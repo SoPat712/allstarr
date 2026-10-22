@@ -12,7 +12,7 @@ public sealed class MonochromeStreamingCapabilityAdapter(
     HttpClient http,
     ILogger<MonochromeStreamingCapabilityAdapter>? logger = null) : IProviderRecordingStreamingCapability
 {
-    public const string SampleTrackId = "155142501534011392";
+    public const string SampleTrackId = "154008664334667776";
     private const string Host = "tracks.monochrome.st";
     private const int MaximumSearchBytes = 256 * 1024;
     private const long MaximumAudioBytes = 2L * 1024 * 1024 * 1024;
@@ -42,11 +42,24 @@ public sealed class MonochromeStreamingCapabilityAdapter(
                 StreamByteRanges.Matches(probe, new RangeHeaderValue(0, 0));
             if (probe.StatusCode == HttpStatusCode.PartialContent && !ranges)
                 return Failure<ProviderStreamLease>(ProviderErrorKind.IncompatibleMedia);
+            var media = Media;
+            if (probe.Content.Headers.ContentType?.MediaType is "audio/mp4" or "application/mp4" ||
+                probe.Content.Headers.ContentType?.MediaType == "application/octet-stream" &&
+                await FirstByteAsync(probe.Content, context.CancellationToken) != (byte)'f')
+            {
+                media = await MonochromeAudioFormat.ReadAsync((range, token) => SendAsync(uri, HttpMethod.Get, range, token),
+                    context.CancellationToken);
+                if (media == null || media.Codec == "aac" && context.Policy.Quality.Minimum > ProviderAudioQuality.Lossy)
+                    return Failure<ProviderStreamLease>(ProviderErrorKind.IncompatibleMedia);
+            }
+            var downgrade = media.Codec == "aac" ? "Monochrome returned lossy AAC for this recording." :
+                request.RequestedQuality == ProviderAudioQuality.HighResolution
+                    ? "Monochrome supplies lossless audio; high resolution is not guaranteed." : null;
             return ProviderOutcome<ProviderStreamLease>.Success(new(
-                $"monochrome-{request.TrackId.Value}", uri, DateTimeOffset.UtcNow.AddMinutes(5), ranges, ranges, Media,
+                $"monochrome-{request.TrackId.Value}", uri, DateTimeOffset.UtcNow.AddMinutes(5), ranges, ranges, media,
                 ProviderStreamRetryBehavior.DoNotRetry,
                 (outbound, token) => OpenAsync(uri, ranges, outbound, token),
-                request.RequestedQuality == ProviderAudioQuality.HighResolution ? "Monochrome supplies lossless FLAC; high resolution is not guaranteed." : null));
+                downgrade));
         }
         catch (OperationCanceledException) { return Failure<ProviderStreamLease>(context.CancellationToken.IsCancellationRequested ? ProviderErrorKind.Canceled : ProviderErrorKind.TransientFailure); }
         catch (HttpRequestException) { return Failure<ProviderStreamLease>(ProviderErrorKind.TransientFailure); }
@@ -57,7 +70,7 @@ public sealed class MonochromeStreamingCapabilityAdapter(
         ProviderExecutionContext context, ProviderStreamLeaseRequest request)
     {
         var lease = await GetStreamLeaseAsync(context, request);
-        return lease.IsSuccess ? ProviderOutcome<ProviderStreamProbeResult>.Success(new(true, DateTimeOffset.UtcNow, Media)) :
+        return lease.IsSuccess ? ProviderOutcome<ProviderStreamProbeResult>.Success(new(true, DateTimeOffset.UtcNow, lease.RequireValue().Media)) :
             ProviderOutcome<ProviderStreamProbeResult>.Failure(lease.Error!);
     }
 
@@ -175,10 +188,19 @@ public sealed class MonochromeStreamingCapabilityAdapter(
         }
     }
 
+    private static async Task<int> FirstByteAsync(HttpContent content, CancellationToken token)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        await using var stream = await content.ReadAsStreamAsync(timeout.Token);
+        var buffer = new byte[1];
+        return await stream.ReadAsync(buffer, timeout.Token) == 0 ? -1 : buffer[0];
+    }
+
     private static bool SafeUri(Uri uri) => OutboundRequestGuard.TryCreateSafeHttpUri(uri.AbsoluteUri, out var safe, out _) &&
         safe!.Scheme == Uri.UriSchemeHttps && safe.Port == 443 && safe.Host.Equals(Host, StringComparison.OrdinalIgnoreCase) && string.IsNullOrEmpty(safe.Fragment);
     private static bool IsNativeId(string id) => id.Length is >= 17 and <= 20 && id.All(char.IsAsciiDigit);
-    private static bool IsAudio(HttpResponseMessage response) => response.Content.Headers.ContentType?.MediaType is "audio/flac" or "audio/x-flac" or "application/octet-stream";
+    private static bool IsAudio(HttpResponseMessage response) => response.Content.Headers.ContentType?.MediaType is "audio/flac" or "audio/x-flac" or "application/octet-stream" or "audio/mp4" or "application/mp4";
     private static bool TooLarge(HttpResponseMessage response) => response.Content.Headers.ContentLength is > MaximumAudioBytes || response.Content.Headers.ContentRange?.Length is > MaximumAudioBytes;
     private static string? NativeId(JsonElement element, string key)
     {

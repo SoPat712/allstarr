@@ -17,7 +17,7 @@ public sealed class ProviderCtsTrackSelectorTests
         await using var database = await SqliteTestDatabase.CreateAsync();
         using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
         var selected = await selector.SelectAsync("monochrome", null, CancellationToken.None);
-        Assert.Equal("155142501534011392", selected!.TrackId);
+        Assert.Equal("154008664334667776", selected!.TrackId);
         Assert.Equal(1, selected.CorpusSize);
     }
 

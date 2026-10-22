@@ -7,7 +7,7 @@ using allstarr.Services.Common;
 
 namespace allstarr.Tests.Providers;
 
-public sealed class MonochromeProviderTests
+public sealed partial class MonochromeProviderTests
 {
     private const string TrackId = "155142501534011392";
     private const string SearchBody = """
@@ -155,9 +155,10 @@ public sealed class MonochromeProviderTests
     [Fact]
     public async Task Probe_OpensFixtureSampleAndReportsFailure()
     {
+        var calls = 0;
         using var http = Client(request =>
         {
-            Assert.Equal($"/track/{TrackId}", request.RequestUri!.AbsolutePath);
+            Assert.Equal($"/track/{(++calls == 1 ? TrackId : MonochromeStreamingCapabilityAdapter.SampleTrackId)}", request.RequestUri!.AbsolutePath);
             return Audio();
         });
         var adapter = new MonochromeStreamingCapabilityAdapter(http);

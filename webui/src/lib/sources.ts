@@ -44,14 +44,15 @@ const checkGuides: Record<string, CheckGuide> = {
     label: "Blocked by a Cloudflare check",
     step: "This source is behind a Cloudflare check. Add a FlareSolverr or Byparr URL in Settings to use it.",
   },
-  service_unavailable: { label: "Service unavailable", step: "The service's download server is failing right now. Try again later; nothing to change in Allstarr." },
+  service_unavailable: { label: "Source service unavailable", step: "The source service is unavailable. Try again later." },
   "lyrics-upstream-busy-or-timed-out": { label: "Lyrics upstream busy or timed out", step: "The lyrics upstream is busy or timed out. Try another lyrics source." },
   timeout: { label: "Timed out", step: "The service took too long to answer. It is checked again every 6 hours." },
   unreachable: { label: "Can't reach the service", step: "Check the server's internet connection, then use Test." },
   administrator_required: { label: "Needs an administrator", step: "Add an administrator in Settings so checks can run." },
 };
 // Playback checks can also report the provider's error kind.
-checkGuides.TransientFailure = { label: "Service error", step: "The service answered with an error. This is usually on its side; it is checked again every 6 hours." };
+checkGuides.TransientFailure = checkGuides["transient-failure"] = checkGuides.service_unavailable;
+for (let status = 500; status < 600; status++) checkGuides[`http-${status}`] = checkGuides.service_unavailable;
 checkGuides.AccountNeedsReauthentication = checkGuides.Unauthorized = checkGuides.sign_in_needed;
 checkGuides.NotFound = { label: "Test song unavailable", step: "The service couldn't play the song it picked. It is checked again every 6 hours." };
 checkGuides.RateLimited = { label: "Rate limited", step: "The service is limiting requests. Wait a few minutes, then use Test." };
@@ -227,7 +228,8 @@ export const supportsPlaybackDiagnostic = (health: ProviderHealth[]) =>
   health.some((item) => ["streaming", "download"].includes(item.capability.toLowerCase()) && item.supported);
 
 export const ctsMeasurementLabel = (measurement: CtsMeasurement) =>
-  measurement.health === "healthy" ? `${measurement.latencyMs} ms` : "Failed";
+  measurement.health === "healthy" ? `${measurement.latencyMs} ms` :
+    measurement.health === "degraded" ? checkGuide(measurement.failureCode)?.label ?? "Failed" : "Not measured yet";
 
 export const sourceOriginLabel = (provider: ProviderDefinition) =>
   provider.originName || (provider.implementationOrigin === "extension" ? "Extension" : "Built-in");

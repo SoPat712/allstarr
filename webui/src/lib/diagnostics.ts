@@ -12,13 +12,15 @@ export function diagnosticFailureMessage(result: DiagnosticFailure) {
   if (code === "lyrics-upstream-busy-or-timed-out" || result.capability === "lyrics" &&
     ["timeout", "service_unavailable"].includes(code))
     return "The lyrics upstream is busy or timed out. Try another lyrics source.";
+  if (["service_unavailable", "transientfailure", "transient-failure"].includes(code) || /^http-5\d{2}$/.test(code))
+    return checkGuide("service_unavailable")!.step;
   if (result.metric === "api-latency" || result.capability && !["streaming", "download"].includes(result.capability)) {
     const guide = checkGuide(code);
-    if (guide && code !== "service_unavailable") return guide.step;
+    if (guide) return guide.step;
     const capability = result.capability ?? "connection";
     return `The ${capability} check failed. Check this source's connection and setup, then try again.`;
   }
-  if (code === "service_unavailable" || code === "timeout") return checkGuide(code)!.step;
+  if (code === "timeout") return checkGuide(code)!.step;
   if (code.includes("account_mismatch") || code.includes("account-mismatch"))
     return "Use the same Apple account for the Media User Token and playback sign-in. Check steps 1 and 2.";
   if (code.includes("sign-in-required") || code.includes("needs_login"))

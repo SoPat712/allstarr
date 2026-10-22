@@ -10,7 +10,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class PaxsenixCapabilityAdapterTests
+public sealed partial class PaxsenixCapabilityAdapterTests
 {
     private const string Song = """{"id":"617154366","type":"songs","attributes":{"name":"月光","artistName":"歌手","durationInMillis":180000,"isrc":"GBARL9300135"}}""";
     private const string Lyrics = """{"type":"Line","content":[{}],"lrc":"[00:01.000]月光"}""";
@@ -607,10 +607,10 @@ public sealed class PaxsenixCapabilityAdapterTests
         string? isrc = "GBARL9300135", string title = "月光", Guid? recording = null) =>
         new(recording ?? Recording, new("paxsenix", ProviderResourceKind.Track, "lookup"), availability, format,
             title, ["歌手"], durationSeconds: 180, isrc: isrc);
-    private static ProviderExecutionContext Context(CancellationToken token = default) =>
+    private static ProviderExecutionContext Context(CancellationToken token = default, string operation = "lyrics-test") =>
         new(new(ProviderActorKind.PublicRead, null), "paxsenix", null,
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
-                true, true, false, ["paxsenix"]), "lyrics-test", "lyrics-test", DateTimeOffset.UtcNow.AddMinutes(1), token);
+                true, true, false, ["paxsenix"]), operation, "lyrics-test", DateTimeOffset.UtcNow.AddMinutes(1), token);
 
     private sealed class Handler(Func<Uri, int, HttpResponseMessage> response) : HttpMessageHandler
     {

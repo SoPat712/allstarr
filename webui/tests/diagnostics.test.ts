@@ -20,7 +20,7 @@ it("explains account mismatch without exposing an identifier", () => {
 
 it("explains a download service failure without suggesting setup changes", () => {
   expect(diagnosticFailureMessage({ stage: "resolve", reasonCode: "service_unavailable" }))
-    .toBe("The service's download server is failing right now. Try again later; nothing to change in Allstarr.");
+    .toBe("The source service is unavailable. Try again later.");
 });
 it("explains a diagnostic timeout", () => {
   expect(diagnosticFailureMessage({ stage: "resolve", reasonCode: "timeout" })).toContain("too long");
@@ -44,3 +44,17 @@ it("explains a connection check's failed lyrics capability", () => {
     { capability: "lyrics", reasonCode: "lyrics-upstream-busy-or-timed-out" },
   ] })).toContain("lyrics upstream is busy or timed out");
 });
+
+for (const capability of ["metadata", "download", "streaming"]) {
+  it(`explains an unavailable ${capability} endpoint without suggesting account changes`, () => {
+    expect(diagnosticFailureMessage({ metric: "api-latency", capability, reasonCode: "service_unavailable" }))
+      .toBe("The source service is unavailable. Try again later.");
+  });
+}
+
+for (const reasonCode of ["TransientFailure", "transient-failure", "http-501"]) {
+  it(`preserves the upstream meaning of ${reasonCode} during playback checks`, () => {
+    expect(diagnosticFailureMessage({ stage: "resolve", reasonCode }))
+      .toBe("The source service is unavailable. Try again later.");
+  });
+}

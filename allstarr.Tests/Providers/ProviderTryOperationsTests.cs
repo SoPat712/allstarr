@@ -5,7 +5,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class ProviderTryOperationsTests
+public sealed partial class ProviderTryOperationsTests
 {
     [Fact]
     public void Catalog_UsesOnlyDeclaredHooksAndSelectedAccounts()

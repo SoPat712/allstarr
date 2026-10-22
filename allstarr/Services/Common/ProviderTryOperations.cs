@@ -159,12 +159,15 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
 
     public async Task<ProviderTryResult> ProbeAsync(ProviderExecutionContext context, ProviderDescriptor descriptor, ProviderCapabilityKind capability)
     {
-        var selected = descriptor.Capabilities.Single(item => item.Capability == capability);
+        descriptor.Capabilities.Single(item => item.Capability == capability);
         if (descriptor.HealthProbe && providers.TryGetCapability<IProviderHealthProbeCapability>(descriptor.Id,
             ProviderCapabilityKind.Health, out var health))
         {
             var probe = await health!.ProbeAsync(context, new(capability));
-            return !probe.IsSuccess ? Failure(probe.Error!) : new() { Succeeded = probe.RequireValue().Status == ProviderProbeStatus.Healthy };
+            if (!probe.IsSuccess) return Failure(probe.Error!);
+            var result = probe.RequireValue();
+            return result.Status == ProviderProbeStatus.Healthy ? new() { Succeeded = true } :
+                ProviderTryResult.Failure(result.SafeCode ?? (result.Status == ProviderProbeStatus.Unauthorized ? "unauthorized" : "service_unavailable"));
         }
         bool Has(ProviderCapabilityKind kind, string hook) => descriptor.Capabilities.Any(item => item.Capability == kind &&
             item.HasUsableImplementation && item.Hooks.Contains(hook));
@@ -174,10 +177,10 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
                 ProviderTryResult.Failure("not_supported");
         if (capability == ProviderCapabilityKind.Playlist && context.Account != null && Has(capability, "getUserPlaylists"))
             return await ExecuteAsync(context, new() { Capability = "playlist", Operation = "mine" });
-        if (capability is not (ProviderCapabilityKind.Lyrics or ProviderCapabilityKind.Download))
-            return new() { Succeeded = selected.HasUsableImplementation };
+        if (capability is not (ProviderCapabilityKind.Lyrics or ProviderCapabilityKind.Download or ProviderCapabilityKind.Streaming))
+            return ProviderTryResult.Failure("probe_not_available");
         if (capability == ProviderCapabilityKind.Download && !Has(capability, "checkAvailability"))
-            return new() { Succeeded = selected.HasUsableImplementation };
+            return ProviderTryResult.Failure("probe_not_available");
         try
         {
             ProviderTrackMetadata? sample = null;
@@ -188,6 +191,14 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
                 if (!outcome.IsSuccess) return Failure(outcome.Error!);
                 sample = outcome.RequireValue().Items.FirstOrDefault();
                 if (sample == null) return ProviderTryResult.Failure("not_found");
+            }
+            if (capability == ProviderCapabilityKind.Streaming)
+            {
+                if (sample == null || !Has(capability, "probeStream")) return ProviderTryResult.Failure("probe_not_available");
+                var probe = await providers.GetRequiredCapability<IProviderStreamingCapability>(descriptor.Id, capability)
+                    .ProbeStreamAsync(context, new(sample.Id)).WaitAsync(context.CancellationToken);
+                return !probe.IsSuccess ? Failure(probe.Error!) : probe.RequireValue().Available
+                    ? new() { Succeeded = true } : ProviderTryResult.Failure("not_found");
             }
             if (capability == ProviderCapabilityKind.Lyrics)
                 return await ExecuteAsync(context, new()

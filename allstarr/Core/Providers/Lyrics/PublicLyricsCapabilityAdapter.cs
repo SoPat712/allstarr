@@ -18,6 +18,7 @@ public abstract class PublicLyricsCapabilityAdapter(
     protected virtual TimeSpan RequestTimeout => Timeout.InfiniteTimeSpan;
     protected virtual ProviderError LookupTimeoutError => new(ProviderErrorKind.TransientFailure);
     protected virtual Task<TimeSpan> ResolveLookupBudgetAsync(CancellationToken token) => Task.FromResult(LookupBudget);
+    protected virtual Task<TimeSpan> ResolveLookupBudgetAsync(ProviderExecutionContext context, CancellationToken token) => ResolveLookupBudgetAsync(token);
     protected virtual Task<TimeSpan> ResolveRequestTimeoutAsync(CancellationToken token) => Task.FromResult(RequestTimeout);
     public abstract string ProviderId { get; }
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Lyrics;
@@ -32,7 +33,7 @@ public abstract class PublicLyricsCapabilityAdapter(
         if (context.IsExpired(DateTimeOffset.UtcNow)) return Failure(ProviderErrorKind.CapabilityUnavailable);
         using var deadlineTimer = new CancellationTokenSource(context.Remaining(DateTimeOffset.UtcNow), Clock);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, deadlineTimer.Token);
-        using var budgetTimer = new CancellationTokenSource(await ResolveLookupBudgetAsync(deadline.Token), Clock);
+        using var budgetTimer = new CancellationTokenSource(await ResolveLookupBudgetAsync(context, deadline.Token), Clock);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, budgetTimer.Token);
         var token = budget.Token;
         try
@@ -87,10 +88,10 @@ public abstract class PublicLyricsCapabilityAdapter(
     }
 
     protected async Task<(string? Content, ProviderError? Error, HttpStatusCode? StatusCode)> GetResponseAsync(
-        Uri endpoint, CancellationToken token, string? accept = null)
+        Uri endpoint, CancellationToken token, string? accept = null, TimeSpan? requestTimeout = null)
     {
         await BeforeRequestAsync(token);
-        using var timeout = new CancellationTokenSource(await ResolveRequestTimeoutAsync(token), Clock);
+        using var timeout = new CancellationTokenSource(requestTimeout ?? await ResolveRequestTimeoutAsync(token), Clock);
         using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token, timeout.Token);
         using var outbound = new HttpRequestMessage(HttpMethod.Get, endpoint);
         outbound.Headers.Accept.ParseAdd(accept ?? "application/ttml+xml, application/json, text/plain");

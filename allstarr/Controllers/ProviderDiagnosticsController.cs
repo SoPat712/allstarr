@@ -115,7 +115,8 @@ public sealed class ProviderDiagnosticsController(
                 : new CtsMeasurement(
                     value.ProviderAccountId,
                     value.ProviderId ?? "provider",
-                    value.Error == null ? "healthy" : "degraded",
+                    value.Stage is "capability" or "account-resolution" or "track-selection" or "concurrency"
+                        ? "unknown" : value.Error == null ? "healthy" : "degraded",
                     value.ClickToStreamMilliseconds ?? value.FirstByteMilliseconds ?? 0,
                     value.Bars,
                     "cts",
@@ -167,6 +168,7 @@ public sealed class ProviderDiagnosticsController(
     private sealed class CtsAuditPayload
     {
         public string? ProviderId { get; set; }
+        public string? Stage { get; set; }
         public Guid? ProviderAccountId { get; set; }
         public string? ProbeMode { get; set; }
         public string? SelectionMode { get; set; }

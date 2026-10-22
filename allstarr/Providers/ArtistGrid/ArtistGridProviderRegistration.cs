@@ -49,7 +49,13 @@ public static class ArtistGridProviderRegistration
                     ProviderCapabilitySupportState.Supported,
                     ProviderAccountRequirement.None,
                     compatibilityVersion: "1",
-                    hooks: ["getStreamLease", "probeStream"])
+                    hooks: ["getStreamLease", "probeStream"]),
+                new ProviderCapabilityDescriptor(
+                    ProviderCapabilityKind.Health,
+                    ProviderCapabilitySupportState.Supported,
+                    ProviderAccountRequirement.None,
+                    compatibilityVersion: "1",
+                    hooks: ["probeMetadata", "probeStreaming"])
             ],
             permissions: new ProviderPermissionDescriptor(
                 networkOrigins:
@@ -63,9 +69,9 @@ public static class ArtistGridProviderRegistration
                     new Uri("https://music.froste.lol/"),
                     new Uri("https://fuck-unvaulted.artistgrid.cx/")
                 ],
-                cache: true))
+                cache: true), healthProbe: true)
         {
             DefaultUseMode = ProviderUseMode.ManualOnly
         },
-        [metadata, streaming]);
+        [metadata, streaming, new ArtistGridHealthCapabilityAdapter(metadata, streaming)]);
 }

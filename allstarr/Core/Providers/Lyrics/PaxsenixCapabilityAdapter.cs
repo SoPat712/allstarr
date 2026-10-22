@@ -15,6 +15,8 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
     public const string HttpClientName = "PaxsenixLyrics";
     public static readonly TimeSpan OverallLookupBudget = TimeSpan.FromSeconds(6);
     public static readonly TimeSpan PerRequestTimeout = TimeSpan.FromSeconds(4);
+    public static readonly TimeSpan DiagnosticLookupBudget = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan DiagnosticRequestTimeout = TimeSpan.FromSeconds(8);
     private readonly PaxsenixRequestPacer _pacer;
     private readonly PaxsenixFailureCache _failures;
     private readonly TimeProvider _clock;
@@ -27,6 +29,8 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
     protected override string CacheScope(ProviderLyricsRequest request) => $"apple:{request.CanonicalRecordingId:N}:";
     protected override TimeSpan LookupBudget => OverallLookupBudget;
     protected override TimeSpan RequestTimeout => PerRequestTimeout;
+    protected override Task<TimeSpan> ResolveLookupBudgetAsync(ProviderExecutionContext context, CancellationToken token) =>
+        Task.FromResult(context.OperationId == "connection-probe" ? DiagnosticLookupBudget : OverallLookupBudget);
     protected override ProviderError LookupTimeoutError => ProviderError.LyricsUpstreamBusyOrTimedOut();
 
     public PaxsenixCapabilityAdapter(HttpClient http, IApplicationCache? cache,
@@ -62,6 +66,7 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
                 true, false, false, [AppleMusicClient.ProviderId]), "lyrics-lookup", context?.CorrelationId ?? "lyrics-lookup",
             context?.Deadline ?? DateTimeOffset.UtcNow.Add(LookupBudget), token);
+        var diagnostic = context?.OperationId == "connection-probe";
         var attempted = new HashSet<string>(StringComparer.Ordinal);
         ProviderError? transient = null;
         var unavailable = false;
@@ -76,7 +81,7 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
             }
             var id = candidate.Id!;
             if (!IsCatalogId(id) || !attempted.Add(id)) continue;
-            if (_failures.Contains(id))
+            if (!diagnostic && _failures.Contains(id))
             {
                 transient = ProviderError.LyricsUpstreamBusyOrTimedOut();
                 continue;
@@ -86,7 +91,8 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
             try
             {
                 sent++;
-                response = await GetResponseAsync(new($"https://lyrics.paxsenix.org/apple-music/lyrics?id={Uri.EscapeDataString(id)}"), token);
+                response = await GetResponseAsync(new($"https://lyrics.paxsenix.org/apple-music/lyrics?id={Uri.EscapeDataString(id)}"), token,
+                    requestTimeout: diagnostic ? DiagnosticRequestTimeout : null);
             }
             catch (OperationCanceledException) when (context?.CancellationToken.IsCancellationRequested != true)
             {
