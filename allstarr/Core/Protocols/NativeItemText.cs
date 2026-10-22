@@ -9,28 +9,34 @@ namespace allstarr.Core.Protocols;
 internal static class NativeItemText
 {
     public static string PreserveJson(string original, string updated, string idProperty)
+        => PreserveJson([original], updated, idProperty);
+
+    public static string PreserveJson(IEnumerable<string> originals, string updated, string idProperty)
     {
-        using var before = JsonDocument.Parse(original);
         using var after = JsonDocument.Parse(updated);
-        var originals = new Dictionary<string, Queue<string>>(StringComparer.Ordinal);
+        var nativeItems = new Dictionary<string, Queue<string>>(StringComparer.Ordinal);
         void Remember(JsonElement item)
         {
             if (IsNative(item, idProperty))
             {
                 var key = JsonNode.Parse(item.GetRawText())!.ToJsonString();
-                if (!originals.TryGetValue(key, out var copies)) originals[key] = copies = new();
+                if (!nativeItems.TryGetValue(key, out var copies)) nativeItems[key] = copies = new();
                 copies.Enqueue(item.GetRawText());
             }
             foreach (var child in Children(item)) Remember(child);
         }
-        Remember(before.RootElement);
-        if (originals.Count == 0) return updated;
+        foreach (var original in originals)
+        {
+            using var before = JsonDocument.Parse(original);
+            Remember(before.RootElement);
+        }
+        if (nativeItems.Count == 0) return updated;
         using var output = new MemoryStream();
         using (var writer = new Utf8JsonWriter(output))
         {
             void Write(JsonElement item)
             {
-                if (IsNative(item, idProperty) && originals.TryGetValue(JsonNode.Parse(item.GetRawText())!.ToJsonString(), out var copies) &&
+                if (IsNative(item, idProperty) && nativeItems.TryGetValue(JsonNode.Parse(item.GetRawText())!.ToJsonString(), out var copies) &&
                     copies.TryDequeue(out var raw))
                 {
                     writer.WriteRawValue(raw);
@@ -59,13 +65,13 @@ internal static class NativeItemText
         return Encoding.UTF8.GetString(output.ToArray());
     }
 
-    public static string PreserveXml(string original, string updated)
+    public static string PreserveXml(string original, string updated, string? elementName = null)
     {
-        var originals = XmlItems(original).GroupBy(item => item.Key, StringComparer.Ordinal)
+        var originals = XmlItems(original, elementName).GroupBy(item => item.Key, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => new Queue<string>(group.Select(item => original[item.Start..item.End])), StringComparer.Ordinal);
         var edits = new List<(int Start, int End, string Text)>();
         var end = 0;
-        foreach (var item in XmlItems(updated).OrderBy(item => item.Start))
+        foreach (var item in XmlItems(updated, elementName).OrderBy(item => item.Start))
         {
             if (item.Start < end || !originals.TryGetValue(item.Key, out var copies) || !copies.TryDequeue(out var raw)) continue;
             edits.Add((item.Start, item.End, raw));
@@ -79,7 +85,7 @@ internal static class NativeItemText
 
     private static bool IsNative(JsonElement item, string idProperty) =>
         item.ValueKind == JsonValueKind.Object && item.TryGetProperty(idProperty, out var id) &&
-        id.ValueKind == JsonValueKind.String && !id.GetString()!.StartsWith("ext-", StringComparison.OrdinalIgnoreCase);
+        id.ValueKind == JsonValueKind.String;
 
     private static IEnumerable<JsonElement> Children(JsonElement item) => item.ValueKind switch
     {
@@ -88,15 +94,15 @@ internal static class NativeItemText
         _ => []
     };
 
-    private static IEnumerable<(int Start, int End, string Key)> XmlItems(string text)
+    private static IEnumerable<(int Start, int End, string Key)> XmlItems(string text, string? elementName)
     {
         var lines = new List<int> { 0 };
         for (var index = 0; index < text.Length; index++)
             if (text[index] == '\n') lines.Add(index + 1);
         int Start(IXmlLineInfo info) => text.LastIndexOf('<', lines[info.LineNumber - 1] + info.LinePosition - 1);
         var document = XDocument.Parse(text, LoadOptions.PreserveWhitespace | LoadOptions.SetLineInfo);
-        var keys = document.Descendants().Where(item => item.Attribute("id") is { } id &&
-                !id.Value.StartsWith("ext-", StringComparison.OrdinalIgnoreCase))
+        var keys = document.Descendants().Where(item => item.Attribute("id") != null ||
+                elementName != null && item.Name.LocalName == elementName)
             .ToDictionary(item => Start((IXmlLineInfo)item), item => item.ToString(SaveOptions.DisableFormatting));
         using var reader = XmlReader.Create(new StringReader(text), new XmlReaderSettings { XmlResolver = null });
         var stack = new Stack<int>();

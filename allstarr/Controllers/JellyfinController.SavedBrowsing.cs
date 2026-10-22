@@ -26,12 +26,14 @@ public partial class JellyfinController
         var favorites = _favoriteViews == null ? new HashSet<string>(StringComparer.Ordinal) :
             (await _favoriteViews.ReadForRequestAsync(HttpContext)).Select(item => item.ItemId).ToHashSet(StringComparer.Ordinal);
         var query = Request.Query.ToDictionary(pair => pair.Key, pair => pair.Value.ToString(), StringComparer.OrdinalIgnoreCase);
-        if (types != null) query["IncludeItemTypes"] = types;
-        if (!query.TryGetValue("IncludeItemTypes", out var requestedTypes) || string.IsNullOrWhiteSpace(requestedTypes))
+        var artistList = Request.Path.StartsWithSegments("/Artists", StringComparison.OrdinalIgnoreCase);
+        if (!artistList && (!query.TryGetValue("IncludeItemTypes", out var requestedTypes) || string.IsNullOrWhiteSpace(requestedTypes)))
             query["IncludeItemTypes"] = JellyfinMusicEndpointPolicy.DefaultMusicItemTypes;
         var genreQueries = await SavedGenreQueriesAsync(query, saved.SelectMany(item => item.Display.Genres));
+        // Artist routes filter native source media by type, while saved rows are artists themselves.
+        if (types != null) genreQueries.Provider["IncludeItemTypes"] = types;
         var providerQuery = new QueryCollection(genreQueries.Provider.ToDictionary(pair => pair.Key, pair => new Microsoft.Extensions.Primitives.StringValues(pair.Value), StringComparer.OrdinalIgnoreCase));
-        var defaultLimit = latest ? 10 : Request.Path.Value!.StartsWith("/Artists", StringComparison.OrdinalIgnoreCase) ? 50 : 20;
+        var defaultLimit = latest ? 10 : artistList ? 50 : 20;
         var filter = new JellyfinProviderQuery(providerQuery, defaultLimit: defaultLimit, membership: true);
         var additions = saved.Where(item => JellyfinFavoriteScope.Matches(item, providerQuery, _settings.LibraryId))
             .Select(item =>
@@ -59,7 +61,14 @@ public partial class JellyfinController
         }
         var genreList = facets && Request.Path.Value!.EndsWith("Genres", StringComparison.OrdinalIgnoreCase);
         var nativeQuery = genreQueries.Native;
-        if ((!facets || genreList) && !latest) { nativeQuery["StartIndex"] = "0"; nativeQuery["Limit"] = "500"; }
+        if ((!facets || genreList) && !latest)
+        {
+            nativeQuery["StartIndex"] = "0";
+            nativeQuery["Limit"] = "500";
+            nativeQuery["EnableTotalRecordCount"] = "true";
+            if (query.GetValueOrDefault("SortBy")?.Equals("Random", StringComparison.OrdinalIgnoreCase) == true)
+                nativeQuery["SortBy"] = "SortName";
+        }
         if (latest) nativeQuery["Limit"] = int.MaxValue.ToString(System.Globalization.CultureInfo.InvariantCulture);
         var endpoint = Request.Path.Value!.TrimStart('/');
         var headers = new HeaderDictionary(Request.Headers.Where(header =>
@@ -109,7 +118,7 @@ public partial class JellyfinController
             }
             await ReadNativeAddedDatesAsync(rows, query, headers, latest);
             rows.AddRange(additions);
-            var merged = filter.FilterAndSort(rows, latest ? "DateCreated" : null, nativeAlreadyFiltered: true);
+            var merged = filter.FilterAndSort(rows, latest ? "DateCreated" : "SortName", nativeAlreadyFiltered: true);
             if (latest && !query.ContainsKey("SortBy")) merged = merged.OrderByDescending(row => JellyfinProviderQuery.Date(JellyfinProviderQuery.Text(row, "DateCreated"))).ToList();
             if (query.GetValueOrDefault("SortBy")?.Equals("Random", StringComparison.OrdinalIgnoreCase) == true)
                 Random.Shared.Shuffle(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(merged));

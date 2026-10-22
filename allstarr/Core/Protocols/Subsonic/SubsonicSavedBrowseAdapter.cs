@@ -79,10 +79,12 @@ public static class SubsonicSavedBrowseAdapter
                 document.Replace(element, ordered.Skip(offset).Take(size));
             }
             var body = document.Text();
-            foreach (var page in pages)
-                body = format.Equals("json", StringComparison.OrdinalIgnoreCase)
-                    ? NativeItemText.PreserveJson(Encoding.UTF8.GetString(page.Body), body, "id")
-                    : NativeItemText.PreserveXml(Encoding.UTF8.GetString(page.Body), body);
+            if (format.Equals("json", StringComparison.OrdinalIgnoreCase))
+                body = NativeItemText.PreserveJson(pages.Select(page => Encoding.UTF8.GetString(page.Body)), body,
+                    container == "genres" ? "value" : "id");
+            else
+                foreach (var page in pages)
+                    body = NativeItemText.PreserveXml(Encoding.UTF8.GetString(page.Body), body, container == "genres" ? "genre" : null);
             return native with
             {
                 Body = Encoding.UTF8.GetBytes(body),
