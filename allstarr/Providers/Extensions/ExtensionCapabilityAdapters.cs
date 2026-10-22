@@ -162,6 +162,19 @@ public abstract class ExtensionCapabilityAdapterBase : IProviderUrlCapability
     private static ProviderError DownloadFailure(Exception exception)
     {
         var message = exception.Message;
+        if (message.Contains(ExtensionDownloadPostProcessor.ToolsUnavailableMessage, StringComparison.Ordinal))
+            return ProviderError.DownloadMediaToolsUnavailable();
+        if (message.Contains(ExtensionDownloadPostProcessor.ConversionFailureMessage, StringComparison.Ordinal))
+            return ProviderError.DownloadContainerConversionFailed();
+        if (exception is HttpRequestException { StatusCode: HttpStatusCode.TooManyRequests } ||
+            Regex.IsMatch(message, @"\brate[ _-]*limit(?:ed)?(?:\b|_)|\b(?:http(?:\s+(?:status|error))?|status(?:\s+code)?)\s*[:=]?\s*429\b|^\s*429\b|\btoo many requests\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            var retry = Regex.Match(message, @"\bretry_after_seconds=(\d{1,4})\b", RegexOptions.CultureInvariant);
+            return new(ProviderErrorKind.RateLimited, TimeSpan.FromSeconds(retry.Success
+                ? Math.Clamp(int.Parse(retry.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture), 1, 3600) : 30));
+        }
+        if (Regex.IsMatch(message, @"\bverification[ _-]*required\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            return ProviderError.DownloadVerificationRequired();
         if (exception is TimeoutException or OperationCanceledException ||
             exception is HttpRequestException { StatusCode: >= HttpStatusCode.InternalServerError } ||
             Regex.IsMatch(message, @"\b(?:http(?:\s+(?:status|error))?|status(?:\s+code)?)\s*[:=]?\s*5\d{2}\b|\bservice[ _-]+unavailable\b|\bbad[ _-]+gateway\b|\b(?:timeout|timed[ _-]+out)\b",

@@ -14,7 +14,7 @@ namespace allstarr.Tests;
 public sealed class ProviderDownloadDiagnosticTests
 {
     [Theory]
-    [InlineData(ProviderErrorKind.TransientFailure, "service_unavailable", 1)]
+    [InlineData(ProviderErrorKind.TransientFailure, "transient-failure", 1)]
     [InlineData(ProviderErrorKind.NotFound, null, 2)]
     public async Task AutomaticSample_OnlyTriesAnotherTrackForATrackFailure(ProviderErrorKind failure, string? reason, int attempts)
     {
@@ -47,7 +47,7 @@ public sealed class ProviderDownloadDiagnosticTests
         {
             metadata.Verify(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Once);
             var json = JsonSerializer.Serialize(result, new JsonSerializerOptions(JsonSerializerDefaults.Web));
-            Assert.Contains("\"reasonCode\":\"service_unavailable\"", json, StringComparison.Ordinal);
+            Assert.Contains("\"reasonCode\":\"" + reason + "\"", json, StringComparison.Ordinal);
             Assert.Contains("\"stage\":\"resolve\"", json, StringComparison.Ordinal);
         }
         else Assert.Equal(new[] { "first", "second" }, tracks);

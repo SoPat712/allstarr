@@ -1732,11 +1732,17 @@ public sealed partial class ExtensionCapabilityAdapterTests
     [InlineData("HTTP 502 Bad Gateway", "service_unavailable")]
     [InlineData("Service unavailable", "service_unavailable")]
     [InlineData("Bad gateway", "service_unavailable")]
+    [InlineData("HTTP 429 Too Many Requests", "rate-limited")]
+    [InlineData("rate_limited", "rate-limited")]
+    [InlineData("Rate limit exceeded", "rate-limited")]
+    [InlineData("Download container conversion failed.", "container-conversion-failed")]
+    [InlineData("Download media tools are unavailable.", "media-tools-unavailable")]
     [InlineData("Track not found", "not-found")]
     [InlineData("Track unavailable", "not-found")]
     [InlineData("This SoundCloud track does not offer a full playable stream", "incompatible-media")]
     [InlineData("No supported full SoundCloud stream is available", "incompatible-media")]
     [InlineData("Track not found: 123", "not-found")]
+    [InlineData("Track not found: 429", "not-found")]
     [InlineData("SoundCloud track is no longer playable", "not-found")]
     [InlineData("Track has been removed", "not-found")]
     [InlineData("Track is geo-blocked", "not-found")]
@@ -2000,9 +2006,10 @@ public sealed partial class ExtensionCapabilityAdapterTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task DownloadStreaming_PreparesSoundCloudTransfersAndPreservesUpstreamFailure(bool upstreamFailure)
+    [InlineData(200, null)]
+    [InlineData(502, "service_unavailable")]
+    [InlineData(429, "rate-limited")]
+    public async Task DownloadStreaming_PreparesSoundCloudTransfersAndPreservesUpstreamFailure(int status, string? reason)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-prepared-stream", Guid.NewGuid().ToString("N"));
         try
@@ -2027,7 +2034,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             var handler = new AppleProviderTestFactory.Handler(request =>
             {
                 calls++;
-                return new HttpResponseMessage(upstreamFailure ? HttpStatusCode.BadGateway : HttpStatusCode.OK)
+                return new HttpResponseMessage((HttpStatusCode)status)
                 { Content = new ByteArrayContent([1, 2, 3, 4]), RequestMessage = request };
             });
             var sandbox = new ExtensionSandbox(root, normalized, script, new HttpClientFactory(handler), NullLogger.Instance,
@@ -2046,11 +2053,11 @@ public sealed partial class ExtensionCapabilityAdapterTests
             var result = await runner.MeasureAsync(Context(manifest.Id).Actor, manifest.Id, null,
                 ProviderAudioQuality.HighResolution, "stream-upstream", "track");
             Assert.Equal(1, calls);
-            if (upstreamFailure)
+            if (reason != null)
             {
                 Assert.False(result.Succeeded);
                 Assert.Equal("resolve", result.Stage);
-                Assert.Equal("service_unavailable", result.ReasonCode);
+                Assert.Equal(reason, result.ReasonCode);
             }
             else
             {
