@@ -6019,11 +6019,15 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.setViewportSize({ width, height: 844 });
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     await page.emulateMedia({ reducedMotion: "reduce" }); await mockApi(page);
-    await page.route("**/api/admin/providers/test/lumen-audio?**", route => route.fulfill({ json: { success: true, healthy: true } }));
-    await page.clock.install();
+    await page.route("**/api/admin/provider-diagnostics/deep-stream", route => route.fulfill({ json: {
+      succeeded: true, providerId: "lumen-audio", clickToStreamMilliseconds: 42,
+    } }));
+    await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
     await page.goto("#/integrations/services/lumen-audio");
-    const action = page.locator(".service-account").getByRole("button", { name: "Test connection", exact: true });
+    const action = page.locator(".service-account").getByRole("button", { name: "Measure CTS", exact: true });
     const region = page.getByRole("region", { name: "Notifications" });
+    await expect(action).toBeEnabled();
+    await page.clock.pauseAt(new Date("2026-01-01T01:00:00Z"));
     for (let index = 0; index < 4; index++) {
       await action.click(); await expect(action).toBeEnabled();
       await expect(region.locator(".toast")).toHaveCount(Math.min(index + 1, 3));
