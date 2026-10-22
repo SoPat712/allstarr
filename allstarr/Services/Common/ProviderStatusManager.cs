@@ -682,7 +682,7 @@ public class ProviderStatusManager
         if (!IsCapabilitySupported(Normalize(provider), Normalize(capability))) return;
         reasonCode = NormalizeTryReason(reasonCode);
         if (!succeeded && reasonCode is "not-found" or "incompatible-media" or "not-supported" or
-            "canceled" or "busy" or "temporary-storage-full" or "invalid-input") return;
+            "canceled" or "busy" or "temporary-storage-full" or "invalid-input" or "needs-artist") return;
         var key = accountId.HasValue ? ProviderRuntimeStatusKey.CreateManaged(provider, capability, accountId.Value) :
             ProviderRuntimeStatusKey.CreateAccountFree(provider, capability);
         _health.Record(key, revision, succeeded, elapsedMilliseconds, reasonCode);
@@ -707,6 +707,7 @@ public class ProviderStatusManager
             "busy" => "busy",
             "temporarystoragefull" => "temporary-storage-full",
             "invalidinput" => "invalid-input",
+            "needsartist" => "needs-artist",
             "transientfailure" => "transient-failure",
             "permanentfailure" => "permanent-failure",
             "timeout" => "timeout",

@@ -13,6 +13,7 @@ public abstract class PublicLyricsCapabilityAdapter(
 {
     private const int MaximumBytes = 2_000_000;
     protected virtual TimeProvider Clock => TimeProvider.System;
+    protected virtual bool RequiresArtist => false;
     protected virtual string CacheScope(ProviderLyricsRequest request) => string.Empty;
     protected virtual TimeSpan LookupBudget => TimeSpan.FromSeconds(3);
     protected virtual TimeSpan RequestTimeout => Timeout.InfiniteTimeSpan;
@@ -31,6 +32,9 @@ public abstract class PublicLyricsCapabilityAdapter(
             return Failure(ProviderErrorKind.Forbidden);
         if (context.CancellationToken.IsCancellationRequested) return Failure(ProviderErrorKind.Canceled);
         if (context.IsExpired(DateTimeOffset.UtcNow)) return Failure(ProviderErrorKind.CapabilityUnavailable);
+        if (RequiresArtist && request.ArtistNames.Count == 0 &&
+            (!string.IsNullOrWhiteSpace(request.TrackTitle) || !string.IsNullOrWhiteSpace(request.Isrc)))
+            return ProviderOutcome<ProviderLyricsResult>.Failure(ProviderError.LyricsArtistRequired());
         using var deadlineTimer = new CancellationTokenSource(context.Remaining(DateTimeOffset.UtcNow), Clock);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, deadlineTimer.Token);
         using var budgetTimer = new CancellationTokenSource(await ResolveLookupBudgetAsync(context, deadline.Token), Clock);

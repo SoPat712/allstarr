@@ -26,7 +26,7 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
                     if (Has("lookupByIsrc")) operations.Add(new("isrc", ["isrc"]));
                     break;
                 case ProviderCapabilityKind.Lyrics:
-                    if (Has("fetchLyrics")) operations.Add(new("lyrics", ["title", "artist", "album", "durationSeconds", "isrc", "trackId"]));
+                    if (Has("fetchLyrics")) operations.Add(new("lyrics", ["title", "artist", "album", "durationSeconds", "isrc"]));
                     break;
                 case ProviderCapabilityKind.Playlist:
                     if (Has("getPlaylistTracks")) operations.Add(new("playlist", ["url"]));

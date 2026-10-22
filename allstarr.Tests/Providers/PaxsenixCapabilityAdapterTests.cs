@@ -305,6 +305,47 @@ public sealed partial class PaxsenixCapabilityAdapterTests
         Assert.Single(handler.Requests);
     }
 
+    [Theory]
+    [InlineData("cached")]
+    [InlineData("verified")]
+    public async Task TitleOnlyUsesKnownIdentityBeforeRequestingArtist(string source)
+    {
+        var recording = Guid.CreateVersion7();
+        var cache = new TestMemoryApplicationCache();
+        if (source == "cached") await cache.SetAsync($"lyrics:paxsenix:apple-id:recording:{recording:N}", "123");
+        var identities = new Mock<ITrackIdentityService>();
+        if (source == "verified")
+            identities.Setup(value => value.ResolveTargetAsync(It.IsAny<ProviderExecutionContext>(), recording,
+                    It.IsAny<ProviderTrackIdentityTarget>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new TrackIdentityResolution(recording, Guid.CreateVersion7(), new("apple-musickit", ProviderResourceKind.Track, "123"),
+                    ProviderIdentityScope.Catalog, null, ProviderIdentityVerification.Verified, "source-use", 1));
+        var handler = new Handler((_, _) => Response(Lyrics));
+        var apple = Catalog(_ => throw new InvalidOperationException("Unexpected catalog read."));
+        var request = new ProviderLyricsRequest(recording, new("paxsenix", ProviderResourceKind.Track, "lookup"), trackTitle: "Fixture");
+        var result = await Adapter(handler, cache, apple, identities: source == "verified" ? identities.Object : null)
+            .FetchLyricsAsync(Context(), request);
+        Assert.Equal(ProviderLyricsAvailabilityState.Available, result.RequireValue().Availability);
+        Assert.Equal("?id=123", Assert.Single(handler.Requests).Query);
+        identities.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, null)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "lyrics-upstream-busy-or-timed-out")]
+    [InlineData(HttpStatusCode.TooManyRequests, "rate-limited")]
+    public async Task TitleOnlyKeepsKnownIdentityFailureInsteadOfRequestingArtist(HttpStatusCode status, string? reason)
+    {
+        var recording = Guid.CreateVersion7();
+        var cache = new TestMemoryApplicationCache();
+        await cache.SetAsync($"lyrics:paxsenix:apple-id:recording:{recording:N}", "123");
+        var handler = new Handler((_, _) => new(status));
+        var request = new ProviderLyricsRequest(recording, new("paxsenix", ProviderResourceKind.Track, "lookup"), trackTitle: "Fixture");
+        var result = await Adapter(handler, cache).FetchLyricsAsync(Context(), request);
+        if (reason != null) Assert.Equal(reason, result.Error!.Code);
+        else Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, result.RequireValue().Availability);
+        Assert.Equal("?id=123", Assert.Single(handler.Requests).Query);
+    }
+
     [Fact]
     public async Task AppleCatalogReadCannotExceedTotalLookupBudget()
     {

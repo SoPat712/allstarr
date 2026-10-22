@@ -20,6 +20,8 @@ public sealed class LrcRedCapabilityAdapter(
             if (direct.IsSuccess && direct.RequireValue().Content != null ||
                 direct.Error is { Kind: ProviderErrorKind.RateLimited }) return direct;
         }
+        if (direct == null && !string.IsNullOrWhiteSpace(request.TrackTitle) && request.ArtistNames.Count == 0)
+            return ProviderOutcome<ProviderLyricsResult>.Failure(ProviderError.LyricsArtistRequired());
         if (string.IsNullOrWhiteSpace(request.TrackTitle) || request.ArtistNames.Count == 0) return direct ?? Unavailable();
         var response = await GetAsync(new("https://lrc.red/match.json?" + MetadataQuery(request, "track")), token);
         if (response.Error != null) return ProviderOutcome<ProviderLyricsResult>.Failure(response.Error);

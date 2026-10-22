@@ -9,7 +9,8 @@ namespace allstarr.Core.Providers.Lyrics;
 
 public sealed class BuiltInLyricsCapabilityAdapter(
     string providerId,
-    Func<ProviderLyricsRequest, CancellationToken, Task<LyricsInfo?>> fetch)
+    Func<ProviderLyricsRequest, CancellationToken, Task<LyricsInfo?>> fetch,
+    bool requiresArtist = false)
     : IProviderLyricsCapability
 {
     public string ProviderId { get; } = ProviderContractValidation.ProviderId(providerId, nameof(providerId));
@@ -25,6 +26,10 @@ public sealed class BuiltInLyricsCapabilityAdapter(
             if (context.ProviderId != ProviderId || !context.Policy.AllowsProvider(ProviderId))
                 return Failure(ProviderErrorKind.Forbidden);
             context.CancellationToken.ThrowIfCancellationRequested();
+
+            if (requiresArtist && request.ArtistNames.Count == 0 &&
+                (!string.IsNullOrWhiteSpace(request.TrackTitle) || !string.IsNullOrWhiteSpace(request.Isrc)))
+                return ProviderOutcome<ProviderLyricsResult>.Failure(ProviderError.LyricsArtistRequired());
 
             var lyrics = await fetch(request, context.CancellationToken);
             context.CancellationToken.ThrowIfCancellationRequested();
@@ -176,7 +181,7 @@ public static class BuiltInLyricsCapabilityRegistration
                 request.DurationSeconds ?? 0).WaitAsync(cancellationToken);
             if (lyrics != null) lyrics.Source ??= "lrclib";
             return lyrics;
-        });
+        }, requiresArtist: true);
 
     public static ProviderRegistration CreateRegistration(
         string id,

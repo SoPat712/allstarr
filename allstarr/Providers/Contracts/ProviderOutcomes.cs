@@ -100,6 +100,11 @@ public sealed record ProviderError
         "lyrics-upstream-busy-or-timed-out",
         "The lyrics upstream is busy or timed out. Try another lyrics source.");
 
+    public static ProviderError LyricsArtistRequired() => new(
+        ProviderErrorKind.PermanentFailure,
+        "needs_artist",
+        "This source needs the artist too");
+
     public static ProviderError StreamRangeUnavailable() => new(
         ProviderErrorKind.NotSupported,
         "stream-range-unavailable",

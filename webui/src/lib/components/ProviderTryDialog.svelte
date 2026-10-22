@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import { Dialog } from "$lib/components/ui/dialog";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { Check, CircleAlert, CircleCheck, Download, Music2, Play, ScrollText, Search, SearchX, X } from "@lucide/svelte";
+  import { Check, ChevronDown, CircleAlert, CircleCheck, Download, Music2, Play, ScrollText, Search, SearchX, X } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
   import {
     ApiError,
@@ -18,6 +18,7 @@
   } from "$lib/api";
   import { diagnosticFailureMessage } from "$lib/diagnostics";
   import { humanize } from "$lib/activity";
+  import { splitLyricSong } from "$lib/try-lyrics";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -27,11 +28,13 @@
     provider,
     account = null,
     capability = "metadata",
+    searchSources = [],
   }: {
     open?: boolean;
     provider: ProviderDefinition;
     account?: ProviderAccount | null;
     capability?: string;
+    searchSources?: { provider: ProviderDefinition; account: ProviderAccount | null }[];
   } = $props();
 
   type Tab = ProviderTryCapability;
@@ -64,6 +67,8 @@
   let lyricDuration = $state("");
   let lyricIsrc = $state("");
   let lyricTrackId = $state("");
+  let lyricDetailsOpen = $state(false);
+  let lyricSearchProviderId = $state("");
   let playlistUrl = $state("");
   let pickQuery = $state<Partial<Record<Tab, string>>>({});
   let picks = $state<Partial<Record<Tab, ProviderTryTrack[]>>>({});
@@ -76,6 +81,13 @@
   const operation = (capability: Tab, id: string) => capabilities.find((item) => item.capability === capability)?.operations.find((item) => item.id === id);
   const search = $derived(operation("metadata", "search"));
   const canSearchSongs = $derived(Boolean(search?.kinds?.includes("tracks") ?? search));
+  const canFindLyrics = $derived(canSearchSongs || searchSources.length > 0);
+  const lyricNeedsArtist = $derived(results.lyrics?.reasonCode === "needs_artist");
+  const suggestions = [
+    { title: "Get Lucky", artist: "Daft Punk" },
+    { title: "Espresso", artist: "Sabrina Carpenter" },
+    { title: "Bohemian Rhapsody", artist: "Queen" },
+  ];
   const name = $derived(provider.name ?? provider.id);
   const result = $derived(results[tab]);
   const accountLine = $derived(account
@@ -93,6 +105,9 @@
     results = {};
     errors = {};
     picks = {};
+    untrack(() => {
+      try { lyricDetailsOpen = sessionStorage.getItem("allstarr.tryLyricsDetails") === "open"; } catch { /* Storage may be unavailable. */ }
+    });
     sources.tryOperations(providerId, accountId, cancellation.signal)
       .then((value) => {
         if (cancellation.signal.aborted) return;
@@ -126,6 +141,7 @@
     running = target;
     if (into === "pick") picking = target;
     errors = { ...errors, [target]: "" };
+    if (target === "lyrics" && into === "result") results = { ...results, lyrics: undefined };
     try {
       const capability = into === "pick" ? "metadata" : target;
       // Features that never use an account (Deezer search, public lyrics) refuse one.
@@ -134,7 +150,7 @@
       if (into === "pick") picks = { ...picks, [target]: value.tracks ?? [] };
       if (into === "pick" && !value.succeeded) errors = { ...errors, [target]: failure(value) };
       if (into === "result") results = { ...results, [target]: value };
-      void reveal();
+      if (target !== "lyrics" || value.reasonCode !== "needs_artist") void reveal(target);
     } catch (cause) {
       if (!request.signal.aborted) errors = { ...errors, [target]: message(cause, "The request did not finish. Try again.") };
     } finally {
@@ -144,15 +160,17 @@
   }
 
   // On small screens the answer lands below the form; bring it into view.
-  async function reveal() {
+  async function reveal(target: Tab) {
     await tick();
-    const answer = document.querySelector<HTMLElement>(".try-body > [role=status], .try-body > [role=alert]");
+    const answer = (target === "lyrics" ? document.querySelector<HTMLElement>(".try-body .try-lyrics") : null)
+      ?? document.querySelector<HTMLElement>(".try-body > [role=status], .try-body > [role=alert]");
     answer?.scrollIntoView({ block: window.matchMedia("(max-width: 760px)").matches ? "start" : "nearest", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
   }
 
   function failure(value: ProviderTryResult) {
+    if (value.reasonCode === "needs_artist") return "This source needs the artist too";
     if (value.reasonCode === "not_found") return `${name} found nothing for this.`;
-    return value.message || diagnosticFailureMessage({ reasonCode: value.reasonCode });
+    return value.message || diagnosticFailureMessage({ reasonCode: value.reasonCode, capability: value.capability });
   }
 
   const hints: Partial<Record<Tab, string>> = {
@@ -200,18 +218,64 @@
     return parts.reduce((total, part) => total * 60 + part, 0) || undefined;
   }
 
-  function submitLyrics(event: SubmitEvent) {
-    event.preventDefault();
-    if (!lyricTitle.trim() || !lyricArtist.trim()) return;
+  function directLyrics() {
+    const song = splitLyricSong(lyricTitle);
+    if (!song.title && !lyricIsrc.trim()) return;
     void run("lyrics", {
       operation: "lyrics",
-      title: lyricTitle.trim(),
-      artist: lyricArtist.trim(),
+      title: song.title || undefined,
+      artist: lyricArtist.trim() || song.artist,
       album: lyricAlbum.trim() || undefined,
       durationSeconds: seconds(lyricDuration),
       isrc: lyricIsrc.trim() || undefined,
       trackId: lyricTrackId || undefined,
     });
+  }
+
+  function toggleLyricDetails() {
+    lyricDetailsOpen = !lyricDetailsOpen;
+    try { sessionStorage.setItem("allstarr.tryLyricsDetails", lyricDetailsOpen ? "open" : "closed"); } catch { /* Storage may be unavailable. */ }
+  }
+
+  async function findLyrics(event: SubmitEvent) {
+    event.preventDefault();
+    const text = lyricTitle.trim();
+    if (!canFindLyrics || !text) { directLyrics(); return; }
+    if (running) return;
+    request?.abort();
+    const cancellation = new AbortController();
+    request = cancellation;
+    running = "lyrics";
+    picking = "lyrics";
+    errors = { ...errors, lyrics: "" };
+    results = { ...results, lyrics: undefined };
+    picks = { ...picks, lyrics: undefined };
+    try {
+      let target = canSearchSongs ? { provider, account } : undefined;
+      let requirement = capabilities.find(item => item.capability === "metadata")?.accountRequirement;
+      for (const candidate of target ? [] : searchSources) {
+        let available: ProviderTryCatalog;
+        try { available = await sources.tryOperations(candidate.provider.id, candidate.account?.id, cancellation.signal); }
+        catch (cause) { if (cancellation.signal.aborted) throw cause; else continue; }
+        const metadata = available.capabilities.find(item => item.capability === "metadata");
+        if (!metadata?.operations.some(item => item.id === "search" && (!item.kinds || item.kinds.includes("tracks")))) continue;
+        if (metadata.accountRequirement === "required" && !candidate.account) continue;
+        target = candidate;
+        requirement = metadata.accountRequirement;
+        break;
+      }
+      if (!target) { picks = { ...picks, lyrics: [] }; return; }
+      lyricSearchProviderId = target.provider.id;
+      const value = await sources.try(target.provider.id, { capability: "metadata", operation: "search", query: text, kind: "tracks",
+        accountId: requirement === "none" ? null : target.account?.id ?? null }, cancellation.signal);
+      picks = { ...picks, lyrics: (value.tracks ?? []).slice(0, 5) };
+      if (!value.succeeded && value.reasonCode !== "not_found") errors = { ...errors, lyrics: value.message || "Song search could not finish. Use what you typed, or try again." };
+    } catch (cause) {
+      if (!cancellation.signal.aborted) errors = { ...errors, lyrics: message(cause, "Song search could not finish. Use what you typed, or try again.") };
+    } finally {
+      running = "";
+      picking = "";
+    }
   }
 
   function submitPick(event: SubmitEvent, target: Tab) {
@@ -221,6 +285,7 @@
   }
 
   function use(track: ProviderTryTrack, target: Tab) {
+    const trackId = tab === "lyrics" && lyricSearchProviderId !== provider.id ? undefined : track.id;
     tab = target;
     if (target === "lyrics") {
       lyricTitle = track.title;
@@ -228,9 +293,9 @@
       lyricAlbum = track.album ?? "";
       lyricDuration = track.durationSeconds ? clock(track.durationSeconds) : "";
       lyricIsrc = track.isrc ?? "";
-      lyricTrackId = track.id;
+      lyricTrackId = trackId ?? "";
       void run("lyrics", { operation: "lyrics", title: track.title, artist: lyricArtist, album: track.album ?? undefined,
-        durationSeconds: track.durationSeconds ?? undefined, isrc: track.isrc ?? undefined, trackId: track.id });
+        durationSeconds: track.durationSeconds ?? undefined, isrc: track.isrc ?? undefined, trackId });
     } else {
       picks = { ...picks, [target]: [track] };
       void run(target, { operation: target === "streaming" ? "stream" : "download", trackId: track.id, quality });
@@ -419,34 +484,69 @@
             {/if}
 
           {:else if tab === "lyrics"}
-            <form class="try-form" onsubmit={submitLyrics}>
-              <div class="try-fields try-fields--two">
-                <label class="try-field"><span>Title</span><input bind:value={lyricTitle} oninput={() => lyricTrackId = ""} disabled={Boolean(running)} placeholder="Get Lucky" required /></label>
-                <label class="try-field"><span>Artist</span><input bind:value={lyricArtist} oninput={() => lyricTrackId = ""} disabled={Boolean(running)} placeholder="Daft Punk" required /></label>
+            <div class="try-lyric-query">
+              <form class="try-searchbar" onsubmit={findLyrics}>
+                <Search size={20} aria-hidden="true" />
+                <label class="sr-only" for="try-lyric-song">Song</label>
+                <input id="try-lyric-song" type="search" bind:value={lyricTitle} oninput={() => lyricTrackId = ""}
+                  placeholder="Song title, or artist and title" maxlength={500} disabled={Boolean(running)}
+                  aria-describedby={lyricNeedsArtist ? "try-lyric-artist-needed" : undefined} aria-invalid={lyricNeedsArtist || undefined} />
+                <Button type="submit" variant="secondary" disabled={Boolean(running) || (!lyricTitle.trim() && !lyricIsrc.trim())}>
+                  {picking === "lyrics" ? "Searching…" : canFindLyrics && lyricTitle.trim() ? "Find" : "Get lyrics"}
+                </Button>
+              </form>
+              {#if lyricNeedsArtist}<p id="try-lyric-artist-needed" class="try-lyric-error" role="alert">This source needs the artist too</p>{/if}
+              <div class="try-lyric-actions">
+                <Button variant="ghost" aria-expanded={lyricDetailsOpen} aria-controls="try-lyric-details" onclick={toggleLyricDetails}>
+                  <ChevronDown class={lyricDetailsOpen ? "try-chevron-open" : ""} aria-hidden="true" />More details
+                </Button>
+                <Button variant="link" disabled={Boolean(running) || (!lyricTitle.trim() && !lyricIsrc.trim())} onclick={directLyrics}>Use what I typed</Button>
               </div>
-              <div class="try-fields try-fields--details">
-                <label class="try-field"><span>Album <em>optional</em></span><input bind:value={lyricAlbum} disabled={Boolean(running)} placeholder="Random Access Memories" /></label>
-                <label class="try-field"><span>Length <em>optional</em></span><input bind:value={lyricDuration} inputmode="numeric" disabled={Boolean(running)} placeholder="6:09" /></label>
-                <label class="try-field"><span>ISRC <em>optional</em></span><input bind:value={lyricIsrc} disabled={Boolean(running)} placeholder="USQX91300108" /></label>
+            </div>
+            {#if lyricDetailsOpen}
+              <div id="try-lyric-details" class="try-fields try-fields--two">
+                <label class="try-field"><span>Artist</span><input bind:value={lyricArtist} oninput={() => lyricTrackId = ""} maxlength={500} disabled={Boolean(running)} placeholder="Daft Punk" /></label>
+                <label class="try-field"><span>Album</span><input bind:value={lyricAlbum} maxlength={500} disabled={Boolean(running)} placeholder="Random Access Memories" /></label>
+                <label class="try-field"><span>Length</span><input bind:value={lyricDuration} inputmode="numeric" maxlength={12} disabled={Boolean(running)} placeholder="6:09" /></label>
+                <label class="try-field"><span>ISRC</span><input bind:value={lyricIsrc} maxlength={20} disabled={Boolean(running)} placeholder="USQX91300108" /></label>
               </div>
-              <div class="try-form-end">
-                {#if canSearchSongs}<small>Or pick a song on the Search tab to fill these in.</small>{/if}
-                <Button type="submit" disabled={Boolean(running) || !lyricTitle.trim() || !lyricArtist.trim()}><ScrollText aria-hidden="true" />{running === "lyrics" ? "Getting lyrics…" : "Get lyrics"}</Button>
+            {/if}
+            {#if !result && !picks.lyrics && !running && !errors.lyrics}
+              <div class="try-search">
+                <p class="try-facts">Try a song you know has lyrics</p>
+                <div class="try-chips try-suggestions" aria-label="Songs to try">
+                  {#each suggestions as song}
+                    <button type="button" class="try-chip" onclick={() => {
+                      lyricTitle = song.title; lyricArtist = song.artist; lyricAlbum = ""; lyricDuration = ""; lyricIsrc = ""; lyricTrackId = "";
+                      void run("lyrics", { operation: "lyrics", ...song });
+                    }}>{song.title} · {song.artist}</button>
+                  {/each}
+                </div>
               </div>
-            </form>
-            {@render status("lyrics", result, result?.lyrics ? `${result.lyrics.lineCount} lines found` : "")}
+            {/if}
+            {#if picking === "lyrics"}<div class="try-outcome" data-tone="busy" role="status"><span class="try-spinner" aria-hidden="true"></span><div><strong>Finding songs…</strong></div></div>{/if}
+            {#if picks.lyrics?.length}
+              <ul class="try-list" aria-label="Songs to test">{#each picks.lyrics as track}{@render trackRow(track, ["lyrics"])}{/each}</ul>
+            {:else if picks.lyrics && !errors.lyrics}
+              <div class="try-outcome" data-tone="neutral" role="status"><SearchX size={20} aria-hidden="true" /><div><strong>No matching songs found.</strong><small>Use what you typed, or try another title.</small></div></div>
+            {/if}
+            {#if !lyricNeedsArtist && !result?.succeeded}{@render status("lyrics", result, "")}{/if}
             {#if result?.succeeded && result.lyrics}
               <section class="try-card try-lyrics" aria-label="Lyrics">
+                <header class="try-summary" role="status"><CircleCheck size={18} aria-hidden="true" /><strong>{result.lyrics.lineCount} lines found</strong> <span>in {elapsed(result.elapsedMs)}</span></header>
                 <p class="try-facts">
                   <span class="try-pill">{result.lyrics.format === "word" ? "Word-timed" : result.lyrics.format === "line" ? "Line-timed" : "Plain text"}</span>
                   {#if result.lyrics.source}<span>From {result.lyrics.source}</span>{/if}
                   {#if result.lyrics.language}<span>Language: {result.lyrics.language}</span>{/if}
                 </p>
-                <ol class="try-lyric-lines" class:untimed={result.lyrics.format === "plain"}>
-                  {#each result.lyrics.lines as line}
-                    <li>{#if result.lyrics.format !== "plain"}<time>{stamp(line.startMs)}</time>{/if}<span>{line.text || " "}</span></li>
-                  {/each}
-                </ol>
+                <!-- svelte-ignore a11y_no_noninteractive_tabindex (The lyrics scroll region supports keyboard scrolling.) -->
+                <div class="try-lyric-scroll" role="region" aria-label="Lyric lines" tabindex="0">
+                  <ol class="try-lyric-lines" class:untimed={result.lyrics.format === "plain"}>
+                    {#each result.lyrics.lines as line}
+                      <li>{#if result.lyrics.format !== "plain"}<time>{stamp(line.startMs)}</time>{/if}<span>{line.text || " "}</span></li>
+                    {/each}
+                  </ol>
+                </div>
               </section>
             {/if}
 
@@ -542,8 +642,12 @@
         --dialog-max-height: 54rem;
 
         display: grid;
-        grid-template-rows: auto auto minmax(0, 1fr) auto;
+        grid-template-rows: auto minmax(0, 1fr) auto;
         overflow: hidden;
+      }
+
+      .try-dialog:has(> .segmented-nav) {
+        grid-template-rows: auto auto minmax(0, 1fr) auto;
       }
 
       .try-heading {
@@ -569,6 +673,7 @@
         width: 2.25rem;
         height: 2.25rem;
         border-radius: var(--radius-sm);
+        font-size: var(--text-md);
       }
 
       .try-dialog > .segmented-nav {
@@ -579,9 +684,59 @@
         display: grid;
         align-content: start;
         gap: var(--space-4);
-        min-height: 20rem;
+        min-height: min(24rem, 45dvh);
+        min-width: 0;
+        scroll-padding-top: 8rem;
         overflow: auto;
         padding: var(--space-5) var(--space-6) var(--space-6);
+      }
+
+      .try-lyric-query {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        display: grid;
+        gap: var(--space-2);
+        background: var(--color-panel);
+        padding-block: var(--space-2);
+      }
+
+      .try-lyric-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: var(--space-1);
+      }
+
+      .try-lyric-actions svg {
+        transition: transform 120ms ease;
+      }
+
+      .try-chevron-open {
+        transform: rotate(180deg);
+      }
+
+      .try-lyric-error {
+        margin: 0;
+        color: var(--color-danger);
+        font-size: var(--text-sm);
+      }
+
+      .try-lyrics {
+        min-width: 0;
+        max-height: 22.5rem;
+        grid-template-rows: auto auto minmax(0, 1fr);
+        overflow: hidden;
+      }
+
+      .try-lyric-scroll {
+        min-height: 0;
+        overflow: auto;
+        overscroll-behavior: contain;
+      }
+
+      .try-lyric-lines > li > span {
+        overflow-wrap: anywhere;
       }
 
       /* Search bar: one pill holding the icon, the field and the action. */
@@ -688,11 +843,6 @@
       }
 
       /* Outlined text fields. */
-      .try-form {
-        display: grid;
-        gap: var(--space-4);
-      }
-
       .try-fields {
         display: grid;
         gap: var(--space-4);
@@ -700,10 +850,6 @@
 
       .try-fields--two {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .try-fields--details {
-        grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.5fr);
       }
 
       .try-field {
@@ -1025,7 +1171,6 @@
 
       .try-lyric-lines {
         display: grid;
-        max-height: 22rem;
         gap: var(--space-2);
         margin: 0;
         overflow: auto;
@@ -1157,19 +1302,19 @@
       }
     }
 
+    @media (max-width: 599px) {
+      .try-fields--two { grid-template-columns: minmax(0, 1fr); }
+      .try-lyrics { max-height: 50dvh; }
+      .try-dialog .dialog-actions { padding-bottom: max(var(--space-4), env(safe-area-inset-bottom)); }
+    }
+
     @media (max-width: 760px) {
       .try-dialog > .segmented-nav {
         padding: var(--space-2) var(--space-4) 0;
       }
 
       .try-body {
-        min-height: 0;
         padding: var(--space-4);
-      }
-
-      .try-fields--two,
-      .try-fields--details {
-        grid-template-columns: minmax(0, 1fr);
       }
 
       .try-searchbar {
@@ -1184,6 +1329,13 @@
         scrollbar-width: none;
       }
 
+      .try-chips.try-suggestions {
+        flex-wrap: wrap;
+        margin: 0;
+        padding: 0;
+      }
+
+
       .try-chips::-webkit-scrollbar {
         display: none;
       }
@@ -1194,14 +1346,27 @@
       }
 
       .try-row {
-        grid-template-columns: 3rem minmax(0, 1fr);
+        grid-template-columns: 3rem minmax(0, 1fr) auto;
         row-gap: var(--space-1);
         gap: var(--space-3);
       }
 
       .try-row-end {
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 0;
+      }
+
+      .try-row:has(.try-row-actions > :nth-child(2)) {
+        grid-template-columns: 3rem minmax(0, 1fr);
+      }
+
+      .try-row:has(.try-row-actions > :nth-child(2)) .try-row-end {
         grid-column: 2;
+        flex-direction: row;
+        align-items: center;
         justify-content: space-between;
+        gap: var(--space-2);
       }
 
       .try-art {

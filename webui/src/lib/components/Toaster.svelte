@@ -38,5 +38,6 @@
   .toast-error { border-left: 4px solid var(--md-sys-color-error); }
   @keyframes toast-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
   @media (max-width: 767px) { .toaster { left: 16px; right: 16px; width: auto; bottom: calc(var(--mobile-nav-height, 72px) + 16px); } }
+  @media (max-width: 599px) { :global(body:has(.try-dialog)) .toaster { top: max(var(--space-2), env(safe-area-inset-top)); bottom: auto; } }
   @media (prefers-reduced-motion: reduce) { .toast, .toast :global(.toast-busy) { animation: none; } }
 </style>
