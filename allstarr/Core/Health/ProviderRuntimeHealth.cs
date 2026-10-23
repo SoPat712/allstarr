@@ -25,6 +25,13 @@ public interface IProviderOutcomeObserver
 {
     void Observe(ProviderExecutionContext context, ProviderCapabilityKind capability,
         ProviderError? error, TimeSpan elapsed);
+
+    void ObservePlayback(ProviderExecutionContext context, ProviderExternalResourceId track,
+        ProviderAudioQuality quality, ProviderError? error, TimeSpan elapsed)
+    { }
+
+    bool IsPlaybackCoolingDown(ProviderExecutionContext context, ProviderExternalResourceId track,
+        ProviderAudioQuality quality) => false;
 }
 
 public sealed record ProviderHealthObservation(
@@ -45,6 +52,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
     private const int MaximumObservations = 4096;
     private readonly object _sync = new();
     private readonly Dictionary<ProviderRuntimeStatusKey, ProviderHealthObservation> _observations = [];
+    private readonly Dictionary<PlaybackItemKey, DateTimeOffset> _playbackFailures = [];
     private readonly Dictionary<string, SidecarStatus> _sidecars = new(StringComparer.OrdinalIgnoreCase);
     private readonly ProviderHealthOptions _options;
     private readonly IPlatformClock _clock;
@@ -93,6 +101,46 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
                 ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.AccountNeedsConfiguration,
             error?.RetryAfter, passive: true);
     }
+
+    public void ObservePlayback(ProviderExecutionContext context, ProviderExternalResourceId track,
+        ProviderAudioQuality quality, ProviderError? error, TimeSpan elapsed)
+    {
+        if (context.IsReadOnly || error?.Kind is ProviderErrorKind.Canceled or ProviderErrorKind.Forbidden or
+            ProviderErrorKind.Unauthorized or ProviderErrorKind.AccountNeedsConfiguration or ProviderErrorKind.AccountNeedsReauthentication)
+            return;
+        lock (_sync)
+        {
+            var key = PlaybackKey(context, track, quality);
+            if (error == null) { _playbackFailures.Remove(key); return; }
+            var cooldown = TimeSpan.FromSeconds(Math.Clamp(error.RetryAfter?.TotalSeconds ?? 30, 5, 300));
+            if (_playbackFailures.Count >= MaximumObservations && !_playbackFailures.ContainsKey(key))
+                _playbackFailures.Remove(_playbackFailures.MinBy(item => item.Value).Key);
+            _playbackFailures[key] = _clock.UtcNow.Add(cooldown);
+            if (error.Kind == ProviderErrorKind.IncompatibleMedia)
+                RecordCore(Key(context.ProviderId, context.Account?.AccountId, ProviderCapabilityKind.Streaming.ToString()),
+                    context.Account?.Revision, false, (long)elapsed.TotalMilliseconds, error.Code, false, null, passive: true);
+        }
+    }
+
+    public bool IsPlaybackCoolingDown(ProviderExecutionContext context, ProviderExternalResourceId track,
+        ProviderAudioQuality quality)
+    {
+        lock (_sync)
+        {
+            var key = PlaybackKey(context, track, quality);
+            if (!_playbackFailures.TryGetValue(key, out var until)) return false;
+            if (until > _clock.UtcNow) return true;
+            _playbackFailures.Remove(key);
+            return false;
+        }
+    }
+
+    private readonly record struct PlaybackItemKey(string Provider, string? Catalog, string Track, Guid? Account,
+        long? Revision, ProviderAudioQuality Quality);
+
+    private static PlaybackItemKey PlaybackKey(ProviderExecutionContext context, ProviderExternalResourceId track,
+        ProviderAudioQuality quality) => new(track.ProviderId, track.Catalog, track.Value, context.Account?.AccountId,
+            context.Account?.Revision, quality);
 
     public void Record(ProviderRuntimeStatusKey key, long? revision, bool success, long? latency,
         string? reason, bool authenticationFailure = false, TimeSpan? retryAfter = null) =>
@@ -222,7 +270,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
         null => null,
         "apple-web-token-unavailable" or "provider-contract-changed" or "capability-unavailable" or
         "account-needs-configuration" or "account-needs-reauthentication" or "unauthorized" or
-        "rate-limited" or "transient-failure" or "permanent-failure" or "probe_failed" or "timeout" or
+        "rate-limited" or "transient-failure" or "permanent-failure" or "incompatible-media" or "probe_failed" or "timeout" or
         "sample-unavailable" or "service_unavailable" or "download-not-verified" or "probe_not_available" or
         "container-conversion-failed" or "media-tools-unavailable" or "verification-required" or
         "authentication-required" or "access-denied" or "not-found" or "metadata-not-found" or "metadata-invalid" or "playlist-not-found" or

@@ -147,6 +147,15 @@ public sealed class ProtocolExecutionOptions
 
     public int DownloadDiagnosticTimeoutSeconds { get; set; } = 180;
 
+    public int SourceStartTimeoutSeconds { get; set; } = 15;
+
+    public TimeSpan GetSourceStartTimeout()
+    {
+        if (SourceStartTimeoutSeconds is < 1 or > 150)
+            throw new InvalidOperationException("ProtocolExecution:SourceStartTimeoutSeconds must be between 1 and 150.");
+        return TimeSpan.FromSeconds(SourceStartTimeoutSeconds);
+    }
+
     public TimeSpan GetDownloadDiagnosticTimeout()
     {
         if (DownloadDiagnosticTimeoutSeconds is < 1 or > 300)

@@ -15,25 +15,37 @@ internal sealed class PrefetchedStream(Stream source, HttpContent owner, ReadOnl
         var content = response.Content;
         var source = await content.ReadAsStreamAsync(cancellationToken);
         var prefix = new byte[4096];
-        var count = await source.ReadAsync(prefix, cancellationToken);
+        var count = await source.ReadAsync(prefix, cancellationToken).AsTask().WaitAsync(cancellationToken);
         if (count == 0) return false;
         var start = content.Headers.ContentRange?.From;
+        if (start is null or 0 && IsErrorBody(prefix.AsSpan(0, count))) return false;
         var size = content.Headers.ContentRange?.Length ?? content.Headers.ContentLength;
         var facts = start is null or 0 ? allstarr.Services.Common.AudioMediaFacts.ReadPrefix(prefix.AsSpan(0, count), size) : null;
         while (start is null or 0 && facts == null && count < prefix.Length &&
             allstarr.Services.Common.AudioMediaFacts.IsPartialHeader(prefix.AsSpan(0, count)))
         {
-            var read = await source.ReadAsync(prefix.AsMemory(count), cancellationToken);
+            var read = await source.ReadAsync(prefix.AsMemory(count), cancellationToken).AsTask().WaitAsync(cancellationToken);
             if (read == 0) break;
             count += read;
             facts = allstarr.Services.Common.AudioMediaFacts.ReadPrefix(prefix.AsSpan(0, count), size);
         }
-        var replacement = new PreparedContent(new PrefetchedStream(source, content, prefix.AsMemory(0, count)), facts);
-        foreach (var header in content.Headers)
-            replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
-        response.Content = replacement;
-        if (facts != null) replacement.Headers.ContentType = new(facts.Media.MimeType);
+        ReplaceContent(response, new PrefetchedStream(source, content, prefix.AsMemory(0, count)), facts);
+        if (facts != null) response.Content.Headers.ContentType = new(facts.Media.MimeType);
         return true;
+    }
+
+    private static bool IsErrorBody(ReadOnlySpan<byte> prefix)
+    {
+        var text = System.Text.Encoding.UTF8.GetString(prefix[..Math.Min(prefix.Length, 256)]).TrimStart('\uFEFF', ' ', '\r', '\n', '\t');
+        return text.Length == 0 || text.StartsWith('<') || text.StartsWith('{') || text.StartsWith('[');
+    }
+
+    internal static void ReplaceContent(HttpResponseMessage response, Stream stream, allstarr.Core.Music.TrackMediaFacts? facts)
+    {
+        var original = response.Content;
+        var replacement = new PreparedContent(stream, facts);
+        foreach (var header in original.Headers) replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        response.Content = replacement;
     }
 
     internal static allstarr.Core.Music.TrackMediaFacts? Facts(HttpContent content) => (content as PreparedContent)?.Facts;

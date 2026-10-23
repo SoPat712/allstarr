@@ -282,6 +282,28 @@ public sealed class ProviderRuntimeHealthTests
         Assert.Equal("probe_failed", store.Get(Key())!.ReasonCode);
     }
 
+    [Fact]
+    public void PlaybackCooldownSeparatesItemAccountRevisionAndQualityAndExpires()
+    {
+        var store = Store();
+        var context = Context();
+        var track = new ProviderExternalResourceId("deezer", ProviderResourceKind.Track, "track");
+        store.ObservePlayback(context, track, ProviderAudioQuality.Lossless,
+            new(ProviderErrorKind.RateLimited, TimeSpan.FromSeconds(47)), TimeSpan.Zero);
+        Assert.True(store.IsPlaybackCoolingDown(context, track, ProviderAudioQuality.Lossless));
+        Assert.False(store.IsPlaybackCoolingDown(context, new("deezer", ProviderResourceKind.Track, "other"), ProviderAudioQuality.Lossless));
+        Assert.False(store.IsPlaybackCoolingDown(context, track, ProviderAudioQuality.HighResolution));
+        var revised = new ProviderExecutionContext(context.Actor, context.ProviderId,
+            new(_account, "deezer", ProviderAccountScope.Shared, 5), context.Policy,
+            context.OperationId, context.CorrelationId, context.Deadline, default);
+        Assert.False(store.IsPlaybackCoolingDown(revised, track, ProviderAudioQuality.Lossless));
+        _clock.UtcNow += TimeSpan.FromSeconds(48);
+        Assert.False(store.IsPlaybackCoolingDown(context, track, ProviderAudioQuality.Lossless));
+        store.ObservePlayback(context, track, ProviderAudioQuality.Lossless, new(ProviderErrorKind.TransientFailure), TimeSpan.Zero);
+        store.ObservePlayback(context, track, ProviderAudioQuality.Lossless, null, TimeSpan.Zero);
+        Assert.False(store.IsPlaybackCoolingDown(context, track, ProviderAudioQuality.Lossless));
+    }
+
     private ProviderExecutionContext Context() => new(
         new ProviderActorContext(ProviderActorKind.Administrator, Guid.Parse("00000000-0000-0000-0000-000000000001"),
             new ProviderBackendPrincipal("jellyfin", "fixture", "admin")), "deezer",
