@@ -154,6 +154,41 @@ test("Playback start defaults to Balanced when older responses omit the preferen
     showExplicitLabel: true, playbackStart: "Balanced", expectedRevision: "legacy" });
 });
 
+for (const width of [320, 390]) {
+  test(`Playback start fits wider fallback labels at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+    await mockPreferences(page, route => json(route, {
+      values: { ...defaults, playbackStart: "Balanced" },
+      householdDefaults: { ...defaults, playbackStart: "Balanced" },
+      revision: "initial", usesHouseholdDefaults: true,
+    }));
+    await page.goto("/#/preferences");
+    const group = page.getByRole("radiogroup", { name: "Playback start", exact: true });
+    await expect(group).toBeVisible();
+    await page.addStyleTag({ content: '[role="radiogroup"][aria-label="Playback start"] [role="radio"] { font-family: monospace; letter-spacing: .15px; }' });
+    for (const name of ["Fast start", "Balanced", "Best quality"]) {
+      await group.getByRole("radio", { name, exact: true }).click();
+      await expect.poll(() => group.evaluate(element => {
+        const active = element.querySelector('[aria-checked="true"]')!.getBoundingClientRect();
+        const thumb = element.querySelector(':scope > [aria-hidden="true"]')!.getBoundingClientRect();
+        return Math.abs(active.left - thumb.left) <= 1 && Math.abs(active.width - thumb.width) <= 1;
+      }), { message: "The selected thumb follows the rendered segment." }).toBe(true);
+      for (const radio of await group.getByRole("radio").all()) {
+        const metrics = await radio.locator("span").evaluate(element => ({
+          label: element.textContent, font: getComputedStyle(element).font,
+          clientWidth: element.clientWidth, scrollWidth: element.scrollWidth, scrollHeight: element.scrollHeight,
+        }));
+        expect(metrics.scrollWidth, JSON.stringify(metrics)).toBeLessThanOrEqual(metrics.clientWidth);
+        expect(metrics.scrollHeight, JSON.stringify(metrics)).toBeLessThanOrEqual(width === 390 ? 20 : 40);
+      }
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await group.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`playback-start-wide-font-${width}.png`) });
+  });
+}
+
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
   test(`Household Playback start uses the shared control and saves configuration at ${width}px ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });

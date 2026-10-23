@@ -223,7 +223,7 @@
           <h3 id="playback-start-title">Playback start</h3>
           <p>Fast start chooses quick lossless playback. Balanced favors the best quality when recent starts take 3 seconds or less. Best quality prefers the highest quality.</p>
         </div>
-        <ThreeDetentSwitch label="Playback start" value={playbackStart} options={playbackStartOptions} widths={[32, 32, 36]} compactWidths={[27, 40, 33]} compact disabled={busy} onchange={value => playbackStart = value} />
+        <ThreeDetentSwitch label="Playback start" value={playbackStart} options={playbackStartOptions} compact disabled={busy} onchange={value => playbackStart = value} />
       </section>
 
       <section class="preference-options" aria-label="Lyrics source order">

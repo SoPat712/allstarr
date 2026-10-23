@@ -58,6 +58,21 @@ public sealed partial class ProtocolStreamingResponseAdapterTests
     }
 
     [Fact]
+    public async Task ProviderRouteReasonIsPreservedWithoutForwardingPrivateUpstreamHeaders()
+    {
+        var context = new DefaultHttpContext();
+        using var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3, 4]) };
+        response.Content.Headers.ContentType = new MediaTypeHeaderValue("audio/flac");
+        response.Headers.Add("X-Allstarr-Route-Reason", "playback-start-balanced:remote");
+        response.Headers.Add("X-Upstream-Token", "fixture-value");
+
+        Assert.IsType<FileStreamResult>(await _adapter.CreateAsync(context, response, default, false, providerStream: true));
+
+        Assert.Equal("playback-start-balanced:remote", context.Response.Headers["X-Allstarr-Route-Reason"]);
+        Assert.False(context.Response.Headers.ContainsKey("X-Upstream-Token"));
+    }
+
+    [Fact]
     public async Task CreateAsync_OrdinaryResponseKeepsMvcRangeHandling()
     {
         var context = new DefaultHttpContext();
