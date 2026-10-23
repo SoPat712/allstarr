@@ -167,8 +167,10 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Equal(replacementTag is "\"same\"" or "\"changed\"" ? 2 : 1, requests);
     }
 
-    [Fact]
-    public async Task FailoverStopsAfterFourSourceAttempts()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailoverStopsAfterFourSourceAttempts(bool playbackStartPreference)
     {
         var sources = Enumerable.Range(0, 6).Select(index => Streaming($"source-{index}",
             (_, _) => Task.FromResult(AudioResponse(HttpStatusCode.BadGateway)))).ToArray();
@@ -180,7 +182,9 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             It.IsAny<int>(), It.IsAny<ProviderError>())).Returns(new ProviderFallbackDecision<IProviderStreamingCapability>(
                 ProviderFallbackDisposition.Advance, "fallback-transient-failure", null));
         var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory());
-        await Assert.ThrowsAsync<HttpRequestException>(() => gateway.OpenStreamAsync(Context(), "source-0", "track", ProviderAudioQuality.Any, null));
+        await Assert.ThrowsAsync<HttpRequestException>(() => gateway.OpenStreamAsync(
+            playbackStartPreference ? StartPreferenceContext("Balanced") : Context(),
+            "source-0", "track", ProviderAudioQuality.Any, null));
         for (var index = 0; index < sources.Length; index++)
             sources[index].Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
                 It.IsAny<ProviderStreamLeaseRequest>()), index < 4 ? Times.Once() : Times.Never());

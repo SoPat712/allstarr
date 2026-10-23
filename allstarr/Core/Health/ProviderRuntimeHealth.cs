@@ -27,12 +27,20 @@ public interface IProviderOutcomeObserver
         ProviderError? error, TimeSpan elapsed);
 
     void ObservePlayback(ProviderExecutionContext context, ProviderExternalResourceId track,
-        ProviderAudioQuality quality, ProviderError? error, TimeSpan elapsed)
+        ProviderAudioQuality quality, ProviderError? error, TimeSpan elapsed, ProviderMediaFormat? media = null)
+    { }
+
+    PlaybackStartObservation? GetPlaybackStart(ProviderExecutionContext context, ProviderAudioQuality quality) => null;
+
+    void ObservePlaybackStart(ProviderExecutionContext context, ProviderAudioQuality quality, TimeSpan elapsed,
+        ProviderMediaFormat? media)
     { }
 
     bool IsPlaybackCoolingDown(ProviderExecutionContext context, ProviderExternalResourceId track,
         ProviderAudioQuality quality) => false;
 }
+
+public sealed record PlaybackStartObservation(TimeSpan MedianStart, ProviderMediaFormat? Media);
 
 public sealed record ProviderHealthObservation(
     long? AccountRevision,
@@ -53,6 +61,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
     private readonly object _sync = new();
     private readonly Dictionary<ProviderRuntimeStatusKey, ProviderHealthObservation> _observations = [];
     private readonly Dictionary<PlaybackItemKey, DateTimeOffset> _playbackFailures = [];
+    private readonly Dictionary<PlaybackSourceKey, List<PlaybackStartSample>> _playbackStarts = [];
     private readonly Dictionary<string, SidecarStatus> _sidecars = new(StringComparer.OrdinalIgnoreCase);
     private readonly ProviderHealthOptions _options;
     private readonly IPlatformClock _clock;
@@ -103,7 +112,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
     }
 
     public void ObservePlayback(ProviderExecutionContext context, ProviderExternalResourceId track,
-        ProviderAudioQuality quality, ProviderError? error, TimeSpan elapsed)
+        ProviderAudioQuality quality, ProviderError? error, TimeSpan elapsed, ProviderMediaFormat? media = null)
     {
         if (context.IsReadOnly || error?.Kind is ProviderErrorKind.Canceled or ProviderErrorKind.Forbidden or
             ProviderErrorKind.Unauthorized or ProviderErrorKind.AccountNeedsConfiguration or ProviderErrorKind.AccountNeedsReauthentication)
@@ -111,7 +120,12 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
         lock (_sync)
         {
             var key = PlaybackKey(context, track, quality);
-            if (error == null) { _playbackFailures.Remove(key); return; }
+            if (error == null)
+            {
+                _playbackFailures.Remove(key);
+                ObservePlaybackStart(context, quality, elapsed, media);
+                return;
+            }
             var cooldown = TimeSpan.FromSeconds(Math.Clamp(error.RetryAfter?.TotalSeconds ?? 30, 5, 300));
             if (_playbackFailures.Count >= MaximumObservations && !_playbackFailures.ContainsKey(key))
                 _playbackFailures.Remove(_playbackFailures.MinBy(item => item.Value).Key);
@@ -121,6 +135,42 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
                     context.Account?.Revision, false, (long)elapsed.TotalMilliseconds, error.Code, false, null, passive: true);
         }
     }
+
+    public void ObservePlaybackStart(ProviderExecutionContext context, ProviderAudioQuality quality, TimeSpan elapsed,
+        ProviderMediaFormat? media)
+    {
+        lock (_sync)
+        {
+            var key = new PlaybackSourceKey(context.ProviderId, context.Account?.AccountId, context.Account?.Revision, quality);
+            if (!_playbackStarts.TryGetValue(key, out var samples))
+            {
+                if (_playbackStarts.Count >= MaximumObservations)
+                    _playbackStarts.Remove(_playbackStarts.MinBy(item => item.Value[^1].At).Key);
+                _playbackStarts[key] = samples = [];
+            }
+            samples.RemoveAll(item => item.At.AddSeconds(_options.SampleTtlSeconds) <= _clock.UtcNow);
+            if (samples.Count >= 15) samples.RemoveAt(0);
+            samples.Add(new(_clock.UtcNow, elapsed < TimeSpan.Zero ? TimeSpan.Zero : elapsed, media));
+        }
+    }
+
+    public PlaybackStartObservation? GetPlaybackStart(ProviderExecutionContext context, ProviderAudioQuality quality)
+    {
+        lock (_sync)
+        {
+            var key = new PlaybackSourceKey(context.ProviderId, context.Account?.AccountId, context.Account?.Revision, quality);
+            if (!_playbackStarts.TryGetValue(key, out var samples)) return null;
+            samples.RemoveAll(item => item.At.AddSeconds(_options.SampleTtlSeconds) <= _clock.UtcNow);
+            if (samples.Count == 0) { _playbackStarts.Remove(key); return null; }
+            var ordered = samples.OrderBy(item => item.Elapsed).ToArray();
+            var median = ordered.Length % 2 == 1 ? ordered[ordered.Length / 2].Elapsed :
+                TimeSpan.FromTicks((ordered[ordered.Length / 2 - 1].Elapsed.Ticks + ordered[ordered.Length / 2].Elapsed.Ticks) / 2);
+            return new(median, samples.LastOrDefault(item => item.Media != null)?.Media);
+        }
+    }
+
+    private readonly record struct PlaybackSourceKey(string Provider, Guid? Account, long? Revision, ProviderAudioQuality Quality);
+    private sealed record PlaybackStartSample(DateTimeOffset At, TimeSpan Elapsed, ProviderMediaFormat? Media);
 
     public bool IsPlaybackCoolingDown(ProviderExecutionContext context, ProviderExternalResourceId track,
         ProviderAudioQuality quality)

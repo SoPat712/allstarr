@@ -20,7 +20,7 @@ public sealed class ListeningPreferencesControllerTests
         settings.Setup(s => s.GetPreferencesAsync(user, It.IsAny<CancellationToken>()))
             .ReturnsAsync(snapshot);
         settings.Setup(s => s.UpdatePreferencesAsync(user,
-                new ListeningPreferences("CleanOnly", false, true), "current", It.IsAny<CancellationToken>()))
+                new ListeningPreferences("CleanOnly", false, true, null, null, null), "current", It.IsAny<CancellationToken>()))
             .ReturnsAsync(snapshot with { Revision = "updated" });
         settings.Setup(s => s.UpdatePreferencesAsync(user, null, "updated", It.IsAny<CancellationToken>()))
             .ReturnsAsync(snapshot);
@@ -39,10 +39,26 @@ public sealed class ListeningPreferencesControllerTests
         var user = Guid.NewGuid();
         var settings = new Mock<IDurableRuntimeSettings>(MockBehavior.Strict);
         settings.Setup(item => item.UpdatePreferencesAsync(user,
-                new ListeningPreferences("All", true, true, "lyricsplus,spotify,lrclib"), "revision", It.IsAny<CancellationToken>()))
+                new ListeningPreferences("All", true, true, "lyricsplus,spotify,lrclib", null, null), "revision", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new PersonalListeningPreferences(new(), new(), false, "next"));
         var controller = Controller(settings.Object, user, false);
         Assert.IsType<OkObjectResult>(await controller.Update(new("All", true, true, "revision", "lyricsplus,spotify,lrclib"), default));
+        settings.VerifyAll();
+        settings.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task PlaybackStartUsesOnlyTheSignedInListenerAndTheExistingRevision()
+    {
+        var user = Guid.CreateVersion7();
+        var settings = new Mock<IDurableRuntimeSettings>(MockBehavior.Strict);
+        settings.Setup(item => item.UpdatePreferencesAsync(user,
+                new ListeningPreferences("All", true, true, null, null, "BestQuality"), "revision", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PersonalListeningPreferences(new(PlaybackStart: "BestQuality"), new(), false, "next"));
+        var controller = Controller(settings.Object, user, false);
+        var result = Assert.IsType<OkObjectResult>(await controller.Update(
+            new("All", true, true, "revision", PlaybackStart: "BestQuality"), default));
+        Assert.Equal("BestQuality", Assert.IsType<PersonalListeningPreferences>(result.Value).Values.PlaybackStart);
         settings.VerifyAll();
         settings.VerifyNoOtherCalls();
     }

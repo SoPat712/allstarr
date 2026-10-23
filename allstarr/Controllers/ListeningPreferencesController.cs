@@ -17,7 +17,8 @@ public sealed class ListeningPreferencesController(IDurableRuntimeSettings setti
     [HttpPut]
     public Task<IActionResult> Update([FromBody] UpdateListeningPreferencesRequest request, CancellationToken cancellationToken) => ExecuteAsync(
         userId => settings.UpdatePreferencesAsync(userId,
-            new(request.ExplicitFilter, request.ShowExternalLabel, request.ShowExplicitLabel, request.LyricsOrder),
+            new(request.ExplicitFilter, request.ShowExternalLabel, request.ShowExplicitLabel, request.LyricsOrder,
+                PlaybackStart: request.PlaybackStart),
             request.ExpectedRevision, cancellationToken));
 
     [HttpDelete]
@@ -39,5 +40,6 @@ public sealed class ListeningPreferencesController(IDurableRuntimeSettings setti
 }
 
 public sealed record UpdateListeningPreferencesRequest(
-    string ExplicitFilter, bool ShowExternalLabel, bool ShowExplicitLabel, string ExpectedRevision, string? LyricsOrder = null);
+    string ExplicitFilter, bool ShowExternalLabel, bool ShowExplicitLabel, string ExpectedRevision,
+    string? LyricsOrder = null, string? PlaybackStart = null);
 public sealed record ResetListeningPreferencesRequest(string ExpectedRevision);

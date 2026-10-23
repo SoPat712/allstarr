@@ -22,7 +22,8 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
         context.RequireResourceOwner(request.TrackId, ProviderResourceKind.Track);
         if (!context.Policy.AllowManagedDownloads || context.ProviderId != ProviderId || !context.Policy.AllowsProvider(ProviderId))
             return Failure<ProviderStreamLease>(ProviderErrorKind.Forbidden);
-        if (context.CancellationToken.IsCancellationRequested) return Failure<ProviderStreamLease>(ProviderErrorKind.Canceled);
+        if (context.CancellationToken.IsCancellationRequested || context.PlaybackAbandonment.IsCancellationRequested)
+            return Failure<ProviderStreamLease>(ProviderErrorKind.Canceled);
         if (context.IsExpired(clock.GetUtcNow())) return Failure<ProviderStreamLease>(ProviderErrorKind.CapabilityUnavailable);
         var sessionPolicy = new ProviderExecutionPolicy(context.Policy.Quality, context.Policy.ExplicitContent,
             context.Policy.AllowFallback, context.Policy.AllowSharedAccount, context.Policy.AllowManagedDownloads, [ProviderId]);
@@ -52,10 +53,12 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
                 session.Completion = RunSessionAsync(downloadContext, request, key, session);
             }
         }
-        listener.Register(context.CancellationToken, session.Cancellation.Token);
+        listener.Register(context.CancellationToken, session.Cancellation.Token, context.PlaybackAbandonment,
+            () => Abandon(key, session));
+        using var waiting = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, context.PlaybackAbandonment);
         try
         {
-            await Task.WhenAny(session.Transfer.Ready.Task, session.Completion).WaitAsync(context.CancellationToken);
+            await Task.WhenAny(session.Transfer.Ready.Task, session.Completion).WaitAsync(waiting.Token);
             ProviderStreamLease prepared;
             if (session.Transfer.Published && !session.Completion.IsCompleted)
             {
@@ -69,7 +72,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
             }
             else
             {
-                var result = await session.Completion.WaitAsync(context.CancellationToken);
+                var result = await session.Completion.WaitAsync(waiting.Token);
                 if (!result.IsSuccess)
                 {
                     listener.Dispose();
@@ -102,6 +105,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
         catch (OperationCanceledException)
         {
             listener.Dispose();
+            if (context.PlaybackAbandonment.IsCancellationRequested) Abandon(key, session);
             return Failure<ProviderStreamLease>(ProviderErrorKind.Canceled);
         }
         catch
@@ -216,12 +220,15 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
         private int opened;
         private CancellationTokenRegistration registration;
         private CancellationTokenRegistration expiryRegistration;
+        private CancellationTokenRegistration abandonmentRegistration;
         private CancellationTokenSource? responseCancellation;
-        public void Register(CancellationToken token, CancellationToken expiry)
+        public void Register(CancellationToken token, CancellationToken expiry, CancellationToken abandonment, Action abandon)
         {
             registration = token.Register(Dispose);
             expiryRegistration = expiry.Register(() => { if (Volatile.Read(ref opened) == 0) Dispose(); });
-            if (Volatile.Read(ref disposed) != 0) { registration.Unregister(); expiryRegistration.Unregister(); }
+            abandonmentRegistration = abandonment.Register(() => { Dispose(); abandon(); });
+            if (Volatile.Read(ref disposed) != 0)
+            { registration.Unregister(); expiryRegistration.Unregister(); abandonmentRegistration.Unregister(); }
         }
         public void MarkOpened()
         {
@@ -238,6 +245,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
             if (Interlocked.Exchange(ref disposed, 1) != 0) return;
             registration.Unregister();
             expiryRegistration.Unregister();
+            abandonmentRegistration.Unregister();
             var cancellation = Interlocked.Exchange(ref responseCancellation, null);
             cancellation?.Cancel();
             cancellation?.Dispose();

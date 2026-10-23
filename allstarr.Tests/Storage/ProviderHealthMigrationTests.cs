@@ -216,7 +216,7 @@ public sealed class ProviderHealthMigrationTests
             .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
             .Select(row => row.Name == "runtime_settings" ? row with
             {
-                Sql = row.Sql.Replace("'Playback:ShowExplicitLabel')", "'Playback:ShowExplicitLabel', 'Providers:LyricsOrder', 'Providers:UseModes')", StringComparison.Ordinal)
+                Sql = row.Sql.Replace("'Playback:ShowExplicitLabel')", "'Playback:ShowExplicitLabel', 'Playback:StartPreference', 'Providers:LyricsOrder', 'Providers:UseModes')", StringComparison.Ordinal)
             } : row)
             .Select(row => row.Name == downloadArtifactIndex ? row with { Sql = currentArtifactIndexSql } : row)
             .Select(NormalizeSchemaObject)

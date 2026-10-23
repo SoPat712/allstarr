@@ -1,4 +1,13 @@
-import type { ConfigField, PriorityGroup } from "./api";
+import type { ConfigField, PlaybackStart, PriorityGroup } from "./api";
+
+export const playbackStartOptions = [
+  { value: "FastStart", label: "Fast start" },
+  { value: "Balanced", label: "Balanced" },
+  { value: "BestQuality", label: "Best quality" },
+] as const satisfies readonly { value: PlaybackStart; label: string }[];
+
+export const playbackStartLabel = (value?: PlaybackStart | null) =>
+  playbackStartOptions.find(option => option.value === value)?.label ?? "Balanced";
 
 export function pathValue(source: Record<string, unknown>, path?: string | null): unknown {
   return path?.split(".").reduce<unknown>(

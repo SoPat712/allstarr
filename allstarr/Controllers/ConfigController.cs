@@ -164,6 +164,7 @@ public class ConfigController : ControllerBase
             },
             playback = new
             {
+                startPreference = RuntimeString("Playback:StartPreference", "Balanced"),
                 prepareUpcomingSongs = RuntimeBool("Playback:PrepareUpcomingSongs", _playbackSettings.PrepareUpcomingSongs),
                 prepareUpcomingCount = RuntimeInt("Playback:PrepareUpcomingCount", _playbackSettings.PrepareUpcomingCount),
                 lastFmSimilarEnabled = RuntimeBool(

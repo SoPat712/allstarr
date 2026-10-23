@@ -105,6 +105,27 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         public void Dispose() => Interlocked.Exchange(ref remaining, null)?.Invoke();
     }
 
+    internal async Task<ProviderMediaFormat?> ReadCachedMediaAsync(ProviderExternalResourceId track,
+        DownloadedSongMappingScope scope, CancellationToken cancellationToken, long? accountRevision)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (active.TryGetValue(Key(scope, accountRevision, track.ProviderId, track.Value), out var transfer))
+            return transfer.Media;
+        var path = await localLibrary.GetLocalPathForExternalSongAsync(scope, track.ProviderId, track.Value);
+        if (path == null || !File.Exists(path)) return null;
+        if (completedMedia.Get<TrackMediaFacts>(path) is { } retained) return retained.Media;
+        try
+        {
+            await using var file = File.OpenRead(path);
+            if (file.Length == 0) return null;
+            var bytes = new byte[4096];
+            var count = await file.ReadAsync(bytes, cancellationToken);
+            return AudioMediaFacts.ReadPrefix(bytes.AsSpan(0, count), file.Length)?.Media;
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
     public async Task<ProtocolProviderStream?> TryOpenAsync(ProviderExternalResourceId track,
         DownloadedSongMappingScope scope, CancellationToken cancellationToken, long? accountRevision = null, bool preparation = false,
         long? requestedOffset = null)

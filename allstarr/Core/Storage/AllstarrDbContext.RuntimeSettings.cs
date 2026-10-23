@@ -13,7 +13,7 @@ public sealed partial class AllstarrDbContext
         {
             entity.ToTable("runtime_settings", table => table.HasCheckConstraint(
                 "CK_runtime_settings_personal_keys",
-                "\"OwnerUserId\" IS NULL OR \"Key\" IN ('Library:ExplicitFilter', 'Playback:ShowExternalLabel', 'Playback:ShowExplicitLabel', 'Providers:LyricsOrder', 'Providers:UseModes')"));
+                "\"OwnerUserId\" IS NULL OR \"Key\" IN ('Library:ExplicitFilter', 'Playback:ShowExternalLabel', 'Playback:ShowExplicitLabel', 'Playback:StartPreference', 'Providers:LyricsOrder', 'Providers:UseModes')"));
             entity.HasKey(item => item.Id);
             entity.Property(item => item.Id).ValueGeneratedNever();
             entity.Property(item => item.Key).HasMaxLength(200).IsRequired();

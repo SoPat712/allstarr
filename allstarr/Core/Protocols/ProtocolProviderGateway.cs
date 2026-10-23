@@ -1238,6 +1238,28 @@ public sealed partial class ProtocolProviderGateway(
             return null;
         }
 
+        if (effectivePolicy != null && hasPlaybackIdentity && !resuming && !headOnly && !protocol.IsReadOnly &&
+            !protocol.IsOriginalDownload && !protocol.IsPreparation &&
+            (providerId == "allstarr" || IsAutomaticProvider(providerId, effectivePolicy)))
+        {
+            void ExtendDownloadOpeningTime()
+            {
+                if (!plan.Candidates.Any(candidate => candidate.Implementation is IProviderDownloadStreamingCapability)) return;
+                var remaining = streamOpeningStartedAt.Add(GetDownloadStreamTimeout()) - clock.GetUtcNow();
+                if (remaining > TimeSpan.Zero) openingTimeout.CancelAfter(remaining);
+                else openingTimeout.Cancel();
+            }
+            ExtendDownloadOpeningTime();
+            return await OpenWithStartPreferenceAsync(protocol, plan, trackId, quality,
+                effectivePolicy, streamOpeningStartedAt, protocolDeadline, streamCancellation, OpenedAsync,
+                async () =>
+                {
+                    if (!await ResolveAvailabilityAsync()) return null;
+                    ExtendDownloadOpeningTime();
+                    return plan;
+                });
+        }
+
         string? fallbackReason = null;
         ProviderError? lastFailure = null;
         var sourceAttempts = 0;
@@ -1378,7 +1400,8 @@ public sealed partial class ProtocolProviderGateway(
             }
             protocol.CancellationToken.ThrowIfCancellationRequested();
             if (!protocol.IsReadOnly && !headOnly)
-                outcomes?.ObservePlayback(candidateExecution, servingTrack, quality, outcome.Error, Stopwatch.GetElapsedTime(started));
+                outcomes?.ObservePlayback(candidateExecution, servingTrack, quality, outcome.Error, Stopwatch.GetElapsedTime(started),
+                    outcome.IsSuccess ? outcome.RequireValue().Lease.Media : null);
             if (!protocol.IsReadOnly && !leaseFailed && (!headOnly || !outcome.IsSuccess))
                 outcomes?.Observe(candidate.Context, ProviderCapabilityKind.Streaming,
                     outcome.Error, Stopwatch.GetElapsedTime(started));

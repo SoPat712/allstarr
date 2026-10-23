@@ -11,6 +11,7 @@
     home,
     settings,
     type ConfigSection,
+    type PlaybackStart,
     type UiSchema,
   } from "$lib/api";
   import SetupGuide from "$lib/components/SetupGuide.svelte";
@@ -22,8 +23,9 @@
   import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
+  import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
   import { humanize } from "$lib/sources";
-  import { fieldValue } from "$lib/settings";
+  import { fieldValue, playbackStartLabel, playbackStartOptions } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { onThemeModeChange, readThemeMode, saveThemeMode, themeOptions, type ThemeMode } from "$lib/theme";
   import { Activity, Archive, HardDrive, Lock, Network, Palette, Rocket, SlidersHorizontal } from "@lucide/svelte";
@@ -350,6 +352,24 @@
                       <Button type="button" variant="secondary" disabled={Boolean(action)} onclick={(event) => void testChallengeSolver(event)}>{action === "challenge-solver-test" ? "Testing…" : "Test"}</Button>
                     </span>
                   </div>
+                {:else if field.valuePath === "playback.startPreference"}
+                  <div class="setting-field settings-row playback-start-row" class:read-only={deploymentOwned(field)}>
+                    <div>
+                      <strong>{field.label}</strong>
+                      {#if field.helpText}<small>{field.helpText}</small>{/if}
+                      {#if deploymentOwned(field)}<small class="settings-owned"><Lock size={12} aria-hidden="true" />Deployment-owned · change it in your deployment config</small>{/if}
+                    </div>
+                    {#if deploymentOwned(field)}
+                      <output>{playbackStartLabel(fieldValue(config, field) as PlaybackStart)}</output>
+                    {:else}
+                      <ThreeDetentSwitch name={field.key} label={field.label}
+                        value={(fieldValue(config, field) || "Balanced") as PlaybackStart} options={playbackStartOptions}
+                        widths={[32, 32, 36]} compactWidths={[27, 40, 33]} compact disabled={Boolean(action)} onchange={value => {
+                          config.playback = { ...(config.playback as Record<string, unknown> | undefined), startPreference: value };
+                          markDirty(item.id);
+                        }} />
+                    {/if}
+                  </div>
                 {:else}
                 <label class="setting-field settings-row" class:read-only={deploymentOwned(field)}>
                   <div>
@@ -505,5 +525,11 @@
   .solver-control input {
     min-width: 0;
     flex: 1;
+  }
+
+  @media (min-width: 651px) {
+    .settings-card .setting-field.playback-start-row {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 23rem);
+    }
   }
 </style>

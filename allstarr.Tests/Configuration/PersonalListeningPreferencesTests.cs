@@ -36,6 +36,33 @@ public sealed class PersonalListeningPreferencesTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PlaybackStartIsListenerScopedAndResetUsesTheLatestHouseholdDefault()
+    {
+        var service = CreateService();
+        var initial = await service.GetPreferencesAsync(_userA);
+        Assert.Equal("Balanced", initial.Values.PlaybackStart);
+        var personal = await service.UpdatePreferencesAsync(_userA,
+            new(PlaybackStart: "bestquality"), initial.Revision);
+        await service.ApplyBatchAsync([new("Playback:StartPreference", "FastStart")], "webui", _userB);
+        var restored = await CreateService().GetPreferencesAsync(_userA);
+        Assert.Equal("BestQuality", restored.Values.PlaybackStart);
+        Assert.Equal("FastStart", restored.HouseholdDefaults.PlaybackStart);
+        Assert.Equal("FastStart", (await service.GetPreferencesAsync(_userB)).Values.PlaybackStart);
+        Assert.Equal("BestQuality", (await new EffectiveProviderPolicyResolver(service)
+            .ResolveForUserAsync(_userA)).Preferences.PlaybackStart);
+        var legacy = await service.UpdatePreferencesAsync(_userA,
+            new("CleanOnly", PlaybackStart: null), restored.Revision);
+        Assert.Equal("BestQuality", legacy.Values.PlaybackStart);
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UpdatePreferencesAsync(_userA,
+            new(PlaybackStart: "unknown"), legacy.Revision));
+        Assert.Equal(legacy.Revision, (await service.GetPreferencesAsync(_userA)).Revision);
+        var reset = await service.UpdatePreferencesAsync(_userA, null, legacy.Revision);
+        Assert.Equal("FastStart", reset.Values.PlaybackStart);
+        Assert.True(reset.UsesHouseholdDefaults);
+        Assert.NotEqual(initial.Revision, personal.Revision);
+    }
+
+    [Fact]
     public async Task PersonalLyricsOrderPersistsForOnlyTheListenerAndResetRevealsLatestHouseholdOrder()
     {
         var service = CreateService();

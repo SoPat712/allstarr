@@ -9,14 +9,16 @@
     type ProviderDefinition,
     type UiSchema,
     type ExplicitFilter,
+    type PlaybackStart,
     type PersonalListeningPreferences,
   } from "$lib/api";
   import RouteError from "$lib/components/RouteError.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Skeleton } from "$lib/components/ui/skeleton";
+  import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
   import { canonicalProviderId, lyricsSourceDisplayName } from "$lib/sources";
-  import { move } from "$lib/settings";
+  import { move, playbackStartLabel, playbackStartOptions } from "$lib/settings";
 
   const filterOptions: Array<{ value: ExplicitFilter; label: string; description: string }> = [
     { value: "All", label: "All", description: "Show clean and explicit releases." },
@@ -28,6 +30,7 @@
   let explicitFilter = $state("");
   let showExternalLabel = $state(false);
   let showExplicitLabel = $state(false);
+  let playbackStart = $state<PlaybackStart>("Balanced");
   let providerDefinitions = $state<ProviderDefinition[]>([]);
   let lyricsOrder = $state<string[]>([]);
   let initialLyricsOrder = $state("");
@@ -43,6 +46,7 @@
     explicitFilter !== snapshot?.values.explicitFilter ||
     showExternalLabel !== snapshot?.values.showExternalLabel ||
     showExplicitLabel !== snapshot?.values.showExplicitLabel ||
+    playbackStart !== (snapshot?.values.playbackStart ?? "Balanced") ||
     lyricsOrder.join(",") !== initialLyricsOrder
   ));
 
@@ -65,6 +69,7 @@
     explicitFilter = next.values.explicitFilter;
     showExternalLabel = next.values.showExternalLabel;
     showExplicitLabel = next.values.showExplicitLabel;
+    playbackStart = next.values.playbackStart ?? "Balanced";
     lyricsOrder = completeLyricsOrder(next.values.lyricsOrder);
     initialLyricsOrder = lyricsOrder.join(",");
   }
@@ -111,6 +116,7 @@
         explicitFilter: selectedFilter,
         showExternalLabel,
         showExplicitLabel,
+        playbackStart,
         ...(lyricsOrder.join(",") !== initialLyricsOrder ? { lyricsOrder: lyricsOrder.join(",") } : {}),
         expectedRevision: snapshot.revision,
       }));
@@ -153,7 +159,7 @@
   <section class="preferences-view" aria-busy={busy}>
     <header class="preferences-intro">
 
-      <h2>Choose what your music clients show</h2>
+      <h2>Tune your listening experience</h2>
       <p>
         These choices affect only your listener account. Native library titles remain untouched.
       </p>
@@ -212,7 +218,15 @@
         </label>
       </section>
 
-      <section class="lyrics-options" aria-label="Lyrics source order">
+      <section class="preference-options" aria-labelledby="playback-start-title">
+        <div>
+          <h3 id="playback-start-title">Playback start</h3>
+          <p>Fast start chooses quick lossless playback. Balanced favors the best quality when recent starts take 3 seconds or less. Best quality prefers the highest quality.</p>
+        </div>
+        <ThreeDetentSwitch label="Playback start" value={playbackStart} options={playbackStartOptions} widths={[32, 32, 36]} compactWidths={[27, 40, 33]} compact disabled={busy} onchange={value => playbackStart = value} />
+      </section>
+
+      <section class="preference-options" aria-label="Lyrics source order">
         <div>
           <h3>Lyrics source order</h3>
           <p>Choose when your music apps try media-server lyrics and other sources. Synced lyrics are preferred; plain text is used when no source has timing. Sources must be enabled and available to your account.</p>
@@ -235,6 +249,7 @@
           Household default: {snapshot.householdDefaults.explicitFilter === "ExplicitOnly" ? "Hide clean/edited versions" : snapshot.householdDefaults.explicitFilter === "CleanOnly" ? "Clean only" : snapshot.householdDefaults.explicitFilter}
           · [A] {snapshot.householdDefaults.showExternalLabel ? "on" : "off"}
           · [E] {snapshot.householdDefaults.showExplicitLabel ? "on" : "off"}
+          · Playback: {playbackStartLabel(snapshot.householdDefaults.playbackStart)}
         </p>
         <div>
           <Button variant="outline" disabled={busy || conflict || snapshot.usesHouseholdDefaults} onclick={() => void reset()}>
@@ -251,9 +266,9 @@
 
 <style>
   .preferences-view { display: grid; min-width: 0; gap: var(--section-gap); }
-  .lyrics-options { display: grid; gap: var(--space-3); border-top: 1px solid var(--color-edge); padding: var(--surface-gutter); }
-  .lyrics-options h3 { margin: 0 0 .3rem; font-size: 1rem; font-weight: 600; }
-  .lyrics-options p { margin: 0; color: var(--color-ink-muted); line-height: 1.55; }
+  .preference-options { display: grid; gap: var(--space-3); border-top: 1px solid var(--color-edge); padding: var(--surface-gutter); }
+  .preference-options h3 { margin: 0 0 .3rem; font-size: 1rem; font-weight: 600; }
+  .preference-options p { margin: 0; color: var(--color-ink-muted); line-height: 1.55; }
   .lyrics-order-list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
   .lyrics-order-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
   .lyrics-order-list strong { min-width: 0; overflow-wrap: anywhere; font-size: var(--text-sm); }

@@ -173,6 +173,9 @@ public static class RuntimeSettingCatalog
             "Playback:ShowExternalLabel", DefaultValue: "true"));
         items.Add(new("Playback:ShowExplicitLabel", RuntimeSettingValueType.Boolean,
             "Playback:ShowExplicitLabel", DefaultValue: "true"));
+        items.Add(new(ListeningPreferenceKeys.PlaybackStart, RuntimeSettingValueType.String,
+            ListeningPreferenceKeys.PlaybackStart, DefaultValue: "Balanced",
+            Choices: new HashSet<string>(["FastStart", "Balanced", "BestQuality"], Comparer)));
         items.Add(new("Playback:PrepareUpcomingSongs", RuntimeSettingValueType.Boolean,
             "Playback:PrepareUpcomingSongs", DefaultValue: "false"));
         items.Add(new("Playback:PrepareUpcomingCount", RuntimeSettingValueType.Integer,
@@ -465,6 +468,9 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
                     overrides.ShowExplicitLabel.ToString(CultureInfo.InvariantCulture),
                     existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.ShowExplicitLabel))
             };
+            if (overrides.PlaybackStart != null)
+                writes.Add(new(ListeningPreferenceKeys.PlaybackStart, overrides.PlaybackStart,
+                    existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.PlaybackStart)));
             if (overrides.LyricsOrder != null)
                 writes.Add(new(ListeningPreferenceKeys.LyricsOrder, overrides.LyricsOrder,
                     existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.LyricsOrder)));
@@ -630,7 +636,8 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
             (bool)settings[ListeningPreferenceKeys.ShowExplicitLabel].Value,
             settings[ListeningPreferenceKeys.LyricsOrder].NormalizedValue,
             modes.Count == 0 ? null : modes.ToDictionary(item => item.Key,
-                item => ProviderUsePolicy.Name(item.Value), StringComparer.Ordinal));
+                item => ProviderUsePolicy.Name(item.Value), StringComparer.Ordinal),
+            (string)settings[ListeningPreferenceKeys.PlaybackStart].Value);
     }
 
     private static string ComputePreferencesRevision(
@@ -716,6 +723,8 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
     private static (object Value, string Display, string Json) NormalizeString(RuntimeSettingDefinition definition, string raw)
     {
         var value = raw.Trim();
+        if (definition.Key == ListeningPreferenceKeys.PlaybackStart)
+            value = definition.Choices!.FirstOrDefault(choice => choice.Equals(value, StringComparison.OrdinalIgnoreCase)) ?? value;
         if (definition.Key == ProviderUsePolicy.SettingKey)
         {
             if (value.Length > definition.MaximumLength) throw new ArgumentException("Too many source use modes.");
