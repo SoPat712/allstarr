@@ -11,6 +11,27 @@ namespace allstarr.Tests;
 public sealed class ProviderRuntimeHealthTests
 {
     [Fact]
+    public void PlaybackStartMedianUsesRecentSuccessfulSamplesForTheExactAccountRevisionAndQuality()
+    {
+        var store = Store();
+        var context = Context();
+        var track = new ProviderExternalResourceId("deezer", ProviderResourceKind.Track, "sample");
+        var media = new ProviderMediaFormat("audio/flac", "flac", "flac", sampleRate: 44100, bitDepth: 16);
+        foreach (var seconds in new[] { 1, 9, 2 })
+            store.ObservePlayback(context, track, ProviderAudioQuality.Lossless, null, TimeSpan.FromSeconds(seconds), media);
+        var measured = store.GetPlaybackStart(context, ProviderAudioQuality.Lossless)!;
+        Assert.Equal(TimeSpan.FromSeconds(2), measured.MedianStart);
+        Assert.Equal(media, measured.Media);
+        store.ObservePlayback(context, track, ProviderAudioQuality.Lossless,
+            new(ProviderErrorKind.RateLimited, TimeSpan.FromSeconds(30)), TimeSpan.FromSeconds(30));
+        Assert.Equal(measured, store.GetPlaybackStart(context, ProviderAudioQuality.Lossless));
+        Assert.Null(store.GetPlaybackStart(context, ProviderAudioQuality.HighResolution));
+        Assert.Null(store.GetPlaybackStart(Context(revision: 5), ProviderAudioQuality.Lossless));
+        _clock.UtcNow += TimeSpan.FromMinutes(6);
+        Assert.Null(store.GetPlaybackStart(context, ProviderAudioQuality.Lossless));
+    }
+
+    [Fact]
     public void AppleDownloadMissingSessionIsReportedWithoutSuppressingCatalog()
     {
         var store = Store();
@@ -304,10 +325,10 @@ public sealed class ProviderRuntimeHealthTests
         Assert.False(store.IsPlaybackCoolingDown(context, track, ProviderAudioQuality.Lossless));
     }
 
-    private ProviderExecutionContext Context() => new(
+    private ProviderExecutionContext Context(long revision = 4) => new(
         new ProviderActorContext(ProviderActorKind.Administrator, Guid.Parse("00000000-0000-0000-0000-000000000001"),
             new ProviderBackendPrincipal("jellyfin", "fixture", "admin")), "deezer",
-        new ProviderAccountContext(_account, "deezer", ProviderAccountScope.Shared, 4),
+        new ProviderAccountContext(_account, "deezer", ProviderAccountScope.Shared, revision),
         new ProviderExecutionPolicy(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
             ProviderExplicitContentPolicy.Allow, true, true, true, ["deezer"]),
         "test", "health-test", DateTimeOffset.UtcNow.AddMinutes(1), default);

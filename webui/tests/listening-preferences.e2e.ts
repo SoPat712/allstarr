@@ -202,7 +202,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(region.getByRole("listitem")).toHaveText(["Spotify", "LRCLIB", "LyricsPlus", "Kept LRC", "Media server lyrics"]);
     await page.getByRole("button", { name: "Save preferences", exact: true }).click();
     await expect.poll(() => writes[0]).toEqual({ explicitFilter: "All", showExternalLabel: true, showExplicitLabel: true,
-      lyricsOrder: "spotify,lrclib,lyricsplus,kept,backend", expectedRevision: "initial" });
+      playbackStart: "Balanced", lyricsOrder: "spotify,lrclib,lyricsplus,kept,backend", expectedRevision: "initial" });
     await expect(page.getByText("Personal choices", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Reset to household defaults", exact: true }).click();
     await expect(region.getByRole("listitem")).toHaveText(["Spotify", "LRCLIB", "LyricsPlus", "Media server lyrics", "Kept LRC"]);

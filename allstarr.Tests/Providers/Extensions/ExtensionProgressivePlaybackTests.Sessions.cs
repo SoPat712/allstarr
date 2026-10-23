@@ -12,6 +12,35 @@ public sealed partial class ExtensionProgressivePlaybackTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task Playback_DiscardedCandidateStopsOnlyItsUnsharedDownloadImmediately(bool shared)
+    {
+        var (adapter, context, track) = SetupConversionPlayback();
+        using var discard = new CancellationTokenSource();
+        var pending = adapter.GetStreamLeaseAsync(context with { PlaybackAbandonment = discard.Token }, new(track));
+        source.Release(prefix);
+        await source.PrefixConsumed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(pending.IsCompleted);
+        var other = shared ? adapter.GetStreamLeaseAsync(context, new(track)) : null;
+        discard.Cancel();
+        if (other != null)
+        {
+            Assert.False(source.Canceled.Task.IsCompleted);
+            source.Release([1, 2, 3, 4]);
+            source.Complete();
+            var lease = (await other.WaitAsync(TimeSpan.FromSeconds(10))).RequireValue();
+            using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+            using var response = await lease.ProtectedResponseFactory!(request, default);
+            Assert.Equal(ExtensionDownloadConversionTests.Converted, await response.Content.ReadAsByteArrayAsync());
+            Assert.Equal(1, requests);
+        }
+        else
+            await source.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False((await pending.WaitAsync(TimeSpan.FromSeconds(10))).IsSuccess);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task Playback_CanceledUnpublishedCallerReturnsAndReplacementSharesConversion(bool converting)
     {
         var (adapter, context, track) = SetupConversionPlayback();

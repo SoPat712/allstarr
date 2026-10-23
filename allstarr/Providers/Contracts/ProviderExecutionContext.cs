@@ -338,6 +338,8 @@ public sealed record ProviderExecutionContext
 
     public CancellationToken CancellationToken { get; }
 
+    public CancellationToken PlaybackAbandonment { get; init; }
+
     public string? IdempotencyKey { get; }
 
     public bool IsReadOnly { get; init; }

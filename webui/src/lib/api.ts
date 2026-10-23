@@ -57,11 +57,13 @@ export type RuntimeStatus = {
 };
 
 export type ExplicitFilter = "All" | "ExplicitOnly" | "CleanOnly";
+export type PlaybackStart = "FastStart" | "Balanced" | "BestQuality";
 
 export type ListeningPreferences = {
   explicitFilter: string;
   showExternalLabel: boolean;
   showExplicitLabel: boolean;
+  playbackStart?: PlaybackStart | null;
   lyricsOrder?: string | null;
 };
 
@@ -1841,6 +1843,7 @@ export const listeningPreferences = {
     explicitFilter: ExplicitFilter;
     showExternalLabel: boolean;
     showExplicitLabel: boolean;
+    playbackStart?: PlaybackStart;
     lyricsOrder?: string;
     expectedRevision: string;
   }) => json<PersonalListeningPreferences>("/api/admin/preferences", {

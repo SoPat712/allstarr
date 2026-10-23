@@ -109,6 +109,7 @@ public static class LegacyEnvParser
             ["SCROBBLING_SYNTHETIC_LOCAL_PLAYED_SIGNAL_ENABLED"] = "Scrobbling:SyntheticLocalPlayedSignalEnabled",
             ["SCROBBLING_LASTFM_ENABLED"] = "Scrobbling:LastFm:Enabled",
             ["SCROBBLING_LISTENBRAINZ_ENABLED"] = "Scrobbling:ListenBrainz:Enabled",
+            ["PLAYBACK_START_PREFERENCE"] = "Playback:StartPreference",
             ["PLAYBACK_PREPARE_UPCOMING_SONGS"] = "Playback:PrepareUpcomingSongs",
             ["PLAYBACK_PREPARE_UPCOMING_COUNT"] = "Playback:PrepareUpcomingCount",
             ["PLAYBACK_LASTFM_SIMILAR_ENABLED"] = "Playback:LastFmSimilarEnabled",

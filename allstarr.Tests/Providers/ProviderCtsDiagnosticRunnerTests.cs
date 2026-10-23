@@ -454,6 +454,10 @@ public sealed class ProviderCtsDiagnosticRunnerTests
             It.Is<ProviderExecutionContext>(context => context.ProviderId == "qobuz" && context.Account != null &&
                 context.Account.AccountId == accountId && context.Account.Revision == 1),
             ProviderCapabilityKind.Streaming, It.IsAny<ProviderError?>(), It.IsAny<TimeSpan>()));
+        if (!rangeBehavior.StartsWith("wrong-", StringComparison.Ordinal))
+            health.Setup(item => item.ObservePlaybackStart(
+                It.Is<ProviderExecutionContext>(context => context.Account != null && context.Account.AccountId == accountId && context.Account.Revision == 1),
+                ProviderAudioQuality.Lossless, It.IsAny<TimeSpan>(), media));
         using var selector = new ProviderCtsTrackSelector(
             Mock.Of<IDbContextFactory<AllstarrDbContext>>(MockBehavior.Strict));
         var runner = new ProviderCtsDiagnosticRunner(
@@ -553,6 +557,9 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         var observer = new Mock<IProviderOutcomeObserver>(MockBehavior.Strict);
         observer.Setup(item => item.Observe(It.Is<ProviderExecutionContext>(context => context.Account == null),
             ProviderCapabilityKind.Streaming, null, It.IsAny<TimeSpan>()));
+        observer.Setup(item => item.ObservePlaybackStart(
+            It.Is<ProviderExecutionContext>(context => context.Account == null),
+            ProviderAudioQuality.Lossless, It.IsAny<TimeSpan>(), It.Is<ProviderMediaFormat>(media => media.Codec == "flac")));
         var accounts = new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict);
         accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderRouteAccountResolution?)null);
@@ -700,6 +707,8 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         var accounts = new DurableProviderRouteAccountResolver(
             new allstarr.Core.Identity.ProviderAccountResolver(new Factory(database.Options)),
             Mock.Of<IProviderRouteHealthSource>());
+        observer.Setup(item => item.ObservePlaybackStart(It.IsAny<ProviderExecutionContext>(),
+            ProviderAudioQuality.Lossless, It.IsAny<TimeSpan>(), It.IsAny<ProviderMediaFormat>()));
         using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
         var runner = new ProviderCtsDiagnosticRunner(
             providers.Object,
@@ -779,6 +788,8 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         var observer = new Mock<IProviderOutcomeObserver>(MockBehavior.Strict);
         observer.Setup(item => item.Observe(It.IsAny<ProviderExecutionContext>(),
             ProviderCapabilityKind.Streaming, null, It.IsAny<TimeSpan>()));
+        observer.Setup(item => item.ObservePlaybackStart(It.IsAny<ProviderExecutionContext>(),
+            ProviderAudioQuality.Lossless, It.IsAny<TimeSpan>(), It.IsAny<ProviderMediaFormat>()));
         using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
         var runner = new ProviderCtsDiagnosticRunner(
             providers.Object,
@@ -847,6 +858,8 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         var observer = new Mock<IProviderOutcomeObserver>(MockBehavior.Strict);
         observer.Setup(item => item.Observe(It.IsAny<ProviderExecutionContext>(),
             ProviderCapabilityKind.Streaming, null, It.IsAny<TimeSpan>()));
+        observer.Setup(item => item.ObservePlaybackStart(It.IsAny<ProviderExecutionContext>(),
+            ProviderAudioQuality.Lossless, It.IsAny<TimeSpan>(), It.IsAny<ProviderMediaFormat>()));
         using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
         var runner = new ProviderCtsDiagnosticRunner(
             providers.Object, accounts.Object, selector, observer.Object);

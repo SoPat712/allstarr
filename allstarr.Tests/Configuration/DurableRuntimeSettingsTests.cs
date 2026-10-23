@@ -734,12 +734,13 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         var personalRows = await db.RuntimeSettings.AsNoTracking()
             .Where(item => item.OwnerUserId == _userId)
             .ToListAsync();
-        Assert.Equal(3, personalRows.Count);
+        Assert.Equal(4, personalRows.Count);
         Assert.All(personalRows, item => Assert.Contains(item.Key, new[]
         {
             "Library:ExplicitFilter",
             "Playback:ShowExternalLabel",
-            "Playback:ShowExplicitLabel"
+            "Playback:ShowExplicitLabel",
+            "Playback:StartPreference"
         }));
         Assert.DoesNotContain(await db.RuntimeSettings.AsNoTracking().ToListAsync(),
             item => item.OwnerUserId == _userB);

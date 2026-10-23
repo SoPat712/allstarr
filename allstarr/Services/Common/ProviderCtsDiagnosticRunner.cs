@@ -388,6 +388,8 @@ public sealed class ProviderCtsDiagnosticRunner(
                     TimeSpan.FromMilliseconds(firstByteMilliseconds.Value));
                 var facts = AudioMediaFacts.ReadPrefix(prefix.AsSpan(0, prefixLength),
                     response.Content.Headers.ContentRange?.Length ?? response.Content.Headers.ContentLength);
+                health.ObservePlaybackStart(execution, quality,
+                    TimeSpan.FromMilliseconds(firstByteMilliseconds.Value), facts?.Media ?? lease.Media);
                 if (facts != null && identities is allstarr.Core.Matching.ITrackMediaFactsStore store)
                     await store.RememberMediaFactsAsync(execution, new(providerId, ProviderResourceKind.Track, trackId!), facts, cancellationToken);
                 var success = ProviderCtsDiagnosticResult.Success(
