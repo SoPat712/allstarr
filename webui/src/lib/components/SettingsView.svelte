@@ -364,7 +364,7 @@
                     {:else}
                       <ThreeDetentSwitch name={field.key} label={field.label}
                         value={(fieldValue(config, field) || "Balanced") as PlaybackStart} options={playbackStartOptions}
-                        widths={[32, 32, 36]} compactWidths={[27, 40, 33]} compact disabled={Boolean(action)} onchange={value => {
+                        compact disabled={Boolean(action)} onchange={value => {
                           config.playback = { ...(config.playback as Record<string, unknown> | undefined), startPreference: value };
                           markDirty(item.id);
                         }} />

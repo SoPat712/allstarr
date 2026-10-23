@@ -1,12 +1,11 @@
 <script lang="ts" generics="Value extends string">
   import { Check } from "@lucide/svelte";
 
-  let { value, label, options, widths = [100 / 3, 100 / 3, 100 / 3], compactWidths, disabled = false, compact = false, name, onchange }: {
+  let { value, label, options, widths = [100 / 3, 100 / 3, 100 / 3], disabled = false, compact = false, name, onchange }: {
     value: Value;
     label: string;
     options: readonly { value: Value; label: string; tone?: "primary" | "secondary" | "neutral" }[];
     widths?: readonly [number, number, number];
-    compactWidths?: readonly [number, number, number];
     disabled?: boolean;
     compact?: boolean;
     name?: string;
@@ -14,7 +13,27 @@
   } = $props();
 
   let buttons: HTMLButtonElement[] = [];
+  let group = $state<HTMLDivElement>();
+  let thumbLeft = $state<number>();
+  let thumbWidth = $state<number>();
   const selected = $derived(Math.max(0, options.findIndex(option => option.value === value)));
+
+  $effect(() => {
+    if (!compact || !group) return;
+    const container = group;
+    const active = buttons[selected];
+    if (!active) return;
+    const measure = () => {
+      const bounds = active.getBoundingClientRect();
+      thumbLeft = bounds.left - container.getBoundingClientRect().left;
+      thumbWidth = bounds.width;
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(container);
+    buttons.forEach(button => observer.observe(button));
+    measure();
+    return () => observer.disconnect();
+  });
 
   function choose(next: Value) {
     if (!disabled && next !== value) onchange(next);
@@ -31,12 +50,11 @@
 </script>
 
 {#if name}<input type="hidden" {name} {value} />{/if}
-<div class="use-switch" role="radiogroup" aria-label={label} aria-disabled={disabled}
+<div bind:this={group} class="use-switch" class:compact role="radiogroup" aria-label={label} aria-disabled={disabled}
   data-tone={options[selected]?.tone ?? "secondary"}
   style:--width-first={widths[0] / 100} style:--width-middle={widths[1] / 100} style:--width-last={widths[2] / 100}
-  style:--compact-first={(compactWidths ?? widths)[0] / 100}
-  style:--compact-middle={(compactWidths ?? widths)[1] / 100}
-  style:--compact-last={(compactWidths ?? widths)[2] / 100}
+  style:--thumb-left={compact && thumbLeft !== undefined ? `${thumbLeft}px` : undefined}
+  style:--thumb-width={compact && thumbWidth !== undefined ? `${thumbWidth}px` : undefined}
   style:--thumb-start={selected === 0 ? "0" : selected === 1 ? "var(--first)" : "calc(var(--first) + var(--middle))"}
   style:--thumb-size={`var(--${["first", "middle", "last"][selected]})`}>
   <span class="use-switch-thumb" aria-hidden="true"></span>
@@ -73,8 +91,8 @@
     position: absolute;
     top: 0.25rem;
     bottom: 0.25rem;
-    left: calc(0.25rem + var(--inner) * var(--thumb-start, 0));
-    width: calc(var(--inner) * var(--thumb-size));
+    left: var(--thumb-left, calc(0.25rem + var(--inner) * var(--thumb-start, 0)));
+    width: var(--thumb-width, calc(var(--inner) * var(--thumb-size)));
     border-radius: 999px;
     background: var(--md-sys-color-secondary-container);
     box-shadow: 0 1px 2px rgb(0 0 0 / 0.18);
@@ -118,6 +136,23 @@
     text-overflow: ellipsis;
   }
 
+  .compact {
+    display: flex;
+  }
+
+  .compact button {
+    flex: 1 1 auto;
+    min-width: min-content;
+  }
+
+  .compact button span {
+    min-width: min-content;
+  }
+
+  .compact button :global(svg) {
+    flex-shrink: 0;
+  }
+
   button[aria-checked="true"] {
     color: var(--md-sys-color-on-secondary-container);
     font-weight: 600;
@@ -151,14 +186,6 @@
   @media (max-width: 40rem) {
     .use-switch {
       width: 100%;
-    }
-  }
-
-  @media (max-width: 360px) {
-    .use-switch {
-      --first: var(--compact-first);
-      --middle: var(--compact-middle);
-      --last: var(--compact-last);
     }
   }
 

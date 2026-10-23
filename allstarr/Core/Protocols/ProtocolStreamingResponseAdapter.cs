@@ -14,7 +14,8 @@ public sealed class ProtocolStreamingResponseAdapter(TimeProvider? timeProvider 
         "ETag",
         "Last-Modified",
         "Cache-Control",
-        "X-Allstarr-Provider"
+        "X-Allstarr-Provider",
+        "X-Allstarr-Route-Reason"
     ];
 
     public void ForwardRangeRequestHeaders(
