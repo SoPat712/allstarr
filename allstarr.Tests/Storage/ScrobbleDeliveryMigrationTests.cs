@@ -19,19 +19,10 @@ public sealed class ScrobbleDeliveryMigrationTests
         var user = Guid.CreateVersion7();
         var receipt = Guid.CreateVersion7();
         var now = DateTimeOffset.UtcNow;
-        db.Users.Add(new()
-        {
-            Id = user,
-            BackendType = "jellyfin",
-            BackendInstanceId = "backend",
-            BackendPrincipalId = "listener",
-            DisplayName = "Listener",
-            Enabled = true,
-            CreatedAt = now,
-            UpdatedAt = now,
-            LastSeenAt = now
-        });
-        await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO users (Id, BackendType, BackendInstanceId, BackendPrincipalId, DisplayName, IsAdmin, Enabled, CreatedAt, UpdatedAt, LastSeenAt)
+            VALUES ({user}, 'jellyfin', 'backend', 'listener', 'Listener', 0, 1, {now.UtcTicks}, {now.UtcTicks}, {now.UtcTicks});
+            """);
         await db.Database.ExecuteSqlInterpolatedAsync($$"""
             INSERT INTO playback_delivery_checkpoints (Id, OwnerUserId, OccurrenceKey, SignalKey, TargetId, Kind, State,
                 DetailsJson, RequiresReauthentication, UpdatedAt)

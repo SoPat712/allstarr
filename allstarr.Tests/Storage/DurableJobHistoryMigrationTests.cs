@@ -26,18 +26,10 @@ public sealed class DurableJobHistoryMigrationTests
         await db.GetService<IMigrator>().MigrateAsync(Before);
         var now = new DateTimeOffset(2026, 10, 15, 1, 0, 0, TimeSpan.Zero);
         var owner = Guid.CreateVersion7();
-        db.Users.Add(new()
-        {
-            Id = owner,
-            BackendType = "jellyfin",
-            BackendInstanceId = "fixture",
-            BackendPrincipalId = "listener",
-            DisplayName = "Listener",
-            Enabled = true,
-            CreatedAt = now,
-            UpdatedAt = now
-        });
-        await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO users (Id, BackendType, BackendInstanceId, BackendPrincipalId, DisplayName, IsAdmin, Enabled, CreatedAt, UpdatedAt, LastSeenAt)
+            VALUES ({owner}, 'jellyfin', 'fixture', 'listener', 'Listener', 0, 1, {now.UtcTicks}, {now.UtcTicks}, 0);
+            """);
         var completedJob = Guid.CreateVersion7();
         var runningJob = Guid.CreateVersion7();
         var oldAudit = Guid.CreateVersion7();

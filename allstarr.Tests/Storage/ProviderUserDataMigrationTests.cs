@@ -16,18 +16,10 @@ public sealed class ProviderUserDataMigrationTests
         await db.GetService<IMigrator>().MigrateAsync("20261021120000_SubsonicPlayQueues");
         var user = Guid.CreateVersion7();
         var now = DateTimeOffset.UtcNow;
-        db.Users.Add(new()
-        {
-            Id = user,
-            BackendType = "subsonic",
-            BackendInstanceId = "fixture",
-            BackendPrincipalId = "listener",
-            DisplayName = "Listener",
-            Enabled = true,
-            CreatedAt = now,
-            UpdatedAt = now
-        });
-        await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO users (Id, BackendType, BackendInstanceId, BackendPrincipalId, DisplayName, IsAdmin, Enabled, CreatedAt, UpdatedAt, LastSeenAt)
+            VALUES ({user}, 'subsonic', 'fixture', 'listener', 'Listener', 0, 1, {now.UtcTicks}, {now.UtcTicks}, 0);
+            """);
         await db.Database.MigrateAsync();
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO provider_user_data (OwnerUserId, Protocol, BackendInstanceId, ItemId, Rating)

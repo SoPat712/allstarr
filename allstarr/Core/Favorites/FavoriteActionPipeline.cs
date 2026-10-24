@@ -5,6 +5,8 @@ using System.Text.Json;
 using allstarr.Core.Jobs;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Operations;
+using allstarr.Core.Intelligence;
+using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -108,7 +110,8 @@ public sealed partial class FavoriteActionPipeline(
         var eventId = Guid.CreateVersion7();
         await CancelSupersededWorkAsync(context, userId, protocol, backend, itemId, now, cancellationToken);
 
-        var actionTypes = BuildActions(request.Operation, itemId);
+        var synthetic = await SyntheticActivityPolicy.IsExcludedAsync(context, new IntelligenceScope(userId, protocol, backend), itemId, cancellationToken);
+        IReadOnlyList<string> actionTypes = synthetic ? [VirtualLikedAction] : BuildActions(request.Operation, itemId);
         var job = await jobs.EnqueueInExistingTransactionAsync(
             context,
             new DurableJobEnqueueRequest<FavoriteJobPayload>(
@@ -175,7 +178,7 @@ public sealed partial class FavoriteActionPipeline(
         }
         try
         {
-            if (keptFiles != null)
+            if (keptFiles != null && !synthetic)
                 await keptFiles.StageFavoriteInterestAsync(context, currentState, record, cancellationToken);
             await context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);

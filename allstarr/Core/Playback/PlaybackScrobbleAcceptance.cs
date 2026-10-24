@@ -11,6 +11,7 @@ public sealed class PlaybackScrobbleAcceptance(IDbContextFactory<AllstarrDbConte
         CancellationToken token)
     {
         var payload = request.Payload;
+        if (await SyntheticActivityPolicy.IsExcludedAsync(factory, payload, token)) return new(Guid.Empty, false);
         await using (var lookup = await factory.CreateDbContextAsync(token))
         {
             var existing = await lookup.Jobs.AsNoTracking().SingleOrDefaultAsync(x => x.Type == request.Type &&

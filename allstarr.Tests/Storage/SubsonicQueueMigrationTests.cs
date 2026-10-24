@@ -16,18 +16,10 @@ public sealed class SubsonicQueueMigrationTests
         await db.GetService<IMigrator>().MigrateAsync("20261021090000_AudioQualityChecks");
         var id = Guid.CreateVersion7();
         var now = DateTimeOffset.UtcNow;
-        db.Users.Add(new UserRecord
-        {
-            Id = id,
-            BackendType = "subsonic",
-            BackendInstanceId = "fixture",
-            BackendPrincipalId = "listener",
-            DisplayName = "Listener",
-            Enabled = true,
-            CreatedAt = now,
-            UpdatedAt = now
-        });
-        await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO users (Id, BackendType, BackendInstanceId, BackendPrincipalId, DisplayName, IsAdmin, Enabled, CreatedAt, UpdatedAt, LastSeenAt)
+            VALUES ({id}, 'subsonic', 'fixture', 'listener', 'Listener', 0, 1, {now.UtcTicks}, {now.UtcTicks}, 0);
+            """);
         await db.Database.MigrateAsync();
         const string savedPayload = """{"ids":["native","external","external"],"currentIndex":2,"position":12345}""";
         await db.Database.ExecuteSqlInterpolatedAsync($"""

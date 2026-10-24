@@ -89,6 +89,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         ConfigureProviderUserData(modelBuilder);
         modelBuilder.ConfigureManualLyricsMappings();
         ConfigureLyricsChoices(modelBuilder);
+        ConfigureHealth(modelBuilder);
         ConfigurePortableDateTimeOffsets(modelBuilder);
         // Durable identifiers are assigned explicitly; omit provider-specific identifier limits.
         modelBuilder.Model.RemoveAnnotation("Relational:MaxIdentifierLength");
@@ -105,6 +106,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.BackendInstanceId).HasMaxLength(200).IsRequired();
             entity.Property(item => item.BackendPrincipalId).HasMaxLength(300).IsRequired();
             entity.Property(item => item.DisplayName).HasMaxLength(200).IsRequired();
+            entity.Property(item => item.IsSynthetic).HasDefaultValue(false);
             entity.HasIndex(item => new { item.BackendType, item.BackendInstanceId, item.BackendPrincipalId }).IsUnique();
         });
     }

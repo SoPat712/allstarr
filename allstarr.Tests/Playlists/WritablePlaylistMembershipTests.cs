@@ -11,6 +11,41 @@ namespace allstarr.Tests;
 public sealed class WritablePlaylistMembershipTests
 {
     [Fact]
+    public async Task SyntheticCleanupRemovesOnlyTheConfirmedPlaylistAndKeepsOtherMembership()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var context = Context();
+        await using (var db = factory.CreateDbContext())
+        {
+            db.Users.Add(new()
+            {
+                Id = context.Principal!.UserId,
+                BackendType = "jellyfin",
+                BackendInstanceId = "primary",
+                BackendPrincipalId = "owner",
+                DisplayName = "Check listener",
+                Enabled = true,
+                IsSynthetic = true
+            });
+            await db.SaveChangesAsync();
+        }
+        var store = new WritablePlaylistMembership(factory, Mock.Of<IProtocolProviderGateway>(), Mock.Of<ILibraryIndexService>());
+        await store.SaveAsync(context, "temporary-playlist", [new("first", "native-track")], default);
+        await store.SaveAsync(context, "temporary-playlist", [], default);
+        await store.SaveAsync(context, "existing-playlist", [new("existing", "native-track")], default);
+        await store.ForgetSyntheticDeletedPlaylistAsync(context, "temporary-playlist", default);
+        Assert.Null(await store.ReadAsync(context, "temporary-playlist", default));
+        Assert.Single((await store.ReadAsync(context, "existing-playlist", default))!.Members);
+        await using var verify = factory.CreateDbContext();
+        Assert.Single(await verify.ExternalMetadataSnapshots.ToArrayAsync());
+        (await verify.Users.SingleAsync()).IsSynthetic = false;
+        await verify.SaveChangesAsync();
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.ForgetSyntheticDeletedPlaylistAsync(context, "existing-playlist", default));
+        Assert.NotNull(await store.ReadAsync(context, "existing-playlist", default));
+    }
+
+    [Fact]
     public async Task Resolve_KnownProviderCopiesUseBackendIdsWithoutLosingDuplicateOccurrences()
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);

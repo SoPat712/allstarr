@@ -33,7 +33,8 @@ public interface IPlaybackLyricsPrefetch
 public sealed class PlaybackSignalPipeline(
     DurableJobQueue jobs,
     IPlaybackDeliveryActivitySource? playbackActivity = null,
-    PlaybackScrobbleAcceptance? scrobbleAcceptance = null) : IPlaybackSignalPipeline
+    PlaybackScrobbleAcceptance? scrobbleAcceptance = null,
+    IDbContextFactory<AllstarrDbContext>? factory = null) : IPlaybackSignalPipeline
 {
     public const string JobType = "playback.signal.process";
     public async Task<bool> RecordAsync(PlaybackSignalRequest request, CancellationToken cancellationToken = default)
@@ -45,6 +46,8 @@ public sealed class PlaybackSignalPipeline(
             throw new ArgumentException("Playback signal is invalid.");
         if (request.SourceKind is not ("protocol" or "listenbrainz-api"))
             throw new ArgumentException("Playback signal source is invalid.");
+        if (await SyntheticActivityPolicy.IsExcludedAsync(factory, execution, request.ItemId, cancellationToken))
+            return false;
         var scope = new IntelligenceScope(owner, execution.Protocol.ToString().ToLowerInvariant(),
             execution.BackendInstanceId);
         var bucket = request.Transition == PlaybackTransition.Progress ? (request.PositionTicks ?? 0) / TimeSpan.TicksPerSecond / 10 : 0;
@@ -114,7 +117,8 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         foreach (var receipt in pending)
         {
             var payload = JsonSerializer.Deserialize<PlaybackSignalPayload>(receipt.SignalPayloadJson!);
-            if (payload != null && payload.Scope.OwnerUserId == receipt.OwnerUserId)
+            if (payload != null && payload.Scope.OwnerUserId == receipt.OwnerUserId &&
+                !await SyntheticActivityPolicy.IsExcludedAsync(db, payload.Scope, payload.ItemId, cancellationToken))
             {
                 if (recoveryJobs == null) continue;
                 await recoveryJobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaybackSignalPayload>(PlaybackSignalPipeline.JobType,
@@ -127,7 +131,8 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
     {
         if (recoveryJobs == null || claim.Type != JobType) return;
         var payload = claim.Payload.Deserialize<PlaybackSignalPayload>();
-        if (payload != null && claim.OwnerUserId == payload.Scope.OwnerUserId)
+        if (payload != null && claim.OwnerUserId == payload.Scope.OwnerUserId &&
+            !await SyntheticActivityPolicy.IsExcludedAsync(factory, payload, cancellationToken))
             await new PlaybackScrobbleRepair(factory, recoveryJobs, tracks).RecoverPendingAsync(cancellationToken,
                 payload.Scope.OwnerUserId, payload.OccurrenceKey ?? payload.SignalKey);
     }
@@ -142,6 +147,8 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
                 user.Enabled && user.BackendType == payload.Scope.Protocol &&
                 user.BackendInstanceId == payload.Scope.BackendInstanceId, cancellationToken))
             return DurableJobCompletion.Failure("playback_signal_scope_invalid", "The playback user is unavailable.");
+        if (await SyntheticActivityPolicy.IsExcludedAsync(ownerDb, payload.Scope, payload.ItemId, cancellationToken))
+            return DurableJobCompletion.Success();
         try
         {
             var retainHistory = await RetainsHistoryAsync(payload.Scope, cancellationToken);

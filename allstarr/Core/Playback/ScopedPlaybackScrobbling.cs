@@ -59,6 +59,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
 {
     public async Task DeliverAsync(PlaybackSignalPayload payload, CancellationToken cancellationToken)
     {
+        if (await SyntheticActivityPolicy.IsExcludedAsync(factory, payload, cancellationToken)) return;
         var timer = Stopwatch.StartNew();
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var occurrenceKey = payload.OccurrenceKey ?? payload.SignalKey;

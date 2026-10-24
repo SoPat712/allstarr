@@ -19,17 +19,10 @@ public sealed class PersonalLyricsOrderMigrationTests
         await db.GetService<IMigrator>().MigrateAsync(Before);
         var user = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
-        db.Users.Add(new UserRecord
-        {
-            Id = user,
-            BackendType = "jellyfin",
-            BackendInstanceId = "fixture",
-            BackendPrincipalId = "listener",
-            DisplayName = "Listener",
-            Enabled = true,
-            CreatedAt = now,
-            UpdatedAt = now
-        });
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO users (Id, BackendType, BackendInstanceId, BackendPrincipalId, DisplayName, IsAdmin, Enabled, CreatedAt, UpdatedAt, LastSeenAt)
+            VALUES ({user}, 'jellyfin', 'fixture', 'listener', 'Listener', 0, 1, {now.UtcTicks}, {now.UtcTicks}, 0);
+            """);
         var display = Row(user, "Playback:ShowExternalLabel", RuntimeSettingValueType.Boolean, "false", now);
         var household = Row(null, "Providers:LyricsOrder", RuntimeSettingValueType.StringList, "[\"spotify\",\"lrclib\"]", now);
         db.RuntimeSettings.AddRange(display, household);

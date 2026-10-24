@@ -55,6 +55,13 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
         await using var transaction = await db.Database.BeginTransactionAsync(token);
         var row = await db.PlaybackDeliveryCheckpoints.SingleAsync(x => x.Id == id, token);
         if (row.State != ScopedPlaybackScrobbleOutcome.Retrying) return;
+        var savedPayload = row.SignalPayloadJson == null ? null : JsonSerializer.Deserialize<PlaybackSignalPayload>(row.SignalPayloadJson);
+        if (await IgnoreSyntheticAsync(db, row, savedPayload, token))
+        {
+            await db.SaveChangesAsync(token);
+            await transaction.CommitAsync(token);
+            return;
+        }
         if (row.Kind == PlaybackScrobbleDeliveryKind.Completed && row.ProviderCode == "pending" &&
             row.SendCount == 0 && row.AttemptStartedAt == null && row.SubmissionJson == null && row.SignalPayloadJson == null &&
             row.UpdatedAt < DateTimeOffset.UtcNow - ReservationLifetime)
@@ -77,6 +84,12 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
                 ScopedPlaybackScrobbleDelivery.CheckpointKey(x) == row.SignalKey)) return;
         var restored = await RestorePayloadAsync(db, row, token);
         var payload = restored.Payload;
+        if (await IgnoreSyntheticAsync(db, row, payload, token))
+        {
+            await db.SaveChangesAsync(token);
+            await transaction.CommitAsync(token);
+            return;
+        }
         var enabled = payload != null && await db.Users.AnyAsync(x => x.Id == row.OwnerUserId && x.Enabled &&
             x.BackendType == payload.Scope.Protocol && x.BackendInstanceId == payload.Scope.BackendInstanceId, token);
         if (BoundPlaybackScrobbleDelivery.IsUncertain(row))
@@ -124,6 +137,20 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
 
     private sealed record RestoredPlayback(PlaybackSignalPayload? Payload, bool MetadataUnavailable = false);
 
+    private static async Task<bool> IgnoreSyntheticAsync(AllstarrDbContext db, PlaybackDeliveryCheckpointEntity row,
+        PlaybackSignalPayload? payload, CancellationToken token)
+    {
+        if (payload == null || payload.Scope.OwnerUserId != row.OwnerUserId ||
+            !await SyntheticActivityPolicy.IsExcludedAsync(db, payload.Scope, payload.ItemId, token)) return false;
+        row.State = ScopedPlaybackScrobbleOutcome.Ignored;
+        row.ProviderCode = "synthetic-listener";
+        row.SafeMessage = null;
+        row.RetryAfter = null;
+        row.Revision++;
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+        return true;
+    }
+
     private async Task<RestoredPlayback> RestorePayloadAsync(AllstarrDbContext db,
         PlaybackDeliveryCheckpointEntity row, CancellationToken token)
     {
@@ -133,6 +160,7 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
             var saved = JsonSerializer.Deserialize<PlaybackSignalPayload>(row.SignalPayloadJson);
             if (saved == null || saved.Scope.OwnerUserId != row.OwnerUserId ||
                 ScopedPlaybackScrobbleDelivery.CheckpointKey(saved) != row.SignalKey) return new(null, metadataUnavailable);
+            if (await SyntheticActivityPolicy.IsExcludedAsync(db, saved.Scope, saved.ItemId, token)) return new(saved);
             if (row.Kind == PlaybackScrobbleDeliveryKind.NowPlaying || row.SubmissionJson != null ||
                 saved.Transition == PlaybackTransition.Submission) return new(saved);
             var metadata = saved.SubmittedTrack;
@@ -167,6 +195,8 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
                     saved.DestinationTargets?.Contains(row.TargetId) != true ||
                     ScopedPlaybackScrobbleDelivery.CheckpointKey(saved) != row.SignalKey) continue;
                 row.SignalPayloadJson ??= JsonSerializer.Serialize(saved);
+                if (await SyntheticActivityPolicy.IsExcludedAsync(db, saved.Scope, saved.ItemId, token))
+                    return new(saved);
                 var metadata = saved.SubmittedTrack;
                 if (metadata == null && tracks != null)
                 {
@@ -227,8 +257,14 @@ public sealed class PlaybackScrobbleRepair(IDbContextFactory<AllstarrDbContext> 
         if (row == null) return false;
         if (row.Revision != revision || row.State is ScopedPlaybackScrobbleOutcome.Delivered or ScopedPlaybackScrobbleOutcome.Ignored)
             throw new InvalidOperationException("Refresh the delivery before resolving it.");
+        var savedPayload = row.SignalPayloadJson == null ? null : JsonSerializer.Deserialize<PlaybackSignalPayload>(row.SignalPayloadJson);
+        if (savedPayload != null && savedPayload.Scope.OwnerUserId == userId &&
+            await SyntheticActivityPolicy.IsExcludedAsync(db, savedPayload.Scope, savedPayload.ItemId, token))
+            throw new InvalidOperationException("Synthetic listener activity cannot be delivered.");
         var payload = (await RestorePayloadAsync(db, row, token)).Payload
             ?? throw new InvalidOperationException("This reservation has no saved completed listen. A completed playback observation is required before it can be sent.");
+        if (await SyntheticActivityPolicy.IsExcludedAsync(db, payload.Scope, payload.ItemId, token))
+            throw new InvalidOperationException("Synthetic listener activity cannot be delivered.");
         if (!await db.Users.AnyAsync(x => x.Id == userId && x.Enabled && x.BackendType == payload.Scope.Protocol &&
                 x.BackendInstanceId == payload.Scope.BackendInstanceId, token)) throw new UnauthorizedAccessException();
         var running = await db.Jobs.AsNoTracking().Where(x => x.OwnerUserId == userId &&

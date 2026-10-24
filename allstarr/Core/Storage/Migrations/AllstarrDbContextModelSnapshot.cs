@@ -3871,6 +3871,11 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<bool>("IsAdmin")
                         .HasColumnType("INTEGER");
 
+                    b.Property<bool>("IsSynthetic")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER")
+                        .HasDefaultValue(false);
+
                     b.Property<long>("LastSeenAt")
                         .HasColumnType("INTEGER");
 
@@ -4768,6 +4773,24 @@ namespace allstarr.Core.Storage.Migrations
                 {
                     b.Navigation("Identifiers");
                 });
+            modelBuilder.Entity("allstarr.Core.Storage.HealthSmokeRunRecord", b =>
+                {
+                    b.Property<Guid>("Id").HasColumnType("TEXT");
+                    b.Property<string>("AlertStatus").IsRequired().HasMaxLength(32).HasColumnType("TEXT");
+                    b.Property<string>("ArtifactsJson").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("BindingJson").IsRequired().HasColumnType("TEXT");
+                    b.Property<long?>("CompletedAt").HasColumnType("INTEGER");
+                    b.Property<string>("CompletedJson").HasColumnType("TEXT");
+                    b.Property<long>("CreatedAt").HasColumnType("INTEGER");
+                    b.Property<Guid>("OwnerUserId").HasColumnType("TEXT");
+                    b.HasKey("Id");
+                    b.HasIndex("CreatedAt");
+                    b.HasIndex("OwnerUserId");
+                    b.ToTable("health_smoke_runs", (string)null);
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany().HasForeignKey("OwnerUserId").OnDelete(DeleteBehavior.Restrict).IsRequired();
+                });
+
 #pragma warning restore 612, 618
         }
     }

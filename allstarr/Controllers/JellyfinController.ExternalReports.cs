@@ -107,12 +107,53 @@ public partial class JellyfinController
             try
             {
                 var body = await upstream.Content.ReadAsStringAsync(HttpContext.RequestAborted);
-                var backend = HttpContext.RequireProtocolExecutionContext().BackendInstanceId;
+                var context = HttpContext.RequireProtocolExecutionContext();
+                var backend = context.BackendInstanceId;
                 var projection = _sessionManager.ProjectExternalSessions(body, backend);
                 if (projection != null)
                 {
                     var serverId = await _proxyService.GetServerIdAsync(backend, HttpContext.RequestAborted);
                     projection = _sessionManager.ProjectExternalSessions(body, backend, serverId) ?? projection;
+                }
+                var factory = HttpContext.RequestServices.GetService<Microsoft.EntityFrameworkCore.IDbContextFactory<allstarr.Core.Storage.AllstarrDbContext>>();
+                using var sessions = JsonDocument.Parse(projection ?? body);
+                if (sessions.RootElement.ValueKind == JsonValueKind.Array)
+                {
+                    var changed = false;
+                    var rows = new List<string>();
+                    foreach (var row in sessions.RootElement.EnumerateArray())
+                    {
+                        var raw = row.GetRawText();
+                        if (row.ValueKind == JsonValueKind.Object && row.TryGetProperty("UserId", out var user) && user.ValueKind == JsonValueKind.String &&
+                            row.TryGetProperty("NowPlayingItem", out var item) && item.ValueKind == JsonValueKind.Object &&
+                            item.TryGetProperty("Id", out var id) && id.ValueKind == JsonValueKind.String)
+                        {
+                            var providerItem = SyntheticActivityPolicy.IsProviderItem(id.GetString());
+                            if (!providerItem && row.TryGetProperty("DeviceId", out var device) && device.ValueKind == JsonValueKind.String &&
+                                _sessionManager.GetExternalReport(new(backend, user.GetString()!, device.GetString()!), includeStopped: true) is { } report &&
+                                JellyfinExternalPlaybackReport.Text(report, "ItemId") is { } tracked && SyntheticActivityPolicy.IsProviderItem(tracked))
+                                providerItem = Guid.TryParse(id.GetString(), out var upstreamId) &&
+                                    upstreamId == Guid.Parse(JellyfinExternalPlaybackReport.UpstreamId(tracked));
+                            var synthetic = providerItem &&
+                                (context.Principal is { IsSynthetic: true } principal && principal.BackendPrincipalId == user.GetString() ||
+                                 factory != null && await SyntheticActivityPolicy.IsSyntheticPrincipalAsync(factory, "jellyfin", backend,
+                                     user.GetString()!, HttpContext.RequestAborted));
+                            if (synthetic)
+                            {
+                                var hidden = JsonNode.Parse(raw)!.AsObject();
+                                hidden.Remove("NowPlayingItem");
+                                hidden.Remove("PlayState");
+                                hidden["NowPlayingQueue"] = new JsonArray();
+                                raw = hidden.ToJsonString();
+                                changed = true;
+                            }
+                        }
+                        rows.Add(raw);
+                    }
+                    if (changed) projection = "[" + string.Join(',', rows) + "]";
+                }
+                if (projection != null)
+                {
                     upstream.Content.Dispose();
                     upstream.Content = new StringContent(projection, Encoding.UTF8, "application/json");
                     upstream.Headers.ETag = null;
