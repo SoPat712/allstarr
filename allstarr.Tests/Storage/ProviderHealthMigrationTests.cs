@@ -28,19 +28,10 @@ public sealed class ProviderHealthMigrationTests
         var now = DateTimeOffset.UtcNow;
         var user = Guid.CreateVersion7();
         var account = Guid.CreateVersion7();
-        db.Users.Add(new UserRecord
-        {
-            Id = user,
-            BackendType = "jellyfin",
-            BackendInstanceId = "fixture",
-            BackendPrincipalId = "listener",
-            DisplayName = "Listener",
-            Enabled = true,
-            CreatedAt = now,
-            UpdatedAt = now,
-            LastSeenAt = now
-        });
-        await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO users (Id, BackendType, BackendInstanceId, BackendPrincipalId, DisplayName, IsAdmin, Enabled, CreatedAt, UpdatedAt, LastSeenAt)
+            VALUES ({user}, 'jellyfin', 'fixture', 'listener', 'Listener', 0, 1, {now.UtcTicks}, {now.UtcTicks}, {now.UtcTicks});
+            """);
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO provider_accounts (Id,OwnerUserId,ProviderId,DisplayName,Enabled,CreatedAt,UpdatedAt,Revision)
             VALUES ({account},{user},'spotify','Saved account',1,{now.UtcTicks},{now.UtcTicks},9);
@@ -98,6 +89,7 @@ public sealed class ProviderHealthMigrationTests
         Assert.Empty(await db.SubsonicPlayQueues.AsNoTracking().ToArrayAsync());
         Assert.Empty(await db.ProviderUserData.AsNoTracking().ToArrayAsync());
         AssertSchemaPreserved(beforeSchema, await Schema(db));
+        Assert.All(await db.Users.AsNoTracking().ToArrayAsync(), listener => Assert.False(listener.IsSynthetic));
         Assert.Equal(beforeRows, await Rows(db));
         Assert.Equal("Existing", await db.Database.SqlQuery<string>($"SELECT DestinationMode AS Value FROM playlist_links").SingleAsync());
         Assert.Equal("{}", await db.Database.SqlQuery<string>($"SELECT SettingsJson AS Value FROM provider_accounts").SingleAsync());
@@ -124,6 +116,7 @@ public sealed class ProviderHealthMigrationTests
         Assert.Empty(await restored.SubsonicPlayQueues.AsNoTracking().ToArrayAsync());
         Assert.Empty(await restored.ProviderUserData.AsNoTracking().ToArrayAsync());
         AssertSchemaPreserved(beforeSchema, await Schema(restored));
+        Assert.All(await restored.Users.AsNoTracking().ToArrayAsync(), listener => Assert.False(listener.IsSynthetic));
         Assert.Equal(beforeRows, await Rows(restored));
         Assert.Equal("Existing", await restored.Database.SqlQuery<string>($"SELECT DestinationMode AS Value FROM playlist_links").SingleAsync());
         Assert.Equal(originalKeyRing, await File.ReadAllBytesAsync(keys.KeyRingPath));
@@ -212,6 +205,16 @@ public sealed class ProviderHealthMigrationTests
         Assert.DoesNotContain(before, row => row.Name == userDataTable);
         Assert.Single(after, row => row.Type == "table" && row.Name == userDataTable);
 
+        Assert.Equal(["\"IsSynthetic\" INTEGER NOT NULL DEFAULT 0"],
+            TableColumns(after, "users").Except(TableColumns(before, "users")));
+        Assert.Empty(TableColumns(before, "users").Except(TableColumns(after, "users")));
+        const string healthTable = "health_smoke_runs";
+        Assert.DoesNotContain(before, row => row.Name == healthTable);
+        Assert.Single(after, row => row.Type == "table" && row.Name == healthTable);
+        Assert.Equal(["IX_health_smoke_runs_CreatedAt", "IX_health_smoke_runs_OwnerUserId"],
+            after.Where(row => row.Type == "index" && row.Name.StartsWith("IX_health_smoke_runs_", StringComparison.Ordinal))
+                .Select(row => row.Name).Order(StringComparer.Ordinal));
+
         var oldSchema = before
             .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
             .Select(row => row.Name == "runtime_settings" ? row with
@@ -223,7 +226,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable)
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable)
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -301,7 +304,8 @@ public sealed class ProviderHealthMigrationTests
                 {
                     var values = Enumerable.Range(0, reader.FieldCount)
                         .Where(index => !(name == "provider_accounts" && reader.GetName(index) == "SettingsJson") &&
-                                        !(name == "playlist_links" && reader.GetName(index) == "DestinationMode"))
+                                        !(name == "playlist_links" && reader.GetName(index) == "DestinationMode") &&
+                                        !(name == "users" && reader.GetName(index) == "IsSynthetic"))
                         .Select(index => $"{reader.GetName(index)}={CanonicalValue(reader.GetValue(index))}")
                         .Order(StringComparer.Ordinal)
                         .ToArray();
@@ -343,6 +347,7 @@ public sealed class ProviderHealthMigrationTests
     }
 
     private static bool IsDeliberateNewColumn(string table, string component) =>
+        (table == "users" && component == "\"IsSynthetic\" INTEGER NOT NULL DEFAULT 0") ||
         (table == "provider_accounts" && component == "\"SettingsJson\" TEXT NOT NULL DEFAULT '{}'") ||
         (table == "playlist_links" && component is "\"DestinationMode\" TEXT NOT NULL DEFAULT 'Existing'" or "\"DestinationMode\" TEXT NOT NULL") ||
         (table == "playlist_target_memberships" && component == "\"RemovalConfirmedAt\" INTEGER NULL") ||

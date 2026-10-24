@@ -40,6 +40,7 @@ public sealed class UserRecord
     public string BackendPrincipalId { get; set; } = string.Empty;
     public string DisplayName { get; set; } = string.Empty;
     public bool IsAdmin { get; set; }
+    public bool IsSynthetic { get; set; }
     public bool Enabled { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

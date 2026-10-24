@@ -56,7 +56,11 @@ public partial class SubsonicController
             var deleted = await _proxyService.RelayRawAsync(Request.Path.Value?.TrimStart('/') ?? "rest/deletePlaylist", parameters,
                 HttpContext.RequestAborted, Request.Headers);
             if (SubsonicPlaylistSucceeded(deleted))
-                await WritablePlaylists.SaveAsync(CurrentProtocolContext, id, [], HttpContext.RequestAborted);
+            {
+                if (CurrentProtocolContext.Principal?.IsSynthetic == true)
+                    await WritablePlaylists.ForgetSyntheticDeletedPlaylistAsync(CurrentProtocolContext, id, HttpContext.RequestAborted);
+                else await WritablePlaylists.SaveAsync(CurrentProtocolContext, id, [], HttpContext.RequestAborted);
+            }
             return _relayProtocolAdapter.CreateResult(deleted, $"application/{format}");
         }
         IReadOnlyList<WritablePlaylistMember> desired;

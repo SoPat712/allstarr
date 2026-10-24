@@ -57,6 +57,11 @@ public partial class SubsonicController
     private async Task ObserveExternalScrobbleAsync(SubsonicScrobbleSignal signal)
     {
         if (!CurrentProtocolContext.CanRunUserScopedWork) return;
+        if (await SyntheticActivityPolicy.IsExcludedAsync(HttpContext, signal.ItemId))
+        {
+            _playbackSessions.Remove(CurrentProtocolContext);
+            return;
+        }
         var now = DateTimeOffset.UtcNow;
         var previous = await ReadPlaybackStateAsync();
         if (signal.Transition == PlaybackTransition.Submission && signal.HasSuppliedTime &&
@@ -228,6 +233,11 @@ public partial class SubsonicController
             return _responseBuilder.CreateError(format, 10, "Invalid playback report");
         if (!CurrentProtocolContext.CanRunUserScopedWork)
             return _responseBuilder.CreateError(format, 50, "Playback is not available to this user");
+        if (await SyntheticActivityPolicy.IsExcludedAsync(HttpContext, itemId))
+        {
+            _playbackSessions.Remove(CurrentProtocolContext);
+            return _responseBuilder.CreateOkResponse(format);
+        }
         var now = DateTimeOffset.UtcNow;
         var previous = await ReadPlaybackStateAsync();
         var state = await StartExternalPlaybackAsync(itemId, $"subsonic:{now.ToUnixTimeSeconds() / 30}:0", now, previous,
@@ -262,6 +272,11 @@ public partial class SubsonicController
         var parameters = await ExtractAllParameters();
         var format = parameters.GetValueOrDefault("f", "xml");
         var state = await ReadPlaybackStateAsync();
+        if (state != null && await SyntheticActivityPolicy.IsExcludedAsync(HttpContext, state.Song.Id))
+        {
+            _playbackSessions.Remove(CurrentProtocolContext);
+            state = null;
+        }
         IHeaderDictionary headers = Request.Headers;
         if (state is { Stopped: false })
             headers = new HeaderDictionary(Request.Headers.Where(header =>

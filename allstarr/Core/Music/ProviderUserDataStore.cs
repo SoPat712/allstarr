@@ -1,6 +1,7 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Favorites;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.Data.Sqlite;
@@ -111,6 +112,8 @@ public sealed class ProviderUserDataStore(IDbContextFactory<AllstarrDbContext> f
             if (!await IsOwnerAsync(db, context, token)) return false;
             var owner = context.Actor!.UserId!.Value;
             var protocol = context.Protocol.ToString().ToLowerInvariant();
+            if (played.HasValue && await SyntheticActivityPolicy.IsExcludedAsync(db,
+                    new(owner, protocol, context.BackendInstanceId), itemId, token)) return true;
             var state = await db.ProviderUserData.SingleOrDefaultAsync(item =>
                 item.OwnerUserId == owner && item.Protocol == protocol &&
                 item.BackendInstanceId == context.BackendInstanceId && item.ItemId == itemId, token);

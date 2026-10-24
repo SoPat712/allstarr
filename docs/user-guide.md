@@ -128,6 +128,16 @@ A personal choice overrides the household choice. **Use household default** remo
 
 Settings owns deployment behavior rather than provider credentials: playback quality, matching preferences, cache behavior, maintenance, backup, restore, and other operator policy. Controls that affect one feature stay near that feature when possible.
 
+### Scheduled health checks
+
+Open **Settings → Health** as an administrator. Checks start off. Choose a dedicated non-administrator listener, verify its sign-in, enter a known song, and save. The default interval is 30 minutes; **Run now** also works with scheduling off. The view identifies the protocol exposed by this deployment and shows the inactive protocol separately.
+
+Each run searches eligible automatic sources, samples playback, requests a far byte range, reports now playing and completion, favorites and unfavorites the song, adds and removes it from a temporary playlist, deletes that playlist, samples an original download, and fetches lyrics. It restores the listener's original favorite state. Results show each step's latency and safe failure reason, with recent history. The download check reads a short sample; it does not retain an offline library copy.
+
+Saving permanently designates that listener for synthetic activity. Its provider playback does not enter listening history, play counts, recommendations, or external scrobbling; test favorites do not trigger automatic downloads. The designation remains when monitoring is disabled. Use a separate listener for ordinary listening. Temporary-state cleanup survives restart and is retried before later checks create more items.
+
+An optional webhook receives a JSON alert after the same step fails twice consecutively and a recovery message when it passes again. The payload contains the protocol, step, state, and time. Listener access and the webhook address are encrypted. Saved secrets are never filled back into the form; leave fields blank to retain them. Removing or replacing the webhook stops pending retries to the old address. Ordinary completed results are retained for 30 days, while unfinished cleanup stays available.
+
 ## Connect a source
 
 1. Open **Integrations → Services** and select the Service.

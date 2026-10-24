@@ -77,6 +77,23 @@ public sealed class WritablePlaylistMembership(
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task ForgetSyntheticDeletedPlaylistAsync(ProtocolExecutionContext context, string playlistId,
+        CancellationToken cancellationToken)
+    {
+        if (context.IsReadOnly) throw new UnauthorizedAccessException("Temporary playlist cleanup requires a writable listener context.");
+        var owner = context.RequireActor().EffectiveUserId ?? throw new UnauthorizedAccessException();
+        var protocol = context.Protocol.ToString().ToLowerInvariant();
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        if (!await db.Users.AnyAsync(user => user.Id == owner && user.IsSynthetic && user.BackendType == protocol &&
+                user.BackendInstanceId == context.BackendInstanceId && user.BackendPrincipalId == context.VerifiedBackendPrincipalId, cancellationToken))
+            throw new UnauthorizedAccessException("Temporary playlist cleanup requires the dedicated test listener.");
+        var hash = Key(context, playlistId);
+        await db.ExternalMetadataSnapshots.Where(item => item.OwnerUserId == owner && item.ProviderId == "allstarr" &&
+                item.ResourceKind == ResourceKind && item.ExternalIdHash == hash && item.Protocol == protocol &&
+                item.BackendInstanceId == context.BackendInstanceId && item.BackendPrincipalId == context.VerifiedBackendPrincipalId)
+            .ExecuteDeleteAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<WritablePlaylistMember>> ResolveAsync(ProtocolExecutionContext context,
         IReadOnlyList<string> itemIds, CancellationToken cancellationToken)
     {

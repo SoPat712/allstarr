@@ -58,7 +58,11 @@ public partial class JellyfinController
         using (response)
         {
             if (status is >= 200 and < 300 && protocol.Actor != null)
-                await WritablePlaylists.SaveAsync(protocol, id, [], HttpContext.RequestAborted);
+            {
+                if (protocol.Principal?.IsSynthetic == true)
+                    await WritablePlaylists.ForgetSyntheticDeletedPlaylistAsync(protocol, id, HttpContext.RequestAborted);
+                else await WritablePlaylists.SaveAsync(protocol, id, [], HttpContext.RequestAborted);
+            }
             return status == StatusCodes.Status204NoContent ? NoContent() : HandleProxyResponse(response, status);
         }
     }

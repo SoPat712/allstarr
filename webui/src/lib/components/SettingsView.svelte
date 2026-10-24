@@ -17,6 +17,7 @@
   import SetupGuide from "$lib/components/SetupGuide.svelte";
   import AccessSettingsCard from "$lib/components/AccessSettingsCard.svelte";
   import StorageVerificationCard from "$lib/components/StorageVerificationCard.svelte";
+  import HealthView from "$lib/components/HealthView.svelte";
   import type { OnboardingState } from "$lib/api";
   import FilePicker from "$lib/components/FilePicker.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
@@ -53,6 +54,7 @@
     { id: "storage", label: "Storage", group: "Server", icon: HardDrive, title: "Storage", description: "Where songs are saved and how long cached data is kept." },
     { id: "network", label: "Network", group: "Server", icon: Network, title: "Network and security", description: "How the admin interface is exposed. These are usually set by your deployment." },
     { id: "backups", label: "Backups", group: "Maintenance", icon: Archive, title: "Backups", description: "Save and restore Allstarr's database, accounts and encryption keys." },
+    { id: "health", label: "Health", group: "Maintenance", icon: Activity, title: "Health", description: "Check provider playback and listener actions with a dedicated test account." },
     { id: "diagnostics", label: "Diagnostics", group: "Maintenance", icon: Activity, title: "Diagnostics", description: "Run checks when playback or playlists aren't working." },
     { id: "setup", label: "Setup", group: "Maintenance", icon: Rocket, title: "Setup", description: "Reopen the setup guide or import settings from Allstarr v2." },
   ] as const;
@@ -469,6 +471,8 @@
             </div>
           {/if}
         </article>
+      {:else if active === "health" && administrator}
+        <HealthView />
       {:else if active === "diagnostics"}
         <section class="settings-card">
           <div class="settings-row maintenance-card">

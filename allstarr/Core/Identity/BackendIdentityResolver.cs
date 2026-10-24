@@ -17,7 +17,8 @@ public sealed record AllstarrPrincipal(
     string BackendInstanceId,
     string BackendPrincipalId,
     string DisplayName,
-    bool IsAdministrator);
+    bool IsAdministrator,
+    bool IsSynthetic = false);
 
 public sealed class BackendIdentityResolver(
     IDbContextFactory<AllstarrDbContext> contextFactory,
@@ -84,5 +85,5 @@ public sealed class BackendIdentityResolver(
 
     private static AllstarrPrincipal ToPrincipal(UserRecord user) => new(
         user.Id, user.BackendType, user.BackendInstanceId, user.BackendPrincipalId,
-        user.DisplayName, user.IsAdmin);
+        user.DisplayName, user.IsAdmin, user.IsSynthetic);
 }

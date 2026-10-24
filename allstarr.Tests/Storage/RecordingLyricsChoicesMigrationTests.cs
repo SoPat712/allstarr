@@ -19,17 +19,10 @@ public sealed class RecordingLyricsChoicesMigrationTests
         var now = DateTimeOffset.UtcNow;
         var owner = Guid.CreateVersion7();
         var recording = Guid.CreateVersion7();
-        db.Users.Add(new()
-        {
-            Id = owner,
-            BackendType = "jellyfin",
-            BackendInstanceId = "fixture",
-            BackendPrincipalId = "listener",
-            DisplayName = "Listener",
-            Enabled = true,
-            CreatedAt = now,
-            UpdatedAt = now
-        });
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO users (Id, BackendType, BackendInstanceId, BackendPrincipalId, DisplayName, IsAdmin, Enabled, CreatedAt, UpdatedAt, LastSeenAt)
+            VALUES ({owner}, 'jellyfin', 'fixture', 'listener', 'Listener', 0, 1, {now.UtcTicks}, {now.UtcTicks}, 0);
+            """);
         db.CanonicalRecordings.Add(new()
         {
             Id = recording,

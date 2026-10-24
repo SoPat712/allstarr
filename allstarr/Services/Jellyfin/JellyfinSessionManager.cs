@@ -5,8 +5,11 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 using allstarr.Core.Identity;
+using allstarr.Core.Playback;
+using allstarr.Core.Storage;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
+using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Services.Jellyfin;
 
@@ -20,6 +23,7 @@ public partial class JellyfinSessionManager : IDisposable
     private readonly JellyfinProxyService _proxyService;
     private readonly JellyfinSettings _settings;
     private readonly ILogger<JellyfinSessionManager> _logger;
+    private readonly IDbContextFactory<AllstarrDbContext>? _factory;
     private readonly ConcurrentDictionary<JellyfinSessionKey, SessionInfo> _sessions = new();
     private readonly ConcurrentDictionary<JellyfinSessionKey, SemaphoreSlim> _sessionInitLocks = new();
     private readonly ConcurrentDictionary<JellyfinSessionKey, byte> _proxiedWebSocketConnections = new();
@@ -29,11 +33,13 @@ public partial class JellyfinSessionManager : IDisposable
     public JellyfinSessionManager(
         JellyfinProxyService proxyService,
         IOptions<JellyfinSettings> settings,
-        ILogger<JellyfinSessionManager> logger)
+        ILogger<JellyfinSessionManager> logger,
+        IDbContextFactory<AllstarrDbContext>? factory = null)
     {
         _proxyService = proxyService;
         _settings = settings.Value;
         _logger = logger;
+        _factory = factory;
 
         // Jellyfin considers inactive sessions stale after roughly 15 seconds.
         _keepAliveTimer = new Timer(KeepSessionsAlive, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
@@ -429,6 +435,9 @@ public partial class JellyfinSessionManager : IDisposable
             {
                 if (!string.IsNullOrEmpty(session.LastPlayingItemId))
                 {
+                    if (SyntheticActivityPolicy.IsProviderItem(session.LastPlayingItemId) && _factory != null &&
+                        await SyntheticActivityPolicy.IsSyntheticPrincipalAsync(_factory, "jellyfin",
+                            key.BackendInstanceId, key.BackendPrincipalId, CancellationToken.None)) return;
                     var stopPayload = new
                     {
                         ItemId = session.LastPlayingItemId,

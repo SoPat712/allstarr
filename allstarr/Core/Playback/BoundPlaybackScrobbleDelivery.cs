@@ -35,6 +35,8 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
     public async Task<ScopedPlaybackScrobbleResult?> DeliverAsync(IBoundPlaybackScrobbleTarget target,
         PlaybackSignalPayload payload, ScopedPlaybackTrack track, DateTimeOffset occurredAt, CancellationToken token)
     {
+        if (await SyntheticActivityPolicy.IsExcludedAsync(factory, payload, token))
+            return ScopedPlaybackScrobbleResult.Ignored("synthetic-listener", null, "{}");
         var gate = Gate(payload.Scope.OwnerUserId, ScopedPlaybackScrobbleDelivery.CheckpointKey(payload), target.ProviderId);
         await gate.WaitAsync(token);
         try
@@ -72,6 +74,8 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
     private async Task<ScopedPlaybackScrobbleResult?> DeliverCoreAsync(IBoundPlaybackScrobbleTarget target,
         PlaybackSignalPayload payload, ScopedPlaybackTrack track, DateTimeOffset occurredAt, CancellationToken token)
     {
+        if (await SyntheticActivityPolicy.IsExcludedAsync(factory, payload, token))
+            return ScopedPlaybackScrobbleResult.Ignored("synthetic-listener", null, "{}");
         var key = ScopedPlaybackScrobbleDelivery.CheckpointKey(payload);
         var occurrence = payload.OccurrenceKey ?? payload.SignalKey;
         var kind = payload.Transition is PlaybackTransition.Start or PlaybackTransition.InferredStart

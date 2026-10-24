@@ -2,6 +2,7 @@ using System.Data;
 using System.Text.Json;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Configuration;
+using allstarr.Core.Health;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Cronos;
@@ -117,16 +118,23 @@ public sealed class DurableScheduleEngine
             Validate(schedule.CronExpression, schedule.TimeZoneId);
             ValidateRetryPolicy(schedule.RetryPolicyJson);
             var dueAt = schedule.NextRunAt.Value;
-            var following = GetNextOccurrence(schedule.CronExpression, schedule.TimeZoneId, dueAt)
+            var jobType = schedule.JobType.Trim().ToLowerInvariant();
+            var health = jobType == HealthSmokeService.JobType
+                ? HealthSmokeService.Parse<HealthSmokeSchedule>(schedule.PayloadTemplateJson) : null;
+            if (jobType == HealthSmokeService.JobType && health is not { Version: 1, IntervalMinutes: >= 1 and <= 1440 })
+                throw new InvalidOperationException("The health schedule configuration is invalid.");
+            var following = health != null ? dueAt.AddMinutes(health.IntervalMinutes) :
+                GetNextOccurrence(schedule.CronExpression, schedule.TimeZoneId, dueAt)
                 ?? throw new InvalidOperationException("The schedule has no future occurrence.");
             var isMisfire = following <= now;
+            if (health != null && following <= now)
+                following = dueAt.AddMinutes((Math.Floor((now - dueAt).TotalMinutes / health.IntervalMinutes) + 1) * health.IntervalMinutes);
             while (following <= now)
             {
                 following = GetNextOccurrence(schedule.CronExpression, schedule.TimeZoneId, following)
                     ?? throw new InvalidOperationException("The schedule has no future occurrence.");
             }
 
-            var jobType = schedule.JobType.Trim().ToLowerInvariant();
             PlaylistLinkRecord? link = null;
             RecommendationScheduleOccurrence? recommendation = null;
             if (jobType == PlaylistSyncJobType)
@@ -139,7 +147,7 @@ public sealed class DurableScheduleEngine
             }
             else if (jobType == RecommendationJobType)
                 recommendation = await ReadRecommendationTemplateAsync(context, schedule, cancellationToken);
-            else
+            else if (jobType != HealthSmokeService.JobType)
                 throw new InvalidOperationException("The enabled schedule job type is unsupported.");
 
             var shouldEnqueue = !(isMisfire && schedule.MisfirePolicy == ScheduleMisfirePolicy.Skip);
@@ -147,7 +155,9 @@ public sealed class DurableScheduleEngine
             var idempotencyPrefix = $"schedule:{schedule.Id:N}:";
             if (shouldEnqueue && schedule.OverlapPolicy == ScheduleOverlapPolicy.Skip)
             {
-                skippedOverlap = await context.Jobs.AnyAsync(item =>
+                skippedOverlap = jobType == HealthSmokeService.JobType
+                    ? await HealthSmokeService.HasActiveRunAsync(context, cancellationToken)
+                    : await context.Jobs.AnyAsync(item =>
                     item.OwnerUserId == schedule.OwnerUserId &&
                     (item.Type == jobType && item.IdempotencyKey.StartsWith(idempotencyPrefix) ||
                      jobType == RecommendationJobType && item.Type == "smart-playlist.materialize" &&
@@ -179,6 +189,11 @@ public sealed class DurableScheduleEngine
                         CorrelationId: $"schedule-{schedule.Id:N}-{dueAt.UtcTicks}");
                     await _queue.EnqueueInExistingTransactionAsync(context, request, cancellationToken);
                 }
+                else if (health != null)
+                    await _queue.EnqueueInExistingTransactionAsync(context,
+                        new DurableJobEnqueueRequest<HealthSmokeJobPayload>(HealthSmokeService.JobType,
+                            $"{idempotencyPrefix}{dueAt.UtcTicks}", new(schedule.Id, health.Revision), schedule.OwnerUserId,
+                            MaxAttempts: 1), cancellationToken);
                 else
                     await EnqueueRecommendationAsync(context, schedule, dueAt, recommendation!, idempotencyPrefix,
                         cancellationToken);

@@ -113,6 +113,7 @@ public partial class JellyfinController
 
             var (deviceId, client, device, version) = ExtractDeviceInfo(Request.Headers);
             deviceId = ResolveDeviceId(deviceId, doc.RootElement);
+            if (await SuppressSyntheticProviderPlaybackAsync(itemId, deviceId)) return NoContent();
             ObserveUpcomingSongs(doc.RootElement, PlaybackTransition.Start, itemId, deviceId, playSessionId, positionTicks);
 
 
@@ -380,6 +381,7 @@ public partial class JellyfinController
             playSessionId = ParsePlaybackSessionId(doc.RootElement);
 
             deviceId = ResolveDeviceId(deviceId, doc.RootElement);
+            if (await SuppressSyntheticProviderPlaybackAsync(itemId, deviceId)) return NoContent();
             ObserveUpcomingSongs(doc.RootElement, PlaybackTransition.Progress, itemId, deviceId, playSessionId, positionTicks);
 
 
@@ -664,6 +666,7 @@ public partial class JellyfinController
         string previousItemId,
         long? previousPositionTicks)
     {
+        if (await SuppressSyntheticProviderPlaybackAsync(previousItemId, deviceId)) return;
         if (_sessionManager.WasRecentlyExplicitlyStopped(PlaybackSessionKey(deviceId), previousItemId, InferredStopDedupeWindow))
         {
             _logger.LogDebug(
@@ -929,7 +932,6 @@ public partial class JellyfinController
             playSessionId = ParsePlaybackSessionId(doc.RootElement);
 
             deviceId = ResolveDeviceId(deviceId, doc.RootElement);
-            ObserveUpcomingSongs(doc.RootElement, PlaybackTransition.Stop, itemId, deviceId, playSessionId, positionTicks);
 
             // Some clients send stop without ItemId. Recover from tracked session state when possible.
             if (string.IsNullOrWhiteSpace(itemId) && !string.IsNullOrWhiteSpace(deviceId))
@@ -955,6 +957,9 @@ public partial class JellyfinController
                 }
             }
 
+
+            if (await SuppressSyntheticProviderPlaybackAsync(itemId, deviceId)) return NoContent();
+            ObserveUpcomingSongs(doc.RootElement, PlaybackTransition.Stop, itemId, deviceId, playSessionId, positionTicks);
 
             if (!string.IsNullOrEmpty(itemId))
             {
@@ -1325,6 +1330,18 @@ public partial class JellyfinController
         if (itemId == null || !CanRunOptionalUserScopedWork()) return;
         await _playbackObservations.RecordAsync(new(HttpContext.RequireProtocolExecutionContext(), transition,
             itemId, deviceId, playSessionId, positionTicks, DateTimeOffset.UtcNow), HttpContext.RequestAborted);
+    }
+
+    private async Task<bool> SuppressSyntheticProviderPlaybackAsync(string? itemId, string? deviceId)
+    {
+        if (!await SyntheticActivityPolicy.IsExcludedAsync(HttpContext, itemId)) return false;
+        if (!string.IsNullOrWhiteSpace(deviceId))
+        {
+            var key = PlaybackSessionKey(deviceId);
+            if (SyntheticActivityPolicy.IsProviderItem(_sessionManager.GetLastPlayingItemId(key)))
+                _sessionManager.UpdatePlayingItem(key, null, null);
+        }
+        return true;
     }
 
     private static ExternalPlaybackItem BuildExternalPlaybackItem(string itemId, Song? song)

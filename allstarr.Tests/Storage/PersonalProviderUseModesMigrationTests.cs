@@ -21,17 +21,10 @@ public sealed class PersonalProviderUseModesMigrationTests
         await migrator.MigrateAsync(Before);
         var userId = Guid.CreateVersion7();
         var now = DateTimeOffset.UtcNow;
-        db.Users.Add(new()
-        {
-            Id = userId,
-            BackendType = "jellyfin",
-            BackendInstanceId = "fixture",
-            BackendPrincipalId = "listener",
-            DisplayName = "Listener",
-            Enabled = true,
-            CreatedAt = now,
-            UpdatedAt = now
-        });
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO users (Id, BackendType, BackendInstanceId, BackendPrincipalId, DisplayName, IsAdmin, Enabled, CreatedAt, UpdatedAt, LastSeenAt)
+            VALUES ({userId}, 'jellyfin', 'fixture', 'listener', 'Listener', 0, 1, {now.UtcTicks}, {now.UtcTicks}, 0);
+            """);
         var display = Row(userId, "Playback:ShowExternalLabel", RuntimeSettingValueType.Boolean, "false", now);
         var lyrics = Row(userId, "Providers:LyricsOrder", RuntimeSettingValueType.StringList, "[\"lrclib\",\"spotify\"]", now);
         var household = Row(null, ProviderUsePolicy.SettingKey, RuntimeSettingValueType.String, "\"{}\"", now);

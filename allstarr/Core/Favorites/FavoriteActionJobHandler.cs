@@ -2,6 +2,7 @@ using allstarr.Core.Identity;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
+using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -63,6 +64,20 @@ public sealed class FavoriteActionJobHandler(
                                  item.ActionType == "download" ? 1 : 99)
                 .ThenBy(item => item.CreatedAt)
                 .ToListAsync(cancellationToken);
+
+            if (await SyntheticActivityPolicy.IsExcludedAsync(database,
+                    new IntelligenceScope(favoriteEvent.OwnerUserId, favoriteEvent.Protocol, favoriteEvent.BackendInstanceId),
+                    favoriteEvent.ItemId, cancellationToken))
+            {
+                foreach (var action in actions.Where(action => action.ActionType != FavoriteActionPipeline.VirtualLikedAction))
+                {
+                    action.State = FavoriteActionState.Cancelled;
+                    action.UpdatedAt = clock.UtcNow;
+                    action.Revision++;
+                }
+                actions = actions.Where(action => action.ActionType == FavoriteActionPipeline.VirtualLikedAction).ToList();
+                await SaveFencedAsync(database, context.Claim, cancellationToken);
+            }
 
             var retired = actions.Where(action => action.ActionType is
                 "match" or "place" or "enrich" or "refresh" or "lastfm").ToArray();
@@ -316,6 +331,8 @@ public sealed class FavoriteActionJobHandler(
         var value = favoriteEvent.Operation == FavoriteOperation.Favorite ? 1d : -1d;
         try
         {
+            await using var database = await contextFactory.CreateDbContextAsync(cancellationToken);
+            if (await SyntheticActivityPolicy.IsExcludedAsync(database, scope, favoriteEvent.ItemId, cancellationToken)) return;
             if (recommendationSignals is IIdempotentRecommendationSignalWriter idempotent)
             {
                 await idempotent.WriteIdempotentAsync(
