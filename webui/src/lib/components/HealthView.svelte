@@ -29,7 +29,7 @@
   const stepLabels: Record<string, string> = {
     search: "Search", playback: "Playback", seek: "Seek", "now-playing": "Now playing", scrobble: "Scrobble",
     heart: "Favorite", unheart: "Remove favorite", "playlist-create": "Create playlist", "playlist-add": "Add playlist track",
-    "playlist-remove": "Remove playlist track", "playlist-delete": "Delete playlist", download: "Download",
+    "playlist-remove": "Remove playlist track", "playlist-delete": "Delete playlist", download: "Download", "download-seek": "Seek in download",
     lyrics: "Lyrics", cleanup: "Cleanup",
   };
   const alertLabels = {

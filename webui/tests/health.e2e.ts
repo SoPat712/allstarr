@@ -209,6 +209,29 @@ test("Health explains skipped checks and source availability at 320px", async ({
   await page.screenshot({ path: testInfo.outputPath("health-unavailable-320.png") });
 });
 
+test("Health identifies a download seek failure independently of playback seeking", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  const view = snapshot(true);
+  view.runs.push({ id: "download-range", protocol: "Jellyfin", startedAt: "2026-10-23T12:00:00Z",
+    completedAt: "2026-10-23T12:00:20Z", passed: false,
+    steps: [
+      { name: "seek", status: "passed", latencyMilliseconds: 50, reason: null },
+      { name: "download", status: "passed", latencyMilliseconds: 800, reason: null },
+      { name: "download-seek", status: "failed", latencyMilliseconds: 40, reason: "invalid_range" },
+      { name: "cleanup", status: "passed", latencyMilliseconds: 20, reason: null },
+    ], alertStatus: "none" });
+  await mockHealth(page, route => respond(route, view));
+  await page.goto("/#/settings/health");
+  const latest = page.getByRole("article", { name: "Latest health check", exact: true });
+  await expect(latest).toContainText("Seek in download failed.");
+  await expect(latest).toContainText("The source did not return the requested byte range.");
+  const steps = latest.getByRole("list", { name: "Check steps", exact: true });
+  await expect(steps.getByRole("listitem").filter({ has: page.getByText("Seek", { exact: true }) })).toContainText("Passed");
+  await expect(steps.getByRole("listitem").filter({ has: page.getByText("Seek in download", { exact: true }) })).toContainText("Failed");
+  await expectContainedMobileGeometry(page);
+  await page.screenshot({ path: testInfo.outputPath("health-download-seek-390.png") });
+});
+
 test("Health conflicts keep edits and offer a safe reload", async ({ page }) => {
   const view = snapshot(true);
   let conflict = true;

@@ -12,13 +12,14 @@ namespace allstarr.Core.Health;
 public sealed class HealthSmokeProtocolProbe(HttpClient client, TimeProvider time)
 {
     public static readonly string[] StepNames = ["search", "playback", "seek", "now-playing", "scrobble", "heart", "unheart",
-        "playlist-create", "playlist-add", "playlist-remove", "playlist-delete", "download", "lyrics", "cleanup"];
+        "playlist-create", "playlist-add", "playlist-remove", "playlist-delete", "download", "download-seek", "lyrics", "cleanup"];
 
     public async Task<IReadOnlyList<HealthSmokeStep>> RunAsync(HealthSmokeProbeContext context, CancellationToken cancellationToken)
     {
         var steps = new List<HealthSmokeStep>();
         var artifacts = new HealthSmokeArtifacts(PlaylistName: $"[allstarr-test] Health {context.RunId:N}");
         long? total = null;
+        long? downloadTotal = null;
         double? firstByteMilliseconds = null;
         using var overall = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         overall.CancelAfter(TimeSpan.FromMinutes(3));
@@ -112,7 +113,15 @@ public sealed class HealthSmokeProtocolProbe(HttpClient client, TimeProvider tim
                             await SaveAsync(artifacts with { PlaylistId = null, PlaylistName = null }, ct);
                             break;
                         case "download":
-                            await AudioAsync(context, encoded, true, 0, ct);
+                            downloadTotal = (await AudioAsync(context, encoded, true, 0, ct)).Total;
+                            break;
+                        case "download-seek":
+                            if (downloadTotal is { } originalLength)
+                            {
+                                if (originalLength <= 16384) throw new ProbeFailure("range_unavailable");
+                                await AudioAsync(context, encoded, true, Math.Min(originalLength - 8192, originalLength * 4 / 5), ct);
+                            }
+                            else await AudioAsync(context, encoded, true, 0, ct, suffix: true);
                             break;
                         case "lyrics":
                             var lyrics = IsJellyfin(context)
@@ -205,19 +214,25 @@ public sealed class HealthSmokeProtocolProbe(HttpClient client, TimeProvider tim
         await context.SaveArtifacts(new(), token);
     }
 
-    private async Task<(long? Total, double FirstByteMilliseconds)> AudioAsync(HealthSmokeProbeContext context, string item, bool download, long start, CancellationToken token)
+    private async Task<(long? Total, double FirstByteMilliseconds)> AudioAsync(HealthSmokeProbeContext context, string item, bool download, long start, CancellationToken token, bool suffix = false)
     {
         var started = time.GetTimestamp();
         using var firstByteDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         firstByteDeadline.CancelAfter(TimeSpan.FromSeconds(context.FirstByteBudgetSeconds));
         var path = IsJellyfin(context) ? download ? $"/Items/{item}/Download" : $"/Audio/{item}/stream?static=true" : download ? "download" : "stream";
         using var request = Request(context, HttpMethod.Get, path, IsJellyfin(context) ? null : new() { ["id"] = Uri.UnescapeDataString(item), ["format"] = "raw" });
-        request.Headers.Range = new RangeHeaderValue(start, start + 8191);
+        request.Headers.Range = suffix ? new RangeHeaderValue(null, 8192) : new RangeHeaderValue(start, start + 8191);
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, firstByteDeadline.Token);
         CheckStatus(response);
         var range = response.Content.Headers.ContentRange;
-        if (start > 0 && (response.StatusCode != HttpStatusCode.PartialContent || range?.From != start || range.Length is not > 0))
-            throw new ProbeFailure("invalid_range");
+        if (start > 0 || suffix)
+        {
+            if (response.StatusCode != HttpStatusCode.PartialContent || range?.Length is not > 0 ||
+                !StreamByteRanges.HasValidContentRange(range, response.Content.Headers.ContentLength) ||
+                range.From != (suffix ? Math.Max(0, range.Length.Value - 8192) : start) ||
+                range.To != (suffix ? range.Length.Value - 1 : Math.Min(start + 8191, range.Length.Value - 1)))
+                throw new ProbeFailure("invalid_range");
+        }
         var type = response.Content.Headers.ContentType?.MediaType;
         if (type == null || !(type.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) || type == "application/octet-stream"))
             throw new ProbeFailure("invalid_audio");

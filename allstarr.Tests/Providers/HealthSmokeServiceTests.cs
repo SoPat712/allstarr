@@ -473,7 +473,7 @@ public sealed class HealthSmokeServiceTests : IAsyncLifetime
         {
             using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync());
             var changes = body.RootElement.GetProperty("changes").EnumerateArray().ToArray();
-            Assert.Equal(3, changes.Length);
+            Assert.Equal(4, changes.Length);
             Assert.All(changes, change => Assert.Equal("failed", change.GetProperty("state").GetString()));
             return new(++deliveries == 1 ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.NoContent);
         });
