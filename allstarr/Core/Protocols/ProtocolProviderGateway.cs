@@ -1285,13 +1285,14 @@ public sealed partial class ProtocolProviderGateway(
             var cacheScope = new DownloadedSongMappingScope(
                     candidate.Context.Account?.AccountId,
                     quality);
-            var coordinate = !protocol.IsOriginalDownload && !protocol.IsReadOnly && !headOnly && managedTrackCache != null;
+            var coordinate = !protocol.IsReadOnly && !headOnly && managedTrackCache != null;
             using var cacheOpening = coordinate ? await managedTrackCache!.BeginOpenAsync(
-                servingTrack, cacheScope, candidate.Context.Account?.Revision, protocol.IsPreparation, protocol.CancellationToken) : null;
+                servingTrack, cacheScope, candidate.Context.Account?.Revision, protocol.IsPreparation, protocol.CancellationToken,
+                originalDownload: protocol.IsOriginalDownload) : null;
             if (coordinate && cacheOpening == null) return null;
-            var cached = protocol.IsOriginalDownload || protocol.IsReadOnly || managedTrackCache == null ? null : await managedTrackCache.TryOpenAsync(
+            var cached = protocol.IsReadOnly || managedTrackCache == null ? null : await managedTrackCache.TryOpenAsync(
                 servingTrack, cacheScope, protocol.CancellationToken, candidate.Context.Account?.Revision, protocol.IsPreparation,
-                rangeStart);
+                rangeStart, originalDownload: protocol.IsOriginalDownload);
             if (cached != null)
             {
                 if (protocol.IsPreparation) { cached.Response.Dispose(); return null; }
@@ -1512,13 +1513,13 @@ public sealed partial class ProtocolProviderGateway(
                 stream.Response.Dispose();
                 throw new ProviderAudioProfileException(rejected.Error!);
             }
-            if (!protocol.IsOriginalDownload && !protocol.IsReadOnly && !headOnly && managedTrackCache != null && !stream.IsCached)
+            if (!protocol.IsReadOnly && !headOnly && managedTrackCache != null && !stream.IsCached)
             {
                 Task<Song?>? metadata = null;
                 Task<Song?> Metadata() => metadata ??= GetSongAsync(protocol, stream.ServingProviderId, stream.ServingExternalId!);
                 try
                 {
-                    StreamDurationGuidance.Attach(stream, Metadata);
+                    if (!protocol.IsOriginalDownload) StreamDurationGuidance.Attach(stream, Metadata);
                     await managedTrackCache.WrapAsync(stream, protocol, stream.ServingProviderId, stream.ServingExternalId!,
                         false, Metadata, streamCancellation);
                 }

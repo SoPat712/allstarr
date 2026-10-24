@@ -22,6 +22,7 @@ public sealed class HealthSmokeProtocolProbeTests
         Assert.False(upstream.PlaylistExists);
         Assert.True(upstream.SeekStart > 8191);
         Assert.True(upstream.DownloadRequested);
+        Assert.True(upstream.DownloadSeekStart > 8191);
         Assert.DoesNotContain("fixture-session", JsonSerializer.Serialize(result));
         Assert.All(upstream.Requests, uri => Assert.DoesNotContain("fixture-session", uri));
     }
@@ -40,6 +41,8 @@ public sealed class HealthSmokeProtocolProbeTests
     [InlineData("Jellyfin", "playlist-remove")]
     [InlineData("Subsonic", "playlist-delete")]
     [InlineData("Jellyfin", "download")]
+    [InlineData("Jellyfin", "download-seek")]
+    [InlineData("Subsonic", "download-seek")]
     [InlineData("Subsonic", "lyrics")]
     public async Task EachFailedStepHasASafeReasonAndStillCleansUp(string protocol, string step)
     {
@@ -60,6 +63,32 @@ public sealed class HealthSmokeProtocolProbeTests
         Assert.All(await upstream.RunAsync(), step => Assert.Equal("passed", step.Status));
         Assert.True(upstream.Hearted);
         Assert.False(upstream.PlaylistExists);
+    }
+
+    [Theory]
+    [InlineData("Jellyfin")]
+    [InlineData("Subsonic")]
+    public async Task OriginalDownloadSeekUsesItsOwnSizeAndDetectsAnIgnoredRange(string protocol)
+    {
+        using var upstream = new Fixture(protocol) { IgnoreDownloadRange = true };
+        var results = await upstream.RunAsync();
+        Assert.Contains(results, step => step.Name == "download" && step.Status == "passed");
+        Assert.Contains(results, step => step.Name == "seek" && step.Status == "passed");
+        Assert.Contains(results, step => step.Name == "download-seek" && step.Status == "failed" && step.Reason == "invalid_range");
+        Assert.Equal(1_360_000, upstream.DownloadSeekStart);
+        Assert.Equal(800_000, upstream.SeekStart);
+    }
+
+    [Theory]
+    [InlineData("Jellyfin")]
+    [InlineData("Subsonic")]
+    public async Task UnknownLengthOriginalDownloadUsesABoundedSuffixForItsSeparateSeekCheck(string protocol)
+    {
+        using var upstream = new Fixture(protocol) { UnknownDownloadLength = true };
+        var results = await upstream.RunAsync();
+        Assert.All(results, step => Assert.Equal("passed", step.Status));
+        Assert.True(upstream.DownloadSeekSuffix);
+        Assert.Equal(1_700_000 - 8192, upstream.DownloadSeekStart);
     }
 
     [Fact]
@@ -188,6 +217,8 @@ public sealed class HealthSmokeProtocolProbeTests
         public string? StallStep { get; init; }
         public TaskCompletionSource<bool> Stalled { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool HtmlAudio { get; set; }
+        public bool IgnoreDownloadRange { get; init; }
+        public bool UnknownDownloadLength { get; init; }
         public bool MissingPlaylistEnvelope { get; init; }
         public bool MissingHeartDetails { get; init; }
         public bool FailCleanup { get; set; }
@@ -198,6 +229,8 @@ public sealed class HealthSmokeProtocolProbeTests
         public bool PlaylistExists { get; private set; }
         public bool DownloadRequested { get; private set; }
         public long? SeekStart { get; private set; }
+        public long? DownloadSeekStart { get; private set; }
+        public bool DownloadSeekSuffix { get; private set; }
         private bool _failed;
         private bool _songInPlaylist;
 
@@ -243,7 +276,8 @@ public sealed class HealthSmokeProtocolProbeTests
             if (operation == "getPlaylists")
                 return Sub(new { playlists = new { playlist = PlaylistExists ? new[] { new { id = "fixture-playlist", name = fields.GetValueOrDefault("query") } } : [] } });
             if (path == "Items" || operation == "search3") step = "search";
-            else if (path.Contains("/Download", StringComparison.Ordinal) || operation == "download") step = "download";
+            else if (path.Contains("/Download", StringComparison.Ordinal) || operation == "download")
+                step = request.Headers.Range?.Ranges.Single() is { } downloadRange && downloadRange.From != 0 ? "download-seek" : "download";
             else if (path.EndsWith("/Lyrics", StringComparison.Ordinal) || operation == "getLyricsBySongId") step = "lyrics";
             else if (path.StartsWith("Audio/", StringComparison.Ordinal) || operation == "stream")
                 step = request.Headers.Range?.Ranges.First().From > 0 ? "seek" : "playback";
@@ -285,16 +319,28 @@ public sealed class HealthSmokeProtocolProbeTests
                 case "playback":
                 case "seek":
                 case "download":
+                case "download-seek":
                     if (step == "seek") SeekStart = request.Headers.Range!.Ranges.First().From;
                     if (step == "download") DownloadRequested = true;
-                    var start = request.Headers.Range?.Ranges.First().From ?? 0;
-                    var audio = new HttpResponseMessage(HttpStatusCode.PartialContent)
+                    var range = request.Headers.Range?.Ranges.Single();
+                    var original = step is "download" or "download-seek";
+                    var total = original ? 1_700_000 : 1_000_000;
+                    var start = range?.From ?? (range?.To is { } suffix ? total - suffix : 0);
+                    if (step == "download-seek")
+                    {
+                        DownloadSeekStart = start;
+                        DownloadSeekSuffix = range?.From == null;
+                    }
+                    var fullOriginal = original && IgnoreDownloadRange || step == "download" && UnknownDownloadLength;
+                    var audio = new HttpResponseMessage(fullOriginal ? HttpStatusCode.OK : HttpStatusCode.PartialContent)
                     {
                         Content = SlowAudioPrefix && step == "playback" ? new StreamContent(new SlowPrefixStream())
+                        : step == "download" && UnknownDownloadLength ? new StreamContent(new UnknownLengthAudio())
                         : new ByteArrayContent(HtmlAudio ? Encoding.UTF8.GetBytes("<html>busy</html>") : new byte[8192])
                     };
                     audio.Content.Headers.ContentType = new("audio/flac");
-                    audio.Content.Headers.ContentRange = new(start, start + 8191, 1_000_000);
+                    if (!fullOriginal) audio.Content.Headers.ContentRange = new(start, start + 8191, total);
+                    else if (!UnknownDownloadLength) audio.Content.Headers.ContentLength = total;
                     return audio;
                 case "heart": Hearted = true; break;
                 case "unheart": Hearted = false; break;
@@ -326,6 +372,11 @@ public sealed class HealthSmokeProtocolProbeTests
 
         private static HttpResponseMessage MissingSubsonicPlaylist() => Json(new Dictionary<string, object>
         { ["subsonic-response"] = new { status = "failed", error = new { code = 70, message = "Not found" } } });
+
+        private sealed class UnknownLengthAudio() : MemoryStream(new byte[8192])
+        {
+            public override bool CanSeek => false;
+        }
 
         private sealed class SlowPrefixStream() : MemoryStream(new byte[8192])
         {
