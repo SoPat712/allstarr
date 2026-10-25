@@ -4194,6 +4194,8 @@ test("Integrations keep primary actions visible and report scoped degradation", 
   await expect(disabledStatus).toHaveText("Turned off");
   await expect(disabledStatus).toHaveCSS("border-top-width", "1px");
   await expect(disabledStatus).toHaveCSS("border-top-style", "solid");
+  await expect(page.locator(".source-row").filter({ hasText: "Apple Music" })).toHaveCount(0);
+  await page.getByRole("button", { name: /^All available/ }).click();
   await page.locator(".source-row").filter({ hasText: "Apple Music" }).getByRole("link").first().click();
   await expect(page.getByRole("button", { name: "Measure CTS" })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Apple Music setup" })).toBeVisible();
