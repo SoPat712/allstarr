@@ -28,23 +28,34 @@ public sealed partial class TrackMatchCommandService
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         providerId = providerId.Trim().ToLowerInvariant();
         externalId = externalId.Trim();
+        var visibleAccountIds = actor.IsAdministrator
+            ? null
+            : await VisibleProviderAccountIdsAsync(db, actor.UserId, cancellationToken);
 
-        var sourceIdentities = await db.ProviderTrackIdentities.AsNoTracking()
-            .Where(item => item.ProviderId == providerId &&
-                           item.ExternalId == externalId)
-            .OrderBy(item => item.CreatedAt)
-            .ToListAsync(cancellationToken);
+        var sourceIdentities = await VisibleProviderIdentitiesAsync(
+                db,
+                actor,
+                db.ProviderTrackIdentities.AsNoTracking()
+                    .Where(item => item.ProviderId == providerId &&
+                                   item.ExternalId == externalId)
+                    .OrderBy(item => item.CreatedAt),
+                visibleAccountIds,
+                cancellationToken);
         var canonicalIds = sourceIdentities
             .Select(item => item.CanonicalRecordingId)
             .Distinct()
             .ToArray();
         var identities = canonicalIds.Length == 0
             ? sourceIdentities
-            : await db.ProviderTrackIdentities.AsNoTracking()
-                .Where(item => canonicalIds.Contains(item.CanonicalRecordingId))
-                .OrderBy(item => item.ProviderId)
-                .ThenBy(item => item.CreatedAt)
-                .ToListAsync(cancellationToken);
+            : await VisibleProviderIdentitiesAsync(
+                db,
+                actor,
+                db.ProviderTrackIdentities.AsNoTracking()
+                    .Where(item => canonicalIds.Contains(item.CanonicalRecordingId))
+                    .OrderBy(item => item.ProviderId)
+                    .ThenBy(item => item.CreatedAt),
+                visibleAccountIds,
+                cancellationToken);
 
         var localQuery = await AccessibleTracksAsync(db, actor, cancellationToken);
         var localTracks = await localQuery
@@ -99,6 +110,9 @@ public sealed partial class TrackMatchCommandService
         CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var visibleAccountIds = actor.IsAdministrator
+            ? null
+            : await VisibleProviderAccountIdsAsync(db, actor.UserId, cancellationToken);
         var snapshotsQuery = db.ExternalMetadataSnapshots.AsNoTracking()
             ;
         if (!actor.IsAdministrator)
@@ -156,11 +170,15 @@ public sealed partial class TrackMatchCommandService
             .Select(item => item.ExternalIdHash)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        var sourceIdentities = await db.ProviderTrackIdentities.AsNoTracking()
-            .Where(item => item.ResourceKind == ProviderResourceKind.Track &&
-                           (sourceIdentityIds.Contains(item.Id) ||
-                            sourceExternalIdHashes.Contains(item.ExternalIdHash)))
-            .ToListAsync(cancellationToken);
+        var sourceIdentities = await VisibleProviderIdentitiesAsync(
+            db,
+            actor,
+            db.ProviderTrackIdentities.AsNoTracking()
+                .Where(item => item.ResourceKind == ProviderResourceKind.Track &&
+                               (sourceIdentityIds.Contains(item.Id) ||
+                                sourceExternalIdHashes.Contains(item.ExternalIdHash))),
+            visibleAccountIds,
+            cancellationToken);
         var canonicalIds = decisions.Where(item => item.CanonicalRecordingId.HasValue)
             .Select(item => item.CanonicalRecordingId!.Value)
             .Concat(sourceIdentities.Select(item => item.CanonicalRecordingId))
@@ -173,12 +191,53 @@ public sealed partial class TrackMatchCommandService
         if (!string.IsNullOrWhiteSpace(backendLibraryId))
             libraryQuery = libraryQuery.Where(item => item.BackendLibraryId == backendLibraryId.Trim());
         var library = await libraryQuery.ToListAsync(cancellationToken);
-        var identities = await db.ProviderTrackIdentities.AsNoTracking()
-            .Where(item => canonicalIds.Contains(item.CanonicalRecordingId))
-            .OrderBy(item => item.ProviderId)
-            .ThenBy(item => item.ExternalId)
-            .ToListAsync(cancellationToken);
+        var identities = await VisibleProviderIdentitiesAsync(
+            db,
+            actor,
+            db.ProviderTrackIdentities.AsNoTracking()
+                .Where(item => canonicalIds.Contains(item.CanonicalRecordingId))
+                .OrderBy(item => item.ProviderId)
+                .ThenBy(item => item.ExternalId),
+            visibleAccountIds,
+            cancellationToken);
         return new(snapshots, decisions, overrides, library, identities);
+    }
+
+    private async Task<IReadOnlyList<ProviderTrackIdentityRecord>> VisibleProviderIdentitiesAsync(
+        AllstarrDbContext db,
+        TrackMatchActor actor,
+        IQueryable<ProviderTrackIdentityRecord> query,
+        IReadOnlySet<Guid>? visibleAccountIds,
+        CancellationToken cancellationToken)
+    {
+        if (actor.IsAdministrator)
+            return await query.ToListAsync(cancellationToken);
+        if (visibleAccountIds == null || visibleAccountIds.Count == 0)
+            return await query.Where(item => item.Scope == ProviderIdentityScope.Catalog && item.ProviderAccountId == null)
+                .ToListAsync(cancellationToken);
+
+        return await query.Where(item =>
+                item.Scope == ProviderIdentityScope.Catalog && item.ProviderAccountId == null ||
+                item.Scope == ProviderIdentityScope.Account && item.ProviderAccountId.HasValue &&
+                visibleAccountIds.Contains(item.ProviderAccountId.Value) &&
+                db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId.Value &&
+                    account.ProviderId == item.ProviderId))
+            .ToListAsync(cancellationToken);
+    }
+
+    private static async Task<IReadOnlySet<Guid>> VisibleProviderAccountIdsAsync(
+        AllstarrDbContext db,
+        Guid userId,
+        CancellationToken cancellationToken)
+    {
+        var accounts = await db.ProviderAccounts.AsNoTracking()
+            .Where(item => item.Enabled &&
+                (item.OwnerUserId == userId || item.OwnerUserId == null) &&
+                (!item.SecretReferenceId.HasValue || db.SecretReferences.Any(secret =>
+                    secret.Id == item.SecretReferenceId && secret.RevokedAt == null)))
+            .ToListAsync(cancellationToken);
+        accounts.RemoveAll(ProviderAccountSettings.IsRemoved);
+        return accounts.Select(item => item.Id).ToHashSet();
     }
 
     public async Task<IReadOnlyList<LibraryTrackRecord>> SearchLocalTracksAsync(
