@@ -117,6 +117,48 @@ public sealed record ProviderLyricsTimedLine
     public IReadOnlyList<ProviderLyricsTimedSegment>? Segments { get; }
 }
 
+public sealed record ProviderLyricsContributor
+{
+    public ProviderLyricsContributor(string username, string? url = null)
+    {
+        Username = ProviderContractValidation.RequiredText(username, nameof(username), 200);
+        Url = IsPublicProfileUrl(url) ? url : null;
+    }
+
+    [JsonPropertyName("username")]
+    public string Username { get; }
+    [JsonPropertyName("url"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Url { get; }
+
+    public static bool IsPublicProfileUrl(string? value) => value is { Length: <= 2_000 } &&
+        !value.Any(char.IsControl) && !value.Contains('%') && !value.Contains('\\') && Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+        uri.Scheme == Uri.UriSchemeHttps && uri.Host == "spicylyrics.org" && uri.IsDefaultPort &&
+        uri.UserInfo.Length == 0 && uri.Query.Length == 0 && uri.Fragment.Length == 0 &&
+        uri.AbsolutePath.StartsWith("/uid/", StringComparison.Ordinal) &&
+        uri.AbsolutePath[5..] is { Length: > 0 } id && id.All(char.IsAsciiLetterOrDigit);
+}
+
+public sealed record ProviderLyricsAttribution
+{
+    public ProviderLyricsAttribution(string service, string catalog,
+        ProviderLyricsContributor? uploader = null, ProviderLyricsContributor? maker = null)
+    {
+        Service = ProviderContractValidation.ProviderId(service, nameof(service));
+        Catalog = ProviderContractValidation.Catalog(catalog, nameof(catalog));
+        Uploader = uploader;
+        Maker = maker;
+    }
+
+    [JsonPropertyName("service")]
+    public string Service { get; }
+    [JsonPropertyName("catalog")]
+    public string Catalog { get; }
+    [JsonPropertyName("uploader"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ProviderLyricsContributor? Uploader { get; }
+    [JsonPropertyName("maker"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ProviderLyricsContributor? Maker { get; }
+}
+
 public sealed record ProviderLyricsResult
 {
     public ProviderLyricsResult(
@@ -125,7 +167,8 @@ public sealed record ProviderLyricsResult
         ProviderLyricsFormat? format = null,
         string? content = null,
         string? revision = null,
-        IReadOnlyList<ProviderLyricsTimedLine>? timedLines = null)
+        IReadOnlyList<ProviderLyricsTimedLine>? timedLines = null,
+        ProviderLyricsAttribution? attribution = null)
     {
         if (!Enum.IsDefined(availability))
         {
@@ -138,7 +181,7 @@ public sealed record ProviderLyricsResult
         }
 
         if (availability != ProviderLyricsAvailabilityState.Available &&
-            (format.HasValue || content != null))
+            (format.HasValue || content != null || attribution != null))
         {
             throw new ArgumentException("Unavailable or restricted lyrics cannot include content.", nameof(content));
         }
@@ -148,6 +191,7 @@ public sealed record ProviderLyricsResult
             throw new ArgumentException("Lyrics content requires an explicit format.", nameof(format));
         }
 
+        Attribution = attribution;
         Availability = availability;
         Source = ProviderContractValidation.RequiredText(source, nameof(source), 200);
         Format = format;
@@ -176,6 +220,9 @@ public sealed record ProviderLyricsResult
             TimedLines = Array.AsReadOnly(timedLines.ToArray());
         }
     }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ProviderLyricsAttribution? Attribution { get; }
 
     public ProviderLyricsAvailabilityState Availability { get; }
 

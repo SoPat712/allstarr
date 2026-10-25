@@ -111,9 +111,9 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
             });
             var resourceKey = externalProvider != null && externalId != null ? $"{externalProvider}:{externalId}" :
                 Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(audioFilePath)));
-            var lyrics = await _lyrics.FindAsync(context, lookup, resourceKey, new ProtocolLyricsSources(HouseholdOnly: true));
+            var lyrics = await _lyrics.FindAsync(context, lookup, resourceKey, new ProtocolLyricsSources(HouseholdOnly: true) { ForPermanentSidecar = true });
 
-            if (lyrics == null)
+            if (lyrics == null || lyrics.Source == "spicylyrics")
             {
                 return null;
             }

@@ -2,6 +2,9 @@ using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Matching;
+using allstarr.Core.Capabilities;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
@@ -19,7 +22,8 @@ public sealed record RecordingLyricsReviewSource(
     string? Format,
     string? Preview,
     string? PreviewRevision,
-    bool Truncated)
+    bool Truncated,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProviderLyricsAttribution? Attribution = null)
 {
     public bool Available => PreviewRevision != null;
 }
@@ -292,6 +296,7 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
 
         var revisionInput = string.Concat(
             recordingId.ToString("D"), "\n", candidate.SourceId, "\n", format, "\n", content);
+        if (lyrics?.Attribution != null) revisionInput += "\n" + JsonSerializer.Serialize(lyrics.Attribution);
         var revision = "sha256:" + Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(revisionInput))).ToLowerInvariant();
         var preview = TruncatePreview(content, out var truncated);
@@ -300,7 +305,8 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
             format,
             preview,
             revision,
-            truncated);
+            truncated,
+            lyrics?.Attribution);
     }
 
     private static string TruncatePreview(string content, out bool truncated)

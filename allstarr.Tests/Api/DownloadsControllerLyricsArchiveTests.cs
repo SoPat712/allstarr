@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using Moq;
 using allstarr.Controllers;
 using allstarr.Core.Downloads;
 using allstarr.Core.Storage;
@@ -14,6 +15,54 @@ namespace allstarr.Tests;
 
 public class DownloadsControllerLyricsArchiveTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SpicyLyricsCannotEnterGeneratedSingleOrBulkExports(bool bulk)
+    {
+        var root = CreateTestRoot();
+        var downloads = Path.Combine(root, "downloads");
+        var folder = Path.Combine(downloads, "kept", "Artist");
+        Directory.CreateDirectory(folder);
+        var audio = Path.Combine(folder, "track.flac");
+        using (var output = File.Create(audio))
+        {
+            output.Write(System.Text.Encoding.ASCII.GetBytes("fLaC"));
+            output.Write(new byte[] { 0x80, 0, 0, 34 });
+            var info = new byte[34];
+            info[0] = 0x10; info[2] = 0x10;
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt64BigEndian(info.AsSpan(10, 8),
+                ((ulong)8_000 << 44) | ((ulong)15 << 36) | 8_000);
+            output.Write(info);
+        }
+        try
+        {
+            using (var tag = TagLib.File.Create(audio)) { tag.Tag.Performers = ["Artist"]; tag.Tag.Title = "Fixture"; tag.Save(); }
+            var resolver = new Moq.Mock<allstarr.Core.Protocols.IProtocolLyricsResolver>(Moq.MockBehavior.Strict);
+            resolver.Setup(item => item.FindAsync(Moq.It.IsAny<allstarr.Core.Protocols.ProtocolExecutionContext>(), Moq.It.IsAny<Song>(), Moq.It.IsAny<string>(),
+                    Moq.It.Is<allstarr.Core.Protocols.ProtocolLyricsSources>(options => options.ForPermanentSidecar && options.HouseholdOnly)))
+                .ReturnsAsync(new allstarr.Models.Lyrics.LyricsInfo { Source = "spicylyrics", PlainLyrics = "Must not enter an export" });
+            var writer = new KeptLyricsSidecarService(resolver.Object, NullLogger<KeptLyricsSidecarService>.Instance);
+            var controller = CreateController(downloads, writer);
+            controller.HttpContext.Items[allstarr.Core.Protocols.ProtocolExecutionContextFactory.HttpContextItemKey] = new allstarr.Core.Protocols.ProtocolExecutionContext(
+                allstarr.Core.Protocols.ProtocolKind.Jellyfin, "backend", "principal", new allstarr.Core.Identity.AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "backend", "principal", "Listener", false),
+                "export", DateTimeOffset.UtcNow.AddMinutes(1), default);
+            var response = bulk ? await controller.DownloadAllFiles() : await controller.DownloadFile("Artist/track.flac");
+            var file = Assert.IsType<FileStreamResult>(response);
+            using var stream = file.FileStream;
+            if (bulk)
+            {
+                var entries = ReadArchiveEntries(stream);
+                Assert.Contains(entries, name => name.EndsWith("track.flac", StringComparison.Ordinal));
+                Assert.DoesNotContain(entries, name => name.EndsWith(".lrc", StringComparison.Ordinal));
+            }
+            else Assert.NotEqual("application/zip", file.ContentType);
+            Assert.False(File.Exists(Path.ChangeExtension(audio, ".lrc")));
+            resolver.VerifyAll();
+        }
+        finally { DeleteTestRoot(root); }
+    }
+
     [Fact]
     public async Task DownloadFile_WithLyricsSidecar_ReturnsZipContainingAudioAndLrc()
     {

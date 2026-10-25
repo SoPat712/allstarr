@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Storage;
 using System.Security.Cryptography;
@@ -20,6 +21,7 @@ public sealed record ProtocolLyricsSources(
 {
     /// <summary>Reads only this source, still subject to the listener's availability policy.</summary>
     public string? OnlySourceId { get; init; }
+    public bool ForPermanentSidecar { get; init; }
 }
 
 public sealed record ProtocolLyricsCandidate(string SourceId, LyricsInfo? Lyrics);
@@ -239,6 +241,12 @@ public sealed partial class ProtocolLyricsResolver(
         if (sources?.OnlySourceId is { } onlySource)
             order = order.Where(item => string.Equals(item, onlySource, StringComparison.Ordinal)).ToArray();
 
+        if (sources?.ForPermanentSidecar == true)
+        {
+            order = order.Where(id => id != "spicylyrics").ToArray();
+            enabledOrder = enabledOrder.Where(id => id != "spicylyrics").ToArray();
+        }
+
         if (automaticLookup && sources?.OnlySourceId == null)
         {
             var preflight = new[] { preferredSourceId, "kept" }.Where(id => id != null).Distinct(StringComparer.Ordinal);
@@ -271,8 +279,9 @@ public sealed partial class ProtocolLyricsResolver(
                         else if (id is not ("backend" or "kept"))
                         {
                             var needsDiscovery = ResolveExternalId(id, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId) == null &&
-                                !canonicalRecordingId.HasValue && !song.CanonicalRecordingId.HasValue;
-                            var canDiscover = crossLinks != null && !string.IsNullOrWhiteSpace(sourceProvider) && !string.IsNullOrWhiteSpace(sourceExternalId) &&
+                                (id == "spicylyrics" || !canonicalRecordingId.HasValue && !song.CanonicalRecordingId.HasValue);
+                            var canDiscover = (id == "spicylyrics" ? identities != null :
+                                crossLinks != null && !string.IsNullOrWhiteSpace(sourceProvider) && !string.IsNullOrWhiteSpace(sourceExternalId)) &&
                                 ResolveExternalId(id, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId) == null;
                             prepared.Add(new(id, async (discovery, token) =>
                             {
@@ -289,9 +298,32 @@ public sealed partial class ProtocolLyricsResolver(
             }
         }
 
+        async Task<string?> ResolveSpicySelectorAsync(bool allowDiscovery, CancellationToken token)
+        {
+            var known = ResolveExternalId("spicylyrics", resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId);
+            if (known != null || !allowDiscovery || protocol.Actor == null) return known;
+            var recording = await ResolveAliasRecordingAsync(token);
+            if (recording.HasValue && identities != null)
+            {
+                var stored = await identities.GetStoredSongsAsync(protocol.Actor, recording.Value.ToString("D"), token);
+                token.ThrowIfCancellationRequested();
+                var selectors = stored.Where(item => item.ExternalProvider == "spotify")
+                    .Select(item => SpotifyTrackReference.TryNormalize(item.ExternalId, out var id) ? id : null)
+                    .Where(id => id != null).Distinct(StringComparer.Ordinal).Take(2).ToArray();
+                if (selectors.Length == 1) return selectors[0];
+                if (selectors.Length > 1) return null;
+            }
+            var linked = (resolvedLinks ?? []).Where(item => item.Verified && OdesliService.NormalizeProviderId(item.ProviderId) == "spotify")
+                .Select(item => SpotifyTrackReference.TryNormalize(item.ExternalId, out var id) ? id : null)
+                .Where(id => id != null).Distinct(StringComparer.Ordinal).Take(2).ToArray();
+            return linked.Length == 1 ? linked[0] : null;
+        }
+
         async Task<LyricsReadSpec?> PrepareSpecAsync(string providerId, DateTimeOffset deadline, bool allowDiscovery, CancellationToken token)
         {
-            var externalId = ResolveExternalId(providerId, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId);
+            var externalId = providerId == "spicylyrics" ? await ResolveSpicySelectorAsync(allowDiscovery, token) :
+                ResolveExternalId(providerId, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId);
+            if (providerId == "spicylyrics" && externalId == null) return null;
             if (allowDiscovery && externalId == null && crossLinks != null && protocol.Actor != null &&
                 !string.IsNullOrWhiteSpace(sourceProvider) && !string.IsNullOrWhiteSpace(sourceExternalId))
             {
@@ -326,6 +358,7 @@ public sealed partial class ProtocolLyricsResolver(
 
         async Task<LyricsInfo?> ReadOneAsync(string providerId)
         {
+            if (sources?.ForPermanentSidecar == true && providerId == "spicylyrics") return null;
             try
             {
                 LyricsInfo? lyrics;
@@ -337,8 +370,9 @@ public sealed partial class ProtocolLyricsResolver(
                 else
                 {
                     if (providerId is "backend" or "kept") return null;
-                    var externalId = ResolveExternalId(
+                    var externalId = providerId == "spicylyrics" ? await ResolveSpicySelectorAsync(true, protocol.CancellationToken) : ResolveExternalId(
                         providerId, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId);
+                    if (providerId == "spicylyrics" && externalId == null) return null;
                     if (externalId == null && crossLinks != null && protocol.Actor != null &&
                         !string.IsNullOrWhiteSpace(sourceProvider) && !string.IsNullOrWhiteSpace(sourceExternalId))
                     {
@@ -380,7 +414,8 @@ public sealed partial class ProtocolLyricsResolver(
                         SyncedLyrics = result.Format == ProviderLyricsFormat.PlainText ? null : result.Content,
                         Source = providerId,
                         Revision = result.Revision,
-                        TimedLines = result.TimedLines
+                        TimedLines = result.TimedLines,
+                        Attribution = result.Attribution
                     };
                 }
                 protocol.CancellationToken.ThrowIfCancellationRequested();
@@ -404,6 +439,13 @@ public sealed partial class ProtocolLyricsResolver(
         string? spotifyTrackId)
     {
         providerId = providerId.Trim().ToLowerInvariant();
+        if (providerId == "spicylyrics")
+        {
+            if (SpotifyTrackReference.TryNormalize(spotifyTrackId, out var known)) return known;
+            return (string.Equals(sourceProvider, "spotify", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(sourceProvider, "spicylyrics", StringComparison.OrdinalIgnoreCase)) && SpotifyTrackReference.TryNormalize(sourceExternalId, out var selected)
+                ? selected : null;
+        }
         if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(sourceExternalId))
             return sourceExternalId;
         if (providerId == "spotify") return string.IsNullOrWhiteSpace(spotifyTrackId) ? null : spotifyTrackId;

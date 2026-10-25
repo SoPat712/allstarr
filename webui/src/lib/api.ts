@@ -582,6 +582,13 @@ export type ProviderTryPlaylist = {
   artworkUrl: string | null;
 };
 
+export type LyricsAttribution = {
+  service: string;
+  catalog: string;
+  uploader?: { username: string; url?: string | null } | null;
+  maker?: { username: string; url?: string | null } | null;
+};
+
 export type ProviderTryResult = {
   provider: string;
   capability: ProviderTryCapability;
@@ -602,6 +609,7 @@ export type ProviderTryResult = {
     language: string | null;
     lineCount: number;
     lines: { startMs: number | null; text: string }[];
+    attribution?: LyricsAttribution | null;
   };
   media?: {
     kind: "stream" | "download";
@@ -1886,6 +1894,7 @@ export type RecordingLyricsSource = {
   previewRevision: string | null;
   available: boolean;
   truncated: boolean;
+  attribution?: LyricsAttribution | null;
 };
 export type RecordingLyricsReview = {
   recordingId: string;

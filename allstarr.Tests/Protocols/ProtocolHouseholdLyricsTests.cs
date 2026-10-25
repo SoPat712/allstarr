@@ -16,6 +16,31 @@ namespace allstarr.Tests;
 public sealed class ProtocolHouseholdLyricsTests
 {
     [Fact]
+    public async Task SpicyHouseholdRouteSelectsOnlyItsSharedRequiredAccount()
+    {
+        using var handler = new SpicyLyricsTestHandler(SpicyLyricsTestData.Payload("static"));
+        using var http = new HttpClient(handler);
+        var source = new SpicyLyricsCapabilityAdapter(http, new SpicyLyricsTestSecrets());
+        var registry = new ProviderRegistry([SpicyLyricsCapabilityAdapter.CreateRegistration(source)]);
+        var account = new ProviderAccountContext(Guid.NewGuid(), "spicylyrics", ProviderAccountScope.Shared, 1, secretReferenceId: SpicyLyricsTestData.SecretId);
+        var accounts = new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict);
+        accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderRouteAccountRequest request, CancellationToken _) =>
+            {
+                Assert.Equal(new[] { ProviderAccountScope.Shared }, request.AllowedScopes);
+                return new ProviderRouteAccountResolution(account, 1);
+            });
+        var health = new Mock<IProviderRouteHealthSource>();
+        health.Setup(item => item.Get(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<ProviderCapabilityKind>())).Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Unknown, false));
+        var router = new ProviderRouter(registry, accounts.Object, health.Object, Mock.Of<IProviderRouteSidecarSource>(), Mock.Of<ITrackIdentityService>());
+        var gateway = new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>());
+        var result = await gateway.GetHouseholdLyricsAsync(Context(), "spicylyrics", SpicyLyricsTestData.TrackId);
+        Assert.Equal("First plain line\nSecond plain line", result!.Content);
+        Assert.Equal(1, handler.Calls);
+        accounts.VerifyAll();
+    }
+
+    [Fact]
     public async Task AutomaticFallbackRejectsDefaultManualOnlyWhileExplicitReadRemainsAvailable()
     {
         var served = new List<Guid?>();

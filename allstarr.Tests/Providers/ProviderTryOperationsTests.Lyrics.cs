@@ -7,6 +7,32 @@ namespace allstarr.Tests;
 public sealed partial class ProviderTryOperationsTests
 {
     [Fact]
+    public async Task SpicyIdOnlyTryKeepsCreditsAndDoesNotInventMetadata()
+    {
+        using var handler = new SpicyLyricsTestHandler(SpicyLyricsTestData.Payload("static"));
+        using var http = new HttpClient(handler);
+        var source = new allstarr.Core.Providers.Lyrics.SpicyLyricsCapabilityAdapter(http, new SpicyLyricsTestSecrets());
+        var registry = new ProviderRegistry([allstarr.Core.Providers.Lyrics.SpicyLyricsCapabilityAdapter.CreateRegistration(source)]);
+        var request = new ProviderTryRequest { Capability = "lyrics", Operation = "lyrics", TrackId = "https://open.spotify.com/track/" + SpicyLyricsTestData.TrackId };
+        Assert.Null(request.Validate("spicylyrics"));
+        Assert.Equal("A title or ISRC is required.", request.Validate("lrclib"));
+        var result = await new ProviderTryOperations(registry).ExecuteAsync(SpicyLyricsTestData.Context(), request);
+        Assert.True(result.Succeeded);
+        var lyrics = Assert.IsType<ProviderTryLyrics>(result.Lyrics);
+        Assert.Equal("spicy_lyrics", lyrics.Attribution!.Catalog);
+        Assert.Equal("Fixture uploader", lyrics.Attribution.Uploader!.Username);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public void SpicyOptionalTryCreditsPreserveExactLegacyJsonKeysNullsAndOrder()
+    {
+        var value = new ProviderTryLyrics("plain", "fixture", null, 1, [new(null, "Words")]);
+        Assert.Equal("{\"format\":\"plain\",\"source\":\"fixture\",\"language\":null,\"lineCount\":1,\"lines\":[{\"startMs\":null,\"text\":\"Words\"}]}",
+            System.Text.Json.JsonSerializer.Serialize(value));
+    }
+
+    [Fact]
     public void LyricsCatalog_AdvertisesLookupMetadata()
     {
         var catalog = ProviderTryOperations.Describe(Descriptor(new ProviderCapabilityDescriptor(

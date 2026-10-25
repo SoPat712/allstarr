@@ -6,6 +6,21 @@ namespace allstarr.Tests;
 public sealed class LyricsTimingContractTests
 {
     [Fact]
+    public void SpicyAttributionSurvivesSerializationWithoutChangingOlderPayloads()
+    {
+        var credits = new ProviderLyricsAttribution("spicylyrics", "spicy_lyrics", new("Uploader", "https://spicylyrics.org/uid/1001"));
+        var result = new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "spicylyrics", ProviderLyricsFormat.PlainText,
+            "Words", attribution: credits);
+        var json = JsonSerializer.Serialize(result);
+        var restored = JsonSerializer.Deserialize<ProviderLyricsResult>(json)!;
+        Assert.Equal(credits, restored.Attribution);
+        Assert.DoesNotContain("maker", json);
+        Assert.Throws<ArgumentException>(() => new ProviderLyricsResult(ProviderLyricsAvailabilityState.Unavailable, "spicylyrics", attribution: credits));
+        var legacy = JsonSerializer.Serialize(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "fixture", ProviderLyricsFormat.PlainText, "Words"));
+        Assert.DoesNotContain("Attribution", legacy);
+    }
+
+    [Fact]
     public void CacheRoundTripRetainsSubMillisecondTimesAndSourceFlags()
     {
         var start = TimeSpan.FromTicks(12_345_678);

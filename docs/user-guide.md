@@ -149,6 +149,10 @@ Administrators can optionally set **Challenge solver URL** in **Settings → Net
 
 To fix a song's lyrics, open its match details and select **Wrong lyrics?**. Preview each available source, then select **Use this source for this recording**. This saves a source preference, including a plain-text source when you prefer it; it does not freeze the words. If that source becomes unavailable or disabled, Allstarr uses the normal source order until it returns.
 
+**SpicyLyrics** is an optional lyrics source. Open its page in **Integrations → Services**, follow **Get a free API key**, and connect your own server key as a Personal or Shared account. The key is stored encrypted. Its **Test** accepts a Spotify track link, URI or ID without a Spotify account. Automatic lookup needs a verified Spotify identity for the recording; otherwise it falls back to another source. Results can contain word timing, line timing or plain text. WebUI previews show the answering catalogue and any community contributor credits beside the lyrics.
+
+SpicyLyrics responses stay in the bounded lyrics cache for at most thirty days. They are not saved as permanent kept lyrics or included in lyrics exports. Other eligible sources can still supply those sidecars.
+
 A personal choice overrides the household choice. **Use household default** removes your personal choice. Administrators can preview shared or public sources and save a household preference for listeners without a personal choice; **Use automatic selection** removes it. If the words or choice change while the picker is open, it reloads them for review before another save. Play or match a new song and reload its details if lyric choices are not available yet.
 
 ### Settings

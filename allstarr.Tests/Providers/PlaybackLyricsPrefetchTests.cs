@@ -10,6 +10,44 @@ namespace allstarr.Tests;
 
 public sealed class PlaybackLyricsPrefetchTests
 {
+    [Fact]
+    public async Task SpicyPlaybackPrefetchFeedsTheSameAuthorizedForegroundCache()
+    {
+        using var handler = new SpicyLyricsTestHandler(SpicyLyricsTestData.Payload("static"));
+        using var http = new HttpClient(handler);
+        var cache = new SpicyLyricsTestCache();
+        var source = new allstarr.Core.Providers.Lyrics.SpicyLyricsCapabilityAdapter(http, new SpicyLyricsTestSecrets(), cache);
+        var user = SpicyLyricsTestData.UserId;
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "principal",
+            new AllstarrPrincipal(user, "jellyfin", "backend", "principal", "Listener", false), "prefetch", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var payload = new PlaybackSignalPayload(new IntelligenceScope(user, "jellyfin", "backend"), PlaybackTransition.Start,
+            "ext-spotify-song-" + SpicyLyricsTestData.TrackId, "device", "session", 0, DateTimeOffset.UtcNow, "signal");
+        var access = new Mock<IBackendLibraryAccessResolver>();
+        access.Setup(item => item.ResolveUserAsync(user, It.IsAny<CancellationToken>())).ReturnsAsync(new BackendLibraryAccessContext(context, new(true, [])));
+        var tracks = new Mock<IPlaybackTrackResolver>();
+        tracks.Setup(item => item.ResolveAsync(payload, It.IsAny<CancellationToken>())).ReturnsAsync(new PlaybackTrackSnapshot(null, null,
+            payload.ItemId, "Fixture", "Artist", "Album", null, ProviderId: "spotify", ProviderTrackReference: "spotify:" + SpicyLyricsTestData.TrackId));
+        var providers = new Mock<allstarr.Core.Protocols.IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(allstarr.Core.Capabilities.ProviderCapabilityKind.Lyrics)).Returns(["spicylyrics"]);
+        providers.Setup(item => item.GetLyricsAsync(It.IsAny<ProtocolExecutionContext>(), "spicylyrics", SpicyLyricsTestData.TrackId,
+                allstarr.Core.Capabilities.ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", It.IsAny<int?>(), null))
+            .Returns(async (ProtocolExecutionContext protocol, string _, string id, allstarr.Core.Capabilities.ProviderLyricsFormat? preferred,
+                string? title, IReadOnlyList<string>? artists, string? album, int? duration, string? isrc) =>
+            {
+                var binding = new allstarr.Core.Capabilities.ProviderExecutionContext(protocol.Actor!, "spicylyrics", SpicyLyricsTestData.Context().Account,
+                    SpicyLyricsTestData.Context().Policy, "lyrics", protocol.CorrelationId, protocol.Deadline, protocol.CancellationToken);
+                return (await source.FetchLyricsAsync(binding, SpicyLyricsTestData.Request(id))).RequireValue();
+            });
+        var resolver = new ProtocolLyricsResolver(providers.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<ProtocolLyricsResolver>.Instance);
+        await new PlaybackLyricsPrefetch(tracks.Object, resolver, access.Object).PrefetchAsync(payload, default);
+        var foreground = new ProtocolExecutionContext(context.Protocol, context.BackendInstanceId, context.VerifiedBackendPrincipalId, context.Principal,
+            "foreground", context.Deadline, default);
+        var result = await resolver.FindAsync(foreground, new Song { Title = "Fixture", Artist = "Artist", Album = "Album", SpotifyId = SpicyLyricsTestData.TrackId }, "foreground-item");
+        Assert.Equal("spicylyrics", result!.Source);
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal(1, cache.Writes);
+    }
+
     [Theory]
     [InlineData("valid", 1)]
     [InlineData("revoked", 0)]

@@ -60,6 +60,7 @@ public class ProviderStatusManager
         ("lrclib", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("lyricsplus", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("musixmatch", ProviderCapabilities.Lyrics, ProviderAccountRequirement.Optional),
+        ("spicylyrics", ProviderCapabilities.Lyrics, ProviderAccountRequirement.Required),
         ("lastfm", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
         ("listenbrainz", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
         ("multi-scrobbler", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
@@ -696,6 +697,7 @@ public class ProviderStatusManager
         bool? configured = (baseline.Provider, baseline.Capability) switch
         {
             ("musixmatch", ProviderCapabilities.Lyrics) => IsConfiguredValue(SecretValue(secrets, "usertoken")),
+            ("spicylyrics", ProviderCapabilities.Lyrics) => IsConfiguredValue(SecretValue(secrets, "apikey")),
             ("apple-musickit", _) => IsConfiguredValue(SecretValue(secrets, "musicusertoken", "mediausertoken")) &&
                 (baseline.Capability is ProviderCapabilities.Metadata or ProviderCapabilities.Playlist || IsConfiguredValue(_appleMusicSettings.BaseUrl)),
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) =>
@@ -798,6 +800,7 @@ public class ProviderStatusManager
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
             ("lrcred" or "unison" or "paxsenix" or "genius" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
+            ("spicylyrics", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
             ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => true,
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => true,
@@ -831,6 +834,7 @@ public class ProviderStatusManager
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
             ("lrcred" or "unison" or "paxsenix" or "genius" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
+            ("spicylyrics", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
             ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => true,
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => true,
@@ -845,36 +849,16 @@ public class ProviderStatusManager
         CancellationToken cancellationToken,
         Guid? providerAccountId = null)
     {
+        if (provider == "spicylyrics" && capability == ProviderCapabilities.Lyrics)
+            return await ProbeDiagnosticAsync(provider, ProviderCapabilityKind.Lyrics, providerAccountId, cancellationToken);
         if (TryGetExtensionCapability(provider, capability, out var extensionCapability))
         {
             if (!extensionCapability!.HasUsableImplementation) return new(false, "probe_not_available");
-            var factory = _services?.GetService<ProviderDiagnosticExecutionFactory>();
-            var operations = _services?.GetService<ProviderTryOperations>();
-            if (factory == null || operations == null) return new(false, "probe_not_available");
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
-            var actor = new ProviderActorContext(ProviderActorKind.SystemJob, null, durableJobId: Guid.NewGuid());
-            if (providerAccountId.HasValue)
-            {
-                var database = _services?.GetService<IDbContextFactory<AllstarrDbContext>>();
-                if (database == null) return new(false, "administrator_required");
-                await using var db = await database.CreateDbContextAsync(linked.Token);
-                var administrator = await db.Users.AsNoTracking().Where(item => item.Enabled && item.IsAdmin)
-                    .OrderBy(item => item.Id).FirstOrDefaultAsync(linked.Token);
-                if (administrator == null) return new(false, "administrator_required");
-                actor = new(ProviderActorKind.Administrator, administrator.Id,
-                    new ProviderBackendPrincipal(administrator.BackendType, administrator.BackendInstanceId, administrator.BackendPrincipalId));
-            }
-            var kind = extensionCapability.Capability;
-            var prepared = await factory.CreateAsync(actor, provider, kind, providerAccountId,
-                Guid.NewGuid().ToString("N"), DateTimeOffset.UtcNow.AddSeconds(30), linked.Token);
-            if (prepared.Context == null) return new(false, prepared.ReasonCode);
-            var outcome = await operations.ProbeAsync(prepared.Context, ProviderRegistry!.GetRequired(provider), kind);
-            cancellationToken.ThrowIfCancellationRequested();
-            return linked.IsCancellationRequested ? new(false, "timeout") : new(outcome.Succeeded, outcome.ReasonCode);
+            return await ProbeDiagnosticAsync(provider, extensionCapability.Capability, providerAccountId, cancellationToken);
         }
         return (provider, capability) switch
         {
+
             ("spotify", ProviderCapabilities.Playlist) => await TestSpotifyPlaylistAsync(
                 SecretValue(accountSecrets, "sessioncookie", "spdc", "cookie") ?? _spotifySettings.SessionCookie,
                 cancellationToken),
@@ -899,6 +883,35 @@ public class ProviderStatusManager
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => await TestAudioMuseAsync(accountSecrets, cancellationToken),
             _ => new ProbeOutcome(false, "probe_not_available")
         };
+    }
+
+
+    private async Task<ProbeOutcome> ProbeDiagnosticAsync(string provider, ProviderCapabilityKind kind,
+        Guid? providerAccountId, CancellationToken cancellationToken)
+    {
+        var factory = _services?.GetService<ProviderDiagnosticExecutionFactory>();
+        var operations = _services?.GetService<ProviderTryOperations>();
+        if (factory == null || operations == null) return new(false, "probe_not_available");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        var actor = new ProviderActorContext(ProviderActorKind.SystemJob, null, durableJobId: Guid.NewGuid());
+        if (providerAccountId.HasValue)
+        {
+            var database = _services?.GetService<IDbContextFactory<AllstarrDbContext>>();
+            if (database == null) return new(false, "administrator_required");
+            await using var db = await database.CreateDbContextAsync(linked.Token);
+            var administrator = await db.Users.AsNoTracking().Where(item => item.Enabled && item.IsAdmin)
+                .OrderBy(item => item.Id).FirstOrDefaultAsync(linked.Token);
+            if (administrator == null) return new(false, "administrator_required");
+            actor = new(ProviderActorKind.Administrator, administrator.Id,
+                new ProviderBackendPrincipal(administrator.BackendType, administrator.BackendInstanceId, administrator.BackendPrincipalId));
+        }
+        var prepared = await factory.CreateAsync(actor, provider, kind, providerAccountId,
+            Guid.NewGuid().ToString("N"), DateTimeOffset.UtcNow.AddSeconds(30), linked.Token);
+        if (prepared.Context == null) return new(false, prepared.ReasonCode);
+        var outcome = await operations.ProbeAsync(prepared.Context, ProviderRegistry!.GetRequired(provider), kind);
+        cancellationToken.ThrowIfCancellationRequested();
+        return linked.IsCancellationRequested ? new(false, "timeout") : new(outcome.Succeeded, outcome.ReasonCode);
     }
 
     private async Task<ProbeOutcome> TestAudioMuseAsync(

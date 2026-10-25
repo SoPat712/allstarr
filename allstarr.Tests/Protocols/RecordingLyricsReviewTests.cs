@@ -13,6 +13,27 @@ namespace allstarr.Tests;
 
 public sealed class RecordingLyricsReviewTests
 {
+    [Fact]
+    public async Task SpicyPreviewCreditsSurviveTruncationAndCreditOnlyChangesInvalidateRevision()
+    {
+        var fixture = new Fixture();
+        fixture.SetupIdentity();
+        fixture.SetupChoices(new RecordingLyricsChoiceLayers(null, null));
+        fixture.Providers.Setup(item => item.GetSongAsync(fixture.Context, "allstarr", RecordingId.ToString("D"))).ReturnsAsync(fixture.ProviderSong());
+        fixture.Library.Setup(item => item.ResolveKnownTrackAsync(fixture.Context, fixture.Recording.PublicId, fixture.Context.CancellationToken)).ReturnsAsync((string?)null);
+        var credits = new ProviderLyricsAttribution("spicylyrics", "spicy_lyrics", new("Uploader", "https://spicylyrics.org/uid/1001"));
+        fixture.Lyrics.Setup(item => item.FindAllAsync(fixture.Context, It.IsAny<Song>(), RecordingId.ToString("N"), It.IsAny<ProtocolLyricsSources?>()))
+            .Returns(() => Task.FromResult<IReadOnlyList<ProtocolLyricsCandidate>>([new("spicylyrics", new LyricsInfo { PlainLyrics = new string('x', 40_000), Attribution = credits })]));
+        var first = Assert.Single((await fixture.Service.GetAsync(fixture.Context, RecordingId, "personal")).Sources);
+        Assert.True(first.Truncated);
+        Assert.Equal(credits, first.Attribution);
+        Assert.Equal("spicylyrics", first.SourceId);
+        credits = new("spicylyrics", "spicy_lyrics", new("Updated uploader", "https://spicylyrics.org/uid/1001"));
+        var second = Assert.Single((await fixture.Service.GetAsync(fixture.Context, RecordingId, "personal")).Sources);
+        Assert.NotEqual(first.PreviewRevision, second.PreviewRevision);
+        Assert.Equal(first.Preview, second.Preview);
+    }
+
     private static readonly Guid RecordingId = Guid.Parse("11111111-1111-4111-8111-111111111111");
     private static readonly Guid UserId = Guid.Parse("22222222-2222-4222-8222-222222222222");
 

@@ -25,6 +25,87 @@ namespace allstarr.Tests;
 public sealed class ProtocolLyricsAutomaticTests
 {
     [Fact]
+    public async Task SpicyAutomaticMissingAliasDoesNotStartExternalDiscovery()
+    {
+        var recording = Guid.NewGuid();
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        identities.Setup(item => item.GetStoredSongsAsync(It.IsAny<ProviderActorContext>(), recording.ToString("D"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<Song>());
+        var links = new Mock<ICrossProviderLinkResolver>(MockBehavior.Strict);
+        var source = new Source("spicylyrics", Result("spicylyrics", false));
+        await using var fixture = new Fixture(identities.Object, links.Object, source)
+        { Recording = recording, ExternalProvider = "deezer", ExternalId = "42" };
+        Assert.Null(await fixture.FindAsync().WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(0, source.Calls);
+        identities.VerifyAll();
+        links.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task SpicyDeferredAliasPreparationCannotHoldAnEarlierAsynchronousAnswer()
+    {
+        var aliasEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var aliasRelease = new TaskCompletionSource<IReadOnlyList<Song>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var recording = Guid.NewGuid();
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        identities.Setup(item => item.GetStoredSongsAsync(It.IsAny<ProviderActorContext>(), recording.ToString("D"), It.IsAny<CancellationToken>()))
+            .Returns(() => { aliasEntered.TrySetResult(); return aliasRelease.Task; });
+        var links = new Mock<ICrossProviderLinkResolver>(MockBehavior.Strict);
+        var first = new Source("lrclib");
+        var later = new Source("spicylyrics", Result("spicylyrics", false));
+        await using var fixture = new Fixture(identities.Object, links.Object, first, later)
+        { Recording = recording, ExternalProvider = "deezer", ExternalId = "42" };
+        var pending = fixture.FindAsync();
+        try
+        {
+            await StartAsync(pending, first);
+            first.Completion.TrySetResult(Result("lrclib", false));
+            Assert.Equal("lrclib", (await pending.WaitAsync(TimeSpan.FromSeconds(10)))?.Source);
+            Assert.False(aliasEntered.Task.IsCompleted);
+            Assert.Equal(0, later.Calls);
+            links.VerifyNoOtherCalls();
+            identities.VerifyNoOtherCalls();
+        }
+        finally { aliasRelease.TrySetResult([]); first.CompleteAll(); await pending.WaitAsync(TimeSpan.FromSeconds(10)); }
+    }
+
+    [Fact]
+    public async Task SpicyOwnedLateCompletionWarmsTheSameForegroundBinding()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var handler = new SpicyLyricsTestHandler(SpicyLyricsTestData.Payload("syllable"))
+        { BeforeResponse = async token => { entered.TrySetResult(); await release.Task.WaitAsync(token); } };
+        using var http = new HttpClient(handler);
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var cache = new SpicyLyricsTestCache();
+        var source = new SpicyLyricsCapabilityAdapter(http, new SpicyLyricsTestSecrets(), cache, clock: clock);
+        var higher = new Source("lrclib");
+        var lower = new Source("lrcred", Result("lrcred", false));
+        await using var fixture = new Fixture(clock, higher, source, lower) { UseAccount = true, SpotifyId = SpicyLyricsTestData.TrackId };
+        var snapshot = await ((IInternalLyricsCapability)source).CaptureSourceAsync(default);
+        ((ILyricsOutcomeObserver)fixture.Health).ObserveLyrics(SpicyLyricsTestData.Context(account: fixture.Account), null, TimeSpan.Zero, snapshot.ConfigurationId);
+        var pending = fixture.FindAsync();
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await fixture.Clock.WaitForTimersAsync(TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(1.5));
+            fixture.Clock.Advance(TimeSpan.FromSeconds(1.5));
+            Assert.Equal("lrcred", (await pending.WaitAsync(TimeSpan.FromSeconds(10)))?.Source);
+            release.TrySetResult();
+            await cache.Written.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var foreground = new ProviderExecutionContext(fixture.Protocol.Actor!, "spicylyrics",
+                new(fixture.Account, "spicylyrics", ProviderAccountScope.Shared, 1, secretReferenceId: SpicyLyricsTestData.SecretId),
+                SpicyLyricsTestData.Context().Policy, "foreground", "different-correlation", clock.GetUtcNow().AddMinutes(1), default);
+            var replay = await new SpicyLyricsCapabilityAdapter(http, new SpicyLyricsTestSecrets(), cache, clock: clock)
+                .FetchLyricsAsync(foreground, SpicyLyricsTestData.Request());
+            Assert.Equal("spicy_lyrics", replay.RequireValue().Attribution!.Catalog);
+            Assert.Equal(1, handler.Calls);
+        }
+        finally { release.TrySetResult(); higher.CompleteAll(); await pending.WaitAsync(TimeSpan.FromSeconds(10)); }
+    }
+
+    [Fact]
     public async Task ImmediateEarlierAnswerDoesNotStartLaterHeldIdentityDiscovery()
     {
         var release = new TaskCompletionSource<IReadOnlyList<CrossProviderLinkCandidate>>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -700,7 +781,7 @@ public sealed class ProtocolLyricsAutomaticTests
         private readonly IProviderLyricsCapability[] _sources;
         internal readonly ManualTimeProvider Clock;
         internal readonly ConcurrentQueue<ProviderRoutePurpose> Plans = new();
-        internal string? ExternalProvider, ExternalId;
+        internal string? ExternalProvider, ExternalId, SpotifyId;
         internal Guid? Recording;
         internal bool RejectRecordingTarget;
         internal readonly ProtocolLyricsResolver Resolver;
@@ -711,10 +792,12 @@ public sealed class ProtocolLyricsAutomaticTests
         internal readonly ProtocolProviderGateway Gateway;
         internal readonly ProviderRuntimeHealth Health;
         internal EffectiveProviderPolicySnapshot CurrentPolicy;
-        internal Fixture(params IProviderLyricsCapability[] sources) : this(new ManualTimeProvider(DateTimeOffset.UtcNow), null, sources) { }
-        internal Fixture(ICrossProviderLinkResolver links, params IProviderLyricsCapability[] sources) : this(new ManualTimeProvider(DateTimeOffset.UtcNow), links, sources) { }
-        internal Fixture(ManualTimeProvider clock, params IProviderLyricsCapability[] sources) : this(clock, null, sources) { }
-        private Fixture(ManualTimeProvider clock, ICrossProviderLinkResolver? links, params IProviderLyricsCapability[] sources)
+        internal Fixture(params IProviderLyricsCapability[] sources) : this(new ManualTimeProvider(DateTimeOffset.UtcNow), null, null, sources) { }
+        internal Fixture(ICrossProviderLinkResolver links, params IProviderLyricsCapability[] sources) : this(new ManualTimeProvider(DateTimeOffset.UtcNow), links, null, sources) { }
+        internal Fixture(ManualTimeProvider clock, params IProviderLyricsCapability[] sources) : this(clock, null, null, sources) { }
+        internal Fixture(ITrackIdentityService identities, ICrossProviderLinkResolver links, params IProviderLyricsCapability[] sources)
+            : this(new ManualTimeProvider(DateTimeOffset.UtcNow), links, identities, sources) { }
+        private Fixture(ManualTimeProvider clock, ICrossProviderLinkResolver? links, ITrackIdentityService? identities, params IProviderLyricsCapability[] sources)
         {
             Clock = clock;
             _sources = sources;
@@ -737,7 +820,7 @@ public sealed class ProtocolLyricsAutomaticTests
                         new(request.CorrelationId, request.Capability, null, null, [])));
                 var source = sources.Single(source => source.ProviderId == id);
                 var descriptor = registry.GetRequired(id);
-                var context = new ProviderExecutionContext(request.Actor, id, UseAccount ? new ProviderAccountContext(Account, id, ProviderAccountScope.Shared, AccountRevision) : null,
+                var context = new ProviderExecutionContext(request.Actor, id, UseAccount ? new ProviderAccountContext(Account, id, ProviderAccountScope.Shared, AccountRevision, secretReferenceId: id == "spicylyrics" ? SpicyLyricsTestData.SecretId : null) : null,
                     request.Policy, request.OperationId, request.CorrelationId, request.Deadline, request.CancellationToken);
                 return Task.FromResult(new ProviderRoutePlan<IProviderLyricsCapability>(request,
                     [new(0, descriptor, Assert.Single(descriptor.Capabilities), ObservedProviderCapabilities.Wrap<IProviderLyricsCapability>(source, health), context, request.SourceTrackId?.ProviderId == "allstarr" ? new(id, ProviderResourceKind.Track, "local-recording-target") : request.SourceTrackId)],
@@ -746,7 +829,7 @@ public sealed class ProtocolLyricsAutomaticTests
             var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             { ["Providers:LyricsOrder"] = string.Join(',', sources.Select(source => source.ProviderId)) }).Build();
             var gateway = Gateway = new ProtocolProviderGateway(router.Object, registry, Mock.Of<IHttpClientFactory>(), configuration, effectivePolicies: policies.Object, outcomes: health, timeProvider: Clock);
-            Resolver = new(gateway, NullLogger<ProtocolLyricsResolver>.Instance, crossLinks: links, effectivePolicies: policies.Object, timeProvider: Clock);
+            Resolver = new(gateway, NullLogger<ProtocolLyricsResolver>.Instance, crossLinks: links, effectivePolicies: policies.Object, timeProvider: Clock, identities: identities);
             Protocol = new(ProtocolKind.Jellyfin, "fixture", "listener", new AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "fixture", "listener", "Listener", false),
                 "lyrics", Clock.GetUtcNow().AddMinutes(1), default);
         }
@@ -758,7 +841,7 @@ public sealed class ProtocolLyricsAutomaticTests
         internal Task<allstarr.Models.Lyrics.LyricsInfo?> FindAsync(ProtocolLyricsSources? sources = null, CancellationToken token = default, TimeSpan? deadline = null) => Resolver.FindAsync(
             new(Protocol.Protocol, Protocol.BackendInstanceId, Protocol.VerifiedBackendPrincipalId, Protocol.Principal, Protocol.CorrelationId,
                 deadline.HasValue ? Clock.GetUtcNow().Add(deadline.Value) : Protocol.Deadline, token),
-            new Song { Title = "Fixture", Artist = "Artist", Artists = ["Artist"], Album = "Album", Isrc = "USFIX0000001", CanonicalRecordingId = Recording, ExternalProvider = ExternalProvider, ExternalId = ExternalId }, "recording", sources ?? new ProtocolLyricsSources());
+            new Song { Title = "Fixture", Artist = "Artist", Artists = ["Artist"], Album = "Album", Isrc = "USFIX0000001", CanonicalRecordingId = Recording, ExternalProvider = ExternalProvider, ExternalId = ExternalId, SpotifyId = SpotifyId }, "recording", sources ?? new ProtocolLyricsSources());
     }
     private sealed class WaitingHandler : HttpMessageHandler
     {

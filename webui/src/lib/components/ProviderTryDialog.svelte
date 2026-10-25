@@ -23,6 +23,7 @@
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
+  import LyricsAttribution from "$lib/components/LyricsAttribution.svelte";
 
   let {
     open = $bindable(false),
@@ -84,7 +85,8 @@
   const operation = (capability: Tab, id: string) => capabilities.find((item) => item.capability === capability)?.operations.find((item) => item.id === id);
   const search = $derived(operation("metadata", "search"));
   const canSearchSongs = $derived(Boolean(search?.kinds?.includes("tracks") ?? search));
-  const canFindLyrics = $derived(canSearchSongs || searchSources.length > 0);
+  const spicyLyrics = $derived(provider.id === "spicylyrics");
+  const canFindLyrics = $derived(!spicyLyrics && (canSearchSongs || searchSources.length > 0));
   const lyricNeedsArtist = $derived(results.lyrics?.reasonCode === "needs_artist");
   const suggestions = [
     { title: "Get Lucky", artist: "Daft Punk" },
@@ -222,6 +224,10 @@
   }
 
   function directLyrics() {
+    if (spicyLyrics) {
+      if (lyricTrackId.trim()) void run("lyrics", { operation: "lyrics", trackId: lyricTrackId.trim() });
+      return;
+    }
     const song = splitLyricSong(lyricTitle);
     if (!song.title && !lyricIsrc.trim()) return;
     void run("lyrics", {
@@ -392,7 +398,7 @@
       {#if missing}<SearchX size={20} aria-hidden="true" />{:else}<CircleAlert size={20} aria-hidden="true" />{/if}
       <div>
         <strong>{failure(value)}</strong>
-        {#if missing && hints[target]}<small>{hints[target]}</small>{/if}
+        {#if missing && hints[target]}<small>{target === "lyrics" && spicyLyrics ? "Check the Spotify track link or ID, or try another song." : hints[target]}</small>{/if}
         <small class="try-outcome-meta">{elapsed(value.elapsedMs)}{value.reasonCode ? ` · ${value.reasonCode}` : ""}</small>
       </div>
     </div>
@@ -487,6 +493,16 @@
             {/if}
 
           {:else if tab === "lyrics"}
+            {#if spicyLyrics}
+              <form class="try-searchbar" onsubmit={(event) => { event.preventDefault(); directLyrics(); }}>
+                <Search size={20} aria-hidden="true" />
+                <label class="sr-only" for="try-spicy-track">Spotify track link or ID</label>
+                <input id="try-spicy-track" type="text" bind:value={lyricTrackId} placeholder="Spotify track link or ID"
+                  maxlength={500} autocomplete="off" disabled={Boolean(running)} />
+                <Button type="submit" variant="secondary" disabled={Boolean(running) || !lyricTrackId.trim()}>Get lyrics</Button>
+              </form>
+              <p class="try-facts">Paste a Spotify track link, URI or ID. A Spotify account is not needed.</p>
+            {:else}
             <div class="try-lyric-query">
               <form class="try-searchbar" onsubmit={findLyrics}>
                 <Search size={20} aria-hidden="true" />
@@ -533,6 +549,7 @@
             {:else if picks.lyrics && !errors.lyrics}
               <div class="try-outcome" data-tone="neutral" role="status"><SearchX size={20} aria-hidden="true" /><div><strong>No matching songs found.</strong><small>Use what you typed, or try another title.</small></div></div>
             {/if}
+            {/if}
             {#if !lyricNeedsArtist && !result?.succeeded}{@render status("lyrics", result, "")}{/if}
             {#if result?.succeeded && result.lyrics}
               <section class="try-card try-lyrics" aria-label="Lyrics">
@@ -542,6 +559,7 @@
                   {#if result.lyrics.source}<span>From {lyricsSourceDisplayName([...providerDefinitions, provider], result.lyrics.source)}</span>{/if}
                   {#if result.lyrics.language}<span>Language: {result.lyrics.language}</span>{/if}
                 </p>
+                <LyricsAttribution sourceId={result.lyrics.source} attribution={result.lyrics.attribution} />
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex (The lyrics scroll region supports keyboard scrolling.) -->
                 <div class="try-lyric-scroll" role="region" aria-label="Lyric lines" tabindex="0">
                   <ol class="try-lyric-lines" class:untimed={result.lyrics.format === "plain"}>

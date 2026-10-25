@@ -1,0 +1,29 @@
+{
+  "Body": {
+    "id": "AbCdEfGhIjKlMnOpQrStUv",
+    "source": "spicy_lyrics",
+    "UploadAttribution": {
+      "Uploader": {
+        "id": "1001",
+        "username": "Fixture uploader",
+        "url": "https://spicylyrics.org/uid/1001"
+      },
+      "Maker": {
+        "id": "1002",
+        "username": "Fixture maker",
+        "url": "https://spicylyrics.org/uid/1002"
+      }
+    },
+    "Type": "Static",
+    "Lines": [
+      {
+        "Text": "First plain line"
+      },
+      {
+        "Text": "Second plain line"
+      }
+    ]
+  },
+  "Status": 200,
+  "Type": "object"
+}

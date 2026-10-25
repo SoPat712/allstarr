@@ -14,6 +14,144 @@ namespace allstarr.Tests;
 
 public sealed class ProtocolLyricsResolverTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SpicyNoAliasNeverStartsItsOwnCrossLinkSearch(bool automatic)
+    {
+        var context = LyricsContext();
+        var recording = Guid.NewGuid();
+        var song = LyricsSong();
+        song.CanonicalRecordingId = recording;
+        song.ExternalProvider = "deezer";
+        song.ExternalId = "42";
+        var links = new Mock<ICrossProviderLinkResolver>(MockBehavior.Strict);
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        identities.Setup(item => item.GetStoredSongsAsync(context.Actor!, recording.ToString("D"), context.CancellationToken)).ReturnsAsync(Array.Empty<Song>());
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["spicylyrics"]);
+        var resolver = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance, crossLinks: links.Object, identities: identities.Object);
+        if (automatic) Assert.Null(await resolver.FindAsync(context, song, "recording", new ProtocolLyricsSources()));
+        else Assert.Null(Assert.Single(await resolver.FindAllAsync(context, song, "recording")).Lyrics);
+        links.VerifyNoOtherCalls();
+        identities.VerifyAll();
+        providers.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics), Times.Once);
+        providers.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task SpicyUsesOnlyOneAuthorizedStoredSpotifyAlias(int count)
+    {
+        var context = LyricsContext();
+        var song = LyricsSong();
+        var recording = Guid.NewGuid();
+        song.CanonicalRecordingId = recording;
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        var stored = new List<Song>();
+        if (count > 0) stored.Add(new() { ExternalProvider = "spotify", ExternalId = SpicyLyricsTestData.TrackId });
+        if (count > 1) stored.Add(new() { ExternalProvider = "spotify", ExternalId = "ZbCdEfGhIjKlMnOpQrStUv" });
+        identities.Setup(item => item.GetStoredSongsAsync(context.Actor!, recording.ToString("D"), context.CancellationToken)).ReturnsAsync(stored);
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["spicylyrics"]);
+        if (count == 1) providers.Setup(item => item.GetLyricsAsync(context, "spicylyrics", SpicyLyricsTestData.TrackId,
+                ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "spicylyrics", ProviderLyricsFormat.PlainText, "Exact words"));
+        var result = Assert.Single(await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance, identities: identities.Object)
+            .FindAllAsync(context, song, "recording"));
+        Assert.Equal(count == 1, result.Lyrics != null);
+        identities.VerifyAll();
+        providers.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SpicyReusesOnlyVerifiedExistingSpotifyCrosslink(bool verified)
+    {
+        var context = LyricsContext();
+        var song = LyricsSong();
+        song.ExternalProvider = "deezer";
+        song.ExternalId = "42";
+        var links = new Mock<ICrossProviderLinkResolver>(MockBehavior.Strict);
+        links.Setup(item => item.ResolveAsync(It.IsAny<ExternalTrackMatchSnapshot>(), It.IsAny<IReadOnlyList<ProviderExternalResourceId>>(),
+                context.Actor!, It.IsAny<string>(), context.CancellationToken))
+            .ReturnsAsync([new("spotify", SpicyLyricsTestData.TrackId, verified, 1, "fixture")]);
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["spotify", "spicylyrics"]);
+        if (verified) providers.Setup(item => item.GetLyricsAsync(context, "spotify", SpicyLyricsTestData.TrackId,
+                ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null)).ReturnsAsync((ProviderLyricsResult?)null);
+        if (verified) providers.Setup(item => item.GetLyricsAsync(context, "spicylyrics", SpicyLyricsTestData.TrackId,
+                ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "spicylyrics", ProviderLyricsFormat.PlainText, "Exact words"));
+        var result = (await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance, crossLinks: links.Object)
+            .FindAllAsync(context, song, "recording")).Single(item => item.SourceId == "spicylyrics");
+        Assert.Equal(verified, result.Lyrics != null);
+        links.VerifyAll();
+        providers.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SpicyResolverUsesKnownSpotifySelectorsAndPreservesSeparateCredits(bool household)
+    {
+        var context = LyricsContext();
+        var song = LyricsSong();
+        song.SpotifyId = SpicyLyricsTestData.TrackId;
+        var credits = new ProviderLyricsAttribution("spicylyrics", "apple_music");
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["spicylyrics"]);
+        if (household) providers.Setup(item => item.GetHouseholdLyricsAsync(context, "spicylyrics", SpicyLyricsTestData.TrackId,
+                ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "spicylyrics", ProviderLyricsFormat.PlainText, "Words", attribution: credits));
+        else providers.Setup(item => item.GetLyricsAsync(context, "spicylyrics", SpicyLyricsTestData.TrackId,
+                ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "spicylyrics", ProviderLyricsFormat.PlainText, "Words", attribution: credits));
+        var resolver = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance);
+        var result = Assert.Single(await resolver.FindAllAsync(context, song, "recording", new ProtocolLyricsSources(HouseholdOnly: household))).Lyrics;
+        Assert.Equal("spicylyrics", result!.Source);
+        Assert.Equal("apple_music", result.Attribution!.Catalog);
+        providers.VerifyAll();
+    }
+
+    [Fact]
+    public async Task SpicyMissingSelectorStaysUnavailableWithoutUsingMetadataHash()
+    {
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["spicylyrics"]);
+        var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance)
+            .FindAllAsync(LyricsContext(), LyricsSong(), "a-resource-key");
+        Assert.Null(Assert.Single(result).Lyrics);
+        providers.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics), Times.Once);
+        providers.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task SpicyPermanentSidecarSkipsPreferredSourceAndKeepsLaterEligibleFallback()
+    {
+        var context = LyricsContext();
+        var recording = Guid.NewGuid();
+        var song = LyricsSong();
+        song.CanonicalRecordingId = recording;
+        song.SpotifyId = SpicyLyricsTestData.TrackId;
+        var choices = new Mock<allstarr.Core.Music.IRecordingLyricsChoices>();
+        choices.Setup(item => item.GetAsync(context, recording)).ReturnsAsync(new allstarr.Core.Music.RecordingLyricsChoiceLayers(null,
+            new(Guid.NewGuid(), recording, null, "spicylyrics", 1)));
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["spicylyrics", "lrclib"]);
+        providers.Setup(item => item.GetHouseholdLyricsAsync(context, "lrclib", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+                "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib", ProviderLyricsFormat.PlainText, "Eligible words"));
+        var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance, choices: choices.Object)
+            .FindAsync(context, song, "recording", new ProtocolLyricsSources(HouseholdOnly: true) { ForPermanentSidecar = true });
+        Assert.Equal("lrclib", result?.Source);
+        providers.VerifyAll();
+        providers.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task UnchosenManualOnlyKeptSourceIsNeverReadAutomatically()
     {

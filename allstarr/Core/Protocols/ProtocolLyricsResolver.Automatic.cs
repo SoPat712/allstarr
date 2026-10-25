@@ -224,6 +224,7 @@ public sealed partial class ProtocolLyricsResolver
                 Source = id,
                 Revision = result.Revision,
                 TimedLines = result.TimedLines,
+                Attribution = result.Attribution,
                 PlainLyrics = result.Format == allstarr.Core.Capabilities.ProviderLyricsFormat.PlainText ? result.Content : null,
                 SyncedLyrics = result.Format == allstarr.Core.Capabilities.ProviderLyricsFormat.PlainText ? null : result.Content
             }, read);

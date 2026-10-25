@@ -1,0 +1,34 @@
+{
+  "Body": {
+    "id": "AbCdEfGhIjKlMnOpQrStUv",
+    "source": "spicy_lyrics",
+    "UploadAttribution": {
+      "Uploader": {
+        "id": "1001",
+        "username": "Fixture uploader",
+        "url": "https://spicylyrics.org/uid/1001"
+      },
+      "Maker": {
+        "id": "1002",
+        "username": "Fixture maker",
+        "url": "https://spicylyrics.org/uid/1002"
+      }
+    },
+    "Type": "Line",
+    "Content": [
+      {
+        "Type": "Vocal",
+        "Text": "Start",
+        "StartTime": 0,
+        "EndTime": 1.25
+      },
+      {
+        "Type": "Vocal",
+        "Text": "Finish",
+        "StartTime": 2
+      }
+    ]
+  },
+  "Status": 200,
+  "Type": "object"
+}
