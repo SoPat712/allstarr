@@ -14,7 +14,9 @@ public class CacheKeyBuilderTests
             CacheKeyBuilder.BuildProviderSearchKey("qobuz", accountId ?? account, revision, scope, query,
                 limit, true, albums, false);
         var key = Key();
+        Assert.StartsWith("search:v3:", key, StringComparison.Ordinal);
         Assert.Equal(ApplicationCacheCategory.SearchResults, ApplicationCachePolicyRegistry.Classify(key));
+        Assert.Equal(ApplicationCacheCategory.SearchResults, ApplicationCachePolicyRegistry.Classify(key.Replace("search:v3:", "search:v2:", StringComparison.Ordinal)));
         Assert.DoesNotContain("private query", key);
         Assert.DoesNotContain("listener-policy", key);
         Assert.NotEqual(key, Key(accountId: Guid.CreateVersion7()));

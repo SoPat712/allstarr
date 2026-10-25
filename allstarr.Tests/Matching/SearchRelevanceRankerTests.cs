@@ -5,6 +5,106 @@ namespace allstarr.Tests;
 public sealed class SearchRelevanceRankerTests
 {
     [Theory]
+    [InlineData("Get Lucky Daft Punk")]
+    [InlineData("Daft Punk Get Lucky")]
+    [InlineData("Get Lucky")]
+    public void GenuineAlternateTitleImprovesFitWithoutReplacingTheDisplayedTitle(string query)
+    {
+        var song = System.Text.Json.JsonSerializer.Deserialize<allstarr.Models.Domain.Song>("""
+            {"Title":"Renamed [V1]","Artist":"Daft Punk","Duration":156,"AlternateTitles":["Get Lucky"]}
+            """)!;
+
+        Assert.Equal(SearchRelevanceRanker.ScoreSong(query, "Get Lucky", "Daft Punk", durationSeconds: 156),
+            SearchRelevanceRanker.ScoreSong(query, song));
+        Assert.Equal("Renamed [V1]", song.Title);
+        Assert.True(SearchRelevanceRanker.ScoreSong(query, song) >
+            SearchRelevanceRanker.ScoreSong(query, song.Title, song.Artist, durationSeconds: song.Duration));
+    }
+
+    [Theory]
+    [InlineData("Live", null)]
+    [InlineData("Other Artist Remix", null)]
+    [InlineData("Music Box Version", null)]
+    [InlineData("Instrumental", null)]
+    [InlineData("Mixed", null)]
+    [InlineData("", "Continuous Mix")]
+    public void AlternateTitleRetainsTheRealRecordingPenalties(string label, string? album)
+    {
+        var title = label.Length == 0 ? "Renamed" : $"Renamed ({label})";
+        var song = System.Text.Json.JsonSerializer.Deserialize<allstarr.Models.Domain.Song>(
+            System.Text.Json.JsonSerializer.Serialize(new
+            {
+                Title = title,
+                Artist = "Daft Punk",
+                Album = album,
+                Duration = 240,
+                AlternateTitles = new[] { "Get Lucky" }
+            }))!;
+        var expectedTitle = label.Length == 0 ? "Get Lucky" : $"Get Lucky ({label})";
+        var expected = SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk", expectedTitle, "Daft Punk", album,
+            durationSeconds: 240);
+
+        Assert.Equal(expected, SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk", song));
+        Assert.True(expected < SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk", "Get Lucky", "Daft Punk",
+            durationSeconds: 240));
+    }
+
+    [Theory]
+    [InlineData(15, false, false)]
+    [InlineData(null, true, false)]
+    [InlineData(240, false, true)]
+    public void AlternateTitleRetainsActualDurationAndRecordingEvidence(int? duration, bool knownDuration, bool proven)
+    {
+        var song = new allstarr.Models.Domain.Song
+        {
+            Title = "Renamed",
+            Artist = "Daft Punk",
+            Duration = duration,
+            AlternateTitles = ["Get Lucky"],
+            Isrc = proven ? "USAA12345678" : null
+        };
+        Assert.Equal(SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk", "Get Lucky", "Daft Punk",
+                durationSeconds: duration, provenRecording: proven, hasKnownDurationVersion: knownDuration),
+            SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk", song, knownDuration));
+        Assert.Equal(SearchRelevanceRanker.RecordingTitle("Renamed", "Daft Punk"),
+            SearchRelevanceRanker.RecordingTitle(song.Title, song.Artist));
+    }
+
+    [Fact]
+    public void MissingInvalidExcessAndLocalAlternateTitlesDoNotAffectRelevance()
+    {
+        var song = new allstarr.Models.Domain.Song { Title = "Renamed", Artist = "Daft Punk", Duration = 240 };
+        var expected = SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk", song.Title, song.Artist, durationSeconds: 240);
+        Assert.Equal(expected, SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk", song));
+        song.AlternateTitles = null!;
+        Assert.Equal(expected, SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk", song));
+        song.AlternateTitles = ["", "Untrimmed ", "Control\u0001Alias", new string('a', 501), null!, "\n", "\t", "   ", "Get Lucky"];
+        Assert.Equal(expected, SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk", song));
+        song.AlternateTitles = ["Get Lucky"];
+        song.IsLocal = true;
+        Assert.Equal(expected, SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk", song));
+    }
+
+    [Fact]
+    public void AnAliasDoesNotSupplyAnotherArtistsCreditsOrEraseRequestedVersionIntent()
+    {
+        var song = new allstarr.Models.Domain.Song
+        {
+            Title = "Renamed (Other Artist Remix)",
+            Artist = "Someone Else",
+            Duration = 240,
+            AlternateTitles = ["Get Lucky Daft Punk"]
+        };
+        Assert.True(SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk", song) <
+            SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk", "Get Lucky", "Daft Punk", durationSeconds: 240));
+        song.Artist = "Daft Punk";
+        song.AlternateTitles = ["Get Lucky"];
+        var requested = SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk Other Artist Remix", song);
+        song.Title = "Renamed";
+        Assert.True(requested > SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk Other Artist Remix", song));
+    }
+
+    [Theory]
     [InlineData("Get Lucky (Daft Punk)", "Charlie Parra Del Riego")]
     [InlineData("Daft Punk - Get Lucky", "Various Artists")]
     [InlineData("Get Lucky - Daft Punk", "Teenage Kicks.")]

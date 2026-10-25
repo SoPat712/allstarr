@@ -6,6 +6,8 @@ using allstarr.Core.Storage;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Services.Common;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using Moq;
 
@@ -35,7 +37,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         cache.SetupGet(item => item.IsEnabled).Returns(true);
         var entries = new Dictionary<string, string>();
         cache.Setup(item => item.GetStringAsync(It.IsAny<string>()))
-            .ReturnsAsync((string key) => key.StartsWith("search:v2:", StringComparison.Ordinal) ? snapshot : entries.GetValueOrDefault(key));
+            .ReturnsAsync((string key) => key.StartsWith("search:v3:", StringComparison.Ordinal) ? snapshot : entries.GetValueOrDefault(key));
         cache.Setup(item => item.SetStringAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan?>()))
             .ReturnsAsync((string key, string value, TimeSpan? expiry) => { entries[key] = value; return true; });
         var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
@@ -72,18 +74,20 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     }
 
     [Theory]
-    [InlineData(ProtocolKind.Jellyfin, ProviderUseMode.Automatic)]
-    [InlineData(ProtocolKind.Subsonic, ProviderUseMode.Automatic)]
-    [InlineData(ProtocolKind.Jellyfin, ProviderUseMode.Off)]
-    [InlineData(ProtocolKind.Subsonic, ProviderUseMode.Off)]
-    [InlineData(ProtocolKind.Jellyfin, ProviderUseMode.ManualOnly)]
-    [InlineData(ProtocolKind.Subsonic, ProviderUseMode.ManualOnly)]
-    public async Task AlbumTracks_UseKnownDisplaySourceWithoutTrackLookups(ProtocolKind protocol, ProviderUseMode mode)
+    [InlineData(ProtocolKind.Jellyfin, ProviderUseMode.Automatic, true)]
+    [InlineData(ProtocolKind.Subsonic, ProviderUseMode.Automatic, true)]
+    [InlineData(ProtocolKind.Jellyfin, ProviderUseMode.Off, true)]
+    [InlineData(ProtocolKind.Subsonic, ProviderUseMode.Off, true)]
+    [InlineData(ProtocolKind.Jellyfin, ProviderUseMode.ManualOnly, true)]
+    [InlineData(ProtocolKind.Subsonic, ProviderUseMode.ManualOnly, true)]
+    [InlineData(ProtocolKind.Jellyfin, ProviderUseMode.Automatic, false)]
+    public async Task AlbumTracks_UseKnownDisplaySourceWithoutTrackLookups(ProtocolKind protocol, ProviderUseMode mode, bool displayAliases)
     {
         var metadata = SearchRankingCapability("deezer");
         Mock.Get(metadata).Setup(item => item.GetAlbumAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderAlbumLookupRequest>()))
             .ReturnsAsync(ProviderOutcome<ProviderAlbumMetadata>.Success(new(new("deezer", ProviderResourceKind.Album, "album"),
-                "Album", [new("Artist")], tracks: [new(new("deezer", ProviderResourceKind.Track, "song"), "Song", [new("Artist")])])));
+                "Album", [new("Artist")], tracks: [new(new("deezer", ProviderResourceKind.Track, "song"), "Song", [new("Artist")],
+                    alternateTitles: ["Original alias"])])));
         var registry = MetadataRegistry(metadata);
         var router = new Mock<IProviderRouter>();
         router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
@@ -96,7 +100,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 ProviderIdentityScope.Catalog, null, ProviderIdentityVerification.Verified, "odesli-link", 1) { PublicId = publicId } });
         identities.Setup(item => item.GetStoredSongsAsync(It.IsAny<ProviderActorContext>(), publicId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Song[] { new() { Id = publicId, CanonicalRecordingId = recordingId, Title = "Song", Artist = "Artist",
-                ExternalProvider = "apple-musickit", ExternalId = "preferred", Album = "Preferred album", AlbumId = "ext-apple-download-album-release" } });
+                ExternalProvider = "apple-musickit", ExternalId = "preferred", Album = "Preferred album", AlbumId = "ext-apple-download-album-release",
+                AlternateTitles = displayAliases ? ["Preferred alias"] : [] } });
         var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), identities: identities.Object);
 
         var song = Assert.Single((await gateway.GetAlbumAsync(DisplayPolicyContext(protocol, "apple-musickit", mode), "deezer", "album"))!.Songs);
@@ -107,6 +112,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             Assert.Equal("apple-download", song.ExternalProvider);
             Assert.Equal("Preferred album", song.Album);
             Assert.Equal("ext-apple-download-album-release", song.AlbumId);
+            Assert.Equal(displayAliases ? new[] { "Preferred alias" } : [], song.AlternateTitles);
         }
         else
         {
@@ -114,8 +120,69 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             Assert.Equal("song", song.ExternalId);
             Assert.Equal("Song", song.Title);
             Assert.Null(song.AlbumId);
+            Assert.Equal(new[] { "Original alias" }, song.AlternateTitles);
         }
         Mock.Get(metadata).Verify(item => item.GetTrackAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderTrackLookupRequest>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task SearchAlternateTitlesSurviveSerializationAndIgnoreTheOldPageNamespace()
+    {
+        var cache = new TestMemoryApplicationCache();
+        var capability = Mock.Get(SearchRankingCapability("deezer"));
+        var calls = 0;
+        var failProvider = false;
+        capability.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(() =>
+            {
+                Assert.False(failProvider);
+                calls++;
+                return ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("deezer",
+                    [new(new("deezer", ProviderResourceKind.Track, "original"), "Renamed [V1]", [new("Daft Punk")],
+                        duration: TimeSpan.FromSeconds(156), alternateTitles: ["Get Lucky"])]));
+            });
+        var registry = MetadataRegistry(capability.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => MetadataPlan(request, registry, capability.Object));
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry,
+                registry.GetRequiredCapability<IProviderStreamingCapability>("deezer", ProviderCapabilityKind.Streaming)));
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Providers:MetadataOrder"] = "deezer",
+            ["Providers:StreamingOrder"] = "deezer"
+        }).Build();
+        ProtocolProviderGateway NewGateway() => new(router.Object, registry, new HttpClientFactory(), configuration,
+            applicationCache: cache);
+        var context = SearchRankingContext(ProtocolKind.Jellyfin);
+
+        var cold = Assert.Single((await NewGateway().SearchAsync(context, "Get Lucky Daft Punk", 10, 0, 0)).Songs);
+        Assert.Equal(new[] { "Get Lucky" }, cold.AlternateTitles);
+        var key = Assert.Single(cache.GetKeysByPattern("search:v3:*"));
+        var oldKey = key.Replace("search:v3:", "search:v2:", StringComparison.Ordinal);
+        var snapshot = JsonNode.Parse((await cache.GetStringAsync(key))!)!;
+        Assert.True(snapshot["Result"]!["Songs"]![0]!.AsObject().Remove("AlternateTitles"));
+        await cache.SetStringAsync(oldKey, snapshot.ToJsonString(), TimeSpan.FromMinutes(5));
+        await cache.DeleteAsync(key);
+
+        var upgraded = Assert.Single((await NewGateway().SearchAsync(context, "Get Lucky Daft Punk", 10, 0, 0)).Songs);
+        Assert.Equal(2, calls);
+        failProvider = true;
+        var warm = Assert.Single((await NewGateway().SearchAsync(context, "Get Lucky Daft Punk", 10, 0, 0)).Songs);
+
+        Assert.Equal(2, calls);
+        Assert.Equal(cold.Id, upgraded.Id);
+        Assert.Equal(cold.Id, warm.Id);
+        Assert.Equal(cold.Title, warm.Title);
+        Assert.Equal(cold.PreciseDuration, warm.PreciseDuration);
+        Assert.Equal(cold.AlternateTitles, warm.AlternateTitles);
+        Assert.Equal(SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk", "Get Lucky", "Daft Punk", durationSeconds: 156),
+            SearchRelevanceRanker.ScoreSong("Get Lucky Daft Punk", warm));
+        Assert.True(await cache.ExistsAsync(oldKey));
+        Assert.Equal(ApplicationCacheCategory.SearchResults, ApplicationCachePolicyRegistry.Classify(oldKey));
+        Assert.Equal(ApplicationCachePolicyRegistry.Resolve(key).FreshFor, ApplicationCachePolicyRegistry.Resolve(oldKey).FreshFor);
+        capability.Verify(item => item.GetTrackAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderTrackLookupRequest>()), Times.Never);
     }
 
     [Fact]

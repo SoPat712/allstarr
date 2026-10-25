@@ -8,5 +8,6 @@ public static partial class SearchRelevanceRanker
         ScoreSong(query, song.Title, song.Artist, song.Album, song.AlbumArtist,
             song.PreciseDuration?.TotalSeconds ?? song.Duration,
             song.CanonicalRecordingId is { } recording && recording != Guid.Empty ||
-            song.Isrc?.Count(char.IsLetterOrDigit) == 12, hasKnownDurationVersion);
+            song.Isrc?.Count(char.IsLetterOrDigit) == 12, hasKnownDurationVersion,
+            song.IsLocal ? null : song.AlternateTitles);
 }

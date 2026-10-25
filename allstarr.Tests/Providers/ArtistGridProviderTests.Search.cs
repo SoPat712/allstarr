@@ -140,6 +140,8 @@ public sealed partial class ArtistGridProviderTests
         Assert.All(tracks.Skip(1), track => Assert.False(track.IsBestVersion));
         Assert.True(allstarr.Core.Protocols.ProtocolProviderGateway.Map(tracks[0]).IsBestVersion);
         Assert.Contains(tracks, track => track.Title == "Diva Shit [V1]");
+        Assert.Equal(new[] { "So Crazy", "Communicate" },
+            tracks.Single(track => track.Title == "Diva Shit [V1]").AlternateTitles);
         Assert.Contains(tracks, track => track.Title == "Communicate [V2]");
         Assert.Contains(tracks, track => track.Title == "Communicate [V4] [OG File]");
         Assert.All(tracks, track => Assert.Contains(track.Contributors, credit => credit.StartsWith("prod. ", StringComparison.Ordinal)));
@@ -150,7 +152,37 @@ public sealed partial class ArtistGridProviderTests
             Assert.Equal(track.Title, lookup.Title);
             Assert.Equal(track.Artists, lookup.Artists);
             Assert.Equal(track.IsBestVersion, lookup.IsBestVersion);
+            Assert.Equal(track.AlternateTitles, lookup.AlternateTitles);
+            Assert.Equal(track.Artwork, lookup.Artwork);
+            Assert.Equal(track.Duration, lookup.Duration);
         }
+    }
+
+    [Fact]
+    public async Task SearchDropsUnsafeOptionalAliasesAndBoundsTheRemainingEvidence()
+    {
+        var payload = JsonSerializer.Serialize(new
+        {
+            name = "Artist",
+            tab = new { gid = "g-1" },
+            tracks = new[] { new { name = new { raw = "Song\n(prod. Producer) (Bad\u0001Alias) " +
+                string.Join(' ', Enumerable.Range(0, 12).Select(index => $"(Alias {index})")) },
+                links = new[] { new { url = "https://pillows.su/f/song" } } } }
+        });
+        using var client = Client(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/artists.csv" => Response(Csv("Artist", "artist"), null, "text/csv"),
+            "/sh/artist/" => Response(payload, null, "application/json"),
+            _ => throw new InvalidOperationException("Unexpected fixture request.")
+        });
+
+        var track = Assert.Single((await Metadata(client).SearchTracksAsync(Context(), new("Artist Song", new(20))))
+            .RequireValue().Items);
+
+        Assert.Equal("Song", track.Title);
+        Assert.Equal(Enumerable.Range(0, 8).Select(index => $"Alias {index}"), track.AlternateTitles);
+        Assert.Equal(new[] { "prod. Producer" }, track.Contributors);
+        Assert.Equal("Artist", Assert.Single(track.Artists).Name);
     }
 
     [Fact]

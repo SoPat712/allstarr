@@ -85,7 +85,7 @@ public static class ApplicationCachePolicyRegistry
                 "musicbrainz:mbid:v2:",
                 "playback:metadata:v1:"))
             category = ApplicationCacheCategory.CanonicalMetadata;
-        if (key.StartsWith("search:v2:", StringComparison.Ordinal))
+        if (StartsWithAny(key, "search:v2:", "search:v3:"))
             category = ApplicationCacheCategory.SearchResults;
         if (key.StartsWith("playlist:discovery:v3:", StringComparison.Ordinal))
             category = ApplicationCacheCategory.PlaylistDiscovery;
@@ -102,7 +102,7 @@ public static class ApplicationCachePolicyRegistry
             category = ApplicationCacheCategory.ProviderResponse;
 
         return category != default ||
-               key.StartsWith("search:v2:", StringComparison.Ordinal);
+               StartsWithAny(key, "search:v2:", "search:v3:");
     }
 
     public static ApplicationCacheCategoryPolicy Resolve(string key, CacheSettings? settings = null) =>
