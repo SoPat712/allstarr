@@ -1,6 +1,7 @@
 using System.Globalization;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
+using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
@@ -52,7 +53,8 @@ public partial class JellyfinController
 
     [HttpGet("Audio/{itemId}/hls/{sessionId}/{part}")]
     [HttpHead("Audio/{itemId}/hls/{sessionId}/{part}")]
-    public IActionResult HlsAudioSegment(string itemId, string sessionId, string part, [FromServices] ProviderHlsSessions sessions)
+    public async Task<IActionResult> HlsAudioSegment(string itemId, string sessionId, string part, [FromServices] ProviderHlsSessions sessions,
+        [FromServices] ProviderStreamAdmission admission, [FromServices] ProtocolStreamingResponseAdapter responses)
     {
         if (part is not ("init.mp4" or "0.mp4")) return NotFound();
         var session = sessions.Find(sessionId);
@@ -62,8 +64,21 @@ public partial class JellyfinController
             session.PrincipalId != context.VerifiedBackendPrincipalId) return NotFound();
         var initialization = part == "init.mp4";
         Response.Headers.CacheControl = "private, no-store";
-        return File(new MemoryStream(session.Bytes, initialization ? 0 : session.InitializationLength,
-            initialization ? session.InitializationLength : session.Bytes.Length - session.InitializationLength, writable: false),
-            "audio/mp4", enableRangeProcessing: true);
+        var capacity = admission.TryEnter(context);
+        if (capacity == null) return HandleExternalStreamFailure("allstarr", itemId, new LocalCapacityException("provider-stream"));
+        var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StreamContent(new MemoryStream(session.Bytes, initialization ? 0 : session.InitializationLength,
+                initialization ? session.InitializationLength : session.Bytes.Length - session.InitializationLength, writable: false))
+        };
+        response.Content.Headers.ContentType = new("audio/mp4");
+        response.Content.Headers.ContentLength = initialization ? session.InitializationLength : session.Bytes.Length - session.InitializationLength;
+        try { return await responses.CreateAsync(HttpContext, response, HttpContext.RequestAborted, true, responseLease: capacity); }
+        catch
+        {
+            response.Dispose();
+            capacity.Dispose();
+            throw;
+        }
     }
 }

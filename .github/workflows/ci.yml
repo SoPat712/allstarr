@@ -35,6 +35,7 @@ jobs:
           bash -n tools/tests/live_jellyfin_smoke.sh
           python3 tools/tests/test_live_jellyfin_smoke.py
           python3 tools/tests/test_live_subsonic_smoke.py
+          python3 tools/tests/test_listener_capacity.py
 
       - name: Install media test tools
         run: |

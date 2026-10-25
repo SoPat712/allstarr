@@ -6,7 +6,8 @@ internal readonly record struct ProgressiveCacheReadState(
     bool Finished,
     bool Failed,
     Task Changed,
-    Task Completion);
+    Task Completion,
+    Exception? Failure = null);
 
 /// <summary>
 /// Reads a cache file while its owner publishes availability and completion state.
@@ -120,6 +121,7 @@ public sealed class ProgressiveCachingStream : Stream
         {
             cancellationToken.ThrowIfCancellationRequested();
             var snapshot = readState();
+            if (snapshot.Failed && snapshot.Failure is LocalCapacityException) throw new LocalCapacityException("audio-cache");
             if (snapshot.Failed || snapshot.AvailableLength < 0 || snapshot.TotalLength is < 0 ||
                 snapshot.TotalLength is { } total && snapshot.AvailableLength > total)
                 throw FailedTransfer();
@@ -171,6 +173,7 @@ public sealed class ProgressiveCachingStream : Stream
             while (true)
             {
                 var snapshot = readState();
+                if (snapshot.Failed && snapshot.Failure is LocalCapacityException) throw new LocalCapacityException("audio-cache");
                 if (snapshot.Failed) throw FailedTransfer();
                 if (snapshot.TotalLength is { } total)
                 {

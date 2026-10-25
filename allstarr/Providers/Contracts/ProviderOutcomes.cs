@@ -70,6 +70,9 @@ public sealed record ProviderError
         "apple-web-token-unavailable",
         "Apple's web-player token could not be fetched. Retry the Apple account test later.");
 
+    public static ProviderError LocalCapacity() => new(ProviderErrorKind.CapabilityUnavailable,
+        "local-capacity-unavailable", "Allstarr is at capacity. Try again shortly.", TimeSpan.FromSeconds(5));
+
     public static ProviderError ServiceUnavailable() => new(
         ProviderErrorKind.TransientFailure,
         "service_unavailable",
@@ -118,11 +121,13 @@ public sealed record ProviderError
     private ProviderError(
         ProviderErrorKind kind,
         string code,
-        string safeMessage)
+        string safeMessage,
+        TimeSpan? retryAfter = null)
     {
         Kind = kind;
         Code = code;
         SafeMessage = safeMessage;
+        RetryAfter = retryAfter;
     }
 
     private static string CodeFor(ProviderErrorKind kind) => kind switch

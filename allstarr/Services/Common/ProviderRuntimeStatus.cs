@@ -81,7 +81,7 @@ public sealed record ProviderRuntimeStatus
 
     public string? VerificationMethod { get; init; }
 
-    public static bool IsNeutralReason(string? reason) => reason is "probe_not_available" or "download-not-verified" or "sample-unavailable" or
+    public static bool IsNeutralReason(string? reason) => reason is "local-capacity-unavailable" or "probe_not_available" or "download-not-verified" or "sample-unavailable" or
         "not-found" or "not_found" or "NotFound" or "metadata-not-found" or "playlist-not-found" or "playlist-empty" or
         "playlist-sample-unavailable" or "http-404" or "http-410" or "incompatible-media" or "IncompatibleMedia" ||
         reason?.Contains("has no song to test with", StringComparison.Ordinal) == true ||

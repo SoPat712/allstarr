@@ -1,3 +1,4 @@
+using allstarr.Services.Common;
 using System.Diagnostics;
 using allstarr.Core.Health;
 
@@ -55,7 +56,7 @@ public static class ObservedProviderCapabilities
             }
             catch (Exception exception)
             {
-                if (exception is not OperationCanceledException || !context.CancellationToken.IsCancellationRequested)
+                if (!LocalCapacityException.IsLocal(exception) && (exception is not OperationCanceledException || !context.CancellationToken.IsCancellationRequested))
                 {
                     Observe(context, new ProviderError(exception is UnauthorizedAccessException
                         ? ProviderErrorKind.Unauthorized

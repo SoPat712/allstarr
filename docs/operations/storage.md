@@ -67,6 +67,22 @@ The encryption key ring defaults to `{Storage:DataDirectory}/keyring.json`; `Sec
 
 Audio, artwork, extension packages, and the encryption key ring remain files. Original backend music is read-only. Keep the configured encryption key ring together with any offline copy of the database: losing it makes the corresponding encrypted provider credentials unreadable. Stop Allstarr before making an offline copy of its data directory, and include any WAL sidecar files. Never copy or replace the active database piecemeal.
 
+## Audio capacity and cleanup
+
+**Settings → Storage → Audio limits** controls provider audio separately from the metadata, artwork and response-file caches. Changes apply to new work without a restart.
+
+| Setting | Default | Range |
+| --- | --- | --- |
+| Maximum audio cache | 2 GiB | 1–1024 GiB |
+| Provider streams per listener | 6 | 1–64 |
+| Concurrent media conversions | 2 | 1–16 |
+
+The audio budget includes completed cache files, in-progress fills and temporary original-download read-ahead. Original downloads use a private directory in the operating system's temporary folder, tied to the configured audio root. Leftovers from an interrupted process count toward the budget and remain protected for review. Concurrent requests for the same authorized source item share a fill; personal accounts, account revisions, quality choices and original-download purposes retain their own scopes. A listener's limit covers opening and active provider responses, including downloads, seeks and HLS segments. Native backend streaming keeps its existing proxy path.
+
+When more space is needed, the cache removes its least recently used eligible completed files. Hourly age-based cleanup uses the same ownership and reader checks, measured from the recorded last use. A recorded filesystem identity and content checksum must still match before removal. Active readers pin their bytes through completion, publication and temporary-file retirement. Lowering the ceiling does not interrupt those readers. Kept songs, downloaded copies, original backend files, unknown files, replaced files and symbolic links are never eviction candidates. Older cache files without verified ownership remain readable and protected; their space still counts toward the ceiling. Legacy transcoded files without a current owner also remain untouched. Do not delete unfamiliar files to clear this condition. Increase the ceiling or review storage through its existing management controls.
+
+Allstarr bounds its own audio conversion processes across playback, extension conversions and quality analysis. Saturated stream, conversion or audio-cache capacity returns HTTP **503** and **Retry-After: 5**. This local busy state does not count as a source failure or trigger source cooldown. Retrying after other responses finish normally frees capacity. A persistently full audio cache reports that its ceiling needs review. Optional external services manage their own resources separately.
+
 ## Event log and job retention
 
 A background cleanup keeps the event log and finished playback jobs from growing the database with listening time. Each playback progress report is its own durable job; finished (succeeded or cancelled) playback jobs and their attempt events are removed once they are older than the event-log retention period. Events that another durable record references, such as a legacy import, are kept. Set these under the event-log policy in Settings:

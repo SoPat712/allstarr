@@ -388,7 +388,7 @@ public sealed class ProviderRouter(
                 null);
         }
 
-        if (!AllowedFallbackFailures.Contains(error.Kind))
+        if (error.Code == "local-capacity-unavailable" || !AllowedFallbackFailures.Contains(error.Kind))
         {
             return new ProviderFallbackDecision<TCapability>(
                 ProviderFallbackDisposition.StopFailure,

@@ -126,7 +126,11 @@ A personal choice overrides the household choice. **Use household default** remo
 
 ### Settings
 
-Settings owns deployment behavior rather than provider credentials: playback quality, matching preferences, cache behavior, maintenance, backup, restore, and other operator policy. Controls that affect one feature stay near that feature when possible.
+Settings owns deployment behavior, cache policy, maintenance, backup and restore. Source credentials and matching controls stay in Integrations.
+
+In **Settings → Storage → Audio limits**, administrators can set the audio-cache ceiling (2 GiB by default), provider streams per listener (6), and concurrent media conversions (2). These limits apply to new work without restarting. Existing streams can finish. The audio limit is separate from the metadata, artwork and response-file cache limits; it also includes temporary read-ahead for original downloads. Cleanup removes the least recently used eligible audio while preserving files being served, kept music, downloaded copies and media-server files. Older cache files without verified ownership remain protected and count toward the limit.
+
+When a limit is reached, new provider requests receive **503** with **Retry-After** instead of waiting indefinitely. Retry shortly; if the audio cache stays full, increase its ceiling or review storage. Native media-server streaming continues through its usual path. See [audio capacity and cleanup](operations/storage.md#audio-capacity-and-cleanup).
 
 ### Scheduled health checks
 

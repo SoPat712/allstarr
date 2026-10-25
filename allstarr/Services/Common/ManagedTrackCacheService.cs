@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Security.Cryptography;
+using allstarr.Core.ManagedFiles;
 using Microsoft.Extensions.Caching.Memory;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
@@ -12,7 +14,7 @@ using Microsoft.Extensions.Options;
 
 namespace allstarr.Services.Common;
 
-public sealed class ManagedTrackCacheService : IAsyncDisposable
+public sealed partial class ManagedTrackCacheService : IAsyncDisposable
 {
     private readonly IConfiguration configuration;
     private readonly IOptions<SubsonicSettings> settings;
@@ -25,18 +27,24 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
     private readonly Dictionary<string, OpenGate> openings = new(StringComparer.Ordinal);
     private readonly Dictionary<string, DateTimeOffset> clientOpens = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource shutdown;
-    private long preparationReserved;
     private bool disposed;
     private Task? disposal;
 
     public ManagedTrackCacheService(IConfiguration configuration, IOptions<SubsonicSettings> settings,
         ILocalLibraryService localLibrary, ILogger<ManagedTrackCacheService> logger,
-        IHostApplicationLifetime? lifetime = null, TimeProvider? timeProvider = null)
+        IHostApplicationLifetime? lifetime = null, TimeProvider? timeProvider = null,
+        IDownloadedSongMappingStore? mappings = null, IManagedFileOperations? files = null,
+        MediaCapacityLimits? capacity = null, Func<long>? audioMaximumBytes = null)
     {
         this.configuration = configuration;
         this.settings = settings;
         this.localLibrary = localLibrary;
         this.logger = logger;
+        cacheMappings = mappings;
+        fileOperations = files ?? new PhysicalManagedFileOperations();
+        mediaLimits = capacity ?? new(configuration);
+        audioMaximumOverride = audioMaximumBytes;
+        if (audioMaximumBytes != null && audioMaximumBytes() <= 0) throw new ArgumentOutOfRangeException(nameof(audioMaximumBytes));
         clock = timeProvider ?? TimeProvider.System;
         shutdown = CancellationTokenSource.CreateLinkedTokenSource(lifetime?.ApplicationStopping ?? CancellationToken.None);
     }
@@ -148,7 +156,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         if (originalDownload) return null;
         var path = await localLibrary.GetLocalPathForExternalSongAsync(scope, track.ProviderId, track.Value);
         if (path == null) return null;
-        FileStream? file = null;
+        Stream? file = null;
         try
         {
             if (Path.GetExtension(path).Equals(".flac", StringComparison.OrdinalIgnoreCase) &&
@@ -157,7 +165,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 File.Move(path, path + $".legacy-id3-{Guid.NewGuid():N}");
                 return null;
             }
-            file = File.OpenRead(path);
+            file = await OpenPinnedAudioAsync(path, cancellationToken);
             if (file.Length == 0) { file.Dispose(); return null; }
             var extension = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
             var mime = extension switch
@@ -178,9 +186,6 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
             response.Content.Headers.ContentLength = file.Length;
             file = null;
             response.Content.Headers.ContentType = new(media.MimeType);
-            try { File.SetLastWriteTimeUtc(path, DateTime.UtcNow); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
             return new(response, CacheLease(media, true), track.ProviderId, track.Value,
                 scope.ProviderAccountId, IsCached: true, EffectiveQuality: scope.AudioQuality,
                 ServingAccountRevision: accountRevision)
@@ -209,7 +214,8 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         var scope = new DownloadedSongMappingScope(stream.ServingAccountId, stream.EffectiveQuality);
         var key = Key(scope, stream.ServingAccountRevision, providerId, externalId, protocol.IsOriginalDownload);
         if (active.ContainsKey(key)) return;
-        var cacheRoot = protocol.IsOriginalDownload ? Path.GetTempPath()
+        if (protocol.IsOriginalDownload) ValidateOriginalRoot(true);
+        var cacheRoot = protocol.IsOriginalDownload ? OriginalAudioRoot
             : Path.Combine(configuration["Library:DownloadPath"] ?? "./downloads", "cache");
         var partial = protocol.IsOriginalDownload ? Path.Combine(cacheRoot, $"allstarr-original-{Guid.NewGuid():N}.partial")
             : Path.Combine(cacheRoot, ".incoming", $"provider-{Guid.NewGuid():N}.partial");
@@ -233,24 +239,32 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         Stream source;
         try { source = await original.ReadAsStreamAsync(cancellationToken); }
         catch { await output.DisposeAsync(); TryDelete(partial); throw; }
+        AudioAllocation allocation;
+        try
+        {
+            allocation = await ReserveAudioAsync(partial, output,
+                stream.Response.StatusCode == HttpStatusCode.PartialContent ? original.Headers.ContentRange?.Length : original.Headers.ContentLength,
+                cancellationToken);
+        }
+        catch (LocalCapacityException) when (protocol.IsPreparation)
+        {
+            await output.DisposeAsync();
+            TryDelete(partial);
+            return;
+        }
+        catch { await output.DisposeAsync(); TryDelete(partial); throw; }
         Transfer? transfer = null;
-        var capacity = protocol.IsPreparation ? PreparationCapacity(cacheRoot) : long.MaxValue;
         lock (lifecycle)
         {
-            var remaining = Math.Max(0, capacity - preparationReserved);
-            var length = original.Headers.ContentLength;
-            var limit = protocol.IsPreparation
-                ? length is > 0 ? length <= remaining ? length.Value : 0 : remaining / 2
-                : long.MaxValue;
-            if (limit > 0 && !disposed && !shutdown.IsCancellationRequested && !active.ContainsKey(key))
+            if (!disposed && !shutdown.IsCancellationRequested && !active.ContainsKey(key))
             {
                 transfer = new(this, key, scope, providerId, externalId, media, cacheRoot,
                     partial, output, original, source,
                     stream.Response.StatusCode == HttpStatusCode.PartialContent ? original.Headers.ContentRange?.Length : original.Headers.ContentLength,
                     metadataFactory, retain, shutdown.Token, stream.FileFacts,
-                    protocol.IsPreparation ? cancellationToken : CancellationToken.None, protocol.IsPreparation, limit,
-                    stream.Lease.SupportsByteRanges, protocol.IsOriginalDownload);
-                if (protocol.IsPreparation) preparationReserved += limit;
+                    protocol.IsPreparation ? cancellationToken : CancellationToken.None, protocol.IsPreparation,
+                    protocol.IsPreparation ? allocation.AdmissionLimit : long.MaxValue,
+                    stream.Lease.SupportsByteRanges, protocol.IsOriginalDownload, allocation);
                 active[key] = transfer;
                 transfer.StartWorker();
             }
@@ -259,6 +273,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         {
             await output.DisposeAsync();
             TryDelete(partial);
+            AudioCompleted(allocation);
             return;
         }
         var reader = transfer.TryOpen(!protocol.IsPreparation);
@@ -289,6 +304,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         await Task.WhenAll(transfers.Select(transfer => transfer.Work));
         shutdown.Dispose();
         completedMedia.Dispose();
+        lock (audioAllocationGate) { originalRootHandle?.Dispose(); originalRootHandle = null; }
     }
 
     private ProviderMediaFormat ReadFileMedia(string path, string mime, string container, ProviderMediaFormat? known = null)
@@ -360,6 +376,8 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         private readonly ITimer idleTimer;
         private readonly ITimer? lifetimeTimer;
         private readonly bool originalDownload;
+        private readonly AudioAllocation allocation;
+        private Exception? failure;
         private readonly TaskCompletionSource ready = Signal();
         private readonly TaskCompletionSource complete = Signal();
         private readonly object gate = new();
@@ -378,7 +396,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
             string provider, string track, ProviderMediaFormat media, string cacheRoot, string path, FileStream output,
             HttpContent original, Stream source, long? total, Func<Task<Song?>> metadata, bool retain, CancellationToken stopping,
             PlaybackFileFacts fileFacts, CancellationToken preparationToken, bool preparation, long maximumBytes,
-            bool supportsUpstreamRanges, bool originalDownload)
+            bool supportsUpstreamRanges, bool originalDownload, AudioAllocation allocation)
         {
             this.owner = owner; this.key = key; this.scope = scope; this.provider = provider; this.track = track;
             FileFacts = fileFacts;
@@ -388,6 +406,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
             this.maximumBytes = maximumBytes;
             this.supportsUpstreamRanges = supportsUpstreamRanges;
             this.originalDownload = originalDownload;
+            this.allocation = allocation;
             PlaybackStarted = playbackStarted.Token;
             cancel = CancellationTokenSource.CreateLinkedTokenSource(stopping);
             idleTimer = owner.clock.CreateTimer(_ => StopIfIdle(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
@@ -425,6 +444,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                     playbackStarted.Cancel();
                 }
                 readers++;
+                owner.AudioPin(allocation);
                 var signal = changed;
                 changed = Signal();
                 signal.TrySetResult();
@@ -437,7 +457,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
 
         private ProgressiveCacheReadState Snapshot()
         {
-            lock (gate) return new(available, total, finished, failed, changed.Task, complete.Task);
+            lock (gate) return new(available, total, finished, failed, changed.Task, complete.Task, failure);
         }
 
         private void Advance(bool end = false, bool failure = false)
@@ -458,6 +478,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         {
             lock (gate)
             {
+                owner.AudioClosed(allocation);
                 if (--readers == 0 && !finished && !retired)
                     idleTimer.Change(TimeSpan.FromSeconds(10), Timeout.InfiniteTimeSpan);
                 var signal = changed;
@@ -488,6 +509,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 // Observe a metadata failure even when the audio source fails first.
                 _ = metadataTask.ContinueWith(task => _ = task.Exception, CancellationToken.None,
                     TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                using var contentHash = retain ? IncrementalHash.CreateHash(HashAlgorithmName.SHA256) : null;
                 var buffer = new byte[81920];
                 while (true)
                 {
@@ -498,6 +520,8 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                         throw new IOException("The prepared media exceeds the cache budget.");
                     if (total is { } expected && read > expected - available)
                         throw new IOException("The media source exceeded its declared length.");
+                    await owner.GrowAudioAsync(allocation, checked(available + read), cancel.Token);
+                    contentHash?.AppendData(buffer, 0, read);
                     await output.WriteAsync(buffer.AsMemory(0, read), cancel.Token);
                     await output.FlushAsync(cancel.Token);
                     lock (gate) available = checked(available + read);
@@ -505,7 +529,10 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 }
                 if (available == 0 || total is { } length && available != length)
                     throw new IOException("The media source ended before its declared length.");
+                allocation.ContentHash = contentHash == null ? null : Convert.ToHexStringLower(contentHash.GetHashAndReset());
                 await output.DisposeAsync();
+                owner.AudioPathChanged(allocation, path);
+                lock (owner.audioAllocationGate) allocation.Reserved = available;
                 original.Dispose();
                 verified = true;
                 FileFacts.Size = available;
@@ -527,10 +554,11 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                     await RetainForPlaybackAsync();
                 }
             }
-            catch (Exception)
+            catch (Exception error)
             {
+                failure = error is LocalCapacityException ? error : null;
                 Advance(end: true, failure: !verified);
-                if (!cancel.IsCancellationRequested && !preparation)
+                if (!cancel.IsCancellationRequested && !preparation && error is not LocalCapacityException)
                     owner.logger.LogWarning("The managed media transfer could not complete for {ProviderId}", provider);
             }
             finally
@@ -539,9 +567,9 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 try { original.Dispose(); } catch (IOException) { }
                 lock (gate) { retired = true; playbackStarted.Dispose(); }
                 if (!published) TryDelete(path);
-                complete.TrySetResult();
+                owner.AudioCompleted(allocation);
                 owner.active.TryRemove(key, out _);
-                if (preparation) { lock (owner.lifecycle) owner.preparationReserved -= maximumBytes; }
+                complete.TrySetResult();
                 preparationCancellation.Dispose();
                 idleTimer.Dispose();
                 lifetimeTimer?.Dispose();
@@ -596,35 +624,20 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 cancel.Token.ThrowIfCancellationRequested();
                 final = PathHelper.ResolveUniquePath(final);
                 lock (gate) { File.Move(path, final); path = final; }
+                owner.AudioPathChanged(allocation, final);
             }
             song.LocalPath = final;
             owner.completedMedia.Set(final, FileFacts.Measured ?? new TrackMediaFacts(Media, available),
                 new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1) });
             FileFacts.Media = Media;
             await owner.localLibrary.RegisterDownloadedSongAsync(scope, song, final);
+            await owner.MarkAudioPublishedAsync(allocation, scope, provider, track, cancel.Token);
             if (!preparation)
                 owner.logger.LogInformation("Published completed provider stream to the managed track cache for {ProviderId}", provider);
             return true;
         }
 
         private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
-    }
-
-    private long PreparationCapacity(string root)
-    {
-        var maximum = configuration.GetValue<long?>("Cache:MediaMaximumBytes") ??
-            (configuration.GetValue<long?>("Cache:MediaMaximumMegabytes") ?? 512) * 1024 * 1024;
-        var entry = configuration.GetValue<long?>("Cache:MediaMaximumEntryBytes") ??
-            configuration.GetValue<long?>("Cache:MediaMaximumEntryMegabytes") * 1024 * 1024 ?? maximum;
-        try
-        {
-            var used = Directory.Exists(root) ? Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
-                .Where(path => !path.Contains(Path.DirectorySeparatorChar + ".incoming" + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-                .Sum(path => new FileInfo(path).Length) : 0;
-            return Math.Min(entry, Math.Max(0, maximum - used));
-        }
-        catch (IOException) { return 0; }
-        catch (UnauthorizedAccessException) { return 0; }
     }
 
     private bool IsCacheMode() => settings.Value.StorageMode == StorageMode.Cache;

@@ -1400,6 +1400,7 @@ public sealed partial class ProtocolProviderGateway(
                 outcome = ProviderOutcome<(HttpResponseMessage, ProviderStreamLease)>.Failure(new(ProviderErrorKind.TransientFailure));
             }
             protocol.CancellationToken.ThrowIfCancellationRequested();
+            if (outcome.Error?.Code == LocalCapacityException.Code) throw new LocalCapacityException();
             if (!protocol.IsReadOnly && !headOnly)
                 outcomes?.ObservePlayback(candidateExecution, servingTrack, quality, outcome.Error, Stopwatch.GetElapsedTime(started),
                     outcome.IsSuccess ? outcome.RequireValue().Lease.Media : null);
@@ -1940,6 +1941,7 @@ public sealed partial class ProtocolProviderGateway(
 
     private static void ThrowRouteFailure(ProviderError error) => throw error switch
     {
+        { Code: LocalCapacityException.Code } => new LocalCapacityException(),
         { Code: "stream-range-unavailable" } => new HttpRequestException(error.SafeMessage, null,
             HttpStatusCode.RequestedRangeNotSatisfiable),
         { Code: "apple-download-sign-in-required" } => new ProtocolProviderUnavailableException(error),

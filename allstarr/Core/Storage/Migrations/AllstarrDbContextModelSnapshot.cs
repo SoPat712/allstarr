@@ -91,6 +91,9 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<int>("AudioQuality")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("CacheIdentityJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<long>("DownloadedAt")
                         .HasColumnType("INTEGER");
 

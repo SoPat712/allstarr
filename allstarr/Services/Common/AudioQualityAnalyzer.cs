@@ -17,8 +17,9 @@ public sealed record AudioQualityCheck(
     [property: JsonPropertyName("confidence")] double Confidence,
     [property: JsonPropertyName("likelySourceRate")] int? LikelySourceRate = null);
 
-public sealed class AudioQualityAnalyzer(FileMediaApplicationCache cache)
+public sealed class AudioQualityAnalyzer(FileMediaApplicationCache cache, MediaConversionGate? conversions = null)
 {
+    private readonly MediaConversionGate conversionGate = conversions ?? new();
     private const int TransformSize = 8192;
     private const int MaximumChannels = 8;
     private const int MaximumRate = 384000;
@@ -79,6 +80,7 @@ public sealed class AudioQualityAnalyzer(FileMediaApplicationCache cache)
                 await cache.SetAsync(key, result).WaitAsync(cancellationToken);
             return result;
         }
+        catch (LocalCapacityException) { throw; }
         catch (OperationCanceledException) { throw; }
         catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or
             JsonException or System.ComponentModel.Win32Exception or InvalidOperationException or OverflowException or KeyNotFoundException or ArgumentException)
@@ -175,7 +177,7 @@ public sealed class AudioQualityAnalyzer(FileMediaApplicationCache cache)
         analysis.Add(samples, cancellationToken);
     }
 
-    private static async Task<AudioFormat?> ProbeAsync(string path, CancellationToken cancellationToken)
+    private async Task<AudioFormat?> ProbeAsync(string path, CancellationToken cancellationToken)
     {
         var bytes = await RunAsync("ffprobe", ["-v", "error", "-protocol_whitelist", "file,pipe", "-threads", "1", "-select_streams", "a:0", "-show_entries",
             "stream=sample_rate,channels,bits_per_raw_sample,bits_per_sample,codec_name,duration:format=duration",
@@ -196,7 +198,7 @@ public sealed class AudioQualityAnalyzer(FileMediaApplicationCache cache)
         return new(Integer(stream, "sample_rate"), bits, Integer(stream, "channels"), duration, Lossless: lossless);
     }
 
-    private static async Task DecodeWindowAsync(string path, AudioFormat format, double start, double seconds,
+    private async Task DecodeWindowAsync(string path, AudioFormat format, double start, double seconds,
         SpectrumAnalysis analysis, CancellationToken cancellationToken)
     {
         var maximumFrames = (int)Math.Ceiling(seconds * format.Rate);
@@ -219,9 +221,10 @@ public sealed class AudioQualityAnalyzer(FileMediaApplicationCache cache)
         analysis.Add(samples, cancellationToken);
     }
 
-    private static async Task<byte[]> RunAsync(string executable, string[] arguments, int maximumBytes,
+    private async Task<byte[]> RunAsync(string executable, string[] arguments, int maximumBytes,
         CancellationToken cancellationToken)
     {
+        using var capacity = executable == "ffmpeg" ? await conversionGate.EnterAsync(cancellationToken) : null;
         var info = new ProcessStartInfo(executable)
         {
             UseShellExecute = false,

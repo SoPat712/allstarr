@@ -1,6 +1,8 @@
 using System.ComponentModel;
 using System.Text.Json;
 using allstarr.Core.Extensions;
+using allstarr.Services.Common;
+using Microsoft.Extensions.Configuration;
 
 namespace allstarr.Tests;
 
@@ -10,6 +12,30 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
     private string input = null!;
     private static readonly byte[] Original = [0, 0, 0, 16, 102, 116, 121, 112, 109, 52, 97, 32];
     internal static readonly byte[] Converted = [102, 76, 97, 67, 0, 0, 0, 0];
+
+    [Fact]
+    public async Task ConversionBusyNeverSpawnsFfmpegOrChangesTheInputAndCanRecover()
+    {
+        var limits = new MediaCapacityLimits(new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { [MediaCapacityLimits.ConversionsKey] = "1" }).Build());
+        var gate = new MediaConversionGate(limits);
+        var calls = new List<string>();
+        Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token)
+        {
+            calls.Add(executable);
+            return FixtureRunner(executable, arguments, output, limit, token);
+        }
+        var processor = new ExtensionDownloadPostProcessor(TimeSpan.FromSeconds(5), Run, gate);
+        using (await gate.EnterAsync(default))
+        {
+            await Assert.ThrowsAsync<LocalCapacityException>(() => processor.ProcessAsync(input, Descriptor(), 100_000, default));
+            Assert.Equal(["ffprobe"], calls);
+            Assert.Equal(Original, await File.ReadAllBytesAsync(input));
+            Assert.Single(Directory.GetFiles(root));
+        }
+        Assert.Equal("flac", (await processor.ProcessAsync(input, Descriptor(), 100_000, default)).Container);
+        Assert.Equal(Converted, await File.ReadAllBytesAsync(input));
+    }
 
     [Fact]
     public async Task Conversion_ReencodesFlacAndVerifiesBeforeReplacingInput()

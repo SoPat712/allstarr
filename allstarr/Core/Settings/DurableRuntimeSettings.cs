@@ -1,3 +1,4 @@
+using allstarr.Services.Common;
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Security.Cryptography;
@@ -147,6 +148,9 @@ public static class RuntimeSettingCatalog
         Int("Cache:MediaMaximumMegabytes", 1, 1048576);
         Int("Cache:MediaMaximumEntryMegabytes", 1, 1024);
         Int("Cache:MediaCleanupFileLimit", 100, 1000000);
+        items.Add(new(MediaCapacityLimits.AudioKey, RuntimeSettingValueType.Integer, MediaCapacityLimits.AudioKey, 1, 1024, DefaultValue: "2"));
+        items.Add(new(MediaCapacityLimits.StreamsKey, RuntimeSettingValueType.Integer, MediaCapacityLimits.StreamsKey, 1, 64, DefaultValue: "6"));
+        items.Add(new(MediaCapacityLimits.ConversionsKey, RuntimeSettingValueType.Integer, MediaCapacityLimits.ConversionsKey, 1, 16, DefaultValue: "2"));
         Text(AudioQualityPolicy.SettingKey, AudioQualityPolicy.Steps.ToArray());
         Text("Deezer:Quality", ["FLAC", "MP3_320", "MP3_128"], allowEmpty: true); Int("Deezer:MinRequestIntervalMs", 0, 60000);
         Text("Qobuz:Quality", ["FLAC", "FLAC_24_HIGH", "FLAC_24_LOW", "FLAC_16", "MP3_320"], allowEmpty: true);
@@ -820,6 +824,7 @@ public sealed class RuntimeSettingsLiveOptions
     private readonly JellyfinSettings _jellyfin;
     private readonly SubsonicSettings _subsonic;
     private readonly string? _bootstrapAppleBaseUrl;
+    private readonly MediaCapacityLimits _capacity;
 
     public RuntimeSettingsLiveOptions(
         IConfiguration configuration, IOptions<CacheSettings> cache, IOptions<DeezerSettings> deezer,
@@ -827,9 +832,10 @@ public sealed class RuntimeSettingsLiveOptions
         IOptions<SpotifyApiSettings> spotifyApi, IOptions<SpotifyImportSettings> spotifyImport,
         IOptions<MusicBrainzSettings> musicBrainz, IOptions<ScrobblingSettings> scrobbling,
         IOptions<JellyfinSettings> jellyfin, IOptions<SubsonicSettings> subsonic,
-        ProviderAccountOptions providerAccounts, IOptions<PlaybackSettings>? playback = null)
+        ProviderAccountOptions providerAccounts, IOptions<PlaybackSettings>? playback = null, MediaCapacityLimits? capacity = null)
     {
         (_configuration, _providerAccounts) = (configuration, providerAccounts);
+        _capacity = capacity ?? new(configuration);
         _bootstrapAppleBaseUrl = configuration["AppleDownload:BaseUrl"];
         (_cache, _deezer, _qobuz, _apple) = (cache.Value, deezer.Value, qobuz.Value, apple.Value);
         (_spotifyApi, _spotifyImport, _musicBrainz, _scrobbling) =
@@ -882,6 +888,9 @@ public sealed class RuntimeSettingsLiveOptions
         var value = setting.Value;
         switch (setting.Key)
         {
+            case MediaCapacityLimits.AudioKey:
+            case MediaCapacityLimits.StreamsKey:
+            case MediaCapacityLimits.ConversionsKey: _capacity.Apply(setting.Key, (int)value); break;
             case ProviderAccountOptions.ListenerConnectionsKey: _providerAccounts.ListenersCanConnectOwnAccounts = (bool)value; break;
             case "Cache:SearchResultsMinutes": _cache.SearchResultsMinutes = (int)value; break;
             case "Cache:SearchBudgetMilliseconds": _cache.SearchBudgetMilliseconds = (int)value; break;

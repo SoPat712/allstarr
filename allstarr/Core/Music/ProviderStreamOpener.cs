@@ -17,7 +17,8 @@ public sealed class ProviderStreamOpener(
     ProtocolStreamingResponseAdapter responses,
     ManagedTrackCacheService? cache = null,
     PlaybackDeliveryActivityStore? activity = null,
-    ILogger<ProviderStreamOpener>? logger = null)
+    ILogger<ProviderStreamOpener>? logger = null,
+    ProviderStreamAdmission? admission = null)
 {
     internal static readonly IReadOnlySet<string> PreparationProviders = new HashSet<string>(StringComparer.Ordinal)
     { "apple-musickit", "apple-download" };
@@ -25,6 +26,8 @@ public sealed class ProviderStreamOpener(
     public async Task PrepareAsync(ProtocolExecutionContext context, string itemId)
     {
         if (!context.IsPreparation || cache?.CanPrepare(context) != true) return;
+        using var capacity = admission?.TryEnter(context);
+        if (admission != null && capacity == null) return;
         var (external, provider, kind, id) = LocalLibraryService.ParseExternalResource(itemId);
         if (!external || kind != "song" || provider == null || id == null) return;
         var started = Stopwatch.GetTimestamp();
@@ -91,62 +94,79 @@ public sealed class ProviderStreamOpener(
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(context);
-        if (context.IsOriginalDownload)
+        IDisposable? capacity = admission?.TryEnter(context);
+        if (admission != null && capacity == null)
         {
-            delivery = null;
-            quality = ProviderAudioQuality.Any;
-            context = context with { AudioDelivery = null };
+            LocalCapacityException.MarkResponse(http.Response);
+            throw new LocalCapacityException("provider-stream");
         }
-        else delivery ??= context.AudioDelivery;
-        if (delivery?.RequestError is { } invalid) throw new ProviderAudioProfileException(invalid);
-        if (delivery != null) context = context with { AudioDelivery = delivery };
-        var headOnly = HttpMethods.IsHead(http.Request.Method);
-        var routed = await providers.OpenStreamAsync(
-            context,
-            providerId,
-            externalId,
-            quality,
-            http.Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null,
-            headOnly);
-        if (routed == null)
-        {
-            return new ObjectResult(new { error = "No verified playback source is available." })
-            {
-                StatusCode = StatusCodes.Status503ServiceUnavailable
-            };
-        }
-        if (!routed.Response.IsSuccessStatusCode)
-        {
-            var status = (int)routed.Response.StatusCode;
-            routed.Response.Dispose();
-            return new StatusCodeResult(status);
-        }
-
-        if (delivery?.Evaluate(routed.Lease.Media) is { Supported: false } rejected)
-        {
-            routed.Response.Dispose();
-            throw new ProviderAudioProfileException(rejected.Error!);
-        }
-
-        var servingId = routed.ServingExternalId ?? externalId;
-        Task<allstarr.Models.Domain.Song?>? metadataTask = null;
-        Task<allstarr.Models.Domain.Song?> Metadata() => metadataTask ??= providers.GetSongAsync(context, routed.ServingProviderId, servingId);
         try
         {
-            var itemId = context.RequestedItemId ?? $"ext-{providerId}-song-{externalId}";
-            void Selected(string rung) => activity?.SeekRungSelected(context, itemId, routed.EffectiveQuality, routed, rung);
-            if (!context.IsOriginalDownload && !headOnly) StreamDurationGuidance.Attach(routed, Metadata, Selected);
-            if (cache != null)
-                await cache.WrapAsync(routed, context, routed.ServingProviderId, servingId, headOnly, Metadata, http.RequestAborted);
-            var cacheRung = ManagedTrackCacheService.SeekRung(routed.Response.Content);
-            if (!context.IsOriginalDownload && !headOnly && cacheRung != null) Selected(cacheRung);
-            return await responses.CreateAsync(http, routed.Response, http.RequestAborted,
-                enableRangeProcessing: routed.IsCached || cacheRung != null, providerStream: true);
+            if (context.IsOriginalDownload)
+            {
+                delivery = null;
+                quality = ProviderAudioQuality.Any;
+                context = context with { AudioDelivery = null };
+            }
+            else delivery ??= context.AudioDelivery;
+            if (delivery?.RequestError is { } invalid) throw new ProviderAudioProfileException(invalid);
+            if (delivery != null) context = context with { AudioDelivery = delivery };
+            var headOnly = HttpMethods.IsHead(http.Request.Method);
+            var routed = await providers.OpenStreamAsync(
+                context,
+                providerId,
+                externalId,
+                quality,
+                http.Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null,
+                headOnly);
+            if (routed == null)
+            {
+                return new ObjectResult(new { error = "No verified playback source is available." })
+                {
+                    StatusCode = StatusCodes.Status503ServiceUnavailable
+                };
+            }
+            if (!routed.Response.IsSuccessStatusCode)
+            {
+                var status = (int)routed.Response.StatusCode;
+                routed.Response.Dispose();
+                return new StatusCodeResult(status);
+            }
+
+            if (delivery?.Evaluate(routed.Lease.Media) is { Supported: false } rejected)
+            {
+                routed.Response.Dispose();
+                throw new ProviderAudioProfileException(rejected.Error!);
+            }
+
+            var servingId = routed.ServingExternalId ?? externalId;
+            Task<allstarr.Models.Domain.Song?>? metadataTask = null;
+            Task<allstarr.Models.Domain.Song?> Metadata() => metadataTask ??= providers.GetSongAsync(context, routed.ServingProviderId, servingId);
+            try
+            {
+                var itemId = context.RequestedItemId ?? $"ext-{providerId}-song-{externalId}";
+                void Selected(string rung) => activity?.SeekRungSelected(context, itemId, routed.EffectiveQuality, routed, rung);
+                if (!context.IsOriginalDownload && !headOnly) StreamDurationGuidance.Attach(routed, Metadata, Selected);
+                if (cache != null)
+                    await cache.WrapAsync(routed, context, routed.ServingProviderId, servingId, headOnly, Metadata, http.RequestAborted);
+                var cacheRung = ManagedTrackCacheService.SeekRung(routed.Response.Content);
+                if (!context.IsOriginalDownload && !headOnly && cacheRung != null) Selected(cacheRung);
+                var result = await responses.CreateAsync(http, routed.Response, http.RequestAborted,
+                    enableRangeProcessing: routed.IsCached || cacheRung != null, providerStream: true, responseLease: capacity);
+                capacity = null;
+                return result;
+            }
+            catch
+            {
+                routed.Response.Dispose();
+                throw;
+            }
         }
-        catch
+        catch (LocalCapacityException)
         {
-            routed.Response.Dispose();
+            LocalCapacityException.MarkResponse(http.Response);
             throw;
         }
+        finally { capacity?.Dispose(); }
     }
 }

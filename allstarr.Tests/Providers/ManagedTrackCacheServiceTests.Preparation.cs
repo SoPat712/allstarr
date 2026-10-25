@@ -20,11 +20,11 @@ public sealed partial class ManagedTrackCacheServiceTests
         try
         {
             var configuration = new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(
-                new Dictionary<string, string?> { ["Library:DownloadPath"] = root, ["Cache:MediaMaximumBytes"] = "8" }).Build();
+                new Dictionary<string, string?> { ["Library:DownloadPath"] = root, ["Cache:MediaMaximumBytes"] = "1024" }).Build();
             await using var cache = new allstarr.Services.Common.ManagedTrackCacheService(configuration,
                 Microsoft.Extensions.Options.Options.Create(new allstarr.Models.Settings.SubsonicSettings
                 { StorageMode = allstarr.Models.Settings.StorageMode.Cache }), Mock.Of<ILocalLibraryService>(MockBehavior.Strict),
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.ManagedTrackCacheService>.Instance);
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.ManagedTrackCacheService>.Instance, audioMaximumBytes: () => 8);
             using var response = Response(System.Net.HttpStatusCode.OK, new byte[16]);
             var original = response.Content;
             await cache.WrapAsync(ProviderStream(response), Context() with { IsPreparation = true }, "deezer", "track-1", false,

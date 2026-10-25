@@ -51,7 +51,7 @@
     { id: "appearance", label: "Appearance", group: "This browser", icon: Palette, title: "Appearance", description: "How Allstarr looks in this browser. Other devices keep their own choice." },
     { id: "access", label: "Access", group: "Server", icon: Lock, title: "Access", description: "Manage media-server access for playlist sync and library scans." },
     { id: "general", label: "General", group: "Server", icon: SlidersHorizontal, title: "General", description: "Server-wide behavior for every listener." },
-    { id: "storage", label: "Storage", group: "Server", icon: HardDrive, title: "Storage", description: "Where songs are saved and how long cached data is kept." },
+    { id: "storage", label: "Storage", group: "Server", icon: HardDrive, title: "Storage", description: "Manage saved music, cache space, and playback capacity." },
     { id: "network", label: "Network", group: "Server", icon: Network, title: "Network and security", description: "How the admin interface is exposed. These are usually set by your deployment." },
     { id: "backups", label: "Backups", group: "Maintenance", icon: Archive, title: "Backups", description: "Save and restore Allstarr's database, accounts and encryption keys." },
     { id: "health", label: "Health", group: "Maintenance", icon: Activity, title: "Health", description: "Check provider playback and listener actions with a dedicated test account." },
@@ -59,7 +59,7 @@
     { id: "setup", label: "Setup", group: "Maintenance", icon: Rocket, title: "Setup", description: "Reopen the setup guide or import settings from Allstarr v2." },
   ] as const;
   const navGroups = ["This browser", "Server", "Maintenance"] as const;
-  const sectionPages: Record<string, string> = { general: "general", paths: "storage", cache: "storage", network: "network" };
+  const sectionPages: Record<string, string> = { general: "general", paths: "storage", cache: "storage", "audio-limits": "storage", network: "network" };
   const contextualTrackCacheKeys = new Set([
     "STORAGE_MODE",
     "CACHE_DURATION_HOURS",
@@ -411,8 +411,10 @@
               {/each}
               {#if item.id === "cache"}
                 <p class="settings-impact">
-                  Memory cache stays capped at 16 MiB and disk cache at {cacheDiskCeiling.toLocaleString()} MiB. These times only change how often data is refreshed.
+                  Memory cache is capped at 16 MiB and response files at {cacheDiskCeiling.toLocaleString()} MiB on disk. Audio has its own limit. These times only change how often data is refreshed.
                 </p>
+              {:else if item.id === "audio-limits"}
+                <p class="settings-impact">Limits apply to new work; music already being served can finish. Audio cleanup preserves kept songs, downloaded copies and media-server files.</p>
               {/if}
               {#if editable.length}
                 <footer>

@@ -25,6 +25,7 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
     private readonly ExtensionExecutionOptions _executionOptions;
     private readonly string _runtimeRoot;
     private readonly TimeProvider _timeProvider;
+    private readonly MediaConversionGate _conversions;
     private readonly string _packageRoot;
     private readonly IDataProtector _sessionProtector;
     private readonly ConcurrentDictionary<Guid, ExtensionSandbox> _sandboxes = new();
@@ -52,8 +53,9 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
         allstarr.Services.Common.IProviderCheckRequests? checkRequests = null,
         TimeProvider? timeProvider = null,
         ExtensionSessionVerificationClient? sessionVerification = null,
-        allstarr.Core.Jobs.DurableJobQueue? sessionJobs = null)
+        allstarr.Core.Jobs.DurableJobQueue? sessionJobs = null, MediaConversionGate? conversions = null)
     {
+        _conversions = conversions ?? new MediaConversionGate(new(configuration));
         _sessionVerification = sessionVerification;
         _sessionJobs = sessionJobs;
         _executionOptions = configuration.GetSection(ExtensionExecutionOptions.SectionName)
@@ -345,7 +347,7 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
             script,
             _clients, _logger, permissions, Path.Combine(_runtimeRoot, manifest.Id),
             _sessionProtector, SessionStateDirectory(manifest.Id, package.RegistryId),
-            timeProvider: _timeProvider, executionOptions: _executionOptions);
+            timeProvider: _timeProvider, executionOptions: _executionOptions, conversions: _conversions);
         if (manifest.SignedSession != null)
         {
             var account = await EnsureDefaultSessionAccountAsync(package, manifest.DisplayName, cancellationToken);

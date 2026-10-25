@@ -166,6 +166,7 @@ public class ConfigController : ControllerBase
             {
                 startPreference = RuntimeString("Playback:StartPreference", "Balanced"),
                 prepareUpcomingSongs = RuntimeBool("Playback:PrepareUpcomingSongs", _playbackSettings.PrepareUpcomingSongs),
+                providerStreamsPerListener = RuntimeInt("Playback:ProviderStreamsPerListener", 6),
                 prepareUpcomingCount = RuntimeInt("Playback:PrepareUpcomingCount", _playbackSettings.PrepareUpcomingCount),
                 lastFmSimilarEnabled = RuntimeBool(
                     "Playback:LastFmSimilarEnabled", _playbackSettings.LastFmSimilarEnabled),
@@ -274,8 +275,10 @@ public class ConfigController : ControllerBase
                 authorizedUserAgentOverride = RuntimeString("MusicBrainz:AuthorizedUserAgentOverride", _musicBrainzSettings.AuthorizedUserAgentOverride ?? "")
             },
             operatorSettings,
+            media = new { maximumConcurrentConversions = RuntimeInt("Media:MaximumConcurrentConversions", 2) },
             cache = new
             {
+                audioMaximumGiB = RuntimeInt("Cache:AudioMaximumGiB", 2),
                 searchResultsMinutes = RuntimeInt("Cache:SearchResultsMinutes", _configuration.GetValue<int>("Cache:SearchResultsMinutes", 1)),
                 playlistImagesHours = RuntimeInt("Cache:PlaylistImagesHours", _configuration.GetValue<int>("Cache:PlaylistImagesHours", 168)),
                 lyricsDays = RuntimeInt("Cache:LyricsDays", _configuration.GetValue<int>("Cache:LyricsDays", 14)),

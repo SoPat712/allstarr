@@ -32,6 +32,23 @@ public sealed class ProviderRuntimeHealthTests
     }
 
     [Fact]
+    public void LocalCapacityDoesNotCreateHealthFailuresOrPlaybackCooldowns()
+    {
+        var store = Store();
+        var context = Context();
+        var track = new ProviderExternalResourceId("deezer", ProviderResourceKind.Track, "fixture");
+        for (var index = 0; index < 5; index++)
+        {
+            store.Observe(context, ProviderCapabilityKind.Streaming, ProviderError.LocalCapacity(), TimeSpan.FromMilliseconds(1));
+            store.ObservePlayback(context, track, ProviderAudioQuality.Any, ProviderError.LocalCapacity(), TimeSpan.FromMilliseconds(1));
+            store.Record(Key(), context.Account?.Revision, false, 1, LocalCapacityException.Code);
+        }
+        Assert.False(store.IsPlaybackCoolingDown(context, track, ProviderAudioQuality.Any));
+        Assert.Null(store.Get(Key(), context.Account?.Revision));
+        Assert.True(ProviderRuntimeStatus.IsNeutralReason(LocalCapacityException.Code));
+    }
+
+    [Fact]
     public void AppleDownloadMissingSessionIsReportedWithoutSuppressingCatalog()
     {
         var store = Store();

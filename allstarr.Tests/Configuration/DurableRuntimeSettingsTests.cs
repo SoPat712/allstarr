@@ -769,16 +769,21 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         var spotifyImport = new SpotifyImportSettings();
         var jellyfin = new JellyfinSettings(); var subsonic = new SubsonicSettings();
         var accounts = new ProviderAccountOptions();
+        var capacity = new MediaCapacityLimits(configuration);
+        Assert.Equal(2L * 1024 * 1024 * 1024, capacity.AudioMaximumBytes);
+        Assert.Equal(6, capacity.StreamsPerListener);
+        Assert.Equal(2, capacity.Conversions);
         var liveOptions = new RuntimeSettingsLiveOptions(configuration,
             Options.Create(cache), Options.Create(deezer), Options.Create(qobuz), Options.Create(apple),
             Options.Create(spotifyApi), Options.Create(spotifyImport),
             Options.Create(new MusicBrainzSettings()), Options.Create(new ScrobblingSettings()), Options.Create(jellyfin), Options.Create(subsonic),
-            accounts);
+            accounts, capacity: capacity);
         var service = new DurableRuntimeSettingsService(_factory, configuration, _clock, signal,
             liveOptions, NullLogger<DurableRuntimeSettingsService>.Instance);
         await service.ApplyBatchAsync(
         [
             new(ProviderAccountOptions.ListenerConnectionsKey, "false"),
+            new(MediaCapacityLimits.AudioKey, "3"), new(MediaCapacityLimits.StreamsKey, "8"), new(MediaCapacityLimits.ConversionsKey, "4"),
             new("Cache:SearchResultsMinutes", "15"), new("Deezer:Quality", "FLAC"),
             new("Cache:SearchBudgetMilliseconds", "2000"), new("Cache:SearchBackgroundSeconds", "20"),
             new("Cache:SearchFailureCooldownSeconds", "120"),
@@ -793,6 +798,9 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         await service.StartAsync(CancellationToken.None);
         using var projectionTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         while (cache.SearchResultsMinutes != 15) await Task.Delay(50, projectionTimeout.Token);
+        Assert.Equal(3L * 1024 * 1024 * 1024, capacity.AudioMaximumBytes);
+        Assert.Equal(8, capacity.StreamsPerListener);
+        Assert.Equal(4, capacity.Conversions);
         Assert.Equal(2000, cache.SearchBudgetMilliseconds);
         Assert.Equal(20, cache.SearchBackgroundSeconds);
         Assert.Equal(120, cache.SearchFailureCooldownSeconds);
@@ -800,10 +808,14 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         Assert.Equal(RuntimeSettingOrigin.Durable, migrated.Origin);
         Assert.Equal("HiResLossless", migrated.Value);
         await service.ApplyBatchAsync(
-            [new(ProviderAccountOptions.ListenerConnectionsKey, "true", 1), new("Cache:SearchResultsMinutes", "22", 1), new(AudioQualityPolicy.SettingKey, "CdLossless", migrated.Revision)],
+            [new(MediaCapacityLimits.AudioKey, "1", 1), new(MediaCapacityLimits.StreamsKey, "1", 1), new(MediaCapacityLimits.ConversionsKey, "1", 1),
+                new(ProviderAccountOptions.ListenerConnectionsKey, "true", 1), new("Cache:SearchResultsMinutes", "22", 1), new(AudioQualityPolicy.SettingKey, "CdLossless", migrated.Revision)],
             "webui", _userId);
         Assert.True(accounts.ListenersCanConnectOwnAccounts);
         Assert.Equal(22, cache.SearchResultsMinutes);
+        Assert.Equal(1024L * 1024 * 1024, capacity.AudioMaximumBytes);
+        Assert.Equal(1, capacity.StreamsPerListener);
+        Assert.Equal(1, capacity.Conversions);
         await service.StopAsync(CancellationToken.None);
 
         Assert.True(accounts.ListenersCanConnectOwnAccounts);

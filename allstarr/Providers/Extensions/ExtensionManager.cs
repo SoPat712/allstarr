@@ -670,7 +670,7 @@ public class ExtensionSandbox
         TimeSpan? hookTimeout = null,
         TimeSpan? downloadTimeout = null,
         TimeProvider? timeProvider = null,
-        ExtensionExecutionOptions? executionOptions = null)
+        ExtensionExecutionOptions? executionOptions = null, MediaConversionGate? conversions = null)
     {
         _logger = logger;
         _logSink = permissions?.LogSink;
@@ -740,7 +740,7 @@ public class ExtensionSandbox
             sessionStateDirectory,
             _timeProvider,
             executionOptions,
-            isSpotiFlac ? SpotiFlacExtensionCompatibility.NetworkTimeout(root) : null);
+            isSpotiFlac ? SpotiFlacExtensionCompatibility.NetworkTimeout(root) : null, conversions);
         _engine.SetValue("host", _hostBridge);
         _engine.SetValue("_allstarrSpotiFlacCompatibility", isSpotiFlac);
 
@@ -1320,6 +1320,7 @@ public partial class ExtensionHostBridge
     private DateTimeOffset _lastSyntheticCooldownResponseAt;
     private CookieContainer _cookies = new(300, 50, 4096);
     private int _logEvents;
+    private readonly MediaConversionGate _conversions;
 
     public ExtensionHostBridge(
         string runtimeStateDirectory,
@@ -1332,8 +1333,10 @@ public partial class ExtensionHostBridge
         string? sessionStateDirectory = null,
         TimeProvider? timeProvider = null,
         ExtensionExecutionOptions? executionOptions = null,
-        TimeSpan? networkRequestTimeout = null)
+        TimeSpan? networkRequestTimeout = null, MediaConversionGate? conversions = null)
     {
+        _conversions = conversions ?? new MediaConversionGate();
+        DownloadPostProcessor = new(TimeSpan.FromMinutes(2), conversions: _conversions);
         _folderPath = Path.GetFullPath(runtimeStateDirectory);
         Directory.CreateDirectory(_folderPath);
         _httpClientFactory = httpClientFactory;
@@ -1761,7 +1764,7 @@ public partial class ExtensionHostBridge
     public void PreparePatternedDownload(string trackId) =>
         ExtensionArtifactInvocationScope.Current?.Progressive?.PrepareDeezer(trackId);
 
-    internal ExtensionDownloadPostProcessor DownloadPostProcessor { get; set; } = new(TimeSpan.FromMinutes(2));
+    internal ExtensionDownloadPostProcessor DownloadPostProcessor { get; set; }
 
     public object ProcessDownloadResult(string path, string resultJson)
     {
@@ -1783,6 +1786,7 @@ public partial class ExtensionHostBridge
             outcome = "success";
             return new { codec = media.Codec, container = media.Container };
         }
+        catch (LocalCapacityException) { outcome = "busy"; throw; }
         catch (OperationCanceledException exception)
         {
             outcome = "canceled";

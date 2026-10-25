@@ -31,7 +31,8 @@ public sealed class ProtocolStreamingResponseAdapter(TimeProvider? timeProvider 
         HttpResponseMessage response,
         CancellationToken cancellationToken,
         bool enableRangeProcessing,
-        bool providerStream = false)
+        bool providerStream = false,
+        IDisposable? responseLease = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(response);
@@ -44,6 +45,12 @@ public sealed class ProtocolStreamingResponseAdapter(TimeProvider? timeProvider 
         }
 
         context.Response.RegisterForDispose(response);
+        if (responseLease != null)
+        {
+            context.Response.RegisterForDispose(responseLease);
+            context.Response.RegisterForDispose(context.RequestAborted.Register(responseLease.Dispose));
+            context.Response.OnCompleted(() => { responseLease.Dispose(); return Task.CompletedTask; });
+        }
         var headOnly = HttpMethods.IsHead(context.Request.Method);
         var partial = response.StatusCode == System.Net.HttpStatusCode.PartialContent;
         var seeking = providerStream && (response.Content.Headers.ContentRange?.From is > 0 ||
@@ -89,7 +96,7 @@ public sealed class ProtocolStreamingResponseAdapter(TimeProvider? timeProvider 
         var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         return new FileStreamResult(
             new StartingResponseStream(stream, context.Response, clock, providerStream, seeking,
-                providerStream && partial ? response.Content.Headers.ContentLength : null, providerStream && partial),
+                providerStream && partial ? response.Content.Headers.ContentLength : null, providerStream && partial, responseLease),
             response.Content.Headers.ContentType?.ToString() ?? "audio/mpeg")
         {
             EnableRangeProcessing = enableRangeProcessing && !(providerStream && partial)
@@ -124,7 +131,7 @@ public sealed class ProtocolStreamingResponseAdapter(TimeProvider? timeProvider 
     }
 
     private sealed class StartingResponseStream(Stream source, HttpResponse response, TimeProvider clock,
-        bool providerStream, bool seeking, long? remaining, bool partial) : Stream
+        bool providerStream, bool seeking, long? remaining, bool partial, IDisposable? capacityLease) : Stream
     {
         private bool initialRead = true;
         public override bool CanRead => source.CanRead;
@@ -164,10 +171,18 @@ public sealed class ProtocolStreamingResponseAdapter(TimeProvider? timeProvider 
         }
         protected override void Dispose(bool disposing)
         {
-            if (disposing) source.Dispose();
+            if (disposing)
+            {
+                try { source.Dispose(); }
+                finally { capacityLease?.Dispose(); }
+            }
             base.Dispose(disposing);
         }
-        public override async ValueTask DisposeAsync() { await source.DisposeAsync(); GC.SuppressFinalize(this); }
+        public override async ValueTask DisposeAsync()
+        {
+            try { await source.DisposeAsync(); }
+            finally { capacityLease?.Dispose(); GC.SuppressFinalize(this); }
+        }
         public override void Flush() => throw new NotSupportedException();
         public override void SetLength(long value) => throw new NotSupportedException();
         public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();

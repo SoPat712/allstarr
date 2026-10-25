@@ -61,6 +61,7 @@ public sealed partial class ProtocolProviderGateway
             _ => "playback-start-balanced"
         };
         plan = plan with { Candidates = order.Select(index => eligible[index]).ToArray() };
+        var localCapacity = 0;
         ProviderError? lastFailure = null;
         string? fallbackReason = null;
         var count = Math.Min(4 - attempted.Count, plan.Candidates.Count);
@@ -77,7 +78,7 @@ public sealed partial class ProtocolProviderGateway
                         hedged = true;
                         return StartAsync(current + 1, token, abandonment);
                     },
-                    item => item.Stream != null || item.Error?.Kind is ProviderErrorKind.Unauthorized or ProviderErrorKind.Forbidden,
+                    item => item.Stream != null || item.Error?.Code == LocalCapacityException.Code || item.Error?.Kind is ProviderErrorKind.Unauthorized or ProviderErrorKind.Forbidden,
                     item => item.Dispose(), PlaybackStartPolicy.HedgeDelay(mode), clock, protocol.CancellationToken)
                 : await StartAsync(current, protocol.CancellationToken, CancellationToken.None);
             if (result.Stream != null)
@@ -86,6 +87,7 @@ public sealed partial class ProtocolProviderGateway
                 try { return await opened(stream, result.Execution, result.Track); }
                 catch { stream.Response.Dispose(); throw; }
             }
+            if (result.Error?.Code == LocalCapacityException.Code) throw new LocalCapacityException();
             lastFailure = result.Error ?? new(ProviderErrorKind.TransientFailure);
             var fallback = router.EvaluateFallback(plan, result.Index, lastFailure);
             if (fallback.Disposition == ProviderFallbackDisposition.Exhausted && attempted.Count < 4 &&
@@ -171,7 +173,8 @@ public sealed partial class ProtocolProviderGateway
                 }
                 catch (OperationCanceledException) when (abandonment.IsCancellationRequested && !protocol.CancellationToken.IsCancellationRequested)
                 {
-                    outcomes?.ObservePlayback(execution, track, quality, new(ProviderErrorKind.TransientFailure), clock.GetElapsedTime(started));
+                    if (Volatile.Read(ref localCapacity) == 0)
+                        outcomes?.ObservePlayback(execution, track, quality, new(ProviderErrorKind.TransientFailure), clock.GetElapsedTime(started));
                     throw;
                 }
                 catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
@@ -186,6 +189,7 @@ public sealed partial class ProtocolProviderGateway
                     abandonment.ThrowIfCancellationRequested();
                 }
                 cancellation.ThrowIfCancellationRequested();
+                if (outcome.Error?.Code == LocalCapacityException.Code) Interlocked.Exchange(ref localCapacity, 1);
                 outcomes?.ObservePlayback(execution, track, quality, outcome.Error, clock.GetElapsedTime(started),
                     outcome.IsSuccess ? outcome.RequireValue().Lease.Media : null);
                 if (!leaseFailed) outcomes?.Observe(execution, ProviderCapabilityKind.Streaming, outcome.Error, clock.GetElapsedTime(started));

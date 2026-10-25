@@ -73,6 +73,11 @@ public sealed class ProviderCtsDiagnosticRunner(
                 foreach (var check in new[] { measured, verified }.OfType<ProviderCheckResult>())
                     await new ProviderCheckHistory(contextFactory, clock).RecordAsync(check, correlationId, deadline.Token).WaitAsync(deadline.Token);
         }
+        catch (LocalCapacityException)
+        {
+            return ProviderCtsDiagnosticResult.Failure(503, providerId, providerAccountId, "admission",
+                LocalCapacityException.Code, retryAfterSeconds: 5);
+        }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && timer.IsCancellationRequested)
         {
             var unavailable = string.IsNullOrWhiteSpace(trackId) &&
@@ -257,6 +262,7 @@ public sealed class ProviderCtsDiagnosticRunner(
                     leaseOutcome = await streaming.GetStreamLeaseAsync(execution,
                         new ProviderStreamLeaseRequest(new(providerId, ProviderResourceKind.Track, trackId!), quality, 0));
                     cancellationToken.ThrowIfCancellationRequested();
+                    if (leaseOutcome.Error?.Code == LocalCapacityException.Code) throw new LocalCapacityException();
                     if (leaseOutcome.IsSuccess || !automatic) break;
                     var missing = ProviderDiagnosticSamples.FromError(leaseOutcome.Error!).SampleUnavailable;
                     if (!missing)

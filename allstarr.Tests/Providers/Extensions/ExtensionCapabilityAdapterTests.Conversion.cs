@@ -10,11 +10,13 @@ namespace allstarr.Tests;
 public sealed partial class ExtensionCapabilityAdapterTests
 {
     [Theory]
-    [InlineData(false, false, "container-conversion-failed")]
-    [InlineData(true, false, "container-conversion-failed")]
-    [InlineData(false, true, "media-tools-unavailable")]
-    [InlineData(true, true, "media-tools-unavailable")]
-    public async Task Download_ProcessingFailurePreservesReasonAndPublishesNoArtifact(bool streaming, bool missingTool, string expected)
+    [InlineData(false, false, "container-conversion-failed", false)]
+    [InlineData(true, false, "container-conversion-failed", false)]
+    [InlineData(false, true, "media-tools-unavailable", false)]
+    [InlineData(true, true, "media-tools-unavailable", false)]
+    [InlineData(false, false, LocalCapacityException.Code, true)]
+    [InlineData(true, false, LocalCapacityException.Code, true)]
+    public async Task Download_ProcessingFailurePreservesReasonAndPublishesNoArtifact(bool streaming, bool missingTool, string expected, bool localBusy)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-processing-failure", Guid.NewGuid().ToString("N"));
         try
@@ -30,14 +32,19 @@ public sealed partial class ExtensionCapabilityAdapterTests
             var manifest = ExtensionSdkV1.ParseManifest(normalized);
             var sandbox = new ExtensionSandbox(root, normalized, script, new HttpClientFactory(), NullLogger.Instance,
                 runtimeStateDirectory: Path.Combine(root, "runtime"));
+            var conversions = new MediaConversionGate();
+            using var one = localBusy ? await conversions.EnterAsync(default) : null;
+            using var two = localBusy ? await conversions.EnterAsync(default) : null;
+            var ffmpegCalls = 0;
             async Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token)
             {
+                if (executable == "ffmpeg") ffmpegCalls++;
                 if (missingTool) throw new System.ComponentModel.Win32Exception(2);
                 var response = await ExtensionDownloadConversionTests.FixtureRunner(executable, arguments, output, limit, token);
                 if (output != null) await File.WriteAllBytesAsync(output, [1, 2, 3, 4], token);
                 return response;
             }
-            sandbox.DownloadPostProcessor = new(TimeSpan.FromSeconds(5), Run);
+            sandbox.DownloadPostProcessor = new(TimeSpan.FromSeconds(5), Run, conversions);
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 100_000 };
             var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
             var context = Context(manifest.Id);
@@ -59,6 +66,12 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 error = result.Error;
             }
             Assert.Equal(expected, error?.Code);
+            if (localBusy)
+            {
+                Assert.Equal(0, ffmpegCalls);
+                Assert.Equal(TimeSpan.FromSeconds(5), error!.RetryAfter);
+                Assert.Equal(ProviderErrorKind.CapabilityUnavailable, error.Kind);
+            }
             Assert.Empty(Directory.GetFiles(options.RootPath, "*", SearchOption.AllDirectories));
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
