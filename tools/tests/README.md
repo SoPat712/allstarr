@@ -7,8 +7,9 @@ authorized direct Deezer or Monochrome items. It makes no network requests unles
 `--run` is supplied. Defaults are five parallel clients and a thirty-second window;
 the upper bounds are twenty clients, 120 seconds and 32 MiB of application-read
 audio across the run. Each client aborts an initial 4 KiB read, requests independent
-8 KiB ranges near 80% and 90%, then reads one stream at 48 KiB/s for the remaining
-window. An early EOF is reported; the tool does not restart that stream.
+8 KiB ranges near 80% and 90% one at a time, then reads one stream at 48 KiB/s
+for the remaining window. An early EOF is reported; the tool does not restart
+that stream.
 
 Supply a private JSON document through stdin, with `base_url`, `credentials` and
 `items`. For Jellyfin, each credential entry has a `token`; for Subsonic it has a
@@ -24,6 +25,9 @@ Alternatively, supply `ALLSTARR_LOAD_BASE_URL`,
 `ALLSTARR_LOAD_CREDENTIALS_JSON` and `ALLSTARR_LOAD_ITEM_IDS_JSON` through the
 environment and omit `--input-stdin`. One credential set means parallel clients
 of one listener; supply separate credentials to exercise distinct listeners.
+When reusing credentials, keep their combined client count within that listener's
+configured provider-stream limit. Parallel clients remain concurrent while each
+client closes its current response before seeking again.
 The JSON report contains aggregate timings, bytes, status counts, local retries
 and early EOF counts. It omits server addresses, item identifiers and credentials.
 Jellyfin requests use only the query API key and Range, matching direct Download
