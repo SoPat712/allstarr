@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Routing;
+using allstarr.Services.Admin;
 
 namespace allstarr.Middleware;
 
@@ -20,6 +21,21 @@ public class GlobalExceptionHandler : IExceptionHandler
         Exception exception,
         CancellationToken cancellationToken)
     {
+        if (exception is AdminBackendSessionUnavailableException &&
+            httpContext.Connection.LocalPort == 5275 &&
+            (httpContext.Request.Path.Value?.StartsWith("/api/admin", StringComparison.OrdinalIgnoreCase) == true))
+        {
+            _logger.LogWarning("Administrator backend session validation is temporarily unavailable");
+            httpContext.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            httpContext.Response.ContentType = "application/json";
+            await httpContext.Response.WriteAsJsonAsync(new
+            {
+                error = "Backend temporarily unavailable",
+                message = "The media backend is temporarily unavailable. Try again."
+            }, cancellationToken);
+            return true;
+        }
+
         var (statusCode, subsonicErrorCode, errorMessage) = MapExceptionToResponse(exception);
         var routePattern = (httpContext.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "unmatched";
         _logger.LogError(

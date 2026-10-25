@@ -188,7 +188,9 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
         var sessions = new AdminAuthSessionService(new MemoryAdminAuthSessionStore(),
             new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider(),
             Microsoft.Extensions.Logging.Abstractions.NullLogger<AdminAuthSessionService>.Instance,
-            contextFactory: factory, identityOptions: new() { BackendInstanceId = "fixture" });
+            contextFactory: factory,
+            identityOptions: new() { BackendInstanceId = "fixture" },
+            backendSessionValidator: HealthyAdminBackendSessionValidator.Instance);
         var session = await sessions.CreateSessionAsync(userId.ToString("N"), "Owner", false, "never-stream-session-token", null,
             allstarrUserId: userId);
         var clock = new PollingClock();

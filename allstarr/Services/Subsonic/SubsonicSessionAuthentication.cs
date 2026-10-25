@@ -39,9 +39,24 @@ public static class SubsonicSessionAuthentication
             !session.BackendInstanceId.Equals(backendInstanceId, StringComparison.Ordinal) ||
             !session.UserId.Equals(verifiedPrincipalId, StringComparison.Ordinal) ||
             !session.AllstarrUserId.HasValue ||
+            !TryGetSessionReadParameters(session, out parameters))
+            return false;
+        return HasAuthentication(parameters);
+    }
+
+    public static bool TryGetSessionReadParameters(
+        AdminAuthSession session,
+        out IReadOnlyList<KeyValuePair<string, string>> parameters)
+    {
+        parameters = [];
+        if (!IsSubsonicDialect(session.BackendType) ||
+            !session.AllstarrUserId.HasValue ||
             session.SubsonicReadAuthentication == null)
             return false;
-        parameters = session.SubsonicReadAuthentication.Where(pair => ReadParameterNames.Contains(pair.Key)).ToArray();
+
+        parameters = session.SubsonicReadAuthentication
+            .Where(pair => ReadParameterNames.Contains(pair.Key))
+            .ToArray();
         return HasAuthentication(parameters);
     }
 

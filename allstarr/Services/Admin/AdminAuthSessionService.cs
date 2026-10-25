@@ -83,7 +83,8 @@ public sealed class AdminAuthSessionService(
     AdminOidcOptions? oidcOptions = null,
     AdminOidcBackendAuthentication? oidcBackend = null,
     allstarr.Core.Identity.IdentityOptions? identityOptions = null,
-    allstarr.Core.Protocols.IBackendLibraryAccessResolver? libraryAccess = null)
+    allstarr.Core.Protocols.IBackendLibraryAccessResolver? libraryAccess = null,
+    IAdminBackendSessionValidator? backendSessionValidator = null)
 {
     public const string SessionCookieName = "allstarr_admin_session_v3";
     public const string LegacySessionCookieName = "allstarr_admin_session";
@@ -95,6 +96,8 @@ public sealed class AdminAuthSessionService(
     private readonly IDataProtector _protector =
         dataProtectionProvider.CreateProtector("allstarr.admin.auth.sessions.v2");
     private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly IAdminBackendSessionValidator? _backendSessionValidator =
+        backendSessionValidator ?? oidcBackend;
 
     public async Task<AdminAuthSession> CreateSessionAsync(
         string userId,
@@ -154,7 +157,9 @@ public sealed class AdminAuthSessionService(
 
         var record = await store.FindAsync(sessionId, cancellationToken);
         if (record is null) return null;
-        if (record.ExpiresAt <= DateTimeOffset.UtcNow)
+        var protectedPayload = record.ProtectedPayload;
+        var expiresAt = record.ExpiresAt;
+        if (expiresAt <= DateTimeOffset.UtcNow)
         {
             await store.RemoveAsync(sessionId, cancellationToken);
             return null;
@@ -163,7 +168,7 @@ public sealed class AdminAuthSessionService(
         try
         {
             var session = JsonSerializer.Deserialize<AdminAuthSession>(
-                _protector.Unprotect(record.ProtectedPayload),
+                _protector.Unprotect(protectedPayload),
                 _jsonOptions);
             if (session is null ||
                 !CryptographicOperations.FixedTimeEquals(
@@ -175,57 +180,71 @@ public sealed class AdminAuthSessionService(
                 return null;
             }
 
-            var now = DateTime.UtcNow;
-            if (contextFactory == null || identityOptions == null || session.AllstarrUserId is not { } userId)
+            var backendConfiguration = SnapshotBackendConfiguration();
+            if (!await IsLocallyValidAsync(session, cancellationToken))
             {
                 await store.RemoveAsync(sessionId, cancellationToken);
                 return null;
             }
-            await using (var db = await contextFactory.CreateDbContextAsync(cancellationToken))
+
+            if (_backendSessionValidator == null)
+                throw new AdminBackendSessionUnavailableException();
+
+            var validation = await _backendSessionValidator.ValidateSessionAsync(session, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsBackendConfigurationCurrent(backendConfiguration))
+                throw new AdminBackendSessionUnavailableException();
+            var backendUser = validation.User;
+            if (validation.Status == AdminBackendSessionValidationStatus.Unavailable ||
+                validation.Status == AdminBackendSessionValidationStatus.Valid && backendUser == null)
+                throw new AdminBackendSessionUnavailableException();
+            if (validation.Status != AdminBackendSessionValidationStatus.Valid ||
+                !IsMatchingBackendIdentity(session, backendUser!))
             {
-                var backendType = session.BackendType.Trim().ToLowerInvariant();
-                var current = await db.Users.AsNoTracking().SingleOrDefaultAsync(item =>
-                    item.Id == userId && item.Enabled && item.BackendType == backendType &&
-                    item.BackendInstanceId == session.BackendInstanceId &&
-                    item.BackendPrincipalId == session.UserId, cancellationToken);
-                if (session.BackendInstanceId != identityOptions.BackendInstanceId ||
-                    current == null || current.IsAdmin != session.IsAdministrator)
-                {
-                    await store.RemoveAsync(sessionId, cancellationToken);
-                    return null;
-                }
+                await RemoveIfMatchingRecordAsync(sessionId, protectedPayload, expiresAt, cancellationToken);
+                return null;
             }
-            if (session.OidcSecretReferenceId is { } secretId)
+
+            if (!await IsLocallyValidAsync(session, cancellationToken))
             {
-                if (oidcOptions?.Enabled != true || oidcBackend == null ||
-                    !session.BackendType.Equals(oidcBackend.Backend, StringComparison.OrdinalIgnoreCase) || session.OidcBackendEndpoint != oidcBackend.Endpoint ||
-                    session.OidcBackendInstanceId != identityOptions.BackendInstanceId)
-                {
-                    await store.RemoveAsync(sessionId, cancellationToken);
-                    return null;
-                }
-                await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-                if (!await (from link in db.AdminOidcLinks
-                            join user in db.Users on link.UserId equals user.Id
-                            join secret in db.SecretReferences on link.SecretReferenceId equals secret.Id
-                            where secret.Id == secretId && secret.RevokedAt == null &&
-                                  secret.UserId == user.Id &&
-                                  secret.Purpose == AdminOidcLinkRecord.SecretPurpose &&
-                                  user.Id == session.AllstarrUserId && user.Enabled &&
-                                  user.BackendType == oidcBackend.Backend &&
-                                  user.BackendInstanceId == session.OidcBackendInstanceId &&
-                                  user.BackendPrincipalId == session.UserId &&
-                                  user.IsAdmin == session.IsAdministrator
-                            select link).AnyAsync(cancellationToken))
-                {
-                    await store.RemoveAsync(sessionId, cancellationToken);
-                    return null;
-                }
+                if (!IsBackendConfigurationCurrent(backendConfiguration))
+                    throw new AdminBackendSessionUnavailableException();
+                await RemoveIfMatchingRecordAsync(sessionId, protectedPayload, expiresAt, cancellationToken);
+                return null;
             }
+            if (!IsBackendConfigurationCurrent(backendConfiguration))
+                throw new AdminBackendSessionUnavailableException();
+
+            // Backend validation is intentionally followed by a fresh record and
+            // local-identity read. A concurrent logout, revocation, or role change
+            // must not be revived by a late upstream response.
+            var currentRecord = await store.FindAsync(sessionId, cancellationToken);
+            if (!IsMatchingRecord(currentRecord, protectedPayload, expiresAt))
+                return null;
+            if (currentRecord!.ExpiresAt <= DateTimeOffset.UtcNow || session.ExpiresAtUtc <= DateTime.UtcNow)
+            {
+                await store.RemoveAsync(sessionId, cancellationToken);
+                return null;
+            }
+
+            var now = DateTime.UtcNow;
             session.LastSeenUtc = now;
-            if (record.LastSeenAt <= DateTimeOffset.UtcNow.AddMinutes(-5))
+            if (currentRecord.LastSeenAt <= DateTimeOffset.UtcNow.AddMinutes(-5))
             {
                 await store.TouchAsync(sessionId, now, cancellationToken);
+            }
+            if (!IsBackendConfigurationCurrent(backendConfiguration))
+                throw new AdminBackendSessionUnavailableException();
+
+            var finalRecord = await store.FindAsync(sessionId, cancellationToken);
+            if (!IsBackendConfigurationCurrent(backendConfiguration))
+                throw new AdminBackendSessionUnavailableException();
+            if (!IsMatchingRecord(finalRecord, protectedPayload, expiresAt))
+                return null;
+            if (finalRecord!.ExpiresAt <= DateTimeOffset.UtcNow || session.ExpiresAtUtc <= DateTime.UtcNow)
+            {
+                await store.RemoveAsync(sessionId, cancellationToken);
+                return null;
             }
             return session;
         }
@@ -239,6 +258,87 @@ public sealed class AdminAuthSessionService(
             return null;
         }
     }
+
+    private async Task<bool> IsLocallyValidAsync(
+        AdminAuthSession session,
+        CancellationToken cancellationToken)
+    {
+        if (contextFactory == null || identityOptions == null || session.AllstarrUserId is not { } userId)
+            return false;
+
+        await using (var db = await contextFactory.CreateDbContextAsync(cancellationToken))
+        {
+            var backendType = session.BackendType.Trim().ToLowerInvariant();
+            var current = await db.Users.AsNoTracking().SingleOrDefaultAsync(item =>
+                item.Id == userId && item.Enabled && item.BackendType == backendType &&
+                item.BackendInstanceId == session.BackendInstanceId &&
+                item.BackendPrincipalId == session.UserId, cancellationToken);
+            if (session.BackendInstanceId != identityOptions.BackendInstanceId ||
+                current == null || current.IsAdmin != session.IsAdministrator)
+                return false;
+        }
+
+        if (session.OidcSecretReferenceId is not { } secretId)
+            return true;
+        if (oidcOptions?.Enabled != true || oidcBackend == null ||
+            !session.BackendType.Equals(oidcBackend.Backend, StringComparison.OrdinalIgnoreCase) ||
+            session.OidcBackendEndpoint != oidcBackend.Endpoint ||
+            session.OidcBackendInstanceId != identityOptions.BackendInstanceId)
+            return false;
+
+        await using var linkDb = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await (from link in linkDb.AdminOidcLinks
+                      join user in linkDb.Users on link.UserId equals user.Id
+                      join secret in linkDb.SecretReferences on link.SecretReferenceId equals secret.Id
+                      where secret.Id == secretId && secret.RevokedAt == null &&
+                            secret.UserId == user.Id &&
+                            secret.Purpose == AdminOidcLinkRecord.SecretPurpose &&
+                            user.Id == session.AllstarrUserId && user.Enabled &&
+                            user.BackendType == oidcBackend.Backend &&
+                            user.BackendInstanceId == session.OidcBackendInstanceId &&
+                            user.BackendPrincipalId == session.UserId &&
+                            user.IsAdmin == session.IsAdministrator
+                      select link).AnyAsync(cancellationToken);
+    }
+
+    private BackendConfigurationSnapshot? SnapshotBackendConfiguration()
+    {
+        if (oidcBackend == null) return null;
+        var current = oidcBackend.SnapshotConfiguration();
+        return new(current.Backend, current.Endpoint);
+    }
+
+    private bool IsBackendConfigurationCurrent(BackendConfigurationSnapshot? snapshot) =>
+        snapshot == null || SnapshotBackendConfiguration() == snapshot;
+
+    private static bool IsMatchingRecord(
+        AdminAuthSessionRecord? record,
+        string protectedPayload,
+        DateTimeOffset expiresAt) =>
+        record != null &&
+        string.Equals(record.ProtectedPayload, protectedPayload, StringComparison.Ordinal) &&
+        record.ExpiresAt == expiresAt;
+
+    private async Task RemoveIfMatchingRecordAsync(
+        string sessionId,
+        string protectedPayload,
+        DateTimeOffset expiresAt,
+        CancellationToken cancellationToken)
+    {
+        var record = await store.FindAsync(sessionId, cancellationToken);
+        if (IsMatchingRecord(record, protectedPayload, expiresAt))
+            await store.RemoveAsync(sessionId, cancellationToken);
+    }
+
+    private static bool IsMatchingBackendIdentity(
+        AdminAuthSession session,
+        AdminOidcBackendUser identity) =>
+        (session.BackendType.Equals("subsonic", StringComparison.OrdinalIgnoreCase)
+            ? identity.UserId.Equals(session.UserId, StringComparison.OrdinalIgnoreCase)
+            : identity.UserId.Equals(session.UserId, StringComparison.Ordinal)) &&
+        identity.IsAdministrator == session.IsAdministrator;
+
+    private sealed record BackendConfigurationSnapshot(string Backend, string Endpoint);
 
     public async Task<AdminAuthSession?> GetValidSessionAsync(
         HttpRequest request,

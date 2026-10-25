@@ -34,7 +34,8 @@ public sealed class AdminPlaylistConsentTests : IAsyncLifetime
         _database = await SqliteTestDatabase.CreateAsync();
         _factory = new Factory(_database.Options);
         _sessions = new(new MemoryAdminAuthSessionStore(), new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider(),
-            NullLogger<AdminAuthSessionService>.Instance, contextFactory: _factory, identityOptions: new());
+            NullLogger<AdminAuthSessionService>.Instance, contextFactory: _factory, identityOptions: new(),
+            backendSessionValidator: HealthyAdminBackendSessionValidator.Instance);
         var state = new DurableStorageState(_database.StorageOptions);
         state.Set(DurableStorageReadiness.Ready);
         _identities = new(_factory, state, new(), new SystemPlatformClock());
