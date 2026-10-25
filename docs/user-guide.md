@@ -276,6 +276,10 @@ Jellyfin favorite views and Subsonic `getStarred` / `getStarred2` include your s
 
 Favorite actions do not tag files, place music in the backend library, trigger library rescans, or send Last.fm love requests. Removing a favorite cancels its pending work, clears its favorite state and releases that heart’s reference to the household copy. Once its last managed reference is released, the household kept file has a twenty-four-hour grace period before removal. Another listener’s heart or another retained reference protects it. Hearting it again protects an existing copy immediately and cancels its cleanup.
 
+Administrators can use **Integrations → Accounts → Shared provider hearts** to link an existing Jellyfin profile and Subsonic profile belonging to the same person. Both profiles must have previously signed in. Review the names, library labels and profile codes before confirming; matching names alone do not establish a link. Allstarr still exposes only the deployment's selected music protocol.
+
+Linking combines their existing provider hearts once, then hearts and un-hearts apply to both profiles. The initial union cannot be undone here. The card shows actual progress and offers a retry if combining saved hearts stops; a retry continues from saved progress. Disabling or changing one profile does not remove hearts already shared with the other available profile. Native backend favorites stay in their own libraries. Library permissions, source accounts, history, ratings, playlists, scrobbling and settings remain separate. Linking does not copy private display metadata or use the other profile's credentials to download music.
+
 ## Listening and scrobbling
 
 Connect Last.fm, ListenBrainz, multi-scrobbler or Koito under **Integrations → Accounts**. ListenBrainz uses your user token; multi-scrobbler and Koito also need their complete ListenBrainz-compatible listening address. Addresses and tokens are encrypted with the account. HTTPS is required outside private networks. See [target setup](operations/scrobbling.md#connect-a-destination) for the exact address formats.

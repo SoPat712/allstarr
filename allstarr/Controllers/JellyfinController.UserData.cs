@@ -34,7 +34,8 @@ public partial class JellyfinController
             return StatusCode(StatusCodes.Status403Forbidden);
         var saved = await state.ReadForRequestAsync(HttpContext, [itemId]);
         var favorites = HttpContext.RequestServices.GetService<FavoriteViewReader>();
-        var favorite = favorites != null && (await favorites.ReadForRequestAsync(HttpContext)).Any(item => item.ItemId == itemId);
+        IReadOnlyList<FavoriteViewItem> favoriteView = favorites == null ? [] : await favorites.ReadForRequestAsync(HttpContext);
+        var favorite = favoriteView.Select(item => item.ItemId).Contains(itemId, FavoriteViewReader.ItemComparer(favoriteView));
         var data = new JsonObject { ["ItemId"] = itemId, ["Key"] = itemId, ["IsFavorite"] = favorite };
         MusicUserDataProjection.Jellyfin(data, saved.GetValueOrDefault(itemId) ?? new());
         Response.Headers.CacheControl = "no-store";

@@ -275,6 +275,8 @@ public sealed class ProviderHealthMigrationTests
         foreach (var (name, sql) in reportIndexes)
             Assert.Equal(sql, CollapseSql(Assert.Single(after, row => row.Type == "index" && row.Name == name).Sql));
 
+        var sharedFavoriteObjects = AssertSharedFavoriteSchema(before, after);
+
         var oldSchema = before
             .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
             .Select(row => row.Name == "runtime_settings" ? row with
@@ -286,7 +288,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name) && !reportObjects.Contains(row.Name))
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name) && !reportObjects.Contains(row.Name) && !sharedFavoriteObjects.Contains(row.Name))
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -408,6 +410,7 @@ public sealed class ProviderHealthMigrationTests
     }
 
     private static bool IsDeliberateNewColumn(string table, string component) =>
+        (table == "favorite_events" && SharedFavoriteEventAdditions.Contains(component)) ||
         (table == "downloaded_song_mappings" && component == "\"CacheIdentityJson\" TEXT NULL") ||
         (table == "users" && component == "\"IsSynthetic\" INTEGER NOT NULL DEFAULT 0") ||
         (table == "provider_accounts" && component == "\"SettingsJson\" TEXT NOT NULL DEFAULT '{}'") ||
@@ -424,6 +427,80 @@ public sealed class ProviderHealthMigrationTests
         (table == "favorite_states" && component == "\"DisplayMetadataJson\" TEXT NULL") ||
         (table == "listening_events" && component == "\"ResumePositionTicks\" INTEGER NULL") ||
         (table == "audit_events" && component is "\"SubjectId\" TEXT NULL" or "\"SubjectType\" TEXT NULL");
+
+    private static readonly string[] SharedFavoriteEventAdditions =
+    [
+        "\"IsRealProviderIntent\" INTEGER NOT NULL DEFAULT 0", "\"SharedLifecycleVersion\" INTEGER NULL", "\"SharedLinkId\" TEXT NULL",
+        "CONSTRAINT \"CK_favorite_event_shared_scope\" CHECK (((\"SharedLinkId\" IS NULL AND \"SharedLifecycleVersion\" IS NULL) OR (\"SharedLinkId\" IS NOT NULL AND \"SharedLifecycleVersion\" IS NOT NULL AND \"SharedLifecycleVersion\">=0 AND \"IsRealProviderIntent\"=1)))",
+        "CONSTRAINT \"FK_favorite_events_provider_favorite_link_members_OwnerUserId_SharedLinkId\" FOREIGN KEY (\"OwnerUserId\", \"SharedLinkId\") REFERENCES \"provider_favorite_link_members\" (\"UserId\", \"LinkId\") ON DELETE RESTRICT"
+    ];
+
+    private static HashSet<string> AssertSharedFavoriteSchema(SchemaObject[] before, SchemaObject[] after)
+    {
+        var expected = new Dictionary<string, string>
+        {
+            ["IX_favorite_event_link_baseline"] = "CREATE INDEX \"IX_favorite_event_link_baseline\" ON \"favorite_events\" (\"OwnerUserId\", \"Protocol\", \"BackendInstanceId\", \"BackendPrincipalId\", \"SharedLinkId\", \"IsRealProviderIntent\", \"CreatedAt\", \"Id\")",
+            ["IX_favorite_event_link_item"] = "CREATE INDEX \"IX_favorite_event_link_item\" ON \"favorite_events\" (\"OwnerUserId\", \"Protocol\", \"BackendInstanceId\", \"BackendPrincipalId\", \"ItemId\", \"CreatedAt\", \"Id\")",
+            ["IX_favorite_events_OwnerUserId_SharedLinkId"] = "CREATE INDEX \"IX_favorite_events_OwnerUserId_SharedLinkId\" ON \"favorite_events\" (\"OwnerUserId\", \"SharedLinkId\")",
+            ["IX_linked_provider_favorite_states_LastIntentEventId"] = "CREATE INDEX \"IX_linked_provider_favorite_states_LastIntentEventId\" ON \"linked_provider_favorite_states\" (\"LastIntentEventId\")",
+            ["IX_provider_favorite_link_member_role"] = "CREATE UNIQUE INDEX \"IX_provider_favorite_link_member_role\" ON \"provider_favorite_link_members\" (\"LinkId\", \"Protocol\")",
+            ["IX_provider_favorite_link_requests_JobId"] = "CREATE INDEX \"IX_provider_favorite_link_requests_JobId\" ON \"provider_favorite_link_requests\" (\"JobId\")",
+            ["IX_provider_favorite_link_requests_LinkId"] = "CREATE INDEX \"IX_provider_favorite_link_requests_LinkId\" ON \"provider_favorite_link_requests\" (\"LinkId\")",
+            ["IX_provider_favorite_link_created"] = "CREATE INDEX \"IX_provider_favorite_link_created\" ON \"provider_favorite_links\" (\"CreatedAt\", \"Id\")",
+            ["IX_provider_favorite_link_pair"] = "CREATE UNIQUE INDEX \"IX_provider_favorite_link_pair\" ON \"provider_favorite_links\" (\"PairKey\")",
+            ["IX_provider_favorite_links_ConfirmedByUserId"] = "CREATE INDEX \"IX_provider_favorite_links_ConfirmedByUserId\" ON \"provider_favorite_links\" (\"ConfirmedByUserId\")",
+            ["IX_provider_favorite_links_UnionJobId"] = "CREATE INDEX \"IX_provider_favorite_links_UnionJobId\" ON \"provider_favorite_links\" (\"UnionJobId\")",
+            ["TR_favorite_event_scope_immutable"] = """
+                CREATE TRIGGER TR_favorite_event_scope_immutable BEFORE UPDATE OF "IsRealProviderIntent","SharedLinkId","SharedLifecycleVersion" ON favorite_events
+                WHEN NEW."IsRealProviderIntent" IS NOT OLD."IsRealProviderIntent" OR NEW."SharedLinkId" IS NOT OLD."SharedLinkId" OR NEW."SharedLifecycleVersion" IS NOT OLD."SharedLifecycleVersion"
+                BEGIN SELECT RAISE(ABORT,'CK_favorite_event_scope_immutable'); END
+                """,
+            ["TR_provider_favorite_link_member_immutable"] = "CREATE TRIGGER TR_provider_favorite_link_member_immutable BEFORE UPDATE ON provider_favorite_link_members BEGIN SELECT RAISE(ABORT,'CK_provider_favorite_link_member_immutable'); END"
+        };
+        foreach (var (name, sql) in expected)
+        {
+            Assert.DoesNotContain(before, item => item.Name == name);
+            Assert.Equal(CollapseSql(sql), CollapseSql(Assert.Single(after, item => item.Name == name).Sql));
+        }
+        var columns = new Dictionary<string, string[]>
+        {
+            ["provider_favorite_links"] = ["Id TEXT NOT NULL CONSTRAINT PK_provider_favorite_links PRIMARY KEY", "PairKey TEXT NOT NULL", "ConfirmedByUserId TEXT NOT NULL", "ConfirmationVersion INTEGER NOT NULL", "CreatedAt INTEGER NOT NULL", "UnionJobId TEXT NOT NULL", "UnionAttempt INTEGER NOT NULL", "UnionAdministratorFingerprint TEXT NOT NULL", "Phase INTEGER NOT NULL", "CursorAt INTEGER NULL", "CursorId TEXT NULL", "ProcessedRows INTEGER NOT NULL", "SeededItems INTEGER NOT NULL", "CompletedAt INTEGER NULL", "Revision INTEGER NOT NULL"],
+            ["provider_favorite_link_members"] = ["UserId TEXT NOT NULL CONSTRAINT PK_provider_favorite_link_members PRIMARY KEY", "LinkId TEXT NOT NULL", "Protocol TEXT NOT NULL", "BackendInstanceId TEXT NOT NULL", "BackendPrincipalId TEXT NOT NULL", "IdentityFingerprint TEXT NOT NULL", "ConfirmedDisplayName TEXT NOT NULL", "UpperAt INTEGER NULL", "UpperId TEXT NULL"],
+            ["linked_provider_favorite_states"] = ["LinkId TEXT NOT NULL", "ProviderId TEXT COLLATE BINARY NOT NULL", "ResourceKind TEXT COLLATE BINARY NOT NULL", "ExternalId TEXT COLLATE BINARY NOT NULL", "IsFavorite INTEGER NOT NULL", "LifecycleVersion INTEGER NOT NULL", "Revision INTEGER NOT NULL", "EffectiveAt INTEGER NOT NULL", "LastIntentEventId TEXT NULL"],
+            ["provider_favorite_link_requests"] = ["AdministratorUserId TEXT NOT NULL", "RequestId TEXT NOT NULL", "Operation TEXT NOT NULL", "RequestHash TEXT NOT NULL", "LinkId TEXT NOT NULL", "JobId TEXT NOT NULL", "Created INTEGER NOT NULL", "CreatedAt INTEGER NOT NULL"]
+        };
+        var constraints = new Dictionary<string, string[]>
+        {
+            ["provider_favorite_links"] = [
+                "CONSTRAINT CK_favorite_link_progress CHECK (length(PairKey)=64 AND length(UnionAdministratorFingerprint)=64 AND ConfirmationVersion=1 AND UnionAttempt>0 AND Phase BETWEEN 0 AND 2 AND ProcessedRows>=0 AND SeededItems>=0 AND Revision>0 AND ((CursorAt IS NULL)=(CursorId IS NULL)))",
+                "CONSTRAINT FK_provider_favorite_links_durable_jobs_UnionJobId FOREIGN KEY (UnionJobId) REFERENCES durable_jobs (Id) ON DELETE RESTRICT",
+                "CONSTRAINT FK_provider_favorite_links_users_ConfirmedByUserId FOREIGN KEY (ConfirmedByUserId) REFERENCES users (Id) ON DELETE RESTRICT"],
+            ["provider_favorite_link_members"] = ["CONSTRAINT AK_provider_favorite_link_members_UserId_LinkId UNIQUE (UserId, LinkId)",
+                "CONSTRAINT CK_favorite_link_member CHECK (Protocol IN ('jellyfin','subsonic') AND length(BackendInstanceId) BETWEEN 1 AND 200 AND length(BackendPrincipalId) BETWEEN 1 AND 300 AND length(IdentityFingerprint)=64 AND length(ConfirmedDisplayName) BETWEEN 1 AND 200 AND ((UpperAt IS NULL)=(UpperId IS NULL)))",
+                "CONSTRAINT FK_provider_favorite_link_members_provider_favorite_links_LinkId FOREIGN KEY (LinkId) REFERENCES provider_favorite_links (Id) ON DELETE RESTRICT",
+                "CONSTRAINT FK_provider_favorite_link_members_users_UserId FOREIGN KEY (UserId) REFERENCES users (Id) ON DELETE RESTRICT"],
+            ["linked_provider_favorite_states"] = ["CONSTRAINT PK_linked_provider_favorite_states PRIMARY KEY (LinkId, ProviderId, ResourceKind, ExternalId)",
+                "CONSTRAINT CK_linked_provider_favorite_state CHECK (length(ProviderId) BETWEEN 1 AND 100 AND ResourceKind IN ('track','album','artist','playlist') AND length(ExternalId) BETWEEN 1 AND 500 AND LifecycleVersion>=0 AND Revision>0)",
+                "CONSTRAINT FK_linked_provider_favorite_states_favorite_events_LastIntentEventId FOREIGN KEY (LastIntentEventId) REFERENCES favorite_events (Id) ON DELETE RESTRICT",
+                "CONSTRAINT FK_linked_provider_favorite_states_provider_favorite_links_LinkId FOREIGN KEY (LinkId) REFERENCES provider_favorite_links (Id) ON DELETE RESTRICT"],
+            ["provider_favorite_link_requests"] = ["CONSTRAINT PK_provider_favorite_link_requests PRIMARY KEY (AdministratorUserId, RequestId)",
+                "CONSTRAINT CK_favorite_link_request CHECK (Operation IN ('create','retry') AND length(RequestHash)=64)",
+                "CONSTRAINT FK_provider_favorite_link_requests_durable_jobs_JobId FOREIGN KEY (JobId) REFERENCES durable_jobs (Id) ON DELETE RESTRICT",
+                "CONSTRAINT FK_provider_favorite_link_requests_provider_favorite_links_LinkId FOREIGN KEY (LinkId) REFERENCES provider_favorite_links (Id) ON DELETE RESTRICT",
+                "CONSTRAINT FK_provider_favorite_link_requests_users_AdministratorUserId FOREIGN KEY (AdministratorUserId) REFERENCES users (Id) ON DELETE RESTRICT"]
+        };
+        foreach (var (table, expectedColumns) in columns)
+        {
+            Assert.DoesNotContain(before, item => item.Name == table);
+            var parts = TableColumns(after, table).Select(value => value.Replace("\"", "", StringComparison.Ordinal)).ToArray();
+            Assert.Equal(expectedColumns.Order(StringComparer.Ordinal), parts.Where(value => !value.StartsWith("CONSTRAINT ", StringComparison.Ordinal)).Order(StringComparer.Ordinal));
+            Assert.Equal(constraints[table].Order(StringComparer.Ordinal), parts.Where(value => value.StartsWith("CONSTRAINT ", StringComparison.Ordinal)).Order(StringComparer.Ordinal));
+        }
+        Assert.Equal(SharedFavoriteEventAdditions.Order(StringComparer.Ordinal), TableColumns(after, "favorite_events").Except(TableColumns(before, "favorite_events")).Order(StringComparer.Ordinal));
+        Assert.Empty(TableColumns(before, "favorite_events").Except(TableColumns(after, "favorite_events")));
+        Assert.Contains(TableColumns(after, "favorite_events"), part => part.StartsWith("CONSTRAINT \"FK_favorite_event_job_lineage\"", StringComparison.Ordinal));
+        return expected.Keys.Concat(columns.Keys).ToHashSet(StringComparer.Ordinal);
+    }
 
     private static string NormalizeNullability(string table, string component)
     {

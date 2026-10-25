@@ -24,9 +24,10 @@ public sealed class AudioQualityMigrationTests
         await db.Database.MigrateAsync();
         var currentGuards = await db.Database.SqlQueryRaw<string>(
             "SELECT name AS Value FROM sqlite_master WHERE type='trigger' ORDER BY name").ToArrayAsync();
-        string[] backupGuards = ["TR_backup_schedule_owner_insert", "TR_backup_schedule_owner_update"];
-        Assert.Equal(backupGuards, currentGuards.Except(guards).ToArray());
-        Assert.Equal(guards, currentGuards.Except(backupGuards).ToArray());
+        string[] addedGuards = ["TR_backup_schedule_owner_insert", "TR_backup_schedule_owner_update",
+            "TR_favorite_event_scope_immutable", "TR_provider_favorite_link_member_immutable"];
+        Assert.Equal(addedGuards, currentGuards.Except(guards).ToArray());
+        Assert.Equal(guards, currentGuards.Except(addedGuards).ToArray());
         Assert.Equal(7, (await db.DownloadedSongMappings.AsNoTracking().SingleAsync()).Revision);
         Assert.True(db.Model.FindEntityType(typeof(ProviderDownloadArtifactEntity))!
             .FindProperty("QualityCheckJson")!.IsNullable);

@@ -67,50 +67,99 @@ public sealed partial class FavoriteActionPipeline(
         var userId = actor.EffectiveUserId ?? throw new UnauthorizedAccessException("A canonical user is required.");
         var itemId = Required(request.ItemId, nameof(request.ItemId), 500);
         var sourceRevision = Required(request.SourceRevision, nameof(request.SourceRevision), 300);
+        var display = await CaptureDisplayAsync(request, itemId, userId, cancellationToken);
+        for (var attempt = 0; ; attempt++)
+        {
+            try { return await RecordOnceAsync(request, itemId, sourceRevision, display, cancellationToken); }
+            catch (Exception error) when (FavoriteLinkService.Retryable(error) && attempt < 3) { }
+        }
+    }
+
+    private async Task<FavoriteEventReceipt> RecordOnceAsync(FavoriteMutationRequest request, string itemId,
+        string sourceRevision, string? display, CancellationToken cancellationToken)
+    {
+        var execution = request.ExecutionContext;
+        var userId = execution.RequireActor().EffectiveUserId!.Value;
         var protocol = execution.Protocol.ToString().ToLowerInvariant();
         var backend = execution.BackendInstanceId;
-        var eventKey = HashKey(userId, protocol, backend, itemId, request.Operation, sourceRevision);
-        var display = await CaptureDisplayAsync(request, itemId, userId, cancellationToken);
         var now = clock.UtcNow;
 
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await context.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        if (!await context.Users.AsNoTracking().AnyAsync(item => item.Id == userId && item.Enabled &&
+        var user = await context.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == userId && item.Enabled &&
                 item.BackendType == protocol && item.BackendInstanceId == backend &&
-                item.BackendPrincipalId == execution.VerifiedBackendPrincipalId, cancellationToken))
-            throw new UnauthorizedAccessException("The favorite principal is no longer authorized.");
+                item.BackendPrincipalId == execution.VerifiedBackendPrincipalId, cancellationToken)
+            ?? throw new UnauthorizedAccessException("The favorite principal is no longer authorized.");
+        var synthetic = await SyntheticActivityPolicy.IsExcludedAsync(context, new IntelligenceScope(userId, protocol, backend), itemId, cancellationToken);
+        if (await context.Users.Where(item => item.Id == userId && item.Enabled && item.BackendType == protocol &&
+                item.BackendInstanceId == backend && item.BackendPrincipalId == execution.VerifiedBackendPrincipalId && item.IsSynthetic == user.IsSynthetic)
+                .ExecuteUpdateAsync(update => update.SetProperty(item => item.UpdatedAt, item => item.UpdatedAt), cancellationToken) != 1)
+            throw new DbUpdateConcurrencyException("The favorite principal changed.");
+        var key = FavoriteLinkScope.Key(itemId);
+        var real = key != null && !synthetic;
+        var member = real ? await FavoriteLinkScope.MemberAsync(context, user, cancellationToken) : null;
+        LinkedProviderFavoriteStateRecord? shared = null;
+        var changed = false;
+        if (member != null)
+        {
+            shared = await FavoriteLinkScope.StateQuery(context, member.LinkId, key!).SingleOrDefaultAsync(cancellationToken);
+            if (shared == null) { shared = FavoriteLinkScope.NewState(member.LinkId, key!, request.Operation == FavoriteOperation.Favorite, now); context.Add(shared); }
+            else if (shared.IsFavorite != (request.Operation == FavoriteOperation.Favorite))
+            {
+                shared.IsFavorite = !shared.IsFavorite;
+                shared.LifecycleVersion++;
+                shared.Revision++;
+                shared.EffectiveAt = now;
+                changed = true;
+            }
+        }
+        var scopedRevision = member != null ? $"{sourceRevision}:link:{member.LinkId:N}:{shared!.LifecycleVersion}" :
+            key != null ? $"{sourceRevision}:{(synthetic ? "synthetic" : "private")}:{FavoriteLinkScope.Fingerprint(user)}" : sourceRevision;
+        var eventKey = HashKey(userId, protocol, backend, itemId, request.Operation, scopedRevision);
         var currentState = await context.Set<FavoriteStateRecord>().SingleOrDefaultAsync(item =>
             item.OwnerUserId == userId && item.Protocol == protocol && item.BackendInstanceId == backend &&
             item.ItemId == itemId, cancellationToken);
         var acceptedEvents = context.Set<FavoriteEventRecord>().AsNoTracking().Where(item =>
-            item.OwnerUserId == userId && item.Protocol == protocol && item.BackendInstanceId == backend && item.ItemId == itemId);
+            item.OwnerUserId == userId && item.Protocol == protocol && item.BackendInstanceId == backend &&
+            item.BackendPrincipalId == execution.VerifiedBackendPrincipalId && item.ItemId == itemId);
         if (currentState != null) acceptedEvents = acceptedEvents.Where(item => item.Id == currentState.LastEventId);
         var latest = await acceptedEvents.OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
-            .Select(item => new { item.Id, item.JobId, item.Operation, item.SourceRevision, item.State })
             .FirstOrDefaultAsync(cancellationToken);
+        var sameScope = latest != null && latest.IsRealProviderIntent == real && (member == null ? latest.SharedLinkId == null :
+            latest.SharedLinkId == member.LinkId && latest.SharedLifecycleVersion == shared!.LifecycleVersion);
         if (latest != null && latest.Operation == request.Operation &&
-            latest.SourceRevision.Equals(sourceRevision, StringComparison.Ordinal))
+            latest.SourceRevision.Equals(sourceRevision, StringComparison.Ordinal) && sameScope)
         {
+            await context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             return new FavoriteEventReceipt(latest.Id, latest.JobId, false, latest.State);
         }
-        // A favorite after an unfavorite is a new lifecycle even when the backend supplies no revision.
-        // Repeated notifications for the current lifecycle still collapse to one event.
-        if (latest != null && latest.Operation != request.Operation)
+        // A changed intent or provider scope starts a new own-profile lifecycle even
+        // when the backend revision is unchanged. The current pointer also fences
+        // a replacement principal without reading its private metadata.
+        if (latest != null && latest.Operation != request.Operation ||
+            key != null && currentState != null && (latest == null || !sameScope))
         {
             eventKey = HashKey(userId, protocol, backend, itemId, request.Operation,
-                $"{sourceRevision}:after:{latest.Id:N}");
+                $"{scopedRevision}:after:{currentState?.LastEventId ?? latest!.Id:N}");
         }
         var existing = await context.Set<FavoriteEventRecord>().AsNoTracking()
             .SingleOrDefaultAsync(item => item.EventKey == eventKey, cancellationToken);
         if (existing != null)
         {
+            await context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             return new FavoriteEventReceipt(existing.Id, existing.JobId, false, existing.State);
         }
 
         var eventId = Guid.CreateVersion7();
-        await CancelSupersededWorkAsync(context, userId, protocol, backend, itemId, now, cancellationToken);
-
-        var synthetic = await SyntheticActivityPolicy.IsExcludedAsync(context, new IntelligenceScope(userId, protocol, backend), itemId, cancellationToken);
+        IReadOnlyList<FavoriteStateRecord> linkedTargets = [];
+        if (member != null && (changed || request.Operation == FavoriteOperation.Unfavorite))
+        {
+            linkedTargets = await FavoriteLinkScope.TargetStatesAsync(context, member.LinkId, key!, cancellationToken);
+            await CancelLinkedWorkAsync(context, member.LinkId, linkedTargets, now, cancellationToken);
+        }
+        await CancelSupersededWorkAsync(context, userId, protocol, backend, itemId, now, cancellationToken, synthetic);
         IReadOnlyList<string> actionTypes = synthetic ? [VirtualLikedAction] : BuildActions(request.Operation, itemId);
         var job = await jobs.EnqueueInExistingTransactionAsync(
             context,
@@ -130,6 +179,9 @@ public sealed partial class FavoriteActionPipeline(
             BackendPrincipalId = execution.VerifiedBackendPrincipalId,
             ItemId = itemId,
             Operation = request.Operation,
+            IsRealProviderIntent = real,
+            SharedLinkId = member?.LinkId,
+            SharedLifecycleVersion = shared?.LifecycleVersion,
             SourceRevision = sourceRevision,
             EventKey = eventKey,
             CorrelationId = execution.CorrelationId,
@@ -144,6 +196,7 @@ public sealed partial class FavoriteActionPipeline(
             UpdatedAt = now
         };
         context.Set<FavoriteEventRecord>().Add(record);
+        if (shared != null && (changed || context.Entry(shared).State == EntityState.Added)) shared.LastIntentEventId = eventId;
         if (currentState == null)
         {
             currentState = new FavoriteStateRecord
@@ -157,7 +210,7 @@ public sealed partial class FavoriteActionPipeline(
             context.Add(currentState);
         }
         currentState.IsFavorite = request.Operation == FavoriteOperation.Favorite;
-        if (display != null) currentState.DisplayMetadataJson = display;
+        if (display != null || key != null && latest == null) currentState.DisplayMetadataJson = display;
         currentState.LastEventId = eventId;
         currentState.UpdatedAt = now;
         currentState.Revision++;
@@ -179,19 +232,16 @@ public sealed partial class FavoriteActionPipeline(
         try
         {
             if (keptFiles != null && !synthetic)
-                await keptFiles.StageFavoriteInterestAsync(context, currentState, record, cancellationToken);
+            {
+                if (member != null && request.Operation == FavoriteOperation.Unfavorite)
+                    await keptFiles.StageLinkedFavoriteReleaseAsync(context, linkedTargets, record, cancellationToken);
+                else await keptFiles.StageFavoriteInterestAsync(context, currentState, record, cancellationToken);
+            }
             await context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new FavoriteEventReceipt(eventId, job.JobId, true, FavoriteEventState.Pending);
         }
-        catch (DbUpdateException)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            await using var retry = await contextFactory.CreateDbContextAsync(cancellationToken);
-            existing = await retry.Set<FavoriteEventRecord>().AsNoTracking()
-                .SingleAsync(item => item.EventKey == eventKey, cancellationToken);
-            return new FavoriteEventReceipt(existing.Id, existing.JobId, false, existing.State);
-        }
+        catch { await transaction.RollbackAsync(cancellationToken); throw; }
     }
 
     public async Task<FavoriteEventStatus?> GetStatusAsync(
@@ -222,7 +272,7 @@ public sealed partial class FavoriteActionPipeline(
             : [VirtualLikedAction];
 
     private async Task CancelSupersededWorkAsync(AllstarrDbContext context, Guid userId,
-        string protocol, string backend, string itemId, DateTimeOffset now, CancellationToken cancellationToken)
+        string protocol, string backend, string itemId, DateTimeOffset now, CancellationToken cancellationToken, bool syntheticOnly = false)
     {
         var priorEvents = await context.Set<FavoriteEventRecord>()
             .Where(item => item.OwnerUserId == userId && item.Protocol == protocol &&
@@ -230,6 +280,29 @@ public sealed partial class FavoriteActionPipeline(
                            (item.State == FavoriteEventState.Pending || item.State == FavoriteEventState.Running ||
                             item.State == FavoriteEventState.Failed))
             .ToListAsync(cancellationToken);
+        if (syntheticOnly) priorEvents = priorEvents.Where(item => !item.IsRealProviderIntent && item.SharedLinkId == null).ToList();
+        await CancelEventsAsync(context, priorEvents, now, cancellationToken);
+    }
+
+    private static async Task CancelLinkedWorkAsync(AllstarrDbContext context, Guid linkId,
+        IReadOnlyList<FavoriteStateRecord> targets, DateTimeOffset now, CancellationToken token)
+    {
+        var members = await context.Set<ProviderFavoriteLinkMemberRecord>().AsNoTracking().Where(item => item.LinkId == linkId).ToArrayAsync(token);
+        var events = new List<FavoriteEventRecord>();
+        foreach (var target in targets)
+        {
+            var member = members.Single(item => item.UserId == target.OwnerUserId);
+            var pending = await context.FavoriteEvents.Where(item => item.OwnerUserId == member.UserId && item.Protocol == member.Protocol &&
+                item.BackendInstanceId == member.BackendInstanceId && item.BackendPrincipalId == member.BackendPrincipalId && item.ItemId == target.ItemId &&
+                item.IsRealProviderIntent && (item.State == FavoriteEventState.Pending || item.State == FavoriteEventState.Running || item.State == FavoriteEventState.Failed)).ToArrayAsync(token);
+            events.AddRange(pending.Where(item => item.SharedLinkId == linkId || item.SharedLinkId == null && FavoriteLinkScope.WithinBound(item, member)));
+        }
+        await CancelEventsAsync(context, events, now, token);
+    }
+
+    private static async Task CancelEventsAsync(AllstarrDbContext context, IReadOnlyList<FavoriteEventRecord> priorEvents,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
         if (priorEvents.Count == 0) return;
         var eventIds = priorEvents.Select(item => item.Id).ToArray();
         var jobIds = priorEvents.Select(item => item.JobId).ToArray();

@@ -113,6 +113,15 @@ public sealed partial class RecordingKeptFiles
             favoriteEvent.CorrelationId, cancellationToken);
     }
 
+    internal async Task StageLinkedFavoriteReleaseAsync(AllstarrDbContext db, IReadOnlyList<FavoriteStateRecord> states,
+        FavoriteEventRecord favoriteEvent, CancellationToken token)
+    {
+        if (db.Database.CurrentTransaction == null) throw new InvalidOperationException("Kept interests require the favorite acceptance transaction.");
+        foreach (var state in states)
+            await StageReleaseInterestAsync(db, HeartKey(state.Id), favoriteEvent.OwnerUserId, favoriteEvent.Id,
+                favoriteEvent.UpdatedAt, favoriteEvent.CorrelationId, token);
+    }
+
     private async Task StageReleaseInterestAsync(AllstarrDbContext db, string key, Guid ownerUserId,
         Guid operationId, DateTimeOffset releasedAt, string correlationId, CancellationToken cancellationToken,
         Guid? onlyFileId = null)

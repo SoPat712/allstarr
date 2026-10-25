@@ -12,6 +12,7 @@ namespace allstarr.Tests;
 public sealed class ScheduledBackupMigrationTests
 {
     private const string Before = "20261024010000_ManagedAudioCacheIdentity";
+    private const string Target = "20261025020354_ScheduledBackups";
     private static async Task<(Guid User, Guid Schedule)> SeedAsync(AllstarrDbContext db)
     {
         var user = Guid.NewGuid();
@@ -52,7 +53,7 @@ public sealed class ScheduledBackupMigrationTests
         var rows = await db.Database.SqlQueryRaw<string>(ScheduleRows).ToArrayAsync();
         var objects = await db.Database.SqlQueryRaw<string>(Objects).ToArrayAsync();
         var ddl = await TableSqlAsync(db);
-        await migrator.MigrateAsync();
+        await migrator.MigrateAsync(Target);
         Assert.Equal(rows, await db.Database.SqlQueryRaw<string>(ScheduleRows).ToArrayAsync());
         Assert.All(objects, item => Assert.Contains(item, db.Database.SqlQueryRaw<string>(Objects).ToArray()));
         Assert.Equal(ddl.Replace("\"OwnerUserId\" TEXT NOT NULL", "\"OwnerUserId\" TEXT NULL", StringComparison.Ordinal), await TableSqlAsync(db));
@@ -71,7 +72,7 @@ public sealed class ScheduledBackupMigrationTests
         Assert.Equal(objects, await db.Database.SqlQueryRaw<string>(Objects).ToArrayAsync());
         await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE job_schedules SET Enabled=0 WHERE Id={schedule}");
         Assert.Equal(1, await db.Database.SqlQueryRaw<int>("SELECT COUNT(*) AS Value FROM schedule_fixture_audit").SingleAsync());
-        await migrator.MigrateAsync();
+        await migrator.MigrateAsync(Target);
         Assert.Equal(0, await db.Database.SqlQueryRaw<int>("SELECT writable_schema AS Value FROM pragma_writable_schema").SingleAsync());
         Assert.Equal("ok", await db.Database.SqlQueryRaw<string>("SELECT integrity_check AS Value FROM pragma_integrity_check").SingleAsync());
     }
@@ -111,7 +112,7 @@ public sealed class ScheduledBackupMigrationTests
         await db.Database.ExecuteSqlRawAsync("ALTER TABLE job_schedules ADD COLUMN OperatorNote TEXT NULL");
         var ddl = await TableSqlAsync(db);
         var rows = await db.Database.SqlQueryRaw<string>(ScheduleRows).ToArrayAsync();
-        await Assert.ThrowsAsync<SqliteException>(() => db.GetService<IMigrator>().MigrateAsync());
+        await Assert.ThrowsAsync<SqliteException>(() => db.GetService<IMigrator>().MigrateAsync(Target));
         Assert.Equal(ddl, await TableSqlAsync(db));
         Assert.Equal(rows, await db.Database.SqlQueryRaw<string>(ScheduleRows).ToArrayAsync());
         Assert.Equal(0, await db.Database.SqlQueryRaw<int>("SELECT writable_schema AS Value FROM pragma_writable_schema").SingleAsync());
@@ -135,7 +136,7 @@ public sealed class ScheduledBackupMigrationTests
         var options = new DbContextOptionsBuilder<AllstarrDbContext>(database.Options).AddInterceptors(inject).Options;
         await using (var db = new AllstarrDbContext(options))
         {
-            await Assert.ThrowsAsync<SqliteException>(() => db.GetService<IMigrator>().MigrateAsync());
+            await Assert.ThrowsAsync<SqliteException>(() => db.GetService<IMigrator>().MigrateAsync(Target));
             Assert.Equal(0, await db.Database.SqlQueryRaw<int>("SELECT writable_schema AS Value FROM pragma_writable_schema").SingleAsync());
             Assert.Equal(1, await db.Users.CountAsync());
             Assert.Equal(1, await db.JobSchedules.CountAsync());
@@ -143,7 +144,7 @@ public sealed class ScheduledBackupMigrationTests
         await using var fresh = new AllstarrDbContext(database.Options);
         Assert.Equal(0, await fresh.Database.SqlQueryRaw<int>("SELECT writable_schema AS Value FROM pragma_writable_schema").SingleAsync());
         Assert.Equal(1, await fresh.Users.CountAsync());
-        await fresh.GetService<IMigrator>().MigrateAsync();
+        await fresh.GetService<IMigrator>().MigrateAsync(Target);
         Assert.Equal(1, await fresh.JobSchedules.CountAsync());
     }
 

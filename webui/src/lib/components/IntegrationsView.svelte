@@ -1,6 +1,7 @@
 <script lang="ts">
   import RoutingView from "$lib/components/RoutingView.svelte";
   import SourcesView from "$lib/components/SourcesView.svelte";
+  import SharedProviderHearts from "$lib/components/SharedProviderHearts.svelte";
   import { Button } from "$lib/components/ui/button";
 
   let {
@@ -43,6 +44,9 @@
     {from}
     {focusAccount}
   />
+  {#if administrator && section === "accounts" && !serviceId && !initialSource && !initialConnect}
+    <SharedProviderHearts {administrator} />
+  {/if}
   {#if administrator && section !== "accounts" && !serviceId}
     <section class="settings-card p-5 my-4 space-y-3" aria-labelledby="routing-entry-title">
       <h3 id="routing-entry-title" class="font-semibold">Routing and quality</h3>

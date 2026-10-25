@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Favorites;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Core.Protocols.Jellyfin;
@@ -23,8 +24,8 @@ public partial class JellyfinController
         if (reader == null) return null;
         var saved = await reader.ReadForRequestAsync(HttpContext);
         if (saved.Count == 0) return null;
-        var favorites = _favoriteViews == null ? new HashSet<string>(StringComparer.Ordinal) :
-            (await _favoriteViews.ReadForRequestAsync(HttpContext)).Select(item => item.ItemId).ToHashSet(StringComparer.Ordinal);
+        IReadOnlyList<FavoriteViewItem> favoriteView = _favoriteViews == null ? [] : await _favoriteViews.ReadForRequestAsync(HttpContext);
+        var favorites = favoriteView.Select(item => item.ItemId).ToHashSet(FavoriteViewReader.ItemComparer(favoriteView));
         var query = Request.Query.ToDictionary(pair => pair.Key, pair => pair.Value.ToString(), StringComparer.OrdinalIgnoreCase);
         var artistList = Request.Path.StartsWithSegments("/Artists", StringComparison.OrdinalIgnoreCase);
         if (!artistList && (!query.TryGetValue("IncludeItemTypes", out var requestedTypes) || string.IsNullOrWhiteSpace(requestedTypes)))

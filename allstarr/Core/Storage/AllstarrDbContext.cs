@@ -14,6 +14,8 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     {
         base.OnConfiguring(optionsBuilder);
         optionsBuilder.AddInterceptors(BackupMigrationCleanupInterceptor.Instance);
+        optionsBuilder.AddInterceptors(FavoriteLinkMigrationInterceptor.Instance);
+        optionsBuilder.AddInterceptors(FavoriteLinkMigrationInterceptor.ConnectionLifecycle);
     }
 
     public DbSet<UserRecord> Users => Set<UserRecord>();
@@ -442,6 +444,12 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
 
     private void EnforceImmutableSnapshots()
     {
+        foreach (var entry in ChangeTracker.Entries<FavoriteEventRecord>().Where(item => item.State == EntityState.Modified))
+            if (entry.Property(item => item.IsRealProviderIntent).IsModified || entry.Property(item => item.SharedLinkId).IsModified ||
+                entry.Property(item => item.SharedLifecycleVersion).IsModified)
+                throw new InvalidOperationException("Accepted favorite scope is immutable.");
+        if (ChangeTracker.Entries<ProviderFavoriteLinkMemberRecord>().Any(item => item.State == EntityState.Modified))
+            throw new InvalidOperationException("Confirmed favorite membership is immutable.");
         foreach (var entry in ChangeTracker.Entries<ExternalMetadataSnapshotRecord>()
                      .Where(entry => entry.State == EntityState.Added))
         {

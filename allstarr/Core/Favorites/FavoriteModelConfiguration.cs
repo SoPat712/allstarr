@@ -8,6 +8,7 @@ public static class FavoriteModelConfiguration
 {
     public static void Configure(ModelBuilder modelBuilder)
     {
+        FavoriteLinkModelConfiguration.Configure(modelBuilder);
         modelBuilder.Entity<FavoriteEventRecord>(entity =>
         {
             entity.ToTable("favorite_events");

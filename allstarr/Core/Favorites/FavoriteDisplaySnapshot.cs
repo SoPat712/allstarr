@@ -79,6 +79,8 @@ public sealed record FavoriteDisplaySnapshot(int Version, string ItemId, string 
 public sealed record FavoriteViewItem(string ItemId, ProviderExternalResourceId Resource,
     DateTimeOffset FavoritedAt, FavoriteDisplaySnapshot Display)
 {
+    internal bool SharedScope { get; init; }
+
     public Song Song() => new()
     {
         Id = ItemId,

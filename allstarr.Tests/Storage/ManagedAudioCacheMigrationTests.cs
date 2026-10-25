@@ -35,9 +35,10 @@ public sealed class ManagedAudioCacheMigrationTests
         Assert.Null((await db.DownloadedSongMappings.AsNoTracking().SingleAsync()).CacheIdentityJson);
         Assert.Equal(values, await db.Database.SqlQueryRaw<string>(historic).ToArrayAsync());
         var currentTriggers = await db.Database.SqlQueryRaw<string>(triggers).ToArrayAsync();
-        string[] backupGuards = ["TR_backup_schedule_owner_insert", "TR_backup_schedule_owner_update"];
+        string[] addedGuards = ["TR_backup_schedule_owner_insert", "TR_backup_schedule_owner_update",
+            "TR_favorite_event_scope_immutable", "TR_provider_favorite_link_member_immutable"];
         var addedTriggers = currentTriggers.Except(originalTriggers).ToArray();
-        Assert.Equal(backupGuards, addedTriggers.Select(item => item.Split('\n')[0]).ToArray());
+        Assert.Equal(addedGuards, addedTriggers.Select(item => item.Split('\n')[0]).ToArray());
         Assert.Equal(originalTriggers, currentTriggers.Except(addedTriggers).ToArray());
         await migrator.MigrateAsync(before);
         Assert.Equal(values, await db.Database.SqlQueryRaw<string>(historic).ToArrayAsync());

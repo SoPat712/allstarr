@@ -264,7 +264,8 @@ public sealed partial class RecordingKeptFilesTests
         Guid userId,
         string itemId,
         Guid? existingJobId = null,
-        FavoriteOperation operation = FavoriteOperation.Favorite)
+        FavoriteOperation operation = FavoriteOperation.Favorite,
+        bool realProviderIntent = false)
     {
         var eventId = Guid.CreateVersion7();
         var activeJobId = existingJobId ?? Guid.Empty;
@@ -298,6 +299,7 @@ public sealed partial class RecordingKeptFilesTests
             BackendPrincipalId = userId.ToString("N"),
             ItemId = itemId,
             Operation = operation,
+            IsRealProviderIntent = realProviderIntent,
             SourceRevision = $"favorite-fixture:{eventId:N}",
             EventKey = $"favorite-fixture:{eventId:N}",
             CorrelationId = $"favorite-fixture:{eventId:N}",
