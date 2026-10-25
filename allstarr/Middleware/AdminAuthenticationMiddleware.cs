@@ -75,6 +75,13 @@ public class AdminAuthenticationMiddleware
         var path = request.Path.Value ?? string.Empty;
         var method = request.Method;
 
+        var reportPath = path.TrimEnd('/');
+        if (reportPath.Equals("/api/admin/problem-reports", StringComparison.OrdinalIgnoreCase) ||
+            reportPath.Equals("/api/admin/problem-reports/context", StringComparison.OrdinalIgnoreCase))
+            return HttpMethods.IsPost(method);
+        if (reportPath.Equals("/api/admin/ui/listener-context", StringComparison.OrdinalIgnoreCase))
+            return HttpMethods.IsGet(method);
+
         if (path.StartsWith("/api/admin/track-matches", StringComparison.OrdinalIgnoreCase))
         {
             var matchSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);

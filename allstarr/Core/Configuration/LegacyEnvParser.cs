@@ -59,6 +59,7 @@ public static class LegacyEnvParser
     private static readonly IReadOnlyDictionary<string, string> DurableAliases =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
+            ["PUBLIC_LISTENER_URL"] = "Gateway:PublicListenerUrl",
             ["BACKEND_MUSIC_LIBRARY_IDS"] = "Backend:MusicLibraryIds",
             ["JELLYFIN_LIBRARY_ID"] = "Backend:MusicLibraryIds",
             ["MUSICBRAINZ_SOURCE_ID"] = "MusicBrainz:SourceId",

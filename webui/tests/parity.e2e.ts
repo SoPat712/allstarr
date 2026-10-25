@@ -3369,6 +3369,7 @@ test("Mappings keep mobile tabs, evidence, and actions readable", async ({ page 
   await expect(more).toBeInViewport();
   await more.click();
   await expect(page.getByRole("menuitem", { name: "Rematch" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Report a problem", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
 });
 
@@ -4838,6 +4839,8 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await dialog.getByRole("button", { name: "Technical details for Test song" }).click();
   await expect(page).toHaveURL(/#\/library\/playlists$/);
   const trackDetails = page.locator(".track-details-menu");
+  const reportSong = trackDetails.getByRole("link", { name: "Report a problem", exact: true });
+  await expect(reportSong).toHaveAttribute("href", /#\/report\?snapshot=snapshot&from=%2Flibrary%2Fplaylists/);
   const reviewMatch = trackDetails.getByRole("button", { name: "Review match" });
   await expect(reviewMatch).toBeVisible();
   await expect.poll(() => trackDetails.evaluate((panel) => {

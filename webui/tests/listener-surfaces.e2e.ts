@@ -144,6 +144,11 @@ test("listener navigation exposes personal surfaces and blocks operator workspac
 
   await page.goto("/#/");
   await expect(page.getByRole("region", { name: "Now playing" })).toContainText("My active song");
+  const report = page.getByRole("region", { name: "Now playing" }).getByRole("link", { name: "Report a problem", exact: true });
+  const reportQuery = new URLSearchParams((await report.getAttribute("href"))!.split("?")[1]);
+  expect(reportQuery.get("item")).toBe("item-listener");
+  expect(reportQuery.get("user")).toBe("listener");
+  expect(reportQuery.get("device")).toBe("shared-device-id");
   await expect(page.getByText(/My Playback/i).first()).toBeVisible();
   await expect(page.getByText("Personal Artist", { exact: true })).toBeVisible();
   await expect(page.getByText("Media server", { exact: true })).toHaveCount(0);
@@ -159,6 +164,7 @@ test("listener navigation exposes personal surfaces and blocks operator workspac
   const more = page.getByRole("navigation", { name: "More destinations" });
   await expect(more.getByRole("link", { name: /Listening preferences/ })).toBeVisible();
   await expect(more.getByRole("link", { name: /Sources/ })).toBeVisible();
+  await expect(more.getByRole("link", { name: /Getting started/ })).toBeVisible();
   await expect(more.getByRole("link", { name: /Settings/ })).toHaveCount(0);
   await more.getByRole("link", { name: /Sources/ }).click();
   await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible();

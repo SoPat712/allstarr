@@ -32,6 +32,14 @@ Non-secret product behavior belongs in household SQLite settings and is edited t
 
 `DurableRuntimeSettingsService` owns validation, typing, revisions, optimistic concurrency, and live option updates after a successful commit. Controllers must not add a second environment or JSON owner for these settings.
 
+## Music-client address
+
+Set **Settings → Network → Music-client address** to the Allstarr gateway URL listeners enter in their music apps, for example `https://music.example.com`. Include the port and any gateway path prefix when needed. This optional household setting updates **Getting started** immediately. It does not change listener ports, reverse-proxy routing or the backend connection. An unset value leaves the guide's address empty.
+
+The durable key is `Gateway:PublicListenerUrl`; `PUBLIC_LISTENER_URL` is its environment/import alias. Use an absolute HTTP or HTTPS URL without credentials, a query or a fragment. Keep the backend server's private address out of this field. The guide uses the signed-in listener's verified backend type and username and offers only compatible apps. See [connecting a music app](../user-guide.md#connect-your-music-app).
+
+Problem reports are stored in SQLite and included in database backups. Only administrators can list reports, inspect their captured diagnostics or change their status. Signed-in listeners can preview and submit reports for their accessible songs and observed playback. Capture reads existing local metadata, match authority and source-check results; it does not start a provider request, playback probe or download. Submitted context is bounded and redacts credential assignments and URLs. Reports are not sent to an external service.
+
 ## Provider accounts
 
 Provider credentials are encrypted and persisted as **Personal** or **Shared** accounts. Personal accounts have one user owner; Shared accounts have no user owner and are managed by administrators. Services and their configuration are managed under **Integrations > Services**. Credentials and audience policy live under **Integrations > Accounts**; capability priority lives under **Integrations > Routing**.

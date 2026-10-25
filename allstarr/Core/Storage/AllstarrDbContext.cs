@@ -90,6 +90,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         IntelligenceModelConfiguration.Configure(modelBuilder);
         modelBuilder.ConfigurePlaybackDeliveryCheckpoints();
         ConfigureOperations(modelBuilder);
+        ConfigureProblemReports(modelBuilder);
         ConfigureRuntimeSettings(modelBuilder);
         ConfigureSubsonicQueues(modelBuilder);
         ConfigureProviderUserData(modelBuilder);

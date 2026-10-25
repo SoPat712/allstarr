@@ -6,6 +6,7 @@ internal static class OperatorSettingPolicy
 {
     internal static readonly RuntimeSettingDefinition[] Definitions =
     [
+        new("Gateway:PublicListenerUrl", RuntimeSettingValueType.String, "Gateway:PublicListenerUrl", AllowEmpty: true, DefaultValue: "", MaximumLength: 2048),
         new("ChallengeSolver:Url", RuntimeSettingValueType.String, "ChallengeSolver:Url", AllowEmpty: true, DefaultValue: "", MaximumLength: 2048),
         new("ChallengeSolver:TimeoutSeconds", RuntimeSettingValueType.Integer, "ChallengeSolver:TimeoutSeconds", 10, 180, DefaultValue: "60"),
         new("MusicBrainz:SourceId", RuntimeSettingValueType.String, "MusicBrainz:SourceId", DefaultValue: "musicbrainz", MaximumLength: 100, RequiresRestart: true),

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Storage;
 using allstarr.Models.Domain;
 using allstarr.Services.Common;
 
@@ -7,6 +8,20 @@ namespace allstarr.Core.Protocols;
 
 public sealed partial class ProtocolProviderGateway
 {
+    internal async Task<ProtocolCachedSongFacts?> ReadCachedSongFactsAsync(ProviderActorContext actor, string providerId,
+        string externalId, ProviderAccountContext? account = null)
+    {
+        var provider = NormalizeProvider(providerId);
+        if (actor.Kind is not (ProviderActorKind.User or ProviderActorKind.Administrator) ||
+            actor.EffectiveUserId == null || actor.BackendPrincipal == null || account != null &&
+            (!account.Enabled || NormalizeProvider(account.ProviderId) != provider ||
+             account.Scope == ProviderAccountScope.Personal && account.OwnerUserId != actor.EffectiveUserId)) return null;
+        var song = await ReadCachedSongAsync(actor, provider, externalId, account);
+        if (song == null || song.IsLocal || NormalizeProvider(song.ExternalProvider) != provider || song.ExternalId != externalId) return null;
+        return new(song.Title, song.Artist, song.Album,
+            song.Duration is > 0 and <= 604800 ? song.Duration.Value * 1000L : null, song.CanonicalRecordingId);
+    }
+
     public async Task<Album?> GetStoredAlbumAsync(ProtocolExecutionContext protocol, string providerId, string externalId)
     {
         var album = await ReadStoredMetadataAsync<Album>(protocol, providerId, ProviderResourceKind.Album, externalId);
@@ -123,3 +138,6 @@ public sealed partial class ProtocolProviderGateway
         ProviderResourceKind kind, string externalId, bool detail = false, ProviderAccountContext? account = null) => CacheKeyBuilder.BuildProtocolMetadataKey(
             NormalizeProvider(provider), JsonSerializer.Serialize(new { Actor = actor, AccountId = account?.AccountId, AccountRevision = account?.Revision }), detail ? $"{kind}:detail" : kind.ToString(), externalId);
 }
+
+internal sealed record ProtocolCachedSongFacts(string? Title, string? Artist, string? Album,
+    long? DurationMilliseconds, Guid? CanonicalRecordingId);

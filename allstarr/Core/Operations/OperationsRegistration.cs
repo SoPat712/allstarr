@@ -17,6 +17,7 @@ public static class OperationsRegistration
         services.AddSingleton(sidecars);
         services.AddSingleton<PlatformReadinessService>();
         services.AddSingleton<BackgroundTaskActivity>();
+        services.AddSingleton<ProblemReportService>();
         services.AddHostedService<SidecarHealthMonitor>();
         return services;
     }

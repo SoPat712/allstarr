@@ -1,0 +1,118 @@
+<script lang="ts">
+  import { onMount } from "svelte";
+  import { home, type ProviderDefinition } from "$lib/api";
+  import { Button } from "$lib/components/ui/button";
+  import { Badge } from "$lib/components/ui/badge";
+  import { Skeleton } from "$lib/components/ui/skeleton";
+  import SelectField from "$lib/components/SelectField.svelte";
+  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
+  import ProblemContextCard from "$lib/components/ProblemContextCard.svelte";
+  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
+  import { providerDisplayName } from "$lib/sources";
+  import { listenerSupport, reportKindLabel, reportStatusLabel, reportStatuses, supportDate, supportError,
+    supportErrorCode, type ProblemReport, type ProblemReportDetail, type ReportStatus } from "$lib/support";
+
+  let { administrator, initialReportId = "" }: { administrator: boolean; initialReportId?: string } = $props();
+  let filter = $state<ReportStatus | "all">("new");
+  let rows = $state<ProblemReport[]>([]);
+  let cursor = $state<string | null>(null);
+  let detail = $state<ProblemReportDetail | null>(null);
+  let selectedId = $state("");
+  let desired = $state<ReportStatus>("new");
+  let providers = $state<ProviderDefinition[]>([]);
+  let loading = $state(true);
+  let busy = $state(false);
+  let detailLoading = $state(false);
+  let saving = $state(false);
+  let error = $state("");
+  let detailError = $state("");
+  let conflict = $state(false);
+  let savedMessage = $state("");
+  let disposed = false;
+  let request = 0;
+  const provider = (id: string | null) => providerDisplayName(providers, id, "Not captured");
+
+  async function load(more = false) {
+    if (!administrator || busy || disposed || more && !cursor) return;
+    busy = true; error = "";
+    try {
+      const next = await listenerSupport.list(filter, more ? cursor! : undefined);
+      if (disposed) return;
+      rows = more ? [...rows, ...next.items.filter(item => !rows.some(old => old.id === item.id))] : next.items;
+      cursor = next.nextCursor;
+    } catch (cause) { error = supportError(cause, "Reports could not be loaded. Try again."); }
+    finally { busy = false; loading = false; }
+  }
+  async function choose(next: string) {
+    if (busy) return;
+    filter = next as ReportStatus | "all"; cursor = null; rows = []; loading = true;
+    await load();
+  }
+  async function open(id: string) {
+    if (saving) return;
+    const current = ++request;
+    selectedId = id; detail = null;
+    detailLoading = true; detailError = ""; conflict = false; savedMessage = "";
+    try {
+      const incoming = await listenerSupport.detail(id);
+      if (disposed || current !== request) return;
+      detail = incoming; desired = incoming.status;
+    } catch (cause) { if (current === request) detailError = supportError(cause, "This report could not be loaded. Try again."); }
+    finally { if (current === request) detailLoading = false; }
+  }
+  async function save(event: SubmitEvent) {
+    event.preventDefault();
+    if (!detail || saving || desired === detail.status || conflict) return;
+    saving = true; detailError = ""; savedMessage = "";
+    try {
+      const result = await listenerSupport.status(detail.id, desired, detail.revision);
+      detail = { ...detail, ...result }; savedMessage = `Report marked ${reportStatusLabel(result.status).toLowerCase()}.`;
+      await load();
+    } catch (cause) {
+      conflict = supportErrorCode(cause) === "report_changed";
+      detailError = supportError(cause, "The report status could not be saved. Try again.");
+    } finally { saving = false; }
+  }
+  const scheduler = createRefreshScheduler(() => load());
+  onMount(() => {
+    if (!administrator) return;
+    void load();
+    if (initialReportId) void open(initialReportId);
+    void home.schema().then(schema => { providers = schema.providers ?? []; }).catch(() => {});
+    const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
+    return () => { disposed = true; request++; scheduler.cancel(); unsubscribe(); };
+  });
+</script>
+
+{#if administrator}
+  <section class="settings-content" aria-label="Problem report inbox">
+    <header class="panel-heading"><div><h2>Problem reports</h2><p>Notes and captured diagnostics from your listeners.</p></div><div class="panel-heading-actions"><Button variant="secondary" disabled={busy} onclick={() => void load()}>Refresh reports</Button></div></header>
+    <SegmentedNav label="Report status" active={filter} onchange={(next) => void choose(next)} items={[
+      { id: "new", label: "New" }, { id: "seen", label: "Seen" }, { id: "fixed", label: "Fixed" }, { id: "all", label: "All" },
+    ]} />
+    {#if error}<div class="degraded-banner" role="alert"><p>{error}</p><Button variant="secondary" disabled={busy} onclick={() => void load()}>Retry reports</Button></div>{/if}
+    {#if loading}<Skeleton class="settings-card skeleton-panel" aria-label="Loading reports" aria-busy="true" />
+    {:else if rows.length}
+      <article class="settings-card" aria-label="Report list">
+        {#each rows as row (row.id)}
+          <div class="settings-row"><div><strong>{row.songTitle ?? "General report"}</strong><small>{row.artist ? `${row.artist} · ` : ""}{reportKindLabel(row.kind)} · {row.reporterName} · {supportDate(row.createdAt)}</small><small>{row.notePreview}</small><small>Source: {provider(row.providerId)} · App: {row.clientName ?? "Not captured"}</small></div>
+            <div class="panel-heading-actions"><Badge tone={row.status === "fixed" ? "success" : row.status === "new" ? "accent" : "neutral"}>{reportStatusLabel(row.status)}</Badge><Button variant="secondary" disabled={saving} aria-label={`Open report for ${row.songTitle ?? "general problem"}`} onclick={() => void open(row.id)}>Open report</Button></div></div>
+        {/each}
+        {#if cursor}<footer><Button variant="secondary" disabled={busy} onclick={() => void load(true)}>{busy ? "Loading…" : "Load more reports"}</Button></footer>{/if}
+      </article>
+    {:else if !error}<article class="settings-card"><header><h3>No {filter === "all" ? "" : `${filter} `}reports</h3></header><p class="settings-impact">Listeners can report a song from its details or send a note from Getting started.</p></article>{/if}
+    {#if detailLoading}<Skeleton class="settings-card skeleton-panel" aria-label="Loading report" aria-busy="true" />{/if}
+    {#if detailError}<div class="degraded-banner" role="alert"><p>{detailError}</p>{#if selectedId}<Button variant="secondary" disabled={detailLoading || saving} onclick={() => void open(selectedId)}>Reload report</Button>{/if}</div>{/if}
+    {#if detail}
+      <article class="settings-card" aria-label="Report note"><header><div><h3>{reportKindLabel(detail.kind)}</h3><small>Reported by {detail.reporterName} · {supportDate(detail.createdAt)}</small></div></header>
+        <p class="settings-impact whitespace-pre-wrap break-words">{detail.note}</p>
+        <form aria-label="Report status change" onsubmit={(event) => void save(event)}>
+          <div class="settings-row"><div><strong>Status</strong><small>Opening a report leaves its status unchanged.</small></div><SelectField label="Report status" value={desired} options={reportStatuses} onchange={(value) => desired = value as ReportStatus} disabled={saving || conflict} /></div>
+          {#if savedMessage}<p class="settings-impact" role="status">{savedMessage}</p>{/if}
+          <footer><Button type="submit" disabled={saving || conflict || desired === detail.status}>{saving ? "Saving…" : "Save status"}</Button></footer>
+        </form>
+      </article>
+      <ProblemContextCard context={detail.context} {providers} review />
+    {/if}
+  </section>
+{/if}

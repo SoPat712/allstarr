@@ -83,6 +83,7 @@ public sealed class ScheduledBackupMigrationTests
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         await using var db = new AllstarrDbContext(database.Options);
+        await db.GetService<IMigrator>().MigrateAsync("20261025020354_ScheduledBackups");
         if (artifact)
         {
             db.BackupArtifacts.Add(new() { Id = Guid.NewGuid(), Origin = "manual", CreatedAt = DateTimeOffset.UtcNow, Directory = "fixture", StorageBinding = "fixture" });

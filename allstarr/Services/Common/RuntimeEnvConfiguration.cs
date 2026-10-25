@@ -21,6 +21,7 @@ public static class RuntimeEnvConfiguration
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
             ["BACKEND_TYPE"] = ["Backend:Type"],
+            ["PUBLIC_LISTENER_URL"] = ["Gateway:PublicListenerUrl"],
             ["BACKEND_MUSIC_LIBRARY_IDS"] = ["Backend:MusicLibraryIds"],
             ["ALLSTARR_RELEASE_PROFILE"] = ["Release:Profile"],
             ["ADMIN_BIND_ANY_IP"] = ["Admin:BindAnyIp"],
@@ -191,6 +192,7 @@ public static class RuntimeEnvConfiguration
     private static readonly HashSet<string> BootstrapKeys = new(StringComparer.OrdinalIgnoreCase)
     {
         "Backend:Type", "Jellyfin:Url", "Subsonic:Url",
+        "Gateway:PublicListenerUrl",
         "Storage:DataDirectory", "Storage:DatabaseFileName", "Storage:AutoMigrate", "Secrets:KeyRingPath",
         "Admin:BindAnyIp", "Admin:TrustedSubnets", "Admin:BasePath", "Admin:Containerized", "Admin:ContainerGateway",
         "Extensions:SessionVerification:BaseUrl",

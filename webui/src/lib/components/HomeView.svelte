@@ -12,6 +12,7 @@
   import { playbackSeekLabel, playbackSourceIssues, summarizeHome, type HomeSnapshot } from "$lib/home";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { accountSubtitle, findProviderDefinition, providerDisplayName } from "$lib/sources";
+  import { reportHref } from "$lib/support";
 
   let { administrator }: { administrator: boolean } = $props();
 
@@ -257,6 +258,8 @@
               </span>
             </div>
 
+            <div class="panel-heading-actions"><Button variant="secondary" size="sm" href={reportHref({ itemId: item.itemId,
+              ...(item.userId ? { playback: { subjectUserId: item.userId, deviceId: item.deviceId } } : {}) })}>Report a problem</Button></div>
             {#if item.scrobbleDeliveries?.length}
               <div class="scrobble-targets" aria-label="Scrobble delivery targets">
                 {#each item.scrobbleDeliveries as delivery (delivery.targetId)}
@@ -278,6 +281,7 @@
         <div>
           <h2>Nothing is playing</h2>
           <p>{administrator ? "When someone plays music through Allstarr, it shows up here." : "When you play music through Allstarr, it shows up here."}</p>
+          <Button variant="secondary" href="#/getting-started">Connect a music app</Button>
         </div>
       </div>
     {/if}
