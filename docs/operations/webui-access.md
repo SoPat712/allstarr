@@ -31,6 +31,8 @@ This location does not add authentication. Protect the entire path with your acc
 
 A path is not a browser security boundary. Other applications on `media.example.org` share its origin and can make same-origin requests to Allstarr. Use a dedicated hostname when possible; otherwise, only share the hostname with applications you trust. Cookie paths and an access-proxy login do not remove this risk.
 
+Admin responses include `Content-Security-Policy: frame-ancestors 'none'`, `X-Frame-Options: DENY`, and `X-Content-Type-Options: nosniff`. Open the dashboard in its own browser tab or window. These protections cover pages, assets, redirects, and API responses on the admin listener. The generated script policy remains in place when a URL prefix is used. Configure HTTPS at the reverse proxy for remote access.
+
 ## OIDC login
 
 Register a confidential web client with your identity provider. Enable authorization-code flow with PKCE and register this exact redirect URI:
