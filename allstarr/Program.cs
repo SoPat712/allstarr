@@ -258,6 +258,7 @@ builder.Services.AddControllers()
         }
         manager.FeatureProviders.Add(new BackendControllerFeatureProvider(backendType, releaseComposition));
     });
+builder.Services.AddAdminSignInRateLimiting();
 
 builder.Services.AddHttpClient();
 builder.Services.Configure<OdesliSettings>(builder.Configuration.GetSection("Odesli"));
@@ -618,6 +619,7 @@ app.UseMiddleware<allstarr.Middleware.AdminNetworkAllowlistMiddleware>();
 app.UseMiddleware<allstarr.Middleware.AdminBasePathMiddleware>();
 // Select endpoints after stripping the admin prefix, before authentication.
 app.UseRouting();
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseMiddleware<allstarr.Middleware.AdminStaticFilesMiddleware>();
 app.UseMiddleware<allstarr.Middleware.AdminAuthenticationMiddleware>();

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.RateLimiting;
 using System.Globalization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -1149,6 +1150,8 @@ public partial class JellyfinController : ControllerBase
     // The lowest-priority catch-all relays only requests that escaped explicit music routes.
     // Privileged Jellyfin operations are denied at this public proxy boundary.
     [AcceptVerbs("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", Route = "{**path}", Order = 100)]
+    [EnableRateLimiting(AdminSignInRateLimiting.PolicyName)]
+    [NativeSignInFallback]
     public async Task<IActionResult> ProxyRequest(string path)
     {
         // Admin controllers own this namespace; never forward it upstream.

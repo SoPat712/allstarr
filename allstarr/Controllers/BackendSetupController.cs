@@ -2,8 +2,10 @@ using System.Text.Json;
 using allstarr.Core.Configuration;
 using allstarr.Core.Storage;
 using allstarr.Filters;
+using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace allstarr.Controllers;
 
@@ -27,6 +29,7 @@ public sealed class BackendSetupController(BackendSetupService setup, DurableSto
     }
 
     [HttpPost]
+    [EnableRateLimiting(AdminSignInRateLimiting.PolicyName)]
     [RequestSizeLimit(8192)]
     public async Task<IActionResult> Save([FromBody] BackendSetupRequest request, CancellationToken token)
     {

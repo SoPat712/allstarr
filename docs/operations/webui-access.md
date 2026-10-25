@@ -2,6 +2,8 @@
 
 The dashboard uses port 5275 and remains loopback-only by default. URL prefixes and OpenID Connect (OIDC) login are opt-in. Music clients keep using port 5274 with their media-server credentials.
 
+Password checks for dashboard and Jellyfin sign-in, initial setup, and playlist reauthentication share limits of 20 requests per minute for each client address and 60 requests per minute across all those actions. The limits use the address after configured forwarded-header trust, reject without queueing, and return HTTP 429 with a positive `Retry-After` value. OIDC completion callbacks and ordinary music browsing, playback, and seeking remain outside this sign-in budget.
+
 ## Reverse-proxy path
 
 For `https://media.example.org/allstarr/`, set:
