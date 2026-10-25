@@ -12,9 +12,12 @@ public sealed record BackupArtifact(
     Guid Id, string FileName, long Bytes, string? Sha256, string SchemaVersion,
     string ApplicationVersion, DateTimeOffset CreatedAt)
 {
-    public string Status => "verified";
-    public DateTimeOffset VerifiedAt => CreatedAt;
+    public string Status => Verification;
+    public DateTimeOffset? VerifiedAt { get; init; }
     public bool IncludesKeyRing => true;
+    public string Origin { get; init; } = "legacy";
+    public string[] RetentionBuckets { get; init; } = [];
+    public string Verification { get; init; } = "unverified";
 }
 
 public sealed class BackupVerificationException(string message) : InvalidOperationException(message);
@@ -23,7 +26,12 @@ public sealed partial class DurableBackupService(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     StorageOptions options,
     DurableStorageState storageState,
-    SecretStoreOptions secretOptions)
+    SecretStoreOptions secretOptions,
+    allstarr.Core.Settings.DurableRuntimeSettingsService? runtimeSettings = null,
+    allstarr.Core.Jobs.DurableJobQueue? jobs = null,
+    allstarr.Core.Operations.IPlatformClock? clock = null,
+    allstarr.Core.ManagedFiles.IManagedFileOperations? fileOperations = null,
+    IConfiguration? configuration = null) : IDisposable
 {
     internal const string DatabaseFile = "allstarr.db";
     internal const string KeyRingFile = "keyring.json";
@@ -38,122 +46,30 @@ public sealed partial class DurableBackupService(
 
     public async Task<BackupArtifact> CreateAsync(CancellationToken cancellationToken = default)
     {
-        if (storageState.GetSnapshot().Readiness != DurableStorageReadiness.Ready)
-            throw new InvalidOperationException("A backup cannot start while durable storage is unready.");
         await _gate.WaitAsync(cancellationToken);
-        string? temporary = null;
-        string? partial = null;
         try
         {
-            options.Validate();
-            if (HasPendingRestore) throw new RestorePendingException();
-            var directory = Path.GetFullPath(options.BackupDirectory);
+            RequireReady();
+            await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+            var policy = await ReadPolicyAsync(db, cancellationToken);
+            var directory = ResolveDirectory(policy);
             if (directory.Contains('\'')) throw new BackupVerificationException("The backup directory must not contain a single quote.");
-            Directory.CreateDirectory(directory);
-            var id = Guid.NewGuid();
-            var now = DateTimeOffset.UtcNow;
-            temporary = Path.Combine(directory, $".tmp-{id:N}");
-            CreatePrivateDirectory(temporary);
-            var snapshotPath = Path.Combine(temporary, DatabaseFile);
-            await using (var source = await contextFactory.CreateDbContextAsync(cancellationToken))
-            {
-                var compatibility = await DurableSchemaCompatibility.InspectAsync(source, cancellationToken);
-                if (!compatibility.IsCurrent)
-                    throw new BackupVerificationException("A backup requires a compatible database schema.");
-                await source.Database.ExecuteSqlInterpolatedAsync($"VACUUM INTO {snapshotPath}", cancellationToken);
-            }
-            MakePrivate(snapshotPath);
-            var keyPath = Path.Combine(temporary, KeyRingFile);
-            await using (var source = File.OpenRead(secretOptions.KeyRingPath))
-            await using (var target = CreatePrivateFile(keyPath))
-                await source.CopyToAsync(target, cancellationToken);
-            var schema = await VerifySnapshotAsync(snapshotPath, keyPath, cancellationToken);
-            var manifest = new BackupManifest(1, id, AppVersion.Version, schema, now,
-                new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    [DatabaseFile] = await HashAsync(snapshotPath, cancellationToken),
-                    [KeyRingFile] = await HashAsync(keyPath, cancellationToken)
-                });
-            var name = FileName(manifest);
-            partial = Path.Combine(directory, $".{id:N}.partial");
-            await using (var output = CreatePrivateFile(partial))
-            {
-                using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
-                {
-                    foreach (var file in new[] { DatabaseFile, KeyRingFile })
-                    {
-                        await using var source = File.OpenRead(Path.Combine(temporary, file));
-                        await using var entry = archive.CreateEntry(file, CompressionLevel.Fastest).Open();
-                        await source.CopyToAsync(entry, cancellationToken);
-                    }
-                    await using var metadata = archive.CreateEntry(ManifestFile, CompressionLevel.Fastest).Open();
-                    await JsonSerializer.SerializeAsync(metadata, manifest, JsonOptions, cancellationToken);
-                }
-                await output.FlushAsync(cancellationToken);
-                output.Flush(flushToDisk: true);
-            }
-            await VerifyArchiveAsync(partial, cancellationToken);
-            var hash = await HashAsync(partial, cancellationToken);
-            var path = Path.Combine(directory, name);
-            File.Move(partial, path, overwrite: false);
-            partial = null;
-            var artifact = ToArtifact(path, manifest) with { Sha256 = hash };
-            await RotateAsync(cancellationToken);
-            return artifact;
-        }
-        finally
-        {
-            try
-            {
-                if (partial is not null) File.Delete(partial);
-                if (temporary is not null && Directory.Exists(temporary)) Directory.Delete(temporary, recursive: true);
-            }
-            finally { _gate.Release(); }
-        }
-    }
-
-    public async Task<IReadOnlyList<BackupArtifact>> ListAsync(CancellationToken cancellationToken = default)
-    {
-        var directory = options.BackupDirectory;
-        if (!Directory.Exists(directory)) return [];
-        var artifacts = new List<BackupArtifact>();
-        foreach (var path in Directory.EnumerateFiles(directory, "allstarr-backup-*.zip"))
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                if (File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint)) continue;
-                await using var file = File.OpenRead(path);
-                using var archive = new ZipArchive(file, ZipArchiveMode.Read);
-                var manifest = await ReadManifestAsync(archive, cancellationToken);
-                if (Path.GetFileName(path) == FileName(manifest)) artifacts.Add(ToArtifact(path, manifest));
-            }
-            catch (Exception exception) when (exception is IOException or InvalidDataException or BackupVerificationException)
-            {
-                // Leave unknown or damaged files untouched; they are never retention candidates.
-            }
-        }
-        return artifacts.OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id).ToArray();
-    }
-
-    public async Task<(Stream Stream, string FileName)> OpenVerifiedAsync(Guid id, CancellationToken cancellationToken = default)
-    {
-        await _gate.WaitAsync(cancellationToken);
-        try
-        {
-            var artifact = (await ListAsync(cancellationToken)).SingleOrDefault(item => item.Id == id)
-                ?? throw new FileNotFoundException("The backup is unavailable.");
-            var path = Path.Combine(options.BackupDirectory, artifact.FileName);
-            await VerifyArchiveAsync(path, cancellationToken);
-            return (File.OpenRead(path), artifact.FileName);
+            var row = await NewArtifactAsync(db, policy, "manual", null, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+            return await CreateReservedAsync(row, null, cancellationToken);
         }
         finally { _gate.Release(); }
     }
 
     internal async Task<BackupManifest> VerifyArchiveAsync(string path, CancellationToken cancellationToken)
     {
-        await using var file = File.OpenRead(path);
-        using var archive = new ZipArchive(file, ZipArchiveMode.Read);
+        await using var file = OpenArchiveFile(path);
+        return await VerifyArchiveStreamAsync(file, cancellationToken);
+    }
+
+    private async Task<BackupManifest> VerifyArchiveStreamAsync(Stream file, CancellationToken cancellationToken)
+    {
+        using var archive = new ZipArchive(file, ZipArchiveMode.Read, leaveOpen: true);
         var manifest = await ReadManifestAsync(archive, cancellationToken);
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         if (!context.Database.GetMigrations().Contains(manifest.LastMigrationId, StringComparer.Ordinal))
@@ -248,29 +164,12 @@ public sealed partial class DurableBackupService(
         return compatibility.AppliedSchemaVersion;
     }
 
-    private async Task RotateAsync(CancellationToken cancellationToken)
-    {
-        foreach (var old in (await ListAsync(cancellationToken)).Skip(options.BackupRetentionCount))
-        {
-            try
-            {
-                var path = Path.Combine(options.BackupDirectory, old.FileName);
-                await VerifyArchiveAsync(path, cancellationToken);
-                File.Delete(path);
-            }
-            catch (Exception exception) when (exception is IOException or InvalidDataException or BackupVerificationException)
-            {
-                // Keep damaged archives and files held open by an active download.
-            }
-        }
-    }
-
     private static BackupArtifact ToArtifact(string path, BackupManifest manifest) =>
         new(manifest.Id, Path.GetFileName(path), new FileInfo(path).Length, null, manifest.LastMigrationId, manifest.AppVersion, manifest.CreatedAt);
     private static string FileName(BackupManifest manifest) => $"allstarr-backup-{manifest.CreatedAt.UtcDateTime:yyyyMMdd-HHmmss}-{manifest.Id:N}.zip";
     internal static async Task<string> HashAsync(string path, CancellationToken cancellationToken)
     {
-        await using var stream = File.OpenRead(path);
+        await using var stream = OpenArchiveFile(path);
         return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
     }
     internal static void CreatePrivateDirectory(string path)
@@ -278,9 +177,9 @@ public sealed partial class DurableBackupService(
         if (OperatingSystem.IsWindows()) Directory.CreateDirectory(path);
         else Directory.CreateDirectory(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
-    internal static FileStream CreatePrivateFile(string path)
+    internal static FileStream CreatePrivateFile(string path, FileShare share = FileShare.None)
     {
-        var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.ReadWrite, Share = FileShare.None, Options = FileOptions.Asynchronous };
+        var options = new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.ReadWrite, Share = share, Options = FileOptions.Asynchronous };
         if (!OperatingSystem.IsWindows()) options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
         return new FileStream(path, options);
     }

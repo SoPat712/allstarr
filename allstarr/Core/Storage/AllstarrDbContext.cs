@@ -10,6 +10,12 @@ namespace allstarr.Core.Storage;
 
 public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext> options) : DbContext(options)
 {
+    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+    {
+        base.OnConfiguring(optionsBuilder);
+        optionsBuilder.AddInterceptors(BackupMigrationCleanupInterceptor.Instance);
+    }
+
     public DbSet<UserRecord> Users => Set<UserRecord>();
     public DbSet<OnboardingStateRecord> OnboardingStates => Set<OnboardingStateRecord>();
     public DbSet<AdminAuthSessionRecord> AdminAuthSessions => Set<AdminAuthSessionRecord>();
@@ -90,6 +96,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         modelBuilder.ConfigureManualLyricsMappings();
         ConfigureLyricsChoices(modelBuilder);
         ConfigureHealth(modelBuilder);
+        ConfigureBackups(modelBuilder);
         ConfigurePortableDateTimeOffsets(modelBuilder);
         // Durable identifiers are assigned explicitly; omit provider-specific identifier limits.
         modelBuilder.Model.RemoveAnnotation("Relational:MaxIdentifierLength");

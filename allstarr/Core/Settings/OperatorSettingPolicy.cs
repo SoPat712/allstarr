@@ -21,7 +21,6 @@ internal static class OperatorSettingPolicy
         new("Operations:EventLog:CleanupIntervalMinutes", RuntimeSettingValueType.Integer, "Operations:EventLog:CleanupIntervalMinutes", 5, 10080, DefaultValue: "360", RequiresRestart: true),
         new("Operations:EventLog:CleanupBatchSize", RuntimeSettingValueType.Integer, "Operations:EventLog:CleanupBatchSize", 100, 10000, DefaultValue: "1000", RequiresRestart: true),
         new("Operations:EventLog:JobHistoryRetentionDays", RuntimeSettingValueType.Integer, "Operations:EventLog:JobHistoryRetentionDays", 1, 3650, DefaultValue: "7", RequiresRestart: true),
-        new("Storage:BackupRetentionCount", RuntimeSettingValueType.Integer, "Storage:BackupRetentionCount", 1, 1000, DefaultValue: "10", RequiresRestart: true),
         new("Backend:MusicLibraryIds", RuntimeSettingValueType.String, "Backend:MusicLibraryIds", AllowEmpty: true, DefaultValue: "", MaximumLength: 20000, RequiresRestart: true),
         new("Cors:AllowedOrigins", RuntimeSettingValueType.String, "Cors:AllowedOrigins", AllowEmpty: true, DefaultValue: "", MaximumLength: 8192, RequiresRestart: true),
         new("Cors:AllowedMethods", RuntimeSettingValueType.String, "Cors:AllowedMethods", AllowEmpty: true, DefaultValue: "", MaximumLength: 1000, RequiresRestart: true),
@@ -31,6 +30,7 @@ internal static class OperatorSettingPolicy
 
     internal static void Validate(string key, string value)
     {
+        allstarr.Core.Storage.DurableBackupService.ValidatePolicyString(key, value);
         if (key is "Admin:Oidc:Authority" or "Admin:Oidc:PublicUrl" && value.Length > 0 &&
             (!Uri.TryCreate(value, UriKind.Absolute, out var oidcUri) || oidcUri.Scheme != "https" ||
             oidcUri.UserInfo.Length > 0 || oidcUri.Query.Length > 0 || oidcUri.Fragment.Length > 0))

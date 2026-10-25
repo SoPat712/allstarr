@@ -71,6 +71,13 @@ public sealed class DurableJobContextAuthorizer
             return new(ownerUserId, providerAccountId, null, RedactCorrelationId(correlationId),
                 JsonSerializer.Serialize(SessionVerificationSnapshot(sessionAccount)));
         }
+        if (jobType == DurableBackupService.JobType)
+        {
+            if (ownerUserId != null || providerAccountId != null || capability != null)
+                throw new ArgumentException("Database backups cannot carry user or provider authority.");
+            return new(null, null, null, RedactCorrelationId(correlationId),
+                JsonSerializer.Serialize(new DurableJobPolicySnapshot(SnapshotVersion, "household_backup", null, null, null)));
+        }
         if (jobType == ManagedStorageRecovery.JobType)
         {
             if (ownerUserId != null || providerAccountId != null || capability != null)
@@ -136,7 +143,7 @@ public sealed class DurableJobContextAuthorizer
         CancellationToken cancellationToken = default)
     {
         if ((!claim.OwnerUserId.HasValue || claim.OwnerUserId == Guid.Empty) &&
-            claim.Type is not (ManagedStorageRecovery.JobType or ExtensionSessionVerificationJobHandler.Type))
+            claim.Type is not (ManagedStorageRecovery.JobType or ExtensionSessionVerificationJobHandler.Type or DurableBackupService.JobType))
         {
             return DurableJobContextAuthorization.Deny(
                 "job_context_missing",
@@ -169,6 +176,12 @@ public sealed class DurableJobContextAuthorizer
                 ? DurableJobContextAuthorization.Allow()
                 : DurableJobContextAuthorization.Deny("job_provider_account_unauthorized", "The sign-in connection changed before verification completed.");
         }
+
+        if (claim.Type == DurableBackupService.JobType || savedSnapshot.AuthorizationRule == "household_backup")
+            return claim.Type == DurableBackupService.JobType && claim.OwnerUserId == null && claim.ProviderAccountId == null &&
+                claim.ProviderCapability == null && savedSnapshot == new DurableJobPolicySnapshot(SnapshotVersion, "household_backup", null, null, null)
+                ? DurableJobContextAuthorization.Allow()
+                : DurableJobContextAuthorization.Deny("job_policy_snapshot_mismatch", "The backup policy does not match this exact job.");
 
         if (claim.Type == ManagedStorageRecovery.JobType || savedSnapshot.AuthorizationRule == "managed_storage_verification")
             return claim.Type == ManagedStorageRecovery.JobType && savedSnapshot == StorageSnapshot() &&

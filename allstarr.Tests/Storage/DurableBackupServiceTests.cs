@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using System.IO.Compression;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -227,8 +228,18 @@ public sealed partial class DurableBackupServiceTests : IAsyncLifetime
     [Fact]
     public async Task Api_CreatesAndDownloadsBackupAndHidesInternalPathsOnFailure()
     {
-        var controller = Controller(true);
-        var artifact = Assert.IsType<BackupArtifact>(Assert.IsType<OkObjectResult>(await controller.CreateBackup()).Value);
+        await EnableAdministratorAsync();
+        var (service, queue, _) = ScheduledService();
+        var controller = Controller(true, service);
+        var queued = Assert.IsType<BackupQueued>(Assert.IsType<AcceptedResult>(await controller.CreateBackup()).Value);
+        Assert.True(queued.Created);
+        Assert.Equal("Backup queued.", queued.Message);
+        var claim = (await queue.ClaimNextAsync("backup-fixture", [DurableBackupService.JobType]))!;
+        using var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection().BuildServiceProvider();
+        var completed = await new DurableBackupJobHandler(service).ExecuteAsync(new(claim, services), default);
+        Assert.True(completed.Kind == allstarr.Core.Jobs.DurableJobCompletionKind.Succeeded, completed.ErrorCode);
+        await queue.CompleteAsync(claim, completed);
+        var artifact = Assert.Single(await service.ListAsync());
         var download = Assert.IsType<FileStreamResult>(await controller.DownloadBackup(artifact.Id));
         await using (download.FileStream)
         {
@@ -238,19 +249,30 @@ public sealed partial class DurableBackupServiceTests : IAsyncLifetime
         }
         Assert.IsType<NotFoundObjectResult>(await controller.DownloadBackup(Guid.NewGuid()));
         File.Delete(_secrets.KeyRingPath);
+        _state.Set(DurableStorageReadiness.Unavailable);
         var unavailable = Assert.IsType<ObjectResult>(await controller.CreateBackup());
         Assert.Equal(503, unavailable.StatusCode);
         Assert.DoesNotContain(_options.DataDirectory, System.Text.Json.JsonSerializer.Serialize(unavailable.Value));
+        _state.Set(DurableStorageReadiness.Ready);
+        Assert.IsType<AcceptedResult>(await controller.CreateBackup());
+        var failing = (await queue.ClaimNextAsync("backup-fixture", [DurableBackupService.JobType]))!;
+        var failed = await new DurableBackupJobHandler(service).ExecuteAsync(new(failing, services), default);
+        Assert.Equal(allstarr.Core.Jobs.DurableJobCompletionKind.Retry, failed.Kind);
+        Assert.DoesNotContain(_options.DataDirectory, failed.SafeMessage);
+        Assert.Single(await service.ListAsync());
     }
 
-    private StorageController Controller(bool? administrator)
+    private StorageController Controller(bool? administrator, DurableBackupService? service = null)
     {
-        var controller = new StorageController(_state, Service()) { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
+        var controller = new StorageController(_state, service ?? Service()) { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
         if (administrator.HasValue)
             controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
             {
                 SessionId = "fixture",
-                UserId = "fixture",
+                UserId = "listener",
+                BackendType = "Jellyfin",
+                BackendInstanceId = "backup-fixture",
+                AllstarrUserId = _userId,
                 UserName = "fixture",
                 IsAdministrator = administrator.Value,
                 JellyfinAccessToken = "fixture",

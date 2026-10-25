@@ -34,7 +34,11 @@ public sealed class ManagedAudioCacheMigrationTests
         await migrator.MigrateAsync();
         Assert.Null((await db.DownloadedSongMappings.AsNoTracking().SingleAsync()).CacheIdentityJson);
         Assert.Equal(values, await db.Database.SqlQueryRaw<string>(historic).ToArrayAsync());
-        Assert.Equal(originalTriggers, await db.Database.SqlQueryRaw<string>(triggers).ToArrayAsync());
+        var currentTriggers = await db.Database.SqlQueryRaw<string>(triggers).ToArrayAsync();
+        string[] backupGuards = ["TR_backup_schedule_owner_insert", "TR_backup_schedule_owner_update"];
+        var addedTriggers = currentTriggers.Except(originalTriggers).ToArray();
+        Assert.Equal(backupGuards, addedTriggers.Select(item => item.Split('\n')[0]).ToArray());
+        Assert.Equal(originalTriggers, currentTriggers.Except(addedTriggers).ToArray());
         await migrator.MigrateAsync(before);
         Assert.Equal(values, await db.Database.SqlQueryRaw<string>(historic).ToArrayAsync());
         Assert.Equal(originalTriggers, await db.Database.SqlQueryRaw<string>(triggers).ToArrayAsync());
@@ -42,5 +46,6 @@ public sealed class ManagedAudioCacheMigrationTests
         await migrator.MigrateAsync();
         Assert.Null((await db.DownloadedSongMappings.AsNoTracking().SingleAsync()).CacheIdentityJson);
         Assert.Equal(values, await db.Database.SqlQueryRaw<string>(historic).ToArrayAsync());
+        Assert.Equal(currentTriggers, await db.Database.SqlQueryRaw<string>(triggers).ToArrayAsync());
     }
 }

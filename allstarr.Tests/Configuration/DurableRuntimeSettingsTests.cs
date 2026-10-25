@@ -394,7 +394,7 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         await CreateService([]).ApplyBatchAsync([new(key, raw)], "webui", _userId);
         var saved = await CreateService([]).GetAsync(key);
         Assert.Equal(raw, saved.NormalizedValue);
-        Assert.True(RuntimeSettingCatalog.Require(key).RequiresRestart);
+        Assert.Equal(key != "Storage:BackupRetentionCount", RuntimeSettingCatalog.Require(key).RequiresRestart);
     }
 
     [Theory]

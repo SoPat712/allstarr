@@ -220,6 +220,14 @@ public sealed class ProviderHealthMigrationTests
             after.Where(row => row.Type == "index" && row.Name.StartsWith("IX_health_smoke_runs_", StringComparison.Ordinal))
                 .Select(row => row.Name).Order(StringComparer.Ordinal));
 
+        string[] backupObjects = ["backup_artifacts", "IX_backup_artifacts_JobId", "IX_backup_artifacts_CreatedAt",
+            "IX_household_backup_schedule", "TR_backup_schedule_owner_insert", "TR_backup_schedule_owner_update"];
+        Assert.DoesNotContain(before, row => backupObjects.Contains(row.Name));
+        Assert.Equal(backupObjects.Order(StringComparer.Ordinal), after.Where(row => backupObjects.Contains(row.Name))
+            .Select(row => row.Name).Order(StringComparer.Ordinal));
+        Assert.Contains("\"OwnerUserId\" TEXT NOT NULL", TableColumns(before, "job_schedules"));
+        Assert.Contains("\"OwnerUserId\" TEXT NULL", TableColumns(after, "job_schedules"));
+
         var oldSchema = before
             .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
             .Select(row => row.Name == "runtime_settings" ? row with
@@ -231,7 +239,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable)
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name))
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -372,6 +380,8 @@ public sealed class ProviderHealthMigrationTests
 
     private static string NormalizeNullability(string table, string component)
     {
+        if (table == "job_schedules" && component == "\"OwnerUserId\" TEXT NULL")
+            return "\"OwnerUserId\" TEXT NOT NULL";
         if ((table is "external_metadata_snapshots" or "playlist_links" or "playlist_source_snapshots") &&
             component.StartsWith("\"ProviderAccountId\" ", StringComparison.Ordinal))
             return component.Replace(" NOT NULL", string.Empty, StringComparison.Ordinal)

@@ -84,6 +84,7 @@ builder.Services.AddSingleton<ManagedStorageRecovery>();
 builder.Services.AddHostedService<ManagedStorageRecoveryStartup>();
 builder.Services.AddSingleton<IDurableJobHandler, ManagedStorageRecoveryJobHandler>();
 builder.Services.AddDurableJobs(builder.Configuration);
+builder.Services.AddSingleton<IDurableJobHandler, DurableBackupJobHandler>();
 builder.Services.AddProviderRuntimeHealth(builder.Configuration);
 builder.Services.AddProviderCapabilities();
 builder.Services.AddTrackIdentity();

@@ -23,10 +23,13 @@ public sealed partial class RecordingKeptFilesTests
         await migrator.MigrateAsync("20261015083606_RecordFavoriteIntentAtAcceptance");
 
         string[] laterGuards = ["TR_legacy_media_immutable_delete", "TR_legacy_media_immutable_update", "TR_legacy_media_provenance",
-            "TR_legacy_original_file", "TR_legacy_original_reference", "TR_legacy_original_reference_delete"];
+            "TR_legacy_original_file", "TR_legacy_original_reference", "TR_legacy_original_reference_delete",
+            "TR_backup_schedule_owner_insert", "TR_backup_schedule_owner_update"];
         Assert.All(laterGuards, name => Assert.Contains(name, triggers));
-        Assert.Equal(triggers.Except(laterGuards).ToArray(), await db.Database.SqlQueryRaw<string>(
-            "SELECT name AS Value FROM sqlite_master WHERE type = 'trigger' ORDER BY name").ToArrayAsync());
+        var downgradedTriggers = await db.Database.SqlQueryRaw<string>(
+            "SELECT name AS Value FROM sqlite_master WHERE type = 'trigger' ORDER BY name").ToArrayAsync();
+        Assert.All(laterGuards, name => Assert.DoesNotContain(name, downgradedTriggers));
+        Assert.Equal(triggers.Except(laterGuards).ToArray(), downgradedTriggers);
         Assert.Equal(audio, await File.ReadAllBytesAsync(published.Path));
         await db.Database.MigrateAsync();
         var legacy = await db.Set<RecordingKeptRouteEntity>().AsNoTracking().SingleAsync();

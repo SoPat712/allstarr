@@ -110,7 +110,7 @@ public sealed class ManualTrackOverrideRecord
 public sealed class JobScheduleRecord
 {
     public Guid Id { get; set; }
-    public Guid OwnerUserId { get; set; }
+    public Guid? OwnerUserId { get; set; }
     public string JobType { get; set; } = string.Empty;
     public string CronExpression { get; set; } = string.Empty;
     public string TimeZoneId { get; set; } = "UTC";
