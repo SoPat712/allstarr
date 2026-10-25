@@ -1,4 +1,5 @@
-import { ApiError, json } from "./api";
+import { ApiError, json, type ProviderDefinition } from "./api";
+import { providerDisplayName } from "./sources";
 
 export type ListenerContext = { backend: "Jellyfin" | "Subsonic"; username: string;
   musicClientUrl: string | null; addressSource: "configured" | "unconfigured" };
@@ -52,6 +53,8 @@ export const reportStatuses: Array<{ value: ReportStatus; label: string }> = [
 ];
 export const reportKindLabel = (kind: string) => reportKinds.find(item => item.value === kind)?.label ?? "Problem report";
 export const reportStatusLabel = (status: string) => reportStatuses.find(item => item.value === status)?.label ?? "Unknown";
+export const reportSourceName = (providers: ProviderDefinition[], id?: string | null) =>
+  id === "jellyfin" ? "Jellyfin" : id === "subsonic" ? "Subsonic / OpenSubsonic" : providerDisplayName(providers, id ?? "", "Not captured");
 
 export function supportError(cause: unknown, fallback: string) {
   if (cause instanceof ApiError) {

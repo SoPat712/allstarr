@@ -27,10 +27,10 @@ async function mockSupport(page: Page, administrator = false, backend = "Jellyfi
     reportReads: [] as Array<string | null>, creates: [] as Array<Record<string, unknown>>,
     previews: [] as unknown[], updates: [] as Array<Record<string, unknown>>, status: "new", revision: 1,
     note: "No sound after seeking.", paged: false, matchScope: "automatic", matchState: "accepted",
-    settingsWrites: [] as Array<Record<string, string>> };
+    settingsWrites: [] as Array<Record<string, string>>, native: false };
   const summary = () => ({ id: reportId, kind: "seek", status: state.status, notePreview: "No sound after seeking.",
     reporterName: "Listener", subjectName: "Listener", songTitle: captured.song.title, artist: captured.song.artist,
-    providerId: "deezer", clientName: "Feishin", createdAt: captured.capturedAt, updatedAt: captured.capturedAt, revision: state.revision });
+    providerId: state.native ? backend.toLowerCase() : "deezer", clientName: state.native ? null : "Feishin", createdAt: captured.capturedAt, updatedAt: captured.capturedAt, revision: state.revision });
   await page.route("**/api/admin/**", async route => {
     const request = route.request();
     const url = new URL(request.url());
@@ -61,7 +61,9 @@ async function mockSupport(page: Page, administrator = false, backend = "Jellyfi
       const selector = request.postDataJSON();
       state.previews.push(selector);
       if (state.contextFailure) return reply(route, { code: "report_subject_unavailable", error: "Song details are no longer available." }, 404);
-      return reply(route, selector ? { ...captured, match: { ...captured.match, authorityScope: state.matchScope, state: state.matchState },
+      return reply(route, selector ? { ...captured, song: { ...captured.song, itemId: state.native ? "native-fixture" : captured.song.itemId,
+        externalSnapshotId: state.native ? null : snapshotId, catalogProviderId: state.native ? backend.toLowerCase() : "deezer" },
+        match: state.native ? null : { ...captured.match, authorityScope: state.matchScope, state: state.matchState },
         ...(!selector.playback ? { subjectUserId: null, subjectName: null, playback: null } : {}) }
         : { ...captured, subjectUserId: null, subjectName: null, song: null, match: null, playback: null });
     }
@@ -115,6 +117,18 @@ test("Subsonic listeners get compatible apps and can enter an unconfigured addre
   expect(state.url).toBeNull();
   await expect(page.getByRole("link", { name: "Set the household address" })).toHaveCount(0);
 });
+
+for (const backend of ["Jellyfin", "Subsonic"]) {
+  test(`native ${backend} report sources have a name without a provider registration`, async ({ page }) => {
+    const state = await mockSupport(page, true, backend);
+    state.native = true;
+    await page.goto("/#/report?item=native-fixture");
+    const context = page.getByRole("article", { name: "Included report details" });
+    await expect(context.getByText(backend === "Jellyfin" ? "Jellyfin" : "Subsonic / OpenSubsonic", { exact: true })).toBeVisible();
+    await page.goto("/#/activity?view=reports");
+    await expect(page.getByRole("article", { name: "Report list" })).toContainText(`Source: ${backend}`);
+  });
+}
 
 test("guide rejects private URL fields and offers copy selection when clipboard access is unavailable", async ({ page }) => {
   await page.addInitScript(() => Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true }));
