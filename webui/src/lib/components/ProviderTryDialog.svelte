@@ -552,7 +552,7 @@
             {/if}
             {#if !lyricNeedsArtist && !result?.succeeded}{@render status("lyrics", result, "")}{/if}
             {#if result?.succeeded && result.lyrics}
-              <section class="try-card try-lyrics" aria-label="Lyrics">
+              <section class="try-card try-lyrics" aria-label="Lyrics" style="min-height: min-content">
                 <header class="try-summary" role="status"><CircleCheck size={18} aria-hidden="true" /><strong>{result.lyrics.lineCount} lines found</strong> <span>in {elapsed(result.elapsedMs)}</span></header>
                 <div style="display: grid; gap: var(--space-3); min-width: 0">
                   <p class="try-facts">
@@ -748,7 +748,7 @@
       .try-lyrics {
         min-width: 0;
         max-height: 22.5rem;
-        grid-template-rows: auto auto minmax(0, 1fr);
+        grid-template-rows: auto auto minmax(6rem, 1fr);
         overflow: hidden;
       }
 
