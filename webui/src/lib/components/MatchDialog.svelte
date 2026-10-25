@@ -16,12 +16,15 @@
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import {
     candidateResolution,
+    matchScore,
     percent,
     playableProviderIds,
     providerResultCounts,
     rankedTargets,
+    reportedAudio,
     routingPreference,
     scoreComponents,
+    targetRoutingPreference,
   } from "$lib/mappings";
   import {
     allowedAuthorityScopes,
@@ -250,6 +253,7 @@
               {#if match.album}<span>{match.album}</span>{/if}
               <span>{formatDuration(match.durationMilliseconds)}</span>
               {#if match.isrc}<span>ISRC {match.isrc}</span>{/if}
+              {#if match.isExplicit != null}<span>{match.isExplicit ? "Explicit" : "Not explicit"}</span>{/if}
             </p>
           </div>
           <Dialog.Close class="icon-button" aria-label="Close match dialog"><X size={18} aria-hidden="true" /></Dialog.Close>
@@ -305,9 +309,9 @@
                       </span>
                     </div>
                     <span class="candidate-confidence match-confidence" style={`--confidence:${Math.round((candidate.confidence ?? 0) * 100)}%`} data-level={confidenceLevel(candidate.confidence)}>
-                      <strong>{percent(candidate.confidence)}</strong>
+                      <strong>{matchScore(candidate.confidence)}</strong>
                       <span class="confidence-meter" aria-hidden="true"><span></span></span>
-                      <small>confidence</small>
+                      <small>match score</small>
                     </span>
                     {#if resolution?.targetType === "local"}
                       <Button class="candidate-action" variant="secondary" size="sm" disabled={saving || !selectedScopeEditable} onclick={() => void chooseLocal(resolution.libraryTrackId, "Selected from automatic candidate evidence")}>Choose candidate</Button>
@@ -341,7 +345,7 @@
                       <summary>Full scoring evidence</summary>
                       <dl>
                         <div><dt>Candidate ID</dt><dd>{candidate.libraryTrackId || candidate.backendItemId || candidateExternalId(candidate) || "—"}</dd></div>
-                        <div><dt>Raw confidence</dt><dd>{percent(candidate.confidence)}</dd></div>
+                        <div><dt>Match score</dt><dd>{matchScore(candidate.confidence)}</dd></div>
                         {#if routingPreference(candidate.components)}<div><dt>Routing preference</dt><dd>{routingPreference(candidate.components)}</dd></div>{/if}
                         {#each candidateFacts(candidate) as [label, value]}
                           <div><dt>{label}</dt><dd>{value}</dd></div>
@@ -366,6 +370,7 @@
           <div class="match-section-heading">
             <h3 id="find-match-heading">Find a different match</h3>
           </div>
+          <p class="setting-help">Match scores compare recording details. Equal scores use streaming priority, then the same album edition. Artwork and reported audio do not change the score.</p>
           <form class="target-search" onsubmit={(event) => { event.preventDefault(); void search(); }}>
             <label class="field grow">
               <span class="sr-only">Search local library and playable providers</span>
@@ -419,26 +424,34 @@
                       definition={provider(target.externalProvider || "")}
                     />
                     {providerName(target.externalProvider)}
-                    {#if routingPreference(target.components)}
-                      <span>· {routingPreference(target.components)}</span>
+                    {#if targetRoutingPreference(target)}
+                      <span>· {targetRoutingPreference(target)}</span>
                     {/if}
                   </span>
+                  {#if target.isExplicit != null || target.matchesSourceAlbum}
+                    <small>{target.isExplicit == null ? "" : target.isExplicit ? "Explicit" : "Not explicit"}{target.isExplicit != null && target.matchesSourceAlbum ? " · " : ""}{target.matchesSourceAlbum ? "Same album edition" : ""}</small>
+                  {/if}
+                  <small title={reportedAudio(target.media)}>{target.media ? "Reported audio · " : ""}{reportedAudio(target.media)}</small>
                 </span>
                 <span class="target-meta"><strong>{formatDuration(target.durationMilliseconds)}</strong></span>
                 <span class="target-score match-confidence" style={`--confidence:${Math.round((target.confidence ?? 0) * 100)}%`} data-level={confidenceLevel(target.confidence)}>
-                  <strong>{percent(target.confidence)}</strong>
+                  <strong>{matchScore(target.confidence)}</strong>
                   <span class="confidence-meter" aria-hidden="true"><span></span></span>
-                  <small>score rank #{results.indexOf(target) + 1}</small>
+                  <small>result #{results.indexOf(target) + 1}</small>
                 </span>
               </button>
               <details class="target-evidence">
                 <summary>Evidence for {target.title}</summary>
                 <dl>
-                  <div><dt>Score rank</dt><dd>#{results.indexOf(target) + 1}</dd></div>
+                  <div><dt>Result order</dt><dd>#{results.indexOf(target) + 1}</dd></div>
                   <div><dt>Candidate ID</dt><dd>{target.externalId || target.backendItemId || target.id}</dd></div>
-                  <div><dt>Raw confidence</dt><dd>{percent(target.confidence)}</dd></div>
+                  <div><dt>Match score</dt><dd>{matchScore(target.confidence)}</dd></div>
+                  <div><dt>Source ISRC</dt><dd>{match.isrc || "Not provided"}</dd></div>
                   {#if target.isrc}<div><dt>ISRC</dt><dd>{target.isrc}</dd></div>{/if}
-                  {#if routingPreference(target.components)}<div><dt>Routing preference</dt><dd>{routingPreference(target.components)}</dd></div>{/if}
+                  {#if targetRoutingPreference(target)}<div><dt>Routing preference</dt><dd>{targetRoutingPreference(target)}</dd></div>{/if}
+                  {#if target.isExplicit != null}<div><dt>Explicit content</dt><dd>{target.isExplicit ? "Explicit" : "Not explicit"}</dd></div>{/if}
+                  {#if target.matchesSourceAlbum != null}<div><dt>Same album edition</dt><dd>{target.matchesSourceAlbum ? "Yes" : "No"}</dd></div>{/if}
+                  <div><dt>Reported audio</dt><dd>{reportedAudio(target.media)}. Available metadata for this result; the delivered format can differ.</dd></div>
                   {#each scoreComponents({ components: target.components }) as [name, value]}
                     <div><dt>{evidenceLabel(name)}</dt><dd>{percent(value)}</dd></div>
                   {/each}

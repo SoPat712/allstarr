@@ -5,13 +5,16 @@ import {
   differenceHash,
   hashSimilarity,
   isAttention,
+  matchScore,
   percent,
   playableProviderIds,
   providerResultCounts,
   rankedTargets,
+  reportedAudio,
   reviewStateLabel,
   routingPreference,
   scoreComponents,
+  targetRoutingPreference,
 } from "./mappings";
 
 describe("mapping review presentation", () => {
@@ -75,6 +78,59 @@ describe("mapping review presentation", () => {
       "Weak",
       "Unknown",
     ]);
+  });
+
+  it("breaks real Power Trip score ties by streaming order and full album edition", () => {
+    const components = { title: 1, artist: .875, album: 1, duration: .95, acceptanceQualified: 1 };
+    const targets = [
+      { id: "deezer", title: "Power Trip", externalProvider: "deezer", confidence: .9545,
+        routingPriority: 2, matchesSourceAlbum: true, components },
+      { id: "apple-standard", title: "Power Trip (feat. Miguel)", externalProvider: "apple-download", confidence: .9545,
+        routingPriority: 1, matchesSourceAlbum: false, components },
+      { id: "apple-deluxe", title: "Power Trip (feat. Miguel)", externalProvider: "apple-download", confidence: .9545,
+        routingPriority: 1, matchesSourceAlbum: true, components },
+    ];
+    expect(rankedTargets(targets).map(target => target.id)).toEqual(["apple-deluxe", "apple-standard", "deezer"]);
+    expect(targets.map(target => target.id)).toEqual(["deezer", "apple-standard", "apple-deluxe"]);
+    expect(matchScore(.9545)).toBe("95.45%");
+    expect(matchScore(.9544)).toBe("95.44%");
+    expect(matchScore(1)).toBe("100%");
+    expect(matchScore(null)).toBe("—");
+    expect(matchScore(Number.NaN)).toBe("—");
+  });
+
+  it("keeps stronger recording evidence above preferred sources and reported resolution", () => {
+    expect(rankedTargets([
+      { id: "preferred", title: "Preferred", confidence: .9545, routingPriority: 1,
+        media: { codec: "alac", bitDepth: 24, sampleRate: 192000 } },
+      { id: "stronger", title: "Stronger", confidence: .9546, routingPriority: 2,
+        media: { codec: "mp3", bitrate: 320000 } },
+      { id: "unknown", title: "Unknown", confidence: Number.NaN, routingPriority: 0 },
+    ]).map(target => target.id)).toEqual(["stronger", "preferred", "unknown"]);
+  });
+
+  it("uses local preference, legacy rank evidence and stable item identities for exact ties", () => {
+    expect(rankedTargets([
+      { id: "b", title: "Alpha", externalProvider: "deezer", confidence: .95, components: { routingPriority: 2 } },
+      { id: "a", title: "Zulu", externalProvider: "deezer", confidence: .95, routingPriority: 2 },
+      { id: "local", title: "Local", confidence: .95, routingPriority: 0 },
+      { id: "invalid", title: "Invalid rank", confidence: .95, routingPriority: -1 },
+      { id: "missing", title: "Missing score" },
+    ]).map(target => target.id)).toEqual(["local", "a", "b", "invalid", "missing"]);
+    expect(targetRoutingPreference({ id: "1", title: "Track", routingPriority: 1 })).toBe("Streaming priority 1");
+    expect(targetRoutingPreference({ id: "1", title: "Track", routingPriority: 0 })).toBe("Local first");
+    expect(targetRoutingPreference({ id: "1", title: "Track", routingPriority: 2147483647 })).toBe("");
+  });
+
+  it("shows only reported positive audio facts without inventing ranges or lossy bit depth", () => {
+    expect(reportedAudio({ codec: "flac", container: "flac", bitDepth: 24, sampleRate: 96000,
+      bitrate: 1792000, channels: 2 })).toBe("FLAC · 24-bit · 96 kHz · 1792 kbps · 2 channels");
+    expect(reportedAudio({ codec: "aac", container: "mp4", bitDepth: 24, sampleRate: 44100,
+      bitrate: 256000, channels: 1 })).toBe("AAC · MP4 · 44.1 kHz · 256 kbps · 1 channel");
+    expect(reportedAudio({ codec: "unknown", container: "unknown", bitrate: 0, sampleRate: -1,
+      bitDepth: Number.NaN, channels: 0 })).toBe("Audio format not reported");
+    expect(reportedAudio(null)).toBe("Audio format not reported");
+    expect(reportedAudio({ bitrate: 1 })).toBe("<1 kbps");
   });
 
   it("only accepts a concrete local or non-source provider candidate", () => {

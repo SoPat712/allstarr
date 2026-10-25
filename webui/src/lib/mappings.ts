@@ -23,6 +23,10 @@ export function percent(value?: number | null) {
   return value == null || !Number.isFinite(value) ? "—" : `${Math.round(value * 1_000) / 10}%`;
 }
 
+export function matchScore(value?: number | null) {
+  return value == null || !Number.isFinite(value) ? "—" : `${Math.round(value * 10_000) / 100}%`;
+}
+
 export function scoreComponents(candidate: MatchCandidate) {
   return Object.entries(candidate.components ?? {})
     .filter((entry): entry is [string, number] =>
@@ -66,9 +70,46 @@ export function playableProviderIds(providers: ProviderDefinition[]) {
 }
 
 export function rankedTargets(targets: MatchTarget[]) {
+  const confidence = (value?: number | null) => value != null && Number.isFinite(value) ? value : -1;
+  const compare = (left: string, right: string) => {
+    const a = left.trim().toLowerCase(), b = right.trim().toLowerCase();
+    return a < b ? -1 : a > b ? 1 : 0;
+  };
   return targets.toSorted((left, right) =>
-    (right.confidence ?? -1) - (left.confidence ?? -1) ||
-    left.title.localeCompare(right.title));
+    confidence(right.confidence) - confidence(left.confidence) ||
+    targetPriority(left) - targetPriority(right) ||
+    Number(right.matchesSourceAlbum === true) - Number(left.matchesSourceAlbum === true) ||
+    compare(left.externalProvider ?? "", right.externalProvider ?? "") ||
+    compare(left.externalId || left.backendItemId || left.id, right.externalId || right.backendItemId || right.id) ||
+    compare(left.title, right.title));
+}
+
+function targetPriority(target: MatchTarget) {
+  const priority = target.routingPriority ?? target.components?.routingPriority;
+  return priority != null && Number.isInteger(priority) && priority >= 0 && priority < 2147483647
+    ? priority : 2147483647;
+}
+
+export function targetRoutingPreference(target: MatchTarget) {
+  const priority = targetPriority(target);
+  return priority === 0 ? "Local first" : priority < 2147483647 ? `Streaming priority ${priority}` : "";
+}
+
+export function reportedAudio(media?: MatchTarget["media"]) {
+  const fact = (value?: number | null) => value != null && Number.isFinite(value) && value > 0;
+  const token = (value?: string | null) => {
+    const normalized = value?.trim().toLowerCase();
+    return normalized && normalized !== "unknown" && /^[a-z0-9][a-z0-9._-]{0,31}$/.test(normalized)
+      ? normalized : "";
+  };
+  const codec = token(media?.codec), container = token(media?.container);
+  const parts = [codec.toUpperCase()];
+  if (container && container !== codec) parts.push(container.toUpperCase());
+  if (fact(media?.bitDepth) && !["mp3", "aac", "opus", "vorbis"].includes(codec)) parts.push(`${media!.bitDepth}-bit`);
+  if (fact(media?.sampleRate)) parts.push(`${media!.sampleRate! / 1000} kHz`);
+  if (fact(media?.bitrate)) parts.push(media!.bitrate! < 1000 ? "<1 kbps" : `${Math.round(media!.bitrate! / 1000)} kbps`);
+  if (fact(media?.channels)) parts.push(`${media!.channels} ${media!.channels === 1 ? "channel" : "channels"}`);
+  return parts.filter(Boolean).join(" · ") || "Audio format not reported";
 }
 
 export function differenceHash(pixels: ArrayLike<number>) {

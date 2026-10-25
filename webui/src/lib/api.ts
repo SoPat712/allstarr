@@ -940,6 +940,7 @@ export type MatchReviewItem = {
   artworkUrl?: string | null;
   sourceArtworkUrl?: string | null;
   candidateArtworkUrl?: string | null;
+  isExplicit?: boolean | null;
   isrc?: string | null;
   durationMilliseconds?: number | null;
   target?: {
@@ -1022,6 +1023,17 @@ export type MatchTarget = {
   artworkUrl?: string | null;
   durationMilliseconds?: number | null;
   confidence?: number | null;
+  routingPriority?: number | null;
+  matchesSourceAlbum?: boolean | null;
+  isExplicit?: boolean | null;
+  media?: {
+    codec?: string | null;
+    container?: string | null;
+    bitrate?: number | null;
+    sampleRate?: number | null;
+    bitDepth?: number | null;
+    channels?: number | null;
+  } | null;
   isrc?: string | null;
   components?: Record<string, number> | null;
   reasons?: string[];
