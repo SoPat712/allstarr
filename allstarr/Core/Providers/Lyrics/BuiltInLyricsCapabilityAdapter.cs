@@ -11,14 +11,21 @@ public sealed class BuiltInLyricsCapabilityAdapter(
     string providerId,
     Func<ProviderLyricsRequest, CancellationToken, Task<LyricsInfo?>> fetch,
     bool requiresArtist = false)
-    : IProviderLyricsCapability
+    : IProviderLyricsCapability, IInternalLyricsCapability
 {
     public string ProviderId { get; } = ProviderContractValidation.ProviderId(providerId, nameof(providerId));
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Lyrics;
 
-    public async Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(
-        ProviderExecutionContext context,
-        ProviderLyricsRequest request)
+    internal Func<ProviderLyricsRequest, LyricsCompletionMode, CancellationToken, Task<LyricsInfo?>>? CompletionFetch { get; init; }
+    internal LyricsSpeculationMode Speculation { get; init; } = LyricsSpeculationMode.ForegroundOnly;
+    ValueTask<LyricsSourceSnapshot> IInternalLyricsCapability.CaptureSourceAsync(CancellationToken token) =>
+        ValueTask.FromResult(LyricsAwait.Static(ProviderId, Speculation));
+    Task<ProviderOutcome<ProviderLyricsResult>> IInternalLyricsCapability.FetchAsync(ProviderExecutionContext context,
+        ProviderLyricsRequest request, LyricsExecution execution) => FetchCoreAsync(context, request, execution.Completion);
+    public Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(ProviderExecutionContext context, ProviderLyricsRequest request) =>
+        FetchCoreAsync(context, request, LyricsCompletionMode.RequestBound);
+    private async Task<ProviderOutcome<ProviderLyricsResult>> FetchCoreAsync(ProviderExecutionContext context,
+        ProviderLyricsRequest request, LyricsCompletionMode completion)
     {
         try
         {
@@ -31,7 +38,7 @@ public sealed class BuiltInLyricsCapabilityAdapter(
                 (!string.IsNullOrWhiteSpace(request.TrackTitle) || !string.IsNullOrWhiteSpace(request.Isrc)))
                 return ProviderOutcome<ProviderLyricsResult>.Failure(ProviderError.LyricsArtistRequired());
 
-            var lyrics = await fetch(request, context.CancellationToken);
+            var lyrics = CompletionFetch != null ? await CompletionFetch(request, completion, context.CancellationToken) : await fetch(request, context.CancellationToken);
             context.CancellationToken.ThrowIfCancellationRequested();
             if (lyrics == null)
                 return Available(ProviderLyricsAvailabilityState.Unavailable);
@@ -120,7 +127,11 @@ public static class BuiltInLyricsCapabilityRegistration
         services.AddSingleton(provider => new CloudflareChallengeSolver(
             provider.GetRequiredService<IHttpClientFactory>().CreateClient(CloudflareChallengeSolver.HttpClientName),
             token => CloudflareChallengeSolver.ReadOptionsAsync(provider.GetRequiredService<allstarr.Core.Settings.IDurableRuntimeSettings>(), token),
-            logger: provider.GetRequiredService<ILogger<CloudflareChallengeSolver>>()));
+            logger: provider.GetRequiredService<ILogger<CloudflareChallengeSolver>>())
+        {
+            ConfigurationReader = token => CloudflareChallengeSolver.ReadConfigurationAsync(provider.GetRequiredService<allstarr.Core.Settings.IDurableRuntimeSettings>(), token),
+            AdmissionTtl = TimeSpan.FromSeconds((provider.GetService<allstarr.Core.Health.ProviderHealthOptions>()?.SampleTtlSeconds ?? 300))
+        });
         services.AddHttpClient(LyricsPlusCapabilityAdapter.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan)
             .RemoveAllLoggers()
             .AddHttpMessageHandler(provider => new CloudflareChallengeHandler(provider.GetRequiredService<CloudflareChallengeSolver>(), ["lyricsplus.binimum.org"]))
@@ -131,7 +142,10 @@ public static class BuiltInLyricsCapabilityRegistration
             async token => (string)(await provider.GetRequiredService<allstarr.Core.Settings.IDurableRuntimeSettings>()
                 .GetAsync("LyricsPlus:BaseUrl", token)).Value,
             () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL,
-            provider.GetRequiredService<CloudflareChallengeSolver>()));
+            provider.GetRequiredService<CloudflareChallengeSolver>())
+        {
+            EndpointReader = token => LyricsPlusCapabilityAdapter.ReadEndpointAsync(provider.GetRequiredService<allstarr.Core.Settings.IDurableRuntimeSettings>(), token)
+        });
         services.AddSingleton<ProviderRegistration>(provider => new ProviderRegistration(
             new ProviderDescriptor("lyricsplus", "LyricsPlus", "Public lyrics with instance fallback or a self-hosted endpoint.",
                 ProviderOrigin.BuiltIn, "1", "lyricsplus-v2",
@@ -144,7 +158,7 @@ public static class BuiltInLyricsCapabilityRegistration
             provider.GetRequiredService<IHttpClientFactory>().CreateClient(MusixmatchLyricsCapabilityAdapter.HttpClientName),
             provider.GetRequiredService<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
             provider.GetRequiredService<IApplicationCache>(),
-            provider.GetRequiredService<ILogger<MusixmatchLyricsCapabilityAdapter>>()));
+            provider.GetRequiredService<ILogger<MusixmatchLyricsCapabilityAdapter>>(), provider.GetService<IHostApplicationLifetime>()));
         services.AddSingleton<ProviderRegistration>(provider => MusixmatchLyricsCapabilityAdapter.CreateRegistration(
             provider.GetRequiredService<MusixmatchLyricsCapabilityAdapter>()));
         services.AddSingleton<ProviderRegistration>(provider => CreateRegistration(
@@ -178,10 +192,20 @@ public static class BuiltInLyricsCapabilityRegistration
                 request.TrackTitle ?? string.Empty,
                 request.ArtistNames.ToArray(),
                 request.AlbumTitle ?? string.Empty,
-                request.DurationSeconds ?? 0).WaitAsync(cancellationToken);
+                request.DurationSeconds ?? 0, cancellationToken);
             if (lyrics != null) lyrics.Source ??= "lrclib";
             return lyrics;
-        }, requiresArtist: true);
+        }, requiresArtist: true)
+    {
+        Speculation = LyricsSpeculationMode.Unrestricted,
+        CompletionFetch = async (request, mode, token) =>
+        {
+            var lyrics = await service.GetLyricsAsync(request.TrackTitle ?? string.Empty, request.ArtistNames.ToArray(),
+                request.AlbumTitle ?? string.Empty, request.DurationSeconds ?? 0, mode, token);
+            if (lyrics != null) lyrics.Source ??= "lrclib";
+            return lyrics;
+        }
+    };
 
     public static ProviderRegistration CreateRegistration(
         string id,

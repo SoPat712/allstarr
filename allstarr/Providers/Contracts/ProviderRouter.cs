@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Health;
 using allstarr.Core.Matching;
@@ -25,7 +26,7 @@ public sealed class ProviderRouter(
     IProviderRouteSidecarSource sidecars,
     ITrackIdentityService identities,
     IProviderOutcomeObserver? observer = null,
-    IEffectiveProviderPolicyResolver? effectivePolicies = null) : IProviderRouter
+    IEffectiveProviderPolicyResolver? effectivePolicies = null) : IProviderRouter, IHouseholdLyricsRoutePlanner
 {
     private static readonly IReadOnlyDictionary<ProviderCapabilityKind, Type> CapabilityContracts =
         new Dictionary<ProviderCapabilityKind, Type>
@@ -50,7 +51,19 @@ public sealed class ProviderRouter(
             ProviderErrorKind.TransientFailure
         };
 
-    public async Task<ProviderRoutePlan<TCapability>> PlanAsync<TCapability>(ProviderRouteRequest request)
+    public Task<ProviderRoutePlan<TCapability>> PlanAsync<TCapability>(ProviderRouteRequest request)
+        where TCapability : class, IProviderCapability => PlanCoreAsync<TCapability>(request, false);
+
+    Task<ProviderRoutePlan<IProviderLyricsCapability>> IHouseholdLyricsRoutePlanner.PlanHouseholdLyricsAsync(ProviderRouteRequest request)
+    {
+        if (request.Capability != ProviderCapabilityKind.Lyrics || request.Purpose != ProviderRoutePurpose.Automatic ||
+            request.ProviderStates.Count == 0 || request.ProviderStates.Values.Any(state =>
+                state.AllowedAccountScopes is not { Count: 1 } scopes || scopes[0] != ProviderAccountScope.Shared))
+            throw new ArgumentException("Household lyrics require an automatic shared-only route.", nameof(request));
+        return PlanCoreAsync<IProviderLyricsCapability>(request, true);
+    }
+
+    private async Task<ProviderRoutePlan<TCapability>> PlanCoreAsync<TCapability>(ProviderRouteRequest request, bool householdLyrics)
         where TCapability : class, IProviderCapability
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -62,7 +75,7 @@ public sealed class ProviderRouter(
             throw new TimeoutException("The provider route deadline has expired.");
         }
 
-        var usePolicy = effectivePolicies == null ? null : request.Actor.EffectiveUserId is { } userId
+        var usePolicy = effectivePolicies == null ? null : !householdLyrics && request.Actor.EffectiveUserId is { } userId
             ? await effectivePolicies.ResolveForUserAsync(userId, request.CancellationToken)
             : await effectivePolicies.ResolveAsync(request.CancellationToken);
         ProviderUseMode UseMode(ProviderDescriptor provider) => usePolicy?.GetProviderMode(provider.Id) ?? ProviderUsePolicy.DefaultMode(provider);

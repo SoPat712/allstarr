@@ -19,6 +19,7 @@
   import { diagnosticFailureMessage } from "$lib/diagnostics";
   import { humanize } from "$lib/activity";
   import { splitLyricSong } from "$lib/try-lyrics";
+  import { lyricsSourceDisplayName } from "$lib/sources";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -29,12 +30,14 @@
     account = null,
     capability = "metadata",
     searchSources = [],
+    providerDefinitions = [],
   }: {
     open?: boolean;
     provider: ProviderDefinition;
     account?: ProviderAccount | null;
     capability?: string;
     searchSources?: { provider: ProviderDefinition; account: ProviderAccount | null }[];
+    providerDefinitions?: ProviderDefinition[];
   } = $props();
 
   type Tab = ProviderTryCapability;
@@ -536,7 +539,7 @@
                 <header class="try-summary" role="status"><CircleCheck size={18} aria-hidden="true" /><strong>{result.lyrics.lineCount} lines found</strong> <span>in {elapsed(result.elapsedMs)}</span></header>
                 <p class="try-facts">
                   <span class="try-pill">{result.lyrics.format === "word" ? "Word-timed" : result.lyrics.format === "line" ? "Line-timed" : "Plain text"}</span>
-                  {#if result.lyrics.source}<span>From {result.lyrics.source}</span>{/if}
+                  {#if result.lyrics.source}<span>From {lyricsSourceDisplayName([...providerDefinitions, provider], result.lyrics.source)}</span>{/if}
                   {#if result.lyrics.language}<span>Language: {result.lyrics.language}</span>{/if}
                 </p>
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex (The lyrics scroll region supports keyboard scrolling.) -->

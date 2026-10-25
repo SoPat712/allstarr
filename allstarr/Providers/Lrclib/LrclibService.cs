@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.Lyrics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using allstarr.Models.Lyrics;
@@ -31,8 +32,14 @@ public class LrclibService
     public Task<LyricsInfo?> GetLyricsAsync(string trackName, string artistName, string albumName, int durationSeconds) =>
         GetLyricsAsync(trackName, [artistName], albumName, durationSeconds);
 
-    public async Task<LyricsInfo?> GetLyricsAsync(string trackName, string[] artistNames, string albumName, int durationSeconds)
+    public Task<LyricsInfo?> GetLyricsAsync(string trackName, string[] artistNames, string albumName, int durationSeconds) =>
+        GetLyricsAsync(trackName, artistNames, albumName, durationSeconds, CancellationToken.None);
+    public Task<LyricsInfo?> GetLyricsAsync(string trackName, string[] artistNames, string albumName, int durationSeconds, CancellationToken token) =>
+        GetLyricsAsync(trackName, artistNames, albumName, durationSeconds, LyricsCompletionMode.RequestBound, token);
+    internal async Task<LyricsInfo?> GetLyricsAsync(string trackName, string[] artistNames, string albumName, int durationSeconds,
+        LyricsCompletionMode completion, CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(trackName) || artistNames == null || artistNames.Length == 0)
         {
             _logger.LogDebug("Invalid parameters for lyrics search: trackName={TrackName}, artistCount={ArtistCount}",
@@ -43,7 +50,7 @@ public class LrclibService
         var artistName = string.Join(", ", artistNames);
         var cacheKey = "lrclib:automatic:v2:" + CacheKeyBuilder.BuildLyricsKey(artistName, trackName, albumName, durationSeconds);
 
-        var cached = await _cache.GetStringAsync(cacheKey);
+        var cached = await LyricsAwait.CompleteAsync(_cache.GetStringAsync(cacheKey), completion, token);
         if (!string.IsNullOrEmpty(cached))
         {
             try
@@ -66,11 +73,11 @@ public class LrclibService
 
             _logger.LogDebug("Searching LRCLIB: {Url} (expecting {ArtistCount} artists)", searchUrl, artistNames.Length);
 
-            using var searchResponse = await _httpClient.GetAsync(searchUrl);
+            using var searchResponse = await _httpClient.GetAsync(searchUrl, token);
 
             if (searchResponse.IsSuccessStatusCode)
             {
-                var searchJson = await searchResponse.Content.ReadAsStringAsync();
+                var searchJson = await searchResponse.Content.ReadAsStringAsync(token);
                 var searchResults = JsonSerializer.Deserialize<List<LrclibResponse>>(searchJson, JsonOptions);
 
                 if (searchResults != null && searchResults.Count > 0)
@@ -118,7 +125,7 @@ public class LrclibService
                             SyncedLyrics = bestMatch.SyncedLyrics
                         };
 
-                        await CacheLyricsAsync(cacheKey, result);
+                        await LyricsAwait.CompleteAsync(CacheLyricsAsync(cacheKey, result), completion, token);
                         return result;
                     }
                     else
@@ -128,6 +135,7 @@ public class LrclibService
                 }
             }
 
+            token.ThrowIfCancellationRequested();
             var exactUrl = $"{BaseUrl}/get?" +
                           $"track_name={Uri.EscapeDataString(trackName)}&" +
                           $"artist_name={Uri.EscapeDataString(artistName)}&" +
@@ -136,7 +144,7 @@ public class LrclibService
 
             _logger.LogDebug("Trying exact match from LRCLIB: {Url}", exactUrl);
 
-            using var exactResponse = await _httpClient.GetAsync(exactUrl);
+            using var exactResponse = await _httpClient.GetAsync(exactUrl, token);
 
             if (exactResponse.StatusCode == System.Net.HttpStatusCode.NotFound)
             {
@@ -146,7 +154,7 @@ public class LrclibService
 
             exactResponse.EnsureSuccessStatusCode();
 
-            var json = await exactResponse.Content.ReadAsStringAsync();
+            var json = await exactResponse.Content.ReadAsStringAsync(token);
             var lyrics = JsonSerializer.Deserialize<LrclibResponse>(json, JsonOptions);
 
             if (lyrics == null)
@@ -166,12 +174,13 @@ public class LrclibService
                 SyncedLyrics = lyrics.SyncedLyrics
             };
 
-            await CacheLyricsAsync(cacheKey, exactResult);
+            await LyricsAwait.CompleteAsync(CacheLyricsAsync(cacheKey, exactResult), completion, token);
 
             _logger.LogInformation("Retrieved lyrics via exact match for {Artist} - {Track} (ID: {Id})", artistName, trackName, lyrics.Id);
 
             return exactResult;
         }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "Failed to fetch lyrics from LRCLIB for {Artist} - {Track}", artistName, trackName);

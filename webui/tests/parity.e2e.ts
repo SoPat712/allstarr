@@ -7875,3 +7875,85 @@ test("URL import keeps a later browsing choice when its preview arrives", async 
   await expect(dialog.getByRole("radio", { name: /Source Mix/ })).toBeChecked();
   await expect(dialog.getByRole("button", { name: "Continue" })).toBeEnabled();
 });
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`Lyrics test names the actual source at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    const requests: Record<string, unknown>[] = [];
+    await mockApi(page);
+    await mockTry(page, requests);
+    await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
+      ...schema, providers: [...schema.providers, { id: "lrclib", name: "LRCLib", categories: ["lyrics"] }],
+    } }));
+    await page.route("**/api/admin/providers/lumen-audio/try**", route => {
+      if (route.request().method() === "GET") return route.fallback();
+      const request = route.request().postDataJSON();
+      if (request.operation !== "lyrics") return route.fallback();
+      requests.push(request);
+      return route.fulfill({ json: { provider: "lumen-audio", capability: "lyrics", operation: "lyrics", succeeded: true, elapsedMs: 20,
+        lyrics: { source: "lrclib", format: "line", lineCount: 2,
+          lines: [{ startMs: 1000, text: "First fixture line" }, { startMs: 2000, text: "Second fixture line" }] } } });
+    });
+    await page.goto("#/integrations/accounts");
+    await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
+    await page.locator(".service-account.focused .service-check").filter({ hasText: "Metadata" })
+      .getByRole("button", { name: "Open Metadata tests" }).click();
+    const dialog = page.getByRole("dialog", { name: "Test Lumen Audio" });
+    await dialog.getByRole("tab", { name: "Lyrics" }).click();
+    await dialog.getByRole("searchbox", { name: "Song", exact: true }).fill("Fixture song");
+    await dialog.getByRole("button", { name: "Use what I typed" }).click();
+    await expect(dialog.getByText("From LRCLib", { exact: true })).toBeVisible();
+    await expect(dialog.getByText("From lrclib", { exact: true })).toHaveCount(0);
+    expect(requests.at(-1)).toMatchObject({ capability: "lyrics", operation: "lyrics", title: "Fixture song" });
+    await expect(dialog.getByRole("region", { name: "Lyric lines", exact: true })).toContainText("First fixture line");
+    if (width < 600) await expectContainedMobileGeometry(page);
+    await page.screenshot({ path: `test-results/lyrics-source-name-${width}-${theme}.png` });
+  });
+
+  test(`Lyrics routing fixes saved precedence at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    let order = "backend,lrclib,kept,paxsenix";
+    let saved: Record<string, string> | undefined;
+    await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
+      ...schema,
+      providers: [...schema.providers, { id: "lrclib", name: "LRCLib", categories: ["lyrics"] },
+        { id: "paxsenix", name: "Paxsenix", categories: ["lyrics"] }],
+      priorityGroups: [{ id: "lyrics", label: "Lyrics", envKey: "MULTI_PROVIDER_LYRICS_ORDER", providers: ["backend", "lrclib", "kept", "paxsenix"] }],
+    } }));
+    await page.route("**/api/admin/config", route => {
+      if (route.request().method() === "POST") {
+        saved = route.request().postDataJSON().updates;
+        order = saved!.MULTI_PROVIDER_LYRICS_ORDER;
+        return route.fulfill({ json: { message: "Runtime configuration updated." } });
+      }
+      return route.fulfill({ json: { ...(responses["/api/admin/config"] as object), providers: { lyricsOrder: order } } });
+    });
+    await page.goto("#/integrations/routing");
+    const group = page.locator(".routing-group").filter({ has: page.getByRole("heading", { name: "Lyrics order", exact: true }) });
+    await expect(group.locator("li strong")).toHaveText(["Kept LRC", "Media server lyrics", "LRCLib", "Paxsenix"]);
+    await expect(group.getByRole("button", { name: "Move Kept LRC up", exact: true })).toBeDisabled();
+    await expect(group.getByRole("button", { name: "Move Kept LRC down", exact: true })).toBeDisabled();
+    await expect(group.getByRole("button", { name: "Move Media server lyrics up", exact: true })).toBeDisabled();
+    await expect(group.locator("li").first()).toHaveAttribute("draggable", "false");
+    await group.locator("li").nth(2).dispatchEvent("dragstart");
+    await group.locator("li").first().dispatchEvent("drop");
+    await group.locator("li").nth(2).dispatchEvent("dragend");
+    await expect(group.locator("li strong")).toHaveText(["Kept LRC", "Media server lyrics", "LRCLib", "Paxsenix"]);
+    await group.getByRole("button", { name: "Move LRCLib up", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(group.locator("li strong")).toHaveText(["Kept LRC", "LRCLib", "Media server lyrics", "Paxsenix"]);
+    await group.getByRole("button", { name: "Save Lyrics", exact: true }).click();
+    await expect.poll(() => saved).toEqual({ MULTI_PROVIDER_LYRICS_ORDER: "kept,lrclib,backend,paxsenix" });
+    await expect(page.locator(".routing-policy")).toContainText("Match scores describe the recording evidence");
+    await expect(page.locator(".routing-policy")).not.toContainText("gets 5 confidence points");
+    while (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count())
+      await page.getByRole("button", { name: "Dismiss notification", exact: true }).first().click();
+    await group.getByRole("heading", { name: "Lyrics order", exact: true }).click();
+    if (width < 600) await expectContainedMobileGeometry(page);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: `test-results/lyrics-routing-kept-${width}-${theme}.png`, fullPage: true });
+  });
+}

@@ -11,7 +11,7 @@
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import { humanize, lyricsSourceDisplayName } from "$lib/sources";
-  import { fieldValue, mergeRoutingOrders, move } from "$lib/settings";
+  import { fieldValue, keptLyricsFirst, mergeRoutingOrders, move } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
 
   let schema = $state<UiSchema | null>(null);
@@ -47,8 +47,10 @@
       ? results[1].value as Record<string, unknown>
       : null;
     if (nextConfig && !policyDirty) config = nextConfig;
-    if (schema && nextConfig)
+    if (schema && nextConfig) {
       orders = mergeRoutingOrders(nextConfig, schema.priorityGroups ?? [], orders, dirtyOrderIds);
+      if (orders.lyrics) orders.lyrics = keptLyricsFirst(orders.lyrics);
+    }
     const failed = results.filter((result) => result.status === "rejected");
     if (failed.length)
       error = failed[0].reason instanceof Error ? failed[0].reason.message : "Routing state is unavailable.";
@@ -76,6 +78,7 @@
 
   function moveProvider(group: PriorityGroup, index: number, direction: -1 | 1) {
     const order = orders[group.id] ?? [];
+    if (group.id === "lyrics" && (order[index] === "kept" || order[index + direction] === "kept")) return;
     const providerId = order[index];
     orders = { ...orders, [group.id]: move(order, index, direction) };
     if (!dirtyOrderIds.includes(group.id)) dirtyOrderIds = [...dirtyOrderIds, group.id];
@@ -85,6 +88,10 @@
   function dropProvider(group: PriorityGroup, index: number) {
     if (!dragging || dragging.groupId !== group.id || dragging.index === index) return;
     const order = [...(orders[group.id] ?? [])];
+    if (group.id === "lyrics" && (order[index] === "kept" || order[dragging.index] === "kept")) {
+      dragging = null;
+      return;
+    }
     const [providerId] = order.splice(dragging.index, 1);
     order.splice(index, 0, providerId);
     orders = { ...orders, [group.id]: order };
@@ -149,7 +156,7 @@
 
     {#if policyFields.length}
       <form class="settings-card routing-policy" aria-label="Playback and matching" oninput={() => { policyDirty = true; }} onsubmit={savePolicy}>
-        <header><div><h3>Quality and matching</h3><small>Earlier services in the order below win close matches: the first gets 5 confidence points, the second 3, the third 1.</small></div></header>
+        <header><div><h3>Quality and matching</h3><small>Match scores describe the recording evidence. Streaming priority breaks score ties and guides playback; preference windows apply only to tentative matches.</small></div></header>
         {#each policyFields as field (field.key)}
           {#if field.type === "audio-quality"}
             <div class="settings-row routing-quality audio-quality-field">
@@ -179,7 +186,7 @@
       {#each schema.priorityGroups ?? [] as group}
         <section class="settings-card routing-group">
           <header>
-            <div><h3>{group.label} order</h3><small>{group.description || "Drag services, or use the arrows, to change the order Allstarr tries them."}</small></div>
+            <div><h3>{group.label} order</h3><small>{group.id === "lyrics" ? "Your saved choice for a song takes precedence, then Kept LRC. Other sources follow this order, with a short priority window for slower services." : group.description || "Drag services, or use the arrows, to change the order Allstarr tries them."}</small></div>
             <Button aria-label={`Save ${group.label}`} disabled={Boolean(action) || !dirtyOrderIds.includes(group.id)} onclick={() => void saveOrder(group)}>{action === group.id ? "Saving…" : "Save order"}</Button>
           </header>
           <ol>
@@ -193,20 +200,22 @@
             {#each orders[group.id] ?? group.providers as providerId, index}
               {@const definition = provider(providerId)}
               {@const label = group.id === "lyrics" ? lyricsSourceDisplayName(schema?.providers ?? [], providerId) : definition?.name ?? providerId}
+              {@const fixed = group.id === "lyrics" && providerId === "kept"}
               <li
-                draggable="true"
+                draggable={!fixed}
+                class:pinned={fixed}
                 class:dragging={dragging?.groupId === group.id && dragging.index === index}
-                ondragstart={() => { dragging = { groupId: group.id, index }; }}
+                ondragstart={(event) => { if (fixed) event.preventDefault(); else dragging = { groupId: group.id, index }; }}
                 ondragover={(event) => event.preventDefault()}
                 ondrop={() => dropProvider(group, index)}
                 ondragend={() => { dragging = null; }}
               >
-                <span class="routing-index" aria-hidden="true"><GripVertical size={16} />{index + 1}</span>
+                <span class="routing-index" aria-hidden="true">{#if fixed}<Lock size={14} />{:else}<GripVertical size={16} />{index + 1}{/if}</span>
                 <ProviderArtwork id={providerId} definition={definition} label={label} />
-                <span class="routing-copy"><strong>{group.id === "lyrics" ? label : definition?.name ?? humanize(providerId)}</strong><small>{providerId === "backend" ? "Lyrics supplied by your media server" : definition?.categories?.map(humanize).join(" · ") || "Provider service"}</small></span>
+                <span class="routing-copy"><strong>{group.id === "lyrics" ? label : definition?.name ?? humanize(providerId)}</strong><small>{providerId === "backend" ? "Lyrics supplied by your media server" : fixed ? "Saved lyrics from your library" : definition?.categories?.map(humanize).join(" · ") || "Provider service"}</small></span>
                 <span class="routing-actions">
-                  <Button variant="ghost" size="icon" aria-label={`Move ${label} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
-                  <Button variant="ghost" size="icon" aria-label={`Move ${label} down`} disabled={index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
+                  <Button variant="ghost" size="icon" aria-label={`Move ${label} up`} disabled={fixed || index === 0 || group.id === "lyrics" && orders[group.id]?.[index - 1] === "kept"} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
+                  <Button variant="ghost" size="icon" aria-label={`Move ${label} down`} disabled={fixed || index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
                 </span>
               </li>
             {/each}

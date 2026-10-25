@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Health;
 using allstarr.Core.Operations;
@@ -10,6 +11,28 @@ namespace allstarr.Tests;
 
 public sealed class ProviderRuntimeHealthTests
 {
+    [Fact]
+    public void LyricsConfigurationChangesResetOnlyTheirOwnFailureEvidence()
+    {
+        var health = Store();
+        var observer = (ILyricsOutcomeObserver)health;
+        var context = Context();
+        var oldConfiguration = LyricsConfigurationId.From("old", 1);
+        var currentConfiguration = LyricsConfigurationId.From("current", 2);
+        observer.ObserveLyrics(context, new(ProviderErrorKind.TransientFailure), TimeSpan.Zero, oldConfiguration);
+        observer.ObserveLyrics(context, new(ProviderErrorKind.TransientFailure), TimeSpan.Zero, oldConfiguration);
+        observer.ObserveLyrics(context, new(ProviderErrorKind.TransientFailure), TimeSpan.Zero, currentConfiguration);
+        var current = health.GetLyrics(Key(capability: ProviderCapabilities.Lyrics), context.Account!.Revision, currentConfiguration);
+        Assert.NotNull(current);
+        Assert.Equal(1, current.ConsecutiveFailures);
+        Assert.Null(current.RetryAfter);
+        Assert.False(health.IsCircuitOpen(current));
+        observer.ObserveLyrics(context, null, TimeSpan.Zero, currentConfiguration);
+        var success = health.GetLyrics(Key(capability: ProviderCapabilities.Lyrics), context.Account.Revision, currentConfiguration);
+        observer.ObserveLyrics(context, new(ProviderErrorKind.TransientFailure), TimeSpan.Zero, oldConfiguration);
+        Assert.Same(success, health.GetLyrics(Key(capability: ProviderCapabilities.Lyrics), context.Account.Revision, currentConfiguration));
+    }
+
     [Fact]
     public void PlaybackStartMedianUsesRecentSuccessfulSamplesForTheExactAccountRevisionAndQuality()
     {

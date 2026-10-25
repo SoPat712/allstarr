@@ -11,6 +11,7 @@ public sealed class UnisonCapabilityAdapter(
     public const string HttpClientName = "UnisonLyrics";
     private static readonly SemaphoreSlim _requests = new(1, 1);
     private static long _lastRequest;
+    private protected override LyricsSpeculationMode Speculation => LyricsSpeculationMode.RecentHealthy;
     public override string ProviderId => "unison";
     protected override bool RequiresArtist => true;
 

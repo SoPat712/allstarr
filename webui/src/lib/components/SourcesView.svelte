@@ -887,7 +887,7 @@
 
   <ConnectSourceDialog bind:open={connectOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} {currentUserId} testConnection={administrator} initialProviderId={connectProviderId} onSaved={completed} />
   <ConnectSourceDialog bind:open={configureOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} {currentUserId} testConnection={administrator} account={selectedAccount} onSaved={completed} />
-  {#if tryTarget}<ProviderTryDialog bind:open={tryOpen} provider={tryTarget.provider} account={tryTarget.account} capability={tryTarget.capability} searchSources={lyricSearchSources} />{/if}
+  {#if tryTarget}<ProviderTryDialog bind:open={tryOpen} provider={tryTarget.provider} account={tryTarget.account} capability={tryTarget.capability} searchSources={lyricSearchSources} providerDefinitions={providers} />{/if}
   <AppleDownloadDialog bind:open={appleDownloadOpen} onStatus={(status) => { appleRequest++; appleStatus = status; appleStatusError = ""; }} />
   {#if administrator}<ExtensionsView view="catalog" bind:open={addSourceOpen} onchanged={refresh} />{/if}
   <AccountAccessDialog bind:open={accessOpen} account={selectedAccount} users={audienceUsers} onSaved={completed} />

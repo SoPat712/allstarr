@@ -9,6 +9,7 @@ public sealed partial class GeniusCapabilityAdapter : MetadataLyricsCapabilityAd
 {
     public const string HttpClientName = "GeniusLyrics";
     private static readonly MetadataLyricsFailureCache Failures = new(TimeProvider.System);
+    private protected override LyricsSpeculationMode Speculation => LyricsSpeculationMode.RecentHealthy;
     public override string ProviderId => "genius";
     protected override bool RequiresArtist => true;
 

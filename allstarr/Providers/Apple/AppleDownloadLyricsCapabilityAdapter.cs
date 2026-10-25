@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Providers.AppleMusicKit;
 using System.Net;
 using System.Text.Json;
@@ -9,7 +10,7 @@ using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Providers.AppleDownload;
 
-public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapability
+public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapability, IInternalLyricsCapability
 {
     private const int MaximumLyricsBytes = 2_000_000;
     private readonly HttpClient http;
@@ -40,9 +41,16 @@ public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapabi
 
     public string ProviderId => AppleDownloadCapabilityAdapter.StableProviderId;
 
-    public async Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(
-        ProviderExecutionContext context,
-        ProviderLyricsRequest request)
+    private sealed record SourceSnapshot(string BaseUrl) : LyricsSourceSnapshot(
+        LyricsConfigurationId.From("apple-musickit:lyrics:1:" + BaseUrl), LyricsSpeculationMode.RecentHealthy, true);
+    ValueTask<LyricsSourceSnapshot> IInternalLyricsCapability.CaptureSourceAsync(CancellationToken token) =>
+        ValueTask.FromResult<LyricsSourceSnapshot>(new SourceSnapshot(settings.BaseUrl));
+    Task<ProviderOutcome<ProviderLyricsResult>> IInternalLyricsCapability.FetchAsync(ProviderExecutionContext context,
+        ProviderLyricsRequest request, LyricsExecution execution) => FetchCoreAsync(context, request, ((SourceSnapshot)execution.Source).BaseUrl);
+    public Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(ProviderExecutionContext context, ProviderLyricsRequest request) =>
+        FetchCoreAsync(context, request, settings.BaseUrl);
+    private async Task<ProviderOutcome<ProviderLyricsResult>> FetchCoreAsync(ProviderExecutionContext context,
+        ProviderLyricsRequest request, string configuredUrl)
     {
         try
         {
@@ -61,7 +69,7 @@ public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapabi
             if (snapshot.State != AppleDownloadEndpointState.Available ||
                 snapshot.Capability("synced-lyrics-artifact").State != AppleDownloadCapabilityState.Available)
                 return Failure(ProviderErrorKind.CapabilityUnavailable);
-            if (!OutboundRequestGuard.TryCreateConfiguredServiceUri(settings.BaseUrl, out var baseUri, out _))
+            if (!OutboundRequestGuard.TryCreateConfiguredServiceUri(configuredUrl, out var baseUri, out _))
                 return Failure(ProviderErrorKind.AccountNeedsConfiguration);
 
             var resolved = await client.ResolveCatalogTrackAsync(context, request.ProviderTrackId.Value);

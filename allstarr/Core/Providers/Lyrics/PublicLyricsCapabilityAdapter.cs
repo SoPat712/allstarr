@@ -9,7 +9,7 @@ using allstarr.Services.Common;
 namespace allstarr.Core.Providers.Lyrics;
 
 public abstract class PublicLyricsCapabilityAdapter(
-    HttpClient http, IApplicationCache? cache, Func<TimeSpan>? lyricsTtl) : IProviderLyricsCapability
+    HttpClient http, IApplicationCache? cache, Func<TimeSpan>? lyricsTtl) : IProviderLyricsCapability, IInternalLyricsCapability
 {
     private const int MaximumBytes = 2_000_000;
     protected virtual TimeProvider Clock => TimeProvider.System;
@@ -24,18 +24,25 @@ public abstract class PublicLyricsCapabilityAdapter(
     public abstract string ProviderId { get; }
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Lyrics;
 
-    public async Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(
-        ProviderExecutionContext context, ProviderLyricsRequest request)
+    private protected virtual LyricsSpeculationMode Speculation => LyricsSpeculationMode.ForegroundOnly;
+    ValueTask<LyricsSourceSnapshot> IInternalLyricsCapability.CaptureSourceAsync(CancellationToken token) =>
+        ValueTask.FromResult(LyricsAwait.Static(ProviderId, Speculation));
+    Task<ProviderOutcome<ProviderLyricsResult>> IInternalLyricsCapability.FetchAsync(ProviderExecutionContext context,
+        ProviderLyricsRequest request, LyricsExecution execution) => FetchCoreAsync(context, request, execution.Completion);
+    public Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(ProviderExecutionContext context, ProviderLyricsRequest request) =>
+        FetchCoreAsync(context, request, LyricsCompletionMode.RequestBound);
+    private async Task<ProviderOutcome<ProviderLyricsResult>> FetchCoreAsync(
+        ProviderExecutionContext context, ProviderLyricsRequest request, LyricsCompletionMode completion)
     {
         if (context.ProviderId != ProviderId || !context.Policy.AllowsProvider(ProviderId) ||
             request.ProviderTrackId.ProviderId != ProviderId || request.ProviderTrackId.ResourceKind != ProviderResourceKind.Track)
             return Failure(ProviderErrorKind.Forbidden);
         if (context.CancellationToken.IsCancellationRequested) return Failure(ProviderErrorKind.Canceled);
-        if (context.IsExpired(DateTimeOffset.UtcNow)) return Failure(ProviderErrorKind.CapabilityUnavailable);
+        if (context.IsExpired(Clock.GetUtcNow())) return Failure(ProviderErrorKind.CapabilityUnavailable);
         if (RequiresArtist && request.ArtistNames.Count == 0 &&
             (!string.IsNullOrWhiteSpace(request.TrackTitle) || !string.IsNullOrWhiteSpace(request.Isrc)))
             return ProviderOutcome<ProviderLyricsResult>.Failure(ProviderError.LyricsArtistRequired());
-        using var deadlineTimer = new CancellationTokenSource(context.Remaining(DateTimeOffset.UtcNow), Clock);
+        using var deadlineTimer = new CancellationTokenSource(context.Remaining(Clock.GetUtcNow()), Clock);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, deadlineTimer.Token);
         using var budgetTimer = new CancellationTokenSource(await ResolveLookupBudgetAsync(context, deadline.Token), Clock);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, budgetTimer.Token);
@@ -52,19 +59,20 @@ public abstract class PublicLyricsCapabilityAdapter(
             }));
             try
             {
-                var cached = cache == null ? null : await cache.GetAsync<ProviderLyricsResult>(key).WaitAsync(token);
+                var cached = cache == null ? null : await LyricsAwait.CompleteAsync(cache.GetAsync<ProviderLyricsResult>(key), completion, token);
                 token.ThrowIfCancellationRequested();
                 if (cached != null) return Project(cached, request);
             }
             catch (Exception exception) when (exception is not OperationCanceledException) { }
-            var result = await ReadAsync(context, request, token);
+            token.ThrowIfCancellationRequested();
+            var result = await ReadWithCompletionAsync(context, request, completion, token);
             token.ThrowIfCancellationRequested();
             if (!result.IsSuccess) return result;
             try
             {
                 if (cache != null)
-                    await cache.SetAsync(key, result.RequireValue(), result.RequireValue().Content == null
-                        ? TimeSpan.FromMinutes(5) : lyricsTtl?.Invoke() ?? TimeSpan.FromDays(7)).WaitAsync(token);
+                    await LyricsAwait.CompleteAsync(cache.SetAsync(key, result.RequireValue(), result.RequireValue().Content == null
+                        ? TimeSpan.FromMinutes(5) : lyricsTtl?.Invoke() ?? TimeSpan.FromDays(7)), completion, token);
             }
             catch (Exception exception) when (exception is not OperationCanceledException) { }
             token.ThrowIfCancellationRequested();
@@ -83,6 +91,9 @@ public abstract class PublicLyricsCapabilityAdapter(
     protected abstract Task<ProviderOutcome<ProviderLyricsResult>> ReadAsync(ProviderLyricsRequest request, CancellationToken token);
     protected virtual Task<ProviderOutcome<ProviderLyricsResult>> ReadAsync(
         ProviderExecutionContext context, ProviderLyricsRequest request, CancellationToken token) => ReadAsync(request, token);
+    private protected virtual Task<ProviderOutcome<ProviderLyricsResult>> ReadWithCompletionAsync(
+        ProviderExecutionContext context, ProviderLyricsRequest request, LyricsCompletionMode completion, CancellationToken token) =>
+        ReadAsync(context, request, token);
     protected virtual Task BeforeRequestAsync(CancellationToken token) => Task.CompletedTask;
 
     protected async Task<(string? Content, ProviderError? Error)> GetAsync(Uri endpoint, CancellationToken token, string? accept = null)
@@ -109,7 +120,7 @@ public abstract class PublicLyricsCapabilityAdapter(
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
                 var delay = response.Headers.RetryAfter?.Delta ??
-                    (response.Headers.RetryAfter?.Date - DateTimeOffset.UtcNow) ?? TimeSpan.FromSeconds(30);
+                    (response.Headers.RetryAfter?.Date - Clock.GetUtcNow()) ?? TimeSpan.FromSeconds(30);
                 return (null, new(ProviderErrorKind.RateLimited, TimeSpan.FromSeconds(Math.Clamp(delay.TotalSeconds, 0, 300))), response.StatusCode);
             }
             if (!response.IsSuccessStatusCode || response.Headers.Location != null)

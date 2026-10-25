@@ -58,15 +58,15 @@ public sealed class MetadataLyricsCapabilityAdapterTests
             .Callback(new InvocationAction(invocation => logs.Add(invocation.Arguments[2].ToString()!)));
         var handler = new Handler((_, _) => new((HttpStatusCode)status) { Content = new StringContent("Sensitive lyric payload") });
         var adapter = Adapter(provider, handler, clock, logger: logger.Object);
-        var first = await adapter.FetchLyricsAsync(Context(provider), Request(provider));
-        var second = await adapter.FetchLyricsAsync(Context(provider), Request(provider));
+        var first = await adapter.FetchLyricsAsync(Context(provider, clock: clock), Request(provider));
+        var second = await adapter.FetchLyricsAsync(Context(provider, clock: clock), Request(provider));
         Assert.False(first.IsSuccess);
         Assert.Equal(first.Error!.Kind, second.Error!.Kind);
         Assert.Single(handler.Requests);
         Assert.NotEmpty(logs);
         Assert.All(logs, line => Assert.DoesNotContain("Sensitive lyric payload", line));
         clock.Advance(TimeSpan.FromMinutes(10));
-        await adapter.FetchLyricsAsync(Context(provider), Request(provider));
+        await adapter.FetchLyricsAsync(Context(provider, clock: clock), Request(provider));
         Assert.Equal(2, handler.Requests.Count);
     }
 
@@ -77,11 +77,11 @@ public sealed class MetadataLyricsCapabilityAdapterTests
         var clock = new ManualTimeProvider();
         var handler = new WaitingHandler();
         var adapter = Adapter(provider, handler, clock);
-        var pending = adapter.FetchLyricsAsync(Context(provider), Request(provider));
+        var pending = adapter.FetchLyricsAsync(Context(provider, clock: clock), Request(provider));
         await clock.WaitForTimersAsync(TimeSpan.FromSeconds(4));
         clock.Advance(TimeSpan.FromSeconds(4));
         Assert.Equal("lyrics-upstream-busy-or-timed-out", (await pending).Error!.Code);
-        Assert.Equal("lyrics-upstream-busy-or-timed-out", (await adapter.FetchLyricsAsync(Context(provider), Request(provider))).Error!.Code);
+        Assert.Equal("lyrics-upstream-busy-or-timed-out", (await adapter.FetchLyricsAsync(Context(provider, clock: clock), Request(provider))).Error!.Code);
         Assert.Equal(1, handler.Calls);
     }
 
@@ -151,9 +151,9 @@ public sealed class MetadataLyricsCapabilityAdapterTests
     private static ProviderLyricsRequest Request(string provider, string? isrc = null, bool availability = false) =>
         new(Guid.CreateVersion7(), new(provider, ProviderResourceKind.Track, "lookup"), availability,
             trackTitle: "Fixture", artistNames: ["Artist"], albumTitle: "Album", durationSeconds: 180, isrc: isrc);
-    private static ProviderExecutionContext Context(string provider, CancellationToken token = default) => new(new(ProviderActorKind.PublicRead, null), provider, null,
+    private static ProviderExecutionContext Context(string provider, CancellationToken token = default, TimeProvider? clock = null) => new(new(ProviderActorKind.PublicRead, null), provider, null,
         new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
-            true, true, false, [provider]), "lyrics-test", "lyrics-test", DateTimeOffset.UtcNow.AddMinutes(1), token);
+            true, true, false, [provider]), "lyrics-test", "lyrics-test", (clock ?? TimeProvider.System).GetUtcNow().AddMinutes(1), token);
 
     private sealed class Handler(Func<HttpRequestMessage, int, HttpResponseMessage> response) : HttpMessageHandler
     {

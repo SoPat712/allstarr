@@ -14,6 +14,63 @@ namespace allstarr.Tests;
 
 public sealed class ProtocolLyricsResolverTests
 {
+    [Fact]
+    public async Task UnchosenManualOnlyKeptSourceIsNeverReadAutomatically()
+    {
+        var context = LyricsContext();
+        var providers = LyricsProviders(context, ProviderLyricsFormat.LineTimed, ProviderLyricsFormat.LineTimed);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrclib", "kept"]);
+        var policy = new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+            ImmutableHashSet<string>.Empty, "lossless", 0.07)
+        { ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("kept", ProviderUseMode.ManualOnly) };
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        policies.Setup(item => item.ResolveForUserAsync(context.Principal!.UserId, context.CancellationToken)).ReturnsAsync(policy);
+        var reads = 0;
+        var answer = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance,
+            effectivePolicies: policies.Object).FindAsync(context, LyricsSong(), "recording", new ProtocolLyricsSources(Kept: _ =>
+            {
+                reads++;
+                return Task.FromResult<allstarr.Models.Lyrics.LyricsInfo?>(new() { PlainLyrics = "Kept" });
+            }));
+        Assert.Equal("lrclib", answer?.Source);
+        Assert.Equal(0, reads);
+        policies.VerifyAll();
+    }
+
+    [Fact]
+    public async Task AuthorizedKeptLyricsWinBeforeAnyAutomaticProviderCall()
+    {
+        var context = LyricsContext();
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrclib", "kept"]);
+        var reads = 0;
+        var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance)
+            .FindAsync(context, LyricsSong(), "recording", new ProtocolLyricsSources(Kept: token =>
+            {
+                Assert.Equal(context.CancellationToken, token);
+                reads++;
+                return Task.FromResult<allstarr.Models.Lyrics.LyricsInfo?>(new() { PlainLyrics = "Kept words" });
+            }));
+        Assert.Equal("kept", result?.Source);
+        Assert.Equal("Kept words", result?.PlainLyrics);
+        Assert.Equal(1, reads);
+        providers.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics), Times.Once);
+        providers.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task EarlierAutomaticPlainLyricsBeatLaterTimedLyricsWithoutAnotherCall()
+    {
+        var context = LyricsContext();
+        var providers = LyricsProviders(context, ProviderLyricsFormat.PlainText, ProviderLyricsFormat.LineTimed);
+        var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance)
+            .FindAsync(context, LyricsSong(), "recording", "spotify", "fixture-track");
+        Assert.Equal("spotify", result?.Source);
+        Assert.NotNull(result?.PlainLyrics);
+        providers.Verify(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(),
+            ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null), Times.Never);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -148,11 +205,11 @@ public sealed class ProtocolLyricsResolverTests
     }
 
     [Theory]
-    [InlineData("backend,kept,lrclib", true, true, "backend")]
-    [InlineData("lrclib,backend,kept", true, true, "lrclib")]
+    [InlineData("backend,kept,lrclib", true, true, "kept")]
+    [InlineData("lrclib,backend,kept", true, true, "kept")]
     [InlineData("backend,kept,lrclib", false, true, "kept")]
-    [InlineData("backend,kept,lrclib", false, false, "backend")]
-    public async Task LocalSourcesUseTheListenersOrderAndTheSameTimedPreference(
+    [InlineData("backend,kept,lrclib", false, false, "kept")]
+    public async Task EnabledKeptPreflightPrecedesConfiguredBackendAndProviderOrder(
         string order, bool backendTimed, bool laterTimed, string expected)
     {
         var context = LyricsContext();
@@ -181,8 +238,8 @@ public sealed class ProtocolLyricsResolverTests
                 effectivePolicies: policies.Object).FindAsync(context, LyricsSong(), "native-song",
             new ProtocolLyricsSources(token => Read("backend", backendTimed, token), token => Read("kept", laterTimed, token)));
         Assert.Equal(expected, result?.Source);
-        Assert.Equal(laterTimed || backendTimed, result?.SyncedLyrics != null);
-        Assert.Equal(order.Split(',').Take(calls.Count), calls);
+        Assert.Equal(laterTimed, result?.SyncedLyrics != null);
+        Assert.Equal(new[] { "kept" }, calls);
         policies.VerifyAll();
     }
 
@@ -365,10 +422,10 @@ public sealed class ProtocolLyricsResolverTests
 
 
     [Theory]
-    [InlineData(ProviderLyricsFormat.PlainText, ProviderLyricsFormat.LineTimed, "lrclib")]
+    [InlineData(ProviderLyricsFormat.PlainText, ProviderLyricsFormat.LineTimed, "spotify")]
     [InlineData(ProviderLyricsFormat.PlainText, ProviderLyricsFormat.PlainText, "spotify")]
     [InlineData(ProviderLyricsFormat.LineTimed, ProviderLyricsFormat.LineTimed, "spotify")]
-    public async Task Resolver_PrefersTimedContentThenConfiguredOrder(
+    public async Task Resolver_PrefersConfiguredOrderBeforeActualFormat(
         ProviderLyricsFormat first, ProviderLyricsFormat second, string expected)
     {
         var context = LyricsContext();
@@ -376,13 +433,13 @@ public sealed class ProtocolLyricsResolverTests
         var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance)
             .FindAsync(context, LyricsSong(), "recording", "spotify", "fixture-track");
         Assert.Equal(expected, result?.Source);
-        Assert.Equal(first == ProviderLyricsFormat.PlainText && second == ProviderLyricsFormat.PlainText,
+        Assert.Equal(first == ProviderLyricsFormat.PlainText,
             result?.SyncedLyrics == null);
         providers.Verify(item => item.GetLyricsAsync(context, "spotify", "fixture-track",
             ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null), Times.Once);
         providers.Verify(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(),
             ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null),
-            first == ProviderLyricsFormat.LineTimed ? Times.Never() : Times.Once());
+            Times.Never());
     }
 
     [Fact]

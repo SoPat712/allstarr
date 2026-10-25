@@ -13,7 +13,7 @@ public sealed class LyricsPlusCapabilityAdapter(
     IApplicationCache? cache,
     Func<CancellationToken, Task<string>> configuredEndpoint,
     Func<TimeSpan>? lyricsTtl = null,
-    CloudflareChallengeSolver? solver = null) : IProviderLyricsCapability
+    CloudflareChallengeSolver? solver = null) : IProviderLyricsCapability, IInternalLyricsCapability
 {
     public const string HttpClientName = "LyricsPlus";
     private const int MaximumBytes = 2_000_000;
@@ -22,9 +22,43 @@ public sealed class LyricsPlusCapabilityAdapter(
          "https://lyricsplus.prjktla.workers.dev/", "https://lyrics-plus-backend.vercel.app/"];
     public string ProviderId => "lyricsplus";
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Lyrics;
+    internal sealed record EndpointConfiguration(string Endpoint, string Binding, long Revision);
+    internal Func<CancellationToken, Task<EndpointConfiguration>>? EndpointReader { get; init; }
+    private sealed record SourceSnapshot(IReadOnlyList<Uri> Endpoints, ChallengeSolverConfiguration? Solver,
+        LyricsConfigurationId Id, bool Ready) : LyricsSourceSnapshot(Id, LyricsSpeculationMode.RecentHealthy, Ready);
+    internal static async Task<EndpointConfiguration> ReadEndpointAsync(allstarr.Core.Settings.IDurableRuntimeSettings settings, CancellationToken token)
+    {
+        var value = await settings.GetAsync("LyricsPlus:BaseUrl", token);
+        return new(value.NormalizedValue, value.Origin + ":" + value.Revision + ":" + value.NormalizedValue, value.Revision ?? 0);
+    }
+    private static bool CanSolve(Uri endpoint) => endpoint.Scheme == "https" && endpoint.IsDefaultPort &&
+        endpoint.UserInfo.Length == 0 && endpoint.IdnHost.Equals("lyricsplus.binimum.org", StringComparison.OrdinalIgnoreCase);
+    async ValueTask<LyricsSourceSnapshot> IInternalLyricsCapability.CaptureSourceAsync(CancellationToken token) => await CaptureAsync(token);
+    private async ValueTask<SourceSnapshot> CaptureAsync(CancellationToken token)
+    {
+        var configured = EndpointReader != null ? await EndpointReader(token) : new EndpointConfiguration(await configuredEndpoint(token), "", 0);
+        var endpoints = string.IsNullOrWhiteSpace(configured.Endpoint) ? PublicEndpoints : [configured.Endpoint];
+        var bases = endpoints.Select(endpoint => OutboundRequestGuard.TryCreateConfiguredServiceUri(endpoint, out var uri, out _)
+            ? uri! : throw new ArgumentException("Lyrics endpoint is unavailable.")).ToArray();
+        var configuration = solver == null ? null : await solver.CaptureConfigurationAsync(token);
+        var solving = bases.Any(CanSolve) && !string.IsNullOrWhiteSpace(configuration?.Options.Url);
+        var ready = !solving || solver!.IsReady("lyricsplus.binimum.org", configuration!);
+        var id = LyricsConfigurationId.From("lyricsplus:1:" + configured.Binding + ":" + string.Join("\n", bases.Select(uri => uri.AbsoluteUri)) +
+            ":" + configuration?.ConfigurationId.Value, configured.Revision + (configuration?.ConfigurationId.Revision ?? 0));
+        return new(bases, configuration, id, ready);
+    }
+    Task<ProviderOutcome<ProviderLyricsResult>> IInternalLyricsCapability.FetchAsync(ProviderExecutionContext context,
+        ProviderLyricsRequest request, LyricsExecution execution) => FetchCoreAsync(context, request, execution.Completion, (SourceSnapshot)execution.Source);
 
-    public async Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(
-        ProviderExecutionContext context, ProviderLyricsRequest request)
+    public async Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(ProviderExecutionContext context, ProviderLyricsRequest request)
+    {
+        try { return await FetchCoreAsync(context, request, LyricsCompletionMode.RequestBound, await CaptureAsync(context.CancellationToken)); }
+        catch (OperationCanceledException) { return Failure(ProviderErrorKind.Canceled); }
+        catch (ArgumentException) { return Failure(ProviderErrorKind.AccountNeedsConfiguration); }
+        catch { return Failure(ProviderErrorKind.TransientFailure); }
+    }
+    private async Task<ProviderOutcome<ProviderLyricsResult>> FetchCoreAsync(ProviderExecutionContext context,
+        ProviderLyricsRequest request, LyricsCompletionMode completion, SourceSnapshot snapshot)
     {
         if (context.ProviderId != ProviderId || !context.Policy.AllowsProvider(ProviderId) ||
             request.ProviderTrackId.ProviderId != ProviderId || request.ProviderTrackId.ResourceKind != ProviderResourceKind.Track)
@@ -41,15 +75,7 @@ public sealed class LyricsPlusCapabilityAdapter(
         var token = deadline.Token;
         try
         {
-            var configured = await configuredEndpoint(token).WaitAsync(token);
-            var endpoints = string.IsNullOrWhiteSpace(configured) ? PublicEndpoints : [configured];
-            var bases = new List<Uri>();
-            foreach (var endpoint in endpoints)
-            {
-                if (!OutboundRequestGuard.TryCreateConfiguredServiceUri(endpoint, out var uri, out _))
-                    return Failure(ProviderErrorKind.AccountNeedsConfiguration);
-                bases.Add(uri!);
-            }
+            var bases = snapshot.Endpoints;
             var key = "lyrics:v3:lyricsplus:" + Hash(JsonSerializer.Serialize(new
             {
                 Endpoints = bases.Select(uri => uri.AbsoluteUri),
@@ -61,7 +87,7 @@ public sealed class LyricsPlusCapabilityAdapter(
             }));
             try
             {
-                var cached = cache == null ? null : await cache.GetAsync<ProviderLyricsResult>(key).WaitAsync(token);
+                var cached = cache == null ? null : await LyricsAwait.CompleteAsync(cache.GetAsync<ProviderLyricsResult>(key), completion, token);
                 token.ThrowIfCancellationRequested();
                 if (cached?.Content != null) return Project(cached, request);
             }
@@ -72,17 +98,17 @@ public sealed class LyricsPlusCapabilityAdapter(
             {
                 token.ThrowIfCancellationRequested();
                 using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token);
-                var solveTimeout = baseUri.Host == "lyricsplus.binimum.org" && solver != null
-                    ? await solver.ConfiguredTimeoutAsync(token) : null;
+                var solveTimeout = CanSolve(baseUri) && !string.IsNullOrWhiteSpace(snapshot.Solver?.Options.Url)
+                    ? TimeSpan.FromSeconds(snapshot.Solver!.Options.TimeoutSeconds) : (TimeSpan?)null;
                 attempt.CancelAfter((solveTimeout ?? TimeSpan.Zero) + TimeSpan.FromSeconds(3));
                 ProviderOutcome<ProviderLyricsResult> result;
-                try { result = await ReadAsync(baseUri, request, attempt.Token); }
+                try { result = await ReadAsync(baseUri, request, snapshot.Solver, attempt.Token); }
                 catch (OperationCanceledException) when (!token.IsCancellationRequested)
                 { result = Failure(ProviderErrorKind.TransientFailure); }
                 if (!result.IsSuccess) { lastFailure = result; continue; }
                 if (result.RequireValue().Content == null) continue;
                 token.ThrowIfCancellationRequested();
-                try { if (cache != null) await cache.SetAsync(key, result.RequireValue(), lyricsTtl?.Invoke() ?? TimeSpan.FromDays(7)).WaitAsync(token); }
+                try { if (cache != null) await LyricsAwait.CompleteAsync(cache.SetAsync(key, result.RequireValue(), lyricsTtl?.Invoke() ?? TimeSpan.FromDays(7)), completion, token); }
                 catch (Exception exception) when (exception is not OperationCanceledException) { }
                 token.ThrowIfCancellationRequested();
                 return Project(result.RequireValue(), request);
@@ -94,13 +120,14 @@ public sealed class LyricsPlusCapabilityAdapter(
     }
 
     private async Task<ProviderOutcome<ProviderLyricsResult>> ReadAsync(
-        Uri baseUri, ProviderLyricsRequest request, CancellationToken token)
+        Uri baseUri, ProviderLyricsRequest request, ChallengeSolverConfiguration? configuration, CancellationToken token)
     {
         var query = $"title={Uri.EscapeDataString(request.TrackTitle!)}&artist={Uri.EscapeDataString(string.Join(", ", request.ArtistNames))}" +
             $"&album={Uri.EscapeDataString(request.AlbumTitle ?? "")}" +
             (request.DurationSeconds.HasValue ? $"&duration={request.DurationSeconds.Value.ToString(CultureInfo.InvariantCulture)}" : "");
         var endpoint = new Uri(baseUri, "v2/lyrics/get?" + query);
         using var outbound = new HttpRequestMessage(HttpMethod.Get, endpoint);
+        if (configuration != null && CanSolve(baseUri)) outbound.Options.Set(CloudflareChallengeSolver.ExpectedConfiguration, configuration);
         outbound.Headers.Accept.ParseAdd("application/json");
         outbound.Headers.UserAgent.ParseAdd(AppIdentity.UserAgent);
         try

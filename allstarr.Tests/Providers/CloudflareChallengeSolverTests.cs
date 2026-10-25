@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.Lyrics;
 using System.Net;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
@@ -13,6 +14,54 @@ public sealed class CloudflareChallengeSolverTests
 {
     private const string Target = "https://lyrics.example.test/?isrc=private-query";
     private readonly Clock _clock = new();
+
+    [Fact]
+    public async Task AdmissionRequiresRecentRealDeliveryAndExactCurrentConfiguration()
+    {
+        var options = new ChallengeSolverOptions("http://solver:8191", 60);
+        var revision = 1L;
+        var solverCalls = 0;
+        ChallengeSolverConfiguration Configuration() => new(options, LyricsConfigurationId.From(options.Url + ":" + options.TimeoutSeconds, revision));
+        var solver = new CloudflareChallengeSolver(new HttpClient(new Handler(_ =>
+        { solverCalls++; return Task.FromResult(Solution()); })), _ => Task.FromResult(options), _clock)
+        { ConfigurationReader = _ => Task.FromResult(Configuration()), AdmissionTtl = TimeSpan.FromSeconds(10) };
+        var before = await solver.CaptureConfigurationAsync(default);
+        Assert.False(solver.IsReady("lyrics.example.test", before));
+        Assert.Equal(0, solverCalls);
+        Assert.True((await solver.TestAsync(options, default)).Ok);
+        Assert.False(solver.IsReady("lyrics.example.test", before));
+        var originCalls = 0;
+        using var client = Client(solver, request =>
+        { originCalls++; return request.Headers.Contains("Cookie") ? Reply("Words") : Challenge(); });
+        using (var response = await client.GetAsync(Target)) Assert.True(response.IsSuccessStatusCode);
+        Assert.True(solver.IsReady("lyrics.example.test", before));
+        _clock.Now += TimeSpan.FromSeconds(11);
+        Assert.False(solver.IsReady("lyrics.example.test", before));
+        revision++;
+        var changed = await solver.CaptureConfigurationAsync(default);
+        Assert.NotEqual(before.ConfigurationId, changed.ConfigurationId);
+        Assert.False(solver.IsReady("lyrics.example.test", changed));
+        var callsBefore = originCalls;
+        using var stale = new HttpRequestMessage(HttpMethod.Get, Target);
+        stale.Options.Set(CloudflareChallengeSolver.ExpectedConfiguration, before);
+        await Assert.ThrowsAsync<CloudflareChallengeException>(() => client.SendAsync(stale));
+        Assert.Equal(callsBefore, originCalls);
+    }
+
+    [Fact]
+    public async Task FailedCookieDeliveryRevokesSpeculativeSolverReadiness()
+    {
+        var failed = false;
+        var solver = Solver(new Handler(_ => Task.FromResult(Solution())));
+        using var client = Client(solver, request => request.Headers.Contains("Cookie")
+            ? Reply("Words", failed ? 503 : 200) : Challenge());
+        using (var first = await client.GetAsync(Target)) Assert.True(first.IsSuccessStatusCode);
+        var configuration = await solver.CaptureConfigurationAsync(default);
+        Assert.True(solver.IsReady("lyrics.example.test", configuration));
+        failed = true;
+        using (var second = await client.GetAsync(Target)) Assert.Equal(HttpStatusCode.ServiceUnavailable, second.StatusCode);
+        Assert.False(solver.IsReady("lyrics.example.test", configuration));
+    }
 
     [Theory]
     [InlineData("initial", "read")]

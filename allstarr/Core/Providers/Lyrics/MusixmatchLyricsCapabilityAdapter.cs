@@ -12,7 +12,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace allstarr.Core.Providers.Lyrics;
 
-public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapability
+public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapability, IInternalLyricsCapability
 {
     public const string StableProviderId = "musixmatch";
     public const string HttpClientName = "MusixmatchLyrics";
@@ -40,10 +40,10 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         HttpClient http,
         IProviderAccountSecretAccessor secrets,
         IApplicationCache cache,
-        ILogger<MusixmatchLyricsCapabilityAdapter>? logger = null)
+        ILogger<MusixmatchLyricsCapabilityAdapter>? logger = null, IHostApplicationLifetime? lifetime = null)
     {
         _http = http ?? throw new ArgumentNullException(nameof(http));
-        _automaticTokens = new(_http);
+        _automaticTokens = new(_http, shutdown: lifetime?.ApplicationStopping ?? default);
         _secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
         _logger = logger ?? NullLogger<MusixmatchLyricsCapabilityAdapter>.Instance;
@@ -81,12 +81,12 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
 
     internal static async Task<ProviderOutcome<ProviderLyricsResult>> ReadAutomaticLyricsAsync(
         HttpClient http, MusixmatchTokenProvider tokens, ProviderLyricsRequest request,
-        CancellationToken cancellationToken, ILogger logger)
+        CancellationToken cancellationToken, ILogger logger, LyricsCompletionMode completion = LyricsCompletionMode.RequestBound)
     {
         string? rejected = null;
         for (var attempt = 0; attempt < 2; attempt++)
         {
-            var token = await tokens.GetAsync(rejected, cancellationToken);
+            var token = await tokens.GetAsync(rejected, cancellationToken, completion);
             if (!token.IsSuccess) return Failure<ProviderLyricsResult>(token.Error!);
             var credential = token.RequireValue();
             var result = await ReadLyricsFromTokenCoreAsync(http, credential, request, cancellationToken, logger);
@@ -97,9 +97,14 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         return Failure<ProviderLyricsResult>(new ProviderError(ProviderErrorKind.RateLimited, TimeSpan.FromMinutes(5)));
     }
 
-    public async Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(
-        ProviderExecutionContext context,
-        ProviderLyricsRequest request)
+    ValueTask<LyricsSourceSnapshot> IInternalLyricsCapability.CaptureSourceAsync(CancellationToken token) =>
+        ValueTask.FromResult(LyricsAwait.Static(ProviderId, LyricsSpeculationMode.RecentHealthy));
+    Task<ProviderOutcome<ProviderLyricsResult>> IInternalLyricsCapability.FetchAsync(ProviderExecutionContext context,
+        ProviderLyricsRequest request, LyricsExecution execution) => FetchCoreAsync(context, request, execution.Completion);
+    public Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(ProviderExecutionContext context, ProviderLyricsRequest request) =>
+        FetchCoreAsync(context, request, LyricsCompletionMode.RequestBound);
+    private async Task<ProviderOutcome<ProviderLyricsResult>> FetchCoreAsync(ProviderExecutionContext context,
+        ProviderLyricsRequest request, LyricsCompletionMode completion)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(request);
@@ -130,14 +135,15 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
 
             using var operation = StartOperation(context);
             var cacheKey = BuildCacheKey(context.Account, request);
-            var cached = await ReadCacheAsync(cacheKey, operation.Token);
+            var cached = await ReadCacheAsync(cacheKey, operation.Token, completion);
             operation.Token.ThrowIfCancellationRequested();
             if (cached?.Availability == ProviderLyricsAvailabilityState.Available &&
                 cached.Content != null)
                 return Project(cached, request);
 
+            operation.Token.ThrowIfCancellationRequested();
             var loaded = context.Account == null
-                ? await ReadAutomaticLyricsAsync(request, operation.Token)
+                ? await ReadAutomaticLyricsAsync(_http, _automaticTokens, request, operation.Token, _logger, completion)
                 : await _secrets.UseAsync(
                 context.Account,
                 secret =>
@@ -168,7 +174,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
             var result = loaded.RequireValue();
             if (result.Availability == ProviderLyricsAvailabilityState.Available &&
                 result.Content != null)
-                await WriteCacheAsync(cacheKey, result, operation.Token);
+                await WriteCacheAsync(cacheKey, result, operation.Token, completion);
             operation.Token.ThrowIfCancellationRequested();
             return Project(result, request);
         }
@@ -1031,14 +1037,13 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
 
     private async Task<ProviderLyricsResult?> ReadCacheAsync(
         string key,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, LyricsCompletionMode completion)
     {
         if (!_cache.IsEnabled)
             return null;
         try
         {
-            var value = await _cache.GetAsync<ProviderLyricsResult>(key)
-                .WaitAsync(cancellationToken);
+            var value = await LyricsAwait.CompleteAsync(_cache.GetAsync<ProviderLyricsResult>(key), completion, cancellationToken);
             return value?.Availability == ProviderLyricsAvailabilityState.Available &&
                    value.Content != null
                 ? value
@@ -1057,7 +1062,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
     private async Task WriteCacheAsync(
         string key,
         ProviderLyricsResult result,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, LyricsCompletionMode completion)
     {
         if (!_cache.IsEnabled ||
             result.Availability != ProviderLyricsAvailabilityState.Available ||
@@ -1065,8 +1070,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
             return;
         try
         {
-            await _cache.SetAsync(key, result, CacheExtensions.LyricsTTL)
-                .WaitAsync(cancellationToken);
+            await LyricsAwait.CompleteAsync(_cache.SetAsync(key, result, CacheExtensions.LyricsTTL), completion, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
