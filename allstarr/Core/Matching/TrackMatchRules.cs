@@ -331,6 +331,11 @@ internal sealed class FieldScoreRule : ITrackMatchRule
             warnings.Add("semantic_version_mismatch");
         }
         if (!titleAnnotationsMatch) warnings.Add("title_annotation_mismatch");
+        if (!duration.HasValue && Math.Max(album ?? 0, albumArtist ?? 0) < 0.85)
+        {
+            confidence = Math.Min(confidence, 0.94);
+            warnings.Add("limited_recording_metadata");
+        }
         return new TrackMatchRuleOutcome(
             TrackMatchRuleDisposition.Score,
             Math.Round(confidence, 4),

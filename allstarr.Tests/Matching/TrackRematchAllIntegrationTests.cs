@@ -10,11 +10,97 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Moq;
 
 namespace allstarr.Tests;
 
 public sealed class TrackRematchAllIntegrationTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [Trait("Category", "Sqlite")]
+    public async Task AlgorithmRolloutPreservesAuthorityAddedAfterItWasQueued(bool household, bool targeted)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new DbFactory(database.Options);
+        var now = DateTimeOffset.UtcNow;
+        var clock = new Clock(now);
+        var owner = Guid.NewGuid();
+        var account = Guid.NewGuid();
+        var snapshot = Guid.NewGuid();
+        var candidate = Guid.NewGuid();
+        await using (var setup = factory.CreateDbContext())
+        {
+            setup.Users.Add(User(owner, "Owner", now));
+            setup.ProviderAccounts.Add(Account(account, owner, now));
+            setup.LibraryTracks.Add(Local(candidate, owner, "Track", now));
+            setup.ExternalMetadataSnapshots.Add(Snapshot(snapshot, account, owner, "Track", Hash(1000), now));
+            setup.TrackMatches.Add(Decision(snapshot, owner, candidate, null, TrackMatchState.Accepted, now));
+            await setup.SaveChangesAsync();
+        }
+        var rematches = new TrackRematchAllService(factory, Queue(factory, clock), clock);
+        Assert.Equal(1, await rematches.QueueAlgorithmUpgradesAsync());
+        Assert.Equal(0, await rematches.QueueAlgorithmUpgradesAsync());
+        DurableJobRecord job;
+        await using (var queued = factory.CreateDbContext())
+        {
+            job = await queued.Jobs.SingleAsync();
+            queued.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = household ? null : owner,
+                ExternalSnapshotId = snapshot,
+                SourceProviderId = "spotify",
+                SourceExternalIdHash = Hash(1000),
+                Decision = ManualOverrideDecision.Reject,
+                LibraryTrackId = targeted ? candidate : null,
+                MatcherVersion = "accepted-routing-v22",
+                DecisionVersion = 1,
+                Revision = 1,
+                Reason = "Preserve this decision",
+                CreatedAt = now
+            });
+            await queued.SaveChangesAsync();
+        }
+        var payload = JsonSerializer.Deserialize<TrackRematchAllJobPayload>(job.PayloadJson)!;
+        var claim = new DurableJobClaim(job.Id, 1, TrackRematchJobHandler.Type, JsonSerializer.SerializeToElement(payload), owner,
+            null, null, JsonSerializer.SerializeToElement(new { }), TrackRematchAllService.OperationCorrelation(payload.OperationId));
+        var repository = new Mock<ITrackMatchRepository>(MockBehavior.Strict);
+        var handler = new TrackRematchAllJobHandler(factory, rematches, repository.Object, clock);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await handler.ExecuteAsync(new(claim, EmptyServices.Instance), default)).Kind);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await handler.ExecuteAsync(new(claim with { AttemptNumber = 2 }, EmptyServices.Instance), default)).Kind);
+
+        repository.VerifyNoOtherCalls();
+        await using var saved = factory.CreateDbContext();
+        Assert.Single(await saved.TrackMatches.ToArrayAsync());
+        Assert.Single(await saved.ManualTrackOverrides.Where(item => item.RevokedAt == null).ToArrayAsync());
+    }
+
+    [Theory]
+    [InlineData("retired-matcher")]
+    [InlineData("accepted-routing-v22")]
+    [Trait("Category", "Sqlite")]
+    public async Task AlgorithmRolloutRejectsRetiredVersionPayloadBeforeMatching(string version)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var payload = new TrackRematchAllJobPayload(Guid.NewGuid(), version, DateTimeOffset.UtcNow,
+            new string('a', 64), Guid.NewGuid(), 1, false, TrackRematchScopes.Algorithm);
+        var claim = new DurableJobClaim(Guid.NewGuid(), 1, TrackRematchJobHandler.Type, JsonSerializer.SerializeToElement(payload), payload.ScopeOwnerUserId,
+            null, null, JsonSerializer.SerializeToElement(new { }), "retired-version");
+        var repository = new Mock<ITrackMatchRepository>(MockBehavior.Strict);
+        var handler = new TrackRematchAllJobHandler(new DbFactory(database.Options), null!, repository.Object, new Clock(DateTimeOffset.UtcNow));
+
+        var completion = await handler.ExecuteAsync(new(claim, EmptyServices.Instance), default);
+
+        Assert.Equal(DurableJobCompletionKind.Failed, completion.Kind);
+        Assert.Equal("track_rematch_payload_invalid", completion.ErrorCode);
+        repository.VerifyNoOtherCalls();
+    }
+
     [Fact]
     [Trait("Category", "Sqlite")]
     public async Task Administrator_preview_includes_every_owner()

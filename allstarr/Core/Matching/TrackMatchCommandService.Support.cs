@@ -244,18 +244,20 @@ public sealed partial class TrackMatchCommandService
             throw new ArgumentException("A normalized SHA-256 value is required.", name);
     }
 
-    private static (string? Title, string? Artist, string? Album, string? AlbumArtist, string? Isrc) ReadMetadata(string json)
+    private static (string? Title, string? Artist, string? Album, string? AlbumArtist, string? Isrc, bool? IsExplicit) ReadMetadata(string json)
     {
         try
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return default;
             return (
                 ReadString(root, "title", "Title", "name", "Name"),
                 TrackSnapshotMetadata.Artist(root),
                 ReadString(root, "album", "Album"),
                 ReadString(root, "albumArtist", "AlbumArtist"),
-                ReadString(root, "isrc", "Isrc", "ISRC"));
+                ReadString(root, "isrc", "Isrc", "ISRC"),
+                TrackSnapshotMetadata.IsExplicit(root));
         }
         catch (JsonException)
         {
@@ -269,6 +271,7 @@ public sealed partial class TrackMatchCommandService
         {
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
             foreach (var name in new[] { "durationMilliseconds", "DurationMilliseconds", "durationMs", "DurationMs" })
             {
                 if (root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number)

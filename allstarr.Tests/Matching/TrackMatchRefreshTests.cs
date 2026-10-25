@@ -8,10 +8,14 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Matching;
 using allstarr.Core.Operations;
+using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Xunit.Abstractions;
 
 namespace allstarr.Tests;
@@ -270,6 +274,396 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
         return localId;
     }
 
+    public static IEnumerable<object?[]> StoredExplicitCases()
+    {
+        foreach (var branch in new[] { false, true })
+            foreach (var (field, raw, expected) in new (string, string, bool?)[]
+            {
+                ("IsExplicit", "true", true), ("isExplicit", "true", true),
+                ("IsExplicit", "false", false), ("isExplicit", "false", false),
+                ("IsExplicit", "null", null), ("isExplicit", "\"true\"", null),
+                ("IsExplicit", "1", null), ("", "null", null)
+            })
+                yield return [branch, field, raw, expected];
+    }
+
+    [Theory]
+    [MemberData(nameof(StoredExplicitCases))]
+    [Trait("Category", "Sqlite")]
+    public async Task RoutineCommandsUseOnlyStoredBooleanExplicitEvidence(bool refresh, string field, string raw, bool? expected)
+    {
+        var payload = ExplicitPayload(field, raw);
+        await using var fixture = await Fixture.CreateAsync(payload);
+        var local = Local(fixture.Owner, "clean-local", "Track Melodies (Clean)");
+        await using (var setup = fixture.Factory.CreateDbContext())
+        {
+            setup.LibraryTracks.Add(local);
+            await setup.SaveChangesAsync();
+        }
+
+        await RunRoutineAsync(fixture, refresh);
+
+        await using var saved = fixture.Factory.CreateDbContext();
+        var decision = await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        var score = Assert.Single(JsonSerializer.Deserialize<TrackMatchCandidateScore[]>(decision.CandidateResultsJson)!);
+        Assert.Equal(expected == true, score.Reasons.Contains("clean_edit_of_explicit"));
+        if (expected == true) Assert.Equal(0, score.Confidence);
+        else Assert.True(score.Confidence > 0);
+        Assert.Equal(payload, (await saved.ExternalMetadataSnapshots.SingleAsync()).PayloadJson);
+    }
+
+    public static IEnumerable<object[]> UnusablePayloadCases() =>
+        from refresh in new[] { false, true }
+        from payload in new[] { "[]", "\"text\"", "42", "null" }
+        select new object[] { refresh, payload };
+
+    [Theory]
+    [MemberData(nameof(UnusablePayloadCases))]
+    [Trait("Category", "Sqlite")]
+    public async Task RoutineCommandsKeepNonObjectPayloadEvidenceUnknown(bool refresh, string payload)
+    {
+        await using var fixture = await Fixture.CreateAsync(payload);
+        await using (var setup = fixture.Factory.CreateDbContext())
+        {
+            setup.LibraryTracks.Add(Local(fixture.Owner, "clean-local", "Track Melodies (Clean)"));
+            await setup.SaveChangesAsync();
+        }
+
+        await RunRoutineAsync(fixture, refresh);
+
+        await using var saved = fixture.Factory.CreateDbContext();
+        var decision = await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        var scores = JsonSerializer.Deserialize<TrackMatchCandidateScore[]>(decision.CandidateResultsJson)!;
+        Assert.All(scores, score => Assert.DoesNotContain("clean_edit_of_explicit", score.Reasons));
+        if (refresh) Assert.True(Assert.Single(scores).Confidence > 0);
+        else Assert.Equal(TrackMatchState.Unresolved, decision.State);
+        Assert.Equal(payload, (await saved.ExternalMetadataSnapshots.SingleAsync()).PayloadJson);
+    }
+
+    [Theory]
+    [InlineData("{")]
+    [InlineData("{\"IsExplicit\":true")]
+    [Trait("Category", "Sqlite")]
+    public async Task SnapshotCaptureRejectsInvalidJsonBeforeAnyMatchingWrite(string payload)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "owner",
+            new AllstarrPrincipal(fixture.Owner, "jellyfin", "backend", "owner", "Owner", false),
+            "invalid-payload", DateTimeOffset.UtcNow.AddMinutes(1), default);
+
+        await Assert.ThrowsAnyAsync<JsonException>(() => fixture.Service.CaptureSnapshotAsync(context,
+            new(null, "spotify", "track", Hash("invalid"), 1, "1", payload, Hash(payload))));
+
+        await using var saved = fixture.Factory.CreateDbContext();
+        Assert.Single(await saved.ExternalMetadataSnapshots.ToArrayAsync());
+        Assert.Empty(await saved.TrackMatches.ToArrayAsync());
+        Assert.Equal(2, await saved.ProviderTrackIdentities.CountAsync());
+    }
+
+    [Theory]
+    [MemberData(nameof(StoredExplicitCases))]
+    [Trait("Category", "Sqlite")]
+    public async Task StoredExplicitEvidenceReachesExternalSearchAndCachedReuse(bool cached, string field, string raw, bool? expected)
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        var clean = new Song { ExternalProvider = "deezer", ExternalId = expected == false ? "clean" : "target", Title = "Track Melodies", Artist = "Artist", Album = "Album", Duration = 180, ExplicitContentLyrics = 0 };
+        var explicitTrack = new Song { ExternalProvider = "deezer", ExternalId = expected == false ? "target" : "explicit", Title = clean.Title, Artist = clean.Artist, Album = clean.Album, Duration = 180, ExplicitContentLyrics = 1 };
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
+        gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "target"))
+            .ReturnsAsync(cached ? expected == false ? explicitTrack : clean : null);
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync([clean, explicitTrack]);
+        await using var fixture = await Fixture.CreateAsync(ExplicitPayload(field, raw), gateway: gateway.Object);
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "owner",
+            new AllstarrPrincipal(fixture.Owner, "jellyfin", "backend", "owner", "Owner", false),
+            "stored-explicit", DateTimeOffset.UtcNow.AddMinutes(1), default);
+
+        var result = await fixture.Service.RematchSnapshotAsync(context, fixture.SnapshotId, "stored-explicit", "manual-rematch-v3");
+
+        Assert.True(result.Succeeded, result.Error);
+        await using var saved = fixture.Factory.CreateDbContext();
+        var decision = await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        var scores = JsonSerializer.Deserialize<TrackMatchCandidateScore[]>(decision.CandidateResultsJson)!;
+        var cleanScore = Assert.Single(scores, item => item.BackendItemId == clean.ExternalId);
+        Assert.Equal(expected == true, cleanScore.Reasons.Contains("clean_edit_of_explicit"));
+        if (expected == true)
+        {
+            Assert.Equal(0, cleanScore.Confidence);
+            Assert.Equal(1, Assert.Single(scores, item => item.BackendItemId == explicitTrack.ExternalId).Confidence);
+        }
+        else
+        {
+            Assert.True(cleanScore.Confidence > 0);
+            if (expected == false)
+                Assert.Contains("clean_version_available", Assert.Single(scores, item => item.BackendItemId == explicitTrack.ExternalId).Reasons);
+            if (!cached && expected == null)
+                Assert.All(scores, score => Assert.True(score.Confidence > 0));
+        }
+        gateway.Verify(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "target"), Times.Once);
+        gateway.Verify(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15),
+            cached && expected == null ? Times.Never() : Times.Exactly(!cached && expected == null ? 5 : 1));
+        gateway.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming), Times.Exactly(cached && expected == null ? 1 : 2));
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, false)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, true)]
+    [Trait("Category", "Sqlite")]
+    public async Task OldCandidateRejectionRemainsAuthoritativeForRoutineCommands(bool refresh, bool household, bool alternate)
+    {
+        await using var fixture = await Fixture.CreateAsync(ExplicitPayload("", "null"));
+        var rejected = Local(fixture.Owner, "rejected", "Track Melodies");
+        var other = Local(fixture.Owner, "other", "Track Melodies");
+        var authority = new ManualTrackOverrideRecord
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = household ? null : fixture.Owner,
+            ExternalSnapshotId = fixture.SnapshotId,
+            SourceProviderId = "spotify",
+            SourceExternalIdHash = Hash("source"),
+            LibraryTrackId = rejected.Id,
+            Decision = ManualOverrideDecision.Reject,
+            Reason = "Keep this candidate rejected",
+            MatcherVersion = "accepted-routing-v21",
+            DecisionVersion = 1,
+            Revision = 1,
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        await using (var setup = fixture.Factory.CreateDbContext())
+        {
+            setup.LibraryTracks.Add(rejected);
+            if (alternate) setup.LibraryTracks.Add(other);
+            setup.ManualTrackOverrides.Add(authority);
+            await setup.SaveChangesAsync();
+        }
+
+        await RunRoutineAsync(fixture, refresh);
+
+        await using var saved = fixture.Factory.CreateDbContext();
+        var decision = await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        Assert.Equal(alternate ? TrackMatchState.Accepted : TrackMatchState.Rejected, decision.State);
+        Assert.Equal(alternate ? (Guid?)other.Id : null, decision.LibraryTrackId);
+        Assert.DoesNotContain(JsonSerializer.Deserialize<TrackMatchCandidateScore[]>(decision.CandidateResultsJson)!, item => item.LibraryTrackId == rejected.Id);
+        var retained = Assert.Single(await saved.ManualTrackOverrides.ToArrayAsync());
+        Assert.Equal(authority.Id, retained.Id);
+        Assert.Equal("accepted-routing-v21", retained.MatcherVersion);
+        Assert.Null(retained.RevokedAt);
+        Assert.Equal(1, retained.Revision);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [Trait("Category", "Sqlite")]
+    public async Task OldRejectionCannotCrossItsPersonalOwnerOrSource(bool refresh, bool otherSource)
+    {
+        await using var fixture = await Fixture.CreateAsync(ExplicitPayload("", "null"));
+        var candidate = Local(fixture.Owner, "valid", "Track Melodies");
+        var otherOwner = Guid.NewGuid();
+        await using (var setup = fixture.Factory.CreateDbContext())
+        {
+            setup.Users.Add(new UserRecord { Id = otherOwner, BackendType = "jellyfin", BackendInstanceId = "backend", BackendPrincipalId = "other", DisplayName = "Other", Enabled = true });
+            setup.LibraryTracks.Add(candidate);
+            setup.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = otherSource ? fixture.Owner : otherOwner,
+                ExternalSnapshotId = fixture.SnapshotId,
+                SourceProviderId = "spotify",
+                SourceExternalIdHash = Hash(otherSource ? "other" : "source"),
+                LibraryTrackId = candidate.Id,
+                Decision = ManualOverrideDecision.Reject,
+                MatcherVersion = "accepted-routing-v22",
+                DecisionVersion = 1,
+                Reason = "Scoped rejection",
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await setup.SaveChangesAsync();
+        }
+
+        await RunRoutineAsync(fixture, refresh);
+
+        await using var saved = fixture.Factory.CreateDbContext();
+        var decision = await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        Assert.Equal(TrackMatchState.Accepted, decision.State);
+        Assert.Equal(candidate.Id, decision.LibraryTrackId);
+        Assert.Single(await saved.ManualTrackOverrides.Where(item => item.RevokedAt == null).ToArrayAsync());
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [Trait("Category", "Sqlite")]
+    public async Task OldPersonalPinOrSourceRejectionKeepsPrecedenceOverHouseholdCandidateRejection(bool refresh, bool sourceRejection)
+    {
+        await using var fixture = await Fixture.CreateAsync(ExplicitPayload("", "null"));
+        var rejected = Local(fixture.Owner, "household-rejected", "Track Melodies");
+        var chosen = Local(fixture.Owner, "personal-chosen", "Track Melodies");
+        var personalId = Guid.NewGuid();
+        await using (var setup = fixture.Factory.CreateDbContext())
+        {
+            setup.LibraryTracks.AddRange(rejected, chosen);
+            setup.ManualTrackOverrides.AddRange(
+                new ManualTrackOverrideRecord
+                {
+                    Id = Guid.NewGuid(),
+                    ExternalSnapshotId = fixture.SnapshotId,
+                    SourceProviderId = "spotify",
+                    SourceExternalIdHash = Hash("source"),
+                    LibraryTrackId = rejected.Id,
+                    Decision = ManualOverrideDecision.Reject,
+                    MatcherVersion = "accepted-routing-v22",
+                    DecisionVersion = 1,
+                    Reason = "Household choice",
+                    CreatedAt = DateTimeOffset.UtcNow
+                },
+                new ManualTrackOverrideRecord
+                {
+                    Id = personalId,
+                    OwnerUserId = fixture.Owner,
+                    ExternalSnapshotId = fixture.SnapshotId,
+                    SourceProviderId = "spotify",
+                    SourceExternalIdHash = Hash("source"),
+                    LibraryTrackId = sourceRejection ? null : chosen.Id,
+                    Decision = sourceRejection ? ManualOverrideDecision.Reject : ManualOverrideDecision.Pin,
+                    MatcherVersion = "accepted-routing-v22",
+                    DecisionVersion = 1,
+                    Reason = "Personal choice",
+                    CreatedAt = DateTimeOffset.UtcNow
+                });
+            await setup.SaveChangesAsync();
+        }
+
+        await RunRoutineAsync(fixture, refresh);
+
+        await using var saved = fixture.Factory.CreateDbContext();
+        var snapshot = await saved.ExternalMetadataSnapshots.SingleAsync();
+        var authorities = await saved.ManualTrackOverrides.ToArrayAsync();
+        var effective = ManualTrackOverrides.Select(authorities, fixture.Owner).Effective;
+        Assert.Equal(personalId, effective!.Id);
+        var projection = TrackRouteProjector.Project(snapshot, await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstOrDefaultAsync(),
+            effective, await saved.ProviderTrackIdentities.SingleAsync(item => item.Id == snapshot.ProviderTrackIdentityId),
+            await saved.LibraryTracks.ToArrayAsync(), await saved.ProviderTrackIdentities.ToArrayAsync(), ["deezer"]);
+        Assert.Equal(sourceRejection ? TrackMatchState.Rejected : TrackMatchState.Pinned, projection.ReviewState);
+        Assert.Equal(sourceRejection ? null : (Guid?)chosen.Id, projection.LibraryTrack?.Id);
+        Assert.Equal(2, authorities.Length);
+        Assert.All(authorities, item => { Assert.Equal("accepted-routing-v22", item.MatcherVersion); Assert.Null(item.RevokedAt); });
+    }
+
+    [Fact]
+    [Trait("Category", "Sqlite")]
+    public async Task SeedCreatedSnapshotKeepsMissingExplicitEvidenceUnknown()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await using (var setup = fixture.Factory.CreateDbContext())
+        {
+            setup.ProviderAccounts.Add(new ProviderAccountRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = fixture.Owner,
+                ProviderId = "spotify",
+                DisplayName = "Source",
+                Enabled = true
+            });
+            setup.LibraryTracks.Add(Local(fixture.Owner, "legacy-clean", "Legacy Track (Clean)"));
+            await setup.SaveChangesAsync();
+        }
+        SourceTrackSeed seed = new("spotify", "legacy", "Legacy Track", "Artist", "Album", 180000, null, null, "1");
+        Assert.Equal(2, await fixture.Service.EnsureSourceSnapshotsAsync([seed]));
+
+        Assert.Single(await fixture.Service.MatchSourceTracksAsync([seed], "unknown-seed"));
+
+        await using var saved = fixture.Factory.CreateDbContext();
+        var snapshot = await saved.ExternalMetadataSnapshots.SingleAsync(item => item.ExternalIdHash == Hash("legacy"));
+        using var payload = JsonDocument.Parse(snapshot.PayloadJson);
+        Assert.Null(TrackSnapshotMetadata.IsExplicit(payload.RootElement));
+        var decision = await saved.TrackMatches.Where(item => item.ExternalSnapshotId == snapshot.Id)
+            .OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        var score = Assert.Single(JsonSerializer.Deserialize<TrackMatchCandidateScore[]>(decision.CandidateResultsJson)!);
+        Assert.True(score.Confidence > 0);
+        Assert.DoesNotContain("clean_edit_of_explicit", score.Reasons);
+    }
+
+    [Fact]
+    [Trait("Category", "Sqlite")]
+    public async Task ManagedRematchRechecksAuthorityAfterExternalSearchBeforeSaving()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
+        gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "target")).ReturnsAsync((Song?)null);
+        await using var fixture = await Fixture.CreateAsync(ExplicitPayload("IsExplicit", "true"), gateway: gateway.Object);
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .Returns(async () =>
+            {
+                await using var concurrent = fixture.Factory.CreateDbContext();
+                concurrent.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
+                {
+                    Id = Guid.NewGuid(),
+                    ExternalSnapshotId = fixture.SnapshotId,
+                    SourceProviderId = "spotify",
+                    SourceExternalIdHash = Hash("source"),
+                    Decision = ManualOverrideDecision.Reject,
+                    MatcherVersion = "accepted-routing-v22",
+                    DecisionVersion = 1,
+                    Reason = "Preserve the new household decision",
+                    CreatedAt = DateTimeOffset.UtcNow
+                });
+                await concurrent.SaveChangesAsync();
+                return (IReadOnlyList<Song>)[new Song { ExternalProvider = "deezer", ExternalId = "explicit", Title = "Track Melodies", Artist = "Artist", Album = "Album", Duration = 180, ExplicitContentLyrics = 1 }];
+            });
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "owner",
+            new AllstarrPrincipal(fixture.Owner, "jellyfin", "backend", "owner", "Owner", false),
+            "authority-race", DateTimeOffset.UtcNow.AddMinutes(1), default);
+
+        var result = await fixture.Service.RematchSnapshotAsync(context, fixture.SnapshotId, "authority-race", TrackRematchAllService.RolloutPolicyVersion);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(TrackMatchCommandFailure.Conflict, result.Failure);
+        await using var saved = fixture.Factory.CreateDbContext();
+        Assert.Empty(await saved.TrackMatches.ToArrayAsync());
+        Assert.Equal(2, await saved.ProviderTrackIdentities.CountAsync());
+        Assert.Single(await saved.ManualTrackOverrides.Where(item => item.RevokedAt == null).ToArrayAsync());
+    }
+
+    private static async Task RunRoutineAsync(Fixture fixture, bool refresh)
+    {
+        if (refresh) Assert.Single(await fixture.Service.MatchSourceTracksAsync(
+            [new("spotify", "source", "Track Melodies", "Artist", "Album", 180000, null, null, "1")], "routine"));
+        else Assert.True((await fixture.Service.RematchSnapshotAsync(new(fixture.Owner, false), fixture.SnapshotId, "routine")).Succeeded);
+    }
+
+    private static string ExplicitPayload(string field, string raw)
+    {
+        var values = new Dictionary<string, object?> { ["Title"] = "Track Melodies", ["Artist"] = "Artist", ["Album"] = "Album", ["DurationMilliseconds"] = 180000 };
+        if (field.Length > 0) values[field] = JsonSerializer.Deserialize<JsonElement>(raw);
+        return JsonSerializer.Serialize(values);
+    }
+
+    private static LibraryTrackRecord Local(Guid owner, string id, string title) => new()
+    {
+        Id = Guid.NewGuid(),
+        OwnerUserId = owner,
+        BackendInstanceId = "backend",
+        BackendLibraryId = "music",
+        BackendItemId = id,
+        Title = title,
+        Artist = "Artist",
+        Album = "Album",
+        DurationMilliseconds = 180000,
+        Protocol = "jellyfin"
+    };
+
     private static ExternalMetadataSnapshotRecord Snapshot(Guid owner, Guid? identity, string externalId,
         string payload, DateTimeOffset retrievedAt) => new()
         {
@@ -301,7 +695,7 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
         public TrackMatchCommandService Service { get; private set; } = null!;
 
         public static async Task<Fixture> CreateAsync(string? payload = null,
-            ProviderUseMode? policyTargetMode = null)
+            ProviderUseMode? policyTargetMode = null, IProtocolProviderGateway? gateway = null)
         {
             var fixture = new Fixture(await SqliteTestDatabase.CreateAsync());
             fixture.Factory = new(new DbContextOptionsBuilder<AllstarrDbContext>(fixture.DatabaseOptions)
@@ -354,6 +748,8 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
                 : null;
             fixture.Service = new(fixture.Factory, new TrackMatchDecisionEngine(),
                 new ProviderAccountResolver(fixture.Factory), new Clock(), new TestBackendLibraryAccess(fixture.Factory, "music"),
+                gateway == null ? null : new TrackMatchPlayableSearch(gateway, new TrackMatchDecisionEngine(), NullLogger<TrackMatchPlayableSearch>.Instance),
+                providerGateway: gateway,
                 effectivePolicies: policies);
             return fixture;
         }

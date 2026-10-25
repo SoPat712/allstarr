@@ -789,7 +789,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Missing_optional_metadata_is_neutral_and_not_reported_as_zero()
+    public void Missing_optional_metadata_stays_unknown_and_limits_field_confidence()
     {
         var scope = Scope();
         var decision = new TrackMatchDecisionEngine().Decide(
@@ -809,7 +809,8 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
 
         var score = Assert.Single(decision.Candidates);
         Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
-        Assert.Equal(1, score.Confidence);
+        Assert.Equal(.94, score.Confidence);
+        Assert.Contains("limited_recording_metadata", score.Warnings);
         Assert.Contains("artist", score.Components!.Keys);
         Assert.Contains("title", score.Components.Keys);
         Assert.DoesNotContain("album", score.Components.Keys);

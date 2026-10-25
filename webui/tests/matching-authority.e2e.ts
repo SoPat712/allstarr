@@ -139,6 +139,7 @@ for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as 
         { id: "apple-musickit", name: "Apple Music", categories: ["streaming"] },
         { id: "deezer", name: "Deezer", categories: ["streaming"] },
         { id: "qobuz", name: "Qobuz", categories: ["streaming"] },
+        { id: "amazon", name: "Amazon Music", categories: ["streaming"] },
       ],
       match: { title: "Power Trip (feat. Miguel)", artist: "J. Cole · Miguel", album: "Born Sinner (Deluxe Version)",
         durationMilliseconds: 241160, isExplicit: true, isrc: null, manualAuthorities: [], candidates: [] },
@@ -157,6 +158,9 @@ for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as 
           media: { codec: "alac", bitDepth: 24, sampleRate: 48000 } },
         { id: "qobuz", externalId: "qobuz", externalProvider: "qobuz", title: "Power Trip", artist: "J. Cole",
           confidence: .9544, routingPriority: 3, media: null },
+        { id: "amazon", externalId: "amazon", externalProvider: "amazon", title: "Power Trip [feat. Miguel]",
+          artist: "J. Cole feat. Miguel", confidence: .94, routingPriority: 5, media: null,
+          warnings: ["limited_recording_metadata"] },
         { id: "clean", externalId: "clean", externalProvider: "apple-download", title: "Power Trip (feat. Miguel)",
           artist: "J. Cole", album: "Born Sinner", confidence: 0, routingPriority: 1, isExplicit: false,
           reasons: ["clean_edit_of_explicit"], media: null },
@@ -169,7 +173,7 @@ for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as 
     await expect(dialog).toContainText("Equal scores use streaming priority, then the same album edition");
     await dialog.getByRole("button", { name: "Search", exact: true }).click();
     const rows = dialog.locator(".target-results > button.match-row");
-    await expect(rows).toHaveCount(5);
+    await expect(rows).toHaveCount(6);
     await expect(rows.nth(0)).toContainText("Apple Music");
     await expect(rows.nth(0)).toContainText("Streaming priority 1");
     await expect(rows.nth(0)).toContainText("Same album edition");
@@ -180,8 +184,11 @@ for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as 
     await expect(rows.nth(3)).toContainText("95.44%");
     await expect(rows.nth(3)).toContainText("Audio format not reported");
     await expect(rows.nth(3)).not.toContainText("Not explicit");
-    await expect(rows.nth(4)).toContainText("Not explicit");
-    await expect(rows.nth(4)).toContainText("0%");
+    await expect(rows.nth(4)).toContainText("94%");
+    await expect(rows.nth(4)).toContainText("Limited recording metadata");
+    await expect(rows.nth(4)).toContainText("Audio format not reported");
+    await expect(rows.nth(5)).toContainText("Not explicit");
+    await expect(rows.nth(5)).toContainText("0%");
     for (let index = 0; index < 3; index++) await expect(rows.nth(index)).toContainText("95.45%");
     const evidence = dialog.locator(".target-evidence").first();
     await evidence.locator("summary").click();
@@ -194,6 +201,8 @@ for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as 
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(901);
     await dialog.evaluate(element => { element.scrollTop = 0; });
     await page.screenshot({ path: testInfo.outputPath(`match-priority-${width}-${colorScheme}.png`) });
+    await rows.nth(4).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`match-limited-${width}-${colorScheme}.png`) });
     await rows.first().focus();
     await page.keyboard.press("Enter");
     await expect.poll(() => writes.length).toBe(1);
