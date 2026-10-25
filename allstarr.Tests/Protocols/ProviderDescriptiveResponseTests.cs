@@ -52,7 +52,7 @@ public sealed class ProviderDescriptiveResponseTests
         var item = JsonSerializer.SerializeToElement(builder.ConvertSongToJellyfinItem(GuestSong()));
         var albumArtist = Assert.Single(item.GetProperty("AlbumArtists").EnumerateArray());
         Assert.Equal("ext-deezer-artist-2", albumArtist.GetProperty("Id").GetString());
-        Assert.Equal("Host [D]", albumArtist.GetProperty("Name").GetString());
+        Assert.Equal("Host [A]", albumArtist.GetProperty("Name").GetString());
         Assert.Equal("ext-deezer-artist-3", Assert.Single(item.GetProperty("ArtistItems").EnumerateArray()).GetProperty("Id").GetString());
         Assert.Equal("recording-id", item.GetProperty("ProviderIds").GetProperty("MusicBrainzTrack").GetString());
         if (fields.Contains("People", StringComparison.Ordinal))

@@ -72,8 +72,10 @@ public class JellyfinResponseBuilderTests
             "ParentBackdropItemId", "ParentBackdropImageTags");
     }
 
-    [Fact]
-    public void ConvertSongToJellyfinItem_LocalSnapshotPreservesTheEntireOriginalObject()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ConvertSongToJellyfinItem_LocalSnapshotPreservesTheEntireOriginalObject(bool showExternalLabel)
     {
         using var source = JsonDocument.Parse("""
             {
@@ -91,10 +93,13 @@ public class JellyfinResponseBuilderTests
         var song = new Song { Id = "song-123", IsLocal = true };
         JellyfinItemSnapshotHelper.StoreRawItemSnapshot(song, source.RootElement);
 
-        var actual = JsonSerializer.SerializeToNode(_builder.ConvertSongToJellyfinItem(song));
+        var item = _builder.ConvertSongToJellyfinItem(song,
+            new allstarr.Core.Settings.ListeningPreferences { ShowExternalLabel = showExternalLabel });
+        var actual = JsonSerializer.SerializeToNode(item);
         var expected = JsonNode.Parse(source.RootElement.GetRawText());
 
         Assert.True(JsonNode.DeepEquals(expected, actual));
+        Assert.Equal(JsonSerializer.Serialize(source.RootElement), JsonSerializer.Serialize(item));
     }
 
     [Fact]
@@ -264,26 +269,26 @@ public class JellyfinResponseBuilderTests
     }
 
     [Theory]
-    [InlineData("deezer", "[D]")]
-    [InlineData("qobuz", "[Q]")]
-    [InlineData("apple-download", "[AM]")]
-    [InlineData("applemusic", "[AM]")]
-    [InlineData("apple-music", "[AM]")]
-    [InlineData("apple-musickit", "[AM]")]
-    [InlineData("spotify", "[S]")]
-    [InlineData("tidal", "[T]")]
-    [InlineData("spotiflac-qobuz", "[Q]")]
-    [InlineData("spotiflac-qobuz-web", "[Q]")]
-    [InlineData("spotiflac-amazon", "[AmM]")]
-    [InlineData("spotiflac-amazon-music", "[AmM]")]
-    [InlineData("spotiflac-spotify-web", "[SW]")]
-    [InlineData("spotiflac-tidal-web", "[T]")]
-    [InlineData("spotiflac-soundcloud", "[So]")]
-    [InlineData("spotiflac-ytmusic", "[YM]")]
-    [InlineData("spotiflac-ytmusic-spotiflac", "[YM]")]
-    [InlineData("typed-provider", "[TP]")]
-    [InlineData("unknown", "[EXT]")]
-    public void ConvertSongToJellyfinItem_ExternalSong_UsesNeutralTitleAndCatalogRelationships(string provider, string label)
+    [InlineData("deezer", "[A]")]
+    [InlineData("qobuz", "[A]")]
+    [InlineData("apple-download", "[A]")]
+    [InlineData("applemusic", "[A]")]
+    [InlineData("apple-music", "[A]")]
+    [InlineData("apple-musickit", "[A]")]
+    [InlineData("spotify", "[A]")]
+    [InlineData("tidal", "[A]")]
+    [InlineData("spotiflac-qobuz", "[A]")]
+    [InlineData("spotiflac-qobuz-web", "[A]")]
+    [InlineData("spotiflac-amazon", "[A]")]
+    [InlineData("spotiflac-amazon-music", "[A]")]
+    [InlineData("spotiflac-spotify-web", "[A]")]
+    [InlineData("spotiflac-tidal-web", "[A]")]
+    [InlineData("spotiflac-soundcloud", "[A]")]
+    [InlineData("spotiflac-ytmusic", "[A]")]
+    [InlineData("spotiflac-ytmusic-spotiflac", "[A]")]
+    [InlineData("typed-provider", "[A]")]
+    [InlineData("unknown", "[A]")]
+    public void ConvertSongToJellyfinItem_ExternalSong_UsesNeutralExternalNamesAndCatalogRelationships(string provider, string label)
     {
         var song = new Song
         {
@@ -322,16 +327,16 @@ public class JellyfinResponseBuilderTests
         var result = _builder.ConvertSongToJellyfinItem(matchedSong);
 
         Assert.Equal("Matched Track [A]", result["Name"]);
-        Assert.Equal("Matched Album [D]", result["Album"]);
+        Assert.Equal("Matched Album [A]", result["Album"]);
         var artists = Assert.IsType<string[]>(result["Artists"]);
-        Assert.Equal(["Matched Artist [D]"], artists);
+        Assert.Equal(["Matched Artist [A]"], artists);
         var artistItems = Assert.IsType<Dictionary<string, object?>[]>(result["ArtistItems"]);
         Assert.Empty(artistItems);
         Assert.Empty(Assert.IsType<Dictionary<string, object?>[]>(result["AlbumArtists"]));
     }
 
     [Fact]
-    public void ExternalConverters_MissingArtistUseAnHonestProviderLabeledFallback()
+    public void ExternalConverters_MissingArtistUseAnHonestExternalFallback()
     {
         var song = _builder.ConvertSongToJellyfinItem(new Song
         {
@@ -357,11 +362,11 @@ public class JellyfinResponseBuilderTests
             ExternalId = "24680"
         });
 
-        Assert.Equal(["Unknown artist [AM]"], Assert.IsType<string[]>(song["Artists"]));
-        Assert.Equal("Unknown artist [AM]", song["AlbumArtist"]);
+        Assert.Equal(["Unknown artist [A]"], Assert.IsType<string[]>(song["Artists"]));
+        Assert.Equal("Unknown artist [A]", song["AlbumArtist"]);
         Assert.Empty(Assert.IsType<Dictionary<string, object?>[]>(song["ArtistItems"]));
-        Assert.Equal("Unknown artist [AM]", album["AlbumArtist"]);
-        Assert.Equal("Unknown artist [AM]", artist["Name"]);
+        Assert.Equal("Unknown artist [A]", album["AlbumArtist"]);
+        Assert.Equal("Unknown artist [A]", artist["Name"]);
     }
 
     [Fact]
@@ -377,8 +382,8 @@ public class JellyfinResponseBuilderTests
             ExternalId = "12345"
         });
 
-        Assert.Equal(["Album Artist [AM]"], Assert.IsType<string[]>(result["Artists"]));
-        Assert.Equal("Album Artist [AM]", result["AlbumArtist"]);
+        Assert.Equal(["Album Artist [A]"], Assert.IsType<string[]>(result["Artists"]));
+        Assert.Equal("Album Artist [A]", result["AlbumArtist"]);
     }
 
     [Fact]
@@ -403,13 +408,13 @@ public class JellyfinResponseBuilderTests
             ExternalProvider = "deezer"
         });
 
-        Assert.Equal(["Primary [D]", "Feature [D]"], Assert.IsType<string[]>(song["Artists"]));
+        Assert.Equal(["Primary [A]", "Feature [A]"], Assert.IsType<string[]>(song["Artists"]));
         Assert.False(song.ContainsKey("AlbumId"));
         Assert.False(song.ContainsKey("AlbumPrimaryImageTag"));
         Assert.False(song.ContainsKey("ParentLogoImageTag"));
         Assert.Empty(Assert.IsType<Dictionary<string, object?>[]>(song["ArtistItems"]));
         Assert.Empty(Assert.IsType<Dictionary<string, object?>[]>(song["AlbumArtists"]));
-        Assert.Equal(["Primary [D]"], Assert.IsType<string[]>(album["Artists"]));
+        Assert.Equal(["Primary [A]"], Assert.IsType<string[]>(album["Artists"]));
         Assert.Empty(Assert.IsType<Dictionary<string, object?>[]>(album["ArtistItems"]));
         Assert.Empty(Assert.IsType<Dictionary<string, object?>[]>(album["AlbumArtists"]));
     }
@@ -491,10 +496,10 @@ public class JellyfinResponseBuilderTests
     }
 
     [Theory]
-    [InlineData("deezer", "[D]")]
-    [InlineData("qobuz", "[Q]")]
-    [InlineData("soundcloud", "[So]")]
-    public void ConvertAlbumToJellyfinItem_ExternalAlbum_UsesProviderSourceLabel(string provider, string label)
+    [InlineData("deezer", "[A]")]
+    [InlineData("qobuz", "[A]")]
+    [InlineData("soundcloud", "[A]")]
+    public void ConvertAlbumToJellyfinItem_ExternalAlbum_UsesNeutralExternalLabel(string provider, string label)
     {
         var album = new Album
         {
@@ -540,10 +545,10 @@ public class JellyfinResponseBuilderTests
     }
 
     [Theory]
-    [InlineData("deezer", "[D]")]
-    [InlineData("qobuz", "[Q]")]
-    [InlineData("soundcloud", "[So]")]
-    public void ConvertArtistToJellyfinItem_ExternalArtist_UsesProviderSourceLabel(string provider, string label)
+    [InlineData("deezer", "[A]")]
+    [InlineData("qobuz", "[A]")]
+    [InlineData("soundcloud", "[A]")]
+    public void ConvertArtistToJellyfinItem_ExternalArtist_UsesNeutralExternalLabel(string provider, string label)
     {
         var artist = new Artist
         {
@@ -660,13 +665,13 @@ public class JellyfinResponseBuilderTests
             ExternalProvider = "apple-download",
             ExplicitContentLyrics = 1
         });
-        Assert.Equal("Unknown artist [Q]", artist["Name"]);
-        Assert.Equal("Album [D]", album["Name"]);
-        Assert.Equal("Unknown artist [D]", album["AlbumArtist"]);
+        Assert.Equal("Unknown artist [A]", artist["Name"]);
+        Assert.Equal("Album [A]", album["Name"]);
+        Assert.Equal("Unknown artist [A]", album["AlbumArtist"]);
         Assert.Equal("Track [A]/[E]", song["Name"]);
-        Assert.Equal("Album [AM]", song["Album"]);
+        Assert.Equal("Album [A]", song["Album"]);
         using var document = JsonDocument.Parse(JsonSerializer.Serialize(song));
-        Assert.Equal("Unknown artist [AM]", document.RootElement.GetProperty("Artists")[0].GetString());
+        Assert.Equal("Unknown artist [A]", document.RootElement.GetProperty("Artists")[0].GetString());
     }
 
     [Fact]

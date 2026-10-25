@@ -298,12 +298,12 @@ public partial class JellyfinResponseBuilder
         {
             songTitle = ExternalTrackPresentation.Title(song, preferences);
 
-            artistName = AppendExternalSourceLabel(artistName, song.ExternalProvider);
-            albumName = AppendExternalSourceLabel(albumName, song.ExternalProvider);
+            artistName = ExternalTrackPresentation.Name(artistName, preferences);
+            albumName = ExternalTrackPresentation.Name(albumName, preferences);
             artistNames = artistNames
-                .Select(a => AppendExternalSourceLabel(a, song.ExternalProvider))
+                .Select(a => ExternalTrackPresentation.Name(a, preferences))
                 .ToList();
-            albumArtistName = AppendExternalSourceLabel(albumArtistName, song.ExternalProvider);
+            albumArtistName = ExternalTrackPresentation.Name(albumArtistName, preferences);
         }
 
         var primaryImageTag = !song.IsLocal && ProviderArtworkFallback.IsFallback(song.ExternalProvider, song.CoverArtUrl, "song")
@@ -498,7 +498,7 @@ public partial class JellyfinResponseBuilder
 
         if (!song.IsLocal)
         {
-            AddSongDescription(song, item);
+            AddSongDescription(song, item, preferences);
             JellyfinLyricStreams.AddTo(item);
             if (item.GetValueOrDefault("MediaSources") is Dictionary<string, object?>[] sources)
             {
@@ -584,27 +584,9 @@ public partial class JellyfinResponseBuilder
         return year is >= 1 and <= 9999 ? new DateTime(year.Value, 1, 1, 0, 0, 0, DateTimeKind.Utc) : null;
     }
 
-    internal static string AppendExternalSourceLabel(string value, string? provider)
-    {
-        if (string.IsNullOrEmpty(value))
-        {
-            return value;
-        }
-
-        var label = GetExternalSourceLabel(provider);
-        return value.EndsWith($" {label}", StringComparison.Ordinal)
-            ? value
-            : $"{value} {label}";
-    }
-
     private static string BuildExternalPlaylistName(string playlistName, string? provider)
     {
         return $"{playlistName} [{GetExternalSourceCode(provider)}/P]";
-    }
-
-    private static string GetExternalSourceLabel(string? provider)
-    {
-        return $"[{GetExternalSourceCode(provider)}]";
     }
 
     private static string GetExternalSourceCode(string? provider)
@@ -643,14 +625,15 @@ public partial class JellyfinResponseBuilder
 
     private Dictionary<string, object?> BuildAlbumItem(Album album, bool includeAllFields = false)
     {
+        var preferences = ExternalTrackPresentation.Preferences(_httpContexts?.HttpContext);
         var albumName = album.Title;
         var artistName = string.IsNullOrWhiteSpace(album.Artist)
             ? "Unknown artist"
             : album.Artist.Trim();
         if (!album.IsLocal)
         {
-            albumName = AppendExternalSourceLabel(album.Title, album.ExternalProvider);
-            artistName = AppendExternalSourceLabel(artistName, album.ExternalProvider);
+            albumName = ExternalTrackPresentation.Name(album.Title, preferences);
+            artistName = ExternalTrackPresentation.Name(artistName, preferences);
         }
 
         Dictionary<string, object?>[] albumArtistItems =
@@ -731,7 +714,7 @@ public partial class JellyfinResponseBuilder
             };
         }
 
-        if (!album.IsLocal) AddAlbumDescription(album, item);
+        if (!album.IsLocal) AddAlbumDescription(album, item, preferences);
         return album.IsLocal ? item : ApplyExternalFields(item, includeAllFields);
     }
 
@@ -746,7 +729,7 @@ public partial class JellyfinResponseBuilder
             : artist.Name.Trim();
         if (!artist.IsLocal)
         {
-            artistName = AppendExternalSourceLabel(artistName, artist.ExternalProvider);
+            artistName = ExternalTrackPresentation.Name(artistName, ExternalTrackPresentation.Preferences(_httpContexts?.HttpContext));
         }
 
         var item = new Dictionary<string, object?>

@@ -167,7 +167,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var saved = Assert.Single(document.RootElement.GetProperty("Items").EnumerateArray(),
             item => item.GetProperty("Id").GetString() == "ext-deezer-song-snapshot");
         Assert.Equal("Accepted favorite [A]", saved.GetProperty("Name").GetString());
-        Assert.Equal("Accepted artist [D]", saved.GetProperty("Artists")[0].GetString());
+        Assert.Equal("Accepted artist [A]", saved.GetProperty("Artists")[0].GetString());
         Assert.DoesNotContain("/untrusted/fixture", body, StringComparison.Ordinal);
         gateway.Verify(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "snapshot"), Times.Once);
     }

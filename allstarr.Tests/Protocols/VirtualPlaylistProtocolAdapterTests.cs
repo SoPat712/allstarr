@@ -238,7 +238,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
         var item = json.RootElement.GetProperty("Items")[0];
 
-        Assert.Equal("Provider artist [AM]", item.GetProperty("Artists")[0].GetString());
+        Assert.Equal("Provider artist [A]", item.GetProperty("Artists")[0].GetString());
         Assert.Equal("ext-apple-download-artist-201",
             item.GetProperty("ArtistItems")[0].GetProperty("Id").GetString());
         Assert.Equal("ext-apple-download-artist-201",
@@ -280,7 +280,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
 
         Assert.Equal(isExplicit ? "Track [A]/[E]" : "Track [A]", item.GetProperty("Name").GetString());
         Assert.Equal("fixture-item", item.GetProperty("Id").GetString());
-        Assert.Equal(projection == PlaylistProjectionMode.Source ? "Album [S]" : "Album [D]",
+        Assert.Equal("Album [A]",
             item.GetProperty("Album").GetString());
         Assert.Equal("Track", model.Tracks[0].Title);
         if (route == TrackRouteKind.Unresolved)
@@ -288,6 +288,50 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             Assert.Equal("None", item.GetProperty("PlayAccess").GetString());
             Assert.Empty(item.GetProperty("MediaSources").EnumerateArray());
         }
+    }
+
+    [Theory]
+    [InlineData(PlaylistProjectionMode.Source, false)]
+    [InlineData(PlaylistProjectionMode.Source, true)]
+    [InlineData(PlaylistProjectionMode.Resolved, false)]
+    [InlineData(PlaylistProjectionMode.Resolved, true)]
+    public async Task JellyfinUnresolvedPlaylistNames_HonorExternalLabelPreferenceWithoutChangingSourceIdentity(
+        PlaylistProjectionMode projection, bool showLabel)
+    {
+        var model = Model() with
+        {
+            ProjectionMode = projection,
+            Tracks =
+            [
+                new(0, "fixture-item", "Track", "Primary", "Album", "Host", 1_000, null,
+                    TrackMatchState.Unresolved, "spotify", "source-item", TrackRouteKind.Unresolved,
+                    RouteProviderId: "deezer", RouteExternalId: "route-item",
+                    SourceMetadata: new(Artists: ["Primary", "Guest"], IsExplicit: true))
+            ]
+        };
+        var policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(
+            System.Collections.Immutable.ImmutableDictionary<allstarr.Core.Capabilities.ProviderCapabilityKind,
+                System.Collections.Immutable.ImmutableArray<string>>.Empty,
+            System.Collections.Immutable.ImmutableHashSet<string>.Empty, "lossless", 0.07)
+        { Preferences = new("All", showLabel, true) };
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(new StubVirtualizationService(model),
+            new StubJellyfinMutationResolver(null), responseBuilder: new JellyfinResponseBuilder());
+
+        var result = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(
+            Context(ProtocolKind.Jellyfin) with { Policy = policy }, ProtocolId, null, FullQuery(), CancellationToken.None));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        var item = Assert.Single(json.RootElement.GetProperty("Items").EnumerateArray());
+        var suffix = showLabel ? " [A]" : "";
+        Assert.Equal("Track" + (showLabel ? " [A]/[E]" : " [E]"), item.GetProperty("Name").GetString());
+        Assert.Equal("Album" + suffix, item.GetProperty("Album").GetString());
+        Assert.Equal("Host" + suffix, item.GetProperty("AlbumArtist").GetString());
+        Assert.Equal(["Primary" + suffix, "Guest" + suffix], item.GetProperty("Artists").EnumerateArray().Select(value => value.GetString()));
+        Assert.Equal("fixture-item", item.GetProperty("Id").GetString());
+        Assert.Equal(projection == PlaylistProjectionMode.Source ? "spotify" : "deezer",
+            item.GetProperty("ProviderIds").GetProperty("AllstarrSource").GetString());
+        Assert.Empty(item.GetProperty("MediaSources").EnumerateArray());
+        Assert.Equal("Track", model.Tracks[0].Title);
+        Assert.Equal("Album", model.Tracks[0].Album);
     }
 
     [Fact]
