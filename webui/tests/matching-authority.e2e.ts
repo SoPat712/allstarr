@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Request, type Route } from "@playwright/test";
+import { expectContainedMobileGeometry } from "./mobile-geometry";
 
 type AuthorityOptions = {
   administrator: boolean;
@@ -125,6 +126,81 @@ test("match dialog shows field scores at 320px in dark mode", async ({ page }) =
   await expect(dialog.locator(".score-components")).toContainText("title");
   await expect(dialog.locator(".score-components")).toContainText("duration");
 });
+
+for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as const) {
+  test(`interactive matching explains equal scores and keeps source priority at ${width}px ${colorScheme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+    const writes: Record<string, unknown>[] = [];
+    await mockMatching(page, {
+      administrator: false,
+      providers: [
+        { id: "spotify", name: "Spotify", categories: ["metadata"] },
+        { id: "apple-musickit", name: "Apple Music", categories: ["streaming"] },
+        { id: "deezer", name: "Deezer", categories: ["streaming"] },
+        { id: "qobuz", name: "Qobuz", categories: ["streaming"] },
+      ],
+      match: { title: "Power Trip (feat. Miguel)", artist: "J. Cole · Miguel", album: "Born Sinner (Deluxe Version)",
+        durationMilliseconds: 241160, isExplicit: true, isrc: null, manualAuthorities: [], candidates: [] },
+      resolve: async route => { writes.push(route.request().postDataJSON()); await json(route, { success: true }); },
+    });
+    await page.route("**/api/admin/track-matches/targets/*?*", async route => json(route, {
+      tracks: new URL(route.request().url()).pathname.endsWith("/provider") ? [
+        { id: "deezer", externalId: "deezer", externalProvider: "deezer", title: "Power Trip", artist: "J. Cole",
+          album: "Born Sinner (Deluxe Version)", confidence: .9545, routingPriority: 2, matchesSourceAlbum: true, isExplicit: true,
+          media: { codec: "flac", bitDepth: 16, sampleRate: 44100 } },
+        { id: "apple-standard", externalId: "apple-standard", externalProvider: "apple-download", title: "Power Trip (feat. Miguel)",
+          artist: "J. Cole", album: "Born Sinner", confidence: .9545, routingPriority: 1, matchesSourceAlbum: false,
+          media: { codec: "aac", bitrate: 256000 } },
+        { id: "apple-deluxe", externalId: "apple-deluxe", externalProvider: "apple-download", title: "Power Trip (feat. Miguel)",
+          artist: "J. Cole", album: "Born Sinner (Deluxe Version)", confidence: .9545, routingPriority: 1, matchesSourceAlbum: true, isExplicit: true,
+          media: { codec: "alac", bitDepth: 24, sampleRate: 48000 } },
+        { id: "qobuz", externalId: "qobuz", externalProvider: "qobuz", title: "Power Trip", artist: "J. Cole",
+          confidence: .9544, routingPriority: 3, media: null },
+        { id: "clean", externalId: "clean", externalProvider: "apple-download", title: "Power Trip (feat. Miguel)",
+          artist: "J. Cole", album: "Born Sinner", confidence: 0, routingPriority: 1, isExplicit: false,
+          reasons: ["clean_edit_of_explicit"], media: null },
+      ] : [],
+    }));
+    await page.goto("#/library/mappings");
+    await page.getByRole("button", { name: "Interactive search" }).click();
+    const dialog = page.getByRole("dialog", { name: "Power Trip (feat. Miguel)" });
+    await expect(dialog.locator(".match-header")).toContainText("Explicit");
+    await expect(dialog).toContainText("Equal scores use streaming priority, then the same album edition");
+    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    const rows = dialog.locator(".target-results > button.match-row");
+    await expect(rows).toHaveCount(5);
+    await expect(rows.nth(0)).toContainText("Apple Music");
+    await expect(rows.nth(0)).toContainText("Streaming priority 1");
+    await expect(rows.nth(0)).toContainText("Same album edition");
+    await expect(rows.nth(0)).toContainText("Reported audio · ALAC · 24-bit · 48 kHz");
+    await expect(rows.nth(1)).toContainText("Apple Music");
+    await expect(rows.nth(1)).not.toContainText("Same album edition");
+    await expect(rows.nth(2)).toContainText("Deezer");
+    await expect(rows.nth(3)).toContainText("95.44%");
+    await expect(rows.nth(3)).toContainText("Audio format not reported");
+    await expect(rows.nth(3)).not.toContainText("Not explicit");
+    await expect(rows.nth(4)).toContainText("Not explicit");
+    await expect(rows.nth(4)).toContainText("0%");
+    for (let index = 0; index < 3; index++) await expect(rows.nth(index)).toContainText("95.45%");
+    const evidence = dialog.locator(".target-evidence").first();
+    await evidence.locator("summary").click();
+    await expect(evidence).toContainText("Source ISRCNot provided");
+    await expect(evidence).toContainText("the delivered format can differ");
+    if (width === 390) await expectContainedMobileGeometry(page);
+    const bounds = await dialog.boundingBox();
+    expect(bounds).not.toBeNull();
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(901);
+    await dialog.evaluate(element => { element.scrollTop = 0; });
+    await page.screenshot({ path: testInfo.outputPath(`match-priority-${width}-${colorScheme}.png`) });
+    await rows.first().focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => writes.length).toBe(1);
+    expect(writes[0]).toMatchObject({ targetType: "provider", externalProvider: "apple-download", externalId: "apple-deluxe", authorityScope: "personal" });
+    await expect(dialog).not.toBeVisible();
+  });
+}
 
 for (const [width, colorScheme] of [[320, "light"], [1280, "dark"]] as const) {
   test(`manual-only source results come from the normal search and save an exact pin at ${width}px`, async ({ page }) => {

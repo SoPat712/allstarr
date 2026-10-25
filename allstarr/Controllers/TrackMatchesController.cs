@@ -467,12 +467,20 @@ public sealed class TrackMatchesController(
             album = item.Album,
             durationMilliseconds = item.DurationMilliseconds,
             isrc = item.Isrc,
+            isExplicit = (bool?)null,
+            routingPriority = 0,
+            matchesSourceAlbum = MatchesSourceAlbum(source?.Album, item.Album),
+            media = (object?)null,
             confidence = scores.GetValueOrDefault(item.Id)?.Confidence,
             components = scores.GetValueOrDefault(item.Id)?.Components,
             reasons = scores.GetValueOrDefault(item.Id)?.Reasons,
             warnings = scores.GetValueOrDefault(item.Id)?.Warnings,
             artworkUrl = item.CoverArtReference == null ? null : LocalArtworkUrl(item.BackendItemId)
-        }).OrderByDescending(item => item.confidence).ThenBy(item => item.title).ToArray();
+        }).OrderByDescending(item => item.confidence)
+            .ThenByDescending(item => item.matchesSourceAlbum == true)
+            .ThenBy(item => OrderKey(item.backendItemId), StringComparer.Ordinal)
+            .ThenBy(item => OrderKey(item.title), StringComparer.Ordinal)
+            .ToArray();
         return Ok(new { tracks = values });
     }
 
@@ -547,11 +555,16 @@ public sealed class TrackMatchesController(
             {
                 item.Song,
                 item.Candidate,
-                Confidence = scores.GetValueOrDefault(item.Candidate.LibraryTrackId)?.Confidence
+                Score = scores.GetValueOrDefault(item.Candidate.LibraryTrackId),
+                RoutingPriority = ProviderRoutingPriority(item.Song.ExternalProvider!, streamingOrder),
+                MatchesSourceAlbum = MatchesSourceAlbum(source?.Album, item.Song.Album)
             })
-            .OrderByDescending(item => item.Confidence)
-            .ThenBy(item => item.Song.ExternalProvider)
-            .ThenBy(item => item.Song.Title)
+            .OrderByDescending(item => item.Score?.Confidence)
+            .ThenBy(item => item.RoutingPriority ?? int.MaxValue)
+            .ThenByDescending(item => item.MatchesSourceAlbum == true)
+            .ThenBy(item => OrderKey(item.Song.ExternalProvider), StringComparer.Ordinal)
+            .ThenBy(item => OrderKey(item.Song.ExternalId ?? item.Song.Id), StringComparer.Ordinal)
+            .ThenBy(item => OrderKey(item.Song.Title), StringComparer.Ordinal)
             .ToArray();
         return Ok(new
         {
@@ -573,10 +586,14 @@ public sealed class TrackMatchesController(
                         : ExternalArtworkUrl(song.ExternalProvider!, song.ExternalId!),
                     durationMilliseconds = song.Duration * 1000,
                     isrc = song.Isrc,
-                    confidence = item.Confidence,
-                    components = scores.GetValueOrDefault(item.Candidate.LibraryTrackId)?.Components,
-                    reasons = scores.GetValueOrDefault(item.Candidate.LibraryTrackId)?.Reasons,
-                    warnings = scores.GetValueOrDefault(item.Candidate.LibraryTrackId)?.Warnings
+                    isExplicit = item.Candidate.IsExplicit,
+                    routingPriority = item.RoutingPriority,
+                    matchesSourceAlbum = item.MatchesSourceAlbum,
+                    media = ReportedMedia(song),
+                    confidence = item.Score?.Confidence,
+                    components = item.Score?.Components,
+                    reasons = item.Score?.Reasons,
+                    warnings = item.Score?.Warnings
                 };
             }),
             providers = playableProviders
@@ -951,6 +968,7 @@ public sealed class TrackMatchesController(
             sourceArtworkUrl,
             candidateArtworkUrl,
             isrc = metadata.Isrc,
+            isExplicit = metadata.IsExplicit,
             durationMilliseconds = track?.DurationMilliseconds ?? metadata.DurationMilliseconds,
             durationProvenance = track?.DurationMilliseconds.HasValue == true
                 ? track.DurationProvenance ?? track.Protocol
@@ -996,7 +1014,7 @@ public sealed class TrackMatchesController(
                 projection.PrimaryProviderRoute?.IsManual == true));
     }
 
-    private static (string? Title, string? Artist, string? Album, string? ArtworkUrl, string? Isrc, long? DurationMilliseconds) Metadata(string json)
+    private static (string? Title, string? Artist, string? Album, string? ArtworkUrl, string? Isrc, long? DurationMilliseconds, bool? IsExplicit) Metadata(string json)
     {
         try
         {
@@ -1011,9 +1029,10 @@ public sealed class TrackMatchesController(
                     Text(root, "imageUrl") ?? Text(root, "ImageUrl") ??
                     Text(root, "artworkReference") ?? Text(root, "ArtworkReference"),
                 Text(root, "isrc") ?? Text(root, "Isrc") ?? Text(root, "ISRC"),
-                DurationMilliseconds(root));
+                DurationMilliseconds(root),
+                TrackSnapshotMetadata.IsExplicit(root));
         }
-        catch (JsonException) { return (null, null, null, null, null, null); }
+        catch (JsonException) { return (null, null, null, null, null, null, null); }
     }
 
     private async Task<ExternalTrackMatchSnapshot?> ReviewSourceAsync(
@@ -1051,7 +1070,7 @@ public sealed class TrackMatchesController(
             metadata.DurationMilliseconds,
             metadata.Isrc,
             null,
-            null,
+            metadata.IsExplicit,
             canonicalId);
     }
 
@@ -1104,6 +1123,49 @@ public sealed class TrackMatchesController(
         IsLocal: false,
         IsBestVersion: song.IsBestVersion,
         ExternalProvider: song.ExternalProvider);
+
+    private static int? ProviderRoutingPriority(string provider, IReadOnlyList<string> streamingOrder)
+    {
+        var ordered = streamingOrder.Select(ExternalTrackPlaybackPolicy.Normalize)
+            .Distinct(StringComparer.Ordinal).ToArray();
+        var index = Array.IndexOf(ordered, ExternalTrackPlaybackPolicy.Normalize(provider));
+        return index < 0 ? null : index + 1;
+    }
+
+    private static bool? MatchesSourceAlbum(string? sourceAlbum, string? candidateAlbum)
+    {
+        var source = TrackMatchReviewSearch.Normalize(sourceAlbum ?? string.Empty);
+        var candidate = TrackMatchReviewSearch.Normalize(candidateAlbum ?? string.Empty);
+        return source.Length == 0 || candidate.Length == 0 ? null : source == candidate;
+    }
+
+    private static string OrderKey(string? value) => value?.Trim().ToLowerInvariant() ?? string.Empty;
+
+    private static object? ReportedMedia(Song song)
+    {
+        var codec = MediaToken(song.Codec);
+        var container = MediaToken(song.Container);
+        var bitrate = song.Bitrate > 0 ? song.Bitrate : null;
+        var sampleRate = song.SampleRate > 0 ? song.SampleRate : null;
+        var bitDepth = codec is "mp3" or "aac" or "opus" or "vorbis"
+            ? null
+            : song.BitDepth > 0 ? song.BitDepth : null;
+        var channels = song.Channels > 0 ? song.Channels : null;
+        return codec == null && container == null && bitrate == null && sampleRate == null &&
+               bitDepth == null && channels == null
+            ? null
+            : new { codec, container, bitrate, sampleRate, bitDepth, channels };
+    }
+
+    private static string? MediaToken(string? value)
+    {
+        var token = value?.Trim().ToLowerInvariant();
+        return string.IsNullOrEmpty(token) || token.Length > 32 || token == "unknown" ||
+               !char.IsAsciiLetterOrDigit(token[0]) ||
+               token.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not ('.' or '_' or '-'))
+            ? null
+            : token;
+    }
 
     private static long? DurationMilliseconds(JsonElement root)
     {
@@ -1172,7 +1234,7 @@ public sealed class TrackMatchesController(
             var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
             var source = new ExternalTrackMatchSnapshot(snapshot.Id.ToString("N"), snapshot.ProviderId, snapshot.Id.ToString("N"),
                 metadata.Title ?? "Unknown", metadata.Artist ?? "Unknown", metadata.Album, null, metadata.DurationMilliseconds,
-                metadata.Isrc, null, null);
+                metadata.Isrc, null, metadata.IsExplicit);
             var fallback = current != null
                 ? new TrackMatchDecisionEngine().ScoreCandidates(source, [ToCandidate(current)]).Single()
                 : new TrackMatchCandidateScore(Guid.Empty, $"ext-{route!.ProviderId}-song-{route.ExternalId}", decision?.Confidence ?? 0,

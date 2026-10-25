@@ -3261,7 +3261,7 @@ test("MatchDialog deep links preserve title prefill and tentative mapping review
     dialog.locator(".target-results > button").filter({ hasText: "Lumen Audio" })
       .locator(".target-score").getByText("94%"),
   ).toBeVisible();
-  await expect(dialog.getByText("score rank #1")).toBeVisible();
+  await expect(dialog.getByText("result #1")).toBeVisible();
   await dialog.locator(".candidate-card").first().getByText("Full scoring evidence").click();
   await expect(dialog.locator(".candidate-card").first().getByText("Candidate ID")).toBeVisible();
   await expect(dialog.locator(".candidate-card").first().getByText("Artist overlap")).toBeVisible();

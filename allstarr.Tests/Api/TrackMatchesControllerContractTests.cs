@@ -11,6 +11,67 @@ namespace allstarr.Tests;
 public sealed class TrackMatchesControllerContractTests
 {
     [Theory]
+    [InlineData("IsExplicit", "true", true)]
+    [InlineData("isExplicit", "false", false)]
+    [InlineData("IsExplicit", "null", null)]
+    [InlineData("IsExplicit", "\"true\"", null)]
+    [InlineData("OtherExplicit", "true", null)]
+    public void ReviewSourceProjectionPreservesOnlyKnownExplicitBoolean(string field, string raw, bool? expected)
+    {
+        var source = new ExternalMetadataSnapshotRecord
+        {
+            Id = Guid.NewGuid(),
+            ProviderId = "spotify",
+            BackendInstanceId = "fixture",
+            PayloadJson = $$"""{"Title":"Power Trip (feat. Miguel)","Artists":["J. Cole","Miguel"],"{{field}}":{{raw}}}"""
+        };
+        var row = typeof(TrackMatchesController).GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null,
+            [source, null, new ManualTrackOverrideLayers(null, null), null, new Dictionary<Guid, LibraryTrackRecord>(),
+                new Dictionary<Guid, ProviderTrackIdentityRecord[]>(), Array.Empty<string>(), Guid.NewGuid(), false, null])!;
+        var value = JsonSerializer.SerializeToElement(row.GetType().GetProperty("Value")!.GetValue(row));
+        var actual = value.GetProperty("isExplicit");
+        if (expected.HasValue) Assert.Equal(expected.Value, actual.GetBoolean());
+        else Assert.Equal(JsonValueKind.Null, actual.ValueKind);
+    }
+
+    [Theory]
+    [InlineData(" FLAC ", "flac")]
+    [InlineData("pcm_s16le", "pcm_s16le")]
+    [InlineData("mp4a.40.2", "mp4a.40.2")]
+    [InlineData("format-name", "format-name")]
+    [InlineData("abcdefghijklmnopqrstuvwxyz123456", "abcdefghijklmnopqrstuvwxyz123456")]
+    [InlineData("abcdefghijklmnopqrstuvwxyz1234567", null)]
+    [InlineData("-flac", null)]
+    [InlineData("flac/pcm", null)]
+    [InlineData("flac\nsecret", null)]
+    [InlineData("flác", null)]
+    [InlineData("UNKNOWN", null)]
+    public void ReportedMediaLabelsAreBoundedAsciiTokens(string raw, string? expected)
+    {
+        var project = typeof(TrackMatchesController).GetMethod("ReportedMedia", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var value = project.Invoke(null, [new Song { Codec = raw, Container = raw }]);
+        if (expected == null) Assert.Null(value);
+        else
+        {
+            var media = JsonSerializer.SerializeToElement(value);
+            Assert.Equal(expected, media.GetProperty("codec").GetString());
+            Assert.Equal(expected, media.GetProperty("container").GetString());
+        }
+    }
+
+    [Theory]
+    [InlineData(" MP3 ")]
+    [InlineData("AAC")]
+    [InlineData("opus")]
+    [InlineData("vorbis")]
+    public void ReportedLossyMediaNeverClaimsBitDepth(string codec)
+    {
+        var project = typeof(TrackMatchesController).GetMethod("ReportedMedia", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var media = JsonSerializer.SerializeToElement(project.Invoke(null, [new Song { Codec = codec, BitDepth = 24 }]));
+        Assert.Equal(JsonValueKind.Null, media.GetProperty("bitDepth").ValueKind);
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public void ReviewCandidateProjectionPreservesBestVersionAndEvidence(bool best)

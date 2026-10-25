@@ -4,6 +4,16 @@ namespace allstarr.Core.Matching;
 
 public static class TrackSnapshotMetadata
 {
+    public static bool? IsExplicit(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return null;
+        return (root.TryGetProperty("isExplicit", out var value) ||
+                root.TryGetProperty("IsExplicit", out value)) &&
+               value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean()
+            : null;
+    }
+
     public static string? Artist(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object) return null;
