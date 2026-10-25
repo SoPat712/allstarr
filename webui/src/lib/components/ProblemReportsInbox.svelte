@@ -8,8 +8,7 @@
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import ProblemContextCard from "$lib/components/ProblemContextCard.svelte";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
-  import { providerDisplayName } from "$lib/sources";
-  import { listenerSupport, reportKindLabel, reportStatusLabel, reportStatuses, supportDate, supportError,
+  import { listenerSupport, reportKindLabel, reportStatusLabel, reportSourceName, reportStatuses, supportDate, supportError,
     supportErrorCode, type ProblemReport, type ProblemReportDetail, type ReportStatus } from "$lib/support";
 
   let { administrator, initialReportId = "" }: { administrator: boolean; initialReportId?: string } = $props();
@@ -30,7 +29,7 @@
   let savedMessage = $state("");
   let disposed = false;
   let request = 0;
-  const provider = (id: string | null) => providerDisplayName(providers, id, "Not captured");
+  const provider = (id: string | null) => reportSourceName(providers, id);
 
   async function load(more = false) {
     if (!administrator || busy || disposed || more && !cursor) return;

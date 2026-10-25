@@ -1,10 +1,10 @@
 <script lang="ts">
   import type { ProviderDefinition } from "$lib/api";
-  import { humanize, providerDisplayName } from "$lib/sources";
-  import { supportDate, type ProblemContext } from "$lib/support";
+  import { humanize } from "$lib/sources";
+  import { reportSourceName, supportDate, type ProblemContext } from "$lib/support";
   import { Button } from "$lib/components/ui/button";
   let { context, providers = [], review = false }: { context: ProblemContext; providers?: ProviderDefinition[]; review?: boolean } = $props();
-  const provider = (id?: string | null) => providerDisplayName(providers, id ?? "", "Not captured");
+  const provider = (id?: string | null) => reportSourceName(providers, id);
 </script>
 
 <article class="settings-card" aria-label="Included report details">
