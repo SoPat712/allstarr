@@ -5379,6 +5379,175 @@ test("Intelligence keeps the most recently selected backend scope session-bound 
   }
 });
 
+test("Home keeps newer playback progress when an older poll finishes late", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-01-01T00:00:01Z"));
+  await page.addInitScript(() => {
+    const consumed: number[] = [];
+    Object.assign(window, { __consumedPlaybackPositions: consumed });
+    const fetchResponse = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+      const response = await fetchResponse(...args);
+      if (new URL(response.url).pathname === "/api/admin/ui/now-playing") {
+        const read = response.json.bind(response);
+        response.json = async () => {
+          const body = await read();
+          consumed.push(body.items[0].positionSeconds);
+          return body;
+        };
+      }
+      return response;
+    };
+  });
+  await mockApi(page);
+  const older = routeRelease();
+  let reads = 0;
+  await page.route("**/api/admin/ui/now-playing", async route => {
+    const request = ++reads;
+    const fixture = structuredClone(responses["/api/admin/ui/now-playing"]) as { items: Record<string, unknown>[] };
+    const position = request === 1 ? 30 : request === 2 ? 40 : 50;
+    fixture.items[0].positionSeconds = position;
+    fixture.items[0].progress = position / 120;
+    if (request === 2) await older.promise;
+    return route.fulfill({ json: fixture });
+  });
+  await page.goto("#/");
+  const playing = page.getByRole("region", { name: "Now playing" });
+  await expect(playing).toContainText("0:30 / 2:00");
+  await page.clock.runFor(10_010);
+  await expect(playing).toContainText("0:50 / 2:00");
+  const stale = page.waitForResponse(async response => new URL(response.url()).pathname === "/api/admin/ui/now-playing" &&
+    (await response.json()).items[0].positionSeconds === 40);
+  older.release();
+  await (await stale).finished();
+  await expect.poll(() => page.evaluate(() =>
+    (window as unknown as { __consumedPlaybackPositions: number[] }).__consumedPlaybackPositions.includes(40))).toBe(true);
+  await expect(playing).toContainText("0:50 / 2:00");
+  await expect(playing.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "42");
+});
+
+test("Sources background refresh stays quiet and manual refresh joins it", async ({ page }) => {
+  await page.clock.install();
+  await mockApi(page);
+  await page.goto("#/integrations/services");
+  const refresh = page.getByRole("button", { name: "Refresh", exact: true });
+  await expect(refresh).toBeEnabled();
+  const started = routeRelease();
+  const finish = routeRelease();
+  let reads = 0;
+  await page.route("**/api/admin/ui/schema", async route => {
+    reads++;
+    started.release();
+    await finish.promise;
+    return route.fulfill({ json: schema });
+  });
+  await page.clock.runFor(20_500);
+  await started.promise;
+  await expect(refresh).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Refreshing…", exact: true })).toHaveCount(0);
+  await refresh.click();
+  await expect(page.getByRole("button", { name: "Refreshing…", exact: true })).toBeDisabled();
+  expect(reads).toBe(1);
+  finish.release();
+  await expect(refresh).toBeEnabled();
+  expect(reads).toBe(1);
+});
+
+test("Sources keeps never-connected built-ins in the available catalog", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
+    ...schema, providers: [...schema.providers, ...["Koito", "Multi-scrobbler", "Qobuz"].map(name => ({
+      id: name.toLowerCase(), name, status: "needs_config", implementationOrigin: "builtin",
+      categories: ["scrobbling"], accountSettings: [{ key: "token", label: "Access token", type: "text", required: true }],
+    }))],
+  } }));
+  await page.goto("#/integrations/services");
+  const services = page.getByRole("list", { name: "Services", exact: true });
+  await expect(page.getByRole("button", { name: /^My sources/ })).toHaveAttribute("aria-pressed", "true");
+  for (const name of ["Koito", "Multi-scrobbler", "Qobuz"])
+    await expect(services.getByText(name, { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: /^Needs attention/ }).click();
+  for (const name of ["Koito", "Multi-scrobbler", "Qobuz"])
+    await expect(services.getByText(name, { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: /^All available/ }).click();
+  for (const name of ["Koito", "Multi-scrobbler", "Qobuz"])
+    await expect(services.locator(".source-name").getByText(name, { exact: true })).toBeVisible();
+});
+
+test("Sources ignores playback updates and coalesces source checks", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-01-01T00:00:01Z"));
+  await page.addInitScript(() => {
+    class FixtureStream {
+      static instance: FixtureStream;
+      listeners = new Map<string, EventListener[]>();
+      constructor() { FixtureStream.instance = this; }
+      addEventListener(type: string, listener: EventListener) {
+        this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
+        if (type === "stream-status") queueMicrotask(() => listener(new MessageEvent(type, { data: "{}" })));
+      }
+      close() {}
+    }
+    Object.defineProperty(window, "EventSource", { value: FixtureStream });
+    let batch = 0;
+    window.__emitAllstarrUpdate = () => {
+      const updates = batch++ === 0
+        ? [{ resource: "job", resourceId: "play", data: { type: "playback.signal" } }, { resource: "track-match", resourceId: "match" }]
+        : [{ resource: "audit", resourceId: "check-1", data: { category: "provider-check" } }, { resource: "audit", resourceId: "check-2", data: { category: "provider-status" } }];
+      for (const [index, update] of updates.entries())
+        for (const listener of FixtureStream.instance.listeners.get("update") ?? [])
+          listener(new MessageEvent("update", { data: JSON.stringify(update), lastEventId: `${batch}-${index}` }));
+    };
+  });
+  await mockApi(page);
+  let reads = 0;
+  await page.route("**/api/admin/ui/schema", route => {
+    reads++;
+    return route.fulfill({ json: schema });
+  });
+  await page.goto("#/integrations/services");
+  const refresh = page.getByRole("button", { name: "Refresh", exact: true });
+  await expect(refresh).toBeEnabled();
+  expect(reads).toBe(1);
+  await page.evaluate(() => window.__emitAllstarrUpdate?.());
+  await page.clock.runFor(5_100);
+  expect(reads).toBe(1);
+  await page.evaluate(() => window.__emitAllstarrUpdate?.());
+  await page.clock.runFor(4_999);
+  expect(reads).toBe(1);
+  await page.clock.runFor(1);
+  await expect.poll(() => reads).toBe(2);
+  await expect(refresh).toBeEnabled();
+});
+
+for (const width of [390, 1280]) {
+  for (const theme of ["light", "dark"] as const) {
+    test(`Sources and playback stay readable at ${width}px in ${theme}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+      await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+      await mockApi(page);
+      await page.goto("#/integrations/services");
+      await expect(page.getByRole("button", { name: /^My sources/ })).toBeVisible();
+      await page.getByRole("button", { name: /^All available/ }).click();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      if (width === 390) await expectContainedMobileGeometry(page);
+      await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR ?? "test-results"}/sources-quiet-${width}-${theme}.png`, fullPage: true });
+      await page.goto("#/");
+      const playing = page.getByRole("region", { name: "Now playing" });
+      await expect(playing).toBeVisible();
+      const bar = playing.locator(".playback-bar > span").first();
+      await expect(bar).toHaveCSS("transition-property", "none");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      if (width === 390) await expectContainedMobileGeometry(page);
+      await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR ?? "test-results"}/playback-smooth-${width}-${theme}.png`, fullPage: true });
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+      await expect(bar).toHaveCSS("transition-property", "width");
+      await expect(bar).toHaveCSS("transition-duration", "0.2s");
+    });
+  }
+}
+
 test("copying a listening-app key confirms the action", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "clipboard", {

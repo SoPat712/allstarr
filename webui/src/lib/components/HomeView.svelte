@@ -20,6 +20,7 @@
   let loading = $state(true);
   let refreshing = $state(false);
   let pendingRefresh = false;
+  let nowPlayingRequest = 0;
   let nowPlayingTimer: ReturnType<typeof setInterval> | null = null;
 
   const summary = $derived(snapshot ? summarizeHome(snapshot) : null);
@@ -40,6 +41,7 @@
     }
 
     refreshing = true;
+    const playbackRequest = ++nowPlayingRequest;
     const requests = [
       ["Home overview", home.overview()],
       ["Now playing", home.nowPlaying()],
@@ -65,6 +67,7 @@
       if (label === "Now playing") next.nowPlaying = (result.value as Awaited<ReturnType<typeof home.nowPlaying>>).items;
     });
 
+    if (playbackRequest !== nowPlayingRequest) next.nowPlaying = snapshot?.nowPlaying;
     snapshot = next;
     loading = false;
     refreshing = false;
@@ -79,8 +82,10 @@
 
   async function refreshNowPlaying() {
     if (!snapshot) return;
+    const playbackRequest = ++nowPlayingRequest;
     try {
       const response = await home.nowPlaying();
+      if (playbackRequest !== nowPlayingRequest) return;
       snapshot = { ...snapshot, nowPlaying: response.items };
     } catch {
       // Keep the last known playback state; the normal refresh surfaces persistent failures.
@@ -222,7 +227,7 @@
             <div class="playback-progress">
               <span class="playback-progress-track" style={`--scrobble-at: ${Math.min(100, ((item.scrobbleThresholdSeconds ?? 0) / (item.durationSeconds || 1)) * 100)}%`}>
                 <span class="playback-bar" role="progressbar" aria-label={`Playback progress for ${item.title}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((item.progress ?? 0) * 100)}>
-                  <span style={`width: ${Math.min(100, Math.max(0, (item.progress ?? 0) * 100))}%`}></span>
+                  <span class="transition-[width] duration-200 motion-reduce:transition-none" style={`width: ${Math.min(100, Math.max(0, (item.progress ?? 0) * 100))}%`}></span>
                 </span>
                 {#if item.scrobbleThresholdSeconds}
                   <i title={`Scrobble at ${clockTime(item.scrobbleThresholdSeconds)}`} aria-label={`Scrobble threshold at ${clockTime(item.scrobbleThresholdSeconds)}`}></i>

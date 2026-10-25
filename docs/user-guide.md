@@ -81,7 +81,7 @@ When the development Intelligence workspace requests background access, Subsonic
 
 ### Integrations
 
-- **Services** lists every built-in or extension-backed capability and its readiness.
+- **Services** opens **My sources**, showing connected accounts, installed extensions, public services and configured built-ins. Unused built-ins stay under **All available** and **Connect Source**; they do not demand setup in **Needs attention**. Removing a saved connection revokes its credentials. Built-in services remain available to connect later.
 - **Accounts** stores encrypted personal or shared credentials and audience policy.
 - **Extensions** installs, updates, reviews permissions, disables, and removes provider packages. Packages that need a verified sign-in show a **Sign-in** section with the steps; see [signed sessions](extensions/sdk-v1.md#signed-sessions).
 - **Routing** orders the eligible fallback services for metadata, streaming, download, lyrics, playlists, scrobbling, and other typed capabilities.

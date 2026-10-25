@@ -3,12 +3,13 @@ import { adminUrl } from "./admin-url";
 
 export type LiveState = "connecting" | "live" | "reconnecting" | "stale";
 
-type UpdateEvent = {
+export type UpdateEvent = {
   requiresAdministrator?: boolean;
   eventId?: string;
   revision?: number;
   resource?: string;
   resourceId?: string;
+  data?: { category?: string; type?: string };
 };
 
 const state = $state({
