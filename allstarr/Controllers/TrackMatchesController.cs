@@ -532,9 +532,10 @@ public sealed class TrackMatchesController(
                  normalizedQuery == TrackMatchReviewSearch.Normalize($"{source.Artist} {source.Title}")))
             {
                 var fallback = await SearchAsync(source.Title.Trim());
+                // Keep missing-source alternatives alongside the original bounded search.
                 songs = songs.Concat(fallback.Where(song => missingProviders.Any(provider =>
                         SameProvider(provider, song.ExternalProvider!))))
-                    .Take(limit).ToArray();
+                    .ToArray();
             }
         }
         var effectiveMatcher = await MatchingEngineAsync(userId, cancellationToken);

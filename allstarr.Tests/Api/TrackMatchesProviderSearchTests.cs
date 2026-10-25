@@ -155,6 +155,79 @@ public sealed class TrackMatchesProviderSearchTests : IAsyncLifetime
         _gateway.Verify(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Communicate", 20), Times.Once);
     }
 
+    [Theory]
+    [InlineData(20)]
+    [InlineData(50)]
+    public async Task FullSourceQueryKeepsEveryMissingSourceTitleFallback(int limit)
+    {
+        const string query = "Communicate who do we blame";
+        var original = Enumerable.Range(0, limit).Select(index => new Song
+        {
+            ExternalProvider = "other",
+            ExternalId = $"original-{index}",
+            Title = "Communicate",
+            Artist = "who do we blame",
+            Duration = 115
+        }).ToArray();
+        var versions = Versions();
+        versions[2].IsBestVersion = true;
+        _gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["other", "artistgrid"]);
+        _gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), query, limit))
+            .ReturnsAsync(original);
+        _gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Communicate", limit))
+            .ReturnsAsync([original[0], .. versions, new() { ExternalProvider = "off", ExternalId = "excluded", Title = "Communicate" }]);
+
+        var tracks = await SearchAsync(query, limit: limit);
+
+        Assert.Equal(limit + 4, tracks.Length);
+        Assert.Equal(original.Select(item => item.ExternalId).Order(), tracks.Where(item => item.GetProperty("externalProvider").GetString() == "other")
+            .Select(item => item.GetProperty("externalId").GetString()).Order());
+        var alternatives = tracks.Where(item => item.GetProperty("externalProvider").GetString() == "artistgrid").ToArray();
+        AssertVersions(alternatives);
+        Assert.Equal("v3", alternatives[0].GetProperty("externalId").GetString());
+        Assert.True(alternatives[0].GetProperty("isBestVersion").GetBoolean());
+        Assert.DoesNotContain(tracks, item => item.GetProperty("externalProvider").GetString() == "off");
+        Assert.Equal(tracks.Length, tracks.Select(item => (item.GetProperty("externalProvider").GetString(), item.GetProperty("externalId").GetString())).Distinct().Count());
+        _gateway.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming), Times.Once);
+        _gateway.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Download), Times.Once);
+        _gateway.Verify(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), query, limit), Times.Once);
+        _gateway.Verify(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Communicate", limit), Times.Once);
+        _gateway.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(20)]
+    [InlineData(50)]
+    public async Task MissingSourceFallbackKeepsBothLookupsBounded(int limit)
+    {
+        const string query = "Communicate who do we blame";
+        Song[] Results(string provider) => Enumerable.Range(0, limit * 3).Select(index => new Song
+        {
+            ExternalProvider = provider,
+            ExternalId = $"{provider}-{index}",
+            Title = "Communicate",
+            Artist = "who do we blame",
+            Duration = 115
+        }).ToArray();
+        _gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["other", "artistgrid"]);
+        _gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), query, limit))
+            .ReturnsAsync(Results("other"));
+        _gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Communicate", limit))
+            .ReturnsAsync(Results("artistgrid"));
+
+        var tracks = await SearchAsync(query, limit: limit);
+
+        Assert.Equal(limit * 2, tracks.Length);
+        Assert.Equal(limit, tracks.Count(item => item.GetProperty("externalProvider").GetString() == "other"));
+        Assert.Equal(limit, tracks.Count(item => item.GetProperty("externalProvider").GetString() == "artistgrid"));
+        Assert.True(tracks.Length <= 100);
+        _gateway.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming), Times.Once);
+        _gateway.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Download), Times.Once);
+        _gateway.Verify(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), query, limit), Times.Once);
+        _gateway.Verify(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Communicate", limit), Times.Once);
+        _gateway.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task PowerTripEqualRecordingScoresUseAppleAliasPriorityThenExactAlbumEdition()
     {
@@ -405,10 +478,10 @@ public sealed class TrackMatchesProviderSearchTests : IAsyncLifetime
         ExplicitContentLyrics = explicitContent
     };
 
-    private async Task<JsonElement[]> SearchAsync(string query, Guid? snapshot = null)
+    private async Task<JsonElement[]> SearchAsync(string query, Guid? snapshot = null, int limit = 20)
     {
         var controller = Controller();
-        var result = Assert.IsType<OkObjectResult>(await controller.SearchProviderTargets(query, snapshot ?? _snapshot));
+        var result = Assert.IsType<OkObjectResult>(await controller.SearchProviderTargets(query, snapshot ?? _snapshot, limit));
         return JsonSerializer.SerializeToElement(result.Value).GetProperty("tracks").EnumerateArray().ToArray();
     }
 
