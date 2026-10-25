@@ -6,6 +6,7 @@ using allstarr.Core.Extensions;
 using allstarr.Core.Downloads;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
@@ -92,6 +93,92 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
         Assert.DoesNotContain("should-not-survive", log.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("also-secret", log.Message, StringComparison.Ordinal);
         Assert.Contains("[redacted]", log.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RuntimeLogSink_PersistsSanitizedDiagnostic()
+    {
+        var package = await _service.StageAsync(Package("2.0.0", "runtime-log-redaction"));
+        var messages = new List<string>();
+        var permissions = new ExtensionRuntimePermissionSet(
+            new HashSet<string>(),
+            new HashSet<string>(),
+            new HashSet<string>(),
+            LogSink: (level, message) =>
+            {
+                messages.Add(message);
+                _service.WriteLogAsync(package.Id, level, "runtime.log", message, "runtime").GetAwaiter().GetResult();
+            });
+        var sandbox = new ExtensionSandbox(
+            package.PackagePath,
+            await File.ReadAllTextAsync(Path.Combine(package.PackagePath, "manifest.json")),
+            "registerExtension({ searchTracks: function() { log.error('Provider failed status=403 reason=network operation=searchTracks for https://fixture-user:fixture-password@provider.invalid/media?opaque=fixture-query&signature=fixture-signature#fixture-fragment response=upstream_failure'); return []; } });",
+            Mock.Of<IHttpClientFactory>(),
+            NullLogger.Instance,
+            permissions);
+
+        sandbox.InvokeJson("searchTracks", "{\"query\":\"fixture\"}");
+
+        var message = Assert.Single(messages);
+        AssertSafeDiagnostic(message);
+        var persisted = Assert.Single(await _service.ListLogsAsync(package.Id), item => item.EventCode == "runtime.log");
+        AssertSafeDiagnostic(persisted.Message);
+        await using var db = await _factory.CreateDbContextAsync();
+        AssertSafeDiagnostic((await db.ExtensionLogs.SingleAsync(item => item.EventCode == "runtime.log")).Message);
+    }
+
+    [Fact]
+    public async Task DirectRuntimeLogWrite_RedactsUrlBeforeDurableStorage()
+    {
+        var package = await _service.StageAsync(Package("2.0.0", "direct-log-redaction"));
+        await _service.WriteLogAsync(package.Id, "error", "runtime.direct",
+            "Provider failed status=403 reason=network https://fixture-user:fixture-password@provider.invalid/media?opaque=fixture-query&signature=fixture-signature#fixture-fragment",
+            "direct");
+
+        await using var db = await _factory.CreateDbContextAsync();
+        AssertSafeDiagnostic((await db.ExtensionLogs.SingleAsync(item => item.EventCode == "runtime.direct")).Message);
+    }
+
+    [Fact]
+    public async Task ListLogs_RedactsLegacyMessagesWithoutRewritingStorage()
+    {
+        var package = await _service.StageAsync(Package("2.0.0", "legacy-log-redaction"));
+        const string rawMessage =
+            "Provider failed status=403 reason=network operation=searchTracks for https://fixture-user:fixture-password@provider.invalid/media?opaque=fixture-query&signature=fixture-signature#fixture-fragment response=upstream_failure";
+        var logId = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ExtensionLogs.Add(new ExtensionLogRecord
+            {
+                Id = logId,
+                ExtensionPackageId = package.Id,
+                ExtensionId = package.ExtensionId,
+                Level = "error",
+                EventCode = "runtime.log",
+                Message = rawMessage,
+                CorrelationId = "legacy",
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var returned = Assert.Single(await _service.ListLogsAsync(package.Id), item => item.Id == logId);
+        AssertSafeDiagnostic(returned.Message);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(rawMessage, (await check.ExtensionLogs.SingleAsync(item => item.Id == logId)).Message);
+    }
+
+    private static void AssertSafeDiagnostic(string message)
+    {
+        Assert.Contains("403", message, StringComparison.Ordinal);
+        Assert.Contains("network", message, StringComparison.Ordinal);
+        Assert.Contains("provider.invalid", message, StringComparison.Ordinal);
+        Assert.Contains("/media", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-user", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-password", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-query", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-signature", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-fragment", message, StringComparison.Ordinal);
     }
 
     [Theory]

@@ -19,7 +19,11 @@ public static partial class SafeOperationalText
 
     private static string SanitizeUrl(string value)
     {
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) ||
+        var hasRedactedQuery = value.EndsWith("?<redacted>", StringComparison.Ordinal);
+        var parseValue = hasRedactedQuery
+            ? value[..^"<redacted>".Length]
+            : value;
+        if (!Uri.TryCreate(parseValue, UriKind.Absolute, out var uri) ||
             uri.Scheme is not ("http" or "https"))
         {
             return "<redacted-url>";
@@ -27,27 +31,16 @@ public static partial class SafeOperationalText
 
         var authority = uri.IsDefaultPort ? uri.Host : $"{uri.Host}:{uri.Port}";
         var query = uri.Query.TrimStart('?');
-        if (query.Length == 0)
+        if (query.Length == 0 && !hasRedactedQuery)
         {
             return $"{uri.Scheme}://{authority}{uri.AbsolutePath}";
         }
 
-        var safeQuery = string.Join("&", query.Split('&', StringSplitOptions.RemoveEmptyEntries).Select(part =>
-        {
-            var pieces = part.Split('=', 2);
-            var key = Uri.UnescapeDataString(pieces[0]);
-            return SensitiveQueryKey().IsMatch(key)
-                ? $"{pieces[0]}=<redacted>"
-                : part;
-        }));
-        return $"{uri.Scheme}://{authority}{uri.AbsolutePath}?{safeQuery}";
+        return $"{uri.Scheme}://{authority}{uri.AbsolutePath}?<redacted>";
     }
 
-    [GeneratedRegex("https?://[^\\s,;\\\"'<>]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex("https?://(?:[^\\s,;\\\"'<>?#]|<redacted>)+(?:[?#](?:[^\\s\\\"'<>]|<redacted>)*)?", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex UrlPattern();
-
-    [GeneratedRegex("token|password|secret|cookie|authorization|api.?key|client.?id|private.?key|arl|signature|sig|expires|^code$|^state$|nonce|code_verifier", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
-    private static partial Regex SensitiveQueryKey();
 
     [GeneratedRegex(
         @"\b(token|password|secret|cookie|authorization|api[_-]?key|arl|code|state|nonce|code_verifier|client_secret)\s*[=:]\s*[^\s,;]+",

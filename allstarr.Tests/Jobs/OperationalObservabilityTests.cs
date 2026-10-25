@@ -86,6 +86,47 @@ public sealed class OperationalObservabilityTests
         Assert.DoesNotContain("database-secret", log, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("https://fixture-user:fixture-password@provider.invalid/media?opaque=fixture-query&signature=fixture-signature#fixture-fragment")]
+    [InlineData("https://provider.invalid/media?opaque=fixture-query,fixture-comma-secret")]
+    [InlineData("https://provider.invalid/media?opaque=fixture-query;fixture-semicolon-secret#fixture-fragment")]
+    [InlineData("https://provider.invalid/media?opaque=fixture-query#fixture-fragment,fixture-comma-secret;fixture-semicolon-secret")]
+    public void RuntimeLogger_RedactsOpaqueUrlCredentialsAndKeepsSafeContext(string url)
+    {
+        var error = new StringWriter();
+        using var provider = new RedactingConsoleLoggerProvider(
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Logging:LogLevel:Default"] = "Debug"
+            }).Build(),
+            TextWriter.Null,
+            error);
+        var logger = provider.CreateLogger("allstarr.fixture");
+
+        logger.LogWarning(
+            "Provider failed with status={Status} reason={Reason} url={Url}",
+            403,
+            "network",
+            url);
+
+        var safeUrl = SafeOperationalText.Sanitize(url);
+        Assert.Equal("https://provider.invalid/media?<redacted>", safeUrl);
+        Assert.Equal(safeUrl, SafeOperationalText.Sanitize(safeUrl));
+        var log = error.ToString();
+        Assert.Contains("403", log, StringComparison.Ordinal);
+        Assert.Contains("network", log, StringComparison.Ordinal);
+        Assert.Contains("provider.invalid", log, StringComparison.Ordinal);
+        Assert.Contains("/media", log, StringComparison.Ordinal);
+        Assert.Contains("redacted", log, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-user", log, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-password", log, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-query", log, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-signature", log, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-fragment", log, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-comma-secret", log, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-semicolon-secret", log, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void RuntimeLogger_KeepsNonsecretContentAndMultipleAddresses()
     {
