@@ -8285,9 +8285,9 @@ async function mockSpicySource(page: Page, configured = true) {
   }] : [] }));
 }
 
-for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"]) {
+for (const width of [320, 390, 718, 1280]) for (const theme of ["light", "dark"]) {
   test(`SpicyLyrics free key setup stays private at ${width}px ${theme}`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 844 });
+    await page.setViewportSize({ width, height: width === 718 ? 681 : 844 });
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     await mockSpicySource(page, false);
     await page.goto("#/integrations/services/spicylyrics");
@@ -8309,7 +8309,7 @@ for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"]) {
   });
 
   test(`SpicyLyrics tests Spotify links and clears response credits at ${width}px ${theme}`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 844 });
+    await page.setViewportSize({ width, height: width === 718 ? 681 : 844 });
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     await mockSpicySource(page);
     const requests: Record<string, unknown>[] = [];
@@ -8321,8 +8321,9 @@ for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"]) {
       const body = route.request().postDataJSON(); requests.push(body); count++;
       const result = { provider: "spicylyrics", capability: "lyrics", operation: "lyrics", accountId: "spicy-account", elapsedMs: 25 };
       if (count === 3) return route.fulfill({ json: { ...result, succeeded: false, reasonCode: "not_found" } });
-      return route.fulfill({ json: { ...result, succeeded: true, lyrics: { source: "spicylyrics", format: "word", lineCount: 2,
-        lines: [{ startMs: 1200, text: "First fixture words" }, { startMs: 2400, text: "Second fixture words" }],
+      return route.fulfill({ json: { ...result, succeeded: true, lyrics: { source: "spicylyrics", format: "word", lineCount: 65,
+        lines: Array.from({ length: 65 }, (_, index) => ({ startMs: 1200 + index * 1200,
+          text: index === 0 ? "First fixture words" : index === 1 ? "Second fixture words" : `Fixture lyric line ${index + 1}` })),
         attribution: count === 1 ? spicyCredits : { service: "spicylyrics", catalog: "apple_music" },
       } } });
     });
@@ -8339,7 +8340,21 @@ for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(credits.getByRole("link", { name: `Synced by ${spicyCredits.maker.username}` })).toHaveAttribute("rel", "noopener noreferrer");
     await expect(credits.locator("script")).toHaveCount(0);
     expect(requests[0]).toEqual({ capability: "lyrics", operation: "lyrics", accountId: "spicy-account", trackId: selector });
-    await expect(dialog.getByRole("region", { name: "Lyric lines" })).toContainText("First fixture words");
+    const lyricLines = dialog.getByRole("region", { name: "Lyric lines" });
+    await expect(lyricLines).toContainText("First fixture words");
+    const geometry = await dialog.getByRole("region", { name: "Lyrics", exact: true }).evaluate(root => {
+      const credit = root.querySelector<HTMLElement>('[aria-label="Lyrics credits"]')!;
+      const lyric = root.querySelector<HTMLElement>(".try-lyric-scroll")!;
+      return { creditBottom: Math.max(credit.getBoundingClientRect().bottom,
+        ...Array.from(credit.querySelectorAll("p, a, span")).map(element => element.getBoundingClientRect().bottom)),
+        lyricTop: lyric.getBoundingClientRect().top, lyricHeight: lyric.getBoundingClientRect().height };
+    });
+    expect(geometry.creditBottom, "Visible credits stay above the scrolling lyric rows").toBeLessThanOrEqual(geometry.lyricTop + 1);
+    expect(geometry.lyricHeight, "Long results keep a usable lyric viewport").toBeGreaterThanOrEqual(44);
+    await lyricLines.evaluate(element => element.scrollTop = element.scrollHeight);
+    await expect(lyricLines.getByText("Fixture lyric line 65", { exact: true })).toBeInViewport();
+    await expect(credits).toBeInViewport();
+    await lyricLines.evaluate(element => element.scrollTop = 0);
     if (width < 600) await expectContainedMobileGeometry(page);
     await page.screenshot({ path: `test-results/spicy-test-${width}-${theme}.png` });
     await input.fill(spicyTrack);
@@ -8356,7 +8371,7 @@ for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"]) {
   });
 
   test(`SpicyLyrics recording preview keeps credits with its source at ${width}px ${theme}`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 844 });
+    await page.setViewportSize({ width, height: width === 718 ? 681 : 844 });
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     await mockRecordingLyrics(page);
     await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { ...schema, providers: [...schema.providers, spicyDefinition,

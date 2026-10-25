@@ -554,12 +554,14 @@
             {#if result?.succeeded && result.lyrics}
               <section class="try-card try-lyrics" aria-label="Lyrics">
                 <header class="try-summary" role="status"><CircleCheck size={18} aria-hidden="true" /><strong>{result.lyrics.lineCount} lines found</strong> <span>in {elapsed(result.elapsedMs)}</span></header>
-                <p class="try-facts">
-                  <span class="try-pill">{result.lyrics.format === "word" ? "Word-timed" : result.lyrics.format === "line" ? "Line-timed" : "Plain text"}</span>
-                  {#if result.lyrics.source}<span>From {lyricsSourceDisplayName([...providerDefinitions, provider], result.lyrics.source)}</span>{/if}
-                  {#if result.lyrics.language}<span>Language: {result.lyrics.language}</span>{/if}
-                </p>
-                <LyricsAttribution sourceId={result.lyrics.source} attribution={result.lyrics.attribution} />
+                <div style="display: grid; gap: var(--space-3); min-width: 0">
+                  <p class="try-facts">
+                    <span class="try-pill">{result.lyrics.format === "word" ? "Word-timed" : result.lyrics.format === "line" ? "Line-timed" : "Plain text"}</span>
+                    {#if result.lyrics.source}<span>From {lyricsSourceDisplayName([...providerDefinitions, provider], result.lyrics.source)}</span>{/if}
+                    {#if result.lyrics.language}<span>Language: {result.lyrics.language}</span>{/if}
+                  </p>
+                  <LyricsAttribution sourceId={result.lyrics.source} attribution={result.lyrics.attribution} />
+                </div>
                 <!-- svelte-ignore a11y_no_noninteractive_tabindex (The lyrics scroll region supports keyboard scrolling.) -->
                 <div class="try-lyric-scroll" role="region" aria-label="Lyric lines" tabindex="0">
                   <ol class="try-lyric-lines" class:untimed={result.lyrics.format === "plain"}>
