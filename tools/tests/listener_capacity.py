@@ -269,9 +269,8 @@ def client_session(args, parsed, address, credential, item, deadline, summary):
         total = seek("bytes=-8192")
     if total is None or total <= 16384:
         return outcome
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as seeks:
-        futures = [seeks.submit(seek, f"bytes={offset}-{offset + 8191}", offset) for offset in (total * 4 // 5, total * 9 // 10)]
-        outcome["far_seeks"] = [future.result() == total for future in futures]
+    outcome["far_seeks"] = [seek(f"bytes={offset}-{offset + 8191}", offset) == total
+                            for offset in (total * 4 // 5, total * 9 // 10)]
     if not all(outcome["far_seeks"]):
         return outcome
     def paced(response):

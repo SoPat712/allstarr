@@ -92,9 +92,14 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var canceled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var first = Streaming("deezer", async (_, token) =>
         {
-            using var registration = token.Register(() => canceled.TrySetResult());
             waiting.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+            catch (OperationCanceledException error) when (token.IsCancellationRequested)
+            {
+                Assert.Equal(token, error.CancellationToken);
+                canceled.TrySetResult();
+                throw;
+            }
             return AudioResponse();
         });
         var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
@@ -105,10 +110,13 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         await clock.WaitForTimersAsync(TimeSpan.FromSeconds(seconds));
         second.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
             It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
+        Assert.False(canceled.Task.IsCompleted);
         clock.Advance(TimeSpan.FromSeconds(seconds));
         using var response = (await opening.WaitAsync(TimeSpan.FromSeconds(5)))!.Response;
         Assert.Equal("qobuz", Assert.Single(response.Headers.GetValues("X-Allstarr-Provider")));
         await canceled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        first.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
+            It.IsAny<ProviderStreamLeaseRequest>()), Times.Once);
         second.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
             It.IsAny<ProviderStreamLeaseRequest>()), Times.Once);
     }
