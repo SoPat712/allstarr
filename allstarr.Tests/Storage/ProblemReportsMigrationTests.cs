@@ -10,6 +10,7 @@ namespace allstarr.Tests;
 public sealed class ProblemReportsMigrationTests
 {
     private const string Before = "20261025020354_ScheduledBackups";
+    private const string Target = "20261025040000_ProblemReports";
     private const string Objects = """
         SELECT type||'|'||name||'|'||sql AS Value FROM sqlite_schema WHERE sql IS NOT NULL
         AND name NOT LIKE 'sqlite_%' AND name<>'problem_reports' AND name NOT LIKE 'IX_problem_reports_%' ORDER BY type,name
@@ -33,14 +34,14 @@ public sealed class ProblemReportsMigrationTests
             CREATE INDEX report_fixture_index ON report_fixture(Value);
             """);
         var objects = await db.Database.SqlQueryRaw<string>(Objects).ToArrayAsync();
-        await migrator.MigrateAsync();
+        await migrator.MigrateAsync(Target);
         Assert.Equal(objects, await db.Database.SqlQueryRaw<string>(Objects).ToArrayAsync());
         Assert.Equal("Listener", (await db.Users.SingleAsync()).DisplayName);
         Assert.Equal("existing", await db.Database.SqlQueryRaw<string>("SELECT Value FROM report_fixture").SingleAsync());
         Assert.Equal(0, await db.Database.SqlQueryRaw<int>("SELECT count(*) AS Value FROM pragma_foreign_key_check").SingleAsync());
         await migrator.MigrateAsync(Before);
         Assert.Equal(objects, await db.Database.SqlQueryRaw<string>(Objects).ToArrayAsync());
-        await migrator.MigrateAsync();
+        await migrator.MigrateAsync(Target);
         Assert.Equal("ok", await db.Database.SqlQueryRaw<string>("SELECT integrity_check AS Value FROM pragma_integrity_check").SingleAsync());
     }
 
@@ -49,6 +50,7 @@ public sealed class ProblemReportsMigrationTests
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         await using var db = new AllstarrDbContext(database.Options);
+        await db.GetService<IMigrator>().MigrateAsync(Target);
         var owner = Guid.NewGuid();
         db.Users.Add(User(owner));
         var report = Record(owner);

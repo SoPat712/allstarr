@@ -341,15 +341,16 @@ public sealed partial class LegacyEnvMigrationServiceTests
         Assert.Equal(DurableJobCompletionKind.Succeeded, (await media.Import.ExecuteAsync(new(claim, media.Services), default)).Kind);
         await using var db = await _factory.CreateDbContextAsync();
         var before = await db.Database.SqlQueryRaw<string>("SELECT name AS Value FROM sqlite_master WHERE type='trigger' ORDER BY name").ToArrayAsync();
-        string[] backupGuards = ["TR_backup_schedule_owner_insert", "TR_backup_schedule_owner_update"];
-        Assert.All(backupGuards, name => Assert.Contains(name, before));
+        string[] laterGuards = ["TR_backup_schedule_owner_insert", "TR_backup_schedule_owner_update",
+            "TR_favorite_event_scope_immutable", "TR_provider_favorite_link_member_immutable"];
+        Assert.All(laterGuards, name => Assert.Contains(name, before));
         var error = await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(() =>
             db.GetService<IMigrator>().MigrateAsync("20261015214512_VerifyUncertainLastFmDelivery"));
         Assert.Contains("CK_legacy_media_requires_backup_restore", error.Message);
         Assert.Single(await db.Set<LegacyMediaAdoptionRecord>().ToListAsync());
         var after = await db.Database.SqlQueryRaw<string>("SELECT name AS Value FROM sqlite_master WHERE type='trigger' ORDER BY name").ToArrayAsync();
-        Assert.All(backupGuards, name => Assert.DoesNotContain(name, after));
-        Assert.Equal(before.Except(backupGuards).ToArray(), after);
+        Assert.All(laterGuards, name => Assert.DoesNotContain(name, after));
+        Assert.Equal(before.Except(laterGuards).ToArray(), after);
         Assert.Equal("original fixture bytes", await System.IO.File.ReadAllTextAsync(original));
         Assert.Equal(original, (await media.Reader().FindBySourceAsync(MediaActor(_userId, "jellyfin-user-id"),
             new("deezer", ProviderResourceKind.Track, "123")))!.Path);

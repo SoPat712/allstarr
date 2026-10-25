@@ -1,4 +1,5 @@
 using System.Text.Json;
+using allstarr.Core.Favorites;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Services.Jellyfin;
@@ -62,7 +63,7 @@ public partial class JellyfinController
             (string.IsNullOrWhiteSpace(requestedUser) || requestedUser == context.VerifiedBackendPrincipalId))
         {
             var favorites = await _favoriteViews.ReadAsync(context, HttpContext.RequestAborted);
-            var ids = favorites.Select(item => item.ItemId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var ids = favorites.Select(item => item.ItemId).ToHashSet(FavoriteViewReader.ItemComparer(favorites));
             foreach (var item in items.Where(IsProviderQueryItem))
                 if (ids.Contains(JellyfinProviderQuery.Text(item, "Id")) &&
                     item.GetValueOrDefault("UserData") is IDictionary<string, object> data)

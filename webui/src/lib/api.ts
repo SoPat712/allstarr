@@ -1429,6 +1429,48 @@ export const auth = {
   logout: () => json<{ success: boolean }>("/api/admin/auth/logout", { method: "POST" }),
 };
 
+export type ProviderFavoriteMember = {
+  userId: string; displayName: string; protocol: "jellyfin" | "subsonic"; instanceLabel: string;
+  profileCode: string; identityFingerprint: string; lastSeenAt: string | null;
+  participation: "available" | "active" | "disabled" | "synthetic" | "identity_changed";
+  linkId: string | null;
+};
+export type ProviderFavoriteLink = {
+  id: string; jellyfin: ProviderFavoriteMember; subsonic: ProviderFavoriteMember;
+  state: "merging" | "shared" | "needs_attention"; createdAt: string; revision: number;
+  union: { jobId: string; state: "pending" | "running" | "retry_scheduled" | "succeeded" | "failed" | "cancelled";
+    processedRows: number; seededItems: number; completedAt: string | null; errorCode: string | null; canRetry: boolean };
+};
+export type FavoriteLinkPair = { jellyfinUserId: string; jellyfinFingerprint: string;
+  subsonicUserId: string; subsonicFingerprint: string };
+export type FavoriteLinkPreview = { jellyfin: ProviderFavoriteMember; subsonic: ProviderFavoriteMember;
+  confirmationVersion: number; existingLinkId: string | null };
+export type FavoriteLinkReceipt = { linkId: string; jobId: string; created: boolean; replayed: boolean };
+export const providerFavoriteLinks = {
+  members: (protocol: "jellyfin" | "subsonic", cursor?: string, signal?: AbortSignal) => {
+    const query = new URLSearchParams({ protocol, limit: "200" });
+    if (cursor) query.set("cursor", cursor);
+    return json<{ activeProtocol: string; items: ProviderFavoriteMember[]; nextCursor: string | null }>(
+      `/api/admin/provider-favorite-links/members?${query}`, { signal });
+  },
+  list: (cursor?: string, signal?: AbortSignal) => {
+    const query = new URLSearchParams({ limit: "50" });
+    if (cursor) query.set("cursor", cursor);
+    return json<{ activeProtocol: string; items: ProviderFavoriteLink[]; nextCursor: string | null }>(
+      `/api/admin/provider-favorite-links?${query}`, { signal });
+  },
+  detail: (id: string, signal?: AbortSignal) => json<ProviderFavoriteLink>(
+    `/api/admin/provider-favorite-links/${encodeURIComponent(id)}`, { signal }),
+  preview: (pair: FavoriteLinkPair) => json<FavoriteLinkPreview>("/api/admin/provider-favorite-links/preview", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pair) }),
+  create: (input: FavoriteLinkPair & { requestId: string; confirmedSamePerson: boolean; confirmationVersion: number }) =>
+    json<FavoriteLinkReceipt>("/api/admin/provider-favorite-links", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }),
+  retry: (id: string, input: { requestId: string; expectedRevision: number }) =>
+    json<FavoriteLinkReceipt>(`/api/admin/provider-favorite-links/${encodeURIComponent(id)}/retry`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }),
+};
+
 export const onboarding = {
   status: () => json<OnboardingState>("/api/admin/onboarding/status"),
   complete: () => json<OnboardingState>("/api/admin/onboarding/complete", { method: "POST" }),

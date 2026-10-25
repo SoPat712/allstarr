@@ -24,7 +24,8 @@ public sealed partial class RecordingKeptFilesTests
 
         string[] laterGuards = ["TR_legacy_media_immutable_delete", "TR_legacy_media_immutable_update", "TR_legacy_media_provenance",
             "TR_legacy_original_file", "TR_legacy_original_reference", "TR_legacy_original_reference_delete",
-            "TR_backup_schedule_owner_insert", "TR_backup_schedule_owner_update"];
+            "TR_backup_schedule_owner_insert", "TR_backup_schedule_owner_update",
+            "TR_favorite_event_scope_immutable", "TR_provider_favorite_link_member_immutable"];
         Assert.All(laterGuards, name => Assert.Contains(name, triggers));
         var downgradedTriggers = await db.Database.SqlQueryRaw<string>(
             "SELECT name AS Value FROM sqlite_master WHERE type = 'trigger' ORDER BY name").ToArrayAsync();

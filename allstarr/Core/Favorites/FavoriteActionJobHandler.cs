@@ -241,6 +241,15 @@ public sealed class FavoriteActionJobHandler(
     {
         for (var attempt = 0; ; attempt++)
         {
+            var favorite = database.FavoriteEvents.Local.SingleOrDefault(item => item.JobId == claim.JobId)
+                ?? await database.FavoriteEvents.AsNoTracking().SingleOrDefaultAsync(item => item.JobId == claim.JobId, cancellationToken);
+            await using var transaction = favorite != null && FavoriteLinkScope.Key(favorite.ItemId) != null && database.Database.CurrentTransaction == null
+                ? await database.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken) : null;
+            if (!allowCancellation)
+            {
+                if (favorite == null || !await FavoriteLinkScope.ProveAsync(database, favorite, true, true, cancellationToken))
+                    throw new DbUpdateConcurrencyException("The favorite scope is no longer current.");
+            }
             var job = await database.Jobs.AsNoTracking().SingleOrDefaultAsync(
                 item => item.Id == claim.JobId, cancellationToken);
             if (job == null || job.Type != JobType || job.OwnerUserId != claim.OwnerUserId ||
@@ -254,6 +263,7 @@ public sealed class FavoriteActionJobHandler(
             try
             {
                 await database.SaveChangesAsync(cancellationToken);
+                if (transaction != null) await transaction.CommitAsync(cancellationToken);
                 return;
             }
             catch (DbUpdateConcurrencyException) when (attempt < 2)
@@ -304,7 +314,8 @@ public sealed class FavoriteActionJobHandler(
         if (state != null)
         {
             return state.LastEventId == favoriteEvent.Id &&
-                   state.IsFavorite == (favoriteEvent.Operation == FavoriteOperation.Favorite);
+                   state.IsFavorite == (favoriteEvent.Operation == FavoriteOperation.Favorite) &&
+                   await FavoriteLinkScope.ProveAsync(database, favoriteEvent, false, true, cancellationToken);
         }
 
         var latestEventId = await database.Set<FavoriteEventRecord>().AsNoTracking()
@@ -316,7 +327,7 @@ public sealed class FavoriteActionJobHandler(
             .ThenByDescending(item => item.Id)
             .Select(item => (Guid?)item.Id)
             .FirstOrDefaultAsync(cancellationToken);
-        return latestEventId == favoriteEvent.Id;
+        return latestEventId == favoriteEvent.Id && await FavoriteLinkScope.ProveAsync(database, favoriteEvent, false, true, cancellationToken);
     }
 
     private async Task RecordRecommendationSignalAsync(
@@ -464,6 +475,8 @@ public static class FavoriteActionRegistration
     public static IServiceCollection AddFavoriteActions(this IServiceCollection services)
     {
         services.AddSingleton<FavoriteViewReader>();
+        services.AddSingleton<FavoriteLinkService>();
+        services.AddSingleton<IDurableJobHandler, FavoriteLinkUnionJobHandler>();
         services.AddSingleton<FavoriteDisplayBackfillQueue>();
         services.AddSingleton<FavoriteDisplayBackfillJobHandler>();
         services.AddSingleton<IDurableJobHandler>(provider => provider.GetRequiredService<FavoriteDisplayBackfillJobHandler>());

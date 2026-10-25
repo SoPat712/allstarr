@@ -10,18 +10,19 @@ internal static class JellyfinFavoriteScope
         if (unsupported.Any(key => !string.IsNullOrWhiteSpace(query[key])) ||
             Values(query, "Filters").Any(value => !value.Equals("IsFavorite", StringComparison.OrdinalIgnoreCase))) return false;
         var display = item.Display;
-        if (!Matches(query, "ArtistIds", display.ArtistIds) ||
-            !Matches(query, "AlbumArtistIds", display.AlbumArtistIds) ||
+        var comparer = FavoriteViewReader.ItemComparer(item.SharedScope);
+        if (!Matches(query, "ArtistIds", display.ArtistIds, comparer: comparer) ||
+            !Matches(query, "AlbumArtistIds", display.AlbumArtistIds, comparer: comparer) ||
             !Matches(query, "ContributingArtistIds", display.AlbumArtistIds.Length == 0 ? [] :
-                display.ArtistIds.Except(display.AlbumArtistIds, StringComparer.Ordinal)) ||
-            !Matches(query, "AlbumIds", display.AlbumId == null ? [] : [display.AlbumId]) ||
+                display.ArtistIds.Except(display.AlbumArtistIds, comparer), comparer: comparer) ||
+            !Matches(query, "AlbumIds", display.AlbumId == null ? [] : [display.AlbumId], comparer: comparer) ||
             !Matches(query, "Genres", display.Genres, '|', StringComparer.OrdinalIgnoreCase) ||
             !Matches(query, "GenreIds", display.Genres.Select(genre => $"genre-{genre.ToLowerInvariant()}")) ||
             !Matches(query, "Years", display.Year is { } year ? [year.ToString(System.Globalization.CultureInfo.InvariantCulture)] : []))
             return false;
         var parent = query["ParentId"].ToString();
-        return string.IsNullOrEmpty(parent) || parent == libraryId || parent == display.AlbumId ||
-            display.ArtistIds.Contains(parent, StringComparer.Ordinal) || display.AlbumArtistIds.Contains(parent, StringComparer.Ordinal);
+        return string.IsNullOrEmpty(parent) || parent == libraryId || comparer.Equals(parent, display.AlbumId) ||
+            display.ArtistIds.Contains(parent, comparer) || display.AlbumArtistIds.Contains(parent, comparer);
     }
 
     public static bool RestrictNativeQuery(Dictionary<string, string> query)
@@ -41,7 +42,7 @@ internal static class JellyfinFavoriteScope
     }
 
     private static bool Matches(IQueryCollection query, string key, IEnumerable<string> actual,
-        char separator = ',', StringComparer? comparer = null)
+        char separator = ',', IEqualityComparer<string>? comparer = null)
     {
         var requested = Values(query, key, separator);
         return requested.Length == 0 || requested.Intersect(actual, comparer ?? StringComparer.Ordinal).Any();

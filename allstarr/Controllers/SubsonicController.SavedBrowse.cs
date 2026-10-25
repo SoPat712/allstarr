@@ -47,7 +47,7 @@ public partial class SubsonicController
             {
                 saved = await library.ReadForRequestAsync(HttpContext);
                 IReadOnlyList<FavoriteViewItem> favorites = _favoriteViews == null ? [] : await _favoriteViews.ReadForRequestAsync(HttpContext);
-                starred = favorites.ToDictionary(item => item.ItemId, item => item.FavoritedAt, StringComparer.Ordinal);
+                starred = favorites.ToDictionary(item => item.ItemId, item => item.FavoritedAt, FavoriteViewReader.ItemComparer(favorites));
                 if (container == "albumList2" && parameters.GetValueOrDefault("type") == "starred")
                     saved = saved.Where(item => starred.ContainsKey(item.ItemId)).ToArray();
                 saved = SubsonicSavedBrowseAdapter.Select(saved, container, parameters);

@@ -61,9 +61,11 @@ public sealed partial class SubsonicFavoriteResponseFilter(FavoriteViewReader fa
         await next();
     }
 
-    private async Task<Dictionary<string, string>> ReadAsync(HttpContext http) =>
-        (await favorites.ReadForRequestAsync(http)).ToDictionary(item => item.ItemId,
-            item => item.FavoritedAt.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture), StringComparer.Ordinal);
+    private async Task<Dictionary<string, string>> ReadAsync(HttpContext http)
+    {
+        var view = await favorites.ReadForRequestAsync(http);
+        return view.ToDictionary(item => item.ItemId, item => item.FavoritedAt.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture), FavoriteViewReader.ItemComparer(view));
+    }
 
     private async Task<bool> HydrateJsonAsync(JsonNode root, HttpContext http)
     {

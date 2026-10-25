@@ -31,9 +31,11 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
     {
         if (execution.Principal is not { } principal || execution.Actor?.EffectiveUserId is not { } owner) return [];
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        if (!await db.Users.AsNoTracking().AnyAsync(user => user.Id == owner && user.Enabled &&
+        var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(user => user.Id == owner && user.Enabled &&
             user.BackendType == principal.BackendType && user.BackendInstanceId == execution.BackendInstanceId &&
-            user.BackendPrincipalId == execution.VerifiedBackendPrincipalId, cancellationToken)) return [];
+            user.BackendPrincipalId == execution.VerifiedBackendPrincipalId, cancellationToken);
+        if (user == null) return [];
+        var sharedScope = await FavoriteLinkScope.MemberAsync(db, user, cancellationToken) != null;
         var favorites = await new FavoriteViewReader(factory).ReadAsync(execution, cancellationToken);
         var states = await db.Set<FavoriteStateRecord>().AsNoTracking().Where(item => item.OwnerUserId == owner &&
             item.Protocol == principal.BackendType && item.BackendInstanceId == execution.BackendInstanceId).ToArrayAsync(cancellationToken);
@@ -88,7 +90,7 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
         var sourceDisplays = new Dictionary<string, FavoriteDisplaySnapshot[]>(StringComparer.Ordinal);
         var active = new Dictionary<string, int>(StringComparer.Ordinal);
         var dates = new Dictionary<string, DateTimeOffset>(StringComparer.Ordinal);
-        foreach (var change in changes.OrderBy(item => item.At).ThenBy(item => item.Order, StringComparer.Ordinal))
+        void Apply(MembershipChange change)
         {
             var members = Expand(change.Items).GroupBy(item => item.ItemId, StringComparer.Ordinal)
                 .Select(group => group.First() with { Genres = group.SelectMany(item => item.Genres).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() }).ToArray();
@@ -107,6 +109,9 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
             sources[change.Source] = current;
             sourceDisplays[change.Source] = members;
         }
+        foreach (var change in changes.OrderBy(item => item.At).ThenBy(item => item.Order, StringComparer.Ordinal)) Apply(change);
+        foreach (var favorite in favorites.Where(item => item.SharedScope))
+            Apply(new(favorite.FavoritedAt, "current", "heart:" + favorite.ItemId, [favorite.Display]));
         // Current accepted state is authoritative even when old event rows were retained out of order.
         var hearted = favorites.Select(item => item.ItemId).ToHashSet(StringComparer.Ordinal);
         foreach (var source in sources.Where(pair => pair.Key.StartsWith("heart:", StringComparison.Ordinal) && !hearted.Contains(pair.Key[6..])))
@@ -123,12 +128,39 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
                 FavoriteDisplaySnapshot.Resource(item.ItemId)!.ResourceKind).Title).ThenByDescending(item => item.ArtistIds.Length).First();
             displays[group.Key] = best with { Genres = group.SelectMany(item => item.Genres).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() };
         }
+        var itemComparer = FavoriteViewReader.ItemComparer(sharedScope);
+        if (sharedScope)
+        {
+            foreach (var group in dates.Keys.ToArray().GroupBy(id => id, itemComparer).Where(group => group.Count() > 1))
+            {
+                var best = group.OrderByDescending(id => displays[id].Title != FavoriteDisplaySnapshot.Placeholder(id,
+                    FavoriteDisplaySnapshot.Resource(id)!.ResourceKind).Title)
+                    .ThenByDescending(id => displays[id].ArtistIds.Length + displays[id].AlbumArtistIds.Length)
+                    .ThenByDescending(id => displays[id].Album != null).ThenBy(id => id, StringComparer.Ordinal).First();
+                var added = group.Min(id => dates[id]);
+                displays[best] = displays[best] with { Genres = group.SelectMany(id => displays[id].Genres).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() };
+                foreach (var id in group.Where(id => id != best)) dates.Remove(id);
+                dates[best] = added;
+            }
+            var visibleIds = dates.Keys.ToDictionary(id => id, id => id, itemComparer);
+            string Visible(string id) => visibleIds.GetValueOrDefault(id) ?? id;
+            foreach (var id in dates.Keys)
+            {
+                var display = displays[id];
+                displays[id] = display with
+                {
+                    AlbumId = display.AlbumId == null ? null : Visible(display.AlbumId),
+                    ArtistIds = display.ArtistIds.Select(Visible).ToArray(),
+                    AlbumArtistIds = display.AlbumArtistIds.Select(Visible).ToArray()
+                };
+            }
+        }
         var currentDisplays = dates.Keys.Select(id => displays[id]).ToArray();
         var songCounts = currentDisplays.Where(item => item.Kind == "song" && item.AlbumId != null)
-            .GroupBy(item => item.AlbumId!).ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+            .GroupBy(item => item.AlbumId!, itemComparer).ToDictionary(group => group.Key, group => group.Count(), itemComparer);
         var albumCounts = currentDisplays.Where(item => item.Kind == "album")
-            .SelectMany(item => item.ArtistIds.Concat(item.AlbumArtistIds).Distinct(StringComparer.Ordinal))
-            .GroupBy(id => id).ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal);
+            .SelectMany(item => item.ArtistIds.Concat(item.AlbumArtistIds).Distinct(itemComparer))
+            .GroupBy(id => id, itemComparer).ToDictionary(group => group.Key, group => group.Count(), itemComparer);
         foreach (var id in dates.Keys)
         {
             var display = displays[id];
@@ -143,7 +175,8 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
         }
         return dates.OrderByDescending(item => item.Value).ThenBy(item => item.Key, StringComparer.Ordinal)
             .Where(item => FavoriteDisplaySnapshot.Resource(item.Key) != null)
-            .Select(item => new FavoriteViewItem(item.Key, FavoriteDisplaySnapshot.Resource(item.Key)!, item.Value, displays[item.Key])).ToArray();
+            .Select(item => new FavoriteViewItem(item.Key, FavoriteDisplaySnapshot.Resource(item.Key)!, item.Value, displays[item.Key])
+            { SharedScope = sharedScope }).ToArray();
     }
 
     private async Task<HashSet<string>> VisiblePlaylistKeysAsync(ProtocolExecutionContext execution, CancellationToken cancellationToken)

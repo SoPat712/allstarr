@@ -24,7 +24,7 @@ public partial class JellyfinController
             .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var ids = Request.Query["Ids"].ToString().Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-            .ToHashSet(StringComparer.Ordinal);
+            .ToHashSet(FavoriteViewReader.ItemComparer(saved));
         var favorites = saved.Where(item => ids.Count == 0 || ids.Contains(item.ItemId))
             .Where(item => JellyfinFavoriteScope.Matches(item, Request.Query, _settings.LibraryId))
             .Where(item => string.IsNullOrWhiteSpace(searchTerm) || item.Display.Title.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||

@@ -26,6 +26,9 @@ public enum FavoriteActionState
 
 public sealed class FavoriteEventRecord
 {
+    public bool IsRealProviderIntent { get; set; }
+    public Guid? SharedLinkId { get; set; }
+    public long? SharedLifecycleVersion { get; set; }
     public Guid Id { get; set; }
     public Guid OwnerUserId { get; set; }
     public string Protocol { get; set; } = string.Empty;

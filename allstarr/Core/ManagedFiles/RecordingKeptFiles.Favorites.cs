@@ -146,6 +146,12 @@ public sealed partial class RecordingKeptFiles
         if (favoriteRecording == null || requested?.Id != favoriteRecording) throw Denied();
     }
 
+    private async Task FenceFavoritePublicationAsync(AllstarrDbContext db, KeptRecordingPublication request, CancellationToken token)
+    {
+        var job = await db.Jobs.AsNoTracking().SingleOrDefaultAsync(item => item.Id == request.DurableJobId, token) ?? throw Denied();
+        await AuthorizeFavoritePublicationAsync(db, job, request, token);
+    }
+
     private static async Task<FavoriteProof?> FindFavoriteAsync(AllstarrDbContext db,
         KeptFavoriteInterest interest, CancellationToken cancellationToken)
     {
@@ -169,7 +175,8 @@ public sealed partial class RecordingKeptFiles
             item.OwnerUserId == interest.OwnerUserId && item.Protocol == favorite.Protocol &&
             item.BackendInstanceId == favorite.BackendInstanceId && item.ItemId == favorite.ItemId &&
             item.IsFavorite && item.LastEventId == favorite.Id, cancellationToken);
-        return state == null ? null : new(favorite, state, new(ProviderActorKind.User, favorite.OwnerUserId,
+        if (state == null || !await FavoriteLinkScope.ProveAsync(db, favorite, db.Database.CurrentTransaction != null, false, cancellationToken)) return null;
+        return new(favorite, state, new(ProviderActorKind.User, favorite.OwnerUserId,
             new(favorite.Protocol, favorite.BackendInstanceId, favorite.BackendPrincipalId)));
     }
 

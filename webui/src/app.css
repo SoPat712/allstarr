@@ -2693,8 +2693,10 @@
 
   .select-content {
     z-index: var(--layer-menu);
-    min-width: var(--bits-select-anchor-width);
-    overflow: hidden;
+    width: var(--bits-select-anchor-width);
+    max-height: min(24rem, var(--bits-select-content-available-height));
+    overflow: auto;
+    overflow-wrap: anywhere;
     border: 1px solid var(--color-edge);
     border-radius: var(--radius-md);
     background: var(--color-surface-raised);
@@ -2718,7 +2720,7 @@
 
   .select-item {
     display: flex;
-    min-height: var(--control-sm);
+    min-height: var(--control-md);
     align-items: center;
     justify-content: space-between;
     gap: var(--space-3);
@@ -2755,11 +2757,6 @@
 
   .library-tabs {
     margin-bottom: var(--section-gap);
-  }
-
-  .mapping-page {
-    display: grid;
-    min-width: 0;
   }
 
   .mapping-view-tabs {
@@ -3841,12 +3838,6 @@
     width: 100%;
     height: 100%;
     object-fit: contain;
-  }
-
-  .source-capabilities {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
   }
 
   .source-capabilities > span {

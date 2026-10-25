@@ -123,6 +123,7 @@ public sealed partial class RecordingKeptFiles(
             KeptRecordingFile result;
             await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
             {
+                await FenceFavoritePublicationAsync(db, publication, cancellationToken);
                 var refreshed = await AuthorizeAsync(publication, cancellationToken, proof.PlaylistAccess);
                 if (!SameSource(proof.Artifact, refreshed.Artifact)) throw Denied();
                 var currentLink = await db.ProviderTrackIdentities.AsNoTracking()

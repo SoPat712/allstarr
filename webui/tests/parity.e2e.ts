@@ -157,6 +157,8 @@ const responses: Record<string, unknown> = {
   "/api/admin/access/oidc": { settings: { enabled: false, authority: "", clientId: "", publicUrl: "", displayName: "Single sign-on", hasClientSecret: false, needsReview: false, revision: "r1" }, csrfToken: "fixture" },
   "/api/admin/storage/files": { settings: { available: true, pending: false, needsReview: false, files: 0 }, csrfToken: "fixture" },
   "/api/admin/scrobbling/deliveries": { items: [] },
+  "/api/admin/provider-favorite-links": { activeProtocol: "jellyfin", items: [], nextCursor: null },
+  "/api/admin/provider-favorite-links/members": { activeProtocol: "jellyfin", items: [], nextCursor: null },
   "/api/admin/auth/me": {
     authenticated: true, backend: "Jellyfin",
     features: { intelligence: true },
