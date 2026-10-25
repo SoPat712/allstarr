@@ -1697,15 +1697,46 @@ export const sources = {
 
 export type StorageBackup = {
   id: string;
-  status: "verified";
+  status: "verified" | "unverified" | "changed" | "invalid";
   createdAt: string;
-  verifiedAt: string;
+  verifiedAt: string | null;
   fileName: string;
   bytes: number;
   sha256: string | null;
   schemaVersion: string;
   applicationVersion: string;
   includesKeyRing: true;
+  origin?: "manual" | "scheduled" | "legacy";
+  retentionBuckets?: Array<"daily" | "weekly" | "manual">;
+  verification?: "verified" | "unverified" | "changed" | "invalid";
+};
+
+export type BackupPolicy = {
+  enabled: boolean;
+  timeUtc: string;
+  timeZone: "UTC";
+  directory: string;
+  dailyRetentionCount: number;
+  weeklyRetentionCount: number;
+  manualRetentionCount: number;
+  revision: string;
+};
+export type BackupPolicyInput = Omit<BackupPolicy, "timeZone" | "revision">;
+export type BackupStatus = {
+  state: "idle" | "queued" | "running" | "unavailable" | "restore-pending";
+  directoryState: "unchecked" | "ready" | "unavailable" | "changed";
+  activeJobId: string | null;
+  lastSuccessAt: string | null;
+  nextRunAt: string | null;
+  lastBytes: number | null;
+  lastFailure: { code: string; message: string; at: string } | null;
+};
+export type StorageOverview = {
+  storage: { provider?: string; readiness?: string; checkedAt?: string };
+  backups: StorageBackup[];
+  restorePending: boolean;
+  backupPolicy?: BackupPolicy;
+  backupStatus?: BackupStatus;
 };
 
 export const settings = {
@@ -1722,12 +1753,12 @@ export const settings = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ updates }),
     }),
-  storage: () => json<{
-    storage: { provider?: string; readiness?: string; checkedAt?: string };
-    backups: StorageBackup[];
-    restorePending: boolean;
-  }>("/api/admin/storage"),
-  backup: () => json<StorageBackup>("/api/admin/storage/backups", { method: "POST" }),
+  storage: () => json<StorageOverview>("/api/admin/storage"),
+  backup: () => json<{ jobId: string; created: boolean; message?: string }>("/api/admin/storage/backups", { method: "POST" }),
+  saveBackupPolicy: (input: BackupPolicyInput & { expectedRevision: string }) =>
+    json<{ backupPolicy: BackupPolicy; backupStatus: BackupStatus }>("/api/admin/storage/backups/configuration", {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+    }),
   restore: (file: File) => {
     const body = new FormData();
     body.append("backup", file);

@@ -132,6 +132,10 @@ In **Settings → Storage → Audio limits**, administrators can set the audio-c
 
 When a limit is reached, new provider requests receive **503** with **Retry-After** instead of waiting indefinitely. Retry shortly; if the audio cache stays full, increase its ceiling or review storage. Native media-server streaming continues through its usual path. See [audio capacity and cleanup](operations/storage.md#audio-capacity-and-cleanup).
 
+In **Settings → Backups**, administrators can see the last verified database backup, its size, the next run and any failure. Daily backups start enabled at **03:00 UTC**. The schedule form controls the time, destination folder and retention: 14 daily copies, eight weekly copies and ten manual copies by default. **Back up now** queues a background snapshot; wait for completion before downloading it. Unsaved edits stay in the form when status refreshes. If another administrator changes the schedule, reload the server values before saving again.
+
+Backups include the database and encryption keys, so keep downloaded ZIP files private. Audio and other mounted files need separate backups. An optional destination must already exist inside the container; mount synchronized storage before choosing it. Existing archives stay in their original folder when the destination changes. Restore requires a separate confirmation and takes effect on restart. See [backup and restore details](operations/storage.md).
+
 ### Scheduled health checks
 
 Open **Settings → Health** as an administrator. Checks start off. Choose a dedicated non-administrator listener, verify its sign-in, enter a known song, and save. The default interval is 30 minutes; **Run now** also works with scheduling off. The view identifies the protocol exposed by this deployment and shows the inactive protocol separately.

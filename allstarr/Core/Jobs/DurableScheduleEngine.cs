@@ -38,17 +38,20 @@ public sealed class DurableScheduleEngine
     private readonly DurableJobQueue _queue;
     private readonly IPlatformClock _clock;
     private readonly ReleaseComposition _releaseComposition;
+    private readonly DurableBackupService? _backups;
 
     public DurableScheduleEngine(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         DurableJobQueue queue,
         IPlatformClock clock,
-        ReleaseComposition releaseComposition)
+        ReleaseComposition releaseComposition,
+        DurableBackupService? backups = null)
     {
         _contextFactory = contextFactory;
         _queue = queue;
         _clock = clock;
         _releaseComposition = releaseComposition;
+        _backups = backups;
     }
 
     public DurableScheduleEngine(
@@ -75,6 +78,7 @@ public sealed class DurableScheduleEngine
     public async Task<DurableScheduleTickResult> TickAsync(CancellationToken cancellationToken = default)
     {
         var now = _clock.UtcNow;
+        if (_backups != null) await _backups.ReconcileScheduleAsync(cancellationToken);
         await using var scan = await _contextFactory.CreateDbContextAsync(cancellationToken);
         var dueSchedules = scan.JobSchedules.AsNoTracking()
             .Where(item => item.Enabled && item.NextRunAt != null && item.NextRunAt <= now)
@@ -147,6 +151,11 @@ public sealed class DurableScheduleEngine
             }
             else if (jobType == RecommendationJobType)
                 recommendation = await ReadRecommendationTemplateAsync(context, schedule, cancellationToken);
+            else if (jobType == DurableBackupService.JobType)
+            {
+                if (_backups == null || schedule.OwnerUserId != null || schedule.Id != DurableBackupService.ScheduleId)
+                    throw new InvalidOperationException("The backup schedule is invalid.");
+            }
             else if (jobType != HealthSmokeService.JobType)
                 throw new InvalidOperationException("The enabled schedule job type is unsupported.");
 
@@ -155,8 +164,9 @@ public sealed class DurableScheduleEngine
             var idempotencyPrefix = $"schedule:{schedule.Id:N}:";
             if (shouldEnqueue && schedule.OverlapPolicy == ScheduleOverlapPolicy.Skip)
             {
-                skippedOverlap = jobType == HealthSmokeService.JobType
-                    ? await HealthSmokeService.HasActiveRunAsync(context, cancellationToken)
+                skippedOverlap = jobType == DurableBackupService.JobType
+                    ? await DurableBackupService.ActiveJobAsync(context, cancellationToken) != null
+                    : jobType == HealthSmokeService.JobType ? await HealthSmokeService.HasActiveRunAsync(context, cancellationToken)
                     : await context.Jobs.AnyAsync(item =>
                     item.OwnerUserId == schedule.OwnerUserId &&
                     (item.Type == jobType && item.IdempotencyKey.StartsWith(idempotencyPrefix) ||
@@ -189,6 +199,8 @@ public sealed class DurableScheduleEngine
                         CorrelationId: $"schedule-{schedule.Id:N}-{dueAt.UtcTicks}");
                     await _queue.EnqueueInExistingTransactionAsync(context, request, cancellationToken);
                 }
+                else if (jobType == DurableBackupService.JobType)
+                    shouldEnqueue = await _backups!.ReserveScheduledAsync(context, schedule, dueAt, cancellationToken);
                 else if (health != null)
                     await _queue.EnqueueInExistingTransactionAsync(context,
                         new DurableJobEnqueueRequest<HealthSmokeJobPayload>(HealthSmokeService.JobType,
@@ -238,7 +250,7 @@ public sealed class DurableScheduleEngine
         context.RecommendationRuns.Add(new()
         {
             Id = runId,
-            OwnerUserId = schedule.OwnerUserId,
+            OwnerUserId = schedule.OwnerUserId!.Value,
             Protocol = policy.Protocol,
             BackendInstanceId = policy.BackendInstanceId,
             JobId = job.JobId,

@@ -163,6 +163,8 @@ public sealed partial class AllstarrDbContext
             payloadTemplate.HasDefaultValue("{}");
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.Enabled, item.NextRunAt });
+            entity.HasIndex(item => item.JobType).IsUnique().HasDatabaseName("IX_household_backup_schedule")
+                .HasFilter("\"JobType\"='storage.backup' AND \"OwnerUserId\" IS NULL");
             OwnedByUser(entity, item => item.OwnerUserId);
         });
 

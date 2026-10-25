@@ -1043,7 +1043,9 @@ public sealed partial class PlaylistLinksController(
             DurableScheduleEngine.Validate(request.CronExpression, request.TimeZoneId);
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
             var schedule = await db.JobSchedules.SingleOrDefaultAsync(item => item.Id == scheduleId, cancellationToken) ?? throw new KeyNotFoundException("Schedule not found.");
-            EnsureSessionScope(session, schedule.OwnerUserId);
+            if (schedule.OwnerUserId is not { } owner || schedule.JobType != DurableScheduleEngine.PlaylistSyncJobType)
+                throw new KeyNotFoundException("Schedule not found.");
+            EnsureSessionScope(session, owner);
             var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
                 item.OwnerUserId == schedule.OwnerUserId && item.ScheduleId == schedule.Id, cancellationToken);
             if (link?.ImportMode == PlaylistImportMode.OneTime)

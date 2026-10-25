@@ -55,7 +55,7 @@ public sealed class ActivityTasksController(IDbContextFactory<AllstarrDbContext>
                 id = schedule.Id.ToString("D"),
                 kind = "playlist",
                 name = "Sync " + (SafeOperationalText.Sanitize(titles.GetValueOrDefault(link.Id), 200) ?? "playlist"),
-                ownerName = ActivityPresentation.UserName(names.GetValueOrDefault(schedule.OwnerUserId)),
+                ownerName = ActivityPresentation.UserName(names.GetValueOrDefault(link.OwnerUserId)),
                 enabled,
                 state = !enabled ? "Paused" : run != null && run.CompletedAt == null ? "Running" : "Scheduled",
                 cadence = $"{schedule.CronExpression} · {schedule.TimeZoneId}",

@@ -121,6 +121,12 @@ public static class RuntimeSettingCatalog
             items.Add(new(key, RuntimeSettingValueType.String, key,
                 Choices: choices.ToHashSet(Comparer), AllowEmpty: allowEmpty));
         items.AddRange(OperatorSettingPolicy.Definitions);
+        items.Add(new("Storage:BackupEnabled", RuntimeSettingValueType.Boolean, "Storage:BackupEnabled", DefaultValue: "true"));
+        items.Add(new("Storage:BackupTimeUtc", RuntimeSettingValueType.String, "Storage:BackupTimeUtc", MaximumLength: 5, DefaultValue: "03:00"));
+        items.Add(new("Storage:BackupDirectory", RuntimeSettingValueType.String, "Storage:BackupDirectory", AllowEmpty: true, MaximumLength: 2000, DefaultValue: ""));
+        items.Add(new("Storage:BackupDailyRetentionCount", RuntimeSettingValueType.Integer, "Storage:BackupDailyRetentionCount", 1, 90, DefaultValue: "14"));
+        items.Add(new("Storage:BackupWeeklyRetentionCount", RuntimeSettingValueType.Integer, "Storage:BackupWeeklyRetentionCount", 0, 52, DefaultValue: "8"));
+        items.Add(new("Storage:BackupRetentionCount", RuntimeSettingValueType.Integer, "Storage:BackupRetentionCount", 1, 1000, DefaultValue: "10"));
         items.Add(new("Odesli:ApiKeyReference", RuntimeSettingValueType.String, "Odesli:ApiKeyReference",
             AllowEmpty: true, MaximumLength: 36, DefaultValue: "", RequiresRestart: true));
         items.Add(new("Admin:Oidc:Enabled", RuntimeSettingValueType.Boolean, "Admin:Oidc:Enabled", DefaultValue: "false", RequiresRestart: true));
@@ -374,6 +380,13 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
         if (actorUserId is { } solverActor && definitions.Keys.Any(key => key.StartsWith("ChallengeSolver:", StringComparison.Ordinal)) &&
             !await db.Users.AnyAsync(item => item.Id == solverActor && item.Enabled && item.IsAdmin, cancellationToken))
             throw new UnauthorizedAccessException("Administrator permissions required.");
+        if (definitions.Keys.Any(key => DurableBackupService.PolicyKeys.Contains(key)))
+        {
+            if (Path.Exists(Path.Combine(Path.GetFullPath(_configuration["Storage:DataDirectory"] ?? "/app/data"), "restore-pending")))
+                throw new RestorePendingException();
+            if (actorUserId is { } backupActor && !await db.Users.AnyAsync(item => item.Id == backupActor && item.Enabled && item.IsAdmin, cancellationToken))
+                throw new UnauthorizedAccessException("Administrator permissions required.");
+        }
         var normalizedWrites = definitions.ToDictionary(item => item.Key,
             item => Normalize(item.Value.Definition, item.Value.Write.RawValue), StringComparer.OrdinalIgnoreCase);
         if (ownerUserId.HasValue && definitions.Keys.Any(key => !ListeningPreferenceKeys.All.Contains(key)))

@@ -1143,7 +1143,7 @@ for (const viewport of viewports) {
       await addSource.getByRole("button", { name: "Close add a source" }).click();
       await page.goto("#/settings/maintenance");
       await expect(page.getByText("Backups include saved sign-ins. Keep downloaded files private.")).toBeVisible();
-      await expect(page.getByRole("button", { name: "Create verified backup" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Back up now" })).toBeVisible();
       await expect(page.getByText("No backups yet.")).toBeVisible();
       await expect(page.locator(".transfer-card")).toHaveCount(0);
       await expect.poll(() => page.evaluate(() =>
@@ -4305,7 +4305,9 @@ test("Maintenance creates verified backups, lists downloads, and reports failure
         return;
       }
       created = true;
-      await route.fulfill({ contentType: "application/json", body: JSON.stringify(backup) });
+      await route.fulfill({ status: 202, contentType: "application/json", body: JSON.stringify({
+        jobId: "22222222-2222-4222-8222-222222222222", created: true, message: "Backup queued.",
+      }) });
       return;
     }
     await route.continue();
@@ -4319,8 +4321,8 @@ test("Maintenance creates verified backups, lists downloads, and reports failure
   }));
 
   await page.goto("#/settings/maintenance");
-  const card = page.locator(".maintenance-card").filter({ hasText: "Durable application state" });
-  await card.getByRole("button", { name: "Create verified backup" }).click();
+  const card = page.getByRole("article", { name: "Saved backups", exact: true });
+  await page.getByRole("button", { name: "Back up now" }).click();
   await expect(card.getByText(backup.fileName)).toBeVisible();
   await expect(card.getByText(/Sep 30, 2026.*2 MiB.*Verified/)).toBeVisible();
   await expect(card.getByRole("link", { name: "Download" })).toHaveAttribute(
@@ -4329,7 +4331,7 @@ test("Maintenance creates verified backups, lists downloads, and reports failure
 
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   failCreate = true;
-  await card.getByRole("button", { name: "Create verified backup" }).click();
+  await page.getByRole("button", { name: "Back up now" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Backup creation failed." })).toBeVisible();
 });
 
@@ -4362,7 +4364,7 @@ test("Maintenance stages a backup restore only after keyboard confirmation", asy
   });
 
   await page.goto("#/settings/maintenance");
-  const card = page.locator(".maintenance-card").filter({ hasText: "Durable application state" });
+  const card = page.getByRole("article", { name: "Saved backups", exact: true });
   await card.getByLabel("Backup ZIP file").setInputFiles({
     name: "restore.zip", mimeType: "application/zip", buffer: Buffer.from("fixture zip"),
   });
@@ -4391,12 +4393,12 @@ test("Maintenance stages a backup restore only after keyboard confirmation", asy
   await dialog.getByRole("button", { name: "Restore on restart" }).focus();
   await expect(dialog.getByRole("button", { name: "Restore on restart" })).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(card.getByText("A restore is staged. Restart Allstarr to finish replacing saved state and credentials.")).toBeVisible();
+  await expect(page.getByText("A restore is staged. Restart Allstarr to finish replacing saved state and credentials.")).toBeVisible();
   await expect(stage).toBeDisabled();
   expect(restoreRequests).toBe(2);
   await page.reload();
   await page.goto("#/settings/maintenance");
-  await expect(card.getByText("A restore is staged. Restart Allstarr to finish replacing saved state and credentials.")).toBeVisible();
+  await expect(page.getByText("A restore is staged. Restart Allstarr to finish replacing saved state and credentials.")).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 

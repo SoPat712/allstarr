@@ -17,62 +17,6 @@ namespace allstarr.Core.Storage.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
 
-            modelBuilder.Entity("allstarr.Core.Storage.ProviderUserDataRecord", b =>
-                {
-                    b.Property<Guid>("OwnerUserId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Protocol")
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("BackendInstanceId")
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ItemId")
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT");
-
-                    b.Property<long?>("HistoryResetAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<bool?>("Played")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long?>("PlayedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int?>("Rating")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("OwnerUserId", "Protocol", "BackendInstanceId", "ItemId");
-
-                    b.ToTable("provider_user_data", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_provider_user_data_rating", "\"Rating\" IS NULL OR (\"Rating\" >= 0 AND \"Rating\" <= 5)");
-                        });
-                });
-
-            modelBuilder.Entity("allstarr.Core.Storage.SubsonicPlayQueueRecord", b =>
-                {
-                    b.Property<string>("BackendInstanceId")
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("BackendPrincipalId")
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("PayloadJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("BackendInstanceId", "BackendPrincipalId");
-
-                    b.ToTable("subsonic_play_queues", (string)null);
-                });
-
             modelBuilder.Entity("allstarr.Core.Downloads.DownloadedSongMappingEntity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1410,22 +1354,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.ToTable("legacy_media_adoptions", (string)null);
                 });
 
-            modelBuilder.Entity("allstarr.Core.ManagedFiles.ManagedStorageIdentityRecord", b =>
-                {
-                    b.Property<int>("Id").HasColumnType("INTEGER");
-                    b.Property<Guid>("Generation").HasColumnType("TEXT");
-                    b.Property<string>("MarkerDeviceId").IsRequired().HasMaxLength(64).HasColumnType("TEXT");
-                    b.Property<string>("MarkerFileId").IsRequired().HasMaxLength(64).HasColumnType("TEXT");
-                    b.Property<long>("Revision").IsConcurrencyToken().HasColumnType("INTEGER");
-                    b.Property<long>("UpdatedAt").HasColumnType("INTEGER");
-                    b.Property<Guid?>("VerificationJobId").HasColumnType("TEXT");
-                    b.HasKey("Id");
-                    b.ToTable("managed_storage_identity", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_managed_storage_singleton", "\"Id\" = 1 AND \"Revision\" > 0");
-                        });
-                });
-
             modelBuilder.Entity("allstarr.Core.ManagedFiles.ManagedFileOwnershipEntity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -1565,6 +1493,42 @@ namespace allstarr.Core.Storage.Migrations
                         .HasDatabaseName("IX_managed_file_reference_owner");
 
                     b.ToTable("managed_file_references", (string)null);
+                });
+
+            modelBuilder.Entity("allstarr.Core.ManagedFiles.ManagedStorageIdentityRecord", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("Generation")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MarkerDeviceId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MarkerFileId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("VerificationJobId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("managed_storage_identity", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_managed_storage_singleton", "\"Id\" = 1 AND \"Revision\" > 0");
+                        });
                 });
 
             modelBuilder.Entity("allstarr.Core.ManagedFiles.RecordingKeptRouteEntity", b =>
@@ -1875,6 +1839,101 @@ namespace allstarr.Core.Storage.Migrations
                         .HasDatabaseName("IX_audit_subject_history");
 
                     b.ToTable("audit_events", (string)null);
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.BackupArtifactRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ApplicationVersion")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Bytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Directory")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DirectoryDeviceId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DirectoryFileId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FileDeviceId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FileId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("FileWriteTicks")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("JobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("LastFailureAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LastFailureCode")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastFailureMessage")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Origin")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PolicyJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("RemovedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("ScheduledFor")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SchemaVersion")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Sha256")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StorageBinding")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("VerifiedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("JobId")
+                        .IsUnique();
+
+                    b.ToTable("backup_artifacts", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_backup_origin", "\"Origin\" IN ('manual','scheduled')");
+                        });
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.CanonicalRecordingRecord", b =>
@@ -2390,6 +2449,45 @@ namespace allstarr.Core.Storage.Migrations
                         });
                 });
 
+            modelBuilder.Entity("allstarr.Core.Storage.HealthSmokeRunRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AlertStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ArtifactsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BindingJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("CompletedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CompletedJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.HasIndex("OwnerUserId");
+
+                    b.ToTable("health_smoke_runs", (string)null);
+                });
+
             modelBuilder.Entity("allstarr.Core.Storage.JobScheduleRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -2424,7 +2522,7 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("OwnerUserId")
+                    b.Property<Guid?>("OwnerUserId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("PayloadTemplateJson")
@@ -2450,6 +2548,11 @@ namespace allstarr.Core.Storage.Migrations
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("JobType")
+                        .IsUnique()
+                        .HasDatabaseName("IX_household_backup_schedule")
+                        .HasFilter("\"JobType\"='storage.backup' AND \"OwnerUserId\" IS NULL");
 
                     b.HasIndex("OwnerUserId");
 
@@ -3583,6 +3686,43 @@ namespace allstarr.Core.Storage.Migrations
                         });
                 });
 
+            modelBuilder.Entity("allstarr.Core.Storage.ProviderUserDataRecord", b =>
+                {
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Protocol")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BackendInstanceId")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ItemId")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("HistoryResetAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool?>("Played")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("PlayedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Rating")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("OwnerUserId", "Protocol", "BackendInstanceId", "ItemId");
+
+                    b.ToTable("provider_user_data", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_provider_user_data_rating", "\"Rating\" IS NULL OR (\"Rating\" >= 0 AND \"Rating\" <= 5)");
+                        });
+                });
+
             modelBuilder.Entity("allstarr.Core.Storage.RecordingIdentifierRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -3742,6 +3882,25 @@ namespace allstarr.Core.Storage.Migrations
                         .IsUnique();
 
                     b.ToTable("secret_versions", (string)null);
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.SubsonicPlayQueueRecord", b =>
+                {
+                    b.Property<string>("BackendInstanceId")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BackendPrincipalId")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("BackendInstanceId", "BackendPrincipalId");
+
+                    b.ToTable("subsonic_play_queues", (string)null);
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.TrackMatchRecord", b =>
@@ -4018,15 +4177,6 @@ namespace allstarr.Core.Storage.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("allstarr.Core.Storage.ProviderUserDataRecord", b =>
-                {
-                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("OwnerUserId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
             modelBuilder.Entity("allstarr.Core.Intelligence.ListeningEventRecord", b =>
                 {
                     b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
@@ -4294,6 +4444,14 @@ namespace allstarr.Core.Storage.Migrations
                         .OnDelete(DeleteBehavior.Restrict);
                 });
 
+            modelBuilder.Entity("allstarr.Core.Storage.BackupArtifactRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.DurableJobRecord", null)
+                        .WithMany()
+                        .HasForeignKey("JobId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
             modelBuilder.Entity("allstarr.Core.Storage.CanonicalRecordingRecord", b =>
                 {
                     b.HasOne("allstarr.Core.Storage.UserRecord", null)
@@ -4387,13 +4545,21 @@ namespace allstarr.Core.Storage.Migrations
                         .HasConstraintName("FK_external_snapshot_provider_account");
                 });
 
+            modelBuilder.Entity("allstarr.Core.Storage.HealthSmokeRunRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("allstarr.Core.Storage.JobScheduleRecord", b =>
                 {
                     b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
                         .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
                         .HasConstraintName("FK_JobSchedule_User");
                 });
 
@@ -4701,6 +4867,15 @@ namespace allstarr.Core.Storage.Migrations
                         .HasConstraintName("FK_track_identity_provider_account");
                 });
 
+            modelBuilder.Entity("allstarr.Core.Storage.ProviderUserDataRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("allstarr.Core.Storage.RecordingIdentifierRecord", b =>
                 {
                     b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
@@ -4776,24 +4951,6 @@ namespace allstarr.Core.Storage.Migrations
                 {
                     b.Navigation("Identifiers");
                 });
-            modelBuilder.Entity("allstarr.Core.Storage.HealthSmokeRunRecord", b =>
-                {
-                    b.Property<Guid>("Id").HasColumnType("TEXT");
-                    b.Property<string>("AlertStatus").IsRequired().HasMaxLength(32).HasColumnType("TEXT");
-                    b.Property<string>("ArtifactsJson").IsRequired().HasColumnType("TEXT");
-                    b.Property<string>("BindingJson").IsRequired().HasColumnType("TEXT");
-                    b.Property<long?>("CompletedAt").HasColumnType("INTEGER");
-                    b.Property<string>("CompletedJson").HasColumnType("TEXT");
-                    b.Property<long>("CreatedAt").HasColumnType("INTEGER");
-                    b.Property<Guid>("OwnerUserId").HasColumnType("TEXT");
-                    b.HasKey("Id");
-                    b.HasIndex("CreatedAt");
-                    b.HasIndex("OwnerUserId");
-                    b.ToTable("health_smoke_runs", (string)null);
-                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
-                        .WithMany().HasForeignKey("OwnerUserId").OnDelete(DeleteBehavior.Restrict).IsRequired();
-                });
-
 #pragma warning restore 612, 618
         }
     }

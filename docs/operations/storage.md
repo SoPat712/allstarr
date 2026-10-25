@@ -49,11 +49,37 @@ Startup enables WAL, applies the checked-in baseline, and runs an integrity chec
 | `Storage__DatabaseFileName` | `allstarr.db` | File name within the data directory |
 | `Storage__AutoMigrate` | `true` | Apply the baseline before readiness |
 | `Storage__CommandTimeoutSeconds` | `30` | Command execution timeout |
-| `Storage:BackupRetentionCount` | `10` | Saved in Settings; number of recent backup archives to retain (1–1000) |
+| `Storage:BackupEnabled` | `true` | Daily database-and-key-ring backup |
+| `Storage:BackupTimeUtc` | `03:00` | Daily time in UTC, in `HH:mm` format |
+| `Storage:BackupDirectory` | Empty | Existing absolute container directory; empty uses the data volume's `backups/` folder |
+| `Storage:BackupDailyRetentionCount` | `14` | Daily scheduled copies to keep (1–90) |
+| `Storage:BackupWeeklyRetentionCount` | `8` | Weekly scheduled copies to keep (0–52) |
+| `Storage:BackupRetentionCount` | `10` | Recent manual copies to keep (1–1000) |
 
 Development installations use a fresh SQLite baseline; PostgreSQL data is not imported. Preserve existing PostgreSQL data separately before replacing an installation. Do not remove media roots or the encryption key ring.
 
-Administrators can create and download verified backups from Settings → Backups. Each private ZIP in `{Storage:DataDirectory}/backups` contains a consistent SQLite snapshot, the configured encryption key ring, and a manifest with file checksums and schema information. Creation verifies database integrity and key availability; download verifies the archive checksums again. Keep downloaded archives private: together, the database and key ring can unlock saved credentials. Retention removes only recognized backup archives, leaving unrelated or damaged files untouched. Backups exclude media, caches, and extension packages.
+Administrators configure daily backups and download archives in **Settings → Backups**. The status card shows the last verified time and size, the next scheduled run, current work and safe failure details. **Back up now** queues durable background work; acceptance does not mean the archive is complete. Work survives restart, and overlapping manual or scheduled requests do not start a second snapshot. A missed schedule runs once after recovery rather than creating a backlog of historical snapshots. Schedule changes apply to future work without a restart.
+
+Each private ZIP contains a consistent SQLite snapshot, the configured encryption key ring, and a manifest with file checksums and schema information. Creation verifies database integrity and key availability; download verifies archive checksums again. Keep downloaded archives private: together, the database and key ring can unlock saved credentials. Backups exclude media, caches, deployment configuration, extension packages and optional provider-session volumes.
+
+Scheduled retention keeps the newest verified archive from each of the most recent 14 UTC dates and eight ISO weeks by default. One archive can satisfy both daily and weekly retention. Manual archives have a separate count, defaulting to ten. Cleanup requires saved ownership and unchanged file identity and content; it preserves active downloads, unrelated files, damaged or changed archives, and archives created before ownership tracking was introduced. Existing archives remain in their folders when the destination changes. Downloading an older archive checks its contents without adopting it for automatic deletion.
+
+The default destination is `{Storage:DataDirectory}/backups`. To use storage synchronized elsewhere, first mount its local folder into the container, then enter that existing absolute container path in **Backup folder**. Configure the synchronization outside Allstarr and protect the remote copy as carefully as the key ring. A missing, replaced or unavailable mount reports a backup failure; it does not redirect backups to another folder. Keep the live SQLite database on local disk even when archives are synchronized elsewhere.
+
+For example, after creating the host folder with suitable private permissions, add a bind mount to your Compose override:
+
+```yaml
+services:
+  allstarr:
+    volumes:
+      - type: bind
+        source: /absolute/host/backup-sync
+        target: /backup-export
+        bind:
+          create_host_path: false
+```
+
+Replace the source path, recreate the container with the override, then save `/backup-export` as **Backup folder**. The long bind syntax prevents Compose from silently creating a missing host folder; see [Docker's bind-mount options](https://docs.docker.com/reference/compose-file/services/#long-syntax-5). It does not configure or verify the synchronization service.
 
 To restore, choose a backup ZIP in Settings → Backups and confirm **Restore on restart**. Uploads are limited to 1 GiB, with a maximum expanded database size of 4 GiB. Allstarr checks the archive, schema history, database integrity, and required encryption keys, then stages the files in `{Storage:DataDirectory}/restore-pending`. The running database stays unchanged until you restart Allstarr. A pending restore prevents another backup or restore from starting.
 

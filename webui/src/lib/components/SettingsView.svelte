@@ -4,7 +4,6 @@
   import { onMount } from "svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { Checkbox } from "$lib/components/ui/checkbox";
-  import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import {
@@ -18,8 +17,8 @@
   import AccessSettingsCard from "$lib/components/AccessSettingsCard.svelte";
   import StorageVerificationCard from "$lib/components/StorageVerificationCard.svelte";
   import HealthView from "$lib/components/HealthView.svelte";
+  import BackupsView from "$lib/components/BackupsView.svelte";
   import type { OnboardingState } from "$lib/api";
-  import FilePicker from "$lib/components/FilePicker.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -73,7 +72,6 @@
 
   let schema = $state<UiSchema | null>(null);
   let config = $state<Record<string, unknown>>({});
-  let storage = $state<Awaited<ReturnType<typeof settings.storage>> | null>(null);
   let cache = $state<Awaited<ReturnType<typeof settings.cache>> | null>(null);
   let cachePreview = $state<Awaited<ReturnType<typeof settings.cachePreview>> | null>(null);
   let loading = $state(true);
@@ -82,9 +80,6 @@
   let error = $state("");
   let purgeTarget = $state("");
   let purgeOpen = $state(false);
-  let restoreOpen = $state(false);
-  let restoreError = $state("");
-  let restoreFile = $state<File | null>(null);
   let loadedSection = $state("");
   let dirtyOwners = $state<string[]>([]);
   let serverChanged = $state(false);
@@ -111,18 +106,6 @@
   const cacheDiskCeiling = $derived(
     Number((config.cache as Record<string, unknown> | undefined)?.mediaMaximumMegabytes ?? 512),
   );
-  const storageReady = $derived(storage?.storage.readiness?.toLowerCase() === "ready");
-  const restorePending = $derived(storage?.restorePending === true);
-
-  function backupDate(value: string) {
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
-  }
-
-  function backupSize(bytes: number) {
-    return Number.isFinite(bytes) && bytes >= 0 ? `${(bytes / 1024 / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} MiB` : "Size unavailable";
-  }
-
   $effect(() => {
     const section = active;
     if (section === loadedSection) return;
@@ -147,7 +130,6 @@
     const requests: Array<[string, Promise<unknown>]> = [["schema", home.schema()]];
     if (["general", "storage", "network"].includes(active))
       requests.push(["config", settings.config()]);
-    if (active === "backups") requests.push(["storage", settings.storage()]);
     if (active === "storage") requests.push(
       ["cache", settings.cache()],
       ["cachePreview", settings.cachePreview()],
@@ -161,8 +143,6 @@
         if (dirtyOwners.length) serverChanged = true;
         else config = result.value as Record<string, unknown>;
       }
-      if (label === "storage")
-        storage = result.value as Awaited<ReturnType<typeof settings.storage>>;
       if (label === "cache")
         cache = result.value as Awaited<ReturnType<typeof settings.cache>>;
       if (label === "cachePreview")
@@ -245,23 +225,6 @@
       `${humanize(purgeTarget)} cache purged.`,
     );
     purgeOpen = false;
-  }
-
-  async function restore() {
-    if (!restoreFile || action || restorePending) return;
-    action = "restore";
-    restoreError = "";
-    try {
-      const result = await settings.restore(restoreFile);
-      toast.success(result.message);
-      restoreOpen = false;
-      restoreFile = null;
-      await refresh();
-    } catch (cause) {
-      restoreError = cause instanceof Error ? cause.message : "Backup restore could not be staged.";
-    } finally {
-      action = "";
-    }
   }
 
   function deploymentOwned(field: ConfigSection["fields"][number]) {
@@ -437,42 +400,7 @@
           />
         {/if}
       {:else if active === "backups"}
-        <article class="settings-card maintenance-card">
-          <header>
-            <div><h3>Database</h3><small>Durable application state, accounts and encryption keys</small></div>
-            <Badge state={storageReady ? "healthy" : "degraded"}>{storage?.storage.readiness ?? "Unknown"}</Badge>
-          </header>
-          {#if restorePending}
-            <p class="notice-info" role="status">A restore is staged. Restart Allstarr to finish replacing saved state and credentials.</p>
-          {/if}
-          <div class="settings-row">
-            <div><strong>Create a backup</strong><small>Backups include saved sign-ins. Keep downloaded files private.</small></div>
-            {#if administrator}
-              <Button disabled={Boolean(action) || !storageReady || restorePending} onclick={() => void run("backup", settings.backup, "Backup created.")}>{action === "backup" ? "Creating…" : "Create verified backup"}</Button>
-            {/if}
-          </div>
-          {#if (storage?.backups.length ?? 0) > 0}
-            <ul class="backup-list" aria-label="Verified backups">
-              {#each storage?.backups ?? [] as backup (backup.id)}
-                <li>
-                  <span><strong>{backup.fileName}</strong><small>{backupDate(backup.createdAt)} · {backupSize(backup.bytes)} · Verified</small></span>
-                  <Button variant="secondary" size="sm" href={settings.backupDownloadUrl(backup.id)} download={backup.fileName}>Download</Button>
-                </li>
-              {/each}
-            </ul>
-          {:else}
-            <p class="backup-empty">No backups yet.</p>
-          {/if}
-          {#if administrator}
-            <div class="settings-row">
-              <div><strong>Restore from a backup</strong><small>Choose a backup ZIP (up to 1 GiB). It replaces saved state the next time Allstarr restarts.</small></div>
-              <div class="backup-restore">
-                <FilePicker label="Backup ZIP file" accept=".zip,application/zip" buttonLabel="Choose backup" disabled={Boolean(action) || restorePending} onselect={(files) => { restoreFile = files[0] ?? null; }} />
-                <Button variant="secondary" disabled={!restoreFile || Boolean(action) || restorePending} onclick={() => { restoreError = ""; restoreOpen = true; }}>Restore on restart</Button>
-              </div>
-            </div>
-          {/if}
-        </article>
+        <BackupsView {administrator} />
       {:else if active === "health" && administrator}
         <HealthView />
       {:else if active === "diagnostics"}
@@ -506,17 +434,6 @@
     description="Disposable metadata and media payloads will be removed. Durable business state, accounts, mappings, playlists, and kept audio are not affected."
     confirmLabel="Purge cache"
     onConfirm={purge}
-  />
-  <ConfirmDialog
-    bind:open={restoreOpen}
-    title="Stage backup restore?"
-    description="The next restart replaces saved state and credentials with the contents of this backup. Previous files are preserved. Allstarr will not restart automatically."
-    confirmLabel={action === "restore" ? "Staging…" : "Restore on restart"}
-    confirmVariant="destructive"
-    disabled={action === "restore" || !restoreFile}
-    closeOnConfirm={false}
-    error={restoreError}
-    onConfirm={restore}
   />
 {/if}
 
