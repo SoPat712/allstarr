@@ -12,11 +12,19 @@ public partial class JellyfinSessionManager
             return includeStopped || session.LastPlayingItemId != null ? (JsonObject?)session.ExternalReport?.DeepClone() : null;
     }
 
-    internal void UpdateExternalReport(JellyfinSessionKey key, JsonObject report)
+    internal bool UpdateExternalReport(JellyfinSessionKey key, JsonObject report,
+        PlaybackReportReceipt? receipt = null, bool stopped = false)
     {
-        if (!_sessions.TryGetValue(key, out var session)) return;
+        if (!_sessions.TryGetValue(key, out var session)) return false;
         lock (session.SyncRoot)
         {
+            var current = receipt ?? CapturePlaybackReport();
+            if (!CanApplyPlaybackReceipt(session, current)) return false;
+            if (stopped && session.HomeObservation is { } observed)
+            {
+                if (!JellyfinExternalPlaybackReport.SameOccurrence(ObservationIdentity(observed), report)) return false;
+                session.HomeObservation = observed with { Receipt = current, Stopped = true };
+            }
             if (session.LastPlayingItemId == null || session.ExternalReport == null ||
                 !JellyfinExternalPlaybackReport.SameOccurrence(session.ExternalReport, report))
             {
@@ -24,9 +32,11 @@ public partial class JellyfinSessionManager
                 session.LastExplicitStopAtUtc = null;
             }
             session.ExternalReport = (JsonObject)report.DeepClone();
-            session.LastPlayingItemId = JellyfinExternalPlaybackReport.Text(report, "ItemId");
-            session.LastPlayingPositionTicks = report["PositionTicks"]?.GetValue<long>();
+            session.LastPlayingItemId = stopped ? null : JellyfinExternalPlaybackReport.Text(report, "ItemId");
+            session.LastPlayingPositionTicks = stopped ? null : report["PositionTicks"]?.GetValue<long>();
+            session.PlaybackSequence = current.Sequence;
             session.LastActivity = DateTime.UtcNow;
+            return true;
         }
     }
 

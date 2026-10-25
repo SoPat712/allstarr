@@ -20,6 +20,76 @@ public sealed class DownloadActivityControllerTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task NowPlaying_CapturesServerClockAfterMetadataAndPreservesUnknownPosition(bool unknown)
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.Parse("2026-10-25T12:00:00Z"));
+        var anchor = clock.GetUtcNow();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var source = new StubPlaybackSource(new PlaybackActivityState("device", "local-item",
+            unknown ? null : TimeSpan.FromMilliseconds(587).Ticks, DateTime.UtcNow)
+        { IsPaused = unknown ? null : false, PositionUpdatedAt = unknown ? null : anchor });
+        var metadata = new Mock<IPlaybackMetadataResolver>(MockBehavior.Strict);
+        metadata.Setup(value => value.ResolveAsync("local-item", It.IsAny<CancellationToken>())).Returns(async () =>
+        {
+            entered.TrySetResult();
+            await release.Task;
+            return new PlaybackTrackMetadata("Track", "Artist", null, null, 0);
+        });
+        var controller = CreateController([source], [metadata.Object], timeProvider: clock);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession();
+        var pending = controller.GetNowPlaying(default);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            clock.Advance(TimeSpan.FromSeconds(2));
+            release.TrySetResult();
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await pending.WaitAsync(TimeSpan.FromSeconds(5))).Value));
+            Assert.Equal(clock.GetUtcNow(), json.RootElement.GetProperty("capturedAt").GetDateTimeOffset());
+            var item = Assert.Single(json.RootElement.GetProperty("items").EnumerateArray());
+            Assert.Equal(JsonValueKind.Null, item.GetProperty("DurationSeconds").ValueKind);
+            Assert.Equal(JsonValueKind.Null, item.GetProperty("Progress").ValueKind);
+            if (unknown)
+            {
+                Assert.Equal(JsonValueKind.Null, item.GetProperty("PositionSeconds").ValueKind);
+                Assert.Equal(JsonValueKind.Null, item.GetProperty("IsPaused").ValueKind);
+                Assert.Equal(JsonValueKind.Null, item.GetProperty("PositionUpdatedAt").ValueKind);
+            }
+            else
+            {
+                Assert.Equal(0.587, item.GetProperty("PositionSeconds").GetDouble());
+                Assert.False(item.GetProperty("IsPaused").GetBoolean());
+                Assert.Equal(anchor, item.GetProperty("PositionUpdatedAt").GetDateTimeOffset());
+            }
+        }
+        finally
+        {
+            release.TrySetResult();
+            await pending.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public async Task NowPlaying_PreservesFractionalPositionAndDoesNotInventClockOrDuration(int duration)
+    {
+        var source = new StubPlaybackSource(new PlaybackActivityState("device", "local-item",
+            TimeSpan.FromMilliseconds(587).Ticks, DateTime.UtcNow));
+        var controller = CreateController([source], [new StubMetadataResolver(new PlaybackTrackMetadata("Track", "Artist", null, null, duration))]);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession();
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await controller.GetNowPlaying(default)).Value));
+        var item = Assert.Single(json.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal(0.587, item.GetProperty("PositionSeconds").GetDouble());
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("DurationSeconds").ValueKind);
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("IsPaused").ValueKind);
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("PositionUpdatedAt").ValueKind);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task NowPlaying_ProjectsUserClientSourceProgressAndScrobbleState(bool confirmed)
     {
         var userId = Guid.CreateVersion7();
@@ -227,7 +297,8 @@ public sealed class DownloadActivityControllerTests
         IEnumerable<IPlaybackMetadataResolver> metadataResolvers,
         IPlaybackDeliveryActivitySource? playbackDeliveries = null,
         IDbContextFactory<AllstarrDbContext>? contextFactory = null,
-        IBackendLibraryAccessResolver? libraryAccess = null)
+        IBackendLibraryAccessResolver? libraryAccess = null,
+        TimeProvider? timeProvider = null)
     {
         if (libraryAccess == null)
         {
@@ -245,7 +316,8 @@ public sealed class DownloadActivityControllerTests
             NullLogger<DownloadActivityController>.Instance,
             libraryAccess,
             playbackDeliveries,
-            contextFactory)
+            contextFactory,
+            timeProvider)
         {
             ControllerContext = new ControllerContext
             {

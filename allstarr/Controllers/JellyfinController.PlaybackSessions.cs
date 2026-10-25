@@ -81,6 +81,7 @@ public partial class JellyfinController
     [HttpPost("Sessions/Playing")]
     public async Task<IActionResult> ReportPlaybackStart()
     {
+        var receipt = _sessionManager.CapturePlaybackReport();
         try
         {
             Request.EnableBuffering();
@@ -123,7 +124,8 @@ public partial class JellyfinController
                 var (isExt, _, _) = _localLibraryService.ParseSongId(itemId);
                 if (!isExt)
                 {
-                    _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), itemId, positionTicks);
+                    ObservePlaybackActivity(doc.RootElement, itemId, deviceId, receipt);
+                    _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), itemId, positionTicks, receipt);
                 }
             }
 
@@ -165,7 +167,7 @@ public partial class JellyfinController
                                                 IsNewExternalOccurrence(deviceId, doc.RootElement));
                             if (inferredStop && !string.IsNullOrWhiteSpace(previousItemId))
                             {
-                                await HandleInferredStopOnProgressTransitionAsync(deviceId, previousItemId, previousPositionTicks);
+                                await HandleInferredStopOnProgressTransitionAsync(deviceId, previousItemId, previousPositionTicks, receipt);
                             }
                         }
                     }
@@ -180,6 +182,9 @@ public partial class JellyfinController
 
                         if (sessionReady)
                         {
+                            var duplicateSong = await GetProviderSongAsync(provider!, externalId!);
+                            if (duplicateSong != null)
+                                ObservePlaybackActivity(doc.RootElement, itemId, deviceId, receipt);
                             _sessionManager.UpdateActivity(PlaybackSessionKey(deviceId!));
                         }
 
@@ -193,6 +198,7 @@ public partial class JellyfinController
                         trackName, provider, externalId);
 
                     var externalReport = BuildExternalReport(doc.RootElement, itemId, song, deviceId);
+                    ObservePlaybackActivity(doc.RootElement, itemId, deviceId, receipt);
                     var playbackJson = JellyfinExternalPlaybackReport.SerializeUpstream(externalReport);
                     var (ghostResult, ghostStatusCode) =
                         await _proxyService.PostJsonAsync("Sessions/Playing", playbackJson, Request.Headers);
@@ -211,7 +217,7 @@ public partial class JellyfinController
 
                     if (ghostStatusCode == 200 || ghostStatusCode == 204)
                     {
-                        await ObserveExternalReportAsync(externalReport, PlaybackTransition.Start, deviceId);
+                        await ObserveExternalReportAsync(externalReport, PlaybackTransition.Start, deviceId, receipt);
                     }
 
                     if (sessionReady)
@@ -236,7 +242,8 @@ public partial class JellyfinController
                 if (!string.IsNullOrEmpty(deviceId))
                 {
                     _sessionManager.UpdateActivity(PlaybackSessionKey(deviceId));
-                    _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), itemId, positionTicks);
+                    ObservePlaybackActivity(doc.RootElement, itemId, deviceId, receipt);
+                    _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), itemId, positionTicks, receipt);
                 }
 
                 return NoContent();
@@ -331,7 +338,8 @@ public partial class JellyfinController
                     if (sessionCreated)
                     {
                         _sessionManager.UpdateActivity(PlaybackSessionKey(deviceId));
-                        _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), itemId, positionTicks);
+                        ObservePlaybackActivity(doc.RootElement, itemId, deviceId, receipt);
+                        _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), itemId, positionTicks, receipt);
                         _logger.LogDebug("✓ SESSION: Session ensured for device {DeviceId} after playback start", deviceId);
                     }
                     else
@@ -357,6 +365,7 @@ public partial class JellyfinController
     [HttpPost("Sessions/Playing/Progress")]
     public async Task<IActionResult> ReportPlaybackProgress()
     {
+        var receipt = _sessionManager.CapturePlaybackReport();
         try
         {
             Request.EnableBuffering();
@@ -436,7 +445,7 @@ public partial class JellyfinController
 
                         if (sessionReady && inferredStop && !string.IsNullOrWhiteSpace(previousItemId))
                         {
-                            await HandleInferredStopOnProgressTransitionAsync(deviceId, previousItemId, previousPositionTicks);
+                            await HandleInferredStopOnProgressTransitionAsync(deviceId, previousItemId, previousPositionTicks, receipt);
                         }
 
                         if (sessionReady)
@@ -457,6 +466,7 @@ public partial class JellyfinController
                                 externalId);
 
                             var inferredReport = BuildExternalReport(doc.RootElement, itemId, currentSong, deviceId);
+                            ObservePlaybackActivity(doc.RootElement, itemId, deviceId, receipt);
                             var inferredExternalStartPayload = JellyfinExternalPlaybackReport.SerializeUpstream(inferredReport);
 
                             var (_, inferredStartStatusCode) = await _proxyService.PostJsonAsync(
@@ -466,7 +476,7 @@ public partial class JellyfinController
 
                             if (inferredStartStatusCode == 200 || inferredStartStatusCode == 204)
                             {
-                                await ObserveExternalReportAsync(inferredReport, PlaybackTransition.InferredStart, deviceId);
+                                await ObserveExternalReportAsync(inferredReport, PlaybackTransition.InferredStart, deviceId, receipt);
                                 _logger.LogDebug("✓ Inferred external playback start forwarded to Jellyfin ({StatusCode})",
                                     inferredStartStatusCode);
                             }
@@ -494,6 +504,7 @@ public partial class JellyfinController
                     }
 
                     var externalReport = BuildExternalReport(doc.RootElement, itemId, currentSong, deviceId);
+                    ObservePlaybackActivity(doc.RootElement, itemId, deviceId, receipt);
                     var progressJson = JellyfinExternalPlaybackReport.SerializeUpstream(externalReport);
 
                     var (progressResult, progressStatusCode) =
@@ -501,7 +512,7 @@ public partial class JellyfinController
 
                     if (progressStatusCode == 200 || progressStatusCode == 204)
                     {
-                        await ObserveExternalReportAsync(externalReport, PlaybackTransition.Progress, deviceId);
+                        await ObserveExternalReportAsync(externalReport, PlaybackTransition.Progress, deviceId, receipt);
                     }
 
                     if (positionTicks.HasValue)
@@ -552,13 +563,14 @@ public partial class JellyfinController
 
                     if (sessionReady && inferredStop && !string.IsNullOrWhiteSpace(previousItemId))
                     {
-                        await HandleInferredStopOnProgressTransitionAsync(deviceId, previousItemId, previousPositionTicks);
+                        await HandleInferredStopOnProgressTransitionAsync(deviceId, previousItemId, previousPositionTicks, receipt);
                     }
 
                     if (sessionReady)
                     {
                         _sessionManager.UpdateActivity(PlaybackSessionKey(deviceId));
-                        _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), itemId, positionTicks);
+                        ObservePlaybackActivity(doc.RootElement, itemId, deviceId, receipt);
+                        _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), itemId, positionTicks, receipt);
                     }
 
                     if (inferredStart &&
@@ -664,7 +676,7 @@ public partial class JellyfinController
     private async Task HandleInferredStopOnProgressTransitionAsync(
         string deviceId,
         string previousItemId,
-        long? previousPositionTicks)
+        long? previousPositionTicks, JellyfinSessionManager.PlaybackReportReceipt receipt)
     {
         if (await SuppressSyntheticProviderPlaybackAsync(previousItemId, deviceId)) return;
         if (_sessionManager.WasRecentlyExplicitlyStopped(PlaybackSessionKey(deviceId), previousItemId, InferredStopDedupeWindow))
@@ -712,7 +724,7 @@ public partial class JellyfinController
 
             if (inferredExternalStopStatusCode == 200 || inferredExternalStopStatusCode == 204)
             {
-                await ObserveExternalReportAsync(externalReport, PlaybackTransition.InferredStop, deviceId, stopped: true);
+                await ObserveExternalReportAsync(externalReport, PlaybackTransition.InferredStop, deviceId, receipt, stopped: true);
                 _logger.LogDebug("✓ Inferred external playback stop forwarded to Jellyfin ({StatusCode})",
                     inferredExternalStopStatusCode);
             }
@@ -894,6 +906,7 @@ public partial class JellyfinController
     [HttpPost("Sessions/Playing/Stopped")]
     public async Task<IActionResult> ReportPlaybackStopped()
     {
+        var receipt = _sessionManager.CapturePlaybackReport();
         try
         {
             Request.EnableBuffering();
@@ -976,10 +989,10 @@ public partial class JellyfinController
                             deviceId ?? "unknown",
                             playSessionId ?? "none");
 
-                        if (!string.IsNullOrWhiteSpace(deviceId))
+                        if (!string.IsNullOrWhiteSpace(deviceId) && ObservePlaybackActivity(doc.RootElement, itemId, deviceId, receipt, stopped: true))
                         {
-                            _sessionManager.MarkExplicitStop(PlaybackSessionKey(deviceId), itemId);
-                            _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), null, null);
+                            _sessionManager.MarkExplicitStop(PlaybackSessionKey(deviceId), itemId, receipt);
+                            _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), null, null, receipt);
                             _sessionManager.MarkSessionPotentiallyEnded(PlaybackSessionKey(deviceId), TimeSpan.FromSeconds(30));
                         }
 
@@ -1015,21 +1028,23 @@ public partial class JellyfinController
                         itemName ?? "Unknown", position, provider, externalId);
 
                     var externalReport = BuildExternalReport(doc.RootElement, itemId, song, deviceId);
+                    ObservePlaybackActivity(doc.RootElement, itemId, deviceId, receipt, stopped: true);
                     var stopJson = JellyfinExternalPlaybackReport.SerializeUpstream(externalReport);
 
                     var (stopResult, stopStatusCode) =
                         await _proxyService.PostJsonAsync("Sessions/Playing/Stopped", stopJson, Request.Headers);
 
+                    var acknowledged = false;
                     if (stopStatusCode == 204 || stopStatusCode == 200)
                     {
-                        await ObserveExternalReportAsync(externalReport, PlaybackTransition.Stop, deviceId, stopped: true);
+                        acknowledged = await ObserveExternalReportAsync(externalReport, PlaybackTransition.Stop, deviceId, receipt, stopped: true);
                         _logger.LogDebug("✓ Ghost playback stop forwarded to Jellyfin ({StatusCode})", stopStatusCode);
                     }
 
-                    if ((stopStatusCode == 200 || stopStatusCode == 204) && !string.IsNullOrWhiteSpace(deviceId))
+                    if (acknowledged && (stopStatusCode == 200 || stopStatusCode == 204) && !string.IsNullOrWhiteSpace(deviceId))
                     {
-                        _sessionManager.MarkExplicitStop(PlaybackSessionKey(deviceId), itemId);
-                        _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), null, null);
+                        _sessionManager.MarkExplicitStop(PlaybackSessionKey(deviceId), itemId, receipt);
+                        _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), null, null, receipt);
                         _sessionManager.MarkSessionPotentiallyEnded(PlaybackSessionKey(deviceId), TimeSpan.FromSeconds(30));
                     }
 
@@ -1058,6 +1073,8 @@ public partial class JellyfinController
                     }
                 }
 
+                ObservePlaybackActivity(doc.RootElement, itemId, deviceId, receipt, stopped: true);
+
                 _logger.LogInformation("🎵 Local track playback stopped: {Name} (ID: {ItemId})",
                     trackName ?? "Unknown", itemId);
 
@@ -1071,8 +1088,8 @@ public partial class JellyfinController
 
                     if (!string.IsNullOrWhiteSpace(deviceId))
                     {
-                        _sessionManager.MarkExplicitStop(PlaybackSessionKey(deviceId), itemId);
-                        _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), null, null);
+                        _sessionManager.MarkExplicitStop(PlaybackSessionKey(deviceId), itemId, receipt);
+                        _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), null, null, receipt);
                         _sessionManager.MarkSessionPotentiallyEnded(PlaybackSessionKey(deviceId), TimeSpan.FromSeconds(30));
                     }
 
@@ -1127,9 +1144,9 @@ public partial class JellyfinController
                 {
                     if (!string.IsNullOrWhiteSpace(itemId))
                     {
-                        _sessionManager.MarkExplicitStop(PlaybackSessionKey(deviceId), itemId);
+                        _sessionManager.MarkExplicitStop(PlaybackSessionKey(deviceId), itemId, receipt);
                     }
-                    _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), null, null);
+                    _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), null, null, receipt);
                     _sessionManager.MarkSessionPotentiallyEnded(PlaybackSessionKey(deviceId), TimeSpan.FromSeconds(30));
                 }
             }

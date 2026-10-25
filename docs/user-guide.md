@@ -57,6 +57,8 @@ Home shows your active listening sessions, playback source, scrobble progress, p
 
 The source is explicitly marked as confirmed streaming, cached audio, or an unconfirmed catalog entry. See [external song labels and playback sources](operations/client-compatibility.md#external-song-labels-and-playback-sources) for `[A]`/`[E]` titles, automatic fallback, song details, and client limitations.
 
+Progress moves between fresh music-app reports and shows **Paused** when the app reports a pause. **Awaiting update** and `~` mean the displayed position is an estimate held until a fresh report arrives; a dash means the app has not supplied that fact.
+
 ### Library
 
 - **Playlists** connects provider playlists and controls how each is exposed to the selected backend.

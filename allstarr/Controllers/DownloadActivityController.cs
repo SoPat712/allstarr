@@ -22,6 +22,7 @@ public class DownloadActivityController : ControllerBase
     private readonly ILogger<DownloadActivityController> _logger;
     private readonly IPlaybackDeliveryActivitySource? _playbackDeliveries;
     private readonly IDbContextFactory<AllstarrDbContext>? _contextFactory;
+    private readonly TimeProvider _timeProvider;
 
     public DownloadActivityController(
         IEnumerable<IPlaybackActivitySource> playbackSources,
@@ -30,7 +31,8 @@ public class DownloadActivityController : ControllerBase
         ILogger<DownloadActivityController> logger,
         IBackendLibraryAccessResolver libraryAccess,
         IPlaybackDeliveryActivitySource? playbackDeliveries = null,
-        IDbContextFactory<AllstarrDbContext>? contextFactory = null)
+        IDbContextFactory<AllstarrDbContext>? contextFactory = null,
+        TimeProvider? timeProvider = null)
     {
         _playbackSources = playbackSources.ToList();
         _metadataResolvers = metadataResolvers.ToList();
@@ -39,6 +41,7 @@ public class DownloadActivityController : ControllerBase
         _libraryAccess = libraryAccess;
         _playbackDeliveries = playbackDeliveries;
         _contextFactory = contextFactory;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     [HttpGet("/api/admin/ui/now-playing")]
@@ -67,8 +70,9 @@ public class DownloadActivityController : ControllerBase
         {
             var itemId = NormalizeExternalItemId(state.ItemId);
             var metadata = await TryResolvePlaybackMetadataAsync(itemId, viewer, cancellationToken);
-            var duration = metadata?.DurationSeconds;
-            var position = (int)Math.Max(0, state.PositionTicks / TimeSpan.TicksPerSecond);
+            var duration = metadata?.DurationSeconds is > 0 ? metadata.DurationSeconds : null;
+            var position = state.PositionTicks is >= 0
+                ? state.PositionTicks.Value / (double)TimeSpan.TicksPerSecond : (double?)null;
             deliveryState.TryGetValue(DeliveryKey(state.UserId, itemId), out var delivery);
             var streamSource = _playbackDeliveries?.StreamFor(state.UserId, state.DeviceId, itemId);
             var externalIdentity = ExternalPlaybackMetadataResolver.ParseTrackIdentity(itemId);
@@ -100,8 +104,10 @@ public class DownloadActivityController : ControllerBase
                     ? delivery?.ProviderAccountName : null,
                 ArtworkUrl = string.IsNullOrWhiteSpace(metadata?.CoverArtUrl) ? null : ArtworkUrl(itemId),
                 PositionSeconds = position,
+                IsPaused = state.IsPaused,
+                PositionUpdatedAt = state.PositionUpdatedAt,
                 DurationSeconds = duration,
-                Progress = duration > 0 ? Math.Clamp(position / (double)duration.Value, 0d, 1d) : null,
+                Progress = duration > 0 && position.HasValue ? Math.Clamp(position.Value / duration.Value, 0d, 1d) : null,
                 LastActivity = state.LastActivity,
                 ScrobbleThresholdSeconds = threshold,
                 ScrobbleEligible = threshold.HasValue && position >= threshold.Value,
@@ -120,7 +126,7 @@ public class DownloadActivityController : ControllerBase
             });
         }
 
-        return Ok(new { items });
+        return Ok(new { items, capturedAt = _timeProvider.GetUtcNow() });
     }
 
     private async Task<Dictionary<string, PlaybackDeliveryState>> LoadDeliveryStateAsync(
@@ -329,7 +335,9 @@ public class DownloadActivityController : ControllerBase
         public string? RouteReason { get; init; }
         public string? ProviderAccountName { get; init; }
         public string? ArtworkUrl { get; init; }
-        public int PositionSeconds { get; init; }
+        public double? PositionSeconds { get; init; }
+        public bool? IsPaused { get; init; }
+        public DateTimeOffset? PositionUpdatedAt { get; init; }
         public int? DurationSeconds { get; init; }
         public double? Progress { get; init; }
         public DateTime LastActivity { get; init; }

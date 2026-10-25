@@ -53,7 +53,19 @@ public partial class JellyfinController
             JsonNode.Parse(payload.GetRawText())!.AsObject());
     }
 
-    private async Task ObserveExternalReportAsync(JsonObject report, PlaybackTransition transition, string? deviceId, bool stopped = false)
+    private bool ObservePlaybackActivity(JsonElement payload, string? itemId, string? deviceId,
+        JellyfinSessionManager.PlaybackReportReceipt receipt, bool stopped = false)
+    {
+        if (string.IsNullOrWhiteSpace(deviceId) || string.IsNullOrWhiteSpace(itemId)) return false;
+        var supplied = JsonNode.Parse(payload.GetRawText())!.AsObject();
+        bool? paused = payload.TryGetProperty("IsPaused", out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean() : null;
+        return _sessionManager.ObservePlaybackReport(PlaybackSessionKey(deviceId), receipt, itemId,
+            ParsePlaybackPositionTicks(payload), paused, supplied, stopped);
+    }
+
+    private async Task<bool> ObserveExternalReportAsync(JsonObject report, PlaybackTransition transition, string? deviceId,
+        JellyfinSessionManager.PlaybackReportReceipt receipt, bool stopped = false)
     {
         var signalType = transition is PlaybackTransition.Start or PlaybackTransition.InferredStart ? "start" :
             transition is PlaybackTransition.Stop or PlaybackTransition.InferredStop ? "stop" : null;
@@ -61,13 +73,11 @@ public partial class JellyfinController
             await _cache.SetStringAsync(ExternalSignalCacheKey(signalType, deviceId,
                 JellyfinExternalPlaybackReport.Text(report, "ItemId") + ":" + JellyfinExternalPlaybackReport.SignalSession(report)),
                 "1", PlaybackSignalDedupeWindow);
-        if (!string.IsNullOrWhiteSpace(deviceId))
-        {
-            _sessionManager.UpdateExternalReport(PlaybackSessionKey(deviceId), report);
-            if (stopped) _sessionManager.UpdatePlayingItem(PlaybackSessionKey(deviceId), null, null);
-        }
+        var accepted = !string.IsNullOrWhiteSpace(deviceId) &&
+            _sessionManager.UpdateExternalReport(PlaybackSessionKey(deviceId), report, receipt, stopped);
         await QueuePlaybackSignalAsync(transition, JellyfinExternalPlaybackReport.Text(report, "ItemId"), deviceId,
             JellyfinExternalPlaybackReport.SignalSession(report), report["PositionTicks"]?.GetValue<long>());
+        return accepted;
     }
 
     private string ExternalDedupeItem(string itemId, JsonElement payload, string? deviceId)

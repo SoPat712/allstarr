@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 using allstarr.Core.Identity;
@@ -29,17 +30,21 @@ public partial class JellyfinSessionManager : IDisposable
     private readonly ConcurrentDictionary<JellyfinSessionKey, byte> _proxiedWebSocketConnections = new();
     private readonly Timer _keepAliveTimer;
     private int _keepAliveRunning;
+    private readonly TimeProvider _observationClock;
+    private long _playbackReceiptSequence;
 
     public JellyfinSessionManager(
         JellyfinProxyService proxyService,
         IOptions<JellyfinSettings> settings,
         ILogger<JellyfinSessionManager> logger,
-        IDbContextFactory<AllstarrDbContext>? factory = null)
+        IDbContextFactory<AllstarrDbContext>? factory = null,
+        TimeProvider? timeProvider = null)
     {
         _proxyService = proxyService;
         _settings = settings.Value;
         _logger = logger;
         _factory = factory;
+        _observationClock = timeProvider ?? TimeProvider.System;
 
         // Jellyfin considers inactive sessions stale after roughly 15 seconds.
         _keepAliveTimer = new Timer(KeepSessionsAlive, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
@@ -245,12 +250,70 @@ public partial class JellyfinSessionManager : IDisposable
         }
     }
 
-    public void UpdatePlayingItem(JellyfinSessionKey key, string? itemId, long? positionTicks)
+    internal readonly record struct PlaybackReportReceipt(long Sequence, DateTimeOffset ReceivedAt);
+
+    internal PlaybackReportReceipt CapturePlaybackReport() =>
+        new(Interlocked.Increment(ref _playbackReceiptSequence), _observationClock.GetUtcNow());
+
+    internal bool ObservePlaybackReport(JellyfinSessionKey key, PlaybackReportReceipt receipt,
+        string itemId, long? positionTicks, bool? isPaused, JsonObject supplied, bool stopped = false)
+    {
+        if (!_sessions.TryGetValue(key, out var session)) return false;
+        lock (session.SyncRoot)
+        {
+            if (!CanApplyPlaybackReceipt(session, receipt)) return false;
+            var previous = session.HomeObservation;
+            var identity = new JsonObject
+            {
+                ["ItemId"] = itemId,
+                ["PlaySessionId"] = JellyfinExternalPlaybackReport.Text(supplied, "PlaySessionId"),
+                ["SessionId"] = JellyfinExternalPlaybackReport.Text(supplied, "SessionId"),
+                ["PlaylistItemId"] = JellyfinExternalPlaybackReport.Text(supplied, "PlaylistItemId")
+            };
+            var same = previous != null && JellyfinExternalPlaybackReport.SameOccurrence(ObservationIdentity(previous), identity);
+            if (stopped && previous is { Stopped: false } && !same) return false;
+            var reported = positionTicks is >= 0 ? positionTicks : null;
+            var position = reported ?? (same ? previous!.PositionTicks : null);
+            var paused = isPaused ?? (same ? previous!.IsPaused : null);
+            var anchor = reported.HasValue ? receipt.ReceivedAt : same ? previous!.PositionUpdatedAt : null;
+            if (!reported.HasValue && isPaused.HasValue && (!same || previous!.IsPaused != isPaused)) anchor = null;
+            string? Identity(string name, string? old) => JellyfinExternalPlaybackReport.Text(identity, name) ?? (same ? old : null);
+            session.HomeObservation = new(receipt, itemId, position, paused, anchor, stopped,
+                Identity("PlaySessionId", previous?.PlaySessionId), Identity("SessionId", previous?.SessionId), Identity("PlaylistItemId", previous?.PlaylistItemId));
+            session.LastActivity = DateTime.UtcNow;
+            return true;
+        }
+    }
+
+    private static JsonObject ObservationIdentity(HomePlaybackObservation observation) => new()
+    {
+        ["ItemId"] = observation.ItemId,
+        ["PlaySessionId"] = observation.PlaySessionId,
+        ["SessionId"] = observation.SessionId,
+        ["PlaylistItemId"] = observation.PlaylistItemId
+    };
+
+    private static bool CanApplyPlaybackReceipt(SessionInfo session, PlaybackReportReceipt receipt) =>
+        receipt.Sequence >= session.PlaybackSequence && receipt.Sequence >= (session.HomeObservation?.Receipt.Sequence ?? 0);
+
+    public void UpdatePlayingItem(JellyfinSessionKey key, string? itemId, long? positionTicks) =>
+        UpdatePlayingItem(key, itemId, positionTicks, null);
+
+    internal void UpdatePlayingItem(JellyfinSessionKey key, string? itemId, long? positionTicks, PlaybackReportReceipt? receipt)
     {
         if (_sessions.TryGetValue(key, out var session))
         {
             lock (session.SyncRoot)
             {
+                var current = receipt ?? CapturePlaybackReport();
+                if (!CanApplyPlaybackReceipt(session, current)) return;
+                if (receipt.HasValue && itemId == null && session.HomeObservation is { } observed &&
+                    (!observed.Stopped || observed.Receipt.Sequence != current.Sequence)) return;
+                session.PlaybackSequence = current.Sequence;
+                if (!receipt.HasValue)
+                    session.HomeObservation = itemId == null
+                        ? new(current, session.HomeObservation?.ItemId ?? session.LastPlayingItemId ?? "", null, null, null, true, null, null, null)
+                        : null;
                 if (itemId != null && itemId != session.LastPlayingItemId) session.ExternalReport = null;
                 session.LastPlayingItemId = itemId;
                 session.LastPlayingPositionTicks = positionTicks;
@@ -262,12 +325,17 @@ public partial class JellyfinSessionManager : IDisposable
     }
 
     // Explicit stops suppress duplicate stops inferred from progress transitions.
-    public void MarkExplicitStop(JellyfinSessionKey key, string itemId)
+    public void MarkExplicitStop(JellyfinSessionKey key, string itemId) => MarkExplicitStop(key, itemId, null);
+
+    internal void MarkExplicitStop(JellyfinSessionKey key, string itemId, PlaybackReportReceipt? receipt)
     {
         if (_sessions.TryGetValue(key, out var session))
         {
             lock (session.SyncRoot)
             {
+                if (receipt.HasValue && !CanApplyPlaybackReceipt(session, receipt.Value)) return;
+                if (receipt.HasValue && session.HomeObservation is { } observed &&
+                    (!observed.Stopped || observed.Receipt.Sequence != receipt.Value.Sequence)) return;
                 session.LastExplicitStopItemId = itemId;
                 session.LastExplicitStopAtUtc = DateTime.UtcNow;
             }
@@ -350,21 +418,23 @@ public partial class JellyfinSessionManager : IDisposable
     {
         var cutoff = DateTime.UtcNow - maxAge;
 
-        return _sessions.Values
-            .Where(session =>
-                !string.IsNullOrWhiteSpace(session.LastPlayingItemId) &&
-                session.LastActivity >= cutoff)
-            .Select(session => new ActivePlaybackState(
-                session.DeviceId,
-                session.LastPlayingItemId!,
-                session.LastPlayingPositionTicks ?? 0,
-                session.LastActivity,
-                session.UserId,
-                session.BackendUserId,
-                session.UserName,
-                session.Client,
-                session.Device))
-            .ToList();
+        var result = new List<ActivePlaybackState>();
+        foreach (var session in _sessions.Values)
+        {
+            lock (session.SyncRoot)
+            {
+                var observation = session.HomeObservation;
+                var itemId = observation?.ItemId ?? session.LastPlayingItemId;
+                if (observation?.Stopped == true || string.IsNullOrWhiteSpace(itemId) || session.LastActivity < cutoff) continue;
+                result.Add(new(session.DeviceId, itemId, observation != null ? observation.PositionTicks : session.LastPlayingPositionTicks,
+                    session.LastActivity, session.UserId, session.BackendUserId, session.UserName, session.Client, session.Device)
+                {
+                    IsPaused = observation?.IsPaused,
+                    PositionUpdatedAt = observation?.PositionUpdatedAt
+                });
+            }
+        }
+        return result;
     }
 
     // Jellyfin, not local playback cleanup, owns the upstream session lifetime.
@@ -744,6 +814,8 @@ public partial class JellyfinSessionManager : IDisposable
         public System.Text.Json.Nodes.JsonObject? ExternalReport { get; set; }
         public string? LastPlayingItemId { get; set; }
         public long? LastPlayingPositionTicks { get; set; }
+        public long PlaybackSequence { get; set; }
+        public HomePlaybackObservation? HomeObservation { get; set; }
         public string? ClientIp { get; set; }
         public string? LastLocalPlayedSignalItemId { get; set; }
         public string? LastExplicitStopItemId { get; set; }
@@ -757,13 +829,20 @@ public partial class JellyfinSessionManager : IDisposable
     public sealed record ActivePlaybackState(
         string DeviceId,
         string ItemId,
-        long PositionTicks,
+        long? PositionTicks,
         DateTime LastActivity,
         Guid? UserId = null,
         string? BackendUserId = null,
         string? UserName = null,
         string? Client = null,
-        string? Device = null);
+        string? Device = null)
+    {
+        public bool? IsPaused { get; init; }
+        public DateTimeOffset? PositionUpdatedAt { get; init; }
+    }
+
+    private sealed record HomePlaybackObservation(PlaybackReportReceipt Receipt, string ItemId, long? PositionTicks,
+        bool? IsPaused, DateTimeOffset? PositionUpdatedAt, bool Stopped, string? PlaySessionId, string? SessionId, string? PlaylistItemId);
 
     private enum CapabilitiesPostResult
     {

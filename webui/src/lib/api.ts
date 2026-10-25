@@ -201,7 +201,9 @@ export type NowPlayingItem = {
   routeReason?: string | null;
   seekRung?: string | null;
   artworkUrl?: string | null;
-  positionSeconds: number;
+  positionSeconds: number | null;
+  isPaused?: boolean | null;
+  positionUpdatedAt?: string | null;
   durationSeconds?: number | null;
   progress?: number | null;
   lastActivity: string;
@@ -1625,7 +1627,7 @@ export const home = {
       method: "POST",
     }),
   providers: () => json<{ providers: ProviderSummary[] }>("/api/admin/ui/provider-summaries"),
-  nowPlaying: () => json<{ items: NowPlayingItem[] }>("/api/admin/ui/now-playing"),
+  nowPlaying: () => json<{ items: NowPlayingItem[]; capturedAt?: string | null }>("/api/admin/ui/now-playing"),
 };
 
 export type ScrobbleDelivery = {

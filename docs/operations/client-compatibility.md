@@ -107,6 +107,8 @@ External Jellyfin start, progress and stop reports include a minimal audio item 
 
 Home reports the confirmed serving source and the observed seek behavior: verified byte access, a progressive cache reader, duration guidance, or a full stream relying on client buffering. A duration hint alone never proves random access. These observations belong to the exact serving request and account revision; a late prefix read cannot overwrite a newer stream. If the serving account revision changes, a nonzero continuation asks the client to restart playback.
 
+Home advances the displayed position between fresh reports when the music app explicitly reports playing, and freezes the reported position when paused. It estimates at most fifteen seconds after the last position report, then holds that estimate with `~` and **Awaiting update**. Missing position or duration appears as a dash. Source checks and unrelated requests do not refresh the position clock. These observations describe app reports; they do not confirm that a lyric click or seek played correctly on the device.
+
 ## Upcoming songs
 
 **Prepare upcoming songs** is a household setting. Off by default. Turn on only if your player waits until a song ends before requesting the next one. The count defaults to one song when enabled and can be set to two. Many players already request the next song before the current one ends.

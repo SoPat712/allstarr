@@ -7,13 +7,17 @@ namespace allstarr.Services.Common;
 public sealed record PlaybackActivityState(
     string DeviceId,
     string ItemId,
-    long PositionTicks,
+    long? PositionTicks,
     DateTime LastActivity,
     Guid? UserId = null,
     string? BackendUserId = null,
     string? UserName = null,
     string? Client = null,
-    string? Device = null);
+    string? Device = null)
+{
+    public bool? IsPaused { get; init; }
+    public DateTimeOffset? PositionUpdatedAt { get; init; }
+}
 
 public sealed record PlaybackTrackMetadata(
     string Title,
