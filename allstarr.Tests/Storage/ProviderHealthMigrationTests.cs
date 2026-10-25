@@ -88,6 +88,7 @@ public sealed class ProviderHealthMigrationTests
         Assert.Empty(await db.RecordingLyricsChoices.AsNoTracking().ToArrayAsync());
         Assert.Empty(await db.SubsonicPlayQueues.AsNoTracking().ToArrayAsync());
         Assert.Empty(await db.ProviderUserData.AsNoTracking().ToArrayAsync());
+        Assert.Empty(await db.ProblemReports.AsNoTracking().ToArrayAsync());
         AssertSchemaPreserved(beforeSchema, await Schema(db));
         Assert.All(await db.DownloadedSongMappings.AsNoTracking().ToArrayAsync(), mapping => Assert.Null(mapping.CacheIdentityJson));
         Assert.All(await db.Users.AsNoTracking().ToArrayAsync(), listener => Assert.False(listener.IsSynthetic));
@@ -116,6 +117,7 @@ public sealed class ProviderHealthMigrationTests
         Assert.Empty(await restored.RecordingLyricsChoices.AsNoTracking().ToArrayAsync());
         Assert.Empty(await restored.SubsonicPlayQueues.AsNoTracking().ToArrayAsync());
         Assert.Empty(await restored.ProviderUserData.AsNoTracking().ToArrayAsync());
+        Assert.Empty(await restored.ProblemReports.AsNoTracking().ToArrayAsync());
         AssertSchemaPreserved(beforeSchema, await Schema(restored));
         Assert.All(await restored.DownloadedSongMappings.AsNoTracking().ToArrayAsync(), mapping => Assert.Null(mapping.CacheIdentityJson));
         Assert.All(await restored.Users.AsNoTracking().ToArrayAsync(), listener => Assert.False(listener.IsSynthetic));
@@ -228,6 +230,51 @@ public sealed class ProviderHealthMigrationTests
         Assert.Contains("\"OwnerUserId\" TEXT NOT NULL", TableColumns(before, "job_schedules"));
         Assert.Contains("\"OwnerUserId\" TEXT NULL", TableColumns(after, "job_schedules"));
 
+        string[] reportObjects = ["problem_reports", "IX_problem_reports_ActorUserId_RequestId", "IX_problem_reports_CreatedAt_Id",
+            "IX_problem_reports_Status_CreatedAt_Id", "IX_problem_reports_SubjectUserId", "IX_problem_reports_StatusChangedByUserId"];
+        Assert.DoesNotContain(before, row => reportObjects.Contains(row.Name));
+        Assert.Equal(reportObjects.Order(StringComparer.Ordinal), after.Where(row => reportObjects.Contains(row.Name))
+            .Select(row => row.Name).Order(StringComparer.Ordinal));
+        var reportSql = CollapseSql(Assert.Single(after, row => row.Type == "table" && row.Name == "problem_reports").Sql);
+        Assert.Equal(CollapseSql("""
+            CREATE TABLE problem_reports (
+                "Id" TEXT NOT NULL CONSTRAINT PK_problem_reports PRIMARY KEY,
+                "ActorUserId" TEXT NOT NULL,
+                "SubjectUserId" TEXT NULL,
+                "RequestId" TEXT NOT NULL,
+                "RequestFingerprint" TEXT NOT NULL,
+                "Kind" TEXT NOT NULL,
+                "Note" TEXT NOT NULL,
+                "ReporterName" TEXT NOT NULL,
+                "ContextJson" TEXT NOT NULL,
+                "Status" TEXT NOT NULL,
+                "CreatedAt" INTEGER NOT NULL,
+                "UpdatedAt" INTEGER NOT NULL,
+                "StatusChangedByUserId" TEXT NULL,
+                "Revision" INTEGER NOT NULL,
+                CONSTRAINT CK_problem_report_status CHECK("Status" IN ('new','seen','fixed')),
+                CONSTRAINT CK_problem_report_kind CHECK("Kind" IN ('playback','seek','wrong-match','wrong-lyrics','metadata','other')),
+                CONSTRAINT CK_problem_report_bounds CHECK(length("Note") BETWEEN 1 AND 2000 AND length("ReporterName") BETWEEN 1 AND 200 AND length("RequestFingerprint")=64 AND length(CAST("ContextJson" AS BLOB))<=32768 AND "Revision">0),
+                CONSTRAINT CK_problem_report_context CHECK(json_valid("ContextJson") AND coalesce(json_extract("ContextJson",'$.schemaVersion')=1,0)),
+                CONSTRAINT FK_problem_reports_users_ActorUserId FOREIGN KEY("ActorUserId") REFERENCES users("Id") ON DELETE RESTRICT,
+                CONSTRAINT FK_problem_reports_users_SubjectUserId FOREIGN KEY("SubjectUserId") REFERENCES users("Id") ON DELETE RESTRICT,
+                CONSTRAINT FK_problem_reports_users_StatusChangedByUserId FOREIGN KEY("StatusChangedByUserId") REFERENCES users("Id") ON DELETE RESTRICT
+            )
+            """), reportSql);
+        Assert.Contains("CONSTRAINT CK_problem_report_context CHECK(json_valid(\"ContextJson\") AND coalesce(json_extract(\"ContextJson\",'$.schemaVersion')=1,0))", reportSql);
+        foreach (var ownerColumn in new[] { "ActorUserId", "SubjectUserId", "StatusChangedByUserId" })
+            Assert.Contains($"CONSTRAINT FK_problem_reports_users_{ownerColumn} FOREIGN KEY(\"{ownerColumn}\") REFERENCES users(\"Id\") ON DELETE RESTRICT", reportSql);
+        var reportIndexes = new Dictionary<string, string>
+        {
+            ["IX_problem_reports_ActorUserId_RequestId"] = "CREATE UNIQUE INDEX IX_problem_reports_ActorUserId_RequestId ON problem_reports(\"ActorUserId\",\"RequestId\")",
+            ["IX_problem_reports_CreatedAt_Id"] = "CREATE INDEX IX_problem_reports_CreatedAt_Id ON problem_reports(\"CreatedAt\",\"Id\")",
+            ["IX_problem_reports_Status_CreatedAt_Id"] = "CREATE INDEX IX_problem_reports_Status_CreatedAt_Id ON problem_reports(\"Status\",\"CreatedAt\",\"Id\")",
+            ["IX_problem_reports_SubjectUserId"] = "CREATE INDEX IX_problem_reports_SubjectUserId ON problem_reports(\"SubjectUserId\")",
+            ["IX_problem_reports_StatusChangedByUserId"] = "CREATE INDEX IX_problem_reports_StatusChangedByUserId ON problem_reports(\"StatusChangedByUserId\")"
+        };
+        foreach (var (name, sql) in reportIndexes)
+            Assert.Equal(sql, CollapseSql(Assert.Single(after, row => row.Type == "index" && row.Name == name).Sql));
+
         var oldSchema = before
             .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
             .Select(row => row.Name == "runtime_settings" ? row with
@@ -239,7 +286,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name))
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name) && !reportObjects.Contains(row.Name))
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();

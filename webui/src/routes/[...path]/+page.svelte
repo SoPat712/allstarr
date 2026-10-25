@@ -21,6 +21,7 @@
     { href: "#/intelligence", label: "Intelligence", mobileLabel: "Insights", icon: "headphones", mobile: true },
     { href: "#/integrations/services", prefix: "/integrations/", label: "Sources", mobileLabel: "Sources", icon: "sources", mobile: false },
     { href: "#/activity", label: "Activity", mobileLabel: "Activity", icon: "activity", mobile: true },
+    { href: "#/getting-started", label: "Getting started", mobileLabel: "Getting started", icon: "guide", mobile: false },
     { href: "#/settings", label: "Settings", mobileLabel: "Settings", icon: "settings", mobile: false },
   ];
   const preferencesDestination: (typeof destinations)[number] = {
@@ -105,7 +106,7 @@
   ));
   const routeQuery = $derived(new URLSearchParams(page.url.hash.split("?", 2)[1] ?? ""));
   const activeDestination = $derived(
-    [...destinations, preferencesDestination].find((item) =>
+    route === "/report" ? { href: "#/report", label: "Report a problem", mobileLabel: "Report", icon: "activity", mobile: false } : [...destinations, preferencesDestination].find((item) =>
       item.href === "#/" ? route === "/" : route.startsWith(item.prefix ?? item.href.slice(1)),
     ) ?? destinations[0],
   );
@@ -160,7 +161,11 @@
                         onSetupChanged: (value: OnboardingState) => { onboardingState = value; },
                       }
                     : route === "/activity"
+                      ? { administrator, initialView: routeQuery.get("view") ?? "history", initialReportId: routeQuery.get("report") ?? "" }
+                    : route === "/getting-started"
                       ? { administrator }
+                    : route === "/report"
+                      ? { query: routeQuery }
                     : {},
   );
 
@@ -202,6 +207,8 @@
     }
     if (path === "/activity") return import("$lib/components/EventLogView.svelte");
     if (path === "/preferences") return import("$lib/components/ListeningPreferencesView.svelte");
+    if (path === "/getting-started") return import("$lib/components/GettingStartedView.svelte");
+    if (path === "/report") return import("$lib/components/ProblemReportView.svelte");
     if (path === "/intelligence" && session?.features?.intelligence === true) {
       return import("$lib/shelved/IntelligenceView.svelte");
     }

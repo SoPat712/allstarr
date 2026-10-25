@@ -1549,7 +1549,7 @@ public class AdminUiController : ControllerBase
     private static List<AdminUiConfigSection> BuildConfigSections() =>
     [
         Section("operator", "Service and retention settings", OperatorSettingPolicy.Definitions
-            .Where(item => !item.Key.StartsWith("MusicBrainz:", StringComparison.Ordinal) && item.Key != "Debug:LogAllRequests")
+            .Where(item => !item.Key.StartsWith("MusicBrainz:", StringComparison.Ordinal) && item.Key is not ("Debug:LogAllRequests" or "Gateway:PublicListenerUrl"))
             .Select(item => Field(
                 LegacyEnvParser.DurableAliasKeys.First(key => LegacyEnvParser.TryGetDurableAlias(key, out var target) && target == item.Key),
                 OperatorSettingLabel(item.Key),
@@ -1636,6 +1636,11 @@ public class AdminUiController : ControllerBase
             Field("CACHE_MEDIA_MAXIMUM_MEGABYTES", "Media cache total MiB", "number", "cache.mediaMaximumMegabytes"),
             Field("CACHE_MEDIA_MAXIMUM_ENTRY_MEGABYTES", "Media cache entry MiB", "number", "cache.mediaMaximumEntryMegabytes"),
             Field("CACHE_MEDIA_CLEANUP_FILE_LIMIT", "Cleanup scan file limit", "number", "cache.mediaCleanupFileLimit")
+        ]),
+        Section("client-address", "Music-client address",
+        [
+            Field("PUBLIC_LISTENER_URL", "Music-client address", "text", "operatorSettings.Gateway:PublicListenerUrl",
+                helpText: "Optional. The Allstarr address listeners use in music clients, including any gateway path prefix. Shown in Getting started. Changes apply immediately.")
         ]),
         Section("network", "Network and security",
         [

@@ -17,13 +17,37 @@ The dashboard controls how Allstarr connects sources, matches music, projects pl
 6. Open **Integrations → Routing** to choose the fallback order for each capability.
 7. Test ordinary local playback in a music client before adding provider playlists or external playback.
 
-Administrators see deployment and shared-account controls. Listeners can open Home, Playlists, Mappings, Services, their Accounts, Activity, and Listening preferences. Settings, Extensions, Routing, Cached, and Kept require administrator access, including when opened through a direct link.
+Administrators see deployment and shared-account controls. Listeners can open Home, Playlists, Mappings, Services, their Accounts, Activity, Getting started, and Listening preferences. Settings, Extensions, Routing, Cached, and Kept require administrator access, including when opened through a direct link.
 
 For an existing installation, **Settings → Setup → Review previous settings** can preview the mounted v2 environment or an uploaded copy. Nothing is imported until you confirm the preview. Existing saved settings win. Accounts are checked before enablement; unavailable accounts need attention in Sources. Original kept and download files are verified in place by a durable job. Valkey-only favorites and manual fixes are not imported. SquidWTF has no automatic replacement.
 
 **Settings → General → Background library access** connects or disables unattended Jellyfin scans. **Settings → Network → Single sign-on** manages an encrypted OpenID Connect client; blank secrets preserve the current secret only for the same issuer and client. Saving these connections restarts Allstarr after the response. The dashboard waits for the new process and offers a retry if it takes longer than a minute.
 
 After copying a stopped installation's complete folder, **Settings → Storage → Saved-file verification** shows verification progress and lets you retry repaired files. Follow its household job in Activity → Everyone → Queue. Changed, missing or linked originals stay unavailable; verification never replaces their contents.
+
+## Connect your music app
+
+Open **Getting started** in the sidebar, or **More → Getting started** on a phone. The guide fills your signed-in username and the music-client address configured by your administrator. Use that address in your app and sign in with your usual media-server password. If the address is missing, ask your administrator for it; editing the guide only changes the address you copy. **Copy server address** and **Copy username** select the text when the browser cannot access the clipboard.
+
+The guide shows apps for this deployment's selected protocol:
+
+| App | Jellyfin | Subsonic / OpenSubsonic | Setup |
+| --- | --- | --- | --- |
+| Feishin | Yes | Yes | [Desktop app and server setup](https://github.com/jeffvli/feishin) |
+| Finamp | Yes | — | [Finamp](https://github.com/finamp-app/finamp) |
+| Jellyfin Web | Yes | — | **Open web player** in the guide; [project](https://github.com/jellyfin/jellyfin-web) |
+| Symfonium | Yes | Yes | [Jellyfin setup](https://docs.symfonium.app/wiki/providers/jellyfin-media-provider-configuration/) or [Subsonic setup](https://docs.symfonium.app/wiki/providers/subsonic-opensubsonic-media-provider-configuration/) |
+| Tempo | — | Yes | [Android app](https://github.com/CappielloAntonio/tempo) |
+
+For a first listen, play a song, seek well ahead, add a heart, add it to a playlist, and try an offline download in your chosen app. A device download or offline cache belongs to that app; check it plays with the device offline before traveling. Favoriting provider music or adding it to a playlist makes it available in normal library browsing. Listening history alone does not add it to that saved view.
+
+Sources set to **Manual only** appear in search and matching for you to choose. Automatic playback uses sources set to **On**. During the beta, an upstream service may rate-limit requests or require verification; choose another available source or wait before retrying. Some Finamp transcoding formats remain unavailable. Report the song, app version and what happened if playback fails.
+
+### Report a problem
+
+Use **Report a problem** on Home's Now playing card, in a playlist song's details, or in a mapping row's actions. Getting started also offers a general report. Choose a problem type and enter a short note. The form shows the song, saved match, confirmed playback source, observed music app and recent source checks when those facts are available. A catalog source does not confirm what played. Leave passwords, tokens and private links out of the note.
+
+Reports stay in this Allstarr installation for administrators to review. A failed save keeps your note; retrying an unchanged submission uses the same request identity. If playback details expire, refresh them or explicitly continue without those details. Reporting a wrong match or lyrics does not change the saved choice automatically.
 
 ## Dashboard map
 
@@ -94,11 +118,12 @@ Each viewer's external tracks use accounts available to that viewer. If no eligi
 
 ### Activity
 
-Activity has three views. Everyone starts with their own work. Administrators can choose **Everyone** to inspect household work, including system storage verification; the selected scope is remembered in this browser.
+Activity shows background work and an administrator-only problem inbox. Everyone starts with their own work. Administrators can choose **Everyone** to inspect household work, including system storage verification; the selected scope is remembered in this browser.
 
 - **Queue** shows waiting, running, retrying and deferred jobs. Known progress and the next attempt time appear with each job. **Cancel job** requests a stop at the worker's next safe point and preserves completed work.
 - **History** shows finished jobs, retained attempt history, safe failure messages and the operational event feed. Filter jobs by type and state, load earlier jobs or attempts, and use the event feed's existing source, category and search filters. Attempt details expire sooner than the latest job outcome.
 - **Tasks** shows playlist schedules with their last and next run. **Run now** uses the playlist's existing update rules. Administrators also see automatic retention, cache cleanup, library indexing and backfill checks. Maintenance next-check times are approximate; individual kept-copy deletions remain subject to their twenty-four-hour grace period and current references.
+- **Reports** is available to administrators. Filter **New**, **Seen**, **Fixed** or **All**, then open a report to read the note and captured diagnostics. Opening it leaves the status unchanged. Select a status and **Save status** to update it; statuses can be changed again. If another administrator changes the report, reload it before saving. **Review match** opens the existing match review when a saved song snapshot is available.
 
 The existing update stream refreshes these views. If it disconnects, Activity shows the reconnect state and checks periodically; reconnecting refreshes the visible work. Errors retain already-loaded records and offer a retry. Use Activity with container logs when a durable job or provider call fails.
 

@@ -58,7 +58,7 @@
     { id: "setup", label: "Setup", group: "Maintenance", icon: Rocket, title: "Setup", description: "Reopen the setup guide or import settings from Allstarr v2." },
   ] as const;
   const navGroups = ["This browser", "Server", "Maintenance"] as const;
-  const sectionPages: Record<string, string> = { general: "general", paths: "storage", cache: "storage", "audio-limits": "storage", network: "network" };
+  const sectionPages: Record<string, string> = { general: "general", paths: "storage", cache: "storage", "audio-limits": "storage", network: "network", "client-address": "network" };
   const contextualTrackCacheKeys = new Set([
     "STORAGE_MODE",
     "CACHE_DURATION_HOURS",

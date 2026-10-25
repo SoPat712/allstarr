@@ -739,7 +739,7 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
 
     private static (object Value, string Display, string Json) NormalizeString(RuntimeSettingDefinition definition, string raw)
     {
-        var value = raw.Trim();
+        var value = definition.Key == PublicListenerAddress.Key ? PublicListenerAddress.Normalize(raw) : raw.Trim();
         if (definition.Key == ListeningPreferenceKeys.PlaybackStart)
             value = definition.Choices!.FirstOrDefault(choice => choice.Equals(value, StringComparison.OrdinalIgnoreCase)) ?? value;
         if (definition.Key == ProviderUsePolicy.SettingKey)

@@ -21,6 +21,7 @@
   import SearchField from "$lib/components/SearchField.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import TrackRoutes from "$lib/components/TrackRoutes.svelte";
+  import { reportHref } from "$lib/support";
   import {
     home,
     matchReview,
@@ -926,6 +927,10 @@
                                     );
                                   }}
                                 >{matchLoading === track.externalSnapshotId ? "Loading match…" : "Review match"}</Button>
+                              {/if}
+                              {#if track.externalSnapshotId || track.backendItemId}
+                                <Button variant="secondary" size="sm" href={reportHref(track.externalSnapshotId
+                                  ? { externalSnapshotId: track.externalSnapshotId } : { itemId: track.backendItemId! }, "/library/playlists")} onclick={() => trackMenuOpen = null}>Report a problem</Button>
                               {/if}
                             </div>
                           </Popover.Content>
