@@ -135,11 +135,49 @@ public sealed class ExtensionSdkV1Tests : IDisposable
             ExtensionSdkV1.VerifyArchive(archivePath, new string('0', 64), Path.Combine(_root, "bad")));
     }
 
+    [Theory]
+    [InlineData("COPYING")]
+    [InlineData("NOTICE")]
+    public void VerifyArchive_PreservesRootLegalFilesAndTheirInstalledContentHash(string changedFile)
+    {
+        Directory.CreateDirectory(_root);
+        var archivePath = Path.Combine(_root, "package.zip");
+        var legalFiles = new Dictionary<string, byte[]>
+        {
+            ["COPYING"] = Encoding.UTF8.GetBytes("GNU GENERAL PUBLIC LICENSE\r\nVersion 3, 29 June 2007\r\nCopyright © 2007 Free Software Foundation, Inc.\r\n"),
+            ["NOTICE"] = Encoding.UTF8.GetBytes("Fixture Extension\nCopyright 2026 Example\n\nSPDX-License-Identifier: LGPL-3.0-only\nSee LICENSE and COPYING for the complete terms.\n\n")
+        };
+        using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Create))
+        {
+            Write(archive, "manifest.json", Manifest());
+            Write(archive, "index.js", "registerExtension({});");
+            Write(archive, "icon.png", "image");
+            Write(archive, "LICENSE", "SPDX-License-Identifier: LGPL-3.0-only\nSee COPYING for the license text.\n");
+            foreach (var (name, bytes) in legalFiles)
+            {
+                using var stream = archive.CreateEntry(name).Open();
+                stream.Write(bytes);
+            }
+        }
+        var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(archivePath))).ToLowerInvariant();
+        var verified = ExtensionSdkV1.VerifyArchive(archivePath, hash, Path.Combine(_root, "staged"));
+        var installed = Path.Combine(_root, "installed");
+        Directory.Move(verified.PackageRoot, installed);
+
+        Assert.Equal(hash, verified.Sha256);
+        Assert.Equal(6, verified.FileCount);
+        foreach (var (name, bytes) in legalFiles)
+            Assert.Equal(bytes, File.ReadAllBytes(Path.Combine(installed, name)));
+        Assert.Equal(verified.ContentSha256, ExtensionSdkV1.ComputePackageContentSha256(installed));
+        File.AppendAllText(Path.Combine(installed, changedFile), "Changed license notice.\n");
+        Assert.NotEqual(verified.ContentSha256, ExtensionSdkV1.ComputePackageContentSha256(installed));
+    }
+
     [Fact]
     public void VerifyArchive_RejectsTraversalAndUndeclaredExecutableLayout()
     {
         Directory.CreateDirectory(_root);
-        foreach (var name in new[] { "../escape.js", "scripts/install.sh" })
+        foreach (var name in new[] { "../escape.js", "scripts/install.sh", "COPYING.js", "NOTICE.js", "legal/COPYING", "legal/NOTICE", "legal/COPYING.js", "legal/NOTICE.js" })
         {
             var archivePath = Path.Combine(_root, $"{Guid.NewGuid():N}.zip");
             using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Create))
@@ -152,6 +190,27 @@ public sealed class ExtensionSdkV1Tests : IDisposable
             Assert.Throws<ExtensionSdkValidationException>(() =>
                 ExtensionSdkV1.VerifyArchive(archivePath, hash, Path.Combine(_root, Guid.NewGuid().ToString("N"))));
         }
+    }
+
+    [Theory]
+    [InlineData("COPYING.js")]
+    [InlineData("NOTICE.js")]
+    [InlineData("legal/COPYING")]
+    [InlineData("legal/NOTICE")]
+    [InlineData("legal/COPYING.js")]
+    [InlineData("legal/NOTICE.js")]
+    public void InstalledContents_RejectLegalNamesOutsideTheRootAllowlist(string name)
+    {
+        var installed = Path.Combine(_root, "installed");
+        Directory.CreateDirectory(installed);
+        File.WriteAllText(Path.Combine(installed, "manifest.json"), Manifest());
+        File.WriteAllText(Path.Combine(installed, "index.js"), "registerExtension({});");
+        var path = Path.Combine(installed, name);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "registerExtension({});");
+
+        var error = Assert.Throws<ExtensionSdkValidationException>(() => ExtensionSdkV1.ComputePackageContentSha256(installed));
+        Assert.Equal("Extension package contents no longer match the SDK v1 layout.", error.Message);
     }
 
     [Fact]

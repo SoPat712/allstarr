@@ -218,6 +218,52 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
     }
 
     [Theory]
+    [InlineData(null)]
+    [InlineData("COPYING")]
+    [InlineData("NOTICE")]
+    public async Task ActivationReverifiesRootLegalFilesAndRejectsChangedNotices(string? changedFile)
+    {
+        var content = Package("3.0.0", "legal");
+        var legalFiles = new Dictionary<string, byte[]>
+        {
+            ["LICENSE"] = Encoding.UTF8.GetBytes("SPDX-License-Identifier: LGPL-3.0-only\nSee COPYING for the license text.\n"),
+            ["COPYING"] = Encoding.UTF8.GetBytes("GNU GENERAL PUBLIC LICENSE\r\nVersion 3, 29 June 2007\r\nCopyright © 2007 Free Software Foundation, Inc.\r\n"),
+            ["NOTICE"] = Encoding.UTF8.GetBytes("Fixture Extension\nCopyright 2026 Example\n\nSPDX-License-Identifier: LGPL-3.0-only\nSee LICENSE and COPYING for the complete terms.\n\n")
+        };
+        foreach (var (name, bytes) in legalFiles)
+            File.WriteAllBytes(Path.Combine(content.PackageRoot, name), bytes);
+        File.WriteAllText(Path.Combine(content.PackageRoot, "icon.png"), "image");
+        content = content with
+        {
+            FileCount = 6,
+            ExpandedBytes = Directory.GetFiles(content.PackageRoot).Sum(path => new FileInfo(path).Length),
+            ContentSha256 = ExtensionSdkV1.ComputePackageContentSha256(content.PackageRoot)
+        };
+        var package = await _service.StageAsync(content);
+        package = await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
+        [
+            new("network", "https://api.example.test/", true),
+            new("secret", "accountToken", true)
+        ]);
+        foreach (var (name, bytes) in legalFiles)
+            Assert.Equal(bytes, File.ReadAllBytes(Path.Combine(package.PackagePath, name)));
+        Assert.Equal(content.ContentSha256, package.ContentSha256);
+        Assert.Equal(content.ContentSha256, ExtensionSdkV1.ComputePackageContentSha256(package.PackagePath));
+
+        if (changedFile != null)
+        {
+            File.AppendAllText(Path.Combine(package.PackagePath, changedFile), "Changed license notice.\n");
+            var error = await Assert.ThrowsAsync<ExtensionSdkValidationException>(() => _service.ActivateAsync(package.Id, package.Revision));
+            Assert.Equal("Extension package contents changed after checksum verification; stage the package again.", error.Message);
+        }
+        else
+        {
+            package = await _service.ActivateAsync(package.Id, package.Revision);
+            Assert.Equal(ExtensionPackageState.Active, package.State);
+        }
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task RuntimeUpdatePreservesActiveVersionWhenRetiredPackageUninstallIsRefused(bool concurrentUninstall)

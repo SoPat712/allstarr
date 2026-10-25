@@ -6,6 +6,8 @@ SDK v1 lets an administrator install provider modules without giving them contro
 
 An extension package declares a stable ID, version, runtime, entry point, capabilities, permissions, settings, and content hashes. The current compatibility layer also accepts SpotiFLAC registry metadata and `.sflx` packages, then normalizes them into this contract.
 
+SDK v1 requires `manifest.json` and `index.js` at the archive root. Optional root files are `README.md`, `LICENSE`, `LICENSE.md`, `COPYING`, `NOTICE`, `icon.png`, `icon.jpg`, `icon.jpeg`, and `icon.webp`; additional files belong under `assets/`. Legal files are retained unchanged and included in the installed content hash.
+
 ```json
 {
   "id": "example-provider",
