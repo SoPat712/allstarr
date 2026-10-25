@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.Lyrics;
 using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Capabilities;
@@ -9,7 +10,7 @@ public sealed partial class SpotifyPlaylistCapabilityAdapter
 {
     internal async Task<ProviderOutcome<ProviderLyricsResult>> ReadLyricsAsync(
         ProviderExecutionContext context,
-        ProviderLyricsRequest request)
+        ProviderLyricsRequest request, LyricsCompletionMode completion = LyricsCompletionMode.RequestBound)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(request);
@@ -26,7 +27,7 @@ public sealed partial class SpotifyPlaylistCapabilityAdapter
         {
             try
             {
-                var cached = await _cache.GetAsync<ProviderLyricsResult>(cacheKey).WaitAsync(context.CancellationToken);
+                var cached = await LyricsAwait.CompleteAsync(_cache.GetAsync<ProviderLyricsResult>(cacheKey), completion, context.CancellationToken);
                 context.CancellationToken.ThrowIfCancellationRequested();
                 if (cached is { Availability: ProviderLyricsAvailabilityState.Available, Content: not null })
                     return ProjectLyrics(cached, request.AvailabilityOnly);
@@ -41,6 +42,7 @@ public sealed partial class SpotifyPlaylistCapabilityAdapter
             }
         }
 
+        context.CancellationToken.ThrowIfCancellationRequested();
         var outcome = await ExecuteAsync(
             context,
             async (token, cancellationToken) =>

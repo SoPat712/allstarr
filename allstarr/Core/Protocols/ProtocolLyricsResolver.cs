@@ -1,3 +1,5 @@
+using allstarr.Core.Providers.Lyrics;
+using allstarr.Core.Storage;
 using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Capabilities;
@@ -39,7 +41,7 @@ public interface IProtocolLyricsResolver
         string? spotifyTrackId = null);
 }
 
-public sealed class ProtocolLyricsResolver(
+public sealed partial class ProtocolLyricsResolver(
     IProtocolProviderGateway providers,
     ILogger<ProtocolLyricsResolver> logger,
     ICrossProviderLinkResolver? crossLinks = null,
@@ -47,7 +49,8 @@ public sealed class ProtocolLyricsResolver(
     IKeptLyricsReader? keptLyrics = null,
     ILibraryIndexService? libraryIndex = null,
     IRecordingLyricsChoices? choices = null,
-    ITrackIdentityService? identities = null) : IProtocolLyricsResolver
+    ITrackIdentityService? identities = null,
+    TimeProvider? timeProvider = null, IHostApplicationLifetime? lifetime = null) : IProtocolLyricsResolver, IHostedService
 {
     public async Task<IReadOnlyList<ProtocolLyricsCandidate>> FindAllAsync(ProtocolExecutionContext protocol, Song song,
         string resourceKey, ProtocolLyricsSources? sources = null)
@@ -89,17 +92,15 @@ public sealed class ProtocolLyricsResolver(
         var preference = await ResolveChoiceAsync(protocol, song, sources?.HouseholdOnly == true,
             sourceProvider, sourceExternalId);
         var lookupKey = preference.RecordingId?.ToString("N") ?? resourceKey;
-        LyricsInfo? plainFallback = null;
+
         await foreach (var candidate in ReadCandidatesAsync(protocol, song, lookupKey,
             sourceProvider, sourceExternalId, spotifyTrackId, sources, preference.SourceId, preference.RecordingId, skipPaxsenixAfterPlainLyrics: true, automaticLookup: true))
         {
             var lyrics = candidate.Lyrics;
             if (lyrics == null) continue;
-            if (candidate.SourceId == preference.SourceId) return lyrics;
-            if (!string.IsNullOrWhiteSpace(lyrics.SyncedLyrics)) return lyrics;
-            plainFallback ??= lyrics;
+            return lyrics;
         }
-        return plainFallback;
+        return null;
     }
 
     private async Task<(Guid? RecordingId, string? SourceId)> ResolveChoiceAsync(ProtocolExecutionContext protocol,
@@ -157,7 +158,7 @@ public sealed class ProtocolLyricsResolver(
         var aliasRecordingId = canonicalRecordingId;
         var aliasRecordingResolved = aliasRecordingId.HasValue;
 
-        async Task<Guid?> ResolveAliasRecordingAsync()
+        async Task<Guid?> ResolveAliasRecordingAsync(CancellationToken token)
         {
             if (aliasRecordingResolved) return aliasRecordingId == Guid.Empty ? null : aliasRecordingId;
             aliasRecordingResolved = true;
@@ -165,7 +166,7 @@ public sealed class ProtocolLyricsResolver(
             {
                 if (libraryIndex != null && !string.IsNullOrWhiteSpace(song.Id))
                     aliasRecordingId = (await libraryIndex.FindByBackendItemAsync(protocol, song.Id,
-                        protocol.CancellationToken))?.CanonicalRecordingId;
+                        token))?.CanonicalRecordingId;
             }
             else
             {
@@ -177,7 +178,7 @@ public sealed class ProtocolLyricsResolver(
                             ? $"ext-{sourceProvider}-song-{sourceExternalId}" : null;
                     if (publicId != null)
                         aliasRecordingId = (await identities.ResolveRecordingAsync(protocol.Actor, publicId,
-                            protocol.CancellationToken))?.Id;
+                            token))?.Id;
                 }
             }
             return aliasRecordingId == Guid.Empty ? null : aliasRecordingId;
@@ -217,12 +218,14 @@ public sealed class ProtocolLyricsResolver(
             });
         IReadOnlyList<string> order = providers.GetProviderOrder(ProviderCapabilityKind.Lyrics).Concat(localSources.Keys)
             .Distinct(StringComparer.Ordinal).ToArray();
+        IReadOnlyList<string> enabledOrder = order;
         if (effectivePolicies != null)
         {
             var effectivePolicy = householdOnly || protocol.Actor?.EffectiveUserId == null
                 ? await effectivePolicies.ResolveAsync(protocol.CancellationToken)
                 : await effectivePolicies.ResolveForUserAsync(protocol.Actor!.EffectiveUserId!.Value, protocol.CancellationToken);
             var enabled = effectivePolicy.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, order);
+            enabledOrder = enabled;
             order = automaticLookup && sources?.OnlySourceId == null
                 ? effectivePolicy.ApplyAutomaticProviderAvailability(ProviderCapabilityKind.Lyrics, order)
                 : enabled;
@@ -235,6 +238,81 @@ public sealed class ProtocolLyricsResolver(
             order = new[] { preferredSourceId }.Concat(order).Distinct(StringComparer.Ordinal).ToArray();
         if (sources?.OnlySourceId is { } onlySource)
             order = order.Where(item => string.Equals(item, onlySource, StringComparison.Ordinal)).ToArray();
+
+        if (automaticLookup && sources?.OnlySourceId == null)
+        {
+            var preflight = new[] { preferredSourceId, "kept" }.Where(id => id != null).Distinct(StringComparer.Ordinal);
+            foreach (var id in preflight)
+            {
+                if (!enabledOrder.Contains(id!, StringComparer.Ordinal) || id == "kept" && id != preferredSourceId &&
+                    !order.Contains(id, StringComparer.Ordinal)) continue;
+                var answer = await ReadOneAsync(id!);
+                order = order.Where(item => item != id).ToArray();
+                if (answer != null) { yield return new(id!, answer); yield break; }
+            }
+            if (providers is IProtocolLyricsExecutionGateway executionGateway && protocol.Actor != null)
+            {
+                var lookup = EnterAutomatic(protocol);
+                if (lookup == null)
+                {
+                    foreach (var id in order.Where(localSources.ContainsKey))
+                    {
+                        var answer = await ReadOneAsync(id);
+                        if (answer != null) { yield return new(id, answer); yield break; }
+                    }
+                    yield break;
+                }
+                try
+                {
+                    var prepared = new List<AutomaticSource>();
+                    foreach (var id in order)
+                    {
+                        if (localSources.ContainsKey(id)) prepared.Add(new(id, null, false, false, () => ReadOneAsync(id)));
+                        else if (id is not ("backend" or "kept"))
+                        {
+                            var needsDiscovery = ResolveExternalId(id, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId) == null &&
+                                !canonicalRecordingId.HasValue && !song.CanonicalRecordingId.HasValue;
+                            var canDiscover = crossLinks != null && !string.IsNullOrWhiteSpace(sourceProvider) && !string.IsNullOrWhiteSpace(sourceExternalId) &&
+                                ResolveExternalId(id, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId) == null;
+                            prepared.Add(new(id, async (discovery, token) =>
+                            {
+                                var spec = await PrepareSpecAsync(id, lookup.Deadline, discovery, token);
+                                return spec == null ? null : await executionGateway.PrepareAsync(spec, token);
+                            }, needsDiscovery, canDiscover, null));
+                        }
+                    }
+                    var answer = await RunAutomaticAsync(executionGateway, prepared, lookup, protocol.CancellationToken);
+                    if (answer != null) yield return answer;
+                }
+                finally { DrainAutomatic(lookup); }
+                yield break;
+            }
+        }
+
+        async Task<LyricsReadSpec?> PrepareSpecAsync(string providerId, DateTimeOffset deadline, bool allowDiscovery, CancellationToken token)
+        {
+            var externalId = ResolveExternalId(providerId, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId);
+            if (allowDiscovery && externalId == null && crossLinks != null && protocol.Actor != null &&
+                !string.IsNullOrWhiteSpace(sourceProvider) && !string.IsNullOrWhiteSpace(sourceExternalId))
+            {
+                resolvedLinks ??= await crossLinks.ResolveAsync(new(resourceKey, sourceProvider, sourceExternalId,
+                    song.Title, string.Join(", ", artists), song.Album, null, (long?)song.Duration * 1000, song.Isrc, null, null),
+                    [], protocol.Actor, protocol.CorrelationId, token);
+                externalId = resolvedLinks.FirstOrDefault(item => item.Verified &&
+                    OdesliService.NormalizeProviderId(item.ProviderId) == OdesliService.NormalizeProviderId(providerId))?.ExternalId;
+            }
+            var useRecordingSelector = externalId == null;
+            var recording = externalId == null ? await ResolveAliasRecordingAsync(token) : canonicalRecordingId;
+            if (externalId == null && !recording.HasValue) return null;
+            externalId ??= recording!.Value.ToString("D");
+            var target = new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, externalId);
+            var source = useRecordingSelector && recording.HasValue
+                ? new ProviderExternalResourceId("allstarr", ProviderResourceKind.Track, recording.Value.ToString("D")) : target;
+            var canonical = recording ?? new Guid(SHA256.HashData(Encoding.UTF8.GetBytes($"{providerId}\n{externalId}")).AsSpan(0, 16));
+            return new(protocol.Actor!, providerId, source, new(canonical, target, preferredFormat: ProviderLyricsFormat.LineTimed,
+                trackTitle: string.IsNullOrWhiteSpace(song.Title) ? null : song.Title.Trim(), artistNames: artists.Where(artist => !string.IsNullOrWhiteSpace(artist)).Select(artist => artist.Trim()).ToArray(), albumTitle: string.IsNullOrWhiteSpace(song.Album) ? null : song.Album.Trim(), durationSeconds: song.Duration, isrc: song.Isrc),
+                householdOnly ? [ProviderAccountScope.Shared] : [ProviderAccountScope.Personal, ProviderAccountScope.Shared], protocol.CorrelationId, deadline, householdOnly);
+        }
 
         var hasPlainLyrics = false;
         foreach (var providerId in order.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -273,7 +351,7 @@ public sealed class ProtocolLyricsResolver(
                     ProviderLyricsResult? result;
                     if (externalId == null)
                     {
-                        var recordingId = await ResolveAliasRecordingAsync();
+                        var recordingId = await ResolveAliasRecordingAsync(protocol.CancellationToken);
                         if (!recordingId.HasValue) return null;
                         result = await providers.GetRecordingLyricsAsync(protocol, providerId, recordingId.Value,
                             ProviderLyricsFormat.LineTimed, song.Title, artists, song.Album, song.Duration, householdOnly, song.Isrc);

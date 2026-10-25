@@ -18,7 +18,7 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
   import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
   import { canonicalProviderId, lyricsSourceDisplayName } from "$lib/sources";
-  import { move, playbackStartLabel, playbackStartOptions } from "$lib/settings";
+  import { keptLyricsFirst, move, playbackStartLabel, playbackStartOptions } from "$lib/settings";
 
   const filterOptions: Array<{ value: ExplicitFilter; label: string; description: string }> = [
     { value: "All", label: "All", description: "Show clean and explicit releases." },
@@ -54,12 +54,17 @@
     const candidates = [...(value ?? "").split(","), "backend", "kept", ...providerDefinitions
       .filter(provider => provider.categories?.includes("lyrics")).map(provider => provider.id).sort()];
     const included = new Set<string>();
-    return candidates.map(id => id.trim()).filter(id => {
+    return keptLyricsFirst(candidates.map(id => id.trim()).filter(id => {
       const canonical = canonicalProviderId(id);
       if (!id || included.has(canonical)) return false;
       included.add(canonical);
       return true;
-    });
+    }));
+  }
+
+  function moveLyrics(index: number, direction: -1 | 1) {
+    if (lyricsOrder[index] === "kept" || lyricsOrder[index + direction] === "kept") return;
+    lyricsOrder = move(lyricsOrder, index, direction);
   }
 
   const lyricsName = (id: string) => lyricsSourceDisplayName(providerDefinitions, id);
@@ -209,11 +214,11 @@
           <p>Keep source and content cues visible without changing any track title.</p>
         </div>
         <label>
-          <Checkbox bind:checked={showExternalLabel} disabled={busy} aria-label="Show [A] for external tracks" />
+          <span class="settings-toggle"><Checkbox bind:checked={showExternalLabel} disabled={busy} aria-label="Show [A] for external tracks" /></span>
           <span><strong>Show [A] for external tracks</strong><small>Marks tracks supplied outside the native library.</small></span>
         </label>
         <label>
-          <Checkbox bind:checked={showExplicitLabel} disabled={busy} aria-label="Show [E] for explicit tracks" />
+          <span class="settings-toggle"><Checkbox bind:checked={showExplicitLabel} disabled={busy} aria-label="Show [E] for explicit tracks" /></span>
           <span><strong>Show [E] for explicit tracks</strong><small>Marks tracks identified as explicit.</small></span>
         </label>
       </section>
@@ -229,15 +234,15 @@
       <section class="preference-options" aria-label="Lyrics source order">
         <div>
           <h3>Lyrics source order</h3>
-          <p>Choose when your music apps try media-server lyrics and other sources. Synced lyrics are preferred; plain text is used when no source has timing. Sources must be enabled and available to your account.</p>
+          <p>Your saved choice for a song takes precedence, then Kept LRC. Other sources follow this order, with a short priority window for slower services. Sources must be enabled and available to your account.</p>
         </div>
         <ol class="lyrics-order-list">
           {#each lyricsOrder as providerId, index (providerId)}
             <li>
               <strong>{lyricsName(providerId)}</strong>
               <span class="lyrics-order-actions">
-                <Button variant="ghost" size="icon" aria-label={`Move ${lyricsName(providerId)} up`} disabled={busy || index === 0} onclick={() => lyricsOrder = move(lyricsOrder, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
-                <Button variant="ghost" size="icon" aria-label={`Move ${lyricsName(providerId)} down`} disabled={busy || index === lyricsOrder.length - 1} onclick={() => lyricsOrder = move(lyricsOrder, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
+                <Button variant="ghost" size="icon" aria-label={`Move ${lyricsName(providerId)} up`} disabled={busy || providerId === "kept" || index === 0 || lyricsOrder[index - 1] === "kept"} onclick={() => moveLyrics(index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
+                <Button variant="ghost" size="icon" aria-label={`Move ${lyricsName(providerId)} down`} disabled={busy || providerId === "kept" || index === lyricsOrder.length - 1} onclick={() => moveLyrics(index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
               </span>
             </li>
           {/each}

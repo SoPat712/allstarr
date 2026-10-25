@@ -3,7 +3,7 @@ using allstarr.Core.Capabilities;
 
 namespace allstarr.Core.Providers.Lyrics;
 
-internal sealed class MusixmatchTokenProvider(HttpClient http, TimeProvider? timeProvider = null)
+internal sealed class MusixmatchTokenProvider(HttpClient http, TimeProvider? timeProvider = null, CancellationToken shutdown = default)
 {
     private readonly object _gate = new();
     private readonly TimeProvider _time = timeProvider ?? TimeProvider.System;
@@ -11,7 +11,9 @@ internal sealed class MusixmatchTokenProvider(HttpClient http, TimeProvider? tim
     private Task<ProviderOutcome<MusixmatchCredential>>? _pending;
     private DateTimeOffset _retryAt;
 
-    internal async Task<ProviderOutcome<MusixmatchCredential>> GetAsync(string? rejectedToken, CancellationToken cancellationToken)
+    internal Task<ProviderOutcome<MusixmatchCredential>> GetAsync(string? rejectedToken, CancellationToken cancellationToken) =>
+        GetAsync(rejectedToken, cancellationToken, LyricsCompletionMode.RequestBound);
+    internal async Task<ProviderOutcome<MusixmatchCredential>> GetAsync(string? rejectedToken, CancellationToken cancellationToken, LyricsCompletionMode completion)
     {
         cancellationToken.ThrowIfCancellationRequested();
         Task<ProviderOutcome<MusixmatchCredential>> pending;
@@ -26,7 +28,7 @@ internal sealed class MusixmatchTokenProvider(HttpClient http, TimeProvider? tim
             if (_pending?.IsCompleted == true) _pending = null;
             pending = _pending ??= FetchAsync();
         }
-        return await pending.WaitAsync(cancellationToken);
+        return await LyricsAwait.CompleteAsync(pending, completion, cancellationToken);
     }
 
     internal void Reject(string token)
@@ -47,7 +49,8 @@ internal sealed class MusixmatchTokenProvider(HttpClient http, TimeProvider? tim
         var delay = TimeSpan.FromMinutes(1);
         try
         {
-            using var timeout = new CancellationTokenSource(MusixmatchMobileApi.RequestTimeout);
+            using var timer = new CancellationTokenSource(MusixmatchMobileApi.RequestTimeout, _time);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(timer.Token, shutdown);
             using var request = MusixmatchMobileApi.CreateRequest(MusixmatchMobileApi.TokenEndpoint);
             using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
             if ((int)response.StatusCode is 401 or 429)

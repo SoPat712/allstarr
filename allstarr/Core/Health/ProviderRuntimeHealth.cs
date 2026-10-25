@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Capabilities;
 using allstarr.Services.AppleMusic;
 using allstarr.Core.Operations;
@@ -51,11 +52,12 @@ public sealed record ProviderHealthObservation(
     int ConsecutiveFailures,
     DateTimeOffset? RetryAfter)
 {
+    internal LyricsConfigurationId? LyricsConfiguration { get; init; }
     internal ProviderHealthState? HealthBeforeProbe { get; init; }
 }
 
 /// <summary>Volatile observations only. Reading status never contacts a provider or writes storage.</summary>
-public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
+public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOutcomeObserver
 {
     private const int MaximumObservations = 4096;
     private readonly object _sync = new();
@@ -110,6 +112,23 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
             error?.Code, error?.Kind is ProviderErrorKind.Unauthorized or
                 ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.AccountNeedsConfiguration,
             error?.RetryAfter, passive: true);
+    }
+
+    void ILyricsOutcomeObserver.ObserveLyrics(ProviderExecutionContext context, ProviderError? error,
+        TimeSpan elapsed, LyricsConfigurationId configuration)
+    {
+        if (error?.Code == LocalCapacityException.Code || error?.Kind is ProviderErrorKind.Canceled or
+            ProviderErrorKind.NotFound or ProviderErrorKind.NotSupported or ProviderErrorKind.IncompatibleMedia or ProviderErrorKind.Forbidden) return;
+        RecordCore(Key(context.ProviderId, context.Account?.AccountId, ProviderCapabilityKind.Lyrics.ToString()),
+            context.Account?.Revision, error == null, (long)Math.Max(0, elapsed.TotalMilliseconds), error?.Code,
+            error?.Kind is ProviderErrorKind.Unauthorized or ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.AccountNeedsConfiguration,
+            error?.RetryAfter, passive: true, configuration);
+    }
+
+    internal ProviderHealthObservation? GetLyrics(ProviderRuntimeStatusKey key, long? revision, LyricsConfigurationId configuration)
+    {
+        var current = Get(key, revision);
+        return current?.LyricsConfiguration == configuration ? current : null;
     }
 
     public void ObservePlayback(ProviderExecutionContext context, ProviderExternalResourceId track,
@@ -199,25 +218,29 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
         RecordCore(key, revision, success, latency, reason, authenticationFailure, retryAfter, passive: false);
 
     private void RecordCore(ProviderRuntimeStatusKey key, long? revision, bool success, long? latency,
-        string? reason, bool authenticationFailure, TimeSpan? retryAfter, bool passive)
+        string? reason, bool authenticationFailure, TimeSpan? retryAfter, bool passive, LyricsConfigurationId? configuration = null)
     {
         if (reason == LocalCapacityException.Code) return;
         lock (_sync)
         {
             _observations.TryGetValue(key, out var previous);
             if (previous?.AccountRevision > revision) return;
+            if (configuration.HasValue && previous?.AccountRevision == revision &&
+                previous?.LyricsConfiguration is { } previousConfiguration && previousConfiguration.Revision > configuration.Value.Revision) return;
             var now = _clock.UtcNow;
-            var failures = success ? 0 : previous != null && previous.AccountRevision == revision && IsFresh(previous)
-                ? Math.Min(previous.ConsecutiveFailures + 1, _options.FailureThreshold) : 1;
+            var comparable = previous != null && previous.AccountRevision == revision &&
+                (!configuration.HasValue || previous.LyricsConfiguration == configuration);
+            var failures = success ? 0 : comparable && IsFresh(previous!)
+                ? Math.Min(previous!.ConsecutiveFailures + 1, _options.FailureThreshold) : 1;
             var opens = !success && (authenticationFailure || retryAfter.HasValue || failures >= _options.FailureThreshold);
             var cooldown = TimeSpan.FromSeconds(_options.CircuitOpenSeconds);
             if (retryAfter > cooldown) cooldown = TimeSpan.FromSeconds(Math.Min(retryAfter.Value.TotalSeconds, 86400));
             var health = success ? ProviderHealthState.Healthy : !passive || opens ? ProviderHealthState.Degraded :
-                previous != null && previous.AccountRevision == revision
-                    ? previous.HealthBeforeProbe ?? previous.Health : ProviderHealthState.Unknown;
+                comparable ? previous!.HealthBeforeProbe ?? previous.Health : ProviderHealthState.Unknown;
             MakeRoom(key);
             _observations[key] = new(revision, health,
-                now, latency, SafeReason(reason), failures, opens ? now.Add(cooldown) : null);
+                now, latency, SafeReason(reason), failures, opens ? now.Add(cooldown) : null)
+            { LyricsConfiguration = configuration };
         }
     }
 

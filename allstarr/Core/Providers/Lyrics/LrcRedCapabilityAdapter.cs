@@ -5,10 +5,12 @@ using allstarr.Services.Common;
 namespace allstarr.Core.Providers.Lyrics;
 
 public sealed class LrcRedCapabilityAdapter(
-    HttpClient http, IApplicationCache? cache, Func<TimeSpan>? lyricsTtl = null)
+    HttpClient http, IApplicationCache? cache, Func<TimeSpan>? lyricsTtl = null, TimeProvider? timeProvider = null)
     : PublicLyricsCapabilityAdapter(http, cache, lyricsTtl)
 {
     public const string HttpClientName = "LrcRed";
+    protected override TimeProvider Clock => timeProvider ?? TimeProvider.System;
+    private protected override LyricsSpeculationMode Speculation => LyricsSpeculationMode.Unrestricted;
     public override string ProviderId => "lrcred";
 
     protected override async Task<ProviderOutcome<ProviderLyricsResult>> ReadAsync(ProviderLyricsRequest request, CancellationToken token)

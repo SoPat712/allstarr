@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.Lyrics;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Json;
@@ -17,6 +18,7 @@ public sealed record ChallengeSolverTestResult(
     [property: JsonPropertyName("ok")] bool Ok,
     [property: JsonPropertyName("message")] string Message,
     [property: JsonPropertyName("version")] string? Version = null);
+internal sealed record ChallengeSolverConfiguration(ChallengeSolverOptions Options, LyricsConfigurationId ConfigurationId);
 public sealed class CloudflareChallengeException() : Exception(ProviderError.BlockedByChallenge().SafeMessage);
 
 public sealed class CloudflareChallengeSolver(HttpClient http,
@@ -28,6 +30,36 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     private readonly Dictionary<string, HostState> hosts = new(StringComparer.OrdinalIgnoreCase);
     private ChallengeSolverOptions? currentOptions;
+    private LyricsConfigurationId? currentConfiguration;
+    internal Func<CancellationToken, Task<ChallengeSolverConfiguration>>? ConfigurationReader { get; init; }
+    internal TimeSpan AdmissionTtl { get; init; } = TimeSpan.FromMinutes(5);
+    internal static readonly HttpRequestOptionsKey<ChallengeSolverConfiguration> ExpectedConfiguration = new("lyrics-solver-configuration");
+    internal async Task<ChallengeSolverConfiguration> CaptureConfigurationAsync(CancellationToken token)
+    {
+        if (ConfigurationReader != null) return await ConfigurationReader(token);
+        var configured = await options(token);
+        return new(configured, LyricsConfigurationId.From(configured.Url + "\n" + configured.TimeoutSeconds));
+    }
+    internal bool IsReady(string host, ChallengeSolverConfiguration configuration)
+    {
+        lock (hosts)
+        {
+            if (currentConfiguration != configuration.ConfigurationId || currentOptions != configuration.Options ||
+                !hosts.TryGetValue(host, out var state) || state.RetryAfter > clock.GetUtcNow()) return false;
+            var solution = state.Current;
+            return solution != null && solution.ConfigurationId == configuration.ConfigurationId &&
+                solution.DeliveredAt != default && solution.DeliveredAt + AdmissionTtl > clock.GetUtcNow() &&
+                IsCurrent(solution, configuration.Options);
+        }
+    }
+    internal static async Task<ChallengeSolverConfiguration> ReadConfigurationAsync(IDurableRuntimeSettings settings, CancellationToken token)
+    {
+        var values = await settings.GetManyAsync(["ChallengeSolver:Url", "ChallengeSolver:TimeoutSeconds"], token);
+        var configured = new ChallengeSolverOptions(values["ChallengeSolver:Url"].NormalizedValue, (int)values["ChallengeSolver:TimeoutSeconds"].Value);
+        var binding = string.Join("\n", values.OrderBy(item => item.Key, StringComparer.Ordinal)
+            .Select(item => item.Key + ":" + item.Value.Origin + ":" + item.Value.Revision + ":" + item.Value.NormalizedValue));
+        return new(configured, LyricsConfigurationId.From(binding, values.Values.Sum(value => value.Revision ?? 0)));
+    }
 
     public static async Task<ChallengeSolverOptions> ReadOptionsAsync(IDurableRuntimeSettings settings, CancellationToken token)
     {
@@ -69,17 +101,32 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
     internal async Task<HttpResponseMessage> SendAsync(HttpRequestMessage original,
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send, CancellationToken token)
     {
-        var configured = await options(token);
+        var configuration = await CaptureConfigurationAsync(token);
+        if (original.Options.TryGetValue(ExpectedConfiguration, out var expected) && expected.ConfigurationId != configuration.ConfigurationId)
+            throw new CloudflareChallengeException();
+        var configured = configuration.Options;
         var enabled = OutboundRequestGuard.TryCreateConfiguredServiceUri(configured.Url, out var baseUri, out _);
-        var state = StateFor(original.RequestUri!.IdnHost, configured);
+        var state = StateFor(original.RequestUri!.IdnHost, configured, configuration.ConfigurationId);
         var previous = enabled ? state.Current : null;
         if (previous is { CookiesRejected: true } && IsCurrent(previous, configured) &&
-            BodyResponse(original, previous) is { } cached) return cached;
+            BodyResponse(original, previous) is { } cached)
+        {
+            state.Current = previous with { DeliveredAt = clock.GetUtcNow(), ConfigurationId = configuration.ConfigurationId };
+            return cached;
+        }
         using var first = Copy(original, previous, configured.Url);
         var response = await send(first, token);
-        if (!await InspectOwnedResponseAsync(response, token)) return response;
+        if (!await InspectOwnedResponseAsync(response, token))
+        {
+            if (previous != null) state.Current = previous with { DeliveredAt = response.IsSuccessStatusCode ? clock.GetUtcNow() : default, ConfigurationId = configuration.ConfigurationId };
+            return response;
+        }
         response.Dispose();
-        if (previous != null && first.Headers.Contains("Cookie")) previous.CookiesRejected = true;
+        if (previous != null)
+        {
+            if (first.Headers.Contains("Cookie")) previous.CookiesRejected = true;
+            state.Current = previous with { DeliveredAt = default };
+        }
         if (!enabled) throw new CloudflareChallengeException();
 
         await state.Gate.WaitAsync(token);
@@ -88,12 +135,20 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
             var solution = state.Current;
             if (solution != null && IsCurrent(solution, configured))
             {
-                if (BodyResponse(original, solution) is { } body) return body;
+                if (BodyResponse(original, solution) is { } body)
+                {
+                    state.Current = solution with { DeliveredAt = clock.GetUtcNow(), ConfigurationId = configuration.ConfigurationId };
+                    return body;
+                }
                 if (solution != previous && !solution.CookiesRejected && solution.Cookies.Count > 0)
                 {
                     using var sharedRetry = Copy(original, solution, configured.Url);
                     response = await send(sharedRetry, token);
-                    if (!await InspectOwnedResponseAsync(response, token)) return response;
+                    if (!await InspectOwnedResponseAsync(response, token))
+                    {
+                        state.Current = solution with { DeliveredAt = response.IsSuccessStatusCode ? clock.GetUtcNow() : default, ConfigurationId = configuration.ConfigurationId };
+                        return response;
+                    }
                     response.Dispose();
                     solution.CookiesRejected = true;
                 }
@@ -110,6 +165,7 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
                 {
                     state.RetryAfter = default;
                     diagnostic.DeliveryPath = "solver-body";
+                    state.Current = solution with { DeliveredAt = clock.GetUtcNow(), ConfigurationId = configuration.ConfigurationId };
                     return body;
                 }
                 if (solution.Cookies.Count > 0)
@@ -122,6 +178,7 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
                         state.RetryAfter = default;
                         diagnostic.DeliveryPath = "cookies";
                         diagnostic.DeliveryFailureReason = "not-attempted";
+                        state.Current = solution with { DeliveredAt = response.IsSuccessStatusCode ? clock.GetUtcNow() : default, ConfigurationId = configuration.ConfigurationId };
                         return response;
                     }
                     response.Dispose();
@@ -147,14 +204,15 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
         finally { state.Gate.Release(); }
     }
 
-    private HostState StateFor(string host, ChallengeSolverOptions configured)
+    private HostState StateFor(string host, ChallengeSolverOptions configured, LyricsConfigurationId configuration)
     {
         lock (hosts)
         {
-            if (currentOptions != configured)
+            if (currentOptions != configured || currentConfiguration != configuration)
             {
                 hosts.Clear();
                 currentOptions = configured;
+                currentConfiguration = configuration;
             }
             if (!hosts.TryGetValue(host, out var state)) hosts[host] = state = new();
             return state;
@@ -406,7 +464,7 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
     }
     private sealed record SolverCookie(string Name, string Value, string Path, DateTimeOffset Expires, bool Secure);
     private sealed record Solution(Uri Target, int Status, string Body, string ContentType, string UserAgent,
-        IReadOnlyList<SolverCookie> Cookies, DateTimeOffset Expires, string SolverUrl)
+        IReadOnlyList<SolverCookie> Cookies, DateTimeOffset Expires, string SolverUrl, DateTimeOffset DeliveredAt = default, LyricsConfigurationId? ConfigurationId = null)
     {
         public volatile bool CookiesRejected;
     }

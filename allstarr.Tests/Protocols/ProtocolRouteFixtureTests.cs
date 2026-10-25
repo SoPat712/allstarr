@@ -1574,7 +1574,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [Theory]
     [InlineData("backend,lrclib", true, true, true)]
     [InlineData("lrclib,backend", true, true, false)]
-    [InlineData("backend,lrclib", false, true, false)]
+    [InlineData("backend,lrclib", false, true, true)]
     [InlineData("backend,lrclib", false, false, true)]
     public async Task JellyfinNativeLyricsFollowSavedOrderAndPreserveTheSelectedBackendBody(
         string order, bool backendTimed, bool providerTimed, bool expectBackend)
@@ -1614,7 +1614,7 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal(CanonicalJson(JsonDocument.Parse(native).RootElement), CanonicalJson(JsonDocument.Parse(body).RootElement));
         else Assert.Contains("Provider line", body, StringComparison.Ordinal);
         Assert.Equal(order.Split(',').Take(calls.Count), calls);
-        Assert.Equal(expectBackend && backendTimed ? 1 : order.StartsWith("lrclib", StringComparison.Ordinal) ? 1 : 2, calls.Count);
+        Assert.Single(calls);
     }
 
     [Theory]
@@ -3923,8 +3923,8 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("xml", "backend,lrclib", true, true, true)]
     [InlineData("json", "lrclib,backend", true, true, false)]
     [InlineData("xml", "lrclib,backend", true, true, false)]
-    [InlineData("json", "backend,lrclib", false, true, false)]
-    [InlineData("xml", "backend,lrclib", false, true, false)]
+    [InlineData("json", "backend,lrclib", false, true, true)]
+    [InlineData("xml", "backend,lrclib", false, true, true)]
     [InlineData("json", "backend,lrclib", false, false, true)]
     [InlineData("xml", "backend,lrclib", false, false, true)]
     public async Task SubsonicNativeLyricsFollowSavedOrderAndPreserveTheSelectedBackendBody(
@@ -3973,7 +3973,7 @@ public sealed partial class ProtocolRouteFixtureTests
         if (expectBackend) Assert.Equal(native, body);
         else Assert.Contains("Provider line", body, StringComparison.Ordinal);
         Assert.Equal(order.Split(',').Take(calls.Count), calls);
-        Assert.Equal(expectBackend && backendTimed ? 1 : order.StartsWith("lrclib", StringComparison.Ordinal) ? 1 : 2, calls.Count);
+        Assert.Single(calls);
     }
 
     [Theory]

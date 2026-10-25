@@ -438,7 +438,7 @@ public sealed partial class ProviderStatusManagerTests
     [InlineData(true)]
     public async Task PaxsenixProbeReportsUpstreamBusyOrTimedOutWithinDiagnosticBudget(bool hang)
     {
-        var clock = new ManualTimeProvider();
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         using var client = new HttpClient(new PaxsenixProbeHandler(hang));
         var apple = AppleProviderTestFactory.Client(new HttpClient(new AppleProviderTestFactory.Handler(request =>
             Json(HttpStatusCode.OK, request.RequestUri!.AbsolutePath.EndsWith("/search", StringComparison.Ordinal)

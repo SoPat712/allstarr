@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.Lyrics;
 using allstarr.Services.Common;
 using System.Diagnostics;
 using allstarr.Core.Health;
@@ -33,6 +34,7 @@ public static class ObservedProviderCapabilities
         : IProviderUrlCapability where TCapability : class, IProviderCapability
     {
         protected TCapability Implementation { get; } = implementation;
+        protected IProviderOutcomeObserver Observer => observer;
         public string ProviderId => Implementation.ProviderId;
         public ProviderCapabilityKind Capability => Implementation.Capability;
         public IReadOnlyList<string> UrlPatterns => (Implementation as IProviderUrlCapability)?.UrlPatterns ?? [];
@@ -177,11 +179,55 @@ public static class ObservedProviderCapabilities
     }
 
     private sealed class Lyrics(IProviderLyricsCapability implementation, IProviderOutcomeObserver observer)
-        : ObservedCapability<IProviderLyricsCapability>(implementation, observer), IProviderLyricsCapability
+        : ObservedCapability<IProviderLyricsCapability>(implementation, observer), IProviderLyricsCapability, IInternalLyricsCapability
     {
-        public Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(
-            ProviderExecutionContext context, ProviderLyricsRequest request) =>
-            InvokeAsync(context, () => Implementation.FetchLyricsAsync(context, request));
+        public ValueTask<LyricsSourceSnapshot> CaptureSourceAsync(CancellationToken token) =>
+            Implementation is IInternalLyricsCapability source ? source.CaptureSourceAsync(token) :
+                ValueTask.FromResult(LyricsAwait.Static(ProviderId, LyricsSpeculationMode.ForegroundOnly));
+        public async Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(
+            ProviderExecutionContext context, ProviderLyricsRequest request)
+        {
+            LyricsSourceSnapshot snapshot;
+            try { snapshot = await CaptureSourceAsync(context.CancellationToken); }
+            catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+            { return ProviderOutcome<ProviderLyricsResult>.Failure(new(ProviderErrorKind.Canceled)); }
+            catch (UnauthorizedAccessException) { throw; }
+            catch (OperationCanceledException) { throw; }
+            catch (ArgumentException) { return ProviderOutcome<ProviderLyricsResult>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration)); }
+            catch (Exception) { return ProviderOutcome<ProviderLyricsResult>.Failure(new(ProviderErrorKind.TransientFailure)); }
+            return await FetchAsync(context, request, new(LyricsCompletionMode.RequestBound, snapshot));
+        }
+        public async Task<ProviderOutcome<ProviderLyricsResult>> FetchAsync(
+            ProviderExecutionContext context, ProviderLyricsRequest request, LyricsExecution execution)
+        {
+            if (Implementation is not IInternalLyricsCapability source)
+                return await InvokeAsync(context, () => Implementation.FetchLyricsAsync(context, request));
+            var started = Stopwatch.GetTimestamp();
+            try
+            {
+                var outcome = await source.FetchAsync(context, request, execution);
+                await ObserveLyricsAsync(outcome.Error);
+                return outcome;
+            }
+            catch (Exception exception)
+            {
+                if (!LocalCapacityException.IsLocal(exception) && (exception is not OperationCanceledException || !context.CancellationToken.IsCancellationRequested))
+                    await ObserveLyricsAsync(new(exception is UnauthorizedAccessException ? ProviderErrorKind.Unauthorized : ProviderErrorKind.TransientFailure));
+                throw;
+            }
+            async Task ObserveLyricsAsync(ProviderError? error)
+            {
+                if (context.IsReadOnly || context.CancellationToken.IsCancellationRequested) return;
+                try
+                {
+                    if ((await source.CaptureSourceAsync(context.CancellationToken)).ConfigurationId != execution.Source.ConfigurationId) return;
+                    if (Observer is ILyricsOutcomeObserver lyricsObserver)
+                        lyricsObserver.ObserveLyrics(context, error, Stopwatch.GetElapsedTime(started), execution.Source.ConfigurationId);
+                    else Observer.Observe(context, Capability, error, Stopwatch.GetElapsedTime(started));
+                }
+                catch (Exception) { }
+            }
+        }
     }
 
     private class Streaming(IProviderStreamingCapability implementation, IProviderOutcomeObserver observer)

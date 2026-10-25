@@ -118,7 +118,7 @@ public sealed class ProtocolRecordingLyricsTests
     {
         var context = Context();
         var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["backend", "fixture"]);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["fixture", "backend"]);
         providers.Setup(item => item.GetLyricsAsync(context, "fixture", "track", ProviderLyricsFormat.LineTimed,
                 "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
             .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "backend",

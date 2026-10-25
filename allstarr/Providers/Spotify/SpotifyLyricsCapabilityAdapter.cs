@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.Lyrics;
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
@@ -8,7 +9,7 @@ using allstarr.Core.Capabilities;
 
 namespace allstarr.Core.Providers.Spotify;
 
-public sealed class SpotifyLyricsCapabilityAdapter : IProviderLyricsCapability
+public sealed class SpotifyLyricsCapabilityAdapter : IProviderLyricsCapability, IInternalLyricsCapability
 {
     private const int MaximumLyricsBytes = 2_000_000;
     private const long MaximumTimestampMilliseconds = 24L * 60 * 60 * 1000;
@@ -23,6 +24,11 @@ public sealed class SpotifyLyricsCapabilityAdapter : IProviderLyricsCapability
     public string ProviderId => SpotifyPlaylistCapabilityAdapter.StableProviderId;
 
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Lyrics;
+
+    ValueTask<LyricsSourceSnapshot> IInternalLyricsCapability.CaptureSourceAsync(CancellationToken token) =>
+        ValueTask.FromResult(LyricsAwait.Static(ProviderId, LyricsSpeculationMode.RecentHealthy));
+    Task<ProviderOutcome<ProviderLyricsResult>> IInternalLyricsCapability.FetchAsync(ProviderExecutionContext context,
+        ProviderLyricsRequest request, LyricsExecution execution) => _owner.ReadLyricsAsync(context, request, execution.Completion);
 
     public Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(
         ProviderExecutionContext context,

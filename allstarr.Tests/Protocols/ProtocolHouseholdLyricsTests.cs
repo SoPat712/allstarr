@@ -1,3 +1,8 @@
+using allstarr.Models.Domain;
+using Microsoft.Extensions.Logging.Abstractions;
+using System.Collections.Immutable;
+using allstarr.Core.Settings;
+using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Matching;
@@ -10,6 +15,78 @@ namespace allstarr.Tests;
 
 public sealed class ProtocolHouseholdLyricsTests
 {
+    [Fact]
+    public async Task AutomaticFallbackRejectsDefaultManualOnlyWhileExplicitReadRemainsAvailable()
+    {
+        var served = new List<Guid?>();
+        var capability = Capability(served);
+        var gateway = Gateway(ProviderAccountRequirement.None, capability.Object, Mock.Of<IProviderRouteAccountResolver>(),
+            defaultMode: ProviderUseMode.ManualOnly);
+        var context = Context();
+        var target = new ProviderExternalResourceId("fixture", ProviderResourceKind.Track, "exact");
+        var execution = (IProtocolLyricsExecutionGateway)gateway;
+        var prepared = await execution.PrepareAsync(new(context.Actor!, "fixture", target, new(Guid.NewGuid(), target),
+            [ProviderAccountScope.Personal, ProviderAccountScope.Shared], context.CorrelationId, context.Deadline), default);
+        if (prepared != null) await execution.ExecuteAsync(prepared, LyricsCompletionMode.OwnedAutomatic, default);
+        Assert.Empty(served);
+        Assert.Null(prepared);
+        Assert.NotNull(await gateway.GetLyricsAsync(context, "fixture", "exact"));
+        Assert.Single(served);
+    }
+
+    [Fact]
+    public async Task HouseholdAutomaticUsesGlobalPolicyAndSharedAccountsWhenPersonalSourceIsOff()
+    {
+        var context = Context();
+        var global = new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+            ImmutableHashSet<string>.Empty, "lossless", 0.07);
+        var personal = global with { ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("fixture", ProviderUseMode.Off) };
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        policies.Setup(item => item.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(global);
+        policies.Setup(item => item.ResolveForUserAsync(context.Principal!.UserId, It.IsAny<CancellationToken>())).ReturnsAsync(personal);
+        var shared = new ProviderAccountContext(Guid.NewGuid(), "fixture", ProviderAccountScope.Shared, 3);
+        var accounts = new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict);
+        accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderRouteAccountRequest request, CancellationToken _) =>
+            {
+                Assert.Equal(context.Actor, request.Actor);
+                Assert.Equal(new[] { ProviderAccountScope.Shared }, request.AllowedScopes);
+                return new ProviderRouteAccountResolution(shared, shared.Revision);
+            });
+        var served = new List<Guid?>();
+        var capability = Capability(served);
+        var gateway = Gateway(ProviderAccountRequirement.Required, capability.Object, accounts.Object, policies: policies.Object);
+        var target = new ProviderExternalResourceId("fixture", ProviderResourceKind.Track, "exact");
+        var execution = (IProtocolLyricsExecutionGateway)gateway;
+        var prepared = await execution.PrepareAsync(new(context.Actor!, "fixture", target,
+            new(Guid.NewGuid(), target), [ProviderAccountScope.Shared], context.CorrelationId, context.Deadline, HouseholdOnly: true), default);
+        Assert.NotNull(prepared);
+        Assert.False(prepared.MaySpeculate);
+        Assert.NotNull(await execution.ExecuteAsync(prepared, LyricsCompletionMode.RequestBound, default));
+        Assert.Equal(new Guid?[] { shared.AccountId }, served);
+        Assert.Null(await execution.PrepareAsync(new(context.Actor!, "fixture", target,
+            new(Guid.NewGuid(), target), [ProviderAccountScope.Personal, ProviderAccountScope.Shared], context.CorrelationId, context.Deadline), default));
+        var personalReads = policies.Invocations.Count(item => item.Method.Name == nameof(IEffectiveProviderPolicyResolver.ResolveForUserAsync));
+        var callbacks = 0;
+        var resolver = new ProtocolLyricsResolver(gateway, NullLogger<ProtocolLyricsResolver>.Instance, effectivePolicies: policies.Object);
+        var answer = await resolver.FindAsync(context, new Song
+        {
+            Title = "Fixture",
+            Artist = "Artist",
+            Artists = ["Artist"],
+            Album = "Album",
+            ExternalProvider = "fixture",
+            ExternalId = "exact"
+        }, "recording", new ProtocolLyricsSources(
+                Backend: _ => { callbacks++; throw new InvalidOperationException("Unexpected personal callback."); },
+                Kept: _ => { callbacks++; throw new InvalidOperationException("Unexpected personal callback."); }, HouseholdOnly: true));
+        Assert.Equal("fixture", answer?.Source);
+        Assert.Equal(0, callbacks);
+        Assert.Equal(new Guid?[] { shared.AccountId, shared.AccountId }, served);
+        Assert.Equal(personalReads, policies.Invocations.Count(item => item.Method.Name == nameof(IEffectiveProviderPolicyResolver.ResolveForUserAsync)));
+        await resolver.StopAsync(default);
+    }
+
     [Theory]
     [InlineData(ProviderAccountRequirement.Required)]
     [InlineData(ProviderAccountRequirement.Optional)]
@@ -93,18 +170,20 @@ public sealed class ProtocolHouseholdLyricsTests
     }
 
     private static ProtocolProviderGateway Gateway(ProviderAccountRequirement requirement,
-        IProviderLyricsCapability capability, IProviderRouteAccountResolver accounts, ITrackIdentityService? identities = null)
+        IProviderLyricsCapability capability, IProviderRouteAccountResolver accounts, ITrackIdentityService? identities = null, IEffectiveProviderPolicyResolver? policies = null, ProviderUseMode defaultMode = ProviderUseMode.Automatic)
     {
         var descriptor = new ProviderCapabilityDescriptor(ProviderCapabilityKind.Lyrics,
             ProviderCapabilitySupportState.Supported, requirement, "1.0", ["fetchLyrics"],
             requirement == ProviderAccountRequirement.None ? [] : [ProviderAccountScope.Personal, ProviderAccountScope.Shared]);
-        var registry = new ProviderRegistry([new ProviderRegistration(new ProviderDescriptor("fixture", "Fixture", "Fixture",
-            ProviderOrigin.BuiltIn, "1", "1.0", [descriptor], new ProviderPermissionDescriptor()), [capability])]);
+        var definition = new ProviderDescriptor("fixture", "Fixture", "Fixture", ProviderOrigin.BuiltIn, "1", "1.0", [descriptor],
+            new ProviderPermissionDescriptor())
+        { DefaultUseMode = defaultMode };
+        var registry = new ProviderRegistry([new ProviderRegistration(definition, [capability])]);
         var health = new Mock<IProviderRouteHealthSource>();
         health.Setup(item => item.Get(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<ProviderCapabilityKind>()))
             .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Unknown, false));
-        var router = new ProviderRouter(registry, accounts, health.Object, Mock.Of<IProviderRouteSidecarSource>(), identities ?? Mock.Of<ITrackIdentityService>());
-        return new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>());
+        var router = new ProviderRouter(registry, accounts, health.Object, Mock.Of<IProviderRouteSidecarSource>(), identities ?? Mock.Of<ITrackIdentityService>(), effectivePolicies: policies);
+        return new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(), effectivePolicies: policies);
     }
 
     private static ProtocolExecutionContext Context() => new(ProtocolKind.Jellyfin, "backend", "listener",

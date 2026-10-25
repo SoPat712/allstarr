@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { expectContainedMobileGeometry } from "./mobile-geometry";
 
 type PreferenceState = {
   explicitFilter: string;
@@ -194,18 +195,25 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.goto("/#/preferences");
     const region = page.getByRole("region", { name: "Lyrics source order" });
     await expect(region).toBeVisible();
-    await expect(region.getByRole("listitem")).toHaveText(["Spotify", "LRCLIB", "LyricsPlus", "Media server lyrics", "Kept LRC"]);
+    await expect(region.getByRole("listitem")).toHaveText(["Kept LRC", "Spotify", "LRCLIB", "LyricsPlus", "Media server lyrics"]);
     await expect(region.getByRole("button", { name: "Move Spotify up", exact: true })).toBeDisabled();
+    await expect(region.getByRole("button", { name: "Move Kept LRC up", exact: true })).toBeDisabled();
     await expect(region.getByRole("button", { name: "Move Kept LRC down", exact: true })).toBeDisabled();
-    await region.getByRole("button", { name: "Move Kept LRC up", exact: true }).focus();
+    await region.getByRole("button", { name: "Move Media server lyrics up", exact: true }).focus();
     await page.keyboard.press("Enter");
-    await expect(region.getByRole("listitem")).toHaveText(["Spotify", "LRCLIB", "LyricsPlus", "Kept LRC", "Media server lyrics"]);
+    await expect(region.getByRole("listitem")).toHaveText(["Kept LRC", "Spotify", "LRCLIB", "Media server lyrics", "LyricsPlus"]);
     await page.getByRole("button", { name: "Save preferences", exact: true }).click();
     await expect.poll(() => writes[0]).toEqual({ explicitFilter: "All", showExternalLabel: true, showExplicitLabel: true,
-      playbackStart: "Balanced", lyricsOrder: "spotify,lrclib,lyricsplus,kept,backend", expectedRevision: "initial" });
+      playbackStart: "Balanced", lyricsOrder: "kept,spotify,lrclib,backend,lyricsplus", expectedRevision: "initial" });
     await expect(page.getByText("Personal choices", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Reset to household defaults", exact: true }).click();
-    await expect(region.getByRole("listitem")).toHaveText(["Spotify", "LRCLIB", "LyricsPlus", "Media server lyrics", "Kept LRC"]);
+    await expect(region.getByRole("listitem")).toHaveText(["Kept LRC", "Spotify", "LRCLIB", "LyricsPlus", "Media server lyrics"]);
+    while (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count())
+      await page.getByRole("button", { name: "Dismiss notification", exact: true }).first().click();
+    await page.getByRole("heading", { name: "Lyrics source order", exact: true }).click();
+    if (width < 600) await expectContainedMobileGeometry(page);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: `test-results/lyrics-fixed-kept-${width}-${theme}.png`, fullPage: true });
     await expect(page.getByText("Using household defaults", { exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     for (const button of await region.getByRole("button").all()) {

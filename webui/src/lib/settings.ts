@@ -53,3 +53,9 @@ export function move<T>(items: T[], index: number, direction: -1 | 1) {
   [result[index], result[next]] = [result[next], result[index]];
   return result;
 }
+
+export function keptLyricsFirst(items: string[]) {
+  return items.some(id => id.toLowerCase() === "kept")
+    ? ["kept", ...items.filter(id => id.toLowerCase() !== "kept")]
+    : items;
+}

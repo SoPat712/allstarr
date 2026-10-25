@@ -24,6 +24,7 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
     private readonly Func<ITrackIdentityService?>? _identities;
     private readonly IApplicationCache? _cache;
     private readonly Func<TimeSpan>? _lyricsTtl;
+    private protected override LyricsSpeculationMode Speculation => LyricsSpeculationMode.RecentHealthy;
     public override string ProviderId => "paxsenix";
     protected override TimeProvider Clock => _clock;
     protected override string CacheScope(ProviderLyricsRequest request) => $"apple:{request.CanonicalRecordingId:N}:";
@@ -53,13 +54,16 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
     }
 
     protected override Task<ProviderOutcome<ProviderLyricsResult>> ReadAsync(ProviderLyricsRequest request, CancellationToken token) =>
-        ReadCoreAsync(null, request, token);
+        ReadCoreAsync(null, request, LyricsCompletionMode.RequestBound, token);
 
     protected override Task<ProviderOutcome<ProviderLyricsResult>> ReadAsync(
-        ProviderExecutionContext context, ProviderLyricsRequest request, CancellationToken token) => ReadCoreAsync(context, request, token);
+        ProviderExecutionContext context, ProviderLyricsRequest request, CancellationToken token) => ReadCoreAsync(context, request, LyricsCompletionMode.RequestBound, token);
 
+    private protected override Task<ProviderOutcome<ProviderLyricsResult>> ReadWithCompletionAsync(
+        ProviderExecutionContext context, ProviderLyricsRequest request, LyricsCompletionMode completion, CancellationToken token) =>
+        ReadCoreAsync(context, request, completion, token);
     private async Task<ProviderOutcome<ProviderLyricsResult>> ReadCoreAsync(
-        ProviderExecutionContext? context, ProviderLyricsRequest request, CancellationToken token)
+        ProviderExecutionContext? context, ProviderLyricsRequest request, LyricsCompletionMode completion, CancellationToken token)
     {
         var appleContext = new ProviderExecutionContext(context?.Actor ?? new(ProviderActorKind.PublicRead, null),
             AppleMusicClient.ProviderId, null,
@@ -71,7 +75,7 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
         ProviderError? transient = null;
         var unavailable = false;
         var sent = 0;
-        await foreach (var candidate in ResolveAppleIdsAsync(appleContext, request, token))
+        await foreach (var candidate in ResolveAppleIdsAsync(appleContext, request, completion, token))
         {
             token.ThrowIfCancellationRequested();
             if (candidate.Error != null)
@@ -115,7 +119,7 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
                 if (!result.IsSuccess) return result;
                 if (result.RequireValue().Availability == ProviderLyricsAvailabilityState.Available)
                 {
-                    await CacheAppleIdAsync(id, AppleIdCacheKeys(request), token);
+                    await CacheAppleIdAsync(id, AppleIdCacheKeys(request), completion, token);
                     return result;
                 }
                 unavailable = true;
@@ -156,22 +160,23 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
     }
 
     private async IAsyncEnumerable<(string? Id, ProviderError? Error)> ResolveAppleIdsAsync(
-        ProviderExecutionContext context, ProviderLyricsRequest request, [EnumeratorCancellation] CancellationToken token)
+        ProviderExecutionContext context, ProviderLyricsRequest request, LyricsCompletionMode completion, [EnumeratorCancellation] CancellationToken token)
     {
         var keys = AppleIdCacheKeys(request);
-        var cached = await CachedAppleIdAsync(keys[0], token);
+        var cached = await CachedAppleIdAsync(keys[0], completion, token);
         if (cached != null) yield return (cached, null);
+        token.ThrowIfCancellationRequested();
         var identities = _identities?.Invoke();
         if (identities != null)
         {
-            var identity = await identities.ResolveTargetAsync(context, request.CanonicalRecordingId,
-                new(AppleMusicClient.ProviderId), token).WaitAsync(token);
+            var identity = await LyricsAwait.CompleteAsync(identities.ResolveTargetAsync(context, request.CanonicalRecordingId,
+                new(AppleMusicClient.ProviderId), token), completion, token);
             if (identity is { Scope: ProviderIdentityScope.Catalog, Verification: ProviderIdentityVerification.Verified or ProviderIdentityVerification.Pinned } &&
                 IsCatalogId(identity.ExternalId.Value)) yield return (identity.ExternalId.Value, null);
         }
         if (keys.Count > 1)
         {
-            cached = await CachedAppleIdAsync(keys[1], token);
+            cached = await CachedAppleIdAsync(keys[1], completion, token);
             if (cached != null) yield return (cached, null);
         }
         if (string.IsNullOrWhiteSpace(request.Isrc) &&
@@ -183,7 +188,7 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
         }
         if (!string.IsNullOrWhiteSpace(request.Isrc))
         {
-            var lookup = await _apple.LookupAllByIsrcAsync(context, new(request.Isrc)).WaitAsync(token);
+            var lookup = await LyricsAwait.CompleteAsync(_apple.LookupAllByIsrcAsync(context, new(request.Isrc)), completion, token);
             token.ThrowIfCancellationRequested();
             if (lookup.IsSuccess)
             {
@@ -197,8 +202,8 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
         }
         if (!string.IsNullOrWhiteSpace(request.TrackTitle) && request.ArtistNames.Count > 0)
         {
-            var search = await _apple.SearchTracksAsync(context,
-                new(request.TrackTitle + " " + string.Join(" ", request.ArtistNames), new(25))).WaitAsync(token);
+            var search = await LyricsAwait.CompleteAsync(_apple.SearchTracksAsync(context,
+                new(request.TrackTitle + " " + string.Join(" ", request.ArtistNames), new(25))), completion, token);
             token.ThrowIfCancellationRequested();
             if (!search.IsSuccess)
             {
@@ -221,23 +226,24 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
         return keys;
     }
 
-    private async Task<string?> CachedAppleIdAsync(string key, CancellationToken token)
+    private async Task<string?> CachedAppleIdAsync(string key, LyricsCompletionMode completion, CancellationToken token)
     {
         try
         {
-            var cached = _cache == null ? null : await _cache.GetAsync<string>(key).WaitAsync(token);
+            var cached = _cache == null ? null : await LyricsAwait.CompleteAsync(_cache.GetAsync<string>(key), completion, token);
             return cached != null && IsCatalogId(cached) ? cached : null;
         }
         catch (Exception exception) when (exception is not OperationCanceledException) { return null; }
     }
 
-    private async Task CacheAppleIdAsync(string id, IReadOnlyList<string> keys, CancellationToken token)
+    private async Task CacheAppleIdAsync(string id, IReadOnlyList<string> keys, LyricsCompletionMode completion, CancellationToken token)
     {
         if (_cache != null)
         {
             foreach (var key in keys)
             {
-                try { await _cache.SetAsync(key, id, _lyricsTtl?.Invoke() ?? TimeSpan.FromDays(7)).WaitAsync(token); }
+                token.ThrowIfCancellationRequested();
+                try { await LyricsAwait.CompleteAsync(_cache.SetAsync(key, id, _lyricsTtl?.Invoke() ?? TimeSpan.FromDays(7)), completion, token); }
                 catch (Exception exception) when (exception is not OperationCanceledException) { }
             }
         }
