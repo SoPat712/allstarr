@@ -710,7 +710,7 @@
                 <span class="nav-icon"><UiIcon name={destination.icon} /></span>
                 <span>
                   <strong>{destination.label}</strong>
-                  <small>{destination.href === "#/preferences" ? "Content and track labels for your account" : destination.label === "Sources" ? (administrator ? "Music services, accounts and extensions" : "Music services and your accounts") : "Deployment and operator controls"}</small>
+                  <small>{destination.href === "#/preferences" ? "Content and track labels for your account" : destination.href === "#/getting-started" ? "Connect music apps and get help" : destination.label === "Sources" ? (administrator ? "Music services, accounts and extensions" : "Music services and your accounts") : "Deployment and operator controls"}</small>
                 </span>
               </a>
             {/each}

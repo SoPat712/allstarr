@@ -34,7 +34,7 @@
 <SegmentedNav label="Activity views" items={[
   { id: "history", label: "History" }, { id: "jobs", label: "Jobs" }, { id: "tasks", label: "Tasks" },
   ...(administrator ? [{ id: "reports", label: "Reports" }] : []),
-]} active={view} onchange={(next) => { view = next; window.location.hash = next === "history" ? "#/activity" : `#/activity?view=${next}`; }} />
+]} active={view} onchange={(next) => view = next} />
 {#if view !== "reports"}
 <div class="activity-toolbar">
   {#if administrator}
