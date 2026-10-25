@@ -96,7 +96,8 @@ public static partial class ExtensionSdkV1
     public const int MaximumFiles = 2_000;
     private static readonly HashSet<string> AllowedFiles = new(StringComparer.OrdinalIgnoreCase)
     {
-        "manifest.json", "index.js", "README.md", "LICENSE", "LICENSE.md", "icon.png", "icon.jpg", "icon.jpeg", "icon.webp"
+        "manifest.json", "index.js", "README.md", "LICENSE", "LICENSE.md", "COPYING", "NOTICE",
+        "icon.png", "icon.jpg", "icon.jpeg", "icon.webp"
     };
 
     public static ExtensionSdkManifest ParseManifest(string json)
