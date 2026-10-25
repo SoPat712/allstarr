@@ -580,6 +580,8 @@ app.Services.GetRequiredService<ProviderDownloadArtifactResolver>().DeleteAbando
 
 CacheExtensions.InitializeCacheSettings(app.Services);
 
+app.UseMiddleware<AdminResponseHeadersMiddleware>();
+
 // Downstream policies must see only the forwarded identity accepted by the trust policy.
 app.UseForwardedHeaders();
 
