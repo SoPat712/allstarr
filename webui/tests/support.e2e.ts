@@ -265,6 +265,13 @@ test("administrator inbox opens without changing status and protects a stale edi
   await page.getByRole("tab", { name: "All", exact: true }).click();
   await expect(page.getByRole("button", { name: /^Open report for/ })).toBeVisible();
   expect(state.reportReads.at(-1)).toBeNull();
+  const reports = page.getByRole("tab", { name: "Reports", exact: true });
+  await reports.focus();
+  await page.keyboard.press("Home");
+  await expect(page.getByRole("tab", { name: "History", exact: true })).toBeFocused();
+  await page.keyboard.press("End");
+  await expect(reports).toBeFocused();
+  await expect(reports).toHaveAttribute("aria-selected", "true");
 });
 
 test("inbox paging sends the cursor and keeps existing reports without duplicate rows", async ({ page }) => {
