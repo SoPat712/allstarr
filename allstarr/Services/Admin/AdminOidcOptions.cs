@@ -44,6 +44,16 @@ public static class AdminOidcRegistration
         services.AddSingleton(settings);
         services.AddSingleton<AdminOidcLinks>();
         services.AddSingleton<AdminOidcBackendAuthentication>();
+        services.AddHttpClient(AdminOidcBackendAuthentication.HttpClientName, client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+            client.MaxResponseContentBufferSize = 256 * 1024;
+        }).RemoveAllLoggers().ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+        {
+            AllowAutoRedirect = false,
+            UseCookies = false,
+            UseDefaultCredentials = false
+        });
         services.AddAntiforgery(options =>
         {
             options.HeaderName = "X-Allstarr-CSRF";

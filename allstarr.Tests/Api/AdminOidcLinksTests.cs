@@ -159,7 +159,20 @@ public sealed class AdminOidcLinksTests
             {
                 Assert.Equal(HttpMethod.Post, request.Method);
                 Assert.Equal("", request.RequestUri!.Query);
-                Assert.Contains("p=private-fixture-credential", await request.Content!.ReadAsStringAsync(cancellationToken));
+                var body = await request.Content!.ReadAsStringAsync(cancellationToken);
+                if (body.Contains("p=private-fixture-credential", StringComparison.Ordinal))
+                {
+                    Assert.Contains("u=alice", body, StringComparison.Ordinal);
+                }
+                else
+                {
+                    Assert.Contains("u=alice", body, StringComparison.Ordinal);
+                    Assert.Contains("t=", body, StringComparison.Ordinal);
+                    Assert.Contains("s=", body, StringComparison.Ordinal);
+                    Assert.Contains("username=alice", body, StringComparison.Ordinal);
+                    Assert.Contains("f=json", body, StringComparison.Ordinal);
+                    Assert.DoesNotContain("p=", body, StringComparison.Ordinal);
+                }
                 json = JsonSerializer.Serialize(new Dictionary<string, object>
                 {
                     ["subsonic-response"] = new { status = Accept ? "ok" : "failed", user = new { username = UserId, adminRole = Admin } }

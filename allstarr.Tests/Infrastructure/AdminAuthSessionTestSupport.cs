@@ -18,7 +18,8 @@ internal static class AdminAuthSessionTestSupport
         new(
             store ?? new MemoryAdminAuthSessionStore(),
             dataProtection ?? new EphemeralDataProtectionProvider(),
-            logger ?? NullLogger<AdminAuthSessionService>.Instance);
+            logger ?? NullLogger<AdminAuthSessionService>.Instance,
+            backendSessionValidator: HealthyAdminBackendSessionValidator.Instance);
 
     public static async Task<AdminAuthSessionFixture> CreateLinkedAsync(
         MemoryAdminAuthSessionStore? store = null,
@@ -68,12 +69,17 @@ internal sealed class AdminAuthSessionFixture : IAsyncDisposable
     public BackendIdentityResolver Identities { get; }
     public AdminAuthSessionService Service { get; }
 
-    public AdminAuthSessionService CreateService(IAdminAuthSessionStore? store = null) => new(
+    public AdminAuthSessionService CreateService(
+        IAdminAuthSessionStore? store = null,
+        AdminOidcBackendAuthentication? oidcBackend = null,
+        IAdminBackendSessionValidator? backendSessionValidator = null) => new(
         store ?? Store,
         _dataProtection,
         _logger,
         contextFactory: Factory,
-        identityOptions: IdentityOptions);
+        identityOptions: IdentityOptions,
+        oidcBackend: oidcBackend,
+        backendSessionValidator: backendSessionValidator ?? HealthyAdminBackendSessionValidator.Instance);
 
     public async Task<AdminAuthSession> CreateSessionAsync(
         string userId,
@@ -113,9 +119,23 @@ internal sealed class AdminAuthTestDbContextFactory(DbContextOptions<AllstarrDbC
         Task.FromResult(new AllstarrDbContext(options));
 }
 
+internal sealed class HealthyAdminBackendSessionValidator : IAdminBackendSessionValidator
+{
+    public static HealthyAdminBackendSessionValidator Instance { get; } = new();
+
+    public Task<AdminBackendSessionValidationResult> ValidateSessionAsync(
+        AdminAuthSession session,
+        CancellationToken cancellationToken) =>
+        Task.FromResult(new AdminBackendSessionValidationResult(
+            AdminBackendSessionValidationStatus.Valid,
+            new AdminOidcBackendUser(session.UserId, session.UserName, session.IsAdministrator,
+                session.JellyfinAccessToken)));
+}
+
 internal sealed class MemoryAdminAuthSessionStore : IAdminAuthSessionStore
 {
     public Dictionary<string, AdminAuthSessionRecord> Records { get; } = new(StringComparer.Ordinal);
+    public Action<string>? BeforeTouch { get; set; }
 
     public Task<AdminAuthSessionRecord?> FindAsync(string id, CancellationToken cancellationToken)
     {
@@ -131,6 +151,7 @@ internal sealed class MemoryAdminAuthSessionStore : IAdminAuthSessionStore
 
     public Task TouchAsync(string id, DateTimeOffset lastSeenAt, CancellationToken cancellationToken)
     {
+        BeforeTouch?.Invoke(id);
         if (Records.TryGetValue(id, out var record)) record.LastSeenAt = lastSeenAt;
         return Task.CompletedTask;
     }
