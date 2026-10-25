@@ -11,6 +11,7 @@ using allstarr.Core.Secrets;
 using allstarr.Core.Configuration;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace allstarr.Controllers;
 
@@ -75,6 +76,7 @@ public sealed class AdminAuthController : ControllerBase
     }
 
     [HttpPost("login")]
+    [EnableRateLimiting(AdminSignInRateLimiting.PolicyName)]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
         if (request.LinkOidc)
@@ -405,6 +407,7 @@ public sealed class AdminAuthController : ControllerBase
     }
 
     [HttpPost("playlist-consent")]
+    [EnableRateLimiting(AdminSignInRateLimiting.PolicyName)]
     public async Task<IActionResult> GrantPlaylistConsent([FromBody] PlaylistConsentRequest request,
         CancellationToken cancellationToken)
     {
