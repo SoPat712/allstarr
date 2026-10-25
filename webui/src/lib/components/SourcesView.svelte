@@ -63,6 +63,8 @@
     sourceNeedsAccount,
     sourceOriginLabel,
     sourceStatus,
+    sourceIsInUse,
+    sourceUpdateNeedsRefresh,
     sourceTimingLabel,
     settingDefault,
     sourceServerFields,
@@ -174,10 +176,10 @@
   let accessOpen = $state(false);
   let selectedAccount = $state<ProviderAccount | null>(null);
   let selectedSource = $state<ProviderDefinition | null>(null);
-  let listFilter = $state<"all" | "attention" | "accounts">("all");
+  let listFilter = $state<"mine" | "all" | "attention" | "accounts">("mine");
 
   $effect(() => {
-    listFilter = mode === "accounts" ? "accounts" : "all";
+    listFilter = mode === "accounts" ? "accounts" : "mine";
   });
   let addSourceOpen = $state(false);
   let removal = $state<ProviderAccount | null>(null);
@@ -200,7 +202,8 @@
     }),
   );
   const canConnectAccounts = $derived(administrator || listenersCanConnectOwnAccounts);
-  const needsSetup = $derived(providers.filter((item) =>
+  const mySources = $derived(providers.filter(item => sourceIsInUse(item, accounts, health)));
+  const needsSetup = $derived(mySources.filter((item) =>
     ["degraded", "needs_verification", "needs_config", "partial_config"].includes(sourceStatus(item, accounts, health))));
   const pageId = $derived(serviceId || (initialSource && !(initialConnect && mode === "accounts") ? initialSource : ""));
   const pageSource = $derived(pageId ? provider(pageId) ?? null : null);
@@ -252,9 +255,21 @@
 
   $effect(() => () => { for (const timer of followUps) clearTimeout(timer); });
 
-  async function refresh() {
+  let refreshTask: Promise<void> | null = null;
+
+  function refresh(): Promise<void> {
+    if (!refreshTask) refreshTask = loadSources().finally(() => { refreshTask = null; });
+    return refreshTask;
+  }
+
+  async function refreshManually() {
     if (refreshing) return;
     refreshing = true;
+    try { await refresh(); }
+    finally { refreshing = false; }
+  }
+
+  async function loadSources() {
     error = "";
     const requests: Promise<unknown>[] = [home.schema(), sources.accounts()];
     if (administrator) requests.push(home.providers(), sources.health(), sources.cts(), settings.config());
@@ -284,10 +299,9 @@
     if (failed.length)
       error = failed[0].reason instanceof Error ? failed[0].reason.message : "Source state is unavailable.";
     loading = false;
-    refreshing = false;
   }
 
-  const refreshScheduler = createRefreshScheduler(refresh);
+  const refreshScheduler = createRefreshScheduler(refresh, 5_000);
   const scheduleRefresh = refreshScheduler.schedule;
 
   async function completed(message: string) {
@@ -504,7 +518,9 @@
 
   onMount(() => {
     void refresh();
-    const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
+    const unsubscribe = liveUpdates.subscribe(update => {
+      if (sourceUpdateNeedsRefresh(update)) scheduleRefresh();
+    });
     return () => {
       unsubscribe();
       refreshScheduler.cancel();
@@ -822,7 +838,7 @@
           <p>Everywhere Allstarr finds music, playlists, lyrics and scrobbling. Open a source to see its checks, accounts and settings.</p>
         </div>
         <div class="sources-heading-actions">
-          <Button variant="secondary" disabled={refreshing} onclick={() => void refresh()}><RefreshCw size={16} aria-hidden="true" />{refreshing ? "Refreshing…" : "Refresh"}</Button>
+          <Button variant="secondary" disabled={refreshing} onclick={() => void refreshManually()}><RefreshCw size={16} aria-hidden="true" />{refreshing ? "Refreshing…" : "Refresh"}</Button>
           {#if administrator}<Button variant="secondary" onclick={() => { addSourceOpen = true; }}><PackagePlus size={16} aria-hidden="true" />Add a source</Button>{/if}
           {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}><Plus size={16} aria-hidden="true" />Connect Source</Button>{/if}
         </div>
@@ -831,9 +847,10 @@
       {#if administrator}<ExtensionsView view="attention" onchanged={refresh} />{/if}
 
       <div class="source-filters" role="group" aria-label="Show">
-        <button type="button" class="filter-chip" aria-pressed={listFilter === "all"} onclick={() => listFilter = "all"}>All sources <span class="segmented-tab-count">{providers.length}</span></button>
+        <button type="button" class="filter-chip" aria-pressed={listFilter === "mine"} onclick={() => listFilter = "mine"}>My sources <span class="segmented-tab-count">{mySources.length}</span></button>
         <button type="button" class="filter-chip" aria-pressed={listFilter === "attention"} onclick={() => listFilter = "attention"}>Needs attention <span class="segmented-tab-count">{needsSetup.length}</span></button>
         <button type="button" class="filter-chip" aria-pressed={listFilter === "accounts"} onclick={() => listFilter = "accounts"}>Accounts <span class="segmented-tab-count">{accounts.length}</span></button>
+        <button type="button" class="filter-chip" aria-pressed={listFilter === "all"} onclick={() => listFilter = "all"}>All available <span class="segmented-tab-count">{providers.length}</span></button>
       </div>
 
       {#if listFilter === "accounts"}
@@ -842,7 +859,7 @@
         {@render accountList()}
       {:else}
       <ul class="source-list" aria-label="Services">
-        {#each listFilter === "attention" ? needsSetup : providers as item (item.id)}
+        {#each listFilter === "attention" ? needsSetup : listFilter === "mine" ? mySources : providers as item (item.id)}
           {@const state = sourceStatus(item, accounts, health)}
           {@const metrics = sourceMetrics(item, providerHealth(item.id))}
           {@const connected = providerAccounts(item.id)}

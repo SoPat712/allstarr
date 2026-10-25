@@ -8,6 +8,7 @@ import type {
 } from "./api";
 
 import { humanize } from "./activity";
+import type { UpdateEvent } from "./live-updates.svelte";
 export { humanize };
 
 export const providerReadinessLabel = (reason: string) =>
@@ -210,6 +211,23 @@ export function sourceStatus(
   }
   if (sourceNeedsAccount(provider)) return "needs_config";
   return ["healthy", "degraded"].includes(provider.status ?? "") ? "available" : provider.status || "available";
+}
+
+export function sourceIsInUse(provider: ProviderDefinition, accounts: ProviderAccount[], health: ProviderHealth[]) {
+  return provider.implementationOrigin === "extension" ||
+    accounts.some(account => account.providerId.toLowerCase() === provider.id.toLowerCase()) ||
+    provider.status !== "needs_config" && (["partial_config", "degraded"].includes(provider.status ?? "") ||
+      sourceStatus(provider, accounts, health) !== "needs_config");
+}
+
+export function sourceUpdateNeedsRefresh(update: UpdateEvent) {
+  if (!update.resource) return true;
+  if (["track-match", "playlist-source"].includes(update.resource)) return false;
+  if (update.resource === "audit" && update.data?.category)
+    return /^(provider-|extension|runtime-settings|configuration|onboarding)/.test(update.data.category);
+  if (update.resource === "job" && update.data?.type)
+    return /^(provider[.-]|extension[.-]|configuration[.-])/.test(update.data.type);
+  return true;
 }
 
 const isNeutralCheck = (check: { reasonCode?: string | null }) =>

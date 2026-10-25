@@ -14,6 +14,8 @@ import {
   sourceNeedsAccount,
   sourceOriginLabel,
   sourceStatus,
+  sourceIsInUse,
+  sourceUpdateNeedsRefresh,
   supportsPlaybackDiagnostic,
   humanize,
   providerReadinessLabel,
@@ -43,6 +45,32 @@ const account = (scope: ProviderAccount["scope"] = "Personal"): ProviderAccount 
 const provider: ProviderDefinition = { id: "future-extension", name: "Future Extension" };
 
 describe("source presentation", () => {
+  it("keeps unused built-ins available without treating them as connected sources", () => {
+    const unused = { id: "koito", name: "Koito", status: "needs_config" };
+    expect(sourceIsInUse(unused, [], [])).toBe(false);
+    expect(sourceIsInUse(unused, [], [{
+      provider: "koito", providerAccountId: null, providerAccountName: null, capability: "scrobbling",
+      accountScope: "public", supported: true, enabled: true, configuration: "needs_configuration",
+      health: "degraded", ready: false, canAttempt: false, canTest: true,
+    }])).toBe(false);
+    expect(sourceIsInUse({ ...unused, implementationOrigin: "extension" }, [], [])).toBe(true);
+    expect(sourceIsInUse(unused, [{ ...account(), providerId: "koito", enabled: false }], [])).toBe(true);
+    expect(sourceIsInUse({ id: "lrclib", name: "LRCLib", status: "available" }, [], [])).toBe(true);
+    expect(sourceIsInUse({ ...unused, status: "partial_config" }, [], [])).toBe(true);
+    expect(sourceIsInUse({ ...unused, status: "degraded" }, [], [])).toBe(true);
+  });
+
+  it("refreshes source changes without fetching the catalog for ordinary playback work", () => {
+    expect(sourceUpdateNeedsRefresh({})).toBe(true);
+    expect(sourceUpdateNeedsRefresh({ resource: "audit", data: { category: "provider-check" } })).toBe(true);
+    expect(sourceUpdateNeedsRefresh({ resource: "audit", data: { category: "runtime-settings" } })).toBe(true);
+    expect(sourceUpdateNeedsRefresh({ resource: "job", data: { type: "extension.session.verify" } })).toBe(true);
+    expect(sourceUpdateNeedsRefresh({ resource: "job", data: { type: "playback.signal" } })).toBe(false);
+    expect(sourceUpdateNeedsRefresh({ resource: "audit", data: { category: "scrobbling" } })).toBe(false);
+    expect(sourceUpdateNeedsRefresh({ resource: "track-match" })).toBe(false);
+    expect(sourceUpdateNeedsRefresh({ resource: "playlist-source" })).toBe(false);
+  });
+
   it("keeps routine settings visible and compatibility overrides in Advanced", () => {
     const standard = { key: "CACHE", label: "Cache minutes", type: "number" };
     const advanced = { key: "ENDPOINT", label: "Endpoint", type: "text", advanced: true, defaultValueJson: '"https://service.test/default"' };
