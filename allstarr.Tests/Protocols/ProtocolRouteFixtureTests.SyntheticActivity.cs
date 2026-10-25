@@ -84,12 +84,14 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(synthetic ? 0 : 5, forwarded.Count);
         Assert.Equal(synthetic ? 0 : 5, recorded.Count);
         if (synthetic) Assert.Null(manager.GetExternalReport(key, includeStopped: true));
+        Assert.Empty(manager.GetActivePlaybackStates(TimeSpan.FromMinutes(5)));
 
         using var native = await client.PostAsync("/Sessions/Playing", new StringContent(
             "{\"ItemId\":\"native-track\",\"PositionTicks\":0}", Encoding.UTF8, "application/json"));
         Assert.Equal(HttpStatusCode.NoContent, native.StatusCode);
         Assert.Contains(recorded, item => item.ItemId == "native-track");
         Assert.Equal("native-track", manager.GetLastPlayingItemId(key));
+        Assert.Equal("native-track", Assert.Single(manager.GetActivePlaybackStates(TimeSpan.FromMinutes(5))).ItemId);
     }
 
     [Fact]

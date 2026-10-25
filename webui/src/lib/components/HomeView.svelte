@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ChevronRight, CircleAlert, CircleCheck, CircleDashed, Headphones, KeyRound, Music } from "@lucide/svelte";
+  import { ChevronRight, CircleAlert, CircleCheck, CircleDashed, Headphones, KeyRound, Music, Pause } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
   import { home } from "$lib/api";
   import { humanize, relativeTime } from "$lib/activity";
@@ -9,7 +9,7 @@
   import RouteError from "$lib/components/RouteError.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import { playbackSeekLabel, playbackSourceIssues, summarizeHome, type HomeSnapshot } from "$lib/home";
+  import { playbackProgress, playbackSeekLabel, playbackSourceIssues, summarizeHome, type HomeSnapshot } from "$lib/home";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { accountSubtitle, findProviderDefinition, providerDisplayName } from "$lib/sources";
   import { reportHref } from "$lib/support";
@@ -21,9 +21,27 @@
   let refreshing = $state(false);
   let pendingRefresh = false;
   let nowPlayingRequest = 0;
+  let appliedPlaybackRequest = 0;
   let nowPlayingTimer: ReturnType<typeof setInterval> | null = null;
+  let playbackReference = $state<{ capturedAt: string; receivedAt: number } | null>(null);
+  let playbackNow = $state(0);
+  let visible = $state(false);
+  let reducedMotion = $state(false);
 
   const summary = $derived(snapshot ? summarizeHome(snapshot) : null);
+  const playing = $derived((snapshot?.nowPlaying ?? []).map(item => ({
+    item,
+    display: playbackProgress(item, playbackReference ? {
+      capturedAt: playbackReference.capturedAt,
+      elapsedSeconds: Math.max(0, (playbackNow - playbackReference.receivedAt) / 1000),
+    } : null),
+  })));
+  const advancing = $derived(playing.some(row => row.display.advancing));
+  $effect(() => {
+    if (!visible || !advancing) return;
+    const timer = setInterval(() => { playbackNow = performance.now(); }, reducedMotion ? 1_000 : 200);
+    return () => clearInterval(timer);
+  });
   const sourceIssues = $derived(playbackSourceIssues(snapshot?.providerCatalog ?? [], snapshot?.providers ?? []));
   const completelyUnavailable = $derived(
     snapshot !== null &&
@@ -44,15 +62,17 @@
     const playbackRequest = ++nowPlayingRequest;
     const requests = [
       ["Home overview", home.overview()],
-      ["Now playing", home.nowPlaying()],
+      ["Now playing", readNowPlaying()],
     ] as const;
     const results = await Promise.allSettled(requests.map((request) => request[1]));
     const next: HomeSnapshot = { failures: [] };
+    let nextPlayback: Awaited<ReturnType<typeof readNowPlaying>> | null = null;
 
     results.forEach((result, index) => {
       const label = requests[index][0];
       if (result.status === "rejected") {
         next.failures.push(`${label}: ${result.reason instanceof Error ? result.reason.message : "Unavailable"}`);
+        if (label === "Now playing") next.nowPlaying = snapshot?.nowPlaying;
         return;
       }
 
@@ -64,10 +84,17 @@
         next.activity = overview.activity.items;
         next.providers = overview.providerHealth.providers;
       }
-      if (label === "Now playing") next.nowPlaying = (result.value as Awaited<ReturnType<typeof home.nowPlaying>>).items;
+      if (label === "Now playing") {
+        nextPlayback = result.value as Awaited<ReturnType<typeof readNowPlaying>>;
+        next.nowPlaying = nextPlayback.items;
+      }
     });
 
-    if (playbackRequest !== nowPlayingRequest) next.nowPlaying = snapshot?.nowPlaying;
+    if (playbackRequest < appliedPlaybackRequest) next.nowPlaying = snapshot?.nowPlaying;
+    else if (nextPlayback) {
+      appliedPlaybackRequest = playbackRequest;
+      adoptPlaybackClock(nextPlayback);
+    }
     snapshot = next;
     loading = false;
     refreshing = false;
@@ -80,12 +107,24 @@
   const refreshScheduler = createRefreshScheduler(refresh);
   const scheduleRefresh = refreshScheduler.schedule;
 
+  async function readNowPlaying() {
+    const response = await home.nowPlaying();
+    return { ...response, receivedAt: performance.now() };
+  }
+
+  function adoptPlaybackClock(response: Awaited<ReturnType<typeof readNowPlaying>>) {
+    playbackNow = performance.now();
+    playbackReference = response.capturedAt ? { capturedAt: response.capturedAt, receivedAt: response.receivedAt } : null;
+  }
+
   async function refreshNowPlaying() {
     if (!snapshot) return;
     const playbackRequest = ++nowPlayingRequest;
     try {
-      const response = await home.nowPlaying();
-      if (playbackRequest !== nowPlayingRequest) return;
+      const response = await readNowPlaying();
+      if (playbackRequest < appliedPlaybackRequest) return;
+      appliedPlaybackRequest = playbackRequest;
+      adoptPlaybackClock(response);
       snapshot = { ...snapshot, nowPlaying: response.items };
     } catch {
       // Keep the last known playback state; the normal refresh surfaces persistent failures.
@@ -169,6 +208,13 @@
   });
 
   onMount(() => {
+    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const syncMotion = () => { reducedMotion = motion.matches; };
+    const syncVisibility = () => { visible = !document.hidden; playbackNow = performance.now(); };
+    syncMotion();
+    syncVisibility();
+    motion.addEventListener("change", syncMotion);
+    document.addEventListener("visibilitychange", syncVisibility);
     void refresh();
     nowPlayingTimer = setInterval(() => void refreshNowPlaying(), 5_000);
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
@@ -176,6 +222,8 @@
       unsubscribe();
       refreshScheduler.cancel();
       if (nowPlayingTimer) clearInterval(nowPlayingTimer);
+      motion.removeEventListener("change", syncMotion);
+      document.removeEventListener("visibilitychange", syncVisibility);
     };
   });
 </script>
@@ -206,7 +254,7 @@
 
   <section class="home-now" aria-label="Now playing" aria-live="off">
     {#if snapshot.nowPlaying?.length}
-      {#each snapshot.nowPlaying as item, index (`${item.userId ?? "unknown"}:${item.deviceId}`)}
+      {#each playing as { item, display }, index (`${item.userId ?? "unknown"}:${item.deviceId}`)}
         <article class="now-playing-card" class:hero={index === 0}>
           {#if index === 0 && item.artworkUrl}
             <div class="now-playing-backdrop" aria-hidden="true" style={`--artwork: url("${adminUrl(item.artworkUrl)}")`}></div>
@@ -226,14 +274,14 @@
 
             <div class="playback-progress">
               <span class="playback-progress-track" style={`--scrobble-at: ${Math.min(100, ((item.scrobbleThresholdSeconds ?? 0) / (item.durationSeconds || 1)) * 100)}%`}>
-                <span class="playback-bar" role="progressbar" aria-label={`Playback progress for ${item.title}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((item.progress ?? 0) * 100)}>
-                  <span class="transition-[width] duration-200 motion-reduce:transition-none" style={`width: ${Math.min(100, Math.max(0, (item.progress ?? 0) * 100))}%`}></span>
+                <span class="playback-bar" role="progressbar" aria-label={`Playback progress for ${item.title}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={display.progress === null ? undefined : Math.round(display.progress * 100)} aria-valuetext={display.state === "stale" ? `Estimated ${clockTime(display.seconds)}; awaiting an app update` : undefined}>
+                  <span class="transition-[width] duration-200 motion-reduce:transition-none" style={`width: ${(display.progress ?? 0) * 100}%`}></span>
                 </span>
                 {#if item.scrobbleThresholdSeconds}
                   <i title={`Scrobble at ${clockTime(item.scrobbleThresholdSeconds)}`} aria-label={`Scrobble threshold at ${clockTime(item.scrobbleThresholdSeconds)}`}></i>
                 {/if}
               </span>
-              <span class="playback-time">{clockTime(item.positionSeconds)} / {clockTime(item.durationSeconds)}</span>
+              <span class="playback-time" title={display.state === "stale" ? "Estimated position; waiting for an update from your music app." : display.state === "estimated" ? "Progress estimated between updates from your music app." : "Position reported by your music app."}>{display.state === "stale" ? "~" : ""}{clockTime(display.seconds)} / {clockTime(item.durationSeconds && item.durationSeconds > 0 ? item.durationSeconds : null)}</span>
             </div>
 
             <div class="now-playing-meta">
@@ -257,9 +305,9 @@
                   <small>{playbackSeekLabel(item)}</small>
                 </span>
               </span>
-              <span class="scrobble-state" class:complete={item.scrobbled}>
-                {#if item.scrobbled}<CircleCheck size={16} aria-hidden="true" />{:else}<CircleDashed size={16} aria-hidden="true" />{/if}
-                {item.scrobbled ? "Scrobbled" : item.scrobbleEligible ? "Scrobbling" : "Listening"}
+              <span class="scrobble-state" class:complete={item.scrobbled && display.state !== "paused" && display.state !== "stale"}>
+                {#if display.state === "paused"}<Pause size={16} aria-hidden="true" />{:else if item.scrobbled && display.state !== "stale"}<CircleCheck size={16} aria-hidden="true" />{:else}<CircleDashed size={16} aria-hidden="true" />{/if}
+                {display.state === "paused" ? "Paused" : display.state === "stale" ? "Awaiting update" : item.scrobbled ? "Scrobbled" : item.scrobbleEligible ? "Scrobbling" : item.isPaused === false ? "Listening" : "Playback reported"}
               </span>
             </div>
 
@@ -280,6 +328,11 @@
           </div>
         </article>
       {/each}
+    {:else if snapshot.nowPlaying === undefined || snapshot.failures.some(failure => failure.startsWith("Now playing:"))}
+      <div class="now-playing-empty">
+        <span class="now-playing-artwork" aria-hidden="true"><Headphones size={32} /></span>
+        <div><h2>Playback status unavailable</h2><p>Allstarr could not read the current playback status.</p><Button variant="secondary" onclick={() => void refresh()}>Retry playback status</Button></div>
+      </div>
     {:else}
       <div class="now-playing-empty">
         <span class="now-playing-artwork" aria-hidden="true"><Headphones size={32} /></span>

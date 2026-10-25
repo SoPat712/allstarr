@@ -258,6 +258,7 @@ const responses: Record<string, unknown> = {
       album: "Act II", providerId: "lumen-audio", artworkUrl: null,
       catalogProviderId: "deezer", sourceConfirmed: true, cached: false,
       positionSeconds: 30, durationSeconds: 120, progress: 0.25,
+      isPaused: false,
       lastActivity: "2026-01-01", scrobbleThresholdSeconds: 60,
       scrobbleEligible: false, scrobbleDeliveries: [], scrobbled: false,
     }],
@@ -5381,6 +5382,66 @@ test("Intelligence keeps the most recently selected backend scope session-bound 
   }
 });
 
+test("Home follows fresh progress, pauses and backward seeks", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-01-01T00:00:01Z"));
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  await mockApi(page);
+  let state = { position: 30.25, paused: false, anchor: "2026-01-01T00:00:00Z", captured: "2026-01-01T00:00:00Z" };
+  await page.route("**/api/admin/ui/now-playing", route => {
+    const fixture = structuredClone(responses["/api/admin/ui/now-playing"]) as { items: Record<string, unknown>[] };
+    Object.assign(fixture.items[0], { positionSeconds: state.position, isPaused: state.paused, positionUpdatedAt: state.anchor });
+    return route.fulfill({ json: { ...fixture, capturedAt: state.captured } });
+  });
+  await page.goto("#/");
+  const playing = page.getByRole("region", { name: "Now playing" });
+  await expect(playing.locator(".playback-time")).toHaveText("0:30 / 2:00");
+  await page.clock.runFor(2_000);
+  await expect(playing.locator(".playback-time")).toHaveText("0:32 / 2:00");
+  state = { position: 32.25, paused: true, anchor: "2026-01-01T00:00:02Z", captured: "2026-01-01T00:00:05Z" };
+  await page.clock.runFor(3_000);
+  await expect(playing.locator(".scrobble-state")).toHaveText("Paused");
+  await page.clock.runFor(4_000);
+  await expect(playing.locator(".playback-time")).toHaveText("0:32 / 2:00");
+  state = { position: 10.25, paused: false, anchor: "2026-01-01T00:00:10Z", captured: "2026-01-01T00:00:10Z" };
+  await page.clock.runFor(1_000);
+  await expect(playing.locator(".playback-time")).toHaveText("0:10 / 2:00");
+  await page.clock.runFor(2_000);
+  await expect(playing.locator(".playback-time")).toHaveText("0:12 / 2:00");
+});
+
+test("Home keeps unknown and stale progress honest across clock skew", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-01-01T00:00:01Z"));
+  await mockApi(page);
+  const fixture = structuredClone(responses["/api/admin/ui/now-playing"]) as { items: Record<string, unknown>[] };
+  const base = fixture.items[0];
+  fixture.items = [
+    { ...base, deviceId: "unknown", positionSeconds: null, durationSeconds: null, progress: null, isPaused: null, positionUpdatedAt: null },
+    { ...base, deviceId: "stale", title: "Stale report", positionSeconds: 30.25, isPaused: false, positionUpdatedAt: "2026-01-01T00:00:00Z" },
+  ];
+  await page.route("**/api/admin/ui/now-playing", route => route.fulfill({ json: {
+    ...fixture, capturedAt: "2026-01-01T00:00:20Z",
+  } }));
+  await page.goto("#/");
+  const cards = page.getByRole("region", { name: "Now playing" }).locator(".now-playing-card");
+  await expect(cards.first().locator(".playback-time")).toHaveText("— / —");
+  await expect(cards.first().getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+  await expect(cards.last().locator(".playback-time")).toHaveText("~0:45 / 2:00");
+  await expect(cards.last().locator(".scrobble-state")).toHaveText("Awaiting update");
+  await page.clock.runFor(4_000);
+  await expect(cards.last().locator(".playback-time")).toHaveText("~0:45 / 2:00");
+});
+
+test("Home does not report silence when playback status is unavailable", async ({ page }) => {
+  await mockApi(page, { fail: ["/api/admin/ui/now-playing"] });
+  await page.goto("#/");
+  const playing = page.getByRole("region", { name: "Now playing" });
+  await expect(playing.getByRole("heading", { name: "Playback status unavailable" })).toBeVisible();
+  await expect(playing.getByRole("heading", { name: "Nothing is playing" })).toHaveCount(0);
+  await expect(playing.getByRole("button", { name: "Retry playback status" })).toBeEnabled();
+});
+
 test("Home keeps newer playback progress when an older poll finishes late", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-01-01T00:00:01Z"));
@@ -5427,6 +5488,67 @@ test("Home keeps newer playback progress when an older poll finishes late", asyn
   await expect(playing).toContainText("0:50 / 2:00");
   await expect(playing.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "42");
 });
+
+test("Home accepts useful progress while a newer poll is still pending", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-01-01T00:00:01Z"));
+  await mockApi(page);
+  const first = routeRelease();
+  const second = routeRelease();
+  let reads = 0;
+  await page.route("**/api/admin/ui/now-playing", async route => {
+    const request = ++reads;
+    const fixture = structuredClone(responses["/api/admin/ui/now-playing"]) as { items: Record<string, unknown>[] };
+    fixture.items[0].positionSeconds = request === 1 ? 30 : request === 2 ? 40 : 50;
+    if (request === 2) await first.promise;
+    if (request === 3) await second.promise;
+    return route.fulfill({ json: fixture });
+  });
+  await page.goto("#/");
+  const time = page.getByRole("region", { name: "Now playing" }).locator(".playback-time");
+  await expect(time).toHaveText("0:30 / 2:00");
+  await page.clock.runFor(11_000);
+  await expect.poll(() => reads).toBe(3);
+  first.release();
+  await expect(time).toHaveText("0:40 / 2:00");
+  second.release();
+  await expect(time).toHaveText("0:50 / 2:00");
+});
+
+for (const width of [390, 1280]) {
+  for (const theme of ["light", "dark"] as const) {
+    test(`Home pause and stale progress remain contained at ${width}px in ${theme}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+      await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+      await mockApi(page);
+      let paused = true;
+      await page.route("**/api/admin/ui/now-playing", route => {
+        const fixture = structuredClone(responses["/api/admin/ui/now-playing"]) as { items: Record<string, unknown>[] };
+        Object.assign(fixture.items[0], { positionSeconds: 30.25, isPaused: paused, positionUpdatedAt: "2026-01-01T00:00:00Z" });
+        return route.fulfill({ json: { ...fixture, capturedAt: "2026-01-01T00:00:20Z" } });
+      });
+      await page.goto("#/");
+      const playing = page.getByRole("region", { name: "Now playing" });
+      await expect(playing.locator(".scrobble-state")).toHaveText("Paused");
+      await expect(playing.locator(".playback-bar > span")).toHaveCSS("transition-property", "none");
+      if (width === 390) await expectContainedMobileGeometry(page);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR ?? "test-results"}/home-paused-${width}-${theme}.png`, fullPage: true });
+      paused = false;
+      await page.reload();
+      await expect(playing.locator(".scrobble-state")).toHaveText("Awaiting update");
+      await expect(playing.locator(".playback-time")).toHaveText("~0:45 / 2:00");
+      if (width === 390) await expectContainedMobileGeometry(page);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
+      await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR ?? "test-results"}/home-stale-${width}-${theme}.png`, fullPage: true });
+      if (width === 390) {
+        await page.setViewportSize({ width: 320, height: 844 });
+        await expectContainedMobileGeometry(page);
+      }
+    });
+  }
+}
 
 test("Sources background refresh stays quiet and manual refresh joins it", async ({ page }) => {
   await page.clock.install();

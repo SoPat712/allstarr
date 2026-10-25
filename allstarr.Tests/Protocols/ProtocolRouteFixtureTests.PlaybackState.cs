@@ -17,6 +17,208 @@ namespace allstarr.Tests;
 public sealed partial class ProtocolRouteFixtureTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task JellyfinHomeProgress_DuplicateStartRevalidatesResourceAndRefreshesOnlyHome(bool denied)
+    {
+        var gateway = PlaybackStateGateway();
+        var signals = new Mock<IPlaybackSignalPipeline>();
+        var forwarded = new List<(string Path, string Body)>();
+        using var factory = PlaybackStateFactory(gateway, forwarded, signals, () => false);
+        await PreparePlaybackSessionAsync(factory, "fixture-user", "playback-device");
+        using var client = factory.CreateClient();
+        using var start = await client.SendAsync(PlaybackRequest("/Sessions/Playing",
+            """{"ItemId":"ext-deezer-song-42","PlaySessionId":"same","PositionTicks":0,"IsPaused":false}""", "playback-device"));
+        var manager = factory.Services.GetRequiredService<JellyfinSessionManager>();
+        var before = Assert.Single(manager.GetActivePlaybackStates(TimeSpan.FromMinutes(5)));
+        if (denied)
+            gateway.Setup(value => value.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42"))
+                .ThrowsAsync(new UnauthorizedAccessException("Fixture source unavailable"));
+
+        using var duplicate = await client.SendAsync(PlaybackRequest("/Sessions/Playing",
+            """{"ItemId":"ext-deezer-song-42","PlaySessionId":"same","PositionTicks":360000000,"IsPaused":true}""", "playback-device"));
+        Assert.Equal(HttpStatusCode.NoContent, duplicate.StatusCode);
+        var observed = Assert.Single(manager.GetActivePlaybackStates(TimeSpan.FromMinutes(5)));
+        Assert.Equal(denied ? 0L : 360000000L, observed.PositionTicks);
+        Assert.Equal(!denied, observed.IsPaused);
+        if (denied) Assert.Equal(before.PositionUpdatedAt, observed.PositionUpdatedAt);
+        else Assert.NotNull(observed.PositionUpdatedAt);
+        gateway.Verify(value => value.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42"), Times.Exactly(2));
+        Assert.Single(forwarded, item => item.Path == "/Sessions/Playing");
+        signals.Verify(value => value.RecordAsync(It.Is<PlaybackSignalRequest>(signal => signal.Transition == PlaybackTransition.Start), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal(0L, manager.GetExternalReport(new("primary", "fixture-user", "playback-device"))!["PositionTicks"]!.GetValue<long>());
+    }
+
+    [Fact]
+    public async Task JellyfinHomeProgress_AcceptedInferredStopRemovesOldHomeWhenNewMetadataIsDenied()
+    {
+        var gateway = PlaybackStateGateway();
+        gateway.Setup(value => value.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "43"))
+            .ThrowsAsync(new UnauthorizedAccessException("Fixture source unavailable"));
+        var signals = new Mock<IPlaybackSignalPipeline>();
+        var forwarded = new List<(string Path, string Body)>();
+        using var factory = PlaybackStateFactory(gateway, forwarded, signals, () => false);
+        await PreparePlaybackSessionAsync(factory, "fixture-user", "playback-device");
+        using var client = factory.CreateClient();
+        using var start = await client.SendAsync(PlaybackRequest("/Sessions/Playing",
+            """{"ItemId":"ext-deezer-song-42","PlaySessionId":"first","PositionTicks":120000000,"IsPaused":false}""", "playback-device"));
+
+        using var progress = await client.SendAsync(PlaybackRequest("/Sessions/Playing/Progress",
+            """{"ItemId":"ext-deezer-song-43","PlaySessionId":"second","PositionTicks":0,"IsPaused":false}""", "playback-device"));
+        Assert.Equal(HttpStatusCode.NoContent, progress.StatusCode);
+        var manager = factory.Services.GetRequiredService<JellyfinSessionManager>();
+        Assert.Empty(manager.GetActivePlaybackStates(TimeSpan.FromMinutes(5)));
+        Assert.Null(manager.GetLastPlayingState(new("primary", "fixture-user", "playback-device")).ItemId);
+        Assert.Single(forwarded, item => item.Path == "/Sessions/Playing/Stopped");
+        Assert.DoesNotContain(forwarded, item => item.Path == "/Sessions/Playing/Progress");
+        signals.Verify(value => value.RecordAsync(It.Is<PlaybackSignalRequest>(signal => signal.Transition == PlaybackTransition.InferredStop), It.IsAny<CancellationToken>()), Times.Once);
+        signals.Verify(value => value.RecordAsync(It.Is<PlaybackSignalRequest>(signal => signal.Transition == PlaybackTransition.Start), It.IsAny<CancellationToken>()), Times.Once);
+        signals.Verify(value => value.RecordAsync(It.Is<PlaybackSignalRequest>(signal => signal.Transition == PlaybackTransition.InferredStart || signal.Transition == PlaybackTransition.Progress), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task JellyfinHomeProgress_IsObservedWhenUpstreamRejectsOrThrows(bool throws)
+    {
+        var reject = true;
+        var forwarded = new List<(string Path, string Body)>();
+        var signals = new Mock<IPlaybackSignalPipeline>();
+        using var factory = PlaybackStateFactory(PlaybackStateGateway(), forwarded, signals, () => false,
+            playbackResponse: (path, _) => reject && path.EndsWith("/Progress", StringComparison.Ordinal)
+                ? throws ? throw new HttpRequestException("Fixture upstream unavailable") : Json(503, "{}") : null);
+        await PreparePlaybackSessionAsync(factory, "fixture-user", "playback-device");
+        using var client = factory.CreateClient();
+        using var start = await client.SendAsync(PlaybackRequest("/Sessions/Playing",
+            """{"ItemId":"ext-deezer-song-42","PlaySessionId":"play-1","PositionTicks":0,"IsPaused":false}""", "playback-device"));
+        using var progress = await client.SendAsync(PlaybackRequest("/Sessions/Playing/Progress",
+            """{"ItemId":"ext-deezer-song-42","PlaySessionId":"play-1","PositionTicks":360000000,"IsPaused":false}""", "playback-device"));
+
+        Assert.Equal(HttpStatusCode.NoContent, progress.StatusCode);
+        var state = Assert.Single(factory.Services.GetRequiredService<JellyfinSessionManager>().GetActivePlaybackStates(TimeSpan.FromMinutes(5)));
+        Assert.Equal(360000000L, state.PositionTicks);
+        signals.Verify(value => value.RecordAsync(It.Is<PlaybackSignalRequest>(signal => signal.Transition == PlaybackTransition.Progress), It.IsAny<CancellationToken>()), Times.Never);
+        reject = false;
+        using var retry = await client.SendAsync(PlaybackRequest("/Sessions/Playing/Progress",
+            """{"ItemId":"ext-deezer-song-42","PlaySessionId":"play-1","PositionTicks":360000000,"IsPaused":false}""", "playback-device"));
+        Assert.Equal(HttpStatusCode.NoContent, retry.StatusCode);
+        Assert.Equal(2, forwarded.Count(item => item.Path.EndsWith("/Progress", StringComparison.Ordinal)));
+        signals.Verify(value => value.RecordAsync(It.Is<PlaybackSignalRequest>(signal => signal.Transition == PlaybackTransition.Progress), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task JellyfinHomeProgress_DoesNotBypassExistingResourceAuthorization()
+    {
+        var gateway = PlaybackStateGateway();
+        var signals = new Mock<IPlaybackSignalPipeline>();
+        using var factory = PlaybackStateFactory(gateway, [], signals, () => false);
+        await PreparePlaybackSessionAsync(factory, "fixture-user", "playback-device");
+        using var client = factory.CreateClient();
+        using var start = await client.SendAsync(PlaybackRequest("/Sessions/Playing",
+            """{"ItemId":"ext-deezer-song-42","PositionTicks":0,"IsPaused":false}""", "playback-device"));
+        gateway.Setup(value => value.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42"))
+            .ThrowsAsync(new UnauthorizedAccessException("Fixture source unavailable"));
+
+        using var progress = await client.SendAsync(PlaybackRequest("/Sessions/Playing/Progress",
+            """{"ItemId":"ext-deezer-song-42","PositionTicks":360000000,"IsPaused":true}""", "playback-device"));
+        Assert.Equal(HttpStatusCode.NoContent, progress.StatusCode);
+        var state = Assert.Single(factory.Services.GetRequiredService<JellyfinSessionManager>().GetActivePlaybackStates(TimeSpan.FromMinutes(5)));
+        Assert.Equal(0L, state.PositionTicks);
+        Assert.False(state.IsPaused);
+        signals.Verify(value => value.RecordAsync(It.Is<PlaybackSignalRequest>(signal => signal.Transition == PlaybackTransition.Progress), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task JellyfinHomeProgress_HeldStopCannotClearANewerOccurrence()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var held = 0;
+        var forwarded = new List<(string Path, string Body)>();
+        var signals = new Mock<IPlaybackSignalPipeline>();
+        using var factory = PlaybackStateFactory(PlaybackStateGateway(), forwarded, signals, () => false,
+            playbackResponse: (path, _) =>
+            {
+                if (path.EndsWith("/Stopped", StringComparison.Ordinal) && Interlocked.CompareExchange(ref held, 1, 0) == 0)
+                {
+                    entered.TrySetResult();
+                    release.Task.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+                }
+                return null;
+            });
+        await PreparePlaybackSessionAsync(factory, "fixture-user", "playback-device");
+        using var client = factory.CreateClient();
+        using var start = await client.SendAsync(PlaybackRequest("/Sessions/Playing",
+            """{"ItemId":"ext-deezer-song-42","PlaySessionId":"first","PositionTicks":0,"IsPaused":false}""", "playback-device"));
+        var older = client.SendAsync(PlaybackRequest("/Sessions/Playing/Stopped",
+            """{"ItemId":"ext-deezer-song-42","PlaySessionId":"first","PositionTicks":100000000}""", "playback-device"));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            using var next = await client.SendAsync(PlaybackRequest("/Sessions/Playing",
+                """{"ItemId":"ext-deezer-song-42","PlaySessionId":"second","PositionTicks":0,"IsPaused":false}""", "playback-device"));
+            release.TrySetResult();
+            using var completed = await older.WaitAsync(TimeSpan.FromSeconds(5));
+            var manager = factory.Services.GetRequiredService<JellyfinSessionManager>();
+            Assert.Equal(0L, Assert.Single(manager.GetActivePlaybackStates(TimeSpan.FromMinutes(5))).PositionTicks);
+            Assert.Equal("second", manager.GetExternalReport(new("primary", "fixture-user", "playback-device"))!["PlaySessionId"]!.GetValue<string>());
+            signals.Verify(value => value.RecordAsync(It.Is<PlaybackSignalRequest>(signal => signal.Transition == PlaybackTransition.Start), It.IsAny<CancellationToken>()), Times.Exactly(2));
+            signals.Verify(value => value.RecordAsync(It.Is<PlaybackSignalRequest>(signal => signal.Transition == PlaybackTransition.InferredStop || signal.Transition == PlaybackTransition.Stop), It.IsAny<CancellationToken>()), Times.Exactly(2));
+        }
+        finally
+        {
+            release.TrySetResult();
+            try { (await older.WaitAsync(TimeSpan.FromSeconds(5))).Dispose(); }
+            catch (OperationCanceledException) { }
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task JellyfinHomeProgress_OlderCompletionCannotRegressOrReviveStoppedPlayback(bool stop)
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var forwarded = new List<(string Path, string Body)>();
+        var signals = new Mock<IPlaybackSignalPipeline>();
+        using var factory = PlaybackStateFactory(PlaybackStateGateway(), forwarded, signals, () => false,
+            playbackResponse: (path, payload) =>
+            {
+                if (path.EndsWith("/Progress", StringComparison.Ordinal) && payload.GetProperty("PositionTicks").GetInt64() == 100000000L)
+                {
+                    entered.TrySetResult();
+                    release.Task.WaitAsync(TimeSpan.FromSeconds(5)).GetAwaiter().GetResult();
+                }
+                return null;
+            });
+        await PreparePlaybackSessionAsync(factory, "fixture-user", "playback-device");
+        using var client = factory.CreateClient();
+        using var start = await client.SendAsync(PlaybackRequest("/Sessions/Playing",
+            """{"ItemId":"ext-deezer-song-42","PlaySessionId":"play-1","PositionTicks":0,"IsPaused":false}""", "playback-device"));
+        var older = client.SendAsync(PlaybackRequest("/Sessions/Playing/Progress",
+            """{"ItemId":"ext-deezer-song-42","PlaySessionId":"play-1","PositionTicks":100000000,"IsPaused":false}""", "playback-device"));
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            using var newer = await client.SendAsync(PlaybackRequest(stop ? "/Sessions/Playing/Stopped" : "/Sessions/Playing/Progress",
+                """{"ItemId":"ext-deezer-song-42","PlaySessionId":"play-1","PositionTicks":400000000,"IsPaused":false}""", "playback-device"));
+            release.TrySetResult();
+            using var completed = await older.WaitAsync(TimeSpan.FromSeconds(5));
+            var states = factory.Services.GetRequiredService<JellyfinSessionManager>().GetActivePlaybackStates(TimeSpan.FromMinutes(5));
+            if (stop) Assert.Empty(states);
+            else Assert.Equal(400000000L, Assert.Single(states).PositionTicks);
+            signals.Verify(value => value.RecordAsync(It.Is<PlaybackSignalRequest>(signal => signal.Transition == PlaybackTransition.Progress), It.IsAny<CancellationToken>()), Times.Exactly(stop ? 1 : 2));
+        }
+        finally
+        {
+            release.TrySetResult();
+            try { (await older.WaitAsync(TimeSpan.FromSeconds(5))).Dispose(); }
+            catch (OperationCanceledException) { }
+        }
+    }
+
+    [Theory]
     [InlineData("Feishin")]
     [InlineData("Jellyfin Web")]
     [InlineData("Finamp")]
@@ -275,7 +477,8 @@ public sealed partial class ProtocolRouteFixtureTests
 
     private static ProtocolFactory PlaybackStateFactory(Mock<IProtocolProviderGateway> gateway,
         List<(string Path, string Body)> forwarded, Mock<IPlaybackSignalPipeline> signals, Func<bool> stopped,
-        string? sessionResponse = null, bool rejectFirstStart = false) => new("Jellyfin", request =>
+        string? sessionResponse = null, bool rejectFirstStart = false,
+        Func<string, JsonElement, HttpResponseMessage?>? playbackResponse = null) => new("Jellyfin", request =>
         {
             var path = request.RequestUri!.AbsolutePath;
             if (path == "/Users/Me") return Json(200, """{"Id":"fixture-user","Name":"Fixture"}""");
@@ -287,6 +490,8 @@ public sealed partial class ProtocolRouteFixtureTests
             if (path.StartsWith("/Sessions/Playing", StringComparison.Ordinal))
             {
                 forwarded.Add((path, request.Content!.ReadAsStringAsync().GetAwaiter().GetResult()));
+                using var payload = JsonDocument.Parse(forwarded.Last().Body);
+                if (playbackResponse?.Invoke(path, payload.RootElement) is { } custom) return custom;
                 if (rejectFirstStart && path == "/Sessions/Playing" && forwarded.Count == 1) return Json(503, "{}");
                 return Json(204, "{}");
             }

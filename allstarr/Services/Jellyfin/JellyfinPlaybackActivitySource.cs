@@ -17,7 +17,11 @@ public sealed class JellyfinPlaybackActivitySource(JellyfinSessionManager sessio
                 state.BackendUserId,
                 state.UserName,
                 state.Client,
-                state.Device))
+                state.Device)
+            {
+                IsPaused = state.IsPaused,
+                PositionUpdatedAt = state.PositionUpdatedAt
+            })
             .ToList();
     }
 }
