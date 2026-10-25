@@ -12,6 +12,135 @@ namespace allstarr.Tests;
 public sealed class TrackMatchRecordingVersionTests
 {
     [Theory]
+    [InlineData("amazon", "apple-download", false)]
+    [InlineData("amazon", "apple-download", true)]
+    [InlineData("qobuz", "deezer", false)]
+    public void UncorroboratedPerfectFieldsStayEligibleBelowCorroboratedRecordingEvidence(string sparseProvider, string detailedProvider, bool reverse)
+    {
+        var source = Source("Power Trip (feat. Miguel)") with
+        {
+            Artist = "J. Cole, Miguel",
+            Album = "Born Sinner (Deluxe Version)",
+            DurationMilliseconds = 241160,
+            IsExplicit = true
+        };
+        var sparse = Candidate("Power Trip [feat. Miguel]") with
+        {
+            Artist = "J. Cole feat. Miguel",
+            Album = "",
+            DurationMilliseconds = null,
+            IsExplicit = true,
+            ProviderTrackIds = new Dictionary<string, string> { [sparseProvider] = "sparse" }
+        };
+        var detailed = Candidate(source.Title) with
+        {
+            Artist = "J. Cole",
+            Album = source.Album,
+            DurationMilliseconds = 241000,
+            IsExplicit = true,
+            ProviderTrackIds = new Dictionary<string, string> { [detailedProvider] = "detailed" }
+        };
+        var scores = new TrackMatchDecisionEngine().ScoreCandidates(source, reverse ? [detailed, sparse] : [sparse, detailed]);
+        var sparseScore = Assert.Single(scores, item => item.LibraryTrackId == sparse.LibraryTrackId);
+        var detailedScore = Assert.Single(scores, item => item.LibraryTrackId == detailed.LibraryTrackId);
+        Assert.Equal(.94, sparseScore.Confidence);
+        Assert.Equal(.9545, detailedScore.Confidence);
+        Assert.Contains("limited_recording_metadata", sparseScore.Warnings);
+        Assert.DoesNotContain("limited_recording_metadata", detailedScore.Warnings);
+        Assert.Equal(1, sparseScore.Components!["title"]);
+        Assert.Equal(1, sparseScore.Components["artist"]);
+        Assert.Equal(1, sparseScore.Components["primaryArtist"]);
+        Assert.DoesNotContain("album", sparseScore.Components.Keys);
+        Assert.DoesNotContain("duration", sparseScore.Components.Keys);
+        Assert.DoesNotContain("recordingAllowed", sparseScore.Components.Keys);
+        AssertAccepted(source, sparse);
+    }
+
+    [Theory]
+    [InlineData(null, null)]
+    [InlineData(200000L, null)]
+    [InlineData(null, 200000L)]
+    [InlineData(200000L, 0L)]
+    [InlineData(0L, 200000L)]
+    public void MissingDurationDoesNotInventEvidenceOrRejectAFieldMatch(long? sourceDuration, long? candidateDuration)
+    {
+        var source = Source("Espresso") with { DurationMilliseconds = sourceDuration };
+        var candidate = Candidate("Espresso") with { DurationMilliseconds = candidateDuration };
+        var outcome = TrackMatchRuleSet.Evaluate(source, candidate, new TrackMatchPolicy());
+        Assert.Equal(.94, outcome.Confidence);
+        Assert.Contains("limited_recording_metadata", outcome.Warnings);
+        Assert.DoesNotContain("duration", outcome.Components.Keys);
+        Assert.DoesNotContain("album", outcome.Components.Keys);
+        Assert.DoesNotContain("recordingAllowed", outcome.Components.Keys);
+        AssertAccepted(source, candidate);
+    }
+
+    [Theory]
+    [InlineData("duration")]
+    [InlineData("album")]
+    [InlineData("albumArtist")]
+    public void ComparableRecordingCorroborationDoesNotReceiveTheFieldsOnlyCeiling(string evidence)
+    {
+        var source = Source("Espresso") with { DurationMilliseconds = null, Album = "Short n Sweet", AlbumArtist = "Sabrina Carpenter" };
+        var candidate = Candidate(source.Title) with { DurationMilliseconds = null };
+        if (evidence == "duration") { source = source with { DurationMilliseconds = 200000 }; candidate = candidate with { DurationMilliseconds = 200000 }; }
+        if (evidence == "album") candidate = candidate with { Album = source.Album };
+        if (evidence == "albumArtist") candidate = candidate with { AlbumArtist = source.AlbumArtist };
+        var outcome = TrackMatchRuleSet.Evaluate(source, candidate, new TrackMatchPolicy());
+        Assert.Equal(1, outcome.Confidence);
+        Assert.DoesNotContain("limited_recording_metadata", outcome.Warnings);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FieldsOnlyCeilingNeverBoostsWeakOrVersionPenalizedEvidence(bool differentVersion)
+    {
+        var source = Source("Espresso") with { DurationMilliseconds = null };
+        var candidate = Candidate(differentVersion ? "Espresso (Live)" : "Different Song") with { DurationMilliseconds = null };
+        var outcome = TrackMatchRuleSet.Evaluate(source, candidate, new TrackMatchPolicy());
+        Assert.InRange(outcome.Confidence, 0, .9399);
+        Assert.Contains("limited_recording_metadata", outcome.Warnings);
+        if (differentVersion)
+        {
+            Assert.Equal(.7908, outcome.Confidence);
+            Assert.Contains("semantic_version_mismatch", outcome.Warnings);
+        }
+    }
+
+    [Fact]
+    public void WeakComparableAlbumDoesNotRemoveTheFieldsOnlyCeiling()
+    {
+        var source = Source("Espresso") with { DurationMilliseconds = null, Album = "Short n Sweet" };
+        var candidate = Candidate(source.Title) with { DurationMilliseconds = null, Album = "Different Album" };
+        var outcome = TrackMatchRuleSet.Evaluate(source, candidate, new TrackMatchPolicy());
+        Assert.Equal(.94, outcome.Confidence);
+        Assert.InRange(outcome.Components["album"], 0, .8499);
+        Assert.Contains("limited_recording_metadata", outcome.Warnings);
+        Assert.DoesNotContain("duration", outcome.Components.Keys);
+    }
+
+    [Theory]
+    [InlineData("canonical")]
+    [InlineData("recording")]
+    [InlineData("isrc")]
+    [InlineData("alias")]
+    [InlineData("provider")]
+    public void ExactRecordingEvidenceWithMissingFieldsKeepsItsExistingConfidence(string evidence)
+    {
+        var source = Source("Espresso") with { DurationMilliseconds = null };
+        var candidate = Candidate(source.Title) with { DurationMilliseconds = null };
+        if (evidence == "canonical") { var id = Guid.NewGuid(); source = source with { CanonicalRecordingId = id }; candidate = candidate with { CanonicalRecordingId = id }; }
+        if (evidence == "recording") { source = source with { MusicBrainzRecordingId = "recording" }; candidate = candidate with { MusicBrainzRecordingId = "recording" }; }
+        if (evidence == "isrc") { source = source with { Isrc = "USAAA2600001" }; candidate = candidate with { Isrc = source.Isrc }; }
+        if (evidence == "alias") source = source with { ExactProviderAliases = candidate.ProviderTrackIds };
+        if (evidence == "provider") candidate = candidate with { ProviderTrackIds = new Dictionary<string, string> { [source.ProviderId] = source.ExternalId } };
+        var outcome = TrackMatchRuleSet.Evaluate(source, candidate, new TrackMatchPolicy());
+        Assert.Equal(evidence == "isrc" ? .99 : 1, outcome.Confidence);
+        Assert.DoesNotContain("limited_recording_metadata", outcome.Warnings);
+    }
+
+    [Theory]
     [InlineData("Espresso", "Espresso (Mixed)", null, 133_000)]
     [InlineData("Espresso", "Espresso [Mixed]", null, 106_000)]
     [InlineData("Espresso", "Espresso - Mixed", null, 84_000)]

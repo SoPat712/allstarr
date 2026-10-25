@@ -176,7 +176,7 @@ public sealed partial class TrackMatchCommandService
             ReadDurationMilliseconds(snapshot.PayloadJson),
             payload.Isrc,
             null,
-            null);
+            payload.IsExplicit);
         var ownerPolicy = effectivePolicies == null ? null :
             await effectivePolicies.ResolveForUserAsync(snapshot.OwnerUserId, cancellationToken);
         var automaticSource = ownerPolicy?.IsAutomatic(sourceTrack.ProviderId) ??
@@ -204,7 +204,7 @@ public sealed partial class TrackMatchCommandService
         var rejectedOverride =
             manual?.Decision == ManualOverrideDecision.Reject &&
             manual.LibraryTrackId.HasValue &&
-            manual.MatcherVersion == TrackMatchDecisionEngine.AlgorithmVersion
+            candidates.Any(item => item.Id == manual.LibraryTrackId.Value)
                 ? new ScopedTrackMatchOverride(
 
                     snapshot.OwnerUserId,

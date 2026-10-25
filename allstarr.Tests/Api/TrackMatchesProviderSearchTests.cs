@@ -181,6 +181,31 @@ public sealed class TrackMatchesProviderSearchTests : IAsyncLifetime
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RealSparseFieldsCannotOutrankTheCorroboratedPowerTripRecording(bool reverse)
+    {
+        var source = await PowerTripSourceAsync("IsExplicit", true);
+        var sparse = PowerTrip("sparse", "amazon", "", title: "Power Trip [feat. Miguel]");
+        sparse.Artist = "J. Cole feat. Miguel";
+        sparse.Duration = 0;
+        var detailed = PowerTrip("detailed", "apple-download", "Born Sinner (Deluxe Version)");
+        _gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-musickit", "amazon"]);
+        _gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Power Trip", 20))
+            .ReturnsAsync(reverse ? [detailed, sparse] : [sparse, detailed]);
+
+        var tracks = await SearchAsync("Power Trip", source);
+
+        Assert.Equal(new[] { "detailed", "sparse" }, tracks.Select(item => item.GetProperty("externalId").GetString()));
+        Assert.Equal(.9545, tracks[0].GetProperty("confidence").GetDouble());
+        Assert.Equal(.94, tracks[1].GetProperty("confidence").GetDouble());
+        Assert.Contains(tracks[1].GetProperty("warnings").EnumerateArray(), item => item.GetString() == "limited_recording_metadata");
+        Assert.False(tracks[1].GetProperty("components").TryGetProperty("duration", out _));
+        Assert.False(tracks[1].GetProperty("components").TryGetProperty("album", out _));
+        Assert.All(tracks, item => Assert.Equal(JsonValueKind.Null, item.GetProperty("media").ValueKind));
+    }
+
+    [Theory]
     [InlineData("IsExplicit", true)]
     [InlineData("isExplicit", true)]
     [InlineData("IsExplicit", false)]

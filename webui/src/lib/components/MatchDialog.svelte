@@ -139,6 +139,7 @@
     title_fuzzy: "Fuzzy title comparison",
     semantic_version_mismatch: "Different recording version",
     semantic_version_mismatch_review: "Different version needs review",
+    limited_recording_metadata: "Missing duration and matching album evidence limit this score",
   };
 
   function confidenceLevel(value?: number | null) {
@@ -431,6 +432,7 @@
                   {#if target.isExplicit != null || target.matchesSourceAlbum}
                     <small>{target.isExplicit == null ? "" : target.isExplicit ? "Explicit" : "Not explicit"}{target.isExplicit != null && target.matchesSourceAlbum ? " · " : ""}{target.matchesSourceAlbum ? "Same album edition" : ""}</small>
                   {/if}
+                  {#if target.warnings?.includes("limited_recording_metadata")}<small>Limited recording metadata</small>{/if}
                   <small title={reportedAudio(target.media)}>{target.media ? "Reported audio · " : ""}{reportedAudio(target.media)}</small>
                 </span>
                 <span class="target-meta"><strong>{formatDuration(target.durationMilliseconds)}</strong></span>

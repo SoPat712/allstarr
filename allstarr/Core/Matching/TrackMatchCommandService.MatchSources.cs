@@ -186,7 +186,7 @@ public sealed partial class TrackMatchCommandService
                 seed.DurationMilliseconds is > 0 ? seed.DurationMilliseconds : null,
                 seed.Isrc,
                 null,
-                null)
+                ReadMetadata(snapshot.PayloadJson).IsExplicit)
             {
                 ExactProviderAliases = FilterAutomaticCrossLinks(
                     aliases.GetValueOrDefault(identity.CanonicalRecordingId),
@@ -195,7 +195,7 @@ public sealed partial class TrackMatchCommandService
             var rejectedOverride =
                 manual?.Decision == ManualOverrideDecision.Reject &&
                 manual.LibraryTrackId.HasValue &&
-                manual.MatcherVersion == TrackMatchDecisionEngine.AlgorithmVersion
+                library.ById.ContainsKey(manual.LibraryTrackId.Value)
                     ? new ScopedTrackMatchOverride(
 
                         snapshot.OwnerUserId,
