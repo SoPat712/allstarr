@@ -8313,6 +8313,10 @@ for (const width of [320, 390, 718, 1280]) for (const theme of ["light", "dark"]
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     await mockSpicySource(page);
     const requests: Record<string, unknown>[] = [];
+    const testCredits = width === 718 ? { ...spicyCredits,
+      uploader: { ...spicyCredits.uploader, username: "Uploader " + "X".repeat(190) },
+      maker: { ...spicyCredits.maker, username: "Maker <script>inert</script> " + "Y".repeat(170) },
+    } : spicyCredits;
     let count = 0;
     await page.route("**/api/admin/providers/spicylyrics/try**", async route => {
       if (route.request().method() === "GET") return route.fulfill({ json: {
@@ -8324,7 +8328,7 @@ for (const width of [320, 390, 718, 1280]) for (const theme of ["light", "dark"]
       return route.fulfill({ json: { ...result, succeeded: true, lyrics: { source: "spicylyrics", format: "word", lineCount: 65,
         lines: Array.from({ length: 65 }, (_, index) => ({ startMs: 1200 + index * 1200,
           text: index === 0 ? "First fixture words" : index === 1 ? "Second fixture words" : `Fixture lyric line ${index + 1}` })),
-        attribution: count === 1 ? spicyCredits : { service: "spicylyrics", catalog: "apple_music" },
+        attribution: count === 1 ? testCredits : { service: "spicylyrics", catalog: "apple_music" },
       } } });
     });
     await page.goto("#/integrations/services/spicylyrics");
@@ -8336,8 +8340,8 @@ for (const width of [320, 390, 718, 1280]) for (const theme of ["light", "dark"]
     await dialog.getByRole("button", { name: "Get lyrics", exact: true }).click();
     const credits = dialog.getByRole("region", { name: "Lyrics credits" });
     await expect(credits).toContainText("Lyrics source: Spicy Lyrics");
-    await expect(credits.getByRole("link", { name: `Uploaded by ${spicyCredits.uploader.username}` })).toHaveAttribute("href", spicyCredits.uploader.url);
-    await expect(credits.getByRole("link", { name: `Synced by ${spicyCredits.maker.username}` })).toHaveAttribute("rel", "noopener noreferrer");
+    await expect(credits.getByRole("link", { name: `Uploaded by ${testCredits.uploader.username}` })).toHaveAttribute("href", spicyCredits.uploader.url);
+    await expect(credits.getByRole("link", { name: `Synced by ${testCredits.maker.username}` })).toHaveAttribute("rel", "noopener noreferrer");
     await expect(credits.locator("script")).toHaveCount(0);
     expect(requests[0]).toEqual({ capability: "lyrics", operation: "lyrics", accountId: "spicy-account", trackId: selector });
     const lyricLines = dialog.getByRole("region", { name: "Lyric lines" });
@@ -8347,12 +8351,15 @@ for (const width of [320, 390, 718, 1280]) for (const theme of ["light", "dark"]
       const lyric = root.querySelector<HTMLElement>(".try-lyric-scroll")!;
       return { creditBottom: Math.max(credit.getBoundingClientRect().bottom,
         ...Array.from(credit.querySelectorAll("p, a, span")).map(element => element.getBoundingClientRect().bottom)),
-        lyricTop: lyric.getBoundingClientRect().top, lyricHeight: lyric.getBoundingClientRect().height };
+        lyricTop: lyric.getBoundingClientRect().top, lyricHeight: lyric.getBoundingClientRect().height,
+        lyricBottom: lyric.getBoundingClientRect().bottom, cardBottom: root.getBoundingClientRect().bottom };
     });
     expect(geometry.creditBottom, "Visible credits stay above the scrolling lyric rows").toBeLessThanOrEqual(geometry.lyricTop + 1);
     expect(geometry.lyricHeight, "Long results keep a usable lyric viewport").toBeGreaterThanOrEqual(44);
+    expect(geometry.lyricBottom, "The card contains the complete lyric viewport").toBeLessThanOrEqual(geometry.cardBottom + 1);
     await lyricLines.evaluate(element => element.scrollTop = element.scrollHeight);
-    await expect(lyricLines.getByText("Fixture lyric line 65", { exact: true })).toBeInViewport();
+    await lyricLines.getByText("Fixture lyric line 65", { exact: true }).scrollIntoViewIfNeeded();
+    await expect(lyricLines.getByText("Fixture lyric line 65", { exact: true })).toBeInViewport({ ratio: 1 });
     await expect(credits).toBeInViewport();
     await lyricLines.evaluate(element => element.scrollTop = 0);
     if (width < 600) await expectContainedMobileGeometry(page);
@@ -8360,7 +8367,7 @@ for (const width of [320, 390, 718, 1280]) for (const theme of ["light", "dark"]
     await input.fill(spicyTrack);
     await dialog.getByRole("button", { name: "Get lyrics", exact: true }).click();
     await expect(credits).toContainText("Lyrics source: Apple Music");
-    await expect(credits.getByText(spicyCredits.uploader.username)).toHaveCount(0);
+    await expect(credits.getByText(testCredits.uploader.username)).toHaveCount(0);
     await expect(credits.getByRole("link", { name: /Uploaded by|Synced by/ })).toHaveCount(0);
     await dialog.getByRole("button", { name: "Get lyrics", exact: true }).click();
     await expect(credits).toHaveCount(0);
