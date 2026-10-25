@@ -68,27 +68,41 @@ public sealed class PlaybackStartHedgeTests
     {
         using var cancellation = new CancellationTokenSource();
         var clock = new ManualTimeProvider();
-        var cancellations = 0;
-        var abandons = 0;
         var starts = 0;
-        var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        async Task<Result> Open(CancellationToken token, CancellationToken abandon)
+        var stopped = new[]
         {
-            using var aborted = token.Register(() => Interlocked.Increment(ref cancellations));
-            using var discarded = abandon.Register(() => Interlocked.Increment(ref abandons));
-            if (Interlocked.Increment(ref starts) == 2) secondStarted.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, token);
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously),
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)
+        };
+        var abandonment = new CancellationToken[2];
+        var secondStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<Result> Open(int attempt, CancellationToken token, CancellationToken abandon)
+        {
+            abandonment[attempt] = abandon;
+            Interlocked.Increment(ref starts);
+            if (attempt == 1) secondStarted.TrySetResult();
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+            catch (OperationCanceledException error) when (token.IsCancellationRequested)
+            {
+                Assert.Equal(token, error.CancellationToken);
+                stopped[attempt].TrySetResult();
+                throw;
+            }
             return new(true);
         }
-        var opening = PlaybackStartHedge.FirstReadyAsync(Open, Open, item => item.Ready, item => item.Dispose(),
+        var opening = PlaybackStartHedge.FirstReadyAsync((token, abandon) => Open(0, token, abandon),
+            (token, abandon) => Open(1, token, abandon), item => item.Ready, item => item.Dispose(),
             TimeSpan.FromSeconds(2), clock, cancellation.Token);
         await clock.WaitForTimersAsync(TimeSpan.FromSeconds(2));
         clock.Advance(TimeSpan.FromSeconds(2));
         await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, Volatile.Read(ref starts));
+        Assert.All(stopped, attempt => Assert.False(attempt.Task.IsCompleted));
         cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => opening);
-        Assert.Equal(0, Volatile.Read(ref abandons));
-        Assert.Equal(2, Volatile.Read(ref cancellations));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => opening.WaitAsync(TimeSpan.FromSeconds(5)));
+        await Task.WhenAll(stopped.Select(attempt => attempt.Task)).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.All(abandonment, token => Assert.False(token.IsCancellationRequested));
+        Assert.Equal(2, Volatile.Read(ref starts));
     }
 
     private sealed class Result(bool ready) : IDisposable
