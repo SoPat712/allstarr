@@ -89,6 +89,7 @@ public sealed class ProviderHealthMigrationTests
         Assert.Empty(await db.SubsonicPlayQueues.AsNoTracking().ToArrayAsync());
         Assert.Empty(await db.ProviderUserData.AsNoTracking().ToArrayAsync());
         AssertSchemaPreserved(beforeSchema, await Schema(db));
+        Assert.All(await db.DownloadedSongMappings.AsNoTracking().ToArrayAsync(), mapping => Assert.Null(mapping.CacheIdentityJson));
         Assert.All(await db.Users.AsNoTracking().ToArrayAsync(), listener => Assert.False(listener.IsSynthetic));
         Assert.Equal(beforeRows, await Rows(db));
         Assert.Equal("Existing", await db.Database.SqlQuery<string>($"SELECT DestinationMode AS Value FROM playlist_links").SingleAsync());
@@ -116,6 +117,7 @@ public sealed class ProviderHealthMigrationTests
         Assert.Empty(await restored.SubsonicPlayQueues.AsNoTracking().ToArrayAsync());
         Assert.Empty(await restored.ProviderUserData.AsNoTracking().ToArrayAsync());
         AssertSchemaPreserved(beforeSchema, await Schema(restored));
+        Assert.All(await restored.DownloadedSongMappings.AsNoTracking().ToArrayAsync(), mapping => Assert.Null(mapping.CacheIdentityJson));
         Assert.All(await restored.Users.AsNoTracking().ToArrayAsync(), listener => Assert.False(listener.IsSynthetic));
         Assert.Equal(beforeRows, await Rows(restored));
         Assert.Equal("Existing", await restored.Database.SqlQuery<string>($"SELECT DestinationMode AS Value FROM playlist_links").SingleAsync());
@@ -208,6 +210,9 @@ public sealed class ProviderHealthMigrationTests
         Assert.Equal(["\"IsSynthetic\" INTEGER NOT NULL DEFAULT 0"],
             TableColumns(after, "users").Except(TableColumns(before, "users")));
         Assert.Empty(TableColumns(before, "users").Except(TableColumns(after, "users")));
+        Assert.Equal(["\"CacheIdentityJson\" TEXT NULL"],
+            TableColumns(after, "downloaded_song_mappings").Except(TableColumns(before, "downloaded_song_mappings")));
+        Assert.Empty(TableColumns(before, "downloaded_song_mappings").Except(TableColumns(after, "downloaded_song_mappings")));
         const string healthTable = "health_smoke_runs";
         Assert.DoesNotContain(before, row => row.Name == healthTable);
         Assert.Single(after, row => row.Type == "table" && row.Name == healthTable);
@@ -305,7 +310,8 @@ public sealed class ProviderHealthMigrationTests
                     var values = Enumerable.Range(0, reader.FieldCount)
                         .Where(index => !(name == "provider_accounts" && reader.GetName(index) == "SettingsJson") &&
                                         !(name == "playlist_links" && reader.GetName(index) == "DestinationMode") &&
-                                        !(name == "users" && reader.GetName(index) == "IsSynthetic"))
+                                        !(name == "users" && reader.GetName(index) == "IsSynthetic") &&
+                                        !(name == "downloaded_song_mappings" && reader.GetName(index) == "CacheIdentityJson"))
                         .Select(index => $"{reader.GetName(index)}={CanonicalValue(reader.GetValue(index))}")
                         .Order(StringComparer.Ordinal)
                         .ToArray();
@@ -347,6 +353,7 @@ public sealed class ProviderHealthMigrationTests
     }
 
     private static bool IsDeliberateNewColumn(string table, string component) =>
+        (table == "downloaded_song_mappings" && component == "\"CacheIdentityJson\" TEXT NULL") ||
         (table == "users" && component == "\"IsSynthetic\" INTEGER NOT NULL DEFAULT 0") ||
         (table == "provider_accounts" && component == "\"SettingsJson\" TEXT NOT NULL DEFAULT '{}'") ||
         (table == "playlist_links" && component is "\"DestinationMode\" TEXT NOT NULL DEFAULT 'Existing'" or "\"DestinationMode\" TEXT NOT NULL") ||

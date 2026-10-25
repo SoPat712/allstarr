@@ -57,6 +57,37 @@ public sealed class PhysicalManagedFileOperations : IManagedFileOperations
         }
     }
 
+    public bool TryOpenDirectory(string path, out SafeFileHandle handle, out ManagedFileSystemIdentity identity)
+    {
+        handle = new SafeFileHandle(new IntPtr(-1), true);
+        identity = null!;
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                handle.Dispose();
+                handle = CreateFileWindows(path, 0x80000000, 7, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+                if (handle.IsInvalid || !GetFileInformationByHandle(handle, out var info) ||
+                    (info.FileAttributes & 0x410) != 0x10 || !TryGetWindowsIdentity(handle, out identity))
+                { handle.Dispose(); return false; }
+                return true;
+            }
+            if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) return false;
+            var flags = OperatingSystem.IsLinux() ? 0x10000 | 0x20000 | 0x80000 : 0x100000 | 0x100 | 0x1000000;
+            var descriptor = OpenDirectoryUnix(path, flags);
+            if (descriptor < 0) return false;
+            handle.Dispose();
+            handle = new SafeFileHandle(new IntPtr(descriptor), true);
+            if (!TryGetFileIdentity(handle, out identity)) { handle.Dispose(); return false; }
+            // The open directory handle prevents inode reuse; child changes must not change its identity.
+            identity = identity with { FileId = identity.FileId.Split(':')[0] };
+            return true;
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or PlatformNotSupportedException or
+            DllNotFoundException or EntryPointNotFoundException)
+        { handle.Dispose(); return false; }
+    }
+
     public bool TryGetFileIdentity(string path, out ManagedFileSystemIdentity identity)
     {
         identity = null!;
@@ -130,6 +161,13 @@ public sealed class PhysicalManagedFileOperations : IManagedFileOperations
     }
 
     public void MoveNoReplace(string sourcePath, string destinationPath) => File.Move(sourcePath, destinationPath, overwrite: false);
+
+    [DllImport("libc", EntryPoint = "open", SetLastError = true)]
+    private static extern int OpenDirectoryUnix(string path, int flags);
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFileWindows(string path, uint access, uint share, IntPtr security,
+        uint disposition, uint flags, IntPtr template);
 
     [DllImport("libc", EntryPoint = "link", SetLastError = true)]
     private static extern int LinkUnix(string existingPath, string newPath);

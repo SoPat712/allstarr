@@ -1,5 +1,7 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
+using allstarr.Core.Routing;
+using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using Moq;
 
@@ -7,6 +9,44 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
+    [Theory]
+    [InlineData("shared", 1)]
+    [InlineData("personal", 2)]
+    [InlineData("revision", 2)]
+    [InlineData("quality", 2)]
+    [InlineData("purpose", 2)]
+    public async Task ConcurrentListenersShareOnlyTheSameAuthorizedAccountRevisionQualityAndPurpose(string separation, int fetches)
+    {
+        var shared = Guid.NewGuid();
+        var personal = Guid.NewGuid();
+        var firstContext = Context();
+        var secondUser = Guid.NewGuid();
+        var secondContext = new ProtocolExecutionContext(firstContext.Protocol, firstContext.BackendInstanceId, "other-listener",
+            new allstarr.Core.Identity.AllstarrPrincipal(secondUser, "jellyfin", firstContext.BackendInstanceId, "other-listener", "Listener", false),
+            "other-request", firstContext.Deadline, default);
+        allstarr.Core.Capabilities.ProviderAccountContext Account(allstarr.Core.Routing.ProviderRouteRequest request)
+        {
+            var second = request.Actor.EffectiveUserId == secondUser;
+            return new(second && separation == "personal" ? personal : shared, "deezer",
+                separation == "personal" ? ProviderAccountScope.Personal : ProviderAccountScope.Shared,
+                second && separation == "revision" ? 2 : 1,
+                ownerUserId: separation == "personal" ? request.Actor.EffectiveUserId : null, secretReferenceId: Guid.NewGuid());
+        }
+        await using var fixture = new PreparationStreamFixture(false, "deezer", account: Account);
+        var first = fixture.Gateway.OpenStreamAsync(firstContext, "deezer", "next", ProviderAudioQuality.Any, null);
+        await fixture.Opening.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        if (separation == "purpose") secondContext = secondContext with { IsOriginalDownload = true };
+        var second = fixture.Gateway.OpenStreamAsync(secondContext, "deezer", "next",
+            separation == "quality" ? ProviderAudioQuality.Lossless : ProviderAudioQuality.Any, null);
+        fixture.OpenResponse.TrySetResult();
+        using var one = (await first.WaitAsync(TimeSpan.FromSeconds(10)))!.Response;
+        using var two = (await second.WaitAsync(TimeSpan.FromSeconds(10)))!.Response;
+        Assert.Equal(fetches, fixture.Fetches);
+        fixture.Source.Release.TrySetResult();
+        Assert.Equal(fixture.Source.Bytes, await one.Content.ReadAsByteArrayAsync());
+        Assert.Equal(fixture.Source.Bytes, await two.Content.ReadAsByteArrayAsync());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

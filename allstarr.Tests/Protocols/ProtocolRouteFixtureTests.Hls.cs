@@ -3,6 +3,11 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Music;
+using allstarr.Services.Common;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.DependencyInjection;
@@ -16,6 +21,73 @@ public sealed partial class ProtocolRouteFixtureTests
     private static readonly JsonElement HlsFixture = ReadHlsFixture();
     private static string FinampHlsQuery => HlsFixture.GetProperty("query").GetString()!;
     private static byte[] HlsBytes => Convert.FromBase64String(HlsFixture.GetProperty("bytes").GetString()!);
+
+    [Fact]
+    public async Task HlsManifestOpeningUsesListenerCapacityAndReleasesAfterCancellation()
+    {
+        var gateway = HlsGateway();
+        var blocking = new HlsBlockingContent(false);
+        gateway.Setup(service => service.OpenStreamAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42", It.IsAny<ProviderAudioQuality>(), null, false))
+            .ReturnsAsync(new ProtocolProviderStream(new HttpResponseMessage(HttpStatusCode.OK) { Content = blocking },
+                new("fixture", new Uri("https://fixture.invalid/audio"), DateTimeOffset.UtcNow.AddMinutes(1),
+                    true, true, DeliveryMedia("mp4", "aac"), ProviderStreamRetryBehavior.DoNotRetry), "deezer", "42"));
+        using var factory = HlsFactory(gateway, services =>
+        {
+            services.RemoveAll<MediaCapacityLimits>();
+            services.AddSingleton(new MediaCapacityLimits(new ConfigurationManager { [MediaCapacityLimits.StreamsKey] = "1" }));
+        });
+        using var client = factory.CreateClient();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var pending = client.GetAsync("/Audio/ext-deezer-song-42/main.m3u8?" + FinampHlsQuery, cancellation.Token);
+        await blocking.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        using var busy = await client.GetAsync("/Audio/ext-deezer-song-42/main.m3u8?" + FinampHlsQuery);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, busy.StatusCode);
+        Assert.Equal(TimeSpan.FromSeconds(5), busy.Headers.RetryAfter!.Delta);
+        Assert.Equal("busy", busy.Headers.GetValues("X-Allstarr-Capacity").Single());
+        await cancellation.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        await blocking.Finished.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        gateway.Setup(service => service.OpenStreamAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42", It.IsAny<ProviderAudioQuality>(), null, false))
+            .ReturnsAsync(() => HlsGateway().Object.OpenStreamAsync(null!, "deezer", "42", ProviderAudioQuality.Any, null, false).GetAwaiter().GetResult());
+        using var recovered = await client.GetAsync("/Audio/ext-deezer-song-42/main.m3u8?" + FinampHlsQuery);
+        Assert.Equal(HttpStatusCode.OK, recovered.StatusCode);
+        gateway.Verify(service => service.OpenStreamAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42", It.IsAny<ProviderAudioQuality>(), null, false), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task HlsSegmentResponsesUseTheSharedResponseLeaseUntilAbortOrDisposal()
+    {
+        using var factory = HlsFactory(HlsGateway(), services =>
+        {
+            services.RemoveAll<MediaCapacityLimits>();
+            services.AddSingleton(new MediaCapacityLimits(new ConfigurationManager { [MediaCapacityLimits.StreamsKey] = "1" }));
+        });
+        using var client = factory.CreateClient();
+        var manifest = await client.GetStringAsync("/Audio/ext-deezer-song-42/main.m3u8?" + FinampHlsQuery);
+        var (_, segment) = HlsLinks(manifest);
+        var sessionId = segment.Split('/')[1];
+        var sessions = factory.Services.GetRequiredService<ProviderHlsSessions>();
+        var session = sessions.Find(sessionId)!;
+        var principal = new allstarr.Core.Identity.AllstarrPrincipal(Guid.NewGuid(), "jellyfin", session.BackendInstanceId, session.PrincipalId, "Listener", false);
+        var execution = new ProtocolExecutionContext(ProtocolKind.Jellyfin, session.BackendInstanceId, session.PrincipalId,
+            principal, "segment-capacity", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var admission = factory.Services.GetRequiredService<ProviderStreamAdmission>();
+        var responses = factory.Services.GetRequiredService<ProtocolStreamingResponseAdapter>();
+        using var scope = factory.Services.CreateScope();
+        var controller = Microsoft.Extensions.DependencyInjection.ActivatorUtilities.CreateInstance<allstarr.Controllers.JellyfinController>(scope.ServiceProvider);
+        using var cancellation = new CancellationTokenSource();
+        var http = new DefaultHttpContext { RequestAborted = cancellation.Token };
+        http.Request.Method = "GET";
+        http.Items[ProtocolExecutionContextFactory.HttpContextItemKey] = execution;
+        controller.ControllerContext = new ControllerContext { HttpContext = http };
+        var result = Assert.IsType<FileStreamResult>(await controller.HlsAudioSegment(session.ItemId, session.Id, "0.mp4", sessions, admission, responses));
+        Assert.Null(admission.TryEnter(execution));
+        cancellation.Cancel();
+        using var replacement = admission.TryEnter(execution);
+        Assert.NotNull(replacement);
+        result.FileStream.Dispose();
+        Assert.Null(admission.TryEnter(execution));
+    }
 
     [Theory]
     [InlineData("fixture-key")]

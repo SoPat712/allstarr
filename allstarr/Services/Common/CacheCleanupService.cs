@@ -10,18 +10,18 @@ namespace allstarr.Services.Common;
 public class CacheCleanupService : BackgroundService
 {
     private readonly allstarr.Core.Operations.BackgroundTaskActivity? _taskActivity;
-    private readonly IConfiguration _configuration;
+    private readonly ManagedTrackCacheService _audio;
     private readonly SubsonicSettings _subsonicSettings;
     private readonly ILogger<CacheCleanupService> _logger;
     private bool _cleanupFailed;
     private readonly TimeSpan _cleanupInterval = TimeSpan.FromHours(1);
 
     public CacheCleanupService(
-        IConfiguration configuration,
+        ManagedTrackCacheService audio,
         IOptions<SubsonicSettings> subsonicSettings,
         ILogger<CacheCleanupService> logger, allstarr.Core.Operations.BackgroundTaskActivity? taskActivity = null)
     {
-        _configuration = configuration;
+        _audio = audio;
         _taskActivity = taskActivity;
         _subsonicSettings = subsonicSettings.Value;
         _logger = logger;
@@ -44,7 +44,6 @@ public class CacheCleanupService : BackgroundService
                 {
                     await CleanupOldCachedFilesAsync(stoppingToken);
                 }
-                await CleanupTranscodedCacheAsync(stoppingToken);
                 if (_taskActivity != null) await _taskActivity.CompletedAsync("audio-cache-cleanup", !_cleanupFailed, stoppingToken);
                 await Task.Delay(_cleanupInterval, stoppingToken);
             }
@@ -65,179 +64,6 @@ public class CacheCleanupService : BackgroundService
         _logger.LogInformation("CacheCleanupService stopped");
     }
 
-    private async Task CleanupOldCachedFilesAsync(CancellationToken cancellationToken)
-    {
-        // Get the actual cache path used by download services
-        var downloadPath = _configuration["Library:DownloadPath"] ?? "downloads";
-        var cachePath = Path.Combine(downloadPath, "cache");
-
-        if (!Directory.Exists(cachePath))
-        {
-            _logger.LogDebug("Cache directory does not exist: {Path}", cachePath);
-            return;
-        }
-
-        var cutoffTime = DateTime.UtcNow.AddHours(-_subsonicSettings.CacheDurationHours);
-        var deletedCount = 0;
-        var totalSize = 0L;
-
-        _logger.LogInformation("Starting cache cleanup: deleting files older than {CutoffTime} from {Path}", cutoffTime, cachePath);
-
-        try
-        {
-            // Get all files in cache directory and subdirectories
-            var files = Directory.GetFiles(cachePath, "*.*", SearchOption.AllDirectories);
-
-            foreach (var filePath in files)
-            {
-                if (cancellationToken.IsCancellationRequested)
-                    break;
-
-                try
-                {
-                    var fileInfo = new FileInfo(filePath);
-
-                    // Use last write time (when file was created/downloaded) to determine if file should be deleted
-                    // LastAccessTime is unreliable on many filesystems (noatime mount option)
-                    if (fileInfo.LastWriteTimeUtc < cutoffTime)
-                    {
-                        var size = fileInfo.Length;
-                        File.Delete(filePath);
-                        deletedCount++;
-                        totalSize += size;
-                        _logger.LogDebug("Deleted cached file: {Path} (age: {Age:F1} hours)",
-                            filePath, (DateTime.UtcNow - fileInfo.LastWriteTimeUtc).TotalHours);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _cleanupFailed = true;
-                    _logger.LogError(ex, "Failed to delete cached file: {Path}", filePath);
-                }
-            }
-
-            // Clean up empty directories
-            await CleanupEmptyDirectoriesAsync(cachePath, cancellationToken);
-
-            if (deletedCount > 0)
-            {
-                var sizeMB = totalSize / (1024.0 * 1024.0);
-                _logger.LogInformation("Cache cleanup completed: deleted {Count} files, freed {Size:F2} MB",
-                    deletedCount, sizeMB);
-            }
-            else
-            {
-                _logger.LogInformation("Cache cleanup completed: no files to delete");
-            }
-        }
-        catch (Exception ex)
-        {
-            _cleanupFailed = true;
-            _logger.LogError(ex, "Error during cache cleanup");
-        }
-    }
-
-    /// <summary>
-    /// Cleans up transcoded quality-override files based on CACHE_TRANSCODE_MINUTES TTL.
-    /// This always runs regardless of StorageMode, since transcoded files are a separate concern.
-    /// </summary>
-    private async Task CleanupTranscodedCacheAsync(CancellationToken cancellationToken)
-    {
-        var downloadPath = _configuration["Library:DownloadPath"] ?? "downloads";
-        var transcodedPath = Path.Combine(downloadPath, "transcoded");
-
-        if (!Directory.Exists(transcodedPath))
-        {
-            return;
-        }
-
-        var ttl = CacheExtensions.TranscodeCacheTTL;
-        var cutoffTime = DateTime.UtcNow - ttl;
-        var deletedCount = 0;
-        var totalSize = 0L;
-
-        try
-        {
-            var files = Directory.GetFiles(transcodedPath, "*.*", SearchOption.AllDirectories);
-
-            foreach (var filePath in files)
-            {
-                if (cancellationToken.IsCancellationRequested)
-                    break;
-
-                try
-                {
-                    var fileInfo = new FileInfo(filePath);
-
-                    // Use last write time (updated on cache hit) to determine if file should be deleted
-                    if (fileInfo.LastWriteTimeUtc < cutoffTime)
-                    {
-                        var size = fileInfo.Length;
-                        File.Delete(filePath);
-                        deletedCount++;
-                        totalSize += size;
-                        _logger.LogDebug("Deleted transcoded cache file: {Path} (age: {Age:F1} minutes)",
-                            filePath, (DateTime.UtcNow - fileInfo.LastWriteTimeUtc).TotalMinutes);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _cleanupFailed = true;
-                    _logger.LogError(ex, "Failed to delete transcoded cache file: {Path}", filePath);
-                }
-            }
-
-            // Clean up empty directories in the transcoded folder
-            await CleanupEmptyDirectoriesAsync(transcodedPath, cancellationToken);
-
-            if (deletedCount > 0)
-            {
-                var sizeMB = totalSize / (1024.0 * 1024.0);
-                _logger.LogInformation("Transcoded cache cleanup: deleted {Count} files, freed {Size:F2} MB (TTL: {TTL} minutes)",
-                    deletedCount, sizeMB, ttl.TotalMinutes);
-            }
-        }
-        catch (Exception ex)
-        {
-            _cleanupFailed = true;
-            _logger.LogError(ex, "Error during transcoded cache cleanup");
-        }
-    }
-
-    private async Task CleanupEmptyDirectoriesAsync(string rootPath, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var directories = Directory.GetDirectories(rootPath, "*", SearchOption.AllDirectories)
-                .OrderByDescending(d => d.Length); // Process deepest directories first
-
-            foreach (var directory in directories)
-            {
-                if (cancellationToken.IsCancellationRequested)
-                    break;
-
-                try
-                {
-                    if (!Directory.EnumerateFileSystemEntries(directory).Any())
-                    {
-                        Directory.Delete(directory);
-                        _logger.LogDebug("Deleted empty directory: {Path}", directory);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _cleanupFailed = true;
-                    _logger.LogError(ex, "Failed to delete empty directory: {Path}", directory);
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _cleanupFailed = true;
-            _logger.LogError(ex, "Error cleaning up empty directories");
-        }
-
-        await Task.CompletedTask;
-    }
-
+    internal Task CleanupOldCachedFilesAsync(CancellationToken cancellationToken) =>
+        _audio.CleanupExpiredAudioAsync(TimeSpan.FromHours(_subsonicSettings.CacheDurationHours), cancellationToken);
 }

@@ -106,6 +106,8 @@ public interface IManagedFileOperations
     bool TryCreateHardLink(string linkPath, string existingPath);
     bool TryCreateReflink(string destinationPath, string sourcePath);
     bool TryGetFileIdentity(string path, out ManagedFileSystemIdentity identity);
+    bool TryOpenDirectory(string path, out Microsoft.Win32.SafeHandles.SafeFileHandle handle, out ManagedFileSystemIdentity identity) =>
+        new PhysicalManagedFileOperations().TryOpenDirectory(path, out handle, out identity);
     bool TryGetFileIdentity(Stream stream, out ManagedFileSystemIdentity identity) =>
         new PhysicalManagedFileOperations().TryGetFileIdentity(stream, out identity);
     Task CopyAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken);

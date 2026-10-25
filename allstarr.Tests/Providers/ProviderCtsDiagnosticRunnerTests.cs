@@ -21,6 +21,38 @@ namespace allstarr.Tests;
 public sealed class ProviderCtsDiagnosticRunnerTests
 {
     [Fact]
+    public async Task MeasureLocalConversionSaturationIsNeutralAndDoesNotRetryAnotherSample()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var health = new ProviderRuntimeHealth();
+        var attempts = 0;
+        var streaming = new Mock<IProviderStreamingCapability>();
+        streaming.SetupGet(item => item.ProviderId).Returns("fixture");
+        streaming.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Returns(() =>
+            {
+                attempts++;
+                return Task.FromResult(ProviderOutcome<ProviderStreamLease>.Failure(ProviderError.LocalCapacity()));
+            });
+        var metadata = new Mock<IProviderMetadataCapability>();
+        metadata.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("fixture",
+                [new(new("fixture", ProviderResourceKind.Track, "sample"), "Song", [new("Artist")])])));
+        var registry = AccountFreeRegistry("fixture", ObservedProviderCapabilities.Wrap(streaming.Object, health), metadata.Object);
+        using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
+        var runner = new ProviderCtsDiagnosticRunner(registry.Object, Mock.Of<IProviderRouteAccountResolver>(), selector, health);
+        var result = await runner.MeasureAsync(Actor(), "fixture", null, ProviderAudioQuality.Any, "local-capacity");
+        Assert.False(result.Succeeded);
+        Assert.Equal(503, result.StatusCode);
+        Assert.Equal(LocalCapacityException.Code, result.ReasonCode);
+        Assert.Equal(5, result.RetryAfterSeconds);
+        Assert.Equal(1, attempts);
+        Assert.Null(health.Get(ProviderRuntimeStatusKey.CreateAccountFree("fixture", "streaming")));
+        Assert.False(health.GetRouteStatus("fixture", null, ProviderCapabilityKind.Streaming).CircuitOpen);
+    }
+
+    [Fact]
     public async Task Measure_OneFailedSampleCannotOpenACircuitThroughPassiveObservation()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();

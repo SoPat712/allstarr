@@ -92,6 +92,7 @@ public sealed class ProviderDiagnosticsController(
                 correlationId,
                 request.TrackId,
                 cancellationToken);
+            if (result.ReasonCode == LocalCapacityException.Code) LocalCapacityException.MarkResponse(Response);
             if (result.RetryAfterSeconds.HasValue)
                 Response.Headers.RetryAfter = result.RetryAfterSeconds.Value.ToString();
             return StatusCode(result.StatusCode, result);

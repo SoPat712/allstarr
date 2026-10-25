@@ -1,3 +1,4 @@
+using allstarr.Services.Common;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
@@ -15,13 +16,23 @@ internal sealed record ExtensionMediaProcessingDiagnostic(string Operation, stri
 internal delegate Task<string> ExtensionMediaProcessRunner(string executable, IEnumerable<string> arguments,
     string? output, long maximumBytes, CancellationToken token);
 
-internal sealed class ExtensionDownloadPostProcessor(TimeSpan timeout, ExtensionMediaProcessRunner? runner = null)
+internal sealed class ExtensionDownloadPostProcessor
 {
+    private readonly TimeSpan timeout;
+    private readonly ExtensionMediaProcessRunner run;
+    internal ExtensionDownloadPostProcessor(TimeSpan timeout, ExtensionMediaProcessRunner? runner = null, MediaConversionGate? conversions = null)
+    {
+        this.timeout = timeout;
+        var gate = conversions ?? new MediaConversionGate();
+        var spawn = runner ?? RunAsync;
+        run = (executable, arguments, output, maximumBytes, token) => executable == "ffmpeg"
+            ? gate.RunAsync(() => spawn(executable, arguments, output, maximumBytes, token), token)
+            : spawn(executable, arguments, output, maximumBytes, token);
+    }
     internal const string FailureMessage = "Download decryption failed.";
     internal const string ConversionFailureMessage = "Download container conversion failed.";
     internal const string ToolsUnavailableMessage = "Download media tools are unavailable.";
     internal const string DiagnosticKey = "MediaProcessing";
-    private readonly ExtensionMediaProcessRunner run = runner ?? RunAsync;
 
     private sealed class ProcessingState
     {
@@ -60,6 +71,7 @@ internal sealed class ExtensionDownloadPostProcessor(TimeSpan timeout, Extension
             state.Operation = "conversion";
             return await ConvertContainerAsync(input, value, maximumBytes, cancellationToken, state);
         }
+        catch (LocalCapacityException) { throw; }
         catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
         {
             exception.Data[DiagnosticKey] = Diagnostic(state, exception, "canceled");

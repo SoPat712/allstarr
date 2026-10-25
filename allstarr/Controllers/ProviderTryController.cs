@@ -58,6 +58,11 @@ public sealed class ProviderTryController(IProviderRegistry providers, ProviderT
         var correlation = string.IsNullOrWhiteSpace(HttpContext.TraceIdentifier) ? Guid.NewGuid().ToString("N") :
             HttpContext.TraceIdentifier[..Math.Min(100, HttpContext.TraceIdentifier.Length)];
         var outcome = await service.ExecuteAsync(actor, catalog!.Provider, request, correlation, token);
+        if (outcome.StatusCode == 503 && outcome.ReasonCode == LocalCapacityException.Code)
+        {
+            LocalCapacityException.MarkResponse(Response);
+            return StatusCode(503, new { error = "Allstarr is at capacity. Try again shortly.", reasonCode = LocalCapacityException.Code });
+        }
         if (outcome.StatusCode == 429)
         {
             Response.Headers.RetryAfter = "5";

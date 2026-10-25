@@ -1,3 +1,4 @@
+using allstarr.Services.Common;
 using System.Net;
 using allstarr.Core.Protocols;
 using allstarr.Services.Subsonic;
@@ -15,6 +16,7 @@ public sealed class SubsonicExceptionFilter(
 {
     public void OnException(ExceptionContext context)
     {
+        if (context.Exception is LocalCapacityException) LocalCapacityException.MarkResponse(context.HttpContext.Response);
         var error = Map(
             context.Exception,
             context.HttpContext.RequestAborted.IsCancellationRequested);
@@ -42,6 +44,7 @@ public sealed class SubsonicExceptionFilter(
         Exception exception,
         bool requestAborted = false) => exception switch
         {
+            LocalCapacityException busy => (0, busy.SafeMessage, StatusCodes.Status503ServiceUnavailable),
             ProtocolProviderAccountAccessException access =>
                 (50, access.Message, StatusCodes.Status403Forbidden),
             ProtocolProviderUnavailableException unavailable =>

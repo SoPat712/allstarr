@@ -386,6 +386,9 @@ builder.Services.AddSingleton<IDownloadedSongMappingStore, EfDownloadedSongMappi
 builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
 builder.Services.AddSingleton<LrclibService>();
 builder.Services.AddSingleton<ProtocolStreamingResponseAdapter>();
+builder.Services.AddSingleton<MediaCapacityLimits>();
+builder.Services.AddSingleton<ProviderStreamAdmission>();
+builder.Services.AddSingleton<MediaConversionGate>();
 builder.Services.AddSingleton<ManagedTrackCacheService>();
 builder.Services.AddSingleton<IProtocolLyricsResolver, ProtocolLyricsResolver>();
 builder.Services.AddSingleton<IRecordingLyricsChoices, RecordingLyricsChoices>();

@@ -4560,7 +4560,8 @@ test("Maintenance reports cache budgets and confirms category purge", async ({ p
   await mockApi(page);
   await page.goto("#/settings/storage");
   const cacheSettings = page.getByRole("form", { name: "Cache settings" });
-  await expect(cacheSettings.getByText(/Memory cache stays capped at 16 MiB/)).toBeVisible();
+  await expect(cacheSettings.getByText(/Memory cache is capped at 16 MiB/)).toBeVisible();
+  await expect(cacheSettings).toContainText("Audio has its own limit.");
   const card = page.locator(".cache-diagnostics-card");
 
   await expect(card.getByText("Memory hit / miss")).toBeVisible();

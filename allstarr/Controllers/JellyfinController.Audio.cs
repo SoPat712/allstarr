@@ -159,6 +159,11 @@ public partial class JellyfinController
             return StatusCode(499);
         }
 
+        if (ex is LocalCapacityException busy)
+        {
+            LocalCapacityException.MarkResponse(Response);
+            return StatusCode(503, new { error = busy.SafeMessage, code = LocalCapacityException.Code });
+        }
         var (statusCode, errorMessage) = MapExternalStreamException(ex);
 
         if (ex is ProtocolProviderUnavailableException unavailable)
@@ -186,6 +191,8 @@ public partial class JellyfinController
 
     internal static (int statusCode, string errorMessage) MapExternalStreamException(Exception ex)
     {
+        if (ex is LocalCapacityException busy) return (503, busy.SafeMessage);
+
         if (ex is ProviderAudioProfileException profile)
             return (StatusCodes.Status406NotAcceptable, profile.Message);
 

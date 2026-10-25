@@ -1,3 +1,4 @@
+using allstarr.Services.Common;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Text;
@@ -93,6 +94,7 @@ public partial class ExtensionHostBridge
                 return new { success = false, error = "Only codec: copy is supported." };
             if (new FileInfo(source).Length > scope.MaximumBytes) return new { success = false, error = "Input exceeds the managed artifact size limit." };
             staged = scope.ResolveTemporaryPath(output + "." + Guid.NewGuid().ToString("N") + Path.GetExtension(output));
+            using var capacity = _conversions.EnterAsync(scope.CancellationToken).AsTask().GetAwaiter().GetResult();
             var start = new ProcessStartInfo("ffmpeg") { UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true };
             foreach (var argument in new[] { "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
                          "-protocol_whitelist", "file,pipe", "-format_whitelist", "aac,flac,mp3,mpegts,mov,ogg,wav,matroska,webm",
@@ -124,6 +126,7 @@ public partial class ExtensionHostBridge
             File.Move(staged, target, overwrite: true);
             return new { success = true, output_path = output };
         }
+        catch (LocalCapacityException) { return new { success = false, error = LocalCapacityException.Code, retryAfterSeconds = 5 }; }
         catch (Win32Exception exception) when (exception.NativeErrorCode == 2)
         { return new { success = false, error = "ffmpeg is not available" }; }
         catch (Exception) { return new { success = false, error = "Media conversion failed." }; }

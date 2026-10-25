@@ -136,7 +136,8 @@ public sealed class CacheIslandRegressionContractTests
             Assert.Contains("request.Workspace", source, StringComparison.Ordinal);
             Assert.Contains("Quality(request.RequestedQuality, configuredQuality)", source, StringComparison.Ordinal);
         });
-        Assert.Contains("CacheExtensions.TranscodeCacheTTL", cleanup, StringComparison.Ordinal);
+        Assert.Contains("_audio.CleanupExpiredAudioAsync", cleanup, StringComparison.Ordinal);
+        Assert.DoesNotContain("File.Delete", cleanup, StringComparison.Ordinal);
         Assert.Contains("_subsonicSettings.StorageMode == StorageMode.Cache", cleanup, StringComparison.Ordinal);
         Assert.DoesNotContain("CacheCleanupService disabled", cleanup, StringComparison.Ordinal);
     }

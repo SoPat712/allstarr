@@ -6,24 +6,31 @@ namespace allstarr.Services.Common;
 /// </summary>
 public sealed class BoundedOperationGate
 {
-    private readonly SemaphoreSlim semaphore;
+    private readonly Func<int> capacity;
+    private readonly object gate = new();
+    private int active;
 
-    public BoundedOperationGate(int capacity)
+    public BoundedOperationGate(int capacity) : this(() => capacity)
     {
         if (capacity < 1) throw new ArgumentOutOfRangeException(nameof(capacity));
-        semaphore = new SemaphoreSlim(capacity, capacity);
     }
 
-    public async ValueTask<IDisposable?> TryEnterAsync(CancellationToken cancellationToken = default)
+    public BoundedOperationGate(Func<int> capacity) => this.capacity = capacity;
+
+    public ValueTask<IDisposable?> TryEnterAsync(CancellationToken cancellationToken = default)
     {
-        if (!await semaphore.WaitAsync(TimeSpan.Zero, cancellationToken)) return null;
-        return new Lease(semaphore);
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (gate)
+        {
+            if (active >= Math.Max(1, capacity())) return ValueTask.FromResult<IDisposable?>(null);
+            active++;
+            return ValueTask.FromResult<IDisposable?>(new Lease(() => { lock (gate) active--; }));
+        }
     }
 
-    private sealed class Lease(SemaphoreSlim semaphore) : IDisposable
+    private sealed class Lease(Action release) : IDisposable
     {
-        private SemaphoreSlim? owner = semaphore;
-
-        public void Dispose() => Interlocked.Exchange(ref owner, null)?.Release();
+        private Action? remaining = release;
+        public void Dispose() => Interlocked.Exchange(ref remaining, null)?.Invoke();
     }
 }

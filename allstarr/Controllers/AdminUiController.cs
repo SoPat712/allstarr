@@ -1615,6 +1615,15 @@ public class AdminUiController : ControllerBase
             DeploymentField("LIBRARY_KEPT_PATH", "Kept downloads path", "text", "library.keptPath"),
             Field("PLAYLISTS_DIRECTORY", "Playlists directory", "text", "playlistsDirectory")
         ]),
+        Section("audio-limits", "Audio limits",
+        [
+            Field("CACHE_AUDIO_MAXIMUM_GIB", "Maximum audio cache (GiB)", "number", "cache.audioMaximumGiB", min: 1, max: 1024,
+                helpText: "Applies to disposable managed audio and temporary read-ahead. Active readers and protected files are preserved. Default: 2 GiB."),
+            Field("PROVIDER_STREAMS_PER_LISTENER", "Provider streams per listener", "number", "playback.providerStreamsPerListener", min: 1, max: 64,
+                helpText: "Includes opening and active external streams and original downloads. Native backend streams are unaffected. Default: 6."),
+            Field("MEDIA_MAXIMUM_CONCURRENT_CONVERSIONS", "Concurrent media conversions", "number", "media.maximumConcurrentConversions", min: 1, max: 16,
+                helpText: "Maximum simultaneous core media conversions. New requests use the saved limit without restarting. Default: 2.")
+        ]),
         Section("cache", "Cache",
         [
             Field("CACHE_DURATION_HOURS", "Track cache hours", "number", "library.cacheDurationHours", min: 1),

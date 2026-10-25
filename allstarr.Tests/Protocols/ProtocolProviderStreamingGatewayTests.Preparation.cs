@@ -222,7 +222,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         public readonly ProtocolProviderGateway Gateway;
         public int Fetches;
 
-        public PreparationStreamFixture(bool supportsRanges = true, string provider = "apple-musickit", string container = "flac")
+        public PreparationStreamFixture(bool supportsRanges = true, string provider = "apple-musickit", string container = "flac",
+            Func<ProviderRouteRequest, ProviderAccountContext?>? account = null)
         {
             var apple = Capability(provider, ProviderOutcome<ProviderStreamLease>.Success(new(
                 "lease", new Uri("https://media.example.test/audio"), DateTimeOffset.UtcNow.AddMinutes(1),
@@ -248,7 +249,19 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             var registry = Registry(apple.Object);
             var router = new Mock<IProviderRouter>();
             router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()))
-                .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, apple.Object));
+                .ReturnsAsync((ProviderRouteRequest request) =>
+                {
+                    var plan = Plan(request, registry, apple.Object);
+                    if (account == null) return plan;
+                    return plan with
+                    {
+                        Candidates = plan.Candidates.Select(candidate => candidate with
+                        {
+                            Context = new ProviderExecutionContext(request.Actor, provider, account(request), request.Policy,
+                            request.OperationId, request.CorrelationId, request.Deadline, request.CancellationToken)
+                        }).ToArray()
+                    };
+                });
             var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             { ["Library:DownloadPath"] = root }).Build();
             Cache = new(config, Options.Create(new SubsonicSettings { StorageMode = StorageMode.Cache }),

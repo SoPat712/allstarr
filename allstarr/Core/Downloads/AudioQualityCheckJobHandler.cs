@@ -74,6 +74,10 @@ public sealed class AudioQualityCheckJobHandler(IDbContextFactory<AllstarrDbCont
             await transaction.CommitAsync(cancellationToken);
             return DurableJobCompletion.Success();
         }
+        catch (allstarr.Services.Common.LocalCapacityException)
+        {
+            return DurableJobCompletion.Retry("local-capacity-unavailable", "Media conversion capacity is full. Retry shortly.", TimeSpan.FromSeconds(5));
+        }
         catch (Exception error) when (error is IOException or InvalidOperationException or DbUpdateConcurrencyException)
         {
             return DurableJobCompletion.Retry("quality_file_unavailable", "The file could not be checked right now.");

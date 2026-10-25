@@ -101,6 +101,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
     public void Observe(ProviderExecutionContext context, ProviderCapabilityKind capability,
         ProviderError? error, TimeSpan elapsed)
     {
+        if (error?.Code == LocalCapacityException.Code) return;
         if (error?.Kind is ProviderErrorKind.Canceled or ProviderErrorKind.NotFound or
             ProviderErrorKind.NotSupported or ProviderErrorKind.IncompatibleMedia or ProviderErrorKind.Forbidden)
             return;
@@ -114,6 +115,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
     public void ObservePlayback(ProviderExecutionContext context, ProviderExternalResourceId track,
         ProviderAudioQuality quality, ProviderError? error, TimeSpan elapsed, ProviderMediaFormat? media = null)
     {
+        if (error?.Code == LocalCapacityException.Code) return;
         if (context.IsReadOnly || error?.Kind is ProviderErrorKind.Canceled or ProviderErrorKind.Forbidden or
             ProviderErrorKind.Unauthorized or ProviderErrorKind.AccountNeedsConfiguration or ProviderErrorKind.AccountNeedsReauthentication)
             return;
@@ -199,6 +201,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
     private void RecordCore(ProviderRuntimeStatusKey key, long? revision, bool success, long? latency,
         string? reason, bool authenticationFailure, TimeSpan? retryAfter, bool passive)
     {
+        if (reason == LocalCapacityException.Code) return;
         lock (_sync)
         {
             _observations.TryGetValue(key, out var previous);

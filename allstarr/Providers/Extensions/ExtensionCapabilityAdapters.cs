@@ -153,7 +153,7 @@ public abstract class ExtensionCapabilityAdapterBase : IProviderUrlCapability
         { return Failure<T>(ProviderErrorKind.Canceled); }
         catch (Exception exception) when (hook == "download")
         {
-            _sandbox.LogDownloadFailure(exception);
+            if (!LocalCapacityException.IsLocal(exception)) _sandbox.LogDownloadFailure(exception);
             return ProviderOutcome<T>.Failure(DownloadFailure(exception));
         }
         catch { return Failure<T>(ProviderErrorKind.TransientFailure); }
@@ -162,6 +162,7 @@ public abstract class ExtensionCapabilityAdapterBase : IProviderUrlCapability
     private static ProviderError DownloadFailure(Exception exception)
     {
         var message = exception.Message;
+        if (LocalCapacityException.IsLocal(exception)) return ProviderError.LocalCapacity();
         if (message.Contains(ExtensionDownloadPostProcessor.ToolsUnavailableMessage, StringComparison.Ordinal))
             return ProviderError.DownloadMediaToolsUnavailable();
         if (message.Contains(ExtensionDownloadPostProcessor.ConversionFailureMessage, StringComparison.Ordinal))

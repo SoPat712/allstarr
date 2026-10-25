@@ -1,5 +1,39 @@
 # Live qualification tools
 
+## Listener capacity
+
+`listener_capacity.py` checks concurrent original downloads and far seeks using
+authorized direct Deezer or Monochrome items. It makes no network requests unless
+`--run` is supplied. Defaults are five parallel clients and a thirty-second window;
+the upper bounds are twenty clients, 120 seconds and 32 MiB of application-read
+audio across the run. Each client aborts an initial 4 KiB read, requests independent
+8 KiB ranges near 80% and 90%, then reads one stream at 48 KiB/s for the remaining
+window. An early EOF is reported; the tool does not restart that stream.
+
+Supply a private JSON document through stdin, with `base_url`, `credentials` and
+`items`. For Jellyfin, each credential entry has a `token`; for Subsonic it has a
+`username` and `password`. Items must already be authorized for those listeners.
+Keep this document outside the repository and do not include it in a report.
+
+```bash
+python3 tools/tests/listener_capacity.py --run --protocol jellyfin \
+  --listeners 5 --duration-seconds 30 --input-stdin < /private/path/capacity-input.json
+```
+
+Alternatively, supply `ALLSTARR_LOAD_BASE_URL`,
+`ALLSTARR_LOAD_CREDENTIALS_JSON` and `ALLSTARR_LOAD_ITEM_IDS_JSON` through the
+environment and omit `--input-stdin`. One credential set means parallel clients
+of one listener; supply separate credentials to exercise distinct listeners.
+The JSON report contains aggregate timings, bytes, status counts, local retries
+and early EOF counts. It omits server addresses, item identifiers and credentials.
+Jellyfin requests use only the query API key and Range, matching direct Download
+clients. HTTP 429 is never retried; a marked local 503 can receive one bounded
+retry when its Retry-After fits the remaining window.
+
+Run `python3 tools/tests/test_listener_capacity.py` for offline fake-server checks.
+Collect application and host CPU, memory and free disk separately during a live
+run, and record whether other work was using the server.
+
 ## BrainzMash catalog qualification
 
 `live_brainzmash_qualification.py` exercises only Allstarr's selected read-only

@@ -68,12 +68,14 @@ public sealed class ProviderTryService(IProviderRegistry providers, ProviderDiag
                 };
             }
         }
+        catch (LocalCapacityException) { return new(503, null, LocalCapacityException.Code); }
         catch (ProviderTryBusyException) { return new(429, null, "busy"); }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
         catch (OperationCanceledException) { result = ProviderTryResult.Failure("timeout"); }
         catch (Exception) { result = ProviderTryResult.Failure("provider_error"); }
         token.ThrowIfCancellationRequested();
         if (deadline.IsCancellationRequested) result = ProviderTryResult.Failure("timeout");
+        if (result.ReasonCode == LocalCapacityException.Code) return new(503, null, LocalCapacityException.Code);
         result.Provider = provider;
         result.Capability = request.Capability;
         result.Operation = request.Operation;

@@ -1,11 +1,12 @@
 using System.Net;
+using allstarr.Services.Common;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using Microsoft.Extensions.Caching.Memory;
 
 namespace allstarr.Core.Music;
 
-public sealed class ProviderHlsSessions(IProtocolProviderGateway providers, TimeProvider clock) : IDisposable
+public sealed class ProviderHlsSessions(IProtocolProviderGateway providers, TimeProvider clock, ProviderStreamAdmission? admission = null) : IDisposable
 {
     private const int MaximumSourceBytes = 32 * 1024 * 1024;
     private readonly MemoryCache _sessions = new(new MemoryCacheOptions { SizeLimit = 64 * 1024 * 1024 });
@@ -15,7 +16,9 @@ public sealed class ProviderHlsSessions(IProtocolProviderGateway providers, Time
         string provider, string externalId, ProviderAudioDeliveryRequest delivery, double startSeconds = 0)
     {
         if (delivery.RequestError is { } invalid) throw new ProviderAudioProfileException(invalid);
-        await _opening.WaitAsync(context.CancellationToken);
+        using var capacity = admission?.TryEnter(context);
+        if (admission != null && capacity == null) throw new LocalCapacityException("provider-stream");
+        if (!await _opening.WaitAsync(0, context.CancellationToken)) throw new LocalCapacityException("provider-stream");
         try
         {
             var routed = await providers.OpenStreamAsync(context with { IsReadOnly = true, RequestedItemId = itemId, AudioDelivery = delivery },
@@ -55,7 +58,7 @@ public sealed class ProviderHlsSessions(IProtocolProviderGateway providers, Time
                 AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(30)
             });
             if (!_sessions.TryGetValue(session.Id, out _))
-                throw new HttpRequestException("HLS playback capacity is full. Retry playback shortly.", null, HttpStatusCode.ServiceUnavailable);
+                throw new LocalCapacityException("provider-stream");
             return session;
         }
         finally { _opening.Release(); }
