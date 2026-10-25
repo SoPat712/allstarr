@@ -1,13 +1,124 @@
+using System.Collections.Immutable;
+using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
+using allstarr.Core.Settings;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
+using allstarr.Services.Common;
+using allstarr.Services.Jellyfin;
+using Microsoft.AspNetCore.Http;
 using Moq;
 
 namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(null, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task CatalogNames_UseGenericExternalLabelsWithoutChangingSourceIdentity(bool? showLabel, bool canonical)
+    {
+        var capability = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        capability.SetupGet(value => value.ProviderId).Returns("deezer");
+        capability.SetupGet(value => value.Capability).Returns(ProviderCapabilityKind.Metadata);
+        capability.Setup(value => value.GetTrackAsync(It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderTrackLookupRequest>(request => request.Id.Value == "42")))
+            .ReturnsAsync(ProviderOutcome<ProviderTrackMetadata>.Success(new(new("deezer", ProviderResourceKind.Track, "42"),
+                "Track", [new("Primary", new("deezer", ProviderResourceKind.Artist, "1")), new("Guest", new("deezer", ProviderResourceKind.Artist, "3"))],
+                albumId: new("deezer", ProviderResourceKind.Album, "7"), albumTitle: "Album", isExplicit: true,
+                artwork: new(publicUri: new Uri("https://images.invalid/catalog.jpg")),
+                albumArtist: "Host", albumArtists: [new("Host", new("deezer", ProviderResourceKind.Artist, "2"))],
+                providerIds: new Dictionary<string, string> { ["MusicBrainzTrack"] = "recording-id" })));
+        var registry = MetadataRegistry(capability.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(value => value.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => MetadataPlan(request, registry, capability.Object));
+        var context = Context();
+        if (showLabel.HasValue)
+            context = context with
+            {
+                Policy = new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                    ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, 0.07)
+                { Preferences = new ListeningPreferences { ShowExternalLabel = showLabel.Value } }
+            };
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory());
+        var song = Assert.IsType<Song>(await gateway.GetSongAsync(context, "deezer", "42"));
+        if (canonical)
+        {
+            song.CanonicalRecordingId = Guid.Parse("00000000-0000-0000-0000-000000000042");
+            song.Id = "ext-allstarr-song-recording";
+        }
+        var before = JsonSerializer.Serialize(song);
+        var http = new DefaultHttpContext();
+        http.Items[ProtocolExecutionContextFactory.HttpContextItemKey] = context;
+        var activity = new Mock<IPlaybackDeliveryActivitySource>(MockBehavior.Strict);
+        activity.Setup(value => value.StreamFor(context.RequireActor().EffectiveUserId, "device", song.Id))
+            .Returns(new PlaybackStreamSource("apple-musickit", "serving-42", null, "jellyfin", "backend", true,
+                DateTimeOffset.UtcNow, "cached")
+            { Media = new("audio/mp4", "mp4", "alac", 960_000, 48_000, 24, 2) });
+        var builder = new JellyfinResponseBuilder(httpContexts: new HttpContextAccessor { HttpContext = http }, playbackActivity: activity.Object);
+        var item = JsonSerializer.SerializeToElement(Assert.IsType<Microsoft.AspNetCore.Mvc.JsonResult>(builder.CreateSongResponse(song)).Value);
+        var suffix = showLabel != false ? " [A]" : "";
+
+        Assert.Equal("Track" + (showLabel != false ? " [A]/[E]" : " [E]"), item.GetProperty("Name").GetString());
+        Assert.Equal("Album" + suffix, item.GetProperty("Album").GetString());
+        Assert.Equal(["Primary" + suffix, "Guest" + suffix], item.GetProperty("Artists").EnumerateArray().Select(value => value.GetString()));
+        Assert.Equal("Host" + suffix, item.GetProperty("AlbumArtist").GetString());
+        var artists = item.GetProperty("ArtistItems").EnumerateArray().ToArray();
+        Assert.Equal(["ext-deezer-artist-1", "ext-deezer-artist-3"], artists.Select(value => value.GetProperty("Id").GetString()));
+        Assert.Equal(["Primary" + suffix, "Guest" + suffix], artists.Select(value => value.GetProperty("Name").GetString()));
+        var credit = Assert.Single(item.GetProperty("AlbumArtists").EnumerateArray());
+        Assert.Equal("ext-deezer-artist-2", credit.GetProperty("Id").GetString());
+        Assert.Equal("Host" + suffix, credit.GetProperty("Name").GetString());
+        Assert.Equal(song.Id, item.GetProperty("Id").GetString());
+        Assert.Equal("ext-deezer-album-7", item.GetProperty("AlbumId").GetString());
+        Assert.Equal("ext-deezer-album-7", item.GetProperty("ParentId").GetString());
+        Assert.Equal(song.Id + "-art-v2", item.GetProperty("ImageTags").GetProperty("Primary").GetString());
+        Assert.Equal("https://images.invalid/catalog.jpg", song.CoverArtUrl);
+        Assert.Equal("42", item.GetProperty("ProviderIds").GetProperty("deezer").GetString());
+        Assert.Equal("recording-id", item.GetProperty("ProviderIds").GetProperty("MusicBrainzTrack").GetString());
+        Assert.Equal(2, item.GetProperty("ProviderIds").EnumerateObject().Count());
+        Assert.Equal("alac", item.GetProperty("MediaSources")[0].GetProperty("MediaStreams")[0].GetProperty("Codec").GetString());
+        var album = new Album
+        {
+            Id = "ext-deezer-album-7",
+            Title = "Album",
+            Artist = "Host",
+            ArtistId = "ext-deezer-artist-2",
+            Artists = song.AlbumArtists,
+            ExternalProvider = "deezer",
+            ExternalId = "7"
+        };
+        var albumItem = JsonSerializer.SerializeToElement(builder.ConvertAlbumForQuery(album));
+        Assert.Equal("Album" + suffix, albumItem.GetProperty("Name").GetString());
+        Assert.Equal("Album" + suffix, albumItem.GetProperty("SortName").GetString());
+        Assert.Equal("Host" + suffix, albumItem.GetProperty("Artists")[0].GetString());
+        Assert.Equal("Host" + suffix, albumItem.GetProperty("AlbumArtist").GetString());
+        foreach (var field in new[] { "ArtistItems", "AlbumArtists" })
+        {
+            var albumCredit = Assert.Single(albumItem.GetProperty(field).EnumerateArray());
+            Assert.Equal("Host" + suffix, albumCredit.GetProperty("Name").GetString());
+            Assert.Equal("ext-deezer-artist-2", albumCredit.GetProperty("Id").GetString());
+        }
+        Assert.Equal("ext-deezer-album-7", albumItem.GetProperty("Id").GetString());
+        Assert.Equal("7", albumItem.GetProperty("ProviderIds").GetProperty("deezer").GetString());
+        var artist = new Artist { Id = "ext-deezer-artist-2", Name = "Host", ExternalProvider = "deezer", ExternalId = "2" };
+        var artistItem = JsonSerializer.SerializeToElement(builder.ConvertArtistForQuery(artist));
+        Assert.Equal("Host" + suffix, artistItem.GetProperty("Name").GetString());
+        Assert.Equal("Host" + suffix, artistItem.GetProperty("SortName").GetString());
+        Assert.Equal("ext-deezer-artist-2", artistItem.GetProperty("Id").GetString());
+        Assert.Equal("2", artistItem.GetProperty("ProviderIds").GetProperty("deezer").GetString());
+        Assert.Equal(before, JsonSerializer.Serialize(song));
+        capability.Verify(value => value.GetTrackAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderTrackLookupRequest>()), Times.Once);
+        activity.VerifyAll();
+    }
+
     [Fact]
     public async Task DescriptiveCollectionReads_ColdCacheDoesNotRouteOrWrite()
     {

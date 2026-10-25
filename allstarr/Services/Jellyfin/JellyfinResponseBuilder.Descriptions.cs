@@ -1,3 +1,5 @@
+using allstarr.Core.Protocols;
+using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using allstarr.Services.Common;
 
@@ -5,12 +7,12 @@ namespace allstarr.Services.Jellyfin;
 
 public partial class JellyfinResponseBuilder
 {
-    private static void AddSongDescription(Song song, Dictionary<string, object?> item)
+    private static void AddSongDescription(Song song, Dictionary<string, object?> item, ListeningPreferences? preferences)
     {
         var credits = MusicDescriptiveMetadata.AlbumArtists(song);
-        item["AlbumArtists"] = ArtistCredits(credits, song.ExternalProvider);
+        item["AlbumArtists"] = ArtistCredits(credits, preferences);
         if (credits.Count > 0)
-            item["AlbumArtist"] = AppendExternalSourceLabel(string.Join(", ", credits.Select(artist => artist.Name)), song.ExternalProvider);
+            item["AlbumArtist"] = ExternalTrackPresentation.Name(string.Join(", ", credits.Select(artist => artist.Name)), preferences);
         item["People"] = MusicDescriptiveMetadata.Contributors(song).Select(person => (object)new Dictionary<string, object?>
         {
             ["Name"] = person.Name,
@@ -48,9 +50,9 @@ public partial class JellyfinResponseBuilder
         }
     }
 
-    private static void AddAlbumDescription(Album album, Dictionary<string, object?> item)
+    private static void AddAlbumDescription(Album album, Dictionary<string, object?> item, ListeningPreferences? preferences)
     {
-        var credits = ArtistCredits(MusicDescriptiveMetadata.AlbumArtists(album), album.ExternalProvider);
+        var credits = ArtistCredits(MusicDescriptiveMetadata.AlbumArtists(album), preferences);
         item["AlbumArtists"] = credits;
         item["ArtistItems"] = credits;
         if (!string.IsNullOrWhiteSpace(album.Notes)) item["Overview"] = album.Notes;
@@ -64,12 +66,12 @@ public partial class JellyfinResponseBuilder
         AddIdentifiers(item, artist.ProviderIds, "MusicBrainzArtist");
     }
 
-    private static Dictionary<string, object?>[] ArtistCredits(IReadOnlyList<Artist> artists, string? provider) => artists
+    private static Dictionary<string, object?>[] ArtistCredits(IReadOnlyList<Artist> artists, ListeningPreferences? preferences) => artists
         .Where(artist => !string.IsNullOrWhiteSpace(artist.Id) && !string.IsNullOrWhiteSpace(artist.Name))
         .Select(artist => new Dictionary<string, object?>
         {
             ["Id"] = artist.Id,
-            ["Name"] = AppendExternalSourceLabel(artist.Name, provider)
+            ["Name"] = ExternalTrackPresentation.Name(artist.Name, preferences)
         }).ToArray();
 
     private static void AddIdentifiers(Dictionary<string, object?> item, IReadOnlyDictionary<string, string> identifiers, string musicBrainzKey)

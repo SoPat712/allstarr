@@ -24,6 +24,10 @@ public static class ExternalTrackPresentation
     public static ListeningPreferences Preferences(HttpContext? context) =>
         context?.GetProtocolExecutionContext()?.Policy?.Preferences ?? new();
 
+    public static string Name(string name, ListeningPreferences? preferences = null) =>
+        string.IsNullOrEmpty(name) || preferences?.ShowExternalLabel == false || name.EndsWith(" [A]", StringComparison.Ordinal)
+            ? name : $"{name} [A]";
+
     public static string Title(Song song, ListeningPreferences? preferences = null) => song.IsLocal
         ? song.Title
         : Title(BestVersionTitle(song.Title, song.ExternalProvider, song.IsBestVersion),

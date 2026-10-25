@@ -64,7 +64,7 @@ public sealed class JellyfinExternalMetadataTests
         var list = builder.ConvertSongToJellyfinItem(song);
         Assert.Equal(song.AlbumId, list["AlbumId"]);
         Assert.Equal(song.AlbumId, list["ParentId"]);
-        Assert.Equal("Artist [D]", Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(list["AlbumArtists"]))["Name"]);
+        Assert.Equal("Artist [A]", Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(list["AlbumArtists"]))["Name"]);
         foreach (var sources in new[] { list["MediaSources"], Item(builder.CreateSongResponse(song))["MediaSources"], builder.CreatePlaybackMediaSources(song) })
         {
             var source = Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(sources));

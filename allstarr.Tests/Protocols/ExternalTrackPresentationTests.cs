@@ -8,6 +8,19 @@ namespace allstarr.Tests;
 public sealed class ExternalTrackPresentationTests
 {
     [Theory]
+    [InlineData("Artist", null, "Artist [A]")]
+    [InlineData("Album", true, "Album [A]")]
+    [InlineData("Artist", false, "Artist")]
+    [InlineData("Artist [A]", true, "Artist [A]")]
+    [InlineData("", true, "")]
+    public void ExternalNamesHonorTheLabelPreferenceWithoutExplicitMarkers(string name, bool? external, string expected)
+    {
+        var preferences = external.HasValue
+            ? new allstarr.Core.Settings.ListeningPreferences("All", external.Value, true) : null;
+        Assert.Equal(expected, ExternalTrackPresentation.Name(name, preferences));
+    }
+
+    [Theory]
     [InlineData(true, true, true, "Title [A]/[E]")]
     [InlineData(true, false, true, "Title [A]")]
     [InlineData(false, true, true, "Title [E]")]

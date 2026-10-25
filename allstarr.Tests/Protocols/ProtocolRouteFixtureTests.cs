@@ -2573,11 +2573,11 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(3, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
         var album = Assert.Single(items, item => item.GetProperty("Type").GetString() == "MusicAlbum");
-        Assert.Equal("NAS [AmM]", album.GetProperty("AlbumArtist").GetString());
+        Assert.Equal("NAS [A]", album.GetProperty("AlbumArtist").GetString());
         var track = Assert.Single(items, item =>
             item.GetProperty("Id").GetString() == "ext-spotiflac-amazon-song-track-1");
         Assert.Equal(210 * TimeSpan.TicksPerSecond, track.GetProperty("RunTimeTicks").GetInt64());
-        Assert.Equal("NAS [AmM]", track.GetProperty("Artists")[0].GetString());
+        Assert.Equal("NAS [A]", track.GetProperty("Artists")[0].GetString());
         Assert.Equal("ext-spotiflac-amazon-artist-artist-1", track.GetProperty("ArtistItems")[0].GetProperty("Id").GetString());
         using var albumsResponse = await client.GetAsync(
             "/Items?AlbumArtistIds=ext-spotiflac-amazon-artist-artist-1&IncludeItemTypes=MusicAlbum&Fields=AlbumArtist,ArtistItems&api_key=fixture-key");
@@ -2593,7 +2593,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("ext-spotiflac-amazon-album-album-1", primaryAlbum.GetProperty("Id").GetString());
         Assert.Equal(HttpStatusCode.OK, appearancesResponse.StatusCode);
         Assert.Equal("ext-spotiflac-amazon-album-appearance", appearance.GetProperty("Id").GetString());
-        Assert.Equal("Other Album Artist [AmM]", appearance.GetProperty("AlbumArtist").GetString());
+        Assert.Equal("Other Album Artist [A]", appearance.GetProperty("AlbumArtist").GetString());
         gateway.VerifyAll();
     }
 

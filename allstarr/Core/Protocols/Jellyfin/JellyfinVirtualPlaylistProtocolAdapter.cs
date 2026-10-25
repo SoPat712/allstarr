@@ -502,15 +502,15 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     {
         item["Name"] = ExternalTrackPresentation.Title(track.Title, track.SourceMetadata?.IsExplicit == true, preferences);
         foreach (var name in new[] { "Album", "AlbumArtist" })
-            Label(item, name, provider);
+            Label(item, name, preferences);
         if (item["Artists"] is JsonArray artists)
             for (var index = 0; index < artists.Count; index++)
                 if (artists[index] is JsonValue value && value.TryGetValue<string>(out var artist))
-                    artists[index] = JellyfinResponseBuilder.AppendExternalSourceLabel(artist, provider);
+                    artists[index] = ExternalTrackPresentation.Name(artist, preferences);
         foreach (var collectionName in new[] { "ArtistItems", "AlbumArtists" })
             if (item[collectionName] is JsonArray values)
                 foreach (var value in values.OfType<JsonObject>())
-                    Label(value, "Name", provider);
+                    Label(value, "Name", preferences);
 
         if (!string.IsNullOrWhiteSpace(provider))
         {
@@ -531,10 +531,10 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         if (track.SourceMetadata?.Isrc != null) providerIds["ISRC"] = track.SourceMetadata.Isrc;
     }
 
-    private static void Label(JsonObject item, string name, string? provider)
+    private static void Label(JsonObject item, string name, ListeningPreferences? preferences)
     {
         if (item[name] is JsonValue value && value.TryGetValue<string>(out var text))
-            item[name] = JellyfinResponseBuilder.AppendExternalSourceLabel(text, provider);
+            item[name] = ExternalTrackPresentation.Name(text, preferences);
     }
 
     private Dictionary<string, object?> FallbackItem(VirtualPlaylistTrack track, IQueryCollection? query)

@@ -792,9 +792,9 @@ public sealed partial class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData("applemusic", "AM")]
-    [InlineData("tidal", "T")]
-    [InlineData("ytmusic", "YM")]
+    [InlineData("applemusic", "A")]
+    [InlineData("tidal", "A")]
+    [InlineData("ytmusic", "A")]
     public async Task ExternalDisplayLabels_DoNotReachScopedScrobbleMetadata(string provider, string label)
     {
         var song = new allstarr.Models.Domain.Song
