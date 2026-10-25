@@ -374,7 +374,9 @@ public sealed class ArtistGridMetadataCapabilityAdapter : IProviderMetadataCapab
             year: int.TryParse(track.FileDate?[..4], out var year) ? year : null,
             notes: track.Notes,
             artwork: track.ArtworkUrl == null ? new ProviderArtworkReference(resourceId: albumId ?? trackId, revision: "artistgrid-cover-v1")
-                : new ProviderArtworkReference(publicUri: new Uri(track.ArtworkUrl)));
+                : new ProviderArtworkReference(publicUri: new Uri(track.ArtworkUrl)),
+            alternateTitles: track.AlternateTitles.Select(value => value.Trim())
+                .Where(value => SafeText(value, 500)).Distinct(StringComparer.OrdinalIgnoreCase).Take(8).ToArray());
     }
 
     private static string AlbumHash(string album) => ArtistGridTrackId.HashSource("album:" + album);

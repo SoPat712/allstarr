@@ -6,35 +6,23 @@ public static partial class SearchRelevanceRanker
     private static partial System.Text.RegularExpressions.Regex VersionSegmentRegex();
 
     public static double Score(string query, string name, string? artist = null, string? album = null,
-        string? albumArtist = null)
+        string? albumArtist = null) => Score(query, name, artist, album, albumArtist, null);
+
+    private static double Score(string query, string name, string? artist, string? album,
+        string? albumArtist, IEnumerable<string>? alternateTitles)
     {
         if (string.IsNullOrWhiteSpace(query) || string.IsNullOrWhiteSpace(name)) return 0;
         var queryTokens = Tokens(query);
-        var nameTokens = Tokens(name);
-        if (queryTokens.Count == 0 || nameTokens.Count == 0) return 0;
-
-        // A title substring alone must not satisfy the artist portion of a combined query.
-        var titleCoverage = (double)queryTokens.Count(nameTokens.Contains) / queryTokens.Count;
-        double titleScore = FuzzyMatcher.CalculateSimilarityAggressive(query, name);
-        if (nameTokens.IsProperSubsetOf(queryTokens)) titleScore *= titleCoverage;
-        var combined = Tokens($"{name} {artist}");
-        var matched = queryTokens.Count(combined.Contains);
-        var coverageScore = 100 * (0.9 * matched / queryTokens.Count + 0.1 * matched / combined.Count);
-        double combinedScore = FuzzyMatcher.CalculateSimilarityAggressive(query, $"{name} {artist}");
-        if (combined.IsProperSubsetOf(queryTokens)) combinedScore *= (double)matched / queryTokens.Count;
-        var score = Math.Max(titleScore, Math.Max(coverageScore, combinedScore));
-
-        // Only complete main-artist credits supply artist context; title annotations cannot supply it.
-        var mainArtists = new[] { artist, albumArtist }
-            .Select(value => FuzzyMatcher.SplitCredits(value).FirstOrDefault())
-            .Where(value => !string.IsNullOrWhiteSpace(value))
-            .Select(value => Tokens(value!));
-        var artistTitleCoverage = mainArtists.Where(tokens => tokens.Count > 0 && tokens.IsProperSubsetOf(queryTokens))
-            .Select(tokens => queryTokens.Except(tokens).ToArray())
-            .Select(tokens => (double)tokens.Count(nameTokens.Contains) / tokens.Length)
-            .DefaultIfEmpty(0).Max();
-        var matchesMainArtist = artistTitleCoverage > 0;
-        score = Math.Max(score, 100 * artistTitleCoverage) + 30 * artistTitleCoverage;
+        if (queryTokens.Count == 0 || Tokens(name).Count == 0) return 0;
+        var fit = TitleFit(query, name, artist, albumArtist, queryTokens);
+        foreach (var alias in (alternateTitles ?? []).Take(8).Where(value =>
+                     !string.IsNullOrWhiteSpace(value) && value.Length <= 500 && value == value.Trim() && !value.Any(char.IsControl)))
+        {
+            var candidate = TitleFit(query, alias, artist, albumArtist, queryTokens);
+            if (candidate.Score > fit.Score || candidate.Score == fit.Score && candidate.MatchesMainArtist)
+                fit = candidate;
+        }
+        var (score, matchesMainArtist) = fit;
 
         var requestedVariants = VariantTags(query, requireDecoration: false);
         var variants = VariantTags(name, requireDecoration: true);
@@ -61,11 +49,47 @@ public static partial class SearchRelevanceRanker
         return Math.Round(score / 5, MidpointRounding.AwayFromZero) * 5;
     }
 
+    private static (double Score, bool MatchesMainArtist) TitleFit(
+        string query, string name, string? artist, string? albumArtist, IReadOnlySet<string> queryTokens)
+    {
+        var nameTokens = Tokens(name);
+        if (nameTokens.Count == 0) return (0, false);
+        // A title substring alone must not satisfy the artist portion of a combined query.
+        var titleCoverage = (double)queryTokens.Count(nameTokens.Contains) / queryTokens.Count;
+        double titleScore = FuzzyMatcher.CalculateSimilarityAggressive(query, name);
+        if (nameTokens.IsProperSubsetOf(queryTokens)) titleScore *= titleCoverage;
+        var combined = Tokens($"{name} {artist}");
+        var matched = queryTokens.Count(combined.Contains);
+        var coverageScore = 100 * (0.9 * matched / queryTokens.Count + 0.1 * matched / combined.Count);
+        double combinedScore = FuzzyMatcher.CalculateSimilarityAggressive(query, $"{name} {artist}");
+        if (combined.IsProperSubsetOf(queryTokens)) combinedScore *= (double)matched / queryTokens.Count;
+        var score = Math.Max(titleScore, Math.Max(coverageScore, combinedScore));
+
+        // Only complete main-artist credits supply artist context; title annotations cannot supply it.
+        var mainArtists = new[] { artist, albumArtist }
+            .Select(value => FuzzyMatcher.SplitCredits(value).FirstOrDefault())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => Tokens(value!));
+        var artistTitleCoverage = mainArtists.Where(tokens => tokens.Count > 0 && tokens.IsProperSubsetOf(queryTokens))
+            .Select(tokens => queryTokens.Except(tokens).ToArray())
+            .Select(tokens => (double)tokens.Count(nameTokens.Contains) / tokens.Length)
+            .DefaultIfEmpty(0).Max();
+        var matchesMainArtist = artistTitleCoverage > 0;
+        score = Math.Max(score, 100 * artistTitleCoverage) + 30 * artistTitleCoverage;
+
+        return (score, matchesMainArtist);
+    }
+
     public static double ScoreSong(string query, string title, string? artist, string? album = null,
         string? albumArtist = null, double? durationSeconds = null, bool provenRecording = false,
-        bool hasKnownDurationVersion = false)
+        bool hasKnownDurationVersion = false) =>
+        ScoreSong(query, title, artist, album, albumArtist, durationSeconds, provenRecording, hasKnownDurationVersion, null);
+
+    private static double ScoreSong(string query, string title, string? artist, string? album,
+        string? albumArtist, double? durationSeconds, bool provenRecording,
+        bool hasKnownDurationVersion, IEnumerable<string>? alternateTitles)
     {
-        var score = Score(query, title, artist, album, albumArtist);
+        var score = Score(query, title, artist, album, albumArtist, alternateTitles);
         if (durationSeconds is > 0 and < 60) score = Math.Max(0, score - 30);
         else if (durationSeconds is not > 0 && hasKnownDurationVersion) score = Math.Max(0, score - 25);
         // Recording evidence breaks relevance ties without overtaking the next relevance band.

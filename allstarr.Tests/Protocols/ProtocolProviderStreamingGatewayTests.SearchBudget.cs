@@ -286,7 +286,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Empty((await gateway.SearchAsync(context, "another", 10, 0, 0).WaitAsync(guard.Token)).Songs);
         VerifySearchCount(provider, "songs", 3);
         pending.SetResult(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("deezer", [])));
-        Assert.Empty(cache.GetKeysByPattern("search:v2:*"));
+        Assert.Empty(cache.GetKeysByPattern("search:v3:*"));
     }
 
     private static ProtocolExecutionContext WithSearchCancellation(ProtocolExecutionContext context, CancellationToken token) =>

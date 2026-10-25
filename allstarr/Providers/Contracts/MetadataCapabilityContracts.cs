@@ -56,7 +56,8 @@ public sealed record ProviderTrackMetadata
         ProviderMediaFormat? media = null,
         long? size = null,
         ProviderReplayGain? replayGain = null,
-        IEnumerable<string>? genres = null)
+        IEnumerable<string>? genres = null,
+        IEnumerable<string>? alternateTitles = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         id.RequireOwner(id.ProviderId, ProviderResourceKind.Track);
@@ -142,11 +143,20 @@ public sealed record ProviderTrackMetadata
         Size = size is > 0 ? size : null;
         ReplayGain = replayGain;
         Genres = ProviderContractValidation.Copy((genres ?? []).Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value.Trim()));
+        var aliases = (alternateTitles ?? []).Take(9).ToArray();
+        if (aliases.Length > 8)
+            throw new ArgumentException("Track metadata supports at most eight alternate titles.", nameof(alternateTitles));
+        AlternateTitles = ProviderContractValidation.Copy(aliases
+            .Select(value => ProviderContractValidation.RequiredText(value?.Trim()!, nameof(alternateTitles), 500))
+            .Where(value => !string.Equals(value, Title, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase));
     }
 
     public ProviderExternalResourceId Id { get; }
 
     public string Title { get; }
+
+    public IReadOnlyList<string> AlternateTitles { get; }
 
     public bool IsBestVersion { get; }
 

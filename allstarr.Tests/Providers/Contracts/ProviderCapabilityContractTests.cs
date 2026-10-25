@@ -5,6 +5,35 @@ namespace allstarr.Tests;
 public sealed class ProviderCapabilityContractTests
 {
     [Fact]
+    public void TrackMetadataCopiesAndBoundsGenuineAlternateTitles()
+    {
+        var aliases = new List<string> { " Actual title ", " Alternate title ", "alternate TITLE", "Another title" };
+        var metadata = new ProviderTrackMetadata(TrackId("artistgrid", "track"), "Actual title", [new("Artist")],
+            alternateTitles: aliases);
+        aliases.Clear();
+
+        Assert.Equal(new[] { "Alternate title", "Another title" }, metadata.AlternateTitles);
+        Assert.Throws<NotSupportedException>(() => ((IList<string>)metadata.AlternateTitles)[0] = "Changed");
+        Assert.Empty(new ProviderTrackMetadata(TrackId("artistgrid", "track"), "Actual title", [new("Artist")]).AlternateTitles);
+        Assert.Equal(8, new ProviderTrackMetadata(TrackId("artistgrid", "track"), "Actual title", [new("Artist")],
+            alternateTitles: Enumerable.Range(0, 8).Select(index => $"Alias {index}")).AlternateTitles.Count);
+        Assert.Equal(new string('a', 500), Assert.Single(new ProviderTrackMetadata(
+            TrackId("artistgrid", "track"), "Actual title", [new("Artist")], alternateTitles: [new string('a', 500)]).AlternateTitles));
+    }
+
+    [Fact]
+    public void TrackMetadataRejectsInvalidOrExcessAlternateTitles()
+    {
+        foreach (var alias in new[] { "", "  ", "Control\u0001title", new string('a', 501) })
+            Assert.Throws<ArgumentException>(() => new ProviderTrackMetadata(TrackId("artistgrid", "track"),
+                "Actual title", [new("Artist")], alternateTitles: [alias]));
+        Assert.Throws<ArgumentNullException>(() => new ProviderTrackMetadata(TrackId("artistgrid", "track"),
+            "Actual title", [new("Artist")], alternateTitles: [null!]));
+        Assert.Throws<ArgumentException>(() => new ProviderTrackMetadata(TrackId("artistgrid", "track"),
+            "Actual title", [new("Artist")], alternateTitles: Enumerable.Range(0, 9).Select(index => $"Alias {index}")));
+    }
+
+    [Fact]
     public void EverySdkV1CapabilityInterface_ReceivesTheTypedExecutionContext()
     {
         Type[] capabilityInterfaces =

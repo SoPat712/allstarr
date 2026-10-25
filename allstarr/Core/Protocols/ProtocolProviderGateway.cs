@@ -1969,6 +1969,7 @@ public sealed partial class ProtocolProviderGateway(
             ExternalProvider = PublicProviderId(item.Id),
             ExternalId = item.Id.Value,
             Title = item.Title,
+            AlternateTitles = item.AlternateTitles.ToList(),
             IsBestVersion = item.IsBestVersion,
             Artist = artists.FirstOrDefault() ?? string.Empty,
             Artists = artists,

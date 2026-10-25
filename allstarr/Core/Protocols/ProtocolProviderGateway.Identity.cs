@@ -102,6 +102,7 @@ public sealed partial class ProtocolProviderGateway
     private static void ApplyDisplaySource(Song song, Song source)
     {
         song.Title = source.Title;
+        song.AlternateTitles = source.AlternateTitles?.ToList() ?? [];
         song.Artist = source.Artist;
         song.Artists = source.Artists.ToList();
         song.ArtistId = source.ArtistId;

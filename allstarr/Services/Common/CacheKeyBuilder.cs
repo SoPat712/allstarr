@@ -13,7 +13,7 @@ public static class CacheKeyBuilder
     public static string BuildProviderSearchKey(
         string providerId, Guid? accountId, long? accountRevision, string scope, string query,
         int limit, bool songs, bool albums, bool artists) =>
-        $"search:v2:{Normalize(providerId)}:{accountId?.ToString("N") ?? "public"}:{accountRevision ?? 0}:{Digest(scope)}:{DigestIdentity(query, limit, songs, albums, artists)}";
+        $"search:v3:{Normalize(providerId)}:{accountId?.ToString("N") ?? "public"}:{accountRevision ?? 0}:{Digest(scope)}:{DigestIdentity(query, limit, songs, albums, artists)}";
 
     public static string BuildProtocolMetadataKey(string provider, string scope, string kind, string externalId) =>
         $"protocol:metadata:v1:{Normalize(provider)}:{Digest(scope)}:{Normalize(kind)}:{Digest(externalId)}";

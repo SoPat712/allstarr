@@ -9,6 +9,7 @@ public sealed class Song
     public List<allstarr.Core.Capabilities.ProviderExternalResourceId> SearchRoutes { get; set; } = [];
 
     public string Title { get; set; } = string.Empty;
+    public List<string> AlternateTitles { get; set; } = [];
     public bool IsBestVersion { get; set; }
     public string Artist { get; set; } = string.Empty;
     public string? ArtistId { get; set; }
