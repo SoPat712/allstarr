@@ -20,6 +20,31 @@ namespace allstarr.Tests;
 
 public sealed class AdminUiSourceSettingsTests
 {
+    [Fact]
+    public async Task SpicySchemaHasRequiredMaskedAccountKeyAndOfficialLogo()
+    {
+        using var http = new HttpClient(new SpicyLyricsTestHandler("unused"));
+        var registry = new ProviderRegistry([allstarr.Core.Providers.Lyrics.SpicyLyricsCapabilityAdapter.CreateRegistration(new(http, new SpicyLyricsTestSecrets()))]);
+        var configuration = new ConfigurationBuilder().Build();
+        using var services = new ServiceCollection().AddSingleton<IProviderRegistry>(registry).BuildServiceProvider();
+        var manager = new ProviderStatusManager(configuration, Mock.Of<IHttpClientFactory>(), NullLogger<ProviderStatusManager>.Instance,
+            Options.Create(new SpotifyApiSettings()), Options.Create(new AppleDownloadSettings()), Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()), services: services);
+        var controller = new AdminUiController(configuration, Options.Create(new SpotifyApiSettings()), Options.Create(new DeezerSettings()),
+            Options.Create(new QobuzSettings()), Options.Create(new AppleDownloadSettings()), Options.Create(new MusicBrainzSettings()), null!, manager,
+            new ProviderAccountOptions(), null!, providerRegistry: registry)
+        { ControllerContext = new() { HttpContext = new DefaultHttpContext { RequestServices = services } } };
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        { SessionId = "fixture", UserId = "fixture", UserName = "Fixture", JellyfinAccessToken = "fixture", IsAdministrator = true, AllstarrUserId = Guid.NewGuid(), ExpiresAtUtc = DateTime.UtcNow.AddHours(1) };
+        var schema = Assert.IsType<AdminUiSchemaResponse>(Assert.IsType<OkObjectResult>(await controller.GetSchema()).Value);
+        var source = Assert.Single(schema.Providers, item => item.Id == "spicylyrics");
+        Assert.Equal("/images/providers/spicylyrics.ico", source.LogoUrl);
+        var field = Assert.Single(source.AccountSettings);
+        Assert.True(field.Sensitive);
+        Assert.True(field.Required);
+        Assert.Equal("password", field.Type);
+        Assert.Equal("needs_config", source.Status);
+    }
+
     [Theory]
     [InlineData(ProviderUseMode.Automatic, "cookie", "configured")]
     [InlineData(ProviderUseMode.ManualOnly, "cookie", "configured")]

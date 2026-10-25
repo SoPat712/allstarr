@@ -35,7 +35,7 @@ public sealed class ProviderDiagnosticSamples(TimeProvider? timeProvider = null,
     ];
 
     public static IReadOnlyList<ProviderDiagnosticSample> Recordings(string providerId) =>
-        providerId == "spotify" ? Catalog : Catalog.Select(item => item with { TrackId = null }).ToArray();
+        providerId is "spotify" or "spicylyrics" ? Catalog : Catalog.Select(item => item with { TrackId = null }).ToArray();
 
     public static IReadOnlyList<ProviderDiagnosticSample> Playlists { get; } = new[]
     {

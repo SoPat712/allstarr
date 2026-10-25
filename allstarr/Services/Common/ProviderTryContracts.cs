@@ -1,4 +1,6 @@
 using System.Text.Json.Serialization;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Providers.Spotify;
 
 namespace allstarr.Services.Common;
 
@@ -33,7 +35,7 @@ public sealed class ProviderTryRequest
     [JsonPropertyName("quality")]
     public string? Quality { get; init; }
 
-    public string? Validate()
+    public string? Validate(string? providerId = null)
     {
         if (new[] { Capability, Operation, Query, Kind, Id, Isrc, Url, Title, Artist, Album, TrackId, Quality }.Any(item => item?.Length > 500))
             return "Text inputs must be at most 500 characters.";
@@ -44,6 +46,8 @@ public sealed class ProviderTryRequest
         if (Quality != null && Quality is not ("any" or "lossy" or "lossless" or "high-resolution"))
             return "Quality must be any, lossy, lossless or high-resolution.";
         if (DurationSeconds is < 0 or > 86400) return "Duration must be between zero and 86400 seconds.";
+        if (Operation == "lyrics" && providerId == "spicylyrics")
+            return SpotifyTrackReference.TryNormalize(TrackId, out _) ? null : "A Spotify track link or 22-character ID is required.";
         return Operation switch
         {
             "search" when string.IsNullOrWhiteSpace(Query) => "A search query is required.",
@@ -66,6 +70,19 @@ public sealed record ProviderTryCapability([property: JsonPropertyName("capabili
 public sealed record ProviderTryOperation([property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("inputs")] IReadOnlyList<string> Inputs,
     [property: JsonPropertyName("kinds"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? Kinds = null);
+
+public sealed record ProviderTryLyricLine(
+    [property: JsonPropertyName("startMs"), JsonPropertyOrder(0)] double? StartMs,
+    [property: JsonPropertyName("text"), JsonPropertyOrder(1)] string Text);
+
+public sealed record ProviderTryLyrics(
+    [property: JsonPropertyName("format"), JsonPropertyOrder(0)] string Format,
+    [property: JsonPropertyName("source"), JsonPropertyOrder(1)] string Source,
+    [property: JsonPropertyName("language"), JsonPropertyOrder(2)] string? Language,
+    [property: JsonPropertyName("lineCount"), JsonPropertyOrder(3)] int LineCount,
+    [property: JsonPropertyName("lines"), JsonPropertyOrder(4)] IReadOnlyList<ProviderTryLyricLine> Lines,
+    [property: JsonPropertyName("attribution"), JsonPropertyOrder(5), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        ProviderLyricsAttribution? Attribution = null);
 
 public sealed class ProviderTryResult
 {

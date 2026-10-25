@@ -669,6 +669,15 @@
       </dl>
     </section>
 
+    {#if source.id === "spicylyrics"}
+      <section class="settings-card" aria-label="SpicyLyrics setup">
+        <div class="settings-row">
+          <div><strong>Connect a free server key</strong><small>Create your own key, then choose Connect account. Allstarr stores the key encrypted. Testing needs only a Spotify track link.</small></div>
+          <Button variant="secondary" href="https://developers.spicylyrics.org/docs/keys" target="_blank" rel="noopener noreferrer">Get a free API key</Button>
+        </div>
+      </section>
+    {/if}
+
     {#if source.id === "audiomuse-ai"}
       <section class="settings-card">
         <div class="settings-row">

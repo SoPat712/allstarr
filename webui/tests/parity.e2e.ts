@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 import { expectContainedMobileGeometry } from "./mobile-geometry";
 
 for (const width of [390, 1280]) {
@@ -8248,5 +8249,139 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     if (width < 600) await expectContainedMobileGeometry(page);
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: `test-results/lyrics-routing-kept-${width}-${theme}.png`, fullPage: true });
+  });
+}
+
+
+const spicyDefinition = {
+  id: "spicylyrics", name: "SpicyLyrics", categories: ["lyrics"], connectionKind: "built_in",
+  logoUrl: "/images/providers/spicylyrics.ico", supportedAudiences: ["Personal", "Shared"],
+  accountSettings: [{ key: "apiKey", label: "Server API key", type: "password", sensitive: true, required: true }],
+  runtimeCapabilities: [{ id: "lyrics", supported: true, canTest: true, status: "ready" }],
+};
+const spicyCredits = {
+  service: "spicylyrics", catalog: "spicy_lyrics",
+  uploader: { username: "Uploader with a very long display name for narrow screens", url: "https://spicylyrics.org/uid/123" },
+  maker: { username: "Maker <script>inert</script>", url: "https://spicylyrics.org/uid/456" },
+};
+const spicyTrack = "4iV5W9uYEdYUVa79Axb7Rh";
+const spicyUnlinkedMaker = "Unlinked maker " + "x".repeat(185);
+
+async function mockSpicySource(page: Page, configured = true) {
+  await mockApi(page);
+  const accountFixture = responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[]; audienceUsers: object[] };
+  await page.route("**/images/providers/spicylyrics.ico", async route => route.fulfill({
+    contentType: "image/x-icon", body: await readFile("../allstarr/wwwroot/images/providers/spicylyrics.ico"),
+  }));
+  await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { ...schema, providers: [...schema.providers, spicyDefinition] } }));
+  await page.route("**/api/admin/provider-accounts", route => route.fulfill({ json: {
+    ...accountFixture, accounts: configured ? [{ ...accountFixture.accounts[0], id: "spicy-account", providerId: "spicylyrics",
+      displayName: "Spicy key", configuration: {}, configuredFields: ["apiKey"] }] : [],
+  } }));
+  await page.route("**/api/admin/providers/status", route => route.fulfill({ json: configured ? [{
+    provider: "spicylyrics", providerAccountId: "spicy-account", providerAccountName: "Spicy key", capability: "lyrics",
+    accountScope: "personal", supported: true, enabled: true, configuration: "configured", health: "healthy",
+    ready: true, canAttempt: true, canTest: true,
+  }] : [] }));
+}
+
+for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`SpicyLyrics free key setup stays private at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await mockSpicySource(page, false);
+    await page.goto("#/integrations/services/spicylyrics");
+    const setup = page.getByRole("region", { name: "SpicyLyrics setup" });
+    await expect(setup).toContainText("free server key");
+    await expect(setup.getByRole("link", { name: "Get a free API key" })).toHaveAttribute("href", "https://developers.spicylyrics.org/docs/keys");
+    await expect(page.locator('img[src$="spicylyrics.ico"]').first()).toBeVisible();
+    if (width < 600) await expectContainedMobileGeometry(page);
+    await page.screenshot({ path: `test-results/spicy-setup-${width}-${theme}.png`, fullPage: true });
+    await page.getByRole("button", { name: "Connect account", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Connect a Source" });
+    const key = dialog.getByLabel("Server API key", { exact: true });
+    await expect(key).toHaveAttribute("type", "password");
+    await expect(key).toHaveValue("");
+    await key.fill("fixture-server-key");
+    await expect(key).toHaveAttribute("type", "password");
+    if (width < 600) await expectContainedMobileGeometry(page);
+    await page.screenshot({ path: `test-results/spicy-key-${width}-${theme}.png` });
+  });
+
+  test(`SpicyLyrics tests Spotify links and clears response credits at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await mockSpicySource(page);
+    const requests: Record<string, unknown>[] = [];
+    let count = 0;
+    await page.route("**/api/admin/providers/spicylyrics/try**", async route => {
+      if (route.request().method() === "GET") return route.fulfill({ json: {
+        provider: "spicylyrics", capabilities: [{ capability: "lyrics", accountRequirement: "required", operations: [{ id: "lyrics", inputs: ["trackId"] }] }],
+      } });
+      const body = route.request().postDataJSON(); requests.push(body); count++;
+      const result = { provider: "spicylyrics", capability: "lyrics", operation: "lyrics", accountId: "spicy-account", elapsedMs: 25 };
+      if (count === 3) return route.fulfill({ json: { ...result, succeeded: false, reasonCode: "not_found" } });
+      return route.fulfill({ json: { ...result, succeeded: true, lyrics: { source: "spicylyrics", format: "word", lineCount: 2,
+        lines: [{ startMs: 1200, text: "First fixture words" }, { startMs: 2400, text: "Second fixture words" }],
+        attribution: count === 1 ? spicyCredits : { service: "spicylyrics", catalog: "apple_music" },
+      } } });
+    });
+    await page.goto("#/integrations/services/spicylyrics");
+    await page.getByRole("button", { name: "Open Lyrics tests", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Test SpicyLyrics" });
+    const input = dialog.getByRole("textbox", { name: "Spotify track link or ID", exact: true });
+    const selector = `https://open.spotify.com/track/${spicyTrack}?si=fixture-share`;
+    await input.fill(selector);
+    await dialog.getByRole("button", { name: "Get lyrics", exact: true }).click();
+    const credits = dialog.getByRole("region", { name: "Lyrics credits" });
+    await expect(credits).toContainText("Lyrics source: Spicy Lyrics");
+    await expect(credits.getByRole("link", { name: `Uploaded by ${spicyCredits.uploader.username}` })).toHaveAttribute("href", spicyCredits.uploader.url);
+    await expect(credits.getByRole("link", { name: `Synced by ${spicyCredits.maker.username}` })).toHaveAttribute("rel", "noopener noreferrer");
+    await expect(credits.locator("script")).toHaveCount(0);
+    expect(requests[0]).toEqual({ capability: "lyrics", operation: "lyrics", accountId: "spicy-account", trackId: selector });
+    await expect(dialog.getByRole("region", { name: "Lyric lines" })).toContainText("First fixture words");
+    if (width < 600) await expectContainedMobileGeometry(page);
+    await page.screenshot({ path: `test-results/spicy-test-${width}-${theme}.png` });
+    await input.fill(spicyTrack);
+    await dialog.getByRole("button", { name: "Get lyrics", exact: true }).click();
+    await expect(credits).toContainText("Lyrics source: Apple Music");
+    await expect(credits.getByText(spicyCredits.uploader.username)).toHaveCount(0);
+    await expect(credits.getByRole("link", { name: /Uploaded by|Synced by/ })).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Get lyrics", exact: true }).click();
+    await expect(credits).toHaveCount(0);
+    await expect(dialog.getByRole("region", { name: "Lyrics", exact: true })).toHaveCount(0);
+    await expect(dialog).toContainText("SpicyLyrics found nothing for this.");
+    expect(requests).toHaveLength(3);
+    expect(requests.every(request => request.operation === "lyrics")).toBe(true);
+  });
+
+  test(`SpicyLyrics recording preview keeps credits with its source at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await mockRecordingLyrics(page);
+    await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { ...schema, providers: [...schema.providers, spicyDefinition,
+      { id: "lrclib", name: "LRCLib", categories: ["lyrics"] }] } }));
+    await page.route(`**/api/admin/recordings/${lyricsRecordingId}/lyrics*`, route => route.fulfill({ json: {
+      recordingId: lyricsRecordingId, scope: "personal", song: { title: "Fixture song", artist: "Artist", album: "Album" },
+      choices: { personal: null, household: null, effective: null, revision: { personal: null, household: null } }, sources: [
+        { sourceId: "spicylyrics", available: true, preview: "[00:01.200]Community fixture", previewRevision: "sha256:spicy", format: "synced", truncated: false,
+          attribution: { ...spicyCredits, maker: { username: spicyUnlinkedMaker, url: "https://spicylyrics.org.evil.test/uid/456" } } },
+        { sourceId: "lrclib", available: true, preview: "Public fixture", previewRevision: "sha256:public", format: "plain", truncated: false },
+      ],
+    } }));
+    await page.goto("#/library/mappings?review=snapshot");
+    await page.getByRole("dialog", { name: "Fixture song" }).getByRole("button", { name: "Wrong lyrics?" }).click();
+    const picker = page.getByRole("region", { name: "Lyrics sources" });
+    const credits = picker.getByRole("region", { name: "Lyrics credits" });
+    await expect(credits).toContainText(`Synced by ${spicyUnlinkedMaker}`);
+    await expect(credits.getByRole("link", { name: /Unlinked maker/ })).toHaveCount(0);
+    await expect(picker.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("[00:01.200]Community fixture");
+    await picker.getByRole("textbox", { name: "Lyrics preview" }).scrollIntoViewIfNeeded();
+    await expect(credits).toBeInViewport();
+    if (width < 600) await expectContainedMobileGeometry(page);
+    await page.screenshot({ path: `test-results/spicy-picker-${width}-${theme}.png` });
+    await picker.getByRole("button", { name: /LRCLib.*Plain/ }).click();
+    await expect(credits).toHaveCount(0);
+    await expect(picker.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Public fixture");
   });
 }

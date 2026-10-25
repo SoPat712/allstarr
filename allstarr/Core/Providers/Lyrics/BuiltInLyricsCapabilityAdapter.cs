@@ -151,6 +151,18 @@ public static class BuiltInLyricsCapabilityRegistration
                 ProviderOrigin.BuiltIn, "1", "lyricsplus-v2",
                 [new(ProviderCapabilityKind.Lyrics, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None, "1", ["fetchLyrics"])],
                 new ProviderPermissionDescriptor()), [provider.GetRequiredService<LyricsPlusCapabilityAdapter>()]));
+        services.AddHttpClient(SpicyLyricsCapabilityAdapter.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan)
+            .RemoveAllLoggers()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            { UseCookies = false, AllowAutoRedirect = false, UseDefaultCredentials = false });
+        services.AddSingleton(provider => new SpicyLyricsCapabilityAdapter(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient(SpicyLyricsCapabilityAdapter.HttpClientName),
+            provider.GetRequiredService<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
+            provider.GetRequiredService<IApplicationCache>(),
+            () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL));
+        services.AddSingleton<SpicyLyricsHealthCapabilityAdapter>();
+        services.AddSingleton<ProviderRegistration>(provider => SpicyLyricsCapabilityAdapter.CreateRegistration(
+            provider.GetRequiredService<SpicyLyricsCapabilityAdapter>()));
         services.AddHttpClient(MusixmatchLyricsCapabilityAdapter.HttpClientName)
             .RemoveAllLoggers()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });

@@ -40,8 +40,8 @@ public sealed class ProviderTryController(IProviderRegistry providers, ProviderT
     {
         var session = Administrator;
         if (session == null) return StatusCode(403, new { error = "Administrator permissions required." });
-        if (request.Validate() is { } error) return BadRequest(new { error });
         var catalog = Catalog(provider, request.AccountId);
+        if (request.Validate(catalog?.Provider ?? provider.Trim().ToLowerInvariant()) is { } error) return BadRequest(new { error });
         var operation = catalog?.Capabilities.SingleOrDefault(item => item.Capability == request.Capability)?.Operations
             .SingleOrDefault(item => item.Id == request.Operation);
         if (operation == null) return NotFound();

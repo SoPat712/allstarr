@@ -19,6 +19,25 @@ namespace allstarr.Tests;
 
 public sealed partial class ProviderStatusManagerTests
 {
+    [Fact]
+    public async Task SpicyUpstreamAccessRestrictionInvalidatesPriorRecentHealthyEvidence()
+    {
+        using var handler = new SpicyLyricsTestHandler(SpicyLyricsTestData.Payload("static"));
+        using var http = new HttpClient(handler);
+        var source = new allstarr.Core.Providers.Lyrics.SpicyLyricsCapabilityAdapter(http, new SpicyLyricsTestSecrets());
+        var health = new allstarr.Core.Health.ProviderRuntimeHealth();
+        var observed = ObservedProviderCapabilities.Wrap<IProviderLyricsCapability>(source, health);
+        var context = SpicyLyricsTestData.Context();
+        var configuration = await ((allstarr.Core.Providers.Lyrics.IInternalLyricsCapability)source).CaptureSourceAsync(default);
+        Assert.True((await observed.FetchLyricsAsync(context, SpicyLyricsTestData.Request())).IsSuccess);
+        var key = ProviderRuntimeStatusKey.CreateManaged("spicylyrics", "lyrics", context.Account!.AccountId);
+        Assert.Equal(ProviderHealthState.Healthy, health.GetLyrics(key, context.Account.Revision, configuration.ConfigurationId)!.Health);
+        handler.Status = System.Net.HttpStatusCode.Forbidden;
+        var denied = await observed.FetchLyricsAsync(context, SpicyLyricsTestData.Request());
+        Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration, denied.Error!.Kind);
+        Assert.NotEqual(ProviderHealthState.Healthy, health.GetLyrics(key, context.Account.Revision, configuration.ConfigurationId)!.Health);
+    }
+
     [Theory]
     [InlineData("apple-musickit")]
     [InlineData("deezer")]

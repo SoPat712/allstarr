@@ -2,10 +2,11 @@ using System.Text.RegularExpressions;
 using System.Text.Json.Serialization;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Spotify;
+using allstarr.Core.Providers.Lyrics;
 
 namespace allstarr.Services.Common;
 
-public sealed class ProviderTryOperations(IProviderRegistry providers)
+public sealed class ProviderTryOperations(IProviderRegistry providers, SpicyLyricsHealthCapabilityAdapter? spicyLyricsHealth = null)
 {
     private readonly ProviderDiagnosticSamples _diagnosticSamples = new();
 
@@ -28,7 +29,7 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
                     if (Has("lookupByIsrc")) operations.Add(new("isrc", ["isrc"]));
                     break;
                 case ProviderCapabilityKind.Lyrics:
-                    if (Has("fetchLyrics")) operations.Add(new("lyrics", ["title", "artist", "album", "durationSeconds", "isrc"]));
+                    if (Has("fetchLyrics")) operations.Add(new("lyrics", provider.Id == "spicylyrics" ? ["trackId"] : ["title", "artist", "album", "durationSeconds", "isrc"]));
                     break;
                 case ProviderCapabilityKind.Playlist:
                     if (Has("getPlaylistTracks")) operations.Add(new("playlist", ["url"]));
@@ -103,7 +104,14 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
         if (request.Capability == "lyrics")
         {
             var lyrics = providers.GetRequiredCapability<IProviderLyricsCapability>(provider, ProviderCapabilityKind.Lyrics);
-            var outcome = await lyrics.FetchLyricsAsync(context, new(Guid.NewGuid(), TrackId(string.IsNullOrWhiteSpace(request.TrackId) ? "lyrics-lookup" : request.TrackId),
+            var selector = string.IsNullOrWhiteSpace(request.TrackId) ? "lyrics-lookup" : request.TrackId;
+            if (provider == "spicylyrics")
+            {
+                if (!SpotifyTrackReference.TryNormalize(request.TrackId, out var spotifyId))
+                    return ProviderTryResult.Failure("not_found", "Choose a Spotify track link or ID for this source.");
+                selector = spotifyId;
+            }
+            var outcome = await lyrics.FetchLyricsAsync(context, new(Guid.NewGuid(), TrackId(selector),
                 trackTitle: request.Title?.Trim(), artistNames: request.Artist?.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries),
                 albumTitle: request.Album?.Trim(), durationSeconds: request.DurationSeconds, isrc: request.Isrc?.Trim()));
             if (!outcome.IsSuccess) return Failure(outcome.Error!);
@@ -116,14 +124,9 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
             return new()
             {
                 Succeeded = true,
-                Lyrics = new
-                {
-                    format = value.Format == ProviderLyricsFormat.WordTimed ? "word" : value.Format == ProviderLyricsFormat.LineTimed ? "line" : "plain",
-                    source = value.Source,
-                    language = (string?)null,
-                    lineCount = lines.Length,
-                    lines
-                }
+                Lyrics = new ProviderTryLyrics(
+                    value.Format == ProviderLyricsFormat.WordTimed ? "word" : value.Format == ProviderLyricsFormat.LineTimed ? "line" : "plain",
+                    value.Source, null, lines.Length, lines, value.Attribution)
             };
         }
         if (request.Capability == "playlist")
@@ -162,6 +165,15 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
     public async Task<ProviderTryResult> ProbeAsync(ProviderExecutionContext context, ProviderDescriptor descriptor, ProviderCapabilityKind capability)
     {
         descriptor.Capabilities.Single(item => item.Capability == capability);
+        if (descriptor.Id == "spicylyrics" && capability == ProviderCapabilityKind.Lyrics)
+        {
+            if (spicyLyricsHealth == null) return ProviderTryResult.Failure("probe_not_available");
+            var outcome = await spicyLyricsHealth.CheckLyricsAsync(context);
+            if (!outcome.IsSuccess) return Failure(outcome.Error!);
+            var probe = outcome.RequireValue();
+            return probe.Status == ProviderProbeStatus.Healthy ? new() { Succeeded = true } :
+                ProviderTryResult.Failure(probe.SafeCode ?? "sample-unavailable");
+        }
         if (descriptor.HealthProbe && descriptor.Capabilities.Any(item => item.Capability == ProviderCapabilityKind.Health &&
             item.Hooks.Contains("probe" + capability)) && providers.TryGetCapability<IProviderHealthProbeCapability>(descriptor.Id,
             ProviderCapabilityKind.Health, out var health))
@@ -312,6 +324,4 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
             (match.Groups[3].Success ? double.Parse("0." + match.Groups[3].Value, System.Globalization.CultureInfo.InvariantCulture) * 1000 : 0) : null;
         return new ProviderTryLyricLine(start, CleanLyric(match.Success ? line[match.Length..].TrimEnd('\r') : line.TrimEnd('\r')));
     }).ToArray();
-    private sealed record ProviderTryLyricLine([property: JsonPropertyName("startMs")] double? StartMs,
-        [property: JsonPropertyName("text")] string Text);
 }

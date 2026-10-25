@@ -4,6 +4,7 @@
   import { ApiError, recordingLyrics, type MatchAuthorityScope, type ProviderDefinition, type RecordingLyricsReview } from "$lib/api";
   import { lyricsSourceDisplayName } from "$lib/sources";
   import { toast } from "$lib/toasts";
+  import LyricsAttribution from "$lib/components/LyricsAttribution.svelte";
 
   let { recordingId, providers, allowHousehold = false }: {
     recordingId: string;
@@ -107,6 +108,7 @@
       <div class="lyrics-preview">
         {#if selected?.available}
           <h4>{sourceName(selected.sourceId)}</h4>
+          <LyricsAttribution sourceId={selected.sourceId} attribution={selected.attribution} />
           <textarea readonly aria-label="Lyrics preview" rows={Math.min(12, Math.max(3, selected.preview?.split("\n").length ?? 3))} value={selected.preview ?? ""}></textarea>
           {#if selected.truncated}<p class="lyrics-help">Preview shortened. The choice applies to the complete source result.</p>{/if}
         {:else}

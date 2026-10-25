@@ -20,6 +20,26 @@ namespace allstarr.Tests;
 public sealed class BuiltInProviderRegistrationTests
 {
     [Fact]
+    public void SpicyRegistrationRequiresOneEncryptedAccountAndNoPublicHealthHook()
+    {
+        using var http = new HttpClient(new SpicyLyricsTestHandler("unused"));
+        var registration = SpicyLyricsCapabilityAdapter.CreateRegistration(new(http, new SpicyLyricsTestSecrets()));
+        var registry = new ProviderRegistry([registration]);
+        var source = registry.GetRequired("spicylyrics");
+        Assert.False(source.HealthProbe);
+        var capability = Assert.Single(source.Capabilities);
+        Assert.Equal(ProviderCapabilityKind.Lyrics, capability.Capability);
+        Assert.Equal(ProviderAccountRequirement.Required, capability.AccountRequirement);
+        var setting = Assert.Single(source.Settings);
+        Assert.True(setting.Required);
+        Assert.Equal(ProviderSettingValueKind.Secret, setting.ValueKind);
+        Assert.Equal("apiKey", setting.Key);
+        Assert.Contains("apiKey", source.Permissions.SecretSettingKeys);
+        Assert.Equal("{}", ProviderAccountSettings.Project(source, System.Text.Encoding.UTF8.GetBytes("{\"apiKey\":\"sl_sk_fixture_key\"}")));
+        Assert.Equal("spicylyrics", allstarr.Core.Settings.ProviderOrderPolicyCatalog.Find(ProviderCapabilityKind.Lyrics)!.DefaultValue.Split(',').Last());
+    }
+
+    [Fact]
     public void PublicTimedLyricsRegisterUsableAccountFreeCapabilities()
     {
         var services = new ServiceCollection();

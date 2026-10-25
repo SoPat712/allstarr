@@ -1198,6 +1198,16 @@ public class AdminUiController : ControllerBase
             Status = "available",
             Categories = ["lyrics"],
             Notes = ["Public plain lyrics; no account required"]
+        },
+        new()
+        {
+            Id = "spicylyrics",
+            Name = "SpicyLyrics",
+            Icon = "spicylyrics",
+            LogoUrl = "/images/providers/spicylyrics.ico",
+            Status = "needs_config",
+            Categories = ["lyrics"],
+            Notes = ["Free server API key; known Spotify track required"]
         }
         ];
 

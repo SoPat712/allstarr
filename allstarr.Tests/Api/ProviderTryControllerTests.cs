@@ -11,6 +11,18 @@ namespace allstarr.Tests;
 
 public sealed class ProviderTryControllerTests
 {
+    [Fact]
+    public async Task SpicyTryExplainsMissingSelectorBeforeAnyAccountRead()
+    {
+        using var http = new HttpClient(new SpicyLyricsTestHandler("unused"));
+        var registry = new ProviderRegistry([allstarr.Core.Providers.Lyrics.SpicyLyricsCapabilityAdapter.CreateRegistration(
+            new(http, new SpicyLyricsTestSecrets()))]);
+        var controller = Controller(registry);
+        SignIn(controller);
+        var response = Assert.IsType<BadRequestObjectResult>(await controller.Execute("spicylyrics", new() { Capability = "lyrics", Operation = "lyrics", Title = "Title" }));
+        Assert.Equal("A Spotify track link or 22-character ID is required.", JsonSerializer.SerializeToElement(response.Value).GetProperty("error").GetString());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

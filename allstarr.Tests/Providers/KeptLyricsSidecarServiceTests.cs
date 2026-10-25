@@ -11,6 +11,30 @@ namespace allstarr.Tests;
 
 public sealed class KeptLyricsSidecarServiceTests
 {
+    [Fact]
+    public async Task SpicySidecarPurposeAndWriterGuardPreventPermanentPublication()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-spicy-sidecar-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var audio = Path.Combine(root, "Fixture.mp3");
+            await File.WriteAllTextAsync(audio, "owned audio");
+            var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "listener",
+                new AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "backend", "listener", "Listener", false), "lyrics", DateTimeOffset.UtcNow.AddMinutes(1), default);
+            var resolver = new Mock<IProtocolLyricsResolver>(MockBehavior.Strict);
+            resolver.Setup(item => item.FindAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>(), It.IsAny<string>(),
+                    It.Is<ProtocolLyricsSources>(options => options.ForPermanentSidecar && options.HouseholdOnly)))
+                .ReturnsAsync(new LyricsInfo { Source = "spicylyrics", PlainLyrics = "Do not keep this text" });
+            var writer = new KeptLyricsSidecarService(resolver.Object, NullLogger<KeptLyricsSidecarService>.Instance);
+            Assert.Null(await writer.EnsureSidecarAsync(audio, new Song { Title = "Fixture", Artist = "Artist" }, protocol: context));
+            Assert.False(File.Exists(Path.ChangeExtension(audio, ".lrc")));
+            Assert.Equal("owned audio", await File.ReadAllTextAsync(audio));
+            resolver.VerifyAll();
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     [Theory]
     [InlineData(ProtocolKind.Jellyfin, null, true)]
     [InlineData(ProtocolKind.Jellyfin, true, true)]
