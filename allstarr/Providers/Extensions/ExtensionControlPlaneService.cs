@@ -182,10 +182,21 @@ public sealed partial class ExtensionControlPlaneService
         if (packageId.HasValue) query = query.Where(item => item.ExtensionPackageId == packageId.Value);
         if (!string.IsNullOrWhiteSpace(extensionId))
             query = query.Where(item => item.ExtensionId == extensionId.Trim().ToLowerInvariant());
-        return await query.OrderByDescending(item => item.CreatedAt)
+        var logs = await query.OrderByDescending(item => item.CreatedAt)
             .ThenByDescending(item => item.Id)
             .Take(limit)
             .ToListAsync(cancellationToken);
+        return logs.Select(item => new ExtensionLogRecord
+        {
+            Id = item.Id,
+            ExtensionPackageId = item.ExtensionPackageId,
+            ExtensionId = item.ExtensionId,
+            Level = item.Level,
+            EventCode = item.EventCode,
+            Message = SanitizeExtensionDiagnostic(item.Message),
+            CorrelationId = item.CorrelationId,
+            CreatedAt = item.CreatedAt
+        }).ToList();
     }
 
     public async Task<ExtensionPackageRecord> StageAsync(
@@ -585,7 +596,6 @@ public sealed partial class ExtensionControlPlaneService
     private static Task AddLogAsync(AllstarrDbContext db, ExtensionPackageRecord package, string level,
         string eventCode, string message, string correlationId, DateTimeOffset now)
     {
-        var safeMessage = SecretPattern().Replace(message ?? string.Empty, "$1=[redacted]");
         db.ExtensionLogs.Add(new ExtensionLogRecord
         {
             Id = Guid.CreateVersion7(),
@@ -593,11 +603,17 @@ public sealed partial class ExtensionControlPlaneService
             ExtensionId = package.ExtensionId,
             Level = Normalize(level, 20),
             EventCode = Normalize(eventCode, 100),
-            Message = Normalize(safeMessage, 2000),
+            Message = Normalize(SanitizeExtensionDiagnostic(message), 2000),
             CorrelationId = Normalize(correlationId, 100),
             CreatedAt = now
         });
         return Task.CompletedTask;
+    }
+
+    internal static string SanitizeExtensionDiagnostic(string? message)
+    {
+        var safeMessage = SafeOperationalText.Sanitize(message, 2_000) ?? string.Empty;
+        return SecretPattern().Replace(safeMessage, "$1=[redacted]");
     }
 
     private static string Normalize(string value, int maximum)

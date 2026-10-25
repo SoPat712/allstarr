@@ -215,6 +215,100 @@ public sealed class AdminUiActivityTests
         Assert.Equal(403, Assert.IsType<ObjectResult>(await controller.GetDashboardActivity()).StatusCode);
     }
 
+    [Fact]
+    public async Task Activity_RedactsLegacyExtensionLogMessagesWithoutRewritingStorage()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var userId = Guid.CreateVersion7();
+        var packageId = Guid.CreateVersion7();
+        var logId = Guid.CreateVersion7();
+        const string rawMessage =
+            "Provider failed status=403 reason=network operation=searchTracks for https://fixture-user:fixture-password@provider.invalid/media?opaque=fixture-query&signature=fixture-signature#fixture-fragment response=upstream_failure";
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new UserRecord
+            {
+                Id = userId,
+                DisplayName = "Owner",
+                Enabled = true,
+                IsAdmin = true,
+                BackendType = "jellyfin",
+                BackendInstanceId = "backend",
+                BackendPrincipalId = "owner"
+            });
+            db.ExtensionPackages.Add(new ExtensionPackageRecord
+            {
+                Id = packageId,
+                ExtensionId = "fixture-provider",
+                DisplayName = "Fixture",
+                Version = "1.0.0",
+                SdkVersion = "1",
+                Sha256 = new string('a', 64),
+                ContentSha256 = new string('b', 64),
+                PackagePath = "/tmp/fixture-provider",
+                ManifestJson = "{}",
+                State = ExtensionPackageState.Active,
+                StagedAt = DateTimeOffset.UtcNow
+            });
+            db.ExtensionLogs.Add(new ExtensionLogRecord
+            {
+                Id = logId,
+                ExtensionPackageId = packageId,
+                ExtensionId = "fixture-provider",
+                Level = "error",
+                EventCode = "runtime.log",
+                Message = rawMessage,
+                CorrelationId = "legacy",
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var matches = new TrackMatchCommandService(factory, new TrackMatchDecisionEngine(),
+            new ProviderAccountResolver(factory), new SystemPlatformClock(), Mock.Of<IBackendLibraryAccessResolver>());
+        await using var services = new ServiceCollection()
+            .AddSingleton<IDbContextFactory<AllstarrDbContext>>(factory)
+            .BuildServiceProvider();
+        var controller = new AdminUiController(new ConfigurationBuilder().Build(),
+            Options.Create(new SpotifyApiSettings()), Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()),
+            Options.Create(new AppleDownloadSettings()), Options.Create(new MusicBrainzSettings()), null!, null!,
+            new ProviderAccountOptions(), matches)
+        {
+            ControllerContext = new ControllerContext
+            {
+                HttpContext = new DefaultHttpContext { RequestServices = services }
+            }
+        };
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            SessionId = "session",
+            UserId = "owner",
+            UserName = "Owner",
+            IsAdministrator = true,
+            AllstarrUserId = userId,
+            JellyfinAccessToken = "fixture",
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+        };
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(
+            Assert.IsType<OkObjectResult>(await controller.GetDashboardActivity(scope: "everyone")).Value));
+        var item = Assert.Single(json.RootElement.GetProperty("items").EnumerateArray());
+        var message = item.GetProperty("Detail").GetString()!;
+        Assert.Contains("403", message, StringComparison.Ordinal);
+        Assert.Contains("network", message, StringComparison.Ordinal);
+        Assert.Contains("provider.invalid", message, StringComparison.Ordinal);
+        Assert.Contains("/media", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-user", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-password", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-query", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-signature", message, StringComparison.Ordinal);
+        Assert.DoesNotContain("fixture-fragment", message, StringComparison.Ordinal);
+
+        await using var check = await factory.CreateDbContextAsync();
+        Assert.Equal(rawMessage, (await check.ExtensionLogs.SingleAsync(item => item.Id == logId)).Message);
+    }
+
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     {
         public AllstarrDbContext CreateDbContext() => new(options);

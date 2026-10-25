@@ -1,5 +1,6 @@
 using allstarr.Core.Health;
 using allstarr.Core.Configuration;
+using allstarr.Core.Extensions;
 using System.Text.Json;
 using allstarr.Filters;
 using allstarr.Core.Identity;
@@ -568,7 +569,7 @@ public class AdminUiController : ControllerBase
             item.ExtensionId,
             HumanizeAuditCategory(item.EventCode),
             item.Level,
-            item.Message,
+            ExtensionControlPlaneService.SanitizeExtensionDiagnostic(item.Message),
             item.CreatedAt,
             item.CorrelationId,
             SeverityForState(item.Level),

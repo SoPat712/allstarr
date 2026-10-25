@@ -1434,7 +1434,7 @@ public partial class ExtensionHostBridge
 
     public void Log(string level, string message)
     {
-        message = ExtensionControlPlaneService.SecretPattern().Replace(message ?? string.Empty, "$1=[redacted]").Trim();
+        message = ExtensionControlPlaneService.SanitizeExtensionDiagnostic(message);
         if (level.Equals("error", StringComparison.OrdinalIgnoreCase) &&
             DateTimeOffset.UtcNow - _lastSyntheticCooldownResponseAt < TimeSpan.FromSeconds(5) &&
             message.Contains("503", StringComparison.Ordinal))

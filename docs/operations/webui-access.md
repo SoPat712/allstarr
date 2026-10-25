@@ -37,6 +37,20 @@ A path is not a browser security boundary. Other applications on `media.example.
 
 Admin responses include `Content-Security-Policy: frame-ancestors 'none'`, `X-Frame-Options: DENY`, and `X-Content-Type-Options: nosniff`. Open the dashboard in its own browser tab or window. These protections cover pages, assets, redirects, and API responses on the admin listener. The generated script policy remains in place when a URL prefix is used. Configure HTTPS at the reverse proxy for remote access.
 
+## Music clients over HTTPS
+
+Use a dedicated HTTPS hostname for remote music clients and forward it to the music listener. On a shared Docker network the upstream is `http://allstarr:8080`; from a proxy running on the Docker host it is normally `http://127.0.0.1:5274`. Keep port 5275 behind the administrator network or access proxy described above. Dashboard SSO does not replace music-client authentication.
+
+Preserve the complete request URI, query parameters, authorization headers, `Range` and `If-Range`. Some clients authenticate downloads using only an `api_key` query parameter. Disable shared caching and response buffering for this upstream, and preserve streaming responses and HTTP 206 headers. See the [nginx proxy directives](https://nginx.org/en/docs/http/ngx_http_proxy_module.html) for these controls. Configure WebSocket forwarding as well if your client uses it.
+
+Query strings can contain credentials. Proxy access logs must exclude them, authorization headers and cookies. The [default nginx access-log format](https://nginx.org/en/docs/http/ngx_http_log_module.html#log_format) includes the original request line; use a sanitized format or disable access logging for the music location. Allstarr's own redaction cannot protect logs written by another service.
+
+Trust forwarded addresses and schemes only from the actual proxy, using the configured known proxies or networks. Do not trust arbitrary client-supplied forwarding headers. Keep **Allow remote extension installation** off unless you deliberately need installation from outside trusted administrator networks; enabling HTTPS does not require enabling remote installation.
+
+Before inviting listeners, verify sign-in, ordinary playback and a seek well into a track through the external HTTPS address. A successful dashboard page load does not verify music-client requests or proxy range handling. Protect the data directory and its backups together: the database, encryption key ring and browser data-protection keys form the recoverable installation.
+
+URLs in extension diagnostics lose account details, query contents and fragments before new entries are stored. The log and activity APIs apply the same redaction when reading older entries. Static failure reasons and response statuses remain available.
+
 ## OIDC login
 
 Register a confidential web client with your identity provider. Enable authorization-code flow with PKCE and register this exact redirect URI:
