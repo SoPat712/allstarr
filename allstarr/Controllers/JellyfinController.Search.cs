@@ -830,7 +830,7 @@ public partial class JellyfinController
         }
 
         var (body, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
-        return FilterMusicLibraryViews(body, statusCode, requireCollectionFolder: true,
+        return FilterMusicLibraryViews(body, statusCode, rootFoldersOnly: true,
             startIndex: startIndex, limit: Request.Query.ContainsKey("Limit") ? limit : null);
     }
 

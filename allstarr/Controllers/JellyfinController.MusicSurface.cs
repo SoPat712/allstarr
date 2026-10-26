@@ -50,7 +50,7 @@ public partial class JellyfinController
     private IActionResult FilterMusicLibraryViews(
         JsonDocument? body,
         int statusCode,
-        bool requireCollectionFolder = false,
+        bool rootFoldersOnly = false,
         int startIndex = 0,
         int? limit = null)
     {
@@ -67,20 +67,29 @@ public partial class JellyfinController
                 return Content(original, "application/json");
 
             var filtered = items
-                .Where(item => item is JsonObject candidate &&
-                               string.Equals(candidate["CollectionType"]?.GetValue<string>(), "music", StringComparison.OrdinalIgnoreCase) &&
-                               (!requireCollectionFolder ||
-                                string.Equals(candidate["Type"]?.GetValue<string>(), "CollectionFolder", StringComparison.OrdinalIgnoreCase)))
+                .Where(item => item is JsonObject candidate && IsMusicLibraryView(candidate, rootFoldersOnly))
                 .Select(item => item!.DeepClone())
                 .ToArray();
             items.Clear();
             foreach (var item in filtered.Skip(Math.Max(0, startIndex)).Take(Math.Max(0, limit ?? int.MaxValue)))
                 items.Add(item);
             root["TotalRecordCount"] = filtered.Length;
-            if (requireCollectionFolder) root["StartIndex"] = Math.Max(0, startIndex);
+            if (rootFoldersOnly) root["StartIndex"] = Math.Max(0, startIndex);
 
             return Content(root.ToJsonString(), "application/json");
         }
+    }
+
+    private static bool IsMusicLibraryView(JsonObject candidate, bool rootFoldersOnly)
+    {
+        if (!rootFoldersOnly)
+            return string.Equals(candidate["CollectionType"]?.GetValue<string>(), "music", StringComparison.OrdinalIgnoreCase);
+
+        var type = candidate["Type"]?.GetValue<string>();
+        return string.Equals(type, "ManualPlaylistsFolder", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(type, "PlaylistsFolder", StringComparison.OrdinalIgnoreCase) ||
+               (string.Equals(type, "CollectionFolder", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(candidate["CollectionType"]?.GetValue<string>(), "music", StringComparison.OrdinalIgnoreCase));
     }
 
     [HttpGet("Items/Root", Order = 1)]
