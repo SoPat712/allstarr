@@ -28,7 +28,7 @@ Allstarr upgrades the client connection.
 
 | Area | Routes | Behavior |
 | --- | --- | --- |
-| Browse and search | `Items`, user `Items`, `Search/Hints`, `Artists`, `Albums`, `Songs`, `Genres`, `MusicGenres` | Untyped generic requests are constrained to music kinds. Search interleaves local and enabled provider results. |
+| Browse and search | `Items`, user `Items`, `Search/Hints`, `Artists`, `Albums`, `Songs`, `Genres`, `MusicGenres` | Untyped, nonrecursive root requests return native music library folders. Other untyped generic requests are constrained to music kinds. Search interleaves local and enabled provider results. |
 | Recommendations | `Items/Latest`, `Items/Suggestions`, `UserItems/Resume`, instant mixes, similar items | Generic queries are constrained to music/audio. Opaque item routes require a verified music item. |
 | Library discovery | `Library/MediaFolders`, `UserViews`, `Items/Root`, `Items/Counts`, `Items/Filters*` | Views and folders are filtered to the configured/detected music library. Non-music counts are zeroed. |
 | Metadata and art | item detail, music item images, ancestors, collections, external IDs, remote images | Local opaque IDs are type-checked before proxying. External resources are synthesized by Allstarr. |
@@ -42,6 +42,13 @@ Jellyfin's anonymous bootstrap contract is preserved for public server info,
 public users and user images, GET/POST ping, UTC time, Quick Connect
 enabled/initiate/connect, Quick Connect authentication, and music artwork.
 Quick Connect authorization still requires an authenticated user.
+
+After authentication, clients can discover music libraries with `Items` or
+`Users/{userId}/Items` without a parent, search, or item-type filter. An omitted
+`Recursive` value has the same root-discovery behavior as `Recursive=false`.
+The response preserves each native music library folder and applies pagination
+after filtering other library types. Saved provider songs belong in the library's
+contents and do not replace its root folders.
 
 ## Explicitly excluded
 
