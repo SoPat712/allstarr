@@ -37,8 +37,8 @@ public abstract class MediaBackendSettings
 {
     public DownloadMode DownloadMode { get; set; } = DownloadMode.Track;
     public MusicService MusicService { get; set; } = MusicService.None;
-    public StorageMode StorageMode { get; set; } = StorageMode.Permanent;
-    public int CacheDurationHours { get; set; } = 1;
+    public StorageMode StorageMode { get; set; } = StorageMode.Cache;
+    public int CacheDurationHours { get; set; } = 72;
     public bool EnableExternalPlaylists { get; set; } = true;
     public string PlaylistsDirectory { get; set; } = "playlists";
 }

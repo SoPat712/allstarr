@@ -21,6 +21,14 @@ Compose mounts `./data` at `/app/data` by default, with or without `.env`. Set `
 
 Explicit library, extension, cache, workspace, and key-ring path overrides remain supported. Include those external paths separately when moving an installation. Optional Apple gateway and wrapper sessions remain in their own profile volumes.
 
+## Playback cache and kept audio
+
+New installations cache provider playback for **72 hours after last use**. **Library → Cached → Track cache behavior** controls playback caching and retention. Saved choices and explicit configuration overrides survive upgrades. The legacy `Permanent` storage value disables ordinary playback caching and sends requested managed downloads to Kept; it does not retain every played song.
+
+Temporary audio is limited to **2 GiB by default**. Capacity pressure can evict the least recently used eligible files before their age limit. Active readers and background fills are protected. Cached lists complete published files and shows age expiry only when a tracked last-use time is available; the hourly cleanup may remove them after that time.
+
+Hearts, explicit Keep and retained playlists use separate managed references. Cache eviction does not release these references or delete kept copies. Releasing the last reference starts a twenty-four-hour grace period, independent of the playback cache window. Back up kept audio separately from database-and-key-ring archives.
+
 ## Offline folder backup and restore
 
 Stop Allstarr before copying its complete data folder. With the default layout:

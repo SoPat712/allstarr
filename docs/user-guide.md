@@ -270,11 +270,13 @@ Playlist synchronization retains ownership of songs whose removal has not been c
 
 ## Cached versus kept
 
-- A **cached** track is a disposable playback/download artifact. It can be evicted by age or size policy and fetched again.
+- Playback caching is on by default. A **cached** track is a disposable copy retained for **72 hours after its last use**. The size limit can evict it sooner, and Allstarr can fetch it again.
 - A **kept** track was explicitly retained and is managed separately from cache cleanup.
 - A database backup does not contain either audio folder. Back up kept/downloaded media according to your own storage policy.
 
-If playback succeeded but Cached is empty, check the selected storage mode, provider route, durable job, and Activity outcome. A remote stream may not create a complete cache file until the provider download finishes and publishes atomically.
+In **Library → Cached → Track cache behavior**, choose **Cache played songs** and set the retention hours. Existing saved choices survive upgrades. The older **Permanent** setting means **Do not cache playback**; requested managed downloads go to Kept, but ordinary playback does not automatically keep every song. Hearts, Keep and retained playlists protect their copies independently of this setting.
+
+If playback succeeded but Cached is empty, check playback caching, the provider route and Activity. A track appears after its background download finishes and publishes a complete file, even if you skip it before then. Incomplete or failed files are not listed.
 
 A playlist with **Keep downloaded copies** retains its current external songs as household kept recordings. Existing copies are shared with hearts and other retained playlists. Turning the option off, deleting the link, or publishing a source update that removes a song releases only that playlist's interest. The final release starts the same twenty-four-hour grace period used by favorites. Re-enabling the option protects existing copies immediately and queues fresh work for missing ones. In-progress downloads keep their original jobs across refreshes and reordering when the source song and selected recording are unchanged. Changing the source or recording replaces the obsolete work.
 
