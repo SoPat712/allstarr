@@ -250,6 +250,42 @@ public sealed partial class ProtocolRouteFixtureTests
         for (var index = 0; index < 558; index++) Assert.Equal(native[index], originals[$"native-{index:D4}"]);
     }
 
+    [Fact]
+    public async Task JellyfinSavedBrowseKeepsFirstEquivalentNativeGuidPayloadAndCaseDistinctIds()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var storage = new FavoriteViewFactory(database.Options);
+        await SeedSingleSavedSongAsync(storage, albumIdentity: true);
+        const string guidD = "00112233-4455-6677-8899-aabbccddeeff";
+        const string guidN = "00112233445566778899AABBCCDDEEFF";
+        const string firstGuid = "{\"Id\":\"00112233-4455-6677-8899-aabbccddeeff\",\"Name\":\"Guid first\",\"Type\":\"Audio\",\"Future\":{\"winner\":true}}";
+        const string secondGuid = "{\"Id\":\"00112233445566778899AABBCCDDEEFF\",\"Name\":\"Guid second\",\"Type\":\"Audio\",\"Future\":{\"winner\":false}}";
+        const string nativeUpper = "{\"Id\":\"Native-AbC\",\"Name\":\"Opaque upper\",\"Type\":\"Audio\",\"Future\":[1,true]}";
+        const string nativeLower = "{\"Id\":\"Native-abc\",\"Name\":\"Opaque lower\",\"Type\":\"Audio\",\"Future\":[2,false]}";
+        var native = new[] { firstGuid, secondGuid, nativeUpper, nativeLower };
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/Users/Me") return Json(200, "{\"Id\":\"user-1\"}");
+            var query = QueryHelpers.ParseQuery(request.RequestUri.Query);
+            var start = int.TryParse(query.GetValueOrDefault("StartIndex"), out var offset) ? offset : 0;
+            var limit = int.TryParse(query.GetValueOrDefault("Limit"), out var size) ? size : 100;
+            return Json(200, $$"""{"Items":[{{string.Join(',', native.Skip(start).Take(limit))}}],"TotalRecordCount":4,"StartIndex":{{start}}}""");
+        }, services => ConfigureFavoriteViews(services, storage, new Mock<IProtocolProviderGateway>(MockBehavior.Strict).Object));
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/Items?ApiKey=fixture&IncludeItemTypes=Audio&Limit=20");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var rows = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
+        Assert.Equal(4, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal(4, rows.Length);
+        Assert.Single(rows, row => row.GetProperty("Id").GetString() == guidD);
+        Assert.DoesNotContain(rows, row => row.GetProperty("Id").GetString() == guidN);
+        Assert.Equal(firstGuid, Assert.Single(rows, row => row.GetProperty("Id").GetString() == guidD).GetRawText());
+        Assert.Equal(nativeUpper, Assert.Single(rows, row => row.GetProperty("Id").GetString() == "Native-AbC").GetRawText());
+        Assert.Equal(nativeLower, Assert.Single(rows, row => row.GetProperty("Id").GetString() == "Native-abc").GetRawText());
+    }
+
     private static string[] NativeBrowseRows(string type, int count) => Enumerable.Range(0, count).Select(index =>
         $$"""{"Id":"native-{{index:D4}}", "Name":"{{(index < count / 2 ? "A" : "Z")}} {{index:D4}}", "Type":"{{type}}", "DateCreated":"2000-01-01T00:00:00Z", "Future" : [{{index}},true]}""").ToArray();
 
