@@ -151,6 +151,13 @@ Playlist snapshot persistence serializes writes for each provider account with a
 
 ## Recording identity
 
+Automatic alternatives qualify individually against the source recording. Matching title,
+album and duration cannot substitute for compatible artist credits. Different credits
+may describe the same performance when the source explicitly credits both performers.
+Catalog maintenance uses stored acceptance evidence to retire unqualified automatic
+links and restore a previously qualified release where available. Missing evidence
+leaves the link unchanged; pinned and explicitly selected renditions remain protected.
+
 `TrackIdentityService` owns canonical recordings. Each recording has a stable
 `PublicId` assigned at creation from the first known source alias, with
 `ext-allstarr-song-{guid}` as the fallback when no source ID is available, optional

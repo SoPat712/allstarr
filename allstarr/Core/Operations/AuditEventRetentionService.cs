@@ -189,6 +189,7 @@ public sealed class AuditEventRetentionService(
 
     private static IQueryable<AuditEventRecord> Deletable(AllstarrDbContext database) =>
         database.AuditEvents.Where(audit =>
-            (audit.Category != CatalogIdentityMaintenance.Category || audit.Action != CatalogIdentityMaintenance.CompletionAction) &&
+            (audit.Category != CatalogIdentityMaintenance.Category ||
+             audit.Action != CatalogIdentityMaintenance.CompletionAction && audit.Action != CatalogIdentityMaintenance.LegacyCompletionAction) &&
             !database.LegacyEnvImports.Any(importRecord => importRecord.AuditEventId == audit.Id));
 }

@@ -5,12 +5,13 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Matching;
 
-public sealed class CatalogIdentityMaintenance(
+public sealed partial class CatalogIdentityMaintenance(
     IDbContextFactory<AllstarrDbContext> factory,
     IPlatformClock clock)
 {
     internal const string Category = "catalog-identity-maintenance";
-    internal const string CompletionAction = "duplicates.complete";
+    internal const string LegacyCompletionAction = "duplicates.complete";
+    internal const string CompletionAction = "recording-equivalence.complete";
 
     public async Task<int> RepairBatchAsync(int batchSize = 100, CancellationToken cancellationToken = default)
     {
@@ -21,6 +22,7 @@ public sealed class CatalogIdentityMaintenance(
         var active = db.ProviderTrackIdentities.Where(item =>
             item.ResourceKind == ProviderResourceKind.Track &&
             (item.Verification == ProviderIdentityVerification.Verified || item.Verification == ProviderIdentityVerification.Pinned) &&
+            item.VerificationMethod != "automatic-suggestion" &&
             item.VerificationMethod != CatalogIdentityPolicy.SupersededVerificationMethod &&
             item.VerificationMethod != ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod &&
             item.VerificationMethod != ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod);
@@ -66,6 +68,7 @@ public sealed class CatalogIdentityMaintenance(
             if (await db.AuditEvents.AnyAsync(item => item.Category == Category && item.Action == CompletionAction,
                     cancellationToken)) return;
         }
+        await RepairAutomaticRoutesAsync(cancellationToken);
         while (await RepairBatchAsync(cancellationToken: cancellationToken) > 0)
             await Task.Yield();
         await using var completed = await factory.CreateDbContextAsync(cancellationToken);

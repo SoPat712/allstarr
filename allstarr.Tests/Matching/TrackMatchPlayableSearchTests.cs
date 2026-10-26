@@ -170,6 +170,134 @@ public sealed class TrackMatchPlayableSearchTests
     }
 
     [Fact]
+    public async Task AutomaticSearchDoesNotRouteAConflictingArtistFromAnEquivalentTitleGroup()
+    {
+        var user = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
+            .Returns(["deezer", "qobuz"]);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
+            .Returns(["deezer", "qobuz"]);
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync(
+                [
+                    new Song
+                    {
+                        ExternalProvider = "deezer",
+                        ExternalId = "79590714",
+                        Title = "Boom Clap",
+                        Artist = "Charli xcx",
+                        Album = "Boom Clap",
+                        Duration = 169,
+                        Isrc = "GBAHS1400160"
+                    },
+                    new Song
+                    {
+                        ExternalProvider = "deezer",
+                        ExternalId = "80564534",
+                        Title = "Boom Clap",
+                        Artist = "Jazzy K",
+                        Album = "Boom Clap",
+                        Duration = 169,
+                        Isrc = "USA2P1408144"
+                    },
+                    new Song
+                    {
+                        ExternalProvider = "qobuz",
+                        ExternalId = "live-version",
+                        Title = "Boom Clap (Live)",
+                        Artist = "Charli xcx",
+                        Album = "Boom Clap",
+                        Duration = 169,
+                        Isrc = "US-LIVE-BOOMCLAP"
+                    }
+                ]);
+        var service = new TrackMatchPlayableSearch(
+            gateway.Object,
+            new TrackMatchDecisionEngine(),
+            NullLogger<TrackMatchPlayableSearch>.Instance);
+
+        var result = await service.MatchAsync(
+            Context(user),
+            new ExternalTrackMatchSnapshot(
+                "source", "spotify", "source-track", "Boom Clap",
+                "Charli xcx", "SUCKER", null, 169_866, null, null, false),
+            new TrackMatchScope(user, "main", Guid.CreateVersion7(), 2, 1,
+                new HashSet<string>(StringComparer.Ordinal)),
+            [], null, CancellationToken.None);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
+        Assert.Equal("79590714", result.SelectedExternal!.ExternalId);
+        Assert.Single(result.RoutableExternalCandidates);
+        Assert.Equal("79590714", result.RoutableExternalCandidates[0].ExternalId);
+        var cover = Assert.Single(result.Decision.Candidates,
+            candidate => candidate.ProviderTrackIds?.GetValueOrDefault("deezer") == "80564534");
+        Assert.True(cover.Confidence < result.Decision.AcceptThreshold);
+        var semanticAlternate = Assert.Single(result.Decision.Candidates,
+            candidate => candidate.ProviderTrackIds?.GetValueOrDefault("qobuz") == "live-version");
+        Assert.Contains("semantic_version_mismatch", semanticAlternate.Warnings);
+    }
+
+    [Fact]
+    public async Task AutomaticSearchDoesNotRouteAnEquivalentAlternateWithAConflictingIsrc()
+    {
+        var user = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
+            .Returns(["deezer", "qobuz"]);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
+            .Returns(["deezer", "qobuz"]);
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync(
+                [
+                    new Song
+                    {
+                        ExternalProvider = "deezer",
+                        ExternalId = "79590714",
+                        Title = "Boom Clap",
+                        Artist = "Charli xcx",
+                        Album = "SUCKER",
+                        Duration = 169,
+                        Isrc = "GBAHS1400160"
+                    },
+                    new Song
+                    {
+                        ExternalProvider = "qobuz",
+                        ExternalId = "fixture-conflicting-isrc",
+                        Title = "Boom Clap",
+                        Artist = "Charli xcx",
+                        Album = "SUCKER",
+                        Duration = 169,
+                        Isrc = "USA2P1408144"
+                    }
+                ]);
+        var service = new TrackMatchPlayableSearch(
+            gateway.Object,
+            new TrackMatchDecisionEngine(),
+            NullLogger<TrackMatchPlayableSearch>.Instance);
+
+        var result = await service.MatchAsync(
+            Context(user),
+            new ExternalTrackMatchSnapshot(
+                "source", "spotify", "source-track", "Boom Clap",
+                "Charli xcx", "SUCKER", null, 169_866, "GBAHS1400160", null, false),
+            new TrackMatchScope(user, "main", Guid.CreateVersion7(), 2, 1,
+                new HashSet<string>(StringComparer.Ordinal)),
+            [], null, CancellationToken.None);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
+        Assert.Equal("79590714", result.SelectedExternal!.ExternalId);
+        Assert.Single(result.RoutableExternalCandidates);
+        Assert.Equal("79590714", result.RoutableExternalCandidates[0].ExternalId);
+        var conflicting = Assert.Single(result.Decision.Candidates,
+            candidate => candidate.ProviderTrackIds?.GetValueOrDefault("qobuz") == "fixture-conflicting-isrc");
+        Assert.Equal(0, conflicting.Confidence);
+        Assert.Contains("isrc_conflict", conflicting.Reasons);
+    }
+
+    [Fact]
     public async Task AutomaticSearchUsesConfiguredProviderPriorityWindows()
     {
         var user = Guid.CreateVersion7();

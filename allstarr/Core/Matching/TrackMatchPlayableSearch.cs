@@ -146,7 +146,7 @@ public sealed class TrackMatchPlayableSearch(
         IReadOnlyList<string> providerOrder,
         TrackMatchDecisionEngine effectiveMatcher)
     {
-        var groups = GroupEquivalent(songs, scope, providerOrder);
+        var groups = GroupEquivalent(songs, scope, providerOrder, source.Artist);
         return new(
             effectiveMatcher.Decide(
                 scope,
@@ -224,14 +224,15 @@ public sealed class TrackMatchPlayableSearch(
         IsBestVersion: song.IsBestVersion,
         ExternalProvider: song.ExternalProvider);
 
-    private static Guid CandidateId(string provider, string externalId) =>
+    internal static Guid CandidateId(string provider, string externalId) =>
         new(SHA256.HashData(Encoding.UTF8.GetBytes(
             $"{provider.Trim().ToLowerInvariant()}:{externalId.Trim()}"))[..16]);
 
     private List<Song[]> GroupEquivalent(
         IEnumerable<Song> songs,
         TrackMatchScope scope,
-        IReadOnlyList<string> providerOrder)
+        IReadOnlyList<string> providerOrder,
+        string sourceArtist)
     {
         var order = ProviderRanks(providerOrder);
         var groups = new List<List<Song>>();
@@ -244,7 +245,7 @@ public sealed class TrackMatchPlayableSearch(
             var group = groups.FirstOrDefault(existing =>
                 TrackMatchDecisionEngine.SameRecordingIdentity(
                     ToCandidate(existing[0], scope),
-                    candidate));
+                    candidate, sourceArtist));
             if (group == null)
                 groups.Add([song]);
             else
@@ -306,6 +307,15 @@ public sealed record PlayableTrackMatch(
     public IReadOnlyList<Song> RoutableExternalCandidates =>
         (Decision.State is TrackMatchReviewState.Accepted or TrackMatchReviewState.Suggested) &&
         Decision.SelectedLibraryTrackId is { } id
-            ? EquivalentExternalCandidates.GetValueOrDefault(id) ?? []
+            ? (EquivalentExternalCandidates.GetValueOrDefault(id) ?? [])
+                .Where(song =>
+                {
+                    var candidateId = TrackMatchPlayableSearch.CandidateId(
+                        song.ExternalProvider!, song.ExternalId!);
+                    var score = Decision.Candidates.FirstOrDefault(item => item.LibraryTrackId == candidateId);
+                    return score != null &&
+                           TrackMatchDecisionEngine.IsRoutableExternalCandidate(Decision, score);
+                })
+                .ToArray()
             : [];
 }

@@ -138,7 +138,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "accepted-routing-v23";
+    public const string AlgorithmVersion = "accepted-routing-v24";
     private const double ScoreEpsilon = 0.0000001;
 
     private readonly TrackMatchPolicy _policy;
@@ -313,6 +313,27 @@ public sealed class TrackMatchDecisionEngine
         decision.State == TrackMatchReviewState.Accepted &&
         decision.Candidates.FirstOrDefault() is { IsLocal: true };
 
+    internal static bool IsRoutableExternalCandidate(
+        TrackMatchDecision decision, TrackMatchCandidateScore score) =>
+        decision.State switch
+        {
+            TrackMatchReviewState.Accepted =>
+                IsAcceptedExternalCandidate(score, decision.AcceptThreshold),
+            TrackMatchReviewState.Suggested =>
+                IsRecordingAllowed(score) &&
+                score.Confidence >= decision.SuggestThreshold &&
+                HasStrongArtistEvidence(score, decision.AcceptThreshold) &&
+                HasDurationWithinTolerance(score) &&
+                HasSameSemanticVersion(score) &&
+                HasSameTitleAnnotations(score),
+            _ => false
+        };
+
+    internal static bool IsAcceptedExternalCandidate(TrackMatchCandidateScore score, double acceptThreshold) =>
+        IsRecordingAllowed(score) && score.Confidence >= acceptThreshold &&
+        HasStrongArtistEvidence(score, acceptThreshold) && HasDurationWithinTolerance(score) &&
+        HasSameSemanticVersion(score) && HasSameTitleAnnotations(score);
+
     private bool IsAcceptanceQualified(TrackMatchCandidateScore score) =>
         IsRecordingAllowed(score) && score.Confidence >= _policy.AcceptThreshold &&
         HasStrongArtistEvidence(score) &&
@@ -417,7 +438,7 @@ public sealed class TrackMatchDecisionEngine
                 providerPriority).Rank == selectedPriority.Rank &&
             !SameRecordingIdentity(
                 selected,
-                visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId)));
+                visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId), source.Artist));
         if (runnerUp != null &&
             best.Confidence >= _policy.SuggestThreshold &&
             best.Confidence - runnerUp.Confidence <= _policy.AmbiguityDelta)
@@ -473,10 +494,13 @@ public sealed class TrackMatchDecisionEngine
     }
 
     private bool HasStrongArtistEvidence(TrackMatchCandidateScore score) =>
+        HasStrongArtistEvidence(score, _policy.AcceptThreshold);
+
+    private static bool HasStrongArtistEvidence(TrackMatchCandidateScore score, double acceptThreshold) =>
         score.Components == null ||
         !score.Components.TryGetValue("artist", out var artistScore) ||
         artistScore >= 0.7 ||
-        (score.Confidence >= _policy.AcceptThreshold &&
+        (score.Confidence >= acceptThreshold &&
          score.Components.GetValueOrDefault("primaryArtist") >= 0.98 &&
          score.Components.GetValueOrDefault("title") >= 0.98 &&
          score.Components.GetValueOrDefault("album") >= 0.98 &&
@@ -497,7 +521,8 @@ public sealed class TrackMatchDecisionEngine
 
     internal static bool SameRecordingIdentity(
         LocalTrackMatchCandidate left,
-        LocalTrackMatchCandidate right)
+        LocalTrackMatchCandidate right,
+        string? sourceArtist = null)
     {
         if (FuzzyMatcher.IsContinuousMixExcerpt(left.Title, left.Album) !=
             FuzzyMatcher.IsContinuousMixExcerpt(right.Title, right.Album) ||
@@ -543,10 +568,16 @@ public sealed class TrackMatchDecisionEngine
                             .Equals(
                                 FuzzyMatcher.NormalizeForMatching(right.Album),
                                 StringComparison.Ordinal);
-        return sameTitle && (sameArtist || sameAlbum) ||
+        var sourceCredits = FuzzyMatcher.SplitCredits(sourceArtist).Select(FuzzyMatcher.NormalizeForMatching)
+            .ToHashSet(StringComparer.Ordinal);
+        var leftCredits = FuzzyMatcher.SplitCredits(left.Artist).Select(FuzzyMatcher.NormalizeForMatching).ToArray();
+        var rightCredits = FuzzyMatcher.SplitCredits(right.Artist).Select(FuzzyMatcher.NormalizeForMatching).ToArray();
+        var sharedSourceCredits = sourceCredits.Count > 1 && leftCredits.Length > 0 && rightCredits.Length > 0 &&
+            leftCredits.All(sourceCredits.Contains) && rightCredits.All(sourceCredits.Contains);
+        return sameTitle && sameArtist ||
                TrackMatchSignals.Similarity(leftTitle, rightTitle) >= 0.9 &&
+               (TrackMatchSignals.ArtistSimilarity(left.Artist, right.Artist) >= 0.85 || sameAlbum && sharedSourceCredits) &&
                (sameAlbum ||
-                TrackMatchSignals.ArtistSimilarity(left.Artist, right.Artist) >= 0.85 &&
                 TrackMatchSignals.ComparableSimilarity(left.Album, right.Album) >= 0.9);
     }
 

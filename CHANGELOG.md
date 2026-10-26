@@ -8,5 +8,6 @@
 - A getting-started guide and problem inbox help testers connect clients and report problems with useful context. Administrators can open match or lyrics review directly from a report.
 - Provider checks distinguish failed checks from missing samples and unverified facts. Source pages show recent checks and explain temporary routing skips. Source labels distinguish Allstarr items from the service actually delivering their audio, and missing covers use provider artwork.
 - Search and browsing keep distinct provider tracks separate and preserve original media-server details.
+- Automatic playback alternatives must qualify individually and preserve artist credits. Existing automatic links to low-scoring covers are repaired from saved evidence while manual selections remain intact.
 - Lyrics sources include word timing and visible provider credits. Private keys belong to configured accounts.
 - Dashboard access follows current media-server permissions, repeated password checks are limited, and match reviews, extension diagnostics and playlist writes enforce listener privacy and ownership.
