@@ -2210,6 +2210,86 @@ test("Slim sidebar centers navigation and profile controls", async ({ page }) =>
   expect(Math.abs(center(profile!) - center(sidebar!))).toBeLessThanOrEqual(1);
 });
 
+for (const width of [835, 1280]) for (const theme of ["light", "dark"]) {
+  test(`Desktop navigation stays pinned while long pages scroll at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
+      ...schema, configSections: [{ id: "general", label: "General", fields: Array.from({ length: 24 }, (_, i) => ({
+        key: `SCROLL_FIELD_${i}`, label: `Read-only setting ${i + 1}`, type: "text", valuePath: "deployment.backend", readOnly: true,
+      })) }],
+    } }));
+    await page.goto("#/settings/general");
+    await expect(page.getByText("Read-only setting 24", { exact: true })).toBeVisible();
+    await page.evaluate(() => new Promise<void>(resolve =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await page.getByRole("heading", { name: "Settings", level: 1 }).click();
+    const sidebar = page.locator(".sidebar");
+    const initial = await sidebar.boundingBox();
+    const profile = await page.locator(".profile").boundingBox();
+    expect(initial!.height).toBe(844);
+    expect(initial!.width).toBe(width === 835 ? 80 : 248);
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(844);
+    const scrolled = await sidebar.boundingBox();
+    const scrolledProfile = await page.locator(".profile").boundingBox();
+    expect(scrolled!.y).toBe(0);
+    expect(scrolled!.height).toBe(initial!.height);
+    expect(scrolledProfile!.y).toBe(profile!.y);
+    expect((await page.locator(".workspace").boundingBox())!.x).toBe(initial!.width);
+    await expect(sidebar).toHaveCSS("position", "fixed");
+    await page.screenshot({ path: test.info().outputPath(`sidebar-page-bottom-${width}-${theme}.png`) });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: test.info().outputPath(`sidebar-long-${width}-${theme}.png`), fullPage: true });
+    expect((await sidebar.boundingBox())!.y).toBe(0);
+    await page.getByRole("button", { name: width === 835 ? "Expand sidebar" : "Collapse sidebar", exact: true }).click();
+    await expect.poll(async () => (await sidebar.boundingBox())!.width).toBe(width === 835 ? 248 : 80);
+    await expect(page.locator(".brand > span:last-child")).toHaveCSS("opacity", width === 835 ? "1" : "0");
+    expect((await page.locator(".workspace").boundingBox())!.x).toBe(width === 835 ? 248 : 80);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: test.info().outputPath(`sidebar-scrolled-${width}-${theme}.png`) });
+  });
+}
+
+for (const width of [835, 1280]) {
+  test(`Short desktop navigation keeps the profile and every destination reachable at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 420 });
+    await mockApi(page);
+    await page.goto("#/settings/general");
+    const profile = await page.locator(".profile").boundingBox();
+    expect(profile!.y).toBeGreaterThanOrEqual(0);
+    expect(profile!.y + profile!.height).toBeLessThanOrEqual(420);
+    const nav = page.locator(".desktop-navigation");
+    expect(await nav.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+    const scroll = await page.evaluate(() => window.scrollY);
+    const settingsLink = nav.getByRole("link", { name: "Settings", exact: true });
+    await settingsLink.focus();
+    await expect(settingsLink).toBeInViewport({ ratio: 1 });
+    const link = await settingsLink.boundingBox();
+    expect(link!.y + link!.height).toBeLessThanOrEqual(profile!.y);
+    expect(await page.evaluate(() => window.scrollY)).toBe(scroll);
+    await page.screenshot({ path: test.info().outputPath(`sidebar-short-${width}.png`) });
+  });
+}
+
+for (const theme of ["light", "dark"]) {
+  test(`Pinned navigation preserves the phone bottom bar in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    await page.goto("#/settings/general");
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    const bar = await page.locator(".sidebar").boundingBox();
+    expect(bar!.x).toBe(0);
+    expect(bar!.width).toBe(390);
+    expect(bar!.y + bar!.height).toBe(844);
+    await expect(page.locator(".desktop-navigation")).toBeHidden();
+    await expectContainedMobileGeometry(page);
+    await page.screenshot({ path: test.info().outputPath(`sidebar-phone-${theme}.png`) });
+  });
+}
+
 test("Shared selects and settings tabs animate without remounting", async ({ page }) => {
   await mockApi(page);
   await page.goto("#/settings/general");
@@ -5296,7 +5376,7 @@ test("Responsive boundaries preserve navigation and download identity", async ({
     const navigation = page.locator(width <= 760 ? ".mobile-navigation" : ".desktop-navigation");
     await expect(navigation.getByRole("link")).toHaveCount(width <= 760 ? 3 : 6);
     await expect(navigation.locator(":scope > :is(a, button)")).toHaveCount(width <= 760 ? 4 : 6);
-    await expect(page.locator(".sidebar")).toHaveCSS("position", width <= 760 ? "fixed" : "sticky");
+    await expect(page.locator(".sidebar")).toHaveCSS("position", "fixed");
     if (width === 900)
       await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(80);
     if (width === 901)
