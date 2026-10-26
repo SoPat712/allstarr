@@ -63,6 +63,8 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
         foreach (var status in statusManager.GetAllAccountFreeStatuses().Concat(statusManager.GetAppleDownloadEndpointStatuses())
             .Where(item => !accounts.Any(account => account.ProviderId.Equals(item.Provider, StringComparison.OrdinalIgnoreCase))))
         {
+            var runtimeEvidence = statusManager.GetCurrentRuntimeEvidence(
+                ProviderRuntimeStatusKey.CreateAccountFree(status.Provider, status.Capability), null, status);
             results.Add(new
             {
                 provider = status.Provider,
@@ -80,6 +82,9 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
                 reasonCode = status.ReasonCode,
                 verificationMeasurementId = status.VerificationMeasurementId,
                 verificationMethod = status.VerificationMethod,
+                automaticRetryAt = runtimeEvidence.AutomaticRetryAt,
+                failureCount = runtimeEvidence.FailureCount,
+                automaticPauseReasonCode = runtimeEvidence.AutomaticPauseReasonCode,
                 canTest = statusManager.CanTestCapability(status.Provider, status.Capability)
             });
         }
@@ -106,6 +111,11 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
                          account.Id,
                          accountSecrets, account.Revision))
             {
+                var runtimeEvidence = account.Enabled
+                    ? statusManager.GetCurrentRuntimeEvidence(
+                        ProviderRuntimeStatusKey.CreateManaged(status.Provider, status.Capability, account.Id),
+                        account.Revision, status)
+                    : ProviderRuntimeEvidenceSnapshot.Empty;
                 results.Add(new
                 {
                     provider = status.Provider,
@@ -128,6 +138,9 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
                     reasonCode = account.Enabled ? status.ReasonCode : "account_disabled",
                     verificationMeasurementId = status.VerificationMeasurementId,
                     verificationMethod = status.VerificationMethod,
+                    automaticRetryAt = runtimeEvidence.AutomaticRetryAt,
+                    failureCount = runtimeEvidence.FailureCount,
+                    automaticPauseReasonCode = runtimeEvidence.AutomaticPauseReasonCode,
                     canTest = statusManager.CanTestCapability(status.Provider, status.Capability)
                 });
             }
@@ -135,6 +148,111 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
 
         return Ok(results);
     }
+
+    [HttpGet("providers/{providerId}/health-history")]
+    public async Task<IActionResult> GetProviderHealthHistory(
+        string providerId,
+        [FromQuery] int limit = 24,
+        CancellationToken cancellationToken = default)
+    {
+        var adminCheck = RequireAdministratorForSensitiveOperation("get provider health history");
+        if (adminCheck != null)
+        {
+            return adminCheck;
+        }
+
+        if (string.IsNullOrWhiteSpace(providerId))
+        {
+            return BadRequest(new { error = "A canonical provider is required." });
+        }
+
+        var normalizedProvider = ProviderRuntimeStatusKey.CreateAccountFree(providerId, ProviderCapabilities.Metadata).Provider;
+        if (!string.Equals(providerId.Trim(), normalizedProvider, StringComparison.OrdinalIgnoreCase))
+        {
+            return BadRequest(new { error = "A canonical provider is required." });
+        }
+
+        if (allstarr.Core.Settings.RetiredProviderSettings.IsRetired(normalizedProvider))
+        {
+            return NotFound();
+        }
+
+        var effectiveLimit = Math.Clamp(limit, 1, 24);
+        var statusManager = HttpContext.RequestServices.GetRequiredService<ProviderStatusManager>();
+        if (!statusManager.IsKnownProvider(normalizedProvider))
+        {
+            return NotFound();
+        }
+
+        var contextFactory = HttpContext.RequestServices.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var accounts = await context.ProviderAccounts.AsNoTracking().ToListAsync(cancellationToken);
+        accounts = accounts.Where(account =>
+                !ProviderAccountSettings.IsRemoved(account) &&
+                ProviderRuntimeStatusKey.CreateAccountFree(account.ProviderId, ProviderCapabilities.Metadata).Provider == normalizedProvider)
+            .ToList();
+
+        var targets = new List<ProviderCheckHistoryTarget>();
+        foreach (var status in statusManager.GetAllAccountFreeStatuses()
+                     .Where(status => status.Provider == normalizedProvider && status.IsSupported))
+        {
+            targets.Add(new(
+                ProviderRuntimeStatusKey.CreateAccountFree(status.Provider, status.Capability),
+                null,
+                "Public",
+                "public"));
+        }
+
+        foreach (var account in accounts)
+        {
+            foreach (var status in statusManager.GetAllManagedStatuses(
+                         normalizedProvider,
+                         account.Id,
+                         new Dictionary<string, string>(StringComparer.Ordinal),
+                         account.Revision).Where(status => status.IsSupported))
+            {
+                targets.Add(new(
+                    ProviderRuntimeStatusKey.CreateManaged(status.Provider, status.Capability, account.Id),
+                    account.Revision,
+                    string.IsNullOrWhiteSpace(account.DisplayName) ? "Unnamed account" : account.DisplayName,
+                    account.Scope == ProviderAccountScope.Personal ? "personal" : "shared"));
+            }
+        }
+
+        var history = HttpContext.RequestServices.GetRequiredService<ProviderCheckHistory>();
+        var rows = await history.ReadRecentAsync(targets, effectiveLimit, cancellationToken);
+        var capturedAt = DateTimeOffset.UtcNow;
+        var checks = rows.Select(row => new
+        {
+            capability = row.Result.Key.Capability,
+            accountLabel = row.AccountLabel,
+            accountScope = row.AccountScope,
+            testedAt = row.Result.Status.TestedAt!.Value.ToUniversalTime(),
+            outcome = HistoryOutcome(row.Result.Status),
+            reasonCode = ProviderCheckHistory.SafeReasonCode(row.Result.Status.ReasonCode),
+            latencyMs = HistoryLatency(row.Result.Status)
+        }).ToArray();
+
+        return Ok(new
+        {
+            provider = normalizedProvider,
+            capturedAt,
+            checks,
+            counts = new
+            {
+                passed = checks.Count(item => item.outcome == "passed"),
+                failed = checks.Count(item => item.outcome == "failed"),
+                neutral = checks.Count(item => item.outcome == "neutral")
+            }
+        });
+    }
+
+    private static string HistoryOutcome(ProviderRuntimeStatus status) =>
+        !status.HasCheckResult ? "neutral" :
+        status.Health == ProviderHealthState.Healthy ? "passed" : "failed";
+
+    private static long? HistoryLatency(ProviderRuntimeStatus status) =>
+        status.HasCheckResult && status.LatencyMilliseconds is >= 0 ? status.LatencyMilliseconds : null;
 
     [HttpPost("providers/test/{provider}")]
     [HttpPost("providers/test/{provider}/{capability}")]

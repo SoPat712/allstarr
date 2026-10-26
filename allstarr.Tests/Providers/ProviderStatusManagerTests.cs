@@ -230,6 +230,82 @@ public sealed partial class ProviderStatusManagerTests
         Assert.Equal("timeout", status.ReasonCode);
     }
 
+    [Fact]
+    public void RecordedPublicCheckCannotHideCurrentOpenCircuit()
+    {
+        var clock = new FakeClock(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        var health = new ProviderRuntimeHealth(clock: clock);
+        var manager = CreateManager(new Dictionary<string, string?>(), clock: clock, health: health);
+        var key = ProviderRuntimeStatusKey.CreateAccountFree("deezer", ProviderCapabilities.Metadata);
+        health.Record(key, null, false, 4, "rate-limited", retryAfter: TimeSpan.FromMinutes(10));
+        clock.UtcNow = clock.UtcNow.AddSeconds(1);
+        manager.RestoreCheckResult(key, null, manager.GetAccountFreeStatus("deezer", ProviderCapabilities.Metadata) with
+        {
+            Health = ProviderHealthState.Healthy,
+            TestedAt = clock.UtcNow
+        });
+
+        var status = manager.GetAccountFreeStatus("deezer", ProviderCapabilities.Metadata);
+
+        Assert.True(health.GetRouteStatus("deezer", null, ProviderCapabilityKind.Metadata).CircuitOpen);
+        Assert.True(status.CircuitOpen);
+        Assert.False(status.CanAttempt);
+    }
+
+    [Fact]
+    public void RecordedManagedCheckCannotHideCurrentOpenCircuitOrCrossCredentialRevision()
+    {
+        var clock = new FakeClock(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        var health = new ProviderRuntimeHealth(clock: clock);
+        var manager = CreateManager(new Dictionary<string, string?>(), clock: clock, health: health);
+        var accountId = Guid.CreateVersion7();
+        var key = ProviderRuntimeStatusKey.CreateManaged("deezer", ProviderCapabilities.Streaming, accountId);
+        var secrets = new Dictionary<string, string> { ["arl"] = "fixture-arl" };
+        health.Record(key, 7, false, 4, "rate-limited", retryAfter: TimeSpan.FromMinutes(10));
+        clock.UtcNow = clock.UtcNow.AddSeconds(1);
+        manager.RestoreCheckResult(key, 7, manager.GetManagedStatus("deezer", ProviderCapabilities.Streaming,
+            accountId, secrets, 7) with
+        { Health = ProviderHealthState.Healthy, TestedAt = clock.UtcNow });
+
+        var current = manager.GetManagedStatus("deezer", ProviderCapabilities.Streaming, accountId, secrets, 7);
+        var revised = manager.GetManagedStatus("deezer", ProviderCapabilities.Streaming, accountId, secrets, 8);
+
+        Assert.True(health.GetRouteStatus("deezer", accountId, ProviderCapabilityKind.Streaming).CircuitOpen);
+        Assert.True(current.CircuitOpen);
+        Assert.False(current.CanAttempt);
+        Assert.False(revised.CircuitOpen);
+        Assert.True(revised.CanAttempt);
+    }
+
+    [Fact]
+    public void ExplicitSuccessClearsCurrentCircuitWithoutRestoringItForARevisionChange()
+    {
+        var clock = new FakeClock(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        var health = new ProviderRuntimeHealth(clock: clock);
+        var manager = CreateManager(new Dictionary<string, string?>(), clock: clock, health: health);
+        var accountId = Guid.CreateVersion7();
+        var secrets = new Dictionary<string, string> { ["arl"] = "fixture-arl" };
+        var key = ProviderRuntimeStatusKey.CreateManaged("deezer", ProviderCapabilities.Streaming, accountId);
+        health.Record(key, 7, false, 4, "rate-limited", retryAfter: TimeSpan.FromMinutes(10));
+        manager.RestoreCheckResult(key, 7, manager.GetManagedStatus("deezer", ProviderCapabilities.Streaming,
+            accountId, secrets, 7) with
+        { Health = ProviderHealthState.Degraded, TestedAt = clock.UtcNow });
+
+        var paused = manager.GetManagedStatus("deezer", ProviderCapabilities.Streaming, accountId, secrets, 7);
+        var evidence = manager.GetCurrentRuntimeEvidence(key, 7, paused);
+        Assert.Equal(clock.UtcNow.AddMinutes(10), evidence.AutomaticRetryAt);
+        Assert.Equal(1, evidence.FailureCount);
+        Assert.Equal("rate-limited", evidence.AutomaticPauseReasonCode);
+
+        manager.RecordTryResult("deezer", ProviderCapabilities.Streaming, accountId, 7, true, 12, null);
+
+        var recovered = manager.GetManagedStatus("deezer", ProviderCapabilities.Streaming, accountId, secrets, 7);
+        Assert.False(recovered.CircuitOpen);
+        Assert.Equal(ProviderRuntimeEvidenceSnapshot.Empty,
+            manager.GetCurrentRuntimeEvidence(key, 7, recovered));
+        Assert.False(manager.GetManagedStatus("deezer", ProviderCapabilities.Streaming, accountId, secrets, 8).CircuitOpen);
+    }
+
     [Theory]
     [InlineData(true, true)]
     [InlineData(true, false)]

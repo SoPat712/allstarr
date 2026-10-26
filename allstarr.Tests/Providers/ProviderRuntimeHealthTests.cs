@@ -294,6 +294,22 @@ public sealed class ProviderRuntimeHealthTests
     }
 
     [Fact]
+    public void RetryAfterKeepsRouteOpenPastTheSampleTtl()
+    {
+        var store = Store();
+        store.Observe(Context(), ProviderCapabilityKind.Streaming, null, TimeSpan.Zero);
+        store.Observe(Context(), ProviderCapabilityKind.Streaming,
+            new(ProviderErrorKind.RateLimited, TimeSpan.FromMinutes(10)), TimeSpan.Zero);
+
+        _clock.UtcNow += TimeSpan.FromMinutes(6);
+
+        Assert.NotNull(store.Get(Key(), 4));
+        Assert.True(store.GetRouteStatus("deezer", _account, ProviderCapabilityKind.Streaming).CircuitOpen);
+        _clock.UtcNow += TimeSpan.FromMinutes(4).Add(TimeSpan.FromSeconds(1));
+        Assert.False(store.GetRouteStatus("deezer", _account, ProviderCapabilityKind.Streaming).CircuitOpen);
+    }
+
+    [Fact]
     public void CanceledProbeCannotRestoreOverAConcurrentObservation()
     {
         var store = Store();

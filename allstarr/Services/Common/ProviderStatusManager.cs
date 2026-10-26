@@ -19,6 +19,15 @@ using allstarr.Core.Providers.AudioMuse;
 
 namespace allstarr.Services.Common;
 
+public sealed record ProviderRuntimeEvidenceSnapshot(
+    bool CircuitOpen,
+    DateTimeOffset? AutomaticRetryAt,
+    int? FailureCount,
+    string? AutomaticPauseReasonCode)
+{
+    public static ProviderRuntimeEvidenceSnapshot Empty { get; } = new(false, null, null, null);
+}
+
 /// <summary>
 /// Current status for built-in providers. Reads are side-effect free. Explicit
 /// probes and normal activity share account, revision and capability observations.
@@ -199,6 +208,10 @@ public class ProviderStatusManager
     private bool IsKnownBuiltInProvider(string providerId) =>
         KnownCapabilities.Any(capability => string.Equals(capability.Provider, providerId, StringComparison.OrdinalIgnoreCase));
 
+    public bool IsKnownProvider(string providerId) =>
+        IsKnownBuiltInProvider(Normalize(providerId)) ||
+        ProviderRegistry?.TryGet(Normalize(providerId), out _) == true;
+
     private static bool IsStreamingCapability(string capability) =>
         capability.Equals("stream", StringComparison.OrdinalIgnoreCase) ||
         capability.Equals("streaming", StringComparison.OrdinalIgnoreCase);
@@ -280,6 +293,26 @@ public class ProviderStatusManager
         RequireAccountFreeCapability(provider, capability);
         var key = ProviderRuntimeStatusKey.CreateAccountFree(provider, capability);
         return GetStatusCore(key, BuildBaselineStatus(key));
+    }
+
+    public ProviderRuntimeEvidenceSnapshot GetCurrentRuntimeEvidence(
+        ProviderRuntimeStatusKey key,
+        long? accountRevision,
+        ProviderRuntimeStatus currentStatus)
+    {
+        if (!currentStatus.IsSupported || !currentStatus.IsEnabled ||
+            currentStatus.Configuration == ProviderConfigurationState.NeedsConfiguration)
+            return ProviderRuntimeEvidenceSnapshot.Empty;
+
+        var observation = _health.Get(key, accountRevision);
+        if (observation == null || !_health.IsCircuitOpen(observation))
+            return ProviderRuntimeEvidenceSnapshot.Empty;
+
+        return new(
+            true,
+            observation.RetryAfter,
+            observation.ConsecutiveFailures,
+            observation.ReasonCode ?? "circuit_open");
     }
 
     public void RestoreCheckResult(ProviderRuntimeStatusKey key, long? revision, ProviderRuntimeStatus status)
@@ -365,6 +398,7 @@ public class ProviderStatusManager
         if (!baseline.IsSupported) return baseline;
         // Display the newest evidence, with explicit checks winning completed ties; routing TTL cannot revive older checks.
         var observation = _health.GetForDisplay(key, accountRevision);
+        var runtime = GetCurrentRuntimeEvidence(key, accountRevision, baseline);
         if (_recordedChecks.TryGetValue(key, out var recorded) && recorded.Revision == accountRevision &&
             (observation == null || recorded.Status.TestedAt > observation.ObservedAt ||
                 observation.Health != ProviderHealthState.Testing && recorded.Status.TestedAt == observation.ObservedAt))
@@ -375,18 +409,18 @@ public class ProviderStatusManager
                 LatencyMilliseconds = recorded.Status.LatencyMilliseconds,
                 VerificationMeasurementId = recorded.Status.VerificationMeasurementId,
                 VerificationMethod = recorded.Status.VerificationMethod,
+                CircuitOpen = runtime.CircuitOpen,
                 ReasonCode = BaselineReasonTakesPrecedence(baseline) ? baseline.ReasonCode : recorded.Status.ReasonCode
             };
-        if (observation == null) return baseline;
-        var open = _health.IsCircuitOpen(observation);
+        if (observation == null) return baseline with { CircuitOpen = runtime.CircuitOpen };
         return baseline with
         {
             Health = observation.Health,
             TestedAt = observation.Health == ProviderHealthState.Testing ? null : observation.ObservedAt,
             LatencyMilliseconds = observation.LatencyMilliseconds,
-            CircuitOpen = open,
+            CircuitOpen = runtime.CircuitOpen,
             ReasonCode = BaselineReasonTakesPrecedence(baseline) ? baseline.ReasonCode :
-                open ? "circuit_open" : observation.ReasonCode
+                runtime.CircuitOpen ? "circuit_open" : observation.ReasonCode
         };
     }
 

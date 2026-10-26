@@ -399,10 +399,184 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             Assert.Equal(_providerAccountId, status.GetProperty("providerAccountId").GetGuid());
             Assert.Equal("shared", status.GetProperty("accountScope").GetString());
             Assert.Equal(JsonValueKind.Null, status.GetProperty("testedAt").ValueKind);
+            Assert.Equal(JsonValueKind.Null, status.GetProperty("automaticRetryAt").ValueKind);
+            Assert.Equal(JsonValueKind.Null, status.GetProperty("failureCount").ValueKind);
+            Assert.Equal(JsonValueKind.Null, status.GetProperty("automaticPauseReasonCode").ValueKind);
             Assert.Equal("unknown", status.GetProperty("health").GetString());
             Assert.True(status.TryGetProperty("configuration", out _));
             Assert.True(status.TryGetProperty("capability", out _));
         });
+    }
+
+    [Fact]
+    public async Task GetProvidersStatus_ExposesOnlyCurrentAutomaticPauseEvidence()
+    {
+        var health = CreateHealthStore();
+        var key = ProviderRuntimeStatusKey.CreateAccountFree("lrclib", ProviderCapabilities.Lyrics);
+        health.Record(key, null, false, 4, "rate-limited", retryAfter: TimeSpan.FromMinutes(5));
+        var controller = CreateController(CreateHttpContextWithSession(isAdmin: true), healthStore: health);
+
+        var result = Assert.IsType<OkObjectResult>(await Diagnostics(controller).GetProvidersStatus());
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        var status = document.RootElement.EnumerateArray().Single(item =>
+            item.GetProperty("provider").GetString() == "lrclib" &&
+            item.GetProperty("capability").GetString() == ProviderCapabilities.Lyrics);
+
+        Assert.True(status.GetProperty("automaticRetryAt").GetDateTimeOffset() > DateTimeOffset.UtcNow);
+        Assert.Equal(1, status.GetProperty("failureCount").GetInt32());
+        Assert.Equal("rate-limited", status.GetProperty("automaticPauseReasonCode").GetString());
+        Assert.False(status.GetProperty("canAttempt").GetBoolean());
+    }
+
+    [Fact]
+    public async Task ProviderHealthHistoryIsAdministratorOnlyAndReturnsBoundedCurrentDiagnosticRows()
+    {
+        var nonAdministrator = CreateController(CreateHttpContextWithSession(isAdmin: false));
+        AssertForbidden(await Diagnostics(nonAdministrator).GetProviderHealthHistory("deezer", 100));
+
+        var now = DateTimeOffset.UtcNow;
+        var managedKey = ProviderRuntimeStatusKey.CreateManaged("deezer", ProviderCapabilities.Streaming, _providerAccountId);
+        var publicKey = ProviderRuntimeStatusKey.CreateAccountFree("deezer", ProviderCapabilities.Metadata);
+        await using (var context = await _factory.CreateDbContextAsync())
+        {
+            var account = await context.ProviderAccounts.SingleAsync(item => item.Id == _providerAccountId);
+            account.SecretReferenceId = Guid.CreateVersion7();
+            context.SecretReferences.Add(new SecretReferenceRecord
+            {
+                Id = account.SecretReferenceId.Value,
+                Purpose = "provider-account",
+                ActiveVersion = 1,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            context.AuditEvents.AddRange(
+                HistoryEvent(managedKey, account.Revision, new ProviderRuntimeStatus
+                {
+                    Provider = managedKey.Provider,
+                    Capability = managedKey.Capability,
+                    IsSupported = true,
+                    IsEnabled = true,
+                    Configuration = ProviderConfigurationState.Configured,
+                    Health = ProviderHealthState.Degraded,
+                    TestedAt = now.AddMinutes(-1),
+                    LatencyMilliseconds = 15,
+                    ReasonCode = "timeout"
+                }, now.AddMinutes(-1)),
+                HistoryEvent(publicKey, null, new ProviderRuntimeStatus
+                {
+                    Provider = publicKey.Provider,
+                    Capability = publicKey.Capability,
+                    IsSupported = true,
+                    IsEnabled = true,
+                    Configuration = ProviderConfigurationState.NotRequired,
+                    Health = ProviderHealthState.Healthy,
+                    TestedAt = now.AddMinutes(-2),
+                    LatencyMilliseconds = 8
+                }, now.AddMinutes(-2)),
+                HistoryEvent(publicKey, null, new ProviderRuntimeStatus
+                {
+                    Provider = publicKey.Provider,
+                    Capability = publicKey.Capability,
+                    IsSupported = true,
+                    IsEnabled = true,
+                    Configuration = ProviderConfigurationState.NotRequired,
+                    Health = ProviderHealthState.Unknown,
+                    TestedAt = now.AddMinutes(-3),
+                    ReasonCode = "sample-unavailable"
+                }, now.AddMinutes(-3)),
+                HistoryEvent(managedKey, account.Revision + 1, new ProviderRuntimeStatus
+                {
+                    Provider = managedKey.Provider,
+                    Capability = managedKey.Capability,
+                    IsSupported = true,
+                    IsEnabled = true,
+                    Configuration = ProviderConfigurationState.Configured,
+                    Health = ProviderHealthState.Healthy,
+                    TestedAt = now.AddSeconds(-30)
+                }, now.AddSeconds(-30)),
+                HistoryEvent(publicKey, null, new ProviderRuntimeStatus
+                {
+                    Provider = publicKey.Provider,
+                    Capability = publicKey.Capability,
+                    IsSupported = true,
+                    IsEnabled = true,
+                    Configuration = ProviderConfigurationState.NotRequired,
+                    Health = ProviderHealthState.Healthy,
+                    TestedAt = now.AddMinutes(1)
+                }, now.AddMinutes(1)),
+                new AuditEventRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    Category = ProviderCheckHistory.Category,
+                    SubjectType = ProviderCheckHistory.Category,
+                    SubjectId = $"{publicKey.Provider}/{publicKey.Capability}/public",
+                    Action = "check-completed",
+                    Outcome = "recorded",
+                    DetailsJson = "{malformed",
+                    CreatedAt = now.AddMinutes(-4)
+                });
+            await context.SaveChangesAsync();
+        }
+
+        var clientFactory = new Mock<IHttpClientFactory>(MockBehavior.Strict);
+        var administrator = CreateController(
+            CreateHttpContextWithSession(isAdmin: true), httpClientFactory: clientFactory.Object);
+        var originalServices = administrator.HttpContext.RequestServices;
+        administrator.HttpContext.RequestServices = new ServiceCollection()
+            .AddSingleton(originalServices.GetRequiredService<ProviderStatusManager>())
+            .AddSingleton<IDbContextFactory<AllstarrDbContext>>(_factory)
+            .AddSingleton(new ProviderCheckHistory(_factory, TimeProvider.System))
+            .BuildServiceProvider();
+        var result = Assert.IsType<OkObjectResult>(await Diagnostics(administrator)
+            .GetProviderHealthHistory("deezer", 100));
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        Assert.Equal("deezer", document.RootElement.GetProperty("provider").GetString());
+        Assert.True(document.RootElement.GetProperty("capturedAt").GetDateTimeOffset() >= now);
+        var checks = document.RootElement.GetProperty("checks").EnumerateArray().ToArray();
+        Assert.Equal(3, checks.Length);
+        Assert.Equal(1, document.RootElement.GetProperty("counts").GetProperty("passed").GetInt32());
+        Assert.Equal(1, document.RootElement.GetProperty("counts").GetProperty("failed").GetInt32());
+        Assert.Equal(1, document.RootElement.GetProperty("counts").GetProperty("neutral").GetInt32());
+        Assert.Contains(checks, item => item.GetProperty("accountLabel").GetString() == "Health fixture" &&
+            item.GetProperty("accountScope").GetString() == "shared" &&
+            item.GetProperty("outcome").GetString() == "failed" &&
+            item.GetProperty("reasonCode").GetString() == "timeout");
+        Assert.Contains(checks, item => item.GetProperty("accountScope").GetString() == "public" &&
+            item.GetProperty("outcome").GetString() == "passed");
+        Assert.Contains(checks, item => item.GetProperty("accountScope").GetString() == "public" &&
+            item.GetProperty("outcome").GetString() == "neutral");
+        Assert.All(checks, item => Assert.False(item.TryGetProperty("providerAccountId", out _)));
+        clientFactory.Verify(item => item.CreateClient(It.IsAny<string>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData("qobuz")]
+    [InlineData("spotify")]
+    [InlineData("koito")]
+    [InlineData("multi-scrobbler")]
+    [InlineData("spicylyrics")]
+    public async Task KnownAccountOnlyProvidersHaveAnEmptyHistoryBeforeConnecting(string provider)
+    {
+        var clientFactory = new Mock<IHttpClientFactory>(MockBehavior.Strict);
+        var controller = Diagnostics(CreateController(CreateHttpContextWithSession(isAdmin: true),
+            httpClientFactory: clientFactory.Object));
+
+        var response = Assert.IsType<OkObjectResult>(await controller.GetProviderHealthHistory(provider));
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(response.Value));
+        Assert.Equal(provider, document.RootElement.GetProperty("provider").GetString());
+        Assert.Empty(document.RootElement.GetProperty("checks").EnumerateArray());
+        Assert.All(document.RootElement.GetProperty("counts").EnumerateObject(), count => Assert.Equal(0, count.Value.GetInt32()));
+        clientFactory.Verify(item => item.CreateClient(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task HistoryRejectsUnknownRetiredAndNoncanonicalProviders()
+    {
+        var controller = Diagnostics(CreateController(CreateHttpContextWithSession(isAdmin: true)));
+        Assert.IsType<NotFoundResult>(await controller.GetProviderHealthHistory("unknown-history-source"));
+        Assert.IsType<NotFoundResult>(await controller.GetProviderHealthHistory("binilyrics"));
+        Assert.IsType<BadRequestObjectResult>(await controller.GetProviderHealthHistory("applemusic"));
+        Assert.IsType<BadRequestObjectResult>(await controller.GetProviderHealthHistory(" "));
     }
 
     [Fact]
@@ -706,6 +880,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         var services = new ServiceCollection()
             .AddSingleton(providerStatusManager)
             .AddSingleton<IDbContextFactory<AllstarrDbContext>>(_factory)
+            .AddSingleton(new ProviderCheckHistory(_factory, TimeProvider.System))
             .AddSingleton(durableSettings)
             .AddSingleton<IDurableRuntimeSettings>(durableSettings)
             .AddSingleton<IEffectiveProviderPolicyResolver>(effectiveProviderPolicies)
@@ -799,6 +974,22 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         using var document = JsonDocument.Parse(payload);
         Assert.Equal("Administrator permissions required", document.RootElement.GetProperty("error").GetString());
     }
+
+    private static AuditEventRecord HistoryEvent(
+        ProviderRuntimeStatusKey key,
+        long? revision,
+        ProviderRuntimeStatus status,
+        DateTimeOffset createdAt) => new()
+        {
+            Id = Guid.CreateVersion7(),
+            Category = ProviderCheckHistory.Category,
+            Action = "check-completed",
+            Outcome = "recorded",
+            SubjectType = ProviderCheckHistory.Category,
+            SubjectId = $"{key.Provider}/{key.Capability}/{key.ProviderAccountId?.ToString("N") ?? "public"}",
+            DetailsJson = JsonSerializer.Serialize(new ProviderCheckResult(key, revision, status)),
+            CreatedAt = createdAt
+        };
 
     private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)
         : IDbContextFactory<AllstarrDbContext>

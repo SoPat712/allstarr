@@ -512,6 +512,24 @@ export type ProviderHealth = {
   canTest: boolean;
   verificationMeasurementId?: string | null;
   verificationMethod?: string | null;
+  automaticRetryAt?: string | null;
+  failureCount?: number | null;
+  automaticPauseReasonCode?: string | null;
+};
+
+export type ProviderCheckHistory = {
+  provider: string;
+  capturedAt: string;
+  counts: { passed: number; failed: number; neutral: number };
+  checks: {
+    capability: string;
+    accountLabel: string;
+    accountScope: "public" | "personal" | "shared";
+    testedAt: string;
+    outcome: "passed" | "failed" | "neutral";
+    reasonCode: string | null;
+    latencyMs: number | null;
+  }[];
 };
 
 export type ConnectivityResult = {
@@ -1674,6 +1692,8 @@ export const sources = {
       accounts: ProviderAccount[];
     }>("/api/admin/provider-accounts"),
   health: () => json<ProviderHealth[]>("/api/admin/providers/status"),
+  history: (provider: string, signal?: AbortSignal) =>
+    json<ProviderCheckHistory>(`/api/admin/providers/${encodeURIComponent(provider)}/health-history?limit=24`, { signal }),
   cts: () =>
     json<{ measurements: CtsMeasurement[] }>("/api/admin/provider-diagnostics/deep-stream/latest"),
   create: (input: {
