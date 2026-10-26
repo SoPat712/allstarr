@@ -524,6 +524,10 @@ async function mockApi(page: Page, options: {
       return;
     }
     let body = responses[`${url.pathname}${url.search}`] ?? responses[url.pathname];
+    if (url.pathname.endsWith("/health-history")) body = {
+      provider: url.pathname.split("/").at(-2), capturedAt: new Date().toISOString(),
+      checks: [], counts: { passed: 0, failed: 0, neutral: 0 },
+    };
     if (url.pathname === "/api/admin/providers/use") body = {
       personalRevision: "source-use-personal", householdRevision: "source-use-household",
       providers: (responses["/api/admin/ui/schema"] as { providers: { id: string }[] }).providers.map(provider => ({
@@ -8407,3 +8411,152 @@ for (const width of [320, 390, 718, 1280]) for (const theme of ["light", "dark"]
     await expect(picker.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Public fixture");
   });
 }
+
+const sourceHistoryTime = "2030-04-05T12:00:00.000Z";
+const sourceHistory = {
+  provider: "lumen-audio", capturedAt: sourceHistoryTime,
+  counts: { passed: 3, failed: 3, neutral: 3 },
+  checks: Array.from({ length: 9 }, (_, index) => ({
+    capability: index % 2 ? "streaming" : "metadata",
+    accountLabel: index === 0 ? "Long account " + "界".repeat(190) : index % 2 ? "Household account" : "Public access",
+    accountScope: index % 2 ? "shared" : "public",
+    testedAt: "2030-04-05T11:59:00.000Z",
+    outcome: ["passed", "failed", "neutral"][index % 3],
+    reasonCode: index % 3 === 1 ? "timeout" : index % 3 === 2 ? "sample-unavailable" : null,
+    latencyMs: index === 0 ? 0 : index === 1 ? null : 125,
+  })),
+};
+const sourcePause = {
+  provider: "lumen-audio", providerAccountId: "account", providerAccountName: "Household account",
+  capability: "streaming", accountScope: "shared", supported: true, enabled: true,
+  configuration: "configured", health: "degraded", ready: false, canAttempt: false, canTest: true,
+  automaticRetryAt: "2030-04-05T12:01:00.000Z", failureCount: 3, automaticPauseReasonCode: "RateLimited",
+};
+
+for (const width of [320, 390, 1280]) {
+  for (const theme of ["light", "dark"] as const) {
+    test(`Source health history stays honest at ${width}px in ${theme}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+      await mockApi(page);
+      await page.route("**/api/admin/providers/status", route => route.fulfill({ json: [sourcePause, {
+        ...sourcePause, providerAccountId: null, providerAccountName: null, accountScope: "public", capability: "metadata",
+      }] }));
+      let reads = 0;
+      await page.route("**/api/admin/providers/lumen-audio/health-history**", route => {
+        reads++;
+        return route.fulfill({ json: sourceHistory });
+      });
+      await page.goto("#/integrations/services/lumen-audio");
+      const routing = page.getByRole("region", { name: "Automatic routing" });
+      await expect(routing).toContainText("Temporarily skipped");
+      await expect(routing).toContainText("Household account");
+      await expect(routing).toContainText("Public access");
+      await expect(routing).toContainText("Rate limited");
+      await expect(routing).toContainText("Retry after");
+      const history = page.getByRole("group", { name: /Recent diagnostic checks/ });
+      await expect(history).not.toHaveAttribute("open", "");
+      await expect(history).toContainText("3 passed · 3 failed · 3 neutral");
+      await history.locator("summary").click();
+      await expect(history.getByRole("listitem")).toHaveCount(6);
+      await expect(history).toContainText("Under 1 ms");
+      await expect(history).toContainText("Sample unavailable");
+      await expect(history).not.toContainText("Invalid Date");
+      await expect(history).not.toContainText("0 ms");
+      await history.getByRole("button", { name: "Show more checks" }).click();
+      await expect(history.getByRole("listitem")).toHaveCount(9);
+      expect(reads).toBe(1);
+      if (width < 768) await expectContainedMobileGeometry(page);
+      await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());
+      await page.screenshot({ path: `test-results/source-health-${width}-${theme}.png`, fullPage: true });
+    });
+  }
+}
+
+test("Source health history recovers from an error without busying Refresh", async ({ page }) => {
+  await mockApi(page);
+  let reads = 0;
+  await page.route("**/api/admin/providers/lumen-audio/health-history**", route => {
+    reads++;
+    return reads === 1 ? route.fulfill({ status: 503, json: { error: "Unavailable" } }) :
+      route.fulfill({ json: { ...sourceHistory, checks: [], counts: { passed: 0, failed: 0, neutral: 0 } } });
+  });
+  await page.goto("#/integrations/services/lumen-audio");
+  const history = page.getByRole("group", { name: /Recent diagnostic checks/ });
+  await history.locator("summary").click();
+  await expect(history).toContainText("Couldn’t load recent checks.");
+  await history.getByRole("button", { name: "Retry" }).click();
+  await expect(history).toContainText("No recorded diagnostic checks.");
+  expect(reads).toBe(2);
+  await page.locator(".service-back").click();
+  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
+});
+
+test("Source health history ignores a response after changing source", async ({ page }) => {
+  await mockApi(page);
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  let requested = false;
+  await page.route("**/api/admin/providers/lumen-audio/health-history**", async route => {
+    requested = true;
+    await pending;
+    await route.fulfill({ json: sourceHistory }).catch(() => {});
+  });
+  await page.goto("#/integrations/services/lumen-audio");
+  await expect.poll(() => requested).toBe(true);
+  await page.evaluate(() => { location.hash = "#/integrations/services/spotify"; });
+  const history = page.getByRole("group", { name: /Recent diagnostic checks/ });
+  await history.locator("summary").click();
+  await expect(history).toContainText("No recorded diagnostic checks.");
+  release();
+  await expect(history).not.toContainText("Household account");
+  await expect(page.getByRole("heading", { name: "Spotify", exact: true })).toBeVisible();
+});
+
+test("Source health retry follows server time and refreshes quietly once", async ({ page }) => {
+  await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+  await mockApi(page);
+  let statusReads = 0;
+  let historyReads = 0;
+  await page.route("**/api/admin/providers/status", route => {
+    statusReads++;
+    return route.fulfill({ json: [{ ...sourcePause,
+      automaticRetryAt: statusReads === 1 ? "2030-04-05T12:00:02.000Z" : null,
+      canAttempt: statusReads > 1,
+    }] });
+  });
+  await page.route("**/api/admin/providers/lumen-audio/health-history**", route => {
+    historyReads++;
+    return route.fulfill({ json: sourceHistory });
+  });
+  await page.goto("#/integrations/services/lumen-audio");
+  const routing = page.getByRole("region", { name: "Automatic routing" });
+  await expect(routing).toContainText("Temporarily skipped");
+  expect(statusReads).toBe(1);
+  await page.clock.runFor(2_100);
+  await expect.poll(() => statusReads).toBe(2);
+  await expect(routing).toHaveCount(0);
+  await expect.poll(() => historyReads).toBe(2);
+  await page.clock.runFor(2_100);
+  expect(statusReads).toBe(2);
+  expect(historyReads).toBe(2);
+  await page.locator(".service-back").click();
+  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
+});
+
+test("Source health history stays private to administrators", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/admin/auth/me", route => route.fulfill({ json: {
+    ...(responses["/api/admin/auth/me"] as object),
+    user: { id: "user", allstarrUserId: "user", name: "Tester", isAdministrator: false },
+  } }));
+  let reads = 0;
+  await page.route("**/api/admin/providers/*/health-history**", route => {
+    reads++;
+    return route.fulfill({ json: sourceHistory });
+  });
+  await page.goto("#/integrations/services/lumen-audio");
+  await expect(page.getByRole("heading", { name: "Lumen Audio", exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: /Recent diagnostic checks/ })).toHaveCount(0);
+  expect(reads).toBe(0);
+});

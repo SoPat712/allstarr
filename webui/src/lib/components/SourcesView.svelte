@@ -1,6 +1,7 @@
 <script lang="ts">
   import ServicePolicyCard from "$lib/components/ServicePolicyCard.svelte";
   import ProviderUseControl from "$lib/components/ProviderUseControl.svelte";
+  import SourceHealthHistory from "$lib/components/SourceHealthHistory.svelte";
   import { diagnosticFailureMessage, diagnosticIsNeutral, type DiagnosticFailure } from "$lib/diagnostics";
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
@@ -668,6 +669,13 @@
         <div><dt>Built from</dt><dd>{implementationLabel(source)}</dd></div>
       </dl>
     </section>
+
+    {#if administrator}
+      {#key source.id}
+        <SourceHealthHistory providerId={source.id} statuses={providerHealth(source.id)}
+          refreshKey={JSON.stringify(providerHealth(source.id))} onRetryWindow={refresh} />
+      {/key}
+    {/if}
 
     {#if source.id === "spicylyrics"}
       <section class="settings-card" aria-label="SpicyLyrics setup">

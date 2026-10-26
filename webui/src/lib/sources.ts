@@ -68,6 +68,8 @@ for (let status = 500; status < 600; status++) checkGuides[`http-${status}`] = c
 checkGuides.AccountNeedsReauthentication = checkGuides.Unauthorized = checkGuides.sign_in_needed;
 checkGuides.NotFound = { label: "Test song unavailable", step: "The service couldn't play the song it picked. It is checked again every 6 hours." };
 checkGuides.RateLimited = { label: "Rate limited", step: "The service is limiting requests. Wait a few minutes, then use Test." };
+checkGuides["rate-limited"] = checkGuides.RateLimited;
+checkGuides["account-needs-reauthentication"] = checkGuides["verification-required"] = checkGuides.sign_in_needed;
 
 export const checkGuide = (reasonCode?: string | null): CheckGuide | null =>
   reasonCode ? checkGuides[reasonCode] ?? null : null;

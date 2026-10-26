@@ -94,6 +94,8 @@ Listeners connect **Personal** accounts, which only they may use and manage. Adm
 
 Provider cards and account titles use the provider's display name. The subtitle shows the Personal account owner or **Shared with everyone**, followed by an optional custom connection name. When someone else created a Personal account, the card distinguishes its owner from its creator. New Personal connections default to the signed-in administrator; changing the owner changes whose listening may use the account. Leave the connection name blank to use the provider name. Older automatically generated account labels are renamed on startup; custom labels and credentials are preserved. A provider without a health sample shows **Not checked yet**.
 
+Administrators can expand **Recent diagnostic checks** on a source page to see up to 24 recorded checks from the last 30 days. Counts describe these samples, not every stream; unavailable samples stay neutral. **Automatic routing** shows current temporary skips, their reason and retry time. These skips clear after the retry window or a successful check without changing your source switches. Opening the page does not run a check.
+
 Apple Music has a three-step setup checklist: connect the Media User Token and storefront, sign the playback gateway into the same Apple account, then test playback. Package installation and gateway details are under Advanced setup. See [Apple setup](operations/apple-download-provider.md#connect-allstarr).
 
 Administrators may test playback on accounts they manage, including another user’s Personal account. These diagnostics are audited to the administrator. Ordinary listener playback still uses only the listener’s eligible Personal or Shared accounts.
