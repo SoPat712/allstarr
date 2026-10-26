@@ -5,15 +5,15 @@ namespace allstarr.Controllers;
 
 public partial class JellyfinController
 {
-    private readonly Dictionary<string, string> _nativeQueryRows = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _nativeQueryRows = new(JellyfinItemIdComparer.Instance);
 
     private void CaptureNativeQueryRows(JsonElement item)
     {
         if (item.ValueKind != JsonValueKind.Object) return;
         if (item.TryGetProperty("Id", out var value) && value.ValueKind == JsonValueKind.String &&
-            value.GetString() is { } id && !id.StartsWith("ext-", StringComparison.OrdinalIgnoreCase))
+            value.GetString() is { } id && !JellyfinItemIdComparer.IsExternalId(id))
         {
-            _nativeQueryRows[id] = item.GetRawText();
+            _nativeQueryRows.TryAdd(id, item.GetRawText());
             HttpContext.Items[JellyfinQueryResponseRows.NativeRowsKey] = _nativeQueryRows;
             return;
         }

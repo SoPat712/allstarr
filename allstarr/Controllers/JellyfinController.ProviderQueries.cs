@@ -10,7 +10,7 @@ namespace allstarr.Controllers;
 public partial class JellyfinController
 {
     private sealed record ExternalArtistQueryData(List<Song> Tracks, List<Album> Albums, Artist? Artist);
-    private readonly Dictionary<string, ExternalArtistQueryData> _artistQueryData = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ExternalArtistQueryData> _artistQueryData = new(StringComparer.Ordinal);
 
     private readonly Dictionary<string, List<Dictionary<string, object?>>> _curatorQueryRows = new(StringComparer.OrdinalIgnoreCase);
 
@@ -25,11 +25,11 @@ public partial class JellyfinController
         return rows;
     }
 
-    private readonly Dictionary<string, Guid> _queryRecordings = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Guid> _queryRecordings = new(JellyfinItemIdComparer.Instance);
 
     private Dictionary<string, object?> QuerySong(Song song)
     {
-        if (song.CanonicalRecordingId is { } recording && recording != Guid.Empty) _queryRecordings[song.Id] = recording;
+        if (song.CanonicalRecordingId is { } recording && recording != Guid.Empty) _queryRecordings.TryAdd(song.Id, recording);
         return _responseBuilder.ConvertSongToJellyfinItem(song,
             ExternalTrackPresentation.Preferences(HttpContext), null, includeAllFields: true);
     }
@@ -83,7 +83,7 @@ public partial class JellyfinController
     }
 
     private static bool IsProviderQueryItem(Dictionary<string, object?> item) =>
-        JellyfinProviderQuery.Text(item, "Id").StartsWith("ext-", StringComparison.OrdinalIgnoreCase);
+        JellyfinItemIdComparer.IsExternalId(JellyfinProviderQuery.Text(item, "Id"));
 
     private async Task<IActionResult?> TryReadExternalQueryAsync(string? includeItemTypes, string? userId)
     {
@@ -94,17 +94,17 @@ public partial class JellyfinController
         if (!external.Values.Any(ids => ids.Length > 0)) return null;
 
         var rows = new List<Dictionary<string, object?>>();
-        var cache = new Dictionary<string, List<Dictionary<string, object?>>>(StringComparer.OrdinalIgnoreCase);
+        var cache = new Dictionary<string, List<Dictionary<string, object?>>>(StringComparer.Ordinal);
         var groups = new Dictionary<string, HashSet<string>>();
         foreach (var (relation, ids) in external)
         {
-            var members = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var id in ids.Distinct(StringComparer.OrdinalIgnoreCase))
+            var members = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var id in ids.Distinct(JellyfinItemIdComparer.Instance))
             {
                 var parsed = _localLibraryService.ParseExternalId(id);
                 var role = relation == "AlbumArtistIds" ? ExternalArtistRelation.AlbumArtist :
                     relation == "ContributingArtistIds" ? ExternalArtistRelation.ContributingArtist : ExternalArtistRelation.All;
-                var key = $"{id}:{role}";
+                var key = $"{JellyfinItemIdComparer.IdentityKey(id)}:role:{role}";
                 if (!cache.TryGetValue(key, out var children))
                 {
                     children = await ReadExternalChildRowsAsync(parsed.provider!, relation == "AlbumIds" ? "album" : "artist", parsed.externalId!,
@@ -150,10 +150,10 @@ public partial class JellyfinController
     {
         var root = JsonSerializer.SerializeToElement(item);
         bool Contains(string key) => root.TryGetProperty(key, out var artists) && artists.ValueKind == JsonValueKind.Array &&
-            artists.EnumerateArray().Any(artist => artist.TryGetProperty("Id", out var id) && ids.Contains(id.GetString(), StringComparer.OrdinalIgnoreCase));
+            artists.EnumerateArray().Any(artist => artist.TryGetProperty("Id", out var id) && ids.Contains(id.GetString(), JellyfinItemIdComparer.Instance));
         return relation switch
         {
-            "AlbumIds" => ids.Contains(JellyfinProviderQuery.Text(item, "AlbumId"), StringComparer.OrdinalIgnoreCase),
+            "AlbumIds" => ids.Contains(JellyfinProviderQuery.Text(item, "AlbumId"), JellyfinItemIdComparer.Instance),
             "AlbumArtistIds" => Contains("AlbumArtists"),
             "ContributingArtistIds" => Contains("ArtistItems") && !Contains("AlbumArtists"),
             _ => Contains("ArtistItems") || Contains("AlbumArtists")
@@ -164,7 +164,7 @@ public partial class JellyfinController
     {
         var candidates = rows.ToList();
         var native = candidates.Where(item => !IsProviderQueryItem(item)).ToArray();
-        var identities = native.SelectMany(QueryIdentities).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var identities = native.SelectMany(QueryIdentities).ToHashSet(StringComparer.Ordinal);
         foreach (var item in native) yield return item;
         foreach (var item in candidates.Where(IsProviderQueryItem))
         {
@@ -178,13 +178,14 @@ public partial class JellyfinController
     private IEnumerable<string> QueryIdentities(Dictionary<string, object?> item)
     {
         var id = JellyfinProviderQuery.Text(item, "Id");
-        yield return "id:" + id;
-        if (_queryRecordings.TryGetValue(id, out var recording)) yield return $"recording:{recording}";
+        yield return "id:" + JellyfinItemIdComparer.IdentityKey(id);
+        if (_queryRecordings.TryGetValue(id, out var recording)) yield return $"recording:{recording:N}";
         if (!item.TryGetValue("ProviderIds", out var providerIds)) yield break;
         var ids = JsonSerializer.SerializeToElement(providerIds);
         if (ids.ValueKind != JsonValueKind.Object) yield break;
         foreach (var pair in ids.EnumerateObject())
-            if (!string.IsNullOrWhiteSpace(pair.Value.ToString())) yield return $"{JellyfinProviderQuery.Text(item, "Type")}:{pair.Name}:{pair.Value}";
+            if (!string.IsNullOrWhiteSpace(pair.Value.ToString()))
+                yield return JellyfinItemIdComparer.MetadataKey(JellyfinProviderQuery.Text(item, "Type"), pair.Name, pair.Value.ToString());
     }
 
     private async Task<List<Dictionary<string, object?>>?> ReadExternalChildRowsAsync(string provider, string type,
@@ -202,19 +203,19 @@ public partial class JellyfinController
             var album = await GetProviderAlbumAsync(provider, externalId, cancellationToken);
             if (album == null) return null;
             var excludedArtists = JellyfinProviderQuery.Values(Request.Query["ExcludeArtistIds"].ToString());
-            if (album.ArtistId != null && excludedArtists.Contains(album.ArtistId, StringComparer.OrdinalIgnoreCase)) return [];
+            if (album.ArtistId != null && excludedArtists.Contains(album.ArtistId, JellyfinItemIdComparer.Instance)) return [];
             return album.Songs.Select(QuerySong).ToList();
         }
         if (type != "artist") return [];
         var includeAlbums = unspecified || types!.Contains("MusicAlbum", StringComparer.OrdinalIgnoreCase);
         if (!includeTracks && !includeAlbums) return [];
         selectedArtistId ??= $"ext-{provider}-artist-{externalId}";
-        var key = $"{provider}:{externalId}";
+        var key = JellyfinItemIdComparer.ExternalResourceKey(provider, "artist", externalId);
         if (!_artistQueryData.TryGetValue(key, out var data))
         {
             var contributes = artistRelation == ExternalArtistRelation.ContributingArtist ||
                 JellyfinProviderQuery.Values(Request.Query["ContributingArtistIds"].ToString())
-                    .Contains(selectedArtistId, StringComparer.OrdinalIgnoreCase);
+                    .Contains(selectedArtistId, JellyfinItemIdComparer.Instance);
             var tracksTask = includeTracks || contributes
                 ? GetProviderArtistTracksAsync(provider, externalId, cancellationToken) : Task.FromResult(new List<Song>());
             var albumsTask = GetProviderArtistAlbumsAsync(provider, externalId, cancellationToken);
@@ -224,13 +225,14 @@ public partial class JellyfinController
             var allAlbums = (await albumsTask).ToList();
             if (contributes)
             {
-                var known = allAlbums.Select(album => album.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var known = allAlbums.Select(album => album.Id).ToHashSet(JellyfinItemIdComparer.Instance);
                 var lookups = allTracks.Select(track => track.AlbumId)
                     .Where(id => !string.IsNullOrWhiteSpace(id) && !known.Contains(id))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Distinct(JellyfinItemIdComparer.Instance)
                     .Select(id => _localLibraryService.ParseExternalId(id!))
                     .Where(parsed => parsed.isExternal && parsed.type == "album" &&
-                        string.Equals(parsed.provider, provider, StringComparison.OrdinalIgnoreCase))
+                        string.Equals(JellyfinItemIdComparer.NormalizeProvider(parsed.provider!),
+                            JellyfinItemIdComparer.NormalizeProvider(provider), StringComparison.Ordinal))
                     .Take(200)
                     .Select(parsed => GetProviderAlbumAsync(provider, parsed.externalId!, cancellationToken));
                 allAlbums.AddRange((await Task.WhenAll(lookups)).OfType<Album>());
@@ -242,23 +244,23 @@ public partial class JellyfinController
         var albums = data.Albums.ToList();
         var artist = data.Artist;
         bool IsPrimaryAlbum(Album album) => !string.IsNullOrWhiteSpace(album.ArtistId)
-            ? string.Equals(album.ArtistId, selectedArtistId, StringComparison.OrdinalIgnoreCase)
+            ? JellyfinItemIdComparer.Instance.Equals(album.ArtistId, selectedArtistId)
             : artist != null && string.Equals(album.Artist, artist.Name, StringComparison.OrdinalIgnoreCase);
         if (includeTracks)
         {
             tracks.AddRange(albums.SelectMany(album => album.Songs.Where(track => IsPrimaryAlbum(album) ||
-                string.Equals(track.ArtistId, selectedArtistId, StringComparison.OrdinalIgnoreCase) ||
-                track.ArtistIds.Contains(selectedArtistId, StringComparer.OrdinalIgnoreCase))));
+                JellyfinItemIdComparer.Instance.Equals(track.ArtistId, selectedArtistId) ||
+                track.ArtistIds.Contains(selectedArtistId, JellyfinItemIdComparer.Instance))));
             var excludedArtists = JellyfinProviderQuery.Values(Request.Query["ExcludeArtistIds"].ToString());
-            var excludedAlbums = albums.Where(album => album.ArtistId != null && excludedArtists.Contains(album.ArtistId, StringComparer.OrdinalIgnoreCase))
-                .Select(album => album.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var excludedAlbums = albums.Where(album => album.ArtistId != null && excludedArtists.Contains(album.ArtistId, JellyfinItemIdComparer.Instance))
+                .Select(album => album.Id).ToHashSet(JellyfinItemIdComparer.Instance);
             tracks = tracks.Where(track => track.AlbumId == null || !excludedAlbums.Contains(track.AlbumId)).ToList();
         }
         if (artistRelation != ExternalArtistRelation.All)
         {
             albums = albums.Where(album => (!string.IsNullOrWhiteSpace(album.ArtistId) || artist != null && !string.IsNullOrWhiteSpace(album.Artist)) &&
                 IsPrimaryAlbum(album) == (artistRelation == ExternalArtistRelation.AlbumArtist)).ToList();
-            var albumIds = albums.Select(album => album.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var albumIds = albums.Select(album => album.Id).ToHashSet(JellyfinItemIdComparer.Instance);
             tracks = tracks.Where(track => track.AlbumId != null && albumIds.Contains(track.AlbumId)).ToList();
         }
         var result = new List<Dictionary<string, object?>>();

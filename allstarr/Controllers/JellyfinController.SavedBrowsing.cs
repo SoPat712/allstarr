@@ -89,11 +89,11 @@ public partial class JellyfinController
             var originalItems = latest ? JsonNode.Parse(original) as JsonArray : envelope?["Items"] as JsonArray;
             if (originalItems == null) return HandleProxyResponse(native, status);
             var rows = originalItems.OfType<JsonObject>().Select(item => item.Deserialize<Dictionary<string, object?>>() ?? []).ToList();
-            var nativeText = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var nativeText = new Dictionary<string, string>(JellyfinItemIdComparer.Instance);
             void Remember(JsonElement element)
             {
                 foreach (var item in element.EnumerateArray())
-                    if (item.TryGetProperty("Id", out var id) && id.GetString() is { } value) nativeText[value] = item.GetRawText();
+                    if (item.TryGetProperty("Id", out var id) && id.GetString() is { } value) nativeText.TryAdd(value, item.GetRawText());
             }
             Remember(latest ? native.RootElement : native.RootElement.GetProperty("Items"));
             var totalNative = envelope?["TotalRecordCount"]?.GetValue<int>() ?? rows.Count;

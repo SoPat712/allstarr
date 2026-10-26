@@ -14,9 +14,9 @@ public partial class JellyfinController
         if (!(latest && sorts.Length == 0) && !sorts.Contains("DateCreated", StringComparer.OrdinalIgnoreCase)) return;
         if (JellyfinProviderQuery.Values(query.GetValueOrDefault("Fields") ?? "").Contains("DateCreated", StringComparer.OrdinalIgnoreCase)) return;
         var missing = rows.Where(row => !IsProviderQueryItem(row) && !row.ContainsKey("DateCreated"))
-            .GroupBy(row => JellyfinProviderQuery.Text(row, "Id"), StringComparer.OrdinalIgnoreCase)
+            .GroupBy(row => JellyfinProviderQuery.Text(row, "Id"), JellyfinItemIdComparer.Instance)
             .Where(group => group.Key.Length != 0)
-            .ToDictionary(group => group.Key, group => group.ToArray(), StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(group => group.Key, group => group.ToArray(), JellyfinItemIdComparer.Instance);
         var user = HttpContext.RequireProtocolExecutionContext().VerifiedBackendPrincipalId;
         foreach (var batch in missing.Keys.Chunk(400))
         {

@@ -21,9 +21,9 @@ internal sealed class JellyfinProviderQuery(IQueryCollection query, string? sear
         string? defaultSort = null, bool deduplicate = true, bool nativeAlreadyFiltered = false,
         Func<IEnumerable<Dictionary<string, object?>>, IEnumerable<Dictionary<string, object?>>>? reconcile = null)
     {
-        var rows = source.Where(item => nativeAlreadyFiltered && !Text(item, "Id").StartsWith("ext-", StringComparison.OrdinalIgnoreCase) || Matches(item));
+        var rows = source.Where(item => nativeAlreadyFiltered && !JellyfinItemIdComparer.IsExternalId(Text(item, "Id")) || Matches(item));
         if (reconcile != null) rows = reconcile(rows);
-        if (deduplicate) rows = rows.DistinctBy(item => Text(item, "Id"), StringComparer.OrdinalIgnoreCase);
+        if (deduplicate) rows = rows.DistinctBy(item => Text(item, "Id"), JellyfinItemIdComparer.Instance);
         var result = rows.ToList();
         var fields = Values(query["SortBy"].ToString());
         if (fields.Length == 0) fields = Values(defaultSort ?? "");
@@ -39,7 +39,7 @@ internal sealed class JellyfinProviderQuery(IQueryCollection query, string? sear
                     var order = orders.Length == 0 ? "Ascending" : orders[index < orders.Length ? index : 0];
                     return order.Equals("Descending", StringComparison.OrdinalIgnoreCase) ? -comparison : comparison;
                 }
-                return StringComparer.OrdinalIgnoreCase.Compare(Text(left, "Id"), Text(right, "Id"));
+                return JellyfinItemIdComparer.Instance.Compare(Text(left, "Id"), Text(right, "Id"));
             })).ToList();
         }
         return result;
@@ -56,15 +56,17 @@ internal sealed class JellyfinProviderQuery(IQueryCollection query, string? sear
         if (!string.IsNullOrEmpty(query["NameStartsWith"]) && !name.StartsWith(query["NameStartsWith"].ToString(), StringComparison.OrdinalIgnoreCase)) return false;
         if (!string.IsNullOrEmpty(query["NameStartsWithOrGreater"]) && StringComparer.OrdinalIgnoreCase.Compare(name, query["NameStartsWithOrGreater"].ToString()) < 0) return false;
         if (!string.IsNullOrEmpty(query["NameLessThan"]) && StringComparer.OrdinalIgnoreCase.Compare(name, query["NameLessThan"].ToString()) >= 0) return false;
-        if (Values(query["ExcludeItemIds"].ToString()).Contains(Read("Id"), StringComparer.OrdinalIgnoreCase)) return false;
+        if (Values(query["ExcludeItemIds"].ToString()).Contains(Read("Id"), JellyfinItemIdComparer.Instance)) return false;
         if (!MatchAny(query["IncludeItemTypes"].ToString(), [Read("Type")])) return false;
         if (Values(query["ExcludeItemTypes"].ToString()).Contains(Read("Type"), StringComparer.OrdinalIgnoreCase)) return false;
         if (Values(query["ExcludeLocationTypes"].ToString()).Contains(Read("LocationType"), StringComparer.OrdinalIgnoreCase)) return false;
         var excludedArtists = Values(query["ExcludeArtistIds"].ToString());
         if (Objects(root, "ArtistItems").Concat(Objects(root, "AlbumArtists"))
-            .Any(artist => excludedArtists.Contains(String(artist, "Id"), StringComparer.OrdinalIgnoreCase))) return false;
+            .Any(artist => excludedArtists.Contains(String(artist, "Id"), JellyfinItemIdComparer.Instance))) return false;
         if (!MatchAny(query["Genres"].ToString(), Strings(root, "Genres"), genres: true)) return false;
-        if (!MatchAny(query["GenreIds"].ToString(), Objects(root, "GenreItems").Select(value => String(value, "Id")))) return false;
+        var genreIds = Values(query["GenreIds"].ToString());
+        if (genreIds.Length > 0 && !Objects(root, "GenreItems").Select(value => String(value, "Id"))
+            .Any(value => genreIds.Contains(value, JellyfinItemIdComparer.Instance))) return false;
         if (!MatchAny(query["Years"].ToString(), [Read("ProductionYear")])) return false;
         if (int.TryParse(query["MinYear"], out var min) && (!int.TryParse(Read("ProductionYear"), out var minimumYear) || minimumYear < min)) return false;
         if (int.TryParse(query["MaxYear"], out var max) && (!int.TryParse(Read("ProductionYear"), out var maximumYear) || maximumYear > max)) return false;

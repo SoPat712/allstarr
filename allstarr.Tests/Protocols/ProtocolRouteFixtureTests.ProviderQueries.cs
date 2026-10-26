@@ -106,6 +106,52 @@ public sealed partial class ProtocolRouteFixtureTests
         gateway.VerifyNoOtherCalls();
     }
 
+    [Fact]
+    public async Task JellyfinProviderQuery_PreservesCaseDistinctOpaqueIdsForDedupExclusionAndTies()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "case"))
+            .ReturnsAsync(new Album
+            {
+                Songs = [QuerySong("abc", "Same title", 2020, "Rock"), QuerySong("AbC", "Same title", 2020, "Rock")]
+            });
+        using var factory = ProviderQueryFactory(gateway.Object);
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/Items?ParentId=ext-deezer-album-case&IncludeItemTypes=Audio&SortBy=Name&Limit=20&api_key=fixture-key");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        AssertQueryPage(body.RootElement, 0, 2, ["ext-deezer-song-AbC", "ext-deezer-song-abc"]);
+
+        using var excluded = await client.GetAsync("/Items?ParentId=ext-deezer-album-case&IncludeItemTypes=Audio&ExcludeItemIds=ext-deezer-song-AbC&Limit=20&api_key=fixture-key");
+        using var excludedBody = JsonDocument.Parse(await excluded.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.OK, excluded.StatusCode);
+        AssertQueryPage(excludedBody.RootElement, 0, 1, ["ext-deezer-song-abc"]);
+        gateway.VerifyAll();
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task JellyfinProviderQuery_DoesNotConflateCaseDistinctCanonicalRecordings()
+    {
+        var first = QuerySong("abc", "Same title", 2020, "Rock");
+        first.CanonicalRecordingId = Guid.Parse("0199a468-3ac7-799c-8f10-914282c0e621");
+        var second = QuerySong("AbC", "Same title", 2020, "Rock");
+        second.CanonicalRecordingId = Guid.Parse("0199a468-3ac7-799c-8f10-914282c0e622");
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "case-recordings"))
+            .ReturnsAsync(new Album { Songs = [first, second] });
+        using var factory = ProviderQueryFactory(gateway.Object);
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/Items?ParentId=ext-deezer-album-case-recordings&IncludeItemTypes=Audio&SortBy=Name&Limit=20&api_key=fixture-key");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        AssertQueryPage(body.RootElement, 0, 2, ["ext-deezer-song-AbC", "ext-deezer-song-abc"]);
+        gateway.VerifyAll();
+        gateway.VerifyNoOtherCalls();
+    }
+
     [Theory]
     [InlineData("ParentId", "IsFavorite=true", 0, 20)]
     [InlineData("ParentId", "Filters=IsFavorite", 0, 20)]
