@@ -3590,7 +3590,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     if (width === 390) await expectContainedMobileGeometry(page);
     await page.locator(".track-cache-controls").scrollIntoViewIfNeeded();
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-    await page.screenshot({ path: `/private/tmp/allstarr-cache-defaults-visual/off-${width}-${theme}.png` });
+    await page.screenshot({ path: test.info().outputPath(`cache-off-${width}-${theme}.png`) });
     await page.getByRole("button", { name: "Playback caching", exact: true }).click();
     await page.getByRole("option", { name: "Cache played songs", exact: true }).click();
     await page.locator('input[name="CACHE_DURATION_HOURS"]').fill("72");
@@ -3610,7 +3610,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
       const navigation = await page.locator(".mobile-navigation").boundingBox();
       expect(save!.y + save!.height).toBeLessThanOrEqual(navigation!.y);
     }
-    await page.screenshot({ path: `/private/tmp/allstarr-cache-defaults-visual/on-${width}-${theme}.png` });
+    await page.screenshot({ path: test.info().outputPath(`cache-on-${width}-${theme}.png`) });
   });
 }
 
