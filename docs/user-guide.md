@@ -47,7 +47,7 @@ Sources set to **Manual only** appear in search and matching for you to choose. 
 
 Use **Report a problem** on Home's Now playing card, in a playlist song's details, or in a mapping row's actions. Getting started also offers a general report. Choose a problem type and enter a short note. The form shows the song, saved match, confirmed playback source, observed music app and recent source checks when those facts are available. A catalog source does not confirm what played. Leave passwords, tokens and private links out of the note.
 
-Reports stay in this Allstarr installation for administrators to review. A failed save keeps your note; retrying an unchanged submission uses the same request identity. If playback details expire, refresh them or explicitly continue without those details. Reporting a wrong match or lyrics does not change the saved choice automatically.
+Reports stay in this Allstarr installation for administrators to review. A failed save keeps your note; retrying an unchanged submission uses the same request identity. If playback details expire, refresh them or explicitly continue without those details. Reporting a wrong match or lyrics does not change the saved choice automatically. In **Activity → Reports**, administrators can open **Review match** for a captured match or **Review lyrics** for a known recording, including songs without a saved match. Personal lyrics choices apply to the reviewing administrator’s signed-in account. Household choices set a shared default while preserving listeners’ personal choices.
 
 ## Dashboard map
 
