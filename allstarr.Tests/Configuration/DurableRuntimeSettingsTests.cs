@@ -24,6 +24,22 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
     private Guid _disabledUser;
     private FakeClock _clock = null!;
 
+    [Theory]
+    [InlineData("Jellyfin")]
+    [InlineData("Subsonic")]
+    public async Task FreshRuntimeCacheDefaultsAndSavedStorageChoicesSurviveRestart(string backend)
+    {
+        var bootstrap = new Dictionary<string, string?> { ["Backend:Type"] = backend };
+        var service = CreateService(bootstrap);
+        Assert.Equal("Cache", (await service.GetAsync("Library:StorageMode")).NormalizedValue);
+        Assert.Equal("72", (await service.GetAsync("Library:CacheDurationHours")).NormalizedValue);
+        await service.ApplyBatchAsync([new("Library:StorageMode", "Permanent"), new("Library:CacheDurationHours", "24")],
+            "fixture", _userId);
+        var restarted = CreateService(bootstrap);
+        Assert.Equal("Permanent", (await restarted.GetAsync("Library:StorageMode")).NormalizedValue);
+        Assert.Equal("24", (await restarted.GetAsync("Library:CacheDurationHours")).NormalizedValue);
+    }
+
     public async Task InitializeAsync()
     {
         _database = await SqliteTestDatabase.CreateAsync();

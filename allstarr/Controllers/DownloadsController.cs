@@ -8,8 +8,10 @@ using allstarr.Services.Lyrics;
 using allstarr.Services.Common;
 using allstarr.Core.Downloads;
 using allstarr.Core.Jobs;
+using allstarr.Models.Settings;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using TagLib;
 
 namespace allstarr.Controllers;
@@ -32,6 +34,7 @@ public partial class DownloadsController : ControllerBase
     private readonly AdminProtocolExecutionContextFactory? _protocolContexts;
     private readonly Core.ManagedFiles.RecordingKeptFiles? _kept;
     private readonly Core.Downloads.ManagedTrackPlacementOptions? _placement;
+    private readonly IOptions<SubsonicSettings>? _playbackSettings;
 
     public DownloadsController(
         ILogger<DownloadsController> logger,
@@ -41,7 +44,8 @@ public partial class DownloadsController : ControllerBase
         IDbContextFactory<AllstarrDbContext>? contextFactory = null,
         AdminProtocolExecutionContextFactory? protocolContexts = null,
         Core.ManagedFiles.RecordingKeptFiles? kept = null,
-        Core.Downloads.ManagedTrackPlacementOptions? placement = null)
+        Core.Downloads.ManagedTrackPlacementOptions? placement = null,
+        IOptions<SubsonicSettings>? playbackSettings = null)
     {
         _logger = logger;
         _configuration = configuration;
@@ -51,6 +55,7 @@ public partial class DownloadsController : ControllerBase
         _protocolContexts = protocolContexts;
         _kept = kept;
         _placement = placement;
+        _playbackSettings = playbackSettings;
     }
 
     [HttpPost("downloads/{artifactId:guid}/quality-check")]
@@ -495,6 +500,9 @@ public partial class DownloadsController : ControllerBase
                 ? $"{bitrate} kbps"
                 : codec;
 
+        var cacheLastUsed = root.Key == "cache"
+            ? ManagedTrackCacheService.CacheLastUsed(ownership?.Mapping?.CacheIdentityJson)?.UtcDateTime
+            : null;
         return new(
             requestedPath,
             root.Key,
@@ -518,17 +526,18 @@ public partial class DownloadsController : ControllerBase
                 ? null
                 : $"/api/admin/downloads/artwork/{Uri.EscapeDataString(
                     $"ext-{identity.Provider}-song-{identity.ExternalId}")}",
-            info.LastAccessTimeUtc,
-            Expiry(root.Key, info.LastWriteTimeUtc),
+            cacheLastUsed ?? info.LastAccessTimeUtc,
+            Expiry(root.Key, info.LastWriteTimeUtc, cacheLastUsed),
             ownership?.ReferenceCount > 0 ? "Referenced" : ownership?.Mapping != null || ownership?.ManagedFileId != null ? "Indexed" : "Diagnostic",
             ownership?.ReferenceCount,
             ownership?.ExplicitlyKept == true || ownership?.Mapping != null && ownership.ReferenceCount.GetValueOrDefault() == 0,
             ownership?.ExplicitlyKept == true, ownership?.QualityCheck, ownership?.QualityCheckArtifactId);
     }
 
-    private DateTime? Expiry(string root, DateTime lastModified) => root switch
+    private DateTime? Expiry(string root, DateTime lastModified, DateTime? cacheLastUsed) => root switch
     {
-        "cache" => lastModified.AddHours(Math.Max(1, _configuration.GetValue("Library:CacheDurationHours", 24))),
+        "cache" => cacheLastUsed?.AddHours(Math.Max(1, _playbackSettings?.Value.CacheDurationHours ??
+            _configuration.GetValue("Library:CacheDurationHours", 72))),
         "transcoded" => lastModified.AddMinutes(Math.Max(1, _configuration.GetValue("Cache:TranscodeCacheMinutes", 60))),
         _ => null
     };

@@ -3533,7 +3533,7 @@ test("Cached owns track storage and retention controls", async ({ page }) => {
 
   await page.goto("#/library/cached");
   await expect(page.getByText("Track cache behavior")).toBeVisible();
-  await expect(page.getByText("Cache mode", { exact: true })).toBeVisible();
+  await expect(page.getByText("Playback cache on", { exact: true })).toBeVisible();
   await page.getByText("Track cache behavior").click();
   await expect(page.locator('input[name="CACHE_DURATION_HOURS"]')).toHaveValue("24");
   await expect(page.locator('input[name="CACHE_TRANSCODE_MINUTES"]')).toHaveValue("60");
@@ -3554,6 +3554,65 @@ test("Cached owns track storage and retention controls", async ({ page }) => {
   await expect(page.getByText("Track cache hours")).toHaveCount(0);
   await expect(page.getByText("Transcode cache minutes")).toHaveCount(0);
 });
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`Cached explains disabled playback caching at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript((value) => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    let mode = "Permanent";
+    let hours = 1;
+    let saved: Record<string, string> | null = null;
+    const writes: string[] = [];
+    page.on("request", request => {
+      if (request.method() === "POST") writes.push(new URL(request.url()).pathname);
+    });
+    await page.route("**/api/admin/config", route => {
+      if (route.request().method() === "POST") {
+        saved = route.request().postDataJSON().updates;
+        mode = saved!.STORAGE_MODE;
+        hours = Number(saved!.CACHE_DURATION_HOURS);
+        return route.fulfill({ json: { message: "Runtime configuration updated.", requiresRestart: false } });
+      }
+      return route.fulfill({ json: {
+        ...(responses["/api/admin/config"] as object), library: { storageMode: mode, cacheDurationHours: hours },
+      } });
+    });
+    await page.route("**/api/admin/downloads?storage=cache", route => route.fulfill({ json: {
+      storage: "cache", files: [], count: 0, managedCount: 0, diagnosticCount: 0, totalSize: 0, totalSizeFormatted: "0 B",
+    } }));
+    await page.goto("#/library/cached");
+    await expect(page.getByText("Playback cache off", { exact: true })).toBeVisible();
+    await expect(page.getByText(/New playback is not being added to Cached/)).toBeVisible();
+    await page.getByText("Track cache behavior").click();
+    await expect(page.getByRole("button", { name: "Playback caching", exact: true })).toContainText("Do not cache playback");
+    await expect(page.getByText(/Hearts, Keep and retained playlists protect their copies in either mode/)).toBeVisible();
+    if (width === 390) await expectContainedMobileGeometry(page);
+    await page.locator(".track-cache-controls").scrollIntoViewIfNeeded();
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await page.screenshot({ path: `/private/tmp/allstarr-cache-defaults-visual/off-${width}-${theme}.png` });
+    await page.getByRole("button", { name: "Playback caching", exact: true }).click();
+    await page.getByRole("option", { name: "Cache played songs", exact: true }).click();
+    await page.locator('input[name="CACHE_DURATION_HOURS"]').fill("72");
+    await page.getByRole("button", { name: "Save track cache", exact: true }).click();
+    await expect.poll(() => saved).toEqual({ STORAGE_MODE: "Cache", CACHE_DURATION_HOURS: "72", CACHE_TRANSCODE_MINUTES: "60" });
+    await expect(page.getByText("Playback cache on", { exact: true })).toBeVisible();
+    await expect(page.locator('input[name="CACHE_DURATION_HOURS"]')).toHaveValue("72");
+    await expect(page.getByText(/The size limit can evict cached tracks sooner/)).toBeVisible();
+    expect(writes).toEqual(["/api/admin/config"]);
+    await page.getByRole("button", { name: "Dismiss notification", exact: true }).click();
+    await page.locator('input[name="CACHE_DURATION_HOURS"]').click();
+    if (width === 390) await expectContainedMobileGeometry(page);
+    await page.locator(".track-cache-controls").scrollIntoViewIfNeeded();
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    if (width === 390) {
+      const save = await page.getByRole("button", { name: "Save track cache", exact: true }).boundingBox();
+      const navigation = await page.locator(".mobile-navigation").boundingBox();
+      expect(save!.y + save!.height).toBeLessThanOrEqual(navigation!.y);
+    }
+    await page.screenshot({ path: `/private/tmp/allstarr-cache-defaults-visual/on-${width}-${theme}.png` });
+  });
+}
 
 test("Settings fields share columns, control baselines, and a compact action rail", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });

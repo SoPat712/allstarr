@@ -34,7 +34,7 @@
     : placeholder);
 </script>
 
-<div class="select-root">
+<div class="select-root relative">
   <Select.Root
     type="single"
     bind:value

@@ -197,8 +197,10 @@ public static class RuntimeSettingCatalog
         items.Add(new("Lyrics:JellyfinWordGap", RuntimeSettingValueType.Boolean,
             "Lyrics:JellyfinWordGap", DefaultValue: "true"));
         items.Add(new("Library:DownloadMode", RuntimeSettingValueType.String, "Jellyfin:DownloadMode", Choices: new HashSet<string>(["Track", "Album"], Comparer)));
-        items.Add(new("Library:StorageMode", RuntimeSettingValueType.String, "Jellyfin:StorageMode", Choices: new HashSet<string>(["Cache", "Permanent"], Comparer)));
-        Int("Library:CacheDurationHours", 1, 8760, "Jellyfin:CacheDurationHours");
+        items.Add(new("Library:StorageMode", RuntimeSettingValueType.String, "Jellyfin:StorageMode",
+            Choices: new HashSet<string>(["Cache", "Permanent"], Comparer), DefaultValue: "Cache"));
+        items.Add(new("Library:CacheDurationHours", RuntimeSettingValueType.Integer, "Jellyfin:CacheDurationHours",
+            Minimum: 1, Maximum: 8760, DefaultValue: "72"));
         items.Add(new("ProviderAccounts:ListenersCanConnectOwnAccounts", RuntimeSettingValueType.Boolean,
             "ProviderAccounts:ListenersCanConnectOwnAccounts", DefaultValue: "true"));
         Int("SpotifyApi:CacheDurationMinutes", 1, 10080); Int("SpotifyApi:RateLimitDelayMs", 0, 60000);

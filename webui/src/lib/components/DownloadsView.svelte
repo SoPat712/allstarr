@@ -46,7 +46,7 @@
   let removal = $state<Removal | null>(null);
   let confirmOpen = $state(false);
   let storageMode = $state("Cache");
-  let cacheDurationHours = $state(24);
+  let cacheDurationHours = $state(72);
   let transcodeCacheMinutes = $state(60);
   let controlsReady = $state(false);
   let controlsError = $state("");
@@ -104,7 +104,7 @@
     if (cached && configResult.status === "fulfilled" && configResult.value) {
       if (!cacheControlsDirty) {
         storageMode = String(pathValue(configResult.value, "library.storageMode") ?? "Cache");
-        cacheDurationHours = Number(pathValue(configResult.value, "library.cacheDurationHours") ?? 24);
+        cacheDurationHours = Number(pathValue(configResult.value, "library.cacheDurationHours") ?? 72);
         transcodeCacheMinutes = Number(pathValue(configResult.value, "cache.transcodeCacheMinutes") ?? 60);
       }
       controlsReady = true;
@@ -217,7 +217,7 @@
         <p>{cached
           ? storageMode === "Cache"
             ? "Songs saved after streaming so they start faster next time. Keep a song to hold on to it permanently."
-            : "Automatic caching is off. Downloaded songs are kept permanently instead."
+            : "Playback caching is off. Hearts and Keep still save permanent copies."
           : "Songs Allstarr keeps permanently, even when the cache is cleaned."}</p>
       </div>
       <div class="downloads-summary" aria-label={`${label} totals`}>
@@ -318,8 +318,8 @@
         <strong>No {label.toLowerCase()} tracks</strong>
         <p>{cached
           ? storageMode === "Cache"
-            ? "A track appears after an external stream reaches the end. Interrupted and partial streams are not retained."
-            : "Storage mode is Permanent, so managed downloads appear under Kept instead."
+            ? "Tracks appear when their background download finishes, even if you skip the song. Incomplete or failed files are not listed."
+            : "New playback is not being added to Cached. Enable playback caching below to save temporary copies."
           : "Use Keep on a cached track to retain it permanently."}</p>
       </div>
     {/if}
@@ -331,20 +331,20 @@
             <strong id="track-cache-controls-title">Track cache behavior</strong>
             <small>Playback storage and retention, next to the files they control.</small>
           </span>
-          <Badge state={storageMode === "Cache" ? "healthy" : "suggested"}>{storageMode} mode</Badge>
+          <Badge state={storageMode === "Cache" ? "healthy" : "suggested"}>Playback cache {storageMode === "Cache" ? "on" : "off"}</Badge>
           <ChevronDown class="disclosure-chevron" size={16} aria-hidden="true" />
         </summary>
         {#if controlsReady}
           <form class="settings-fields track-cache-settings" onsubmit={(event) => void saveCacheControls(event)}>
             <label class="setting-field">
-              <span><strong>Storage mode</strong></span>
-              <SelectField bind:value={storageMode} name="STORAGE_MODE" label="Storage mode" options={["Cache", "Permanent"]} onchange={() => cacheControlsDirty = true} />
-              <small>Cache retains completed provider streams. Permanent sends managed downloads to Kept.</small>
+              <span><strong>Playback caching</strong></span>
+              <SelectField bind:value={storageMode} name="STORAGE_MODE" label="Playback caching" options={[{ value: "Cache", label: "Cache played songs" }, { value: "Permanent", label: "Do not cache playback" }]} onchange={() => cacheControlsDirty = true} />
+              <small>Hearts, Keep and retained playlists protect their copies in either mode.</small>
             </label>
             <label class="setting-field">
               <span><strong>Track retention</strong><small>Hours</small></span>
               <input bind:value={cacheDurationHours} name="CACHE_DURATION_HOURS" type="number" min="1" max="8760" oninput={() => cacheControlsDirty = true} />
-              <small>Completed cached tracks older than this may be removed.</small>
+              <small>Hours since last use. The size limit can evict cached tracks sooner.</small>
             </label>
             <label class="setting-field">
               <span><strong>Quality override retention</strong><small>Minutes</small></span>

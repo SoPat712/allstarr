@@ -316,6 +316,9 @@ public sealed partial class ManagedTrackCacheService
         catch (JsonException) { return null; }
     }
 
+    internal static DateTimeOffset? CacheLastUsed(string? identityJson) =>
+        ReadIdentity(identityJson) is { LastUsed: var lastUsed } && lastUsed != default ? lastUsed : null;
+
     private sealed class PinnedAudioStream(Stream source, Action closed) : Stream
     {
         private int disposed;

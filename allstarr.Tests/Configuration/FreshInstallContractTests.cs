@@ -1,8 +1,76 @@
+using System.Net;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Downloads;
+using allstarr.Core.Identity;
+using allstarr.Core.Protocols;
+using allstarr.Models.Domain;
+using allstarr.Models.Settings;
+using allstarr.Services.Common;
+using allstarr.Services.Local;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Moq;
+
 namespace allstarr.Tests;
 
 public sealed class FreshInstallContractTests
 {
     private readonly string _repositoryRoot = FindRepositoryRoot();
+
+    [Theory]
+    [InlineData("Jellyfin", false)]
+    [InlineData("Subsonic", false)]
+    [InlineData("Jellyfin", true)]
+    [InlineData("Subsonic", true)]
+    public async Task FreshPlaybackDefaultsPublishAThreeDayCache(string backend, bool packagedConfiguration)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"playback-cache-defaults-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var builder = new ConfigurationBuilder();
+            if (packagedConfiguration) builder.AddJsonFile(Path.Combine(_repositoryRoot, "allstarr", "appsettings.json"));
+            var configuration = builder.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Library:DownloadPath"] = root
+            }).Build();
+            MediaBackendSettings settings = backend == "Jellyfin"
+                ? packagedConfiguration ? configuration.GetSection(backend).Get<JellyfinSettings>()! : new JellyfinSettings()
+                : packagedConfiguration ? configuration.GetSection(backend).Get<SubsonicSettings>()! : new SubsonicSettings();
+            string? published = null;
+            var local = new Mock<ILocalLibraryService>(MockBehavior.Strict);
+            local.Setup(item => item.RegisterDownloadedSongAsync(It.IsAny<DownloadedSongMappingScope>(),
+                    It.IsAny<Song>(), It.IsAny<string>()))
+                .Callback<DownloadedSongMappingScope, Song, string>((_, _, path) => published = path)
+                .Returns(Task.CompletedTask);
+            local.Setup(item => item.GetLocalPathForExternalSongAsync(It.IsAny<DownloadedSongMappingScope>(), "deezer", "track"))
+                .ReturnsAsync(() => published);
+            await using var cache = new ManagedTrackCacheService(configuration,
+                Options.Create(new SubsonicSettings { StorageMode = settings.StorageMode, CacheDurationHours = settings.CacheDurationHours }),
+                local.Object, NullLogger<ManagedTrackCacheService>.Instance);
+            var audio = "fLaCfixture-audio"u8.ToArray();
+            using var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(audio) };
+            var stream = new ProtocolProviderStream(response,
+                new("fixture", new Uri("https://media.example.test/track"), DateTimeOffset.UtcNow.AddMinutes(1),
+                    true, true, new("audio/flac", "flac", "flac"), ProviderStreamRetryBehavior.DoNotRetry), "deezer", "track");
+            var context = new ProtocolExecutionContext(
+                backend == "Jellyfin" ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic, "fixture", "principal",
+                new AllstarrPrincipal(Guid.CreateVersion7(), backend.ToLowerInvariant(), "fixture", "principal", "Listener", false),
+                "cache-defaults", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
+            await cache.WrapAsync(stream, context, "deezer", "track", false,
+                () => Task.FromResult<Song?>(new Song { Title = "Track", Artist = "Artist" }), default);
+            Assert.Equal(audio, await response.Content.ReadAsByteArrayAsync());
+            var replay = await cache.TryOpenAsync(new("deezer", ProviderResourceKind.Track, "track"),
+                new(null, ProviderAudioQuality.Any), default);
+            Assert.NotNull(replay);
+            using var cachedResponse = replay.Response;
+            Assert.True(replay.IsCached);
+            Assert.Equal(audio, await cachedResponse.Content.ReadAsByteArrayAsync());
+            Assert.Equal(72, settings.CacheDurationHours);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 
     [Fact]
     public void Startup_DoesNotRegisterOrRunLegacyStateMigrations()
