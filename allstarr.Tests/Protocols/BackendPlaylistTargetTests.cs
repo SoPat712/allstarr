@@ -237,6 +237,34 @@ public sealed class BackendPlaylistTargetTests
         Assert.False(await target.CanWriteAsync(Context(), "p1", default));
     }
 
+    [Theory]
+    [InlineData("other-owner", BackendPlaylistWriteMode.Reconcile)]
+    [InlineData("other-owner", BackendPlaylistWriteMode.Recreate)]
+    [InlineData(null, BackendPlaylistWriteMode.Reconcile)]
+    [InlineData(null, BackendPlaylistWriteMode.Recreate)]
+    public async Task Subsonic_existing_playlist_requires_confirmed_owner_before_any_write(
+        string? owner, BackendPlaylistWriteMode mode)
+    {
+        var backend = new SubsonicFakeBackend("p1", "Shared", ["original"])
+        {
+            PlaylistOwner = owner
+        };
+        var target = new SubsonicPlaylistTarget(new HttpClient(backend), new Uri("https://subsonic.test/"));
+
+        var result = await target.WriteAsync(Context(), new BackendPlaylistWriteRequest(
+            mode,
+            new BackendPlaylistMetadata("Changed"),
+            ["replacement"],
+            $"owner-check-{mode}",
+            "p1"), default);
+
+        Assert.Equal(BackendPlaylistTargetStatus.Unauthorized, result.Status);
+        Assert.Equal(0, backend.MutationCount);
+        Assert.DoesNotContain(backend.Requests,
+            request => request.Path is "updatePlaylist" or "createPlaylist");
+        Assert.Equal(["original"], backend.Playlists["p1"].Members);
+    }
+
     [Fact]
     public async Task Jellyfin_configured_service_authentication_uses_the_standard_authorization_header()
     {
@@ -798,7 +826,7 @@ public sealed class BackendPlaylistTargetTests
         public ConcurrentQueue<RequestRecord> Requests { get; } = new();
         public int MutationCount { get; private set; }
         public int? ProtocolFailureCode { get; set; }
-        public string PlaylistOwner { get; set; } = "user-1";
+        public string? PlaylistOwner { get; set; } = "user-1";
         public bool ReturnCreatedId { get; set; } = true;
         public int? UpdateFailureCode { get; set; }
         public HttpStatusCode? ForcedStatus { get; set; }
