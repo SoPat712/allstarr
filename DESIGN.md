@@ -37,6 +37,7 @@ Use Google Material 3 as the interaction and visual grammar, adapted to Allstarr
 - The compact bottom navigation reserves `--mobile-nav-height` on the scrolling workspace so terminal content and actions remain fully visible above it.
 - The compact bottom navigation keeps Home, Library, Activity, and **More** in equal-width tracks derived from its contents. Integrations, Settings, appearance, and session controls live in the More sheet instead of crowding the primary bar.
 - Only one primary navigation is visible at a time: the sidebar above 760px, or bottom navigation at 760px and below. Desktop sidebar styles must not target the mobile navigation. The More sheet closes when leaving the compact layout and restores focus to a visible navigation control.
+- The desktop sidebar stays fixed to the viewport while the page scrolls. In short windows, its destination list scrolls independently so the logo, collapse control and profile remain reachable.
 - Data surfaces grow with sparse content and cap their height only when a real list needs internal scrolling. Empty viewport-filling panels are not used as decoration.
 
 ## Information architecture

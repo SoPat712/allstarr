@@ -4,6 +4,7 @@
 
 - Playback can switch sources after a failure. Fast, Balanced and Best quality start preferences control the wait for alternatives, and seeking works while a track fills the cache.
 - Playback caching defaults to 72 hours after last use. Cached explains when playback caching is off and shows expiry using the current retention setting; hearts and kept copies remain separate.
+- Desktop navigation stays pinned while pages scroll, with the profile and all destinations reachable in short windows.
 - Favorites and playlist entries make provider music available in normal library browsing. Linked listening profiles can share hearts; mixed playlists and offline downloads preserve stable track entries.
 - Scheduled Health checks exercise playback without adding synthetic plays to listening history or scrobbles. Backup controls include retention and restore verification.
 - A getting-started guide and problem inbox help testers connect clients and report problems with useful context. Administrators can open match or lyrics review directly from a report.
