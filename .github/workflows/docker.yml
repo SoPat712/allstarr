@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       app-version: ${{ steps.app-version.outputs.version }}
+      stable-release: ${{ steps.app-version.outputs.stable-release }}
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -36,6 +37,11 @@ jobs:
             echo "Release tag ${GITHUB_REF_NAME} does not match canonical app version v${version}." >&2
             exit 1
           fi
+          stable_release=false
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${version}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            stable_release=true
+          fi
+          echo "stable-release=${stable_release}" >> "${GITHUB_OUTPUT}"
 
       - name: Setup .NET
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
@@ -56,6 +62,13 @@ jobs:
 
       - name: Restore dependencies
         run: dotnet restore -p:NuGetAudit=true
+
+      - name: Install media test tools
+        timeout-minutes: 8
+        run: bash tools/ci/install-media-tools.sh
+
+      - name: Test release channels
+        run: python3 tools/tests/test_release_channels.py
 
       - name: Restore Svelte WebUI
         working-directory: webui
@@ -211,6 +224,7 @@ jobs:
         env:
           PUBLISHED_DIGEST: ${{ steps.publish.outputs.digest }}
           PUBLISHED_TAGS: ${{ steps.meta.outputs.tags }}
+          PROMOTE_STABLE: ${{ needs.build-and-test.outputs.stable-release }}
         run: |
           set -euo pipefail
 
@@ -220,8 +234,10 @@ jobs:
             exit 1
           fi
 
-          for published_tag in "${published_tags[@]}"; do
-            verified=false
+          verify_tag() {
+            local published_tag="$1"
+            local verified=false
+            local manifest_output remote_digest attempt
             for attempt in {1..12}; do
               manifest_output="$(docker buildx imagetools inspect "${published_tag}" 2>/dev/null || true)"
               remote_digest="$(printf '%s\n' "${manifest_output}" | awk '/^Digest:/ { print $2; exit }')"
@@ -235,6 +251,17 @@ jobs:
 
             if [ "${verified}" != 'true' ]; then
               echo "Published tag ${published_tag} did not resolve to ${PUBLISHED_DIGEST}." >&2
-              exit 1
+              return 1
             fi
+          }
+
+          for published_tag in "${published_tags[@]}"; do
+            verify_tag "${published_tag}"
           done
+
+          if [[ "${PROMOTE_STABLE:-false}" == 'true' ]]; then
+            source_image="${published_tags[0]%:*}"
+            stable_image="${source_image}:stable"
+            docker buildx imagetools create --tag "${stable_image}" "${source_image}@${PUBLISHED_DIGEST}"
+            verify_tag "${stable_image}"
+          fi
