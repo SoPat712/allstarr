@@ -291,7 +291,11 @@ public sealed partial class ProtocolRouteFixtureTests
                     services.AddSingleton(policies.Object);
                     services.RemoveAll<IProtocolProviderGateway>();
                     services.AddSingleton(gateway.Object);
-                }, new Dictionary<string, string?> { ["Subsonic:StorageMode"] = "Cache", ["Library:DownloadPath"] = root });
+                }, new Dictionary<string, string?>
+                {
+                    ["Subsonic:StorageMode"] = backend == "Jellyfin" ? "Permanent" : "Cache",
+                    ["Library:DownloadPath"] = root
+                });
             using var client = factory.CreateClient();
             using var response = await client.GetAsync(path);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);

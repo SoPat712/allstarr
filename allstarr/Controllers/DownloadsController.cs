@@ -275,17 +275,18 @@ public partial class DownloadsController : ControllerBase
             var ownership = await FindOwnershipAsync(sourcePath, cancellationToken);
             if (ownership?.Mapping is not { } mapping)
                 return Conflict(new { error = "Only indexed Allstarr cache files can be kept" });
+            if (!Core.Downloads.DownloadedSongMappingScope.TryResolve(mapping, out var mappingScope))
+                return Conflict(new { error = "The cached track's account scope changed. Refresh the list and try again." });
             await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
             if (mapping.ProviderAccountId is { } accountId)
             {
                 var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item => item.Id == accountId &&
                     item.ProviderId == mapping.ProviderId, cancellationToken);
                 if (account == null || account.OwnerUserId != null && account.OwnerUserId != context.Principal!.UserId ||
-                    mapping.ScopeKey != new Core.Downloads.DownloadedSongMappingScope(accountId, mapping.AudioQuality).Key)
+                    mappingScope.Representation == Core.Downloads.DownloadedSongRepresentation.Original &&
+                    mappingScope.SourceAccountRevision != account.Revision)
                     return StatusCode(403, new { error = "This cached track belongs to another account. Choose a track available to your account." });
             }
-            else if (mapping.ScopeKey != Core.Downloads.DownloadedSongMappingScope.LegacyKey)
-                return StatusCode(403, new { error = "The cached track's account scope changed. Refresh the list and try again." });
             var result = await _kept.RequestKeepAsync(context, new(mapping.ProviderId, ProviderResourceKind.Track, mapping.ExternalId),
                 new(string.IsNullOrWhiteSpace(mapping.Title) ? "Unknown track" : mapping.Title,
                     [string.IsNullOrWhiteSpace(mapping.Artist) ? "Unknown artist" : mapping.Artist], mapping.Album),

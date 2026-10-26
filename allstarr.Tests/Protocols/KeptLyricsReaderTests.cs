@@ -9,7 +9,7 @@ using Microsoft.Extensions.Configuration;
 
 namespace allstarr.Tests;
 
-public sealed class KeptLyricsReaderTests
+public sealed partial class KeptLyricsReaderTests
 {
     [Theory]
     [InlineData("anonymous", false, true)]

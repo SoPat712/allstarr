@@ -127,6 +127,8 @@ public sealed record ProtocolExecutionContext
 
     public bool IsOriginalDownload { get; init; }
 
+    public bool RetainOriginalMedia { get; init; }
+
     public bool IsReadOnly { get; init; }
 
     public allstarr.Core.Music.ProviderAudioDeliveryRequest? AudioDelivery { get; init; }

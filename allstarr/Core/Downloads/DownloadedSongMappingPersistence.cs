@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -25,17 +26,63 @@ public sealed class DownloadedSongMappingEntity
     public string? CacheIdentityJson { get; set; }
 }
 
+public enum DownloadedSongRepresentation
+{
+    Playback,
+    Original
+}
+
 public sealed record DownloadedSongMappingScope(
     Guid? ProviderAccountId,
-    ProviderAudioQuality AudioQuality)
+    ProviderAudioQuality AudioQuality,
+    DownloadedSongRepresentation Representation = DownloadedSongRepresentation.Playback,
+    long? SourceAccountRevision = null)
 {
     public static string LegacyKey { get; } = new DownloadedSongMappingScope(
         null,
         ProviderAudioQuality.Any).Key;
 
-    public string Key => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\u001f',
-        ProviderAccountId?.ToString("N") ?? "anonymous",
-        ((int)AudioQuality).ToString(CultureInfo.InvariantCulture)))));
+    public string Key
+    {
+        get
+        {
+            var account = ProviderAccountId?.ToString("N") ?? "anonymous";
+            var quality = ((int)AudioQuality).ToString(CultureInfo.InvariantCulture);
+            var value = Representation == DownloadedSongRepresentation.Playback && SourceAccountRevision == null
+                ? string.Join('\u001f', account, quality)
+                : string.Join('\u001f', account, quality, Representation.ToString(),
+                    SourceAccountRevision?.ToString(CultureInfo.InvariantCulture) ?? "none");
+            return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+        }
+    }
+
+    public static bool TryResolve(DownloadedSongMappingEntity mapping, out DownloadedSongMappingScope scope)
+    {
+        scope = new(mapping.ProviderAccountId, mapping.AudioQuality);
+        if (mapping.ScopeKey == scope.Key)
+            return mapping.ProviderAccountId != null || mapping.ScopeKey == LegacyKey;
+        try
+        {
+            if (mapping.CacheIdentityJson == null) return false;
+            using var document = JsonDocument.Parse(mapping.CacheIdentityJson);
+            var proof = document.RootElement;
+            if (proof.ValueKind != JsonValueKind.Object ||
+                !proof.TryGetProperty("Representation", out var representation) ||
+                representation.ValueKind != JsonValueKind.String || representation.GetString() != "Original" ||
+                !proof.TryGetProperty("SourceAccountRevision", out var sourceRevision)) return false;
+            long? revision = null;
+            if (sourceRevision.ValueKind != JsonValueKind.Null)
+            {
+                if (sourceRevision.ValueKind != JsonValueKind.Number || !sourceRevision.TryGetInt64(out var value) || value < 0)
+                    return false;
+                revision = value;
+            }
+            if (mapping.ProviderAccountId == null && revision != null) return false;
+            scope = new(mapping.ProviderAccountId, mapping.AudioQuality, DownloadedSongRepresentation.Original, revision);
+            return mapping.ScopeKey == scope.Key;
+        }
+        catch (JsonException) { return false; }
+    }
 }
 
 public interface IDownloadedSongMappingStore

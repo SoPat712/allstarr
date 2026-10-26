@@ -244,16 +244,15 @@ public sealed class KeptLyricsReader(
         bool householdOnly,
         CancellationToken cancellationToken)
     {
-        if (mapping.ProviderAccountId is not { } accountId)
-            return mapping.ScopeKey == DownloadedSongMappingScope.LegacyKey;
-        if (accountId == Guid.Empty ||
-            mapping.ScopeKey != new DownloadedSongMappingScope(accountId, mapping.AudioQuality).Key)
-            return false;
+        if (!DownloadedSongMappingScope.TryResolve(mapping, out var scope)) return false;
+        if (mapping.ProviderAccountId is not { } accountId) return true;
+        if (accountId == Guid.Empty) return false;
 
         var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
             item.Id == accountId && item.ProviderId == providerId,
             cancellationToken);
         return account is { Enabled: true } &&
+               (scope.Representation != DownloadedSongRepresentation.Original || scope.SourceAccountRevision == account.Revision) &&
                (account.OwnerUserId == null || !householdOnly && account.OwnerUserId == listenerId);
     }
 

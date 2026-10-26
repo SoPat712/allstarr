@@ -141,7 +141,8 @@ public sealed class ProviderStreamOpener(
 
             var servingId = routed.ServingExternalId ?? externalId;
             Task<allstarr.Models.Domain.Song?>? metadataTask = null;
-            Task<allstarr.Models.Domain.Song?> Metadata() => metadataTask ??= providers.GetSongAsync(context, routed.ServingProviderId, servingId);
+            Task<allstarr.Models.Domain.Song?> Metadata() => metadataTask ??= providers.GetSongAsync(
+                context.IsOriginalDownload ? context with { IsReadOnly = true } : context, routed.ServingProviderId, servingId);
             try
             {
                 var itemId = context.RequestedItemId ?? $"ext-{providerId}-song-{externalId}";

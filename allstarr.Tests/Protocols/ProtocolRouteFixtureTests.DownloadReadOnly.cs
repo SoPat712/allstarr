@@ -5,6 +5,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
+using allstarr.Models.Domain;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -53,6 +54,13 @@ public sealed partial class ProtocolRouteFixtureTests
                 new ProviderRouteDecisionRecord(request.CorrelationId, ProviderCapabilityKind.Streaming, "qobuz", null,
                     [new ProviderRouteCandidateDecision("qobuz", null, ProviderRouteDecisionStatus.Accepted, "selected", 0)])));
         var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        identities.Setup(item => item.GetStoredSongsAsync(It.IsAny<ProviderActorContext>(),
+                "ext-qobuz-song-42", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new Song
+            {
+                Id = "ext-qobuz-song-42", ExternalProvider = "qobuz", ExternalId = "42",
+                Title = "Original", Artist = "Artist", Album = "Album", AlbumId = "album"
+            }]);
         using var activity = new allstarr.Services.Common.PlaybackDeliveryActivityStore();
         using var factory = new ProtocolFactory(backend, request =>
             request.RequestUri!.AbsolutePath is "/Users/Me" or "/rest/ping.view"
@@ -82,6 +90,9 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(range ? bytes[4..8] : bytes, await response.Content.ReadAsByteArrayAsync());
         capability.VerifyAll();
         router.VerifyAll();
+        identities.Verify(item => item.GetStoredSongsAsync(It.IsAny<ProviderActorContext>(),
+            "ext-qobuz-song-42", It.IsAny<CancellationToken>()),
+            Times.Exactly(backend == "Jellyfin" && !range ? 1 : 0));
         identities.VerifyNoOtherCalls();
         Assert.Null(activity.StreamFor(Guid.Parse("018f1f6e-8e9c-77f5-9a79-3d8a494d60cd"),
             "download-device", "ext-qobuz-song-42"));

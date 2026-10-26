@@ -65,7 +65,8 @@ public sealed partial class ManagedTrackCacheService
         active.TryGetValue(Key(scope, revision, track.ProviderId, track.Value, originalDownload), out var transfer)
             ? transfer.Work : Task.CompletedTask;
 
-    private sealed record AudioCacheIdentity(string Device, string File, long Length, string Sha256, DateTimeOffset LastUsed);
+    private sealed record AudioCacheIdentity(string Device, string File, long Length, string Sha256, DateTimeOffset LastUsed,
+        string Representation = "Playback", long? SourceAccountRevision = null);
     private sealed class AudioAllocation(string path, FileStream? producer, long reserved, long admissionLimit)
     {
         public string Path = path;
@@ -193,7 +194,8 @@ public sealed partial class ManagedTrackCacheService
             entry.Anchor == null || !Same(identity, Identity(entry.Anchor))) return;
         var hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, token));
         if (hash != entry.ContentHash || !Same(identity, Identity(entry.Path)) || !Same(identity, Identity(entry.Anchor))) return;
-        var stamp = new AudioCacheIdentity(identity.DeviceId, identity.FileId, stream.Length, hash, clock.GetUtcNow());
+        var stamp = new AudioCacheIdentity(identity.DeviceId, identity.FileId, stream.Length, hash, clock.GetUtcNow(),
+            scope.Representation.ToString(), scope.SourceAccountRevision);
         if (cacheMappings != null && await cacheMappings.MarkCacheOwnedAsync(scope, provider, track, entry.Path,
                 JsonSerializer.Serialize(stamp), token) == null) return;
         lock (audioAllocationGate) publishedIdentities[entry.Path] = stamp;
@@ -322,6 +324,7 @@ public sealed partial class ManagedTrackCacheService
     private sealed class PinnedAudioStream(Stream source, Action closed) : Stream
     {
         private int disposed;
+        public Stream Source => source;
         public override bool CanRead => source.CanRead;
         public override bool CanSeek => source.CanSeek;
         public override bool CanWrite => false;

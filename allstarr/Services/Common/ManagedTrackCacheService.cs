@@ -136,9 +136,14 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
 
     public async Task<ProtocolProviderStream?> TryOpenAsync(ProviderExternalResourceId track,
         DownloadedSongMappingScope scope, CancellationToken cancellationToken, long? accountRevision = null, bool preparation = false,
-        long? requestedOffset = null, bool originalDownload = false)
+        long? requestedOffset = null, bool originalDownload = false, bool retainOriginalMedia = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        var retainedOriginal = originalDownload && retainOriginalMedia && IsCacheMode();
+        if (originalDownload)
+            scope = retainedOriginal
+                ? new(scope.ProviderAccountId, scope.AudioQuality, DownloadedSongRepresentation.Original, accountRevision)
+                : new(scope.ProviderAccountId, scope.AudioQuality);
         if (active.TryGetValue(Key(scope, accountRevision, track.ProviderId, track.Value, originalDownload), out var transfer))
         {
             if (requestedOffset is > 0 && transfer.CanFetchRange(requestedOffset.Value)) return null;
@@ -153,13 +158,21 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
                 { FileFacts = transfer.FileFacts };
             }
         }
-        if (originalDownload) return null;
-        var path = await localLibrary.GetLocalPathForExternalSongAsync(scope, track.ProviderId, track.Value);
+        if (originalDownload && !retainedOriginal) return null;
+        DownloadedSongMappingEntity? originalMapping = null;
+        if (retainedOriginal)
+        {
+            if (cacheMappings == null) return null;
+            originalMapping = await cacheMappings.FindAsync(scope, track.ProviderId, track.Value, cancellationToken);
+            if (originalMapping == null || !DownloadedSongMappingScope.TryResolve(originalMapping, out var savedScope) ||
+                savedScope != scope) return null;
+        }
+        var path = originalMapping?.LocalPath ?? await localLibrary.GetLocalPathForExternalSongAsync(scope, track.ProviderId, track.Value);
         if (path == null) return null;
         Stream? file = null;
         try
         {
-            if (Path.GetExtension(path).Equals(".flac", StringComparison.OrdinalIgnoreCase) &&
+            if (!retainedOriginal && Path.GetExtension(path).Equals(".flac", StringComparison.OrdinalIgnoreCase) &&
                 IsOwnedCachePath(path) && HasId3Prefix(path))
             {
                 File.Move(path, path + $".legacy-id3-{Guid.NewGuid():N}");
@@ -167,6 +180,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
             }
             file = await OpenPinnedAudioAsync(path, cancellationToken);
             if (file.Length == 0) { file.Dispose(); return null; }
+            if (originalMapping != null && !await VerifyOriginalCacheAsync(file, originalMapping, cancellationToken)) return null;
             var extension = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
             var mime = extension switch
             {
@@ -200,24 +214,54 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
         context.Actor != null && context.Policy?.AudioQuality != "DataSaver" &&
         context.PreparationQuality != ProviderAudioQuality.DataSaver;
 
+    internal bool CanRetainOriginal(ProtocolExecutionContext context) => IsCacheMode() && context.IsOriginalDownload &&
+        context.RetainOriginalMedia && !context.IsReadOnly && !context.IsPreparation;
+
+    internal DownloadedSongMappingScope ScopeFor(ProtocolExecutionContext context, Guid? account,
+        ProviderAudioQuality quality, long? revision) => CanRetainOriginal(context)
+            ? new(account, quality, DownloadedSongRepresentation.Original, revision) : new(account, quality);
+
+    private async Task<bool> VerifyOriginalCacheAsync(Stream file, DownloadedSongMappingEntity mapping, CancellationToken token)
+    {
+        var source = file is PinnedAudioStream pinned ? pinned.Source : file;
+        var identity = Identity(source);
+        var proof = ReadIdentity(mapping.CacheIdentityJson);
+        if (!SafeCachePath(mapping.LocalPath) || identity?.LinkCount != 1 || proof == null || proof.Representation != "Original" ||
+            proof.Length != file.Length || !Matches(proof, identity) || !Same(identity, Identity(mapping.LocalPath))) return false;
+        var hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(file, token));
+        file.Position = 0;
+        return hash == proof.Sha256 && Same(identity, Identity(mapping.LocalPath)) && Same(identity, Identity(source));
+    }
+
     public async Task WrapAsync(ProtocolProviderStream stream, ProtocolExecutionContext protocol,
         string providerId, string externalId, bool headOnly, Func<Task<Song?>> metadataFactory,
         CancellationToken cancellationToken)
     {
-        if (protocol.IsPreparation && !CanPrepare(protocol)) return;
-        var retain = !protocol.IsOriginalDownload && IsCacheMode();
-        if (stream.IsCached || stream.Response.Content is ProgressiveContent || headOnly || !IsCompleteResponse(stream.Response) || protocol.Actor == null ||
+        if (protocol.IsReadOnly || protocol.IsPreparation && !CanPrepare(protocol)) return;
+        var retainedOriginal = CanRetainOriginal(protocol);
+        var retain = (!protocol.IsOriginalDownload || retainedOriginal) && IsCacheMode();
+        var completeResponse = IsCompleteResponse(stream.Response);
+        var rangeFill = retainedOriginal && !completeResponse && stream.OpenOriginalResponseAsync != null &&
+            stream.Response.StatusCode == HttpStatusCode.PartialContent &&
+            StreamByteRanges.HasValidContentRange(stream.Response.Content.Headers.ContentRange, stream.Response.Content.Headers.ContentLength);
+        if (stream.IsCached || stream.Response.Content is ProgressiveContent or RetainedRangeContent || headOnly ||
+            !completeResponse && !rangeFill || protocol.Actor == null ||
             !retain && stream.Lease.SupportsByteRanges) return;
         if (stream.ServingExternalId == null && stream.ServingProviderId != providerId) return;
         providerId = stream.ServingProviderId;
         externalId = stream.ServingExternalId ?? externalId;
-        var scope = new DownloadedSongMappingScope(stream.ServingAccountId, stream.EffectiveQuality);
+        var scope = ScopeFor(protocol, stream.ServingAccountId, stream.EffectiveQuality, stream.ServingAccountRevision);
         var key = Key(scope, stream.ServingAccountRevision, providerId, externalId, protocol.IsOriginalDownload);
-        if (active.ContainsKey(key)) return;
-        if (protocol.IsOriginalDownload) ValidateOriginalRoot(true);
-        var cacheRoot = protocol.IsOriginalDownload ? OriginalAudioRoot
+        if (active.TryGetValue(key, out var existing))
+        {
+            if (rangeFill) await AttachRangeAsync(stream, existing, cancellationToken);
+            return;
+        }
+        var temporaryOriginal = protocol.IsOriginalDownload && !retainedOriginal;
+        if (temporaryOriginal) ValidateOriginalRoot(true);
+        var cacheRoot = temporaryOriginal ? OriginalAudioRoot
             : Path.Combine(configuration["Library:DownloadPath"] ?? "./downloads", "cache");
-        var partial = protocol.IsOriginalDownload ? Path.Combine(cacheRoot, $"allstarr-original-{Guid.NewGuid():N}.partial")
+        var partial = temporaryOriginal ? Path.Combine(cacheRoot, $"allstarr-original-{Guid.NewGuid():N}.partial")
             : Path.Combine(cacheRoot, ".incoming", $"provider-{Guid.NewGuid():N}.partial");
         FileStream output;
         try
@@ -236,8 +280,8 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
             !stream.Lease.Media.MimeType.Equals("audio/mp4", StringComparison.OrdinalIgnoreCase)
             ? new ProviderMediaFormat("audio/mp4", "mp4", "unknown") : stream.Lease.Media;
         stream.FileFacts.Media = media;
-        Stream source;
-        try { source = await original.ReadAsStreamAsync(cancellationToken); }
+        Stream? source;
+        try { source = rangeFill ? null : await original.ReadAsStreamAsync(cancellationToken); }
         catch { await output.DisposeAsync(); TryDelete(partial); throw; }
         AudioAllocation allocation;
         try
@@ -246,7 +290,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
                 stream.Response.StatusCode == HttpStatusCode.PartialContent ? original.Headers.ContentRange?.Length : original.Headers.ContentLength,
                 cancellationToken);
         }
-        catch (LocalCapacityException) when (protocol.IsPreparation)
+        catch (LocalCapacityException) when (protocol.IsPreparation || rangeFill)
         {
             await output.DisposeAsync();
             TryDelete(partial);
@@ -259,12 +303,13 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
             if (!disposed && !shutdown.IsCancellationRequested && !active.ContainsKey(key))
             {
                 transfer = new(this, key, scope, providerId, externalId, media, cacheRoot,
-                    partial, output, original, source,
+                    partial, output, rangeFill ? null : original, source,
                     stream.Response.StatusCode == HttpStatusCode.PartialContent ? original.Headers.ContentRange?.Length : original.Headers.ContentLength,
                     metadataFactory, retain, shutdown.Token, stream.FileFacts,
                     protocol.IsPreparation ? cancellationToken : CancellationToken.None, protocol.IsPreparation,
                     protocol.IsPreparation ? allocation.AdmissionLimit : long.MaxValue,
-                    stream.Lease.SupportsByteRanges, protocol.IsOriginalDownload, allocation);
+                    stream.Lease.SupportsByteRanges, protocol.IsOriginalDownload, allocation,
+                    retainedOriginal, rangeFill ? stream.OpenOriginalResponseAsync : null);
                 active[key] = transfer;
                 transfer.StartWorker();
             }
@@ -274,6 +319,13 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
             await output.DisposeAsync();
             TryDelete(partial);
             AudioCompleted(allocation);
+            if (rangeFill && active.TryGetValue(key, out existing)) await AttachRangeAsync(stream, existing, cancellationToken);
+            return;
+        }
+        if (rangeFill)
+        {
+            try { await AttachRangeAsync(stream, transfer, cancellationToken); }
+            catch { transfer.Stop(); throw; }
             return;
         }
         var reader = transfer.TryOpen(!protocol.IsPreparation);
@@ -283,6 +335,16 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
             throw new IOException("The progressive media cache could not open a reader.");
         }
         var replacement = new ProgressiveContent(reader, transfer.PlaybackStarted);
+        foreach (var header in original.Headers) replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        stream.Response.Content = replacement;
+    }
+
+    private static async Task AttachRangeAsync(ProtocolProviderStream stream, Transfer transfer, CancellationToken token)
+    {
+        var original = stream.Response.Content;
+        var source = await original.ReadAsStreamAsync(token);
+        if (!transfer.AttachRemoteReader()) return;
+        var replacement = new RetainedRangeContent(new RetainedRangeStream(source, original, transfer.Activate, transfer.RemoteClosed));
         foreach (var header in original.Headers) replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
         stream.Response.Content = replacement;
     }
@@ -346,6 +408,46 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
         public CancellationToken PlaybackStarted { get; } = playbackStarted;
     }
 
+    private sealed class RetainedRangeContent(RetainedRangeStream reader) : StreamContent(reader);
+
+    private sealed class RetainedRangeStream(Stream source, HttpContent original, Action started, Action closed) : Stream
+    {
+        private int disposed;
+        public override bool CanRead => source.CanRead;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = source.Read(buffer, offset, count);
+            if (read > 0) started();
+            return read;
+        }
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default)
+        {
+            var read = await source.ReadAsync(buffer, token);
+            if (read > 0) started();
+            return read;
+        }
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken token) =>
+            ReadAsync(buffer.AsMemory(offset, count), token).AsTask();
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && Interlocked.Exchange(ref disposed, 1) == 0)
+            {
+                try { original.Dispose(); }
+                finally { closed(); }
+            }
+            base.Dispose(disposing);
+        }
+        public override ValueTask DisposeAsync() { Dispose(); GC.SuppressFinalize(this); return ValueTask.CompletedTask; }
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     private static ProviderStreamLease CacheLease(ProviderMediaFormat media, bool ranges, bool progressive = false) => new(
         progressive ? "managed-progressive-cache" : "managed-cache",
         new Uri("https://allstarr.invalid/managed-cache"), DateTimeOffset.UtcNow.AddHours(1), ranges, ranges, media,
@@ -360,8 +462,10 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
         private readonly string track;
         private readonly string cacheRoot;
         private readonly FileStream output;
-        private readonly HttpContent original;
-        private readonly Stream source;
+        private HttpContent? original;
+        private Stream? source;
+        private readonly Func<CancellationToken, Task<HttpResponseMessage>>? fullResponseFactory;
+        private HttpResponseMessage? openedFullResponse;
         private readonly Func<Task<Song?>> metadata;
         private readonly bool retain;
         public PlaybackFileFacts FileFacts { get; }
@@ -376,6 +480,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
         private readonly ITimer idleTimer;
         private readonly ITimer? lifetimeTimer;
         private readonly bool originalDownload;
+        private readonly bool retainedOriginal;
         private readonly AudioAllocation allocation;
         private Exception? failure;
         private readonly TaskCompletionSource ready = Signal();
@@ -394,9 +499,10 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
 
         public Transfer(ManagedTrackCacheService owner, string key, DownloadedSongMappingScope scope,
             string provider, string track, ProviderMediaFormat media, string cacheRoot, string path, FileStream output,
-            HttpContent original, Stream source, long? total, Func<Task<Song?>> metadata, bool retain, CancellationToken stopping,
+            HttpContent? original, Stream? source, long? total, Func<Task<Song?>> metadata, bool retain, CancellationToken stopping,
             PlaybackFileFacts fileFacts, CancellationToken preparationToken, bool preparation, long maximumBytes,
-            bool supportsUpstreamRanges, bool originalDownload, AudioAllocation allocation)
+            bool supportsUpstreamRanges, bool originalDownload, AudioAllocation allocation,
+            bool retainedOriginal, Func<CancellationToken, Task<HttpResponseMessage>>? fullResponseFactory)
         {
             this.owner = owner; this.key = key; this.scope = scope; this.provider = provider; this.track = track;
             FileFacts = fileFacts;
@@ -406,6 +512,8 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
             this.maximumBytes = maximumBytes;
             this.supportsUpstreamRanges = supportsUpstreamRanges;
             this.originalDownload = originalDownload;
+            this.retainedOriginal = retainedOriginal;
+            this.fullResponseFactory = fullResponseFactory;
             this.allocation = allocation;
             PlaybackStarted = playbackStarted.Token;
             cancel = CancellationTokenSource.CreateLinkedTokenSource(stopping);
@@ -450,10 +558,35 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
                 signal.TrySetResult();
                 idleTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
                 return new ProgressiveCachingStream(file, Snapshot, Closed,
-                    ProgressiveCachingStream.SeekWaitTimeout, () => ready.TrySetResult(), ProgressiveCachingStream.InitialReadWaitTimeout,
+                    ProgressiveCachingStream.SeekWaitTimeout, Activate, ProgressiveCachingStream.InitialReadWaitTimeout,
                     timeProvider: owner.clock, maximumWaitTimeout: ProgressiveCachingStream.SeekWaitTimeout);
             }
         }
+
+        public bool AttachRemoteReader()
+        {
+            lock (gate)
+            {
+                if (retired || failed || cancel.IsCancellationRequested) return false;
+                playbackOwned = true;
+                playbackStarted.Cancel();
+                readers++;
+                owner.AudioPin(allocation);
+                idleTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                return true;
+            }
+        }
+
+        public void Activate()
+        {
+            lock (gate)
+            {
+                if (retired || failed || cancel.IsCancellationRequested) return;
+                ready.TrySetResult();
+            }
+        }
+
+        public void RemoteClosed() => Closed();
 
         private ProgressiveCacheReadState Snapshot()
         {
@@ -479,7 +612,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
             lock (gate)
             {
                 owner.AudioClosed(allocation);
-                if (--readers == 0 && !finished && !retired)
+                if (--readers == 0 && !finished && !retired && (!retainedOriginal || !ready.Task.IsCompleted))
                     idleTimer.Change(TimeSpan.FromSeconds(10), Timeout.InfiniteTimeSpan);
                 var signal = changed;
                 changed = Signal();
@@ -491,7 +624,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
         {
             lock (gate)
             {
-                if (readers == 0 && !finished && !retired) cancel.Cancel();
+                if (readers == 0 && !finished && !retired && (!retainedOriginal || !ready.Task.IsCompleted)) cancel.Cancel();
             }
         }
 
@@ -499,10 +632,13 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
         {
             var published = false;
             var verified = false;
-            using var abort = cancel.Token.Register(original.Dispose);
+            using var abort = cancel.Token.Register(DisposeSource);
             try
             {
                 await ready.Task.WaitAsync(cancel.Token);
+                if (fullResponseFactory != null) await OpenCompleteResponseAsync();
+                var input = source ?? throw new IOException("The complete media source is unavailable.");
+                var content = original ?? throw new IOException("The complete media content is unavailable.");
                 Task<Song?> metadataTask;
                 try { metadataTask = retain ? metadata() : Task.FromResult<Song?>(null); }
                 catch { metadataTask = Task.FromResult<Song?>(null); }
@@ -513,8 +649,8 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
                 var buffer = new byte[81920];
                 while (true)
                 {
-                    var read = await source.ReadAsync(buffer, cancel.Token);
-                    lock (gate) total ??= StreamDurationGuidance.DeclaredLength(original);
+                    var read = await input.ReadAsync(buffer, cancel.Token);
+                    lock (gate) total ??= StreamDurationGuidance.DeclaredLength(content);
                     if (read == 0) break;
                     if (!playbackOwned && read > maximumBytes - available)
                         throw new IOException("The prepared media exceeds the cache budget.");
@@ -533,7 +669,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
                 await output.DisposeAsync();
                 owner.AudioPathChanged(allocation, path);
                 lock (owner.audioAllocationGate) allocation.Reserved = available;
-                original.Dispose();
+                DisposeSource();
                 verified = true;
                 FileFacts.Size = available;
                 var measured = await AudioMediaFacts.ReadFileAsync(path, cancel.Token) ?? new TrackMediaFacts(Media, available);
@@ -564,7 +700,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
             finally
             {
                 try { await output.DisposeAsync(); } catch (IOException) { }
-                try { original.Dispose(); } catch (IOException) { }
+                DisposeSource();
                 lock (gate) { retired = true; playbackStarted.Dispose(); }
                 if (!published) TryDelete(path);
                 owner.AudioCompleted(allocation);
@@ -575,6 +711,45 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
                 lifetimeTimer?.Dispose();
                 cancel.Dispose();
             }
+        }
+
+        private async Task OpenCompleteResponseAsync()
+        {
+            using var timeout = new CancellationTokenSource(ProgressiveCachingStream.InitialReadWaitTimeout, owner.clock);
+            using var opening = CancellationTokenSource.CreateLinkedTokenSource(cancel.Token, timeout.Token);
+            var pending = fullResponseFactory!(opening.Token);
+            HttpResponseMessage response;
+            try { openedFullResponse = response = await pending.WaitAsync(opening.Token); }
+            catch
+            {
+                _ = pending.ContinueWith(task =>
+                {
+                    if (task.IsCompletedSuccessfully) task.Result.Dispose();
+                    else _ = task.Exception;
+                }, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                throw;
+            }
+            cancel.Token.ThrowIfCancellationRequested();
+            if (!IsCompleteResponse(response)) throw new IOException("The media source did not return a complete original file.");
+            var content = response.Content;
+            var length = response.StatusCode == HttpStatusCode.PartialContent
+                ? content.Headers.ContentRange?.Length : content.Headers.ContentLength;
+            if (total is { } expected && length is { } actual && expected != actual)
+                throw new IOException("The original file length changed between requests.");
+            lock (gate) total ??= length;
+            if (total is { } size) await owner.GrowAudioAsync(allocation, size, cancel.Token);
+            original = content;
+            source = await content.ReadAsStreamAsync(cancel.Token);
+        }
+
+        private void DisposeSource()
+        {
+            try
+            {
+                if (openedFullResponse != null) openedFullResponse.Dispose();
+                else original?.Dispose();
+            }
+            catch (IOException) { }
         }
 
         private async Task RetainForPlaybackAsync()
@@ -610,7 +785,12 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
             var existing = await owner.localLibrary.GetLocalPathForExternalSongAsync(scope, provider, track);
             if (existing != null && File.Exists(existing)) return false;
             Song? song = null;
-            try { song = await metadataTask.WaitAsync(cancel.Token); }
+            try
+            {
+                song = retainedOriginal
+                    ? await metadataTask.WaitAsync(TimeSpan.FromSeconds(30), owner.clock, cancel.Token)
+                    : await metadataTask.WaitAsync(cancel.Token);
+            }
             catch (OperationCanceledException) when (cancel.IsCancellationRequested) { throw; }
             catch (Exception) { }
             song ??= new Song { Id = $"ext-{provider}-song-{track}", Title = track, Artist = "Unknown artist", Album = "Unknown album" };
@@ -662,6 +842,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
         if (response.StatusCode == HttpStatusCode.OK) return response.Content.Headers.ContentLength != 0;
         var range = response.Content.Headers.ContentRange;
         return response.StatusCode == HttpStatusCode.PartialContent &&
+               StreamByteRanges.HasValidContentRange(range, response.Content.Headers.ContentLength) &&
                range?.From == 0 &&
                range.To.HasValue &&
                range.Length.HasValue &&
