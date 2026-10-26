@@ -7898,6 +7898,7 @@ test("Lyrics-only source checks show lyrics outcomes and no playback controls", 
   const failure = page.getByRole("alert").filter({ hasText: "Paxsenix Lyrics needs attention." });
   await expect(failure).toContainText("The lyrics upstream is busy or timed out.");
   await expect(failure).not.toContainText("Playback");
+  await failure.getByRole("button", { name: "Dismiss notification" }).click();
   healthy = true;
   await row.getByRole("button", { name: "Test", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Paxsenix Lyrics passed." })).toBeVisible();
@@ -7908,6 +7909,7 @@ test("Lyrics-only source checks show lyrics outcomes and no playback controls", 
   await expect(error).not.toContainText("Playback");
   await expect(page.locator(".toaster [role=alert]")).toHaveCount(1);
   expect(requests).toEqual(["/api/admin/providers/test/paxsenix/lyrics", "/api/admin/providers/test/paxsenix/lyrics", "/api/admin/providers/test/paxsenix/lyrics"]);
+  await error.getByRole("button", { name: "Dismiss notification" }).click();
   await row.getByRole("button", { name: "Open Lyrics tests" }).click();
   const dialog = page.getByRole("dialog", { name: "Test Paxsenix" });
   await expect(dialog.getByRole("button", { name: "Use what I typed" })).toBeDisabled();
