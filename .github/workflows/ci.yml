@@ -52,6 +52,7 @@ jobs:
         run: >-
           python3 tools/tests/timing_report.py
           --name dotnet-test
+          --timeout-seconds 900
           --require-tests
           --trx "${{ runner.temp }}/build-and-test.trx"
           --
@@ -162,6 +163,7 @@ jobs:
         run: >-
           python3 ../tools/tests/timing_report.py
           --name webui-e2e
+          --timeout-seconds 900
           --require-tests
           --playwright-json "$RUNNER_TEMP/allstarr-playwright.json"
           -- npm run test:e2e:existing-build
