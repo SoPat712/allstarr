@@ -7,6 +7,9 @@
   import SelectField from "$lib/components/SelectField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import ProblemContextCard from "$lib/components/ProblemContextCard.svelte";
+  import RecordingLyricsPicker from "$lib/components/RecordingLyricsPicker.svelte";
+  import { Dialog } from "$lib/components/ui/dialog";
+  import { X } from "@lucide/svelte";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { listenerSupport, reportKindLabel, reportStatusLabel, reportSourceName, reportStatuses, supportDate, supportError,
     supportErrorCode, type ProblemReport, type ProblemReportDetail, type ReportStatus } from "$lib/support";
@@ -17,6 +20,9 @@
   let cursor = $state<string | null>(null);
   let detail = $state<ProblemReportDetail | null>(null);
   let selectedId = $state("");
+  let lyricsOpen = $state(false);
+  let lyricsTrigger: HTMLElement | undefined;
+  const lyricsRecordingId = $derived(detail?.context.song?.canonicalRecordingId);
   let desired = $state<ReportStatus>("new");
   let providers = $state<ProviderDefinition[]>([]);
   let loading = $state(true);
@@ -49,6 +55,7 @@
   }
   async function open(id: string) {
     if (saving) return;
+    lyricsOpen = false;
     const current = ++request;
     selectedId = id; detail = null;
     detailLoading = true; detailError = ""; conflict = false; savedMessage = "";
@@ -111,7 +118,29 @@
           <footer><Button type="submit" disabled={saving || conflict || desired === detail.status}>{saving ? "Saving…" : "Save status"}</Button></footer>
         </form>
       </article>
-      <ProblemContextCard context={detail.context} {providers} review />
+      <ProblemContextCard context={detail.context} {providers} review onReviewLyrics={(trigger) => {
+        lyricsTrigger = trigger;
+        lyricsOpen = true;
+      }} />
     {/if}
   </section>
+
+  <Dialog.Root bind:open={lyricsOpen}>
+    <Dialog.Portal>
+      <Dialog.Overlay class="dialog-overlay" />
+      <Dialog.Content class="source-dialog" onCloseAutoFocus={(event) => {
+        if (lyricsTrigger?.isConnected) { event.preventDefault(); lyricsTrigger.focus(); }
+      }}>
+        <header>
+          <div><Dialog.Title>Review lyrics</Dialog.Title><Dialog.Description>{detail?.context.song?.title ?? "Reported recording"}{detail?.context.song?.artist ? ` · ${detail.context.song.artist}` : ""}</Dialog.Description></div>
+          <Dialog.Close class="icon-button" aria-label="Close lyrics review"><X size={18} aria-hidden="true" /></Dialog.Close>
+        </header>
+        <p class="settings-impact" style="margin: 0; padding: var(--space-3) var(--surface-gutter);">Personal choices apply to your signed-in account. Household choices set a shared default.</p>
+        {#if lyricsOpen && lyricsRecordingId}
+          {#key lyricsRecordingId}<RecordingLyricsPicker recordingId={lyricsRecordingId} {providers} allowHousehold />{/key}
+        {/if}
+        <footer class="dialog-actions" style="position: sticky; bottom: 0; z-index: 1;"><Button onclick={() => lyricsOpen = false}>Done</Button></footer>
+      </Dialog.Content>
+    </Dialog.Portal>
+  </Dialog.Root>
 {/if}

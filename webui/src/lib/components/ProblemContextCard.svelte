@@ -3,7 +3,12 @@
   import { humanize } from "$lib/sources";
   import { reportSourceName, supportDate, type ProblemContext } from "$lib/support";
   import { Button } from "$lib/components/ui/button";
-  let { context, providers = [], review = false }: { context: ProblemContext; providers?: ProviderDefinition[]; review?: boolean } = $props();
+  let { context, providers = [], review = false, onReviewLyrics }: {
+    context: ProblemContext;
+    providers?: ProviderDefinition[];
+    review?: boolean;
+    onReviewLyrics?: (trigger: HTMLElement) => void;
+  } = $props();
   const provider = (id?: string | null) => reportSourceName(providers, id);
 </script>
 
@@ -27,5 +32,10 @@
       <div class="settings-row"><div><strong>{provider(check.providerId)} · {humanize(check.capability)}</strong><small>{supportDate(check.checkedAt)}</small></div><output>{humanize(check.state)}{check.reasonCode ? ` · ${humanize(check.reasonCode)}` : ""}</output></div>
     {:else}<p class="settings-impact">No recent source checks were captured.</p>{/each}
   </details>
-  {#if review && context.song?.externalSnapshotId}<footer><Button variant="secondary" href={`#/library/mappings?review=${encodeURIComponent(context.song.externalSnapshotId)}`}>Review match</Button></footer>{/if}
+  {#if review && (context.song?.externalSnapshotId || context.song?.canonicalRecordingId && onReviewLyrics)}
+    <footer class="panel-heading-actions">
+      {#if context.song?.externalSnapshotId}<Button variant="secondary" href={`#/library/mappings?review=${encodeURIComponent(context.song.externalSnapshotId)}`}>Review match</Button>{/if}
+      {#if context.song?.canonicalRecordingId && onReviewLyrics}<Button variant="secondary" onclick={(event) => onReviewLyrics?.(event.currentTarget)}>Review lyrics</Button>{/if}
+    </footer>
+  {/if}
 </article>

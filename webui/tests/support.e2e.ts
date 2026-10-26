@@ -351,3 +351,124 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.screenshot({ path: testInfo.outputPath(`getting-started-${width}-${theme}.png`), fullPage: true });
   });
 }
+
+const reportRecordingId = "55555555-5555-4555-8555-555555555555";
+async function mockReportLyrics(page: Page, options: { snapshot?: boolean; known?: boolean } = {}) {
+  const state = await mockSupport(page, true);
+  const scopes: string[] = [];
+  const writes: Array<Record<string, unknown>> = [];
+  let personal: { id: string; sourceId: string; revision: number } | null = null;
+  let household: { id: string; sourceId: string; revision: number } | null = null;
+  const layers = () => ({ personal, household, effective: personal ?? household,
+    revision: { personal: personal && { id: personal.id, revision: personal.revision },
+      household: household && { id: household.id, revision: household.revision } } });
+  await page.route(`**/api/admin/problem-reports/${reportId}`, route => reply(route, {
+    id: reportId, kind: "wrong-lyrics", status: "new", note: "The words are for another version.",
+    reporterName: "Another listener", createdAt: captured.capturedAt, revision: 1,
+    context: { ...captured, song: { ...captured.song,
+      externalSnapshotId: options.snapshot ? snapshotId : null,
+      canonicalRecordingId: options.known === false ? null : reportRecordingId } },
+  }));
+  await page.route(`**/api/admin/recordings/${reportRecordingId}/lyrics*`, route => {
+    if (route.request().method() === "GET") {
+      const scope = new URL(route.request().url()).searchParams.get("scope") ?? "personal";
+      scopes.push(scope);
+      return reply(route, { recordingId: reportRecordingId, scope,
+        song: { title: captured.song.title, artist: "Fixture artist", album: "", durationSeconds: 180 },
+        choices: layers(), sources: [{ sourceId: "lrclib", available: true,
+          preview: scope === "household" ? "Shared fixture words" : "Personal fixture words",
+          previewRevision: `sha256:${scope}`, format: "plain", truncated: false }] });
+    }
+    const input = route.request().postDataJSON();
+    writes.push(input);
+    const choice = { id: input.scope + "-choice", sourceId: input.sourceId, revision: 1 };
+    if (input.scope === "household") household = choice; else personal = choice;
+    return reply(route, layers());
+  });
+  return { state, scopes, writes };
+}
+
+for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"] as const) {
+  test(`report lyrics review without a saved match at ${width}px in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    const fixture = await mockReportLyrics(page);
+    await page.goto(`/#/activity?view=reports&report=${reportId}`);
+    const button = page.getByRole("button", { name: "Review lyrics", exact: true });
+    await expect(button).toBeVisible();
+    await expect(page.getByRole("link", { name: "Review match", exact: true })).toHaveCount(0);
+    expect(fixture.scopes).toEqual([]);
+    await button.click();
+    const dialog = page.getByRole("dialog", { name: "Review lyrics", exact: true });
+    await expect(dialog).toContainText(captured.song.title);
+    await expect(dialog).toContainText("Personal choices apply to your signed-in account.");
+    await expect(dialog.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Personal fixture words");
+    expect(fixture.scopes).toEqual(["personal"]);
+    expect(fixture.writes).toEqual([]);
+    expect(fixture.state.updates).toEqual([]);
+    await dialog.getByRole("radio", { name: "Household", exact: true }).check();
+    await expect(dialog.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Shared fixture words");
+    expect(fixture.scopes).toEqual(["personal", "household"]);
+    if (width < 768) {
+      await expectContainedMobileGeometry(page);
+      const done = await dialog.getByRole("button", { name: "Done", exact: true }).boundingBox();
+      expect(done).not.toBeNull();
+      expect(done!.y + done!.height).toBeLessThanOrEqual(844);
+    }
+    await page.screenshot({ path: `test-results/report-lyrics-${width}-${theme}.png` });
+    await dialog.getByRole("button", { name: "Use this source for this recording", exact: true }).click();
+    await expect.poll(() => fixture.writes).toEqual([{ sourceId: "lrclib", scope: "household",
+      expectedRevision: { personal: null, household: null }, previewRevision: "sha256:household" }]);
+    expect(fixture.state.updates).toEqual([]);
+    await dialog.getByRole("button", { name: "Done", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(button).toBeFocused();
+  });
+}
+
+test("report review keeps saved-match links and hides unavailable lyric actions", async ({ page }) => {
+  const fixture = await mockReportLyrics(page, { snapshot: true, known: false });
+  await page.goto(`/#/activity?view=reports&report=${reportId}`);
+  await expect(page.getByRole("link", { name: "Review match", exact: true })).toHaveAttribute("href", `#/library/mappings?review=${snapshotId}`);
+  await expect(page.getByRole("button", { name: "Review lyrics", exact: true })).toHaveCount(0);
+  expect(fixture.scopes).toEqual([]);
+  expect(fixture.state.updates).toEqual([]);
+});
+
+test("report review actions both fit on a phone without opening sources", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const fixture = await mockReportLyrics(page, { snapshot: true });
+  await page.goto(`/#/activity?view=reports&report=${reportId}`);
+  await expect(page.getByRole("link", { name: "Review match", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Review lyrics", exact: true })).toBeVisible();
+  await expectContainedMobileGeometry(page);
+  expect(fixture.scopes).toEqual([]);
+  expect(fixture.writes).toEqual([]);
+});
+
+test("closing report lyrics discards a late preview before reopening", async ({ page }) => {
+  await mockReportLyrics(page);
+  let release!: () => void;
+  const delayed = new Promise<void>(resolve => { release = resolve; });
+  let reads = 0;
+  await page.route(`**/api/admin/recordings/${reportRecordingId}/lyrics*`, async route => {
+    reads++;
+    const first = reads === 1;
+    if (first) await delayed;
+    await reply(route, { recordingId: reportRecordingId, scope: "personal",
+      song: { title: "Fixture song", artist: "Artist", album: "", durationSeconds: 180 },
+      choices: { personal: null, household: null, effective: null, revision: { personal: null, household: null } },
+      sources: [{ sourceId: "lrclib", available: true, preview: first ? "Old preview" : "Current preview",
+        previewRevision: "sha256:fixture", format: "plain", truncated: false }] }).catch(() => {});
+  });
+  await page.goto(`/#/activity?view=reports&report=${reportId}`);
+  const button = page.getByRole("button", { name: "Review lyrics", exact: true });
+  await button.click();
+  const dialog = page.getByRole("dialog", { name: "Review lyrics", exact: true });
+  await expect.poll(() => reads).toBe(1);
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await button.click();
+  await expect(dialog.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Current preview");
+  release();
+  await expect(dialog.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Current preview");
+});
