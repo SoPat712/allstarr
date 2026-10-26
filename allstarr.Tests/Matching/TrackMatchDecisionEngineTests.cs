@@ -482,6 +482,33 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         Assert.Equal(equivalent, TrackMatchDecisionEngine.SameRecordingIdentity(first, second));
     }
 
+    [Theory]
+    [InlineData("GBAHS1400160", "USA2P1408144")]
+    [InlineData(null, "USA2P1408144")]
+    [InlineData("GBAHS1400160", null)]
+    public void DifferentArtistsWithTheSameBoomClapTitleAlbumAndDurationAreNotEquivalent(
+        string? charliIsrc, string? coverIsrc)
+    {
+        var scope = Scope();
+        var charli = ProviderCandidate(scope, "deezer", 169_000) with
+        {
+            BackendItemId = "79590714",
+            Title = "Boom Clap",
+            Artist = "Charli xcx",
+            Album = "Boom Clap",
+            Isrc = charliIsrc
+        };
+        var cover = charli with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "80564534",
+            Artist = "Jazzy K",
+            Isrc = coverIsrc
+        };
+
+        Assert.False(TrackMatchDecisionEngine.SameRecordingIdentity(charli, cover));
+    }
+
     [Fact]
     public void KissMeMore_VocalFixtureIsAccepted_InstrumentalFixtureIsNotEquivalent()
     {

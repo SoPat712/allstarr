@@ -72,11 +72,13 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
         Assert.Equal("event-1004", events[^1].Action);
     }
 
-    [Fact]
-    public async Task PruneNowAsync_PreservesCatalogRepairCompletionThroughExpiryAndOverflow()
+    [Theory]
+    [InlineData("duplicates.complete")]
+    [InlineData("recording-equivalence.complete")]
+    public async Task PruneNowAsync_PreservesCatalogRepairCompletionThroughExpiryAndOverflow(string completionAction)
     {
         var now = DateTimeOffset.UtcNow;
-        var completed = Event(now.AddDays(-60), "duplicates.complete", "catalog-identity-maintenance");
+        var completed = Event(now.AddDays(-60), completionAction, "catalog-identity-maintenance");
         await using (var scope = provider.CreateAsyncScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
