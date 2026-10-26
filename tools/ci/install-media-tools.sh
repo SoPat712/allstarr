@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-sudo python3 - <<'PY'
+sudo python3 - /etc/apt <<'PY'
 from pathlib import Path
 import re
+import sys
 
-directory = Path("/etc/apt/sources.list.d")
-for path in [Path("/etc/apt/sources.list"), *directory.glob("*.list"), *directory.glob("*.sources")]:
+root = Path(sys.argv[1])
+directory = root / "sources.list.d"
+for path in [root / "sources.list", root / "apt-mirrors.txt", *directory.glob("*.list"), *directory.glob("*.sources")]:
     if not path.is_file():
         continue
     original = path.read_text()
