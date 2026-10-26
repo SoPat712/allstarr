@@ -59,6 +59,10 @@ public partial class JellyfinController
 
         if (string.IsNullOrWhiteSpace(searchTerm))
         {
+            var nativeLibraryRoot = await TryReadNativeMusicLibraryRootAsync(
+                searchTerm, includeItemTypes, parentId, effectiveArtistIds, albumIds, startIndex, limit);
+            if (nativeLibraryRoot != null) return nativeLibraryRoot;
+
             var savedBrowse = await TryReadSavedBrowseAsync(includeItemTypes);
             if (savedBrowse != null) return savedBrowse;
         }
@@ -799,6 +803,95 @@ public partial class JellyfinController
             }
         }
     }
+
+    private async Task<IActionResult?> TryReadNativeMusicLibraryRootAsync(
+        string? searchTerm,
+        string? includeItemTypes,
+        string? parentId,
+        string? effectiveArtistIds,
+        string? albumIds,
+        int startIndex,
+        int limit)
+    {
+        if (!IsNativeMusicLibraryRootRequest(
+                searchTerm, includeItemTypes, parentId, effectiveArtistIds, albumIds))
+            return null;
+
+        var endpoint = BuildCurrentEndpoint();
+        var paginated = Request.Query.ContainsKey("StartIndex") || Request.Query.ContainsKey("Limit");
+        if (paginated)
+        {
+            var query = Request.Query
+                .Where(item => !item.Key.Equals("StartIndex", StringComparison.OrdinalIgnoreCase) &&
+                               !item.Key.Equals("Limit", StringComparison.OrdinalIgnoreCase))
+                .SelectMany(item => item.Value.Select(value =>
+                    new KeyValuePair<string, string?>(item.Key, value)));
+            endpoint = (Request.Path.Value?.TrimStart('/') ?? string.Empty) + QueryString.Create(query);
+        }
+
+        var (body, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
+        return FilterMusicLibraryViews(body, statusCode, requireCollectionFolder: true,
+            startIndex: startIndex, limit: Request.Query.ContainsKey("Limit") ? limit : null);
+    }
+
+    private bool IsNativeMusicLibraryRootRequest(
+        string? searchTerm,
+        string? includeItemTypes,
+        string? parentId,
+        string? effectiveArtistIds,
+        string? albumIds)
+    {
+        if (!string.IsNullOrWhiteSpace(searchTerm) ||
+            !string.IsNullOrWhiteSpace(includeItemTypes) ||
+            !string.IsNullOrWhiteSpace(parentId) ||
+            !string.IsNullOrWhiteSpace(effectiveArtistIds) ||
+            !string.IsNullOrWhiteSpace(albumIds) ||
+            Request.Query.ContainsKey("Ids") ||
+            IsFavoritesOnlyRequest())
+            return false;
+
+        foreach (var query in Request.Query)
+        {
+            if (query.Key.Equals("SearchTerm", StringComparison.OrdinalIgnoreCase) ||
+                query.Key.Equals("IncludeItemTypes", StringComparison.OrdinalIgnoreCase) ||
+                query.Key.Equals("ParentId", StringComparison.OrdinalIgnoreCase))
+            {
+                if (query.Value.Any(value => !string.IsNullOrWhiteSpace(value))) return false;
+                continue;
+            }
+
+            if (query.Key.Equals("Recursive", StringComparison.OrdinalIgnoreCase))
+            {
+                if (query.Value.Count != 1 ||
+                    !bool.TryParse(query.Value[0], out var recursive) ||
+                    recursive)
+                    return false;
+                continue;
+            }
+
+            if (!IsNativeMusicRootQueryOption(query.Key)) return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsNativeMusicRootQueryOption(string key) =>
+        key.Equals("api_key", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("ApiKey", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("access_token", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("UserId", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("StartIndex", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("Limit", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("Fields", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("EnableImages", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("EnableUserData", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("EnableTotalRecordCount", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("ImageTypeLimit", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("EnableImageTypes", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("SortBy", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("SortOrder", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("CollapseBoxSetItems", StringComparison.OrdinalIgnoreCase) ||
+        key.Equals("ExcludeLocationTypes", StringComparison.OrdinalIgnoreCase);
 
     private async Task<IActionResult> MergeVirtualPlaylistBrowseAsync(
         JsonDocument backendResult,

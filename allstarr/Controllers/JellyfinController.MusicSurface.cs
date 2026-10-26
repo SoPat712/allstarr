@@ -44,24 +44,42 @@ public partial class JellyfinController
             (body, statusCode) = await _proxyService.GetJsonAsync(
                 $"UserViews{Request.QueryString}", null, Request.Headers);
         }
+        return FilterMusicLibraryViews(body, statusCode);
+    }
+
+    private IActionResult FilterMusicLibraryViews(
+        JsonDocument? body,
+        int statusCode,
+        bool requireCollectionFolder = false,
+        int startIndex = 0,
+        int? limit = null)
+    {
         if (body == null) return HandleProxyResponse(body, statusCode);
 
         using (body)
         {
-            var root = JsonNode.Parse(body.RootElement.GetRawText()) as JsonObject;
-            if (root?["Items"] is JsonArray items)
-            {
-                var filtered = items
-                    .Where(item => item is JsonObject candidate &&
-                                   string.Equals(candidate["CollectionType"]?.GetValue<string>(), "music", StringComparison.OrdinalIgnoreCase))
-                    .Select(item => item!.DeepClone())
-                    .ToArray();
-                items.Clear();
-                foreach (var item in filtered) items.Add(item);
-                root["TotalRecordCount"] = filtered.Length;
-            }
+            if (statusCode != StatusCodes.Status200OK)
+                return HandleProxyResponse(body, statusCode);
 
-            return Content(root?.ToJsonString() ?? "{}", "application/json");
+            var original = body.RootElement.GetRawText();
+            var root = JsonNode.Parse(original) as JsonObject;
+            if (root?["Items"] is not JsonArray items)
+                return Content(original, "application/json");
+
+            var filtered = items
+                .Where(item => item is JsonObject candidate &&
+                               string.Equals(candidate["CollectionType"]?.GetValue<string>(), "music", StringComparison.OrdinalIgnoreCase) &&
+                               (!requireCollectionFolder ||
+                                string.Equals(candidate["Type"]?.GetValue<string>(), "CollectionFolder", StringComparison.OrdinalIgnoreCase)))
+                .Select(item => item!.DeepClone())
+                .ToArray();
+            items.Clear();
+            foreach (var item in filtered.Skip(Math.Max(0, startIndex)).Take(Math.Max(0, limit ?? int.MaxValue)))
+                items.Add(item);
+            root["TotalRecordCount"] = filtered.Length;
+            if (requireCollectionFolder) root["StartIndex"] = Math.Max(0, startIndex);
+
+            return Content(root.ToJsonString(), "application/json");
         }
     }
 
