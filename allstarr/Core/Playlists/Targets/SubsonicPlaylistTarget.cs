@@ -229,6 +229,10 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
     {
         try
         {
+            if (request.BackendPlaylistId != null &&
+                !await CanWriteAsync(context, request.BackendPlaylistId, cancellationToken))
+                return new(BackendPlaylistTargetStatus.Unauthorized, ErrorCode: "playlist-write-forbidden");
+
             var unsupported = UnsupportedFields(request.Metadata);
             if (request.Mode == BackendPlaylistWriteMode.Recreate || request.BackendPlaylistId == null)
             {
