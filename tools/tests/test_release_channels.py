@@ -158,5 +158,56 @@ class StablePromotionTests(unittest.TestCase):
         self.assertFalse(any(call[2] == "create" for call in calls))
 
 
+class MediaMirrorTests(unittest.TestCase):
+    def rewrite(self, root):
+        installer = (ROOT / "tools/ci/install-media-tools.sh").read_text()
+        program = installer.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+        result = subprocess.run([sys.executable, "-", str(root)], input=program,
+                                text=True, capture_output=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_direct_source_files_rewrite_only_the_azure_host(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            sources = root / "sources.list.d"
+            sources.mkdir()
+            legacy = root / "sources.list"
+            legacy.write_text("deb http://azure.archive.ubuntu.com/ubuntu/ noble main\n")
+            modern = sources / "ubuntu.sources"
+            modern.write_text("URIs: https://azure.archive.ubuntu.com/ubuntu\nSuites: noble\n")
+            other = sources / "other.list"
+            original = "deb https://packages.microsoft.com/ubuntu/24.04/prod noble main\n"
+            other.write_text(original)
+            self.rewrite(root)
+            self.assertEqual("deb https://archive.ubuntu.com/ubuntu/ noble main\n", legacy.read_text())
+            self.assertEqual("URIs: https://archive.ubuntu.com/ubuntu\nSuites: noble\n", modern.read_text())
+            self.assertEqual(original, other.read_text())
+            modified = modern.stat().st_mtime_ns
+            self.rewrite(root)
+            self.assertEqual(modified, modern.stat().st_mtime_ns)
+
+    def test_runner_mirror_file_rewrites_the_selected_mirror(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            sources = root / "sources.list.d"
+            sources.mkdir()
+            source = sources / "ubuntu.sources"
+            original = "URIs: mirror+file:/etc/apt/apt-mirrors.txt\nSuites: noble noble-security\n"
+            source.write_text(original)
+            mirrors = root / "apt-mirrors.txt"
+            mirrors.write_text("http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+                               "https://security.ubuntu.com/ubuntu/\tpriority:3\n")
+            self.rewrite(root)
+            self.assertEqual("https://archive.ubuntu.com/ubuntu/\tpriority:1\n"
+                             "https://security.ubuntu.com/ubuntu/\tpriority:3\n", mirrors.read_text())
+            self.assertEqual(original, source.read_text())
+
+    def test_missing_source_files_are_not_created(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            self.rewrite(root)
+            self.assertEqual([], list(root.iterdir()))
+
+
 if __name__ == "__main__":
     unittest.main()
