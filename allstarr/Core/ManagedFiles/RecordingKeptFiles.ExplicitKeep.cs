@@ -191,16 +191,16 @@ public sealed partial class RecordingKeptFiles
             item.Id == proof.MappingId && item.Revision == proof.Revision && item.ProviderId == source.ProviderId &&
             item.ExternalId == source.Value, cancellationToken)
             ?? throw new InvalidOperationException("The cached track changed. Refresh the list and try again.");
+        if (!DownloadedSongMappingScope.TryResolve(mapping, out var scope))
+            throw new InvalidOperationException("The cached track's account scope changed.");
         if (mapping.ProviderAccountId is { } accountId)
         {
             var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item => item.Id == accountId &&
                 item.ProviderId == source.ProviderId, cancellationToken);
             if (account == null || account.OwnerUserId != null && account.OwnerUserId != owner) throw Denied();
-            if (mapping.ScopeKey != new DownloadedSongMappingScope(accountId, mapping.AudioQuality).Key)
+            if (scope.Representation == DownloadedSongRepresentation.Original && scope.SourceAccountRevision != account.Revision)
                 throw new InvalidOperationException("The cached track's account scope changed.");
         }
-        else if (mapping.ScopeKey != DownloadedSongMappingScope.LegacyKey)
-            throw new InvalidOperationException("The cached track's account scope changed.");
     }
 
     private static async Task<UserRecord> RequireKeepAdministratorAsync(AllstarrDbContext db,

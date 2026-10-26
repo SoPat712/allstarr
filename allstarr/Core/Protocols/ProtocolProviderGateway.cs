@@ -172,6 +172,7 @@ public sealed record ProtocolProviderStream(
 {
     internal object ObservationToken { get; } = new();
     internal PlaybackFileFacts FileFacts { get; init; } = new();
+    internal Func<CancellationToken, Task<HttpResponseMessage>>? OpenOriginalResponseAsync { get; init; }
     public Guid? ServingManagedFileId { get; init; }
 }
 
@@ -1114,6 +1115,7 @@ public sealed partial class ProtocolProviderGateway(
             IsPreparation = protocol.IsPreparation,
             PreparationQuality = protocol.PreparationQuality,
             IsOriginalDownload = protocol.IsOriginalDownload,
+            RetainOriginalMedia = protocol.RetainOriginalMedia,
             IsReadOnly = protocol.IsReadOnly,
             AudioDelivery = protocol.IsOriginalDownload ? null : protocol.AudioDelivery
         };
@@ -1282,9 +1284,8 @@ public sealed partial class ProtocolProviderGateway(
             var routeReason = string.Join(':',
                 fallbackReason ?? "provider-priority",
                 candidate.Context.Account?.ResolutionReason ?? "account-free");
-            var cacheScope = new DownloadedSongMappingScope(
-                    candidate.Context.Account?.AccountId,
-                    quality);
+            var cacheScope = managedTrackCache?.ScopeFor(protocol, candidate.Context.Account?.AccountId,
+                quality, candidate.Context.Account?.Revision) ?? new DownloadedSongMappingScope(candidate.Context.Account?.AccountId, quality);
             var coordinate = !protocol.IsReadOnly && !headOnly && managedTrackCache != null;
             using var cacheOpening = coordinate ? await managedTrackCache!.BeginOpenAsync(
                 servingTrack, cacheScope, candidate.Context.Account?.Revision, protocol.IsPreparation, protocol.CancellationToken,
@@ -1292,7 +1293,7 @@ public sealed partial class ProtocolProviderGateway(
             if (coordinate && cacheOpening == null) return null;
             var cached = protocol.IsReadOnly || managedTrackCache == null ? null : await managedTrackCache.TryOpenAsync(
                 servingTrack, cacheScope, protocol.CancellationToken, candidate.Context.Account?.Revision, protocol.IsPreparation,
-                rangeStart, originalDownload: protocol.IsOriginalDownload);
+                rangeStart, originalDownload: protocol.IsOriginalDownload, retainOriginalMedia: protocol.RetainOriginalMedia);
             if (cached != null)
             {
                 if (protocol.IsPreparation) { cached.Response.Dispose(); return null; }
@@ -1410,21 +1411,41 @@ public sealed partial class ProtocolProviderGateway(
             if (outcome.IsSuccess)
             {
                 var (response, lease) = outcome.RequireValue();
+                void SourceFailed()
+                {
+                    var error = new ProviderError(ProviderErrorKind.TransientFailure);
+                    outcomes?.ObservePlayback(candidateExecution, servingTrack, quality, error, Stopwatch.GetElapsedTime(started));
+                    outcomes?.Observe(candidateExecution, ProviderCapabilityKind.Streaming, error, Stopwatch.GetElapsedTime(started));
+                    logger?.LogInformation("Playback source {Provider} stopped after opening ({FailureCode})", candidate.Provider.Id, error.Code);
+                }
                 if (!headOnly && !protocol.IsReadOnly)
                     await ProviderPlaybackStream.AttachAsync(response, lease.SupportsByteRanges,
                         (offset, end, tag, token) => OpenLeaseAtAsync(lease, new RangeHeaderValue(offset, end), tag, token),
-                        () =>
-                        {
-                            var error = new ProviderError(ProviderErrorKind.TransientFailure);
-                            outcomes?.ObservePlayback(candidateExecution, servingTrack, quality, error, Stopwatch.GetElapsedTime(started));
-                            outcomes?.Observe(candidateExecution, ProviderCapabilityKind.Streaming, error, Stopwatch.GetElapsedTime(started));
-                            logger?.LogInformation("Playback source {Provider} stopped after opening ({FailureCode})", candidate.Provider.Id, error.Code);
-                        }, clock, streamCancellation);
+                        SourceFailed, clock, streamCancellation);
+                async Task<HttpResponseMessage> OpenOriginalResponseAsync(CancellationToken token)
+                {
+                    var complete = await OpenCandidateAsync(
+                        () => Task.FromResult(ProviderOutcome<ProviderStreamLease>.Success(lease)),
+                        selected => OpenLeaseAtAsync(selected, null, null, token), false, null, token);
+                    if (!complete.IsSuccess) ThrowRouteFailure(complete.Error!);
+                    var full = complete.RequireValue().Response;
+                    try
+                    {
+                        await ProviderPlaybackStream.AttachAsync(full, lease.SupportsByteRanges,
+                            (offset, end, tag, reading) => OpenLeaseAtAsync(lease, new RangeHeaderValue(offset, end), tag, reading),
+                            SourceFailed, clock, token);
+                        return full;
+                    }
+                    catch { full.Dispose(); throw; }
+                }
                 return await OpenedAsync(new ProtocolProviderStream(response, lease, candidate.Provider.Id,
                     servingTrack.Value, candidate.Context.Account?.AccountId,
                     EffectiveQuality: quality,
                     SelectionReason: $"{routeReason}:remote",
-                    ServingAccountRevision: candidate.Context.Account?.Revision), candidateExecution, servingTrack);
+                    ServingAccountRevision: candidate.Context.Account?.Revision)
+                {
+                    OpenOriginalResponseAsync = managedTrackCache?.CanRetainOriginal(protocol) == true ? OpenOriginalResponseAsync : null
+                }, candidateExecution, servingTrack);
             }
             lastFailure = outcome.Error;
             var fallback = resuming ? null : router.EvaluateFallback(plan, candidateIndex, outcome.Error!);
@@ -1454,7 +1475,7 @@ public sealed partial class ProtocolProviderGateway(
         async Task<ProtocolProviderStream> OpenedAsync(ProtocolProviderStream stream,
             ProviderExecutionContext? execution, ProviderExternalResourceId? servingTrack)
         {
-            if (!protocol.IsReadOnly && execution != null && servingTrack != null && MediaFacts is { } store)
+            if (!protocol.IsOriginalDownload && !protocol.IsReadOnly && execution != null && servingTrack != null && MediaFacts is { } store)
                 stream.FileFacts.RecordAsync ??= async (facts, token) =>
                 {
                     using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30), clock);
@@ -1501,7 +1522,7 @@ public sealed partial class ProtocolProviderGateway(
                 stream.FileFacts.Media = measured.Media;
                 stream.FileFacts.Size = measured.Size;
                 stream.FileFacts.Measured = measured;
-                if (!protocol.IsReadOnly && !headOnly && execution != null && servingTrack != null && MediaFacts is { } mediaStore)
+                if (!protocol.IsOriginalDownload && !protocol.IsReadOnly && !headOnly && execution != null && servingTrack != null && MediaFacts is { } mediaStore)
                 {
                     try { await mediaStore.RememberMediaFactsAsync(execution, servingTrack, measured, streamCancellation); }
                     catch (Exception error) when (error is not OperationCanceledException)
@@ -1517,7 +1538,8 @@ public sealed partial class ProtocolProviderGateway(
             if (!protocol.IsReadOnly && !headOnly && managedTrackCache != null && !stream.IsCached)
             {
                 Task<Song?>? metadata = null;
-                Task<Song?> Metadata() => metadata ??= GetSongAsync(protocol, stream.ServingProviderId, stream.ServingExternalId!);
+                Task<Song?> Metadata() => metadata ??= GetSongAsync(protocol.IsOriginalDownload ? protocol with { IsReadOnly = true } : protocol,
+                    stream.ServingProviderId, stream.ServingExternalId!);
                 try
                 {
                     if (!protocol.IsOriginalDownload) StreamDurationGuidance.Attach(stream, Metadata);

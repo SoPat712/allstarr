@@ -119,7 +119,8 @@ public sealed partial class ProtocolRouteFixtureTests
                 : $"/rest/{endpoint}?id={ItemId}&u=fixture&p=fixture&v=1.16.1&c=Feishin&f=json";
             var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             { ["Library:DownloadPath"] = Root }).Build();
-            cache = new(configuration, Options.Create(new SubsonicSettings { StorageMode = StorageMode.Cache }),
+            cache = new(configuration, Options.Create(new SubsonicSettings
+            { StorageMode = backend == "Jellyfin" ? StorageMode.Permanent : StorageMode.Cache }),
                 Local.Object, NullLogger<ManagedTrackCacheService>.Instance);
             var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
             streaming.SetupGet(item => item.ProviderId).Returns("deezer");
