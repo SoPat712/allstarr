@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { expectContainedMobileGeometry } from "./mobile-geometry";
 const jobId = "11111111-1111-4111-8111-111111111111";
 const rows = [
@@ -10,7 +10,7 @@ const rows = [
   { id: "cancel", kind: "job", label: "Update favorites", state: "cancelled", detail: "Cancelled before changes were applied." },
 ].map((row, index) => ({ ...row, source: row.source ?? "System", actorUserId: "viewer", actorDisplayName: "Josh", occurredAt: `2026-10-26T12:00:0${9 - index}Z` }));
 const job = { id: jobId, type: "recording.keep", displayName: "Keep a song", state: "Failed", source: "Apple Music", ownerName: "Josh", targetName: "Power Trip · J. Cole", summary: "Audio could not be downloaded from Apple Music.", recovery: "Review the source connection or choose another ready source.", lastErrorMessage: "The source did not return audio before the time limit.", updatedAt: "2026-10-26T12:00:08Z", completedAt: "2026-10-26T12:00:08Z", attemptCount: 1 };
-async function mockActivity(page: Page, events: unknown[] = rows, options: { tasks?: unknown[]; job?: Record<string, unknown> } = {}) {
+async function mockActivity(page: Page, events: unknown[] = rows, options: { tasks?: unknown[]; job?: Record<string, unknown>; jobs?: Record<string, unknown>[]; attempts?: unknown[] } = {}) {
   const reads: string[] = [], writes: string[] = [];
   await page.route("**/api/admin/**", async route => {
     const url = new URL(route.request().url()), path = url.pathname;
@@ -22,12 +22,31 @@ async function mockActivity(page: Page, events: unknown[] = rows, options: { tas
     if (path === "/api/admin/ui/schema") return reply({ configSections: [], providers: [{ id: "applemusic", name: "Apple Music" }, { id: "lastfm", name: "Last.fm" }], activeBackend: "Jellyfin" });
     if (path === "/api/admin/ui/activity") return reply({ items: events, hasMore: false });
     if (path === "/api/admin/activity/tasks") return reply({ items: options.tasks ?? [], hasMore: false });
-    if (path === "/api/admin/jobs") return reply({ jobs: [], progress: [], hasMore: false });
-    if (path === `/api/admin/jobs/${jobId}`) { reads.push(path); return reply({ job: { ...job, ...options.job }, attempts: [{ attemptNumber: 1, startedAt: "2026-10-26T12:00:03Z", completedAt: "2026-10-26T12:00:08Z", outcome: "failed", errorMessage: "The source did not return audio before the time limit." }], hasMore: false }); }
+    if (path === "/api/admin/jobs") return reply({ jobs: (options.jobs ?? []).filter(item => url.searchParams.get("view") === "queue" ? item.state === "Running" : item.state !== "Running"), progress: [], hasMore: false });
+    if (path === `/api/admin/jobs/${jobId}`) { reads.push(path); return reply({ job: { ...job, ...options.job }, attempts: options.attempts ?? [{ attemptNumber: 1, startedAt: "2026-10-26T12:00:03Z", completedAt: "2026-10-26T12:00:08Z", outcome: "failed", errorMessage: "The source did not return audio before the time limit." }], hasMore: false }); }
     if (path === "/api/admin/updates/stream") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" });
     return reply({});
   });
   return { reads, writes };
+}
+async function expectOutcome(badge: Locator, tone: string) {
+  await expect(badge).toHaveClass(new RegExp(`badge-${tone}`));
+  await expect(badge.locator("svg")).toHaveCount(1);
+  const colors = await badge.evaluate(element => {
+    const style = getComputedStyle(element);
+    const luminance = (color: string) => {
+      const channels = color.match(/[\d.]+/g)!.slice(0, 3).map(value => {
+        const channel = Number(value) / 255;
+        return channel <= .04045 ? channel / 12.92 : ((channel + .055) / 1.055) ** 2.4;
+      });
+      return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
+    };
+    const ink = luminance(style.color), background = luminance(style.backgroundColor);
+    return { color: style.color, background: style.backgroundColor, contrast: (Math.max(ink, background) + .05) / (Math.min(ink, background) + .05) };
+  });
+  expect(colors.contrast).toBeGreaterThanOrEqual(4.5);
+  expect((await badge.textContent())?.trim()).toBeTruthy();
+  return colors;
 }
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
   test(`Activity explains outcomes with color and context at ${width}px ${theme}`, async ({ page }, testInfo) => {
@@ -35,14 +54,18 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     const fixture = await mockActivity(page); await page.goto("/#/activity");
     const groups = page.locator(".event-log-group"); await expect(groups).toHaveCount(6);
-    const tones = ["success", "danger", "accent", "warning", "neutral", "neutral"];
+    const tones = ["success", "danger", "accent", "warning", "warning", "neutral"];
+    const colors = [];
     for (let index = 0; index < tones.length; index++) {
       await expect(groups.nth(index).locator(":scope > summary .event-kind-icon")).toHaveAttribute("data-tone", tones[index]);
-      await expect(groups.nth(index).locator(":scope > summary [data-slot=badge]")).toHaveClass(new RegExp(`badge-${tones[index]}`));
+      colors.push(await expectOutcome(groups.nth(index).locator(":scope > summary [data-slot=badge]"), tones[index]));
     }
+    expect(new Set(colors.slice(0, 4).map(value => value.color)).size).toBe(4);
+    expect(new Set(colors.slice(0, 4).map(value => value.background)).size).toBe(4);
     const iconColor = async (index: number) => groups.nth(index).locator(":scope > summary .event-kind-icon").evaluate(element => getComputedStyle(element).color);
-    expect(await iconColor(0)).not.toBe(await iconColor(4));
+    expect(await iconColor(0)).not.toBe(await iconColor(5));
     expect(await iconColor(1)).not.toBe(await iconColor(0));
+    expect(await iconColor(2)).not.toBe(await iconColor(0));
     await expect(groups.first().locator(":scope > summary")).toContainText("Housewife");
     await expect(groups.first().locator(":scope > summary")).toContainText("Apple Music");
     const failed = groups.nth(1); await failed.locator(":scope > summary").focus(); await page.keyboard.press("Enter");
@@ -51,13 +74,14 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(action).toHaveAttribute("href", `#/activity?view=jobs&job=${jobId}`);
     await expect(failed.locator(":scope > summary")).not.toContainText(jobId);
     if (width === 390) await expectContainedMobileGeometry(page);
-    await page.evaluate(() => window.scrollTo(0, 0)); await page.screenshot({ path: testInfo.outputPath(`activity-history-${width}-${theme}.png`) });
+    await page.evaluate(() => window.scrollTo(0, 0)); await page.screenshot({ path: testInfo.outputPath(`activity-history-${width}-${theme}.png`), fullPage: true });
     await action.click();
     await expect(page.getByRole("tab", { name: "Jobs", exact: true })).toHaveAttribute("aria-selected", "true");
     const selected = page.locator(`[data-job-id="${jobId}"]`);
     await expect(selected.getByRole("button", { name: /Keep a song/ })).toHaveAttribute("aria-expanded", "true");
     await expect(selected).toContainText(job.targetName); await expect(selected).toContainText(job.recovery);
     await expect(page.getByRole("region", { name: "Attempt history" })).toContainText("Attempt 1");
+    await expectOutcome(selected.locator(".job-attempts [data-slot=badge]"), "danger");
     if (width === 390) await expectContainedMobileGeometry(page);
     await page.screenshot({ path: testInfo.outputPath(`activity-job-${width}-${theme}.png`) });
     expect(fixture.reads.length).toBeGreaterThan(0); expect(fixture.writes).toEqual([]);
@@ -75,6 +99,42 @@ test("Activity lifecycle uses the latest result while retaining earlier failures
   await group.locator(":scope > summary").click(); await expect(group).toContainText("The first source timed out.");
   await page.getByRole("button", { name: "Problems only" }).click();
   await expect(page.getByText("Nothing matches these filters", { exact: true })).toBeVisible();
+});
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) test(`Activity colors jobs tasks attempts and diagnostics at ${width}px ${theme}`, async ({ page }, testInfo) => {
+  await page.setViewportSize({ width, height: 900 });
+  await page.emulateMedia({ colorScheme: theme });
+  await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+  const states = ["Succeeded", "Failed", "Running"];
+  await mockActivity(page, [
+    { ...rows[0], id: "diagnostic-success", kind: "extension", state: "success", label: "Source connected" },
+    { ...rows[1], id: "diagnostic-error", kind: "extension", jobId: undefined, state: "error", label: "Source unavailable" },
+    { ...rows[2], id: "diagnostic-running", kind: "extension", state: "running", label: "Checking source" },
+  ], {
+    jobs: states.map((state, index) => ({ ...job, id: index === 1 ? jobId : `${index}1111111-1111-4111-8111-111111111111`, type: `fixture.${index}`, state })),
+    tasks: states.map((state, index) => ({ id: String(index), kind: "maintenance", name: `Task ${index + 1}`, state, enabled: true, cadence: "Hourly" })),
+    attempts: states.map((state, index) => ({ attemptNumber: index + 1, startedAt: job.updatedAt, outcome: state.toLowerCase() })),
+  });
+  await page.goto("/#/activity");
+  const diagnostics = page.locator(".event-log-group > summary [data-slot=badge]");
+  for (const [index, tone] of ["success", "danger", "accent"].entries()) await expectOutcome(diagnostics.nth(index), tone);
+  await page.getByRole("tab", { name: "Jobs", exact: true }).click();
+  const jobs = page.locator(".job-row"); await expect(jobs).toHaveCount(3);
+  const colors = [];
+  for (const [index, tone] of ["success", "danger", "accent"].entries()) {
+    const row = jobs.filter({ has: page.locator(`.badge-${tone}`) });
+    colors.push(await expectOutcome(row.locator(".job-row-end [data-slot=badge]"), tone));
+    await expect(row.locator(".event-kind-icon")).toHaveAttribute("data-tone", tone);
+  }
+  expect(new Set(colors.map(value => value.color)).size).toBe(3);
+  await page.locator(`[data-job-id="${jobId}"] .job-row-toggle`).click();
+  for (const [index, tone] of ["success", "danger", "accent"].entries()) await expectOutcome(page.locator(".job-attempts [data-slot=badge]").nth(index), tone);
+  if (width === 390) await expectContainedMobileGeometry(page);
+  await page.screenshot({ path: testInfo.outputPath(`activity-jobs-${width}-${theme}.png`), fullPage: true });
+  await page.getByRole("tab", { name: "Tasks", exact: true }).click();
+  for (const [index, tone] of ["success", "danger", "accent"].entries()) await expectOutcome(page.locator(".activity-task [data-slot=badge]").nth(index), tone);
+  if (width === 390) await expectContainedMobileGeometry(page);
+  await page.screenshot({ path: testInfo.outputPath(`activity-tasks-${width}-${theme}.png`), fullPage: true });
 });
 test("Activity keeps an older reference out of the headline and makes it traceable", async ({ page }) => {
   await mockActivity(page, [{ id: "legacy", kind: "job", source: "system", label: "recording.keep", state: "failed", detail: jobId, jobId, actorUserId: "viewer", occurredAt: "2026-10-26T12:00:00Z" }]);
@@ -104,8 +164,8 @@ test("A completed job with missing Health checks stays neutral", async ({ page }
   await mockActivity(page, rows, { job: { type: "health.smoke", displayName: "Health check", state: "Succeeded", displayState: "not_checked", summary: "Health check result unavailable; detailed results were not retained.", targetName: "Server", recovery: "Review the current checks in Health." } });
   await page.goto(`/#/activity?view=jobs&job=${jobId}`);
   const selected = page.getByRole("region", { name: "Selected operation" });
-  await expect(selected.locator("[data-slot=badge]")).toHaveText("Not checked");
-  await expect(selected.locator("[data-slot=badge]")).toHaveClass(/badge-neutral/);
+  await expect(selected.locator(".job-row-end [data-slot=badge]")).toHaveText("Not checked");
+  await expect(selected.locator(".job-row-end [data-slot=badge]")).toHaveClass(/badge-neutral/);
   await expect(selected).toContainText("result unavailable");
 });
 test("An unavailable related job gives a readable explanation without changes", async ({ page }) => {
@@ -123,5 +183,9 @@ test("Diagnostic event groups do not pretend to be unfinished jobs", async ({ pa
   ]);
   await page.goto("/#/activity");
   const group = page.locator(".event-log-group"); await expect(group).toHaveCount(1);
-  await expect(group.locator(":scope > summary [data-slot=badge]")).toHaveText("2 events");
+  await expect(group.locator(":scope > summary [data-slot=badge]")).toHaveText("Warning · 2 events");
+  await expectOutcome(group.locator(":scope > summary [data-slot=badge]"), "warning");
+  await group.locator(":scope > summary").click();
+  await expectOutcome(group.locator(".event-child [data-slot=badge]").nth(0), "neutral");
+  await expectOutcome(group.locator(".event-child [data-slot=badge]").nth(1), "warning");
 });

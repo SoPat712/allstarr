@@ -3,11 +3,14 @@
   import { humanize } from "$lib/sources";
   import { reportSourceName, supportDate, type ProblemContext } from "$lib/support";
   import { Button } from "$lib/components/ui/button";
-  let { context, providers = [], review = false, onReviewLyrics }: {
+  let { context, providers = [], review = false, onReviewLyrics, onReviewMatch, matchLoading = false, matchReviewNote = "" }: {
     context: ProblemContext;
     providers?: ProviderDefinition[];
     review?: boolean;
     onReviewLyrics?: (trigger: HTMLElement) => void;
+    onReviewMatch?: (trigger: HTMLElement) => void;
+    matchLoading?: boolean;
+    matchReviewNote?: string;
   } = $props();
   const provider = (id?: string | null) => reportSourceName(providers, id);
 </script>
@@ -34,8 +37,12 @@
   </details>
   {#if review && (context.song?.externalSnapshotId || context.song?.canonicalRecordingId && onReviewLyrics)}
     <footer class="panel-heading-actions">
-      {#if context.song?.externalSnapshotId}<Button variant="secondary" href={`#/library/mappings?review=${encodeURIComponent(context.song.externalSnapshotId)}`}>Review match</Button>{/if}
+      {#if context.song?.externalSnapshotId}
+        {#if onReviewMatch}<Button variant="secondary" disabled={matchLoading} onclick={(event) => onReviewMatch?.(event.currentTarget)}>{matchLoading ? "Loading match…" : "Review match"}</Button>
+        {:else}<Button variant="secondary" href={`#/library/mappings?review=${encodeURIComponent(context.song.externalSnapshotId)}`}>Review match</Button>{/if}
+      {/if}
       {#if context.song?.canonicalRecordingId && onReviewLyrics}<Button variant="secondary" onclick={(event) => onReviewLyrics?.(event.currentTarget)}>Review lyrics</Button>{/if}
     </footer>
   {/if}
+  {#if review && matchReviewNote}<p class="settings-impact">{matchReviewNote}</p>{/if}
 </article>

@@ -381,6 +381,98 @@ public sealed class ProviderRuntimeHealthTests
         Assert.False(store.IsPlaybackCoolingDown(context, track, ProviderAudioQuality.Lossless));
     }
 
+    [Fact]
+    public void PublicSourceProbeStartsWithoutPreviousEvidenceAndPreservesAnExistingPause()
+    {
+        var store = Store();
+        var key = ProviderRuntimeStatusKey.CreateAccountFree("fixture-extension", "streaming");
+        var probe = store.BeginProbe(key, null);
+        Assert.NotNull(probe);
+        Assert.Null(probe.Current.PausedAt);
+        store.CancelProbe(probe);
+        for (var index = 0; index < 3; index++) store.Record(key, null, false, 1, "timeout");
+        var pausedAt = store.Get(key)!.PausedAt;
+        probe = store.BeginProbe(key, null);
+        Assert.Equal(pausedAt, probe!.Current.PausedAt);
+        store.Record(key, null, true, 1, null);
+        Assert.Null(store.Get(key)!.PausedAt);
+        Assert.False(store.IsCircuitOpen(store.Get(key)!));
+    }
+
+    [Theory]
+    [InlineData(299, 3, true)]
+    [InlineData(300, 1, false)]
+    [InlineData(301, 1, false)]
+    public void FailureWindowStartsAtFirstFailureAndDoesNotSlide(int elapsedSeconds, int failures, bool paused)
+    {
+        var store = Store();
+        store.Record(Key(), 4, false, 1, "timeout");
+        _clock.UtcNow += TimeSpan.FromSeconds(200);
+        store.Record(Key(), 4, false, 1, "timeout");
+        _clock.UtcNow += TimeSpan.FromSeconds(elapsedSeconds - 200);
+        store.Record(Key(), 4, false, 1, "timeout");
+        Assert.Equal(failures, store.Get(Key(), 4)!.ConsecutiveFailures);
+        Assert.Equal(paused, store.IsCircuitOpen(store.Get(Key(), 4)!));
+    }
+
+    [Fact]
+    public void ResumeClearsOnlyExactRevisionPauseAndKeepsRecentOutcomes()
+    {
+        var store = Store();
+        var track = new ProviderExternalResourceId("deezer", ProviderResourceKind.Track, "fixture");
+        store.ObservePlayback(Context(), track, ProviderAudioQuality.Any, new(ProviderErrorKind.TransientFailure), TimeSpan.Zero);
+        Assert.True(store.IsPlaybackCoolingDown(Context(), track, ProviderAudioQuality.Any));
+        for (var index = 0; index < 3; index++) store.Record(Key(), 4, false, 1, "timeout", recordAttempt: true);
+        var started = _clock.UtcNow;
+        Assert.Equal(started, store.Get(Key(), 4)!.PausedAt);
+        _clock.UtcNow += TimeSpan.FromSeconds(1);
+        store.Record(Key(), 4, false, 1, "timeout", recordAttempt: true);
+        Assert.Equal(started, store.Get(Key(), 4)!.PausedAt);
+        Assert.False(store.Resume(Key(), 5));
+        Assert.True(store.IsCircuitOpen(store.Get(Key(), 4)!));
+        Assert.True(store.Resume(Key(), 4));
+        Assert.False(store.IsPlaybackCoolingDown(Context(), track, ProviderAudioQuality.Any));
+        Assert.Null(store.Get(Key(), 4)!.RetryAfter);
+        Assert.Null(store.Get(Key(), 4)!.PausedAt);
+        Assert.Equal(0, store.Get(Key(), 4)!.ConsecutiveFailures);
+        Assert.Equal(4, store.Recent(Key(), 4).Count);
+        store.Record(Key(), 4, false, 1, "timeout", recordAttempt: true);
+        Assert.False(store.IsCircuitOpen(store.Get(Key(), 4)!));
+        store.Record(Key(), 4, true, 1, null);
+        Assert.Null(store.Get(Key(), 4)!.PausedAt);
+        Assert.Equal(0, store.Get(Key(), 4)!.ConsecutiveFailures);
+    }
+
+    [Fact]
+    public void PassiveHistoryRecordsRealOutcomesAndSkipsResourceAndCapacityFailures()
+    {
+        var store = Store();
+        store.Observe(Context(), ProviderCapabilityKind.Streaming, null, TimeSpan.FromMilliseconds(7));
+        store.Observe(Context(), ProviderCapabilityKind.Streaming, new(ProviderErrorKind.NotFound), TimeSpan.Zero);
+        store.Observe(Context(), ProviderCapabilityKind.Streaming, ProviderError.LocalCapacity(), TimeSpan.Zero);
+        store.Observe(Context(), ProviderCapabilityKind.Streaming, new(ProviderErrorKind.TransientFailure), TimeSpan.Zero);
+        var recent = store.Recent(Key(), 4);
+        Assert.Equal(2, recent.Count);
+        Assert.Equal(HealthState.Degraded, recent[0].Status.Health);
+        Assert.Equal(HealthState.Healthy, recent[1].Status.Health);
+    }
+
+    [Fact]
+    public void RecentAttemptsAreBoundedAndRevisionScoped()
+    {
+        var store = Store();
+        for (var index = 0; index < 25; index++)
+        {
+            store.Record(Key(), 4, index % 2 == 0, 1, index % 2 == 0 ? null : "timeout", recordAttempt: true);
+            _clock.UtcNow += TimeSpan.FromSeconds(1);
+        }
+        Assert.Equal(20, store.Recent(Key(), 4).Count);
+        Assert.Equal(ProviderHealthState.Healthy, store.Recent(Key(), 4)[0].Status.Health);
+        Assert.Empty(store.Recent(Key(), 5));
+        _clock.UtcNow += TimeSpan.FromDays(31);
+        Assert.Empty(store.Recent(Key(), 4));
+    }
+
     private ProviderExecutionContext Context(long revision = 4) => new(
         new ProviderActorContext(ProviderActorKind.Administrator, Guid.Parse("00000000-0000-0000-0000-000000000001"),
             new ProviderBackendPrincipal("jellyfin", "fixture", "admin")), "deezer",

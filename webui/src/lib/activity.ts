@@ -209,14 +209,8 @@ export function activityAction(item: ActivityItem, providerName: (id: string) =>
 }
 
 export function outcomeClass(state: string) {
-  const normalized = state.toLowerCase();
-  if (["accepted", "delivered", "healthy", "pinned", "succeeded", "success"].includes(normalized))
-    return "accepted";
-  if (["ambiguous", "partial", "partiallysucceeded", "conflicted", "retrying", "suggested", "warning"].includes(normalized))
-    return "suggested";
-  if (["failed", "rejected", "unhealthy", "unresolved"].includes(normalized))
-    return "rejected";
-  return "";
+  const tone = activityTone(state);
+  return tone === "success" ? "accepted" : tone === "warning" ? "suggested" : tone === "danger" ? "rejected" : "";
 }
 
 
@@ -239,12 +233,12 @@ export function progressPercent(completed?: number | null, total?: number | null
 export type ActivityTone = "neutral" | "accent" | "success" | "warning" | "danger";
 export function activityTone(state: string, severity = "info"): ActivityTone {
   const normalized = state.toLowerCase().replaceAll(/[-_ ]/g, "");
-  if (["cancelled", "canceled", "skipped", "notchecked", "partlychecked", "info"].includes(normalized)) return "neutral";
-  if (severity === "error" || ["failed", "rejected", "unhealthy", "unresolved", "error", "blocked", "unauthorized"].includes(normalized)) return "danger";
-  if (severity === "warning" || ["ambiguous", "partial", "partiallysucceeded", "conflicted", "retrying", "retryscheduled", "deferred", "suggested", "warning", "degraded", "needsattention", "needsreview"].includes(normalized)) return "warning";
-  if (["accepted", "delivered", "healthy", "pinned", "succeeded", "success", "passed", "completed", "verified", "placed", "saved", "resolved", "ok"].includes(normalized)) return "success";
-  if (["running", "started", "pending", "waiting", "queued", "scheduled", "checking", "active"].includes(normalized)) return "accent";
-  return "neutral";
+  if (["cancelled", "canceled", "superseded", "notchecked", "paused", "automatic"].includes(normalized)) return "neutral";
+  if (["failed", "rejected", "unhealthy", "unresolved", "error", "blocked", "unauthorized"].includes(normalized)) return "danger";
+  if (normalized.startsWith("skipped") || normalized.startsWith("retry") || ["ambiguous", "partial", "partlychecked", "partiallysucceeded", "partialfailure", "conflict", "conflicted", "deferred", "interrupted", "suggested", "warning", "warn", "degraded", "needsattention", "needsreview", "sampleunavailable"].includes(normalized)) return "warning";
+  if (["accepted", "delivered", "healthy", "pinned", "succeeded", "success", "passed", "completed", "verified", "placed", "saved", "resolved", "ok", "updated", "released", "created", "enriched", "merged", "alreadylinked", "concurrentexisting", "rematched", "republished"].includes(normalized)) return "success";
+  if (["running", "inprogress", "started", "pending", "waiting", "queued", "scheduled", "checking", "active"].includes(normalized)) return "accent";
+  return severity.toLowerCase() === "error" ? "danger" : ["warning", "warn"].includes(severity.toLowerCase()) ? "warning" : "neutral";
 }
 export function validJobId(value?: string | null) {
   return Boolean(value && /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(value));

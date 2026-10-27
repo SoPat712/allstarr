@@ -157,9 +157,31 @@ it("uses meaningful outcome tones without marking cancelled or unknown work as f
   for (const state of ["running", "started", "pending", "scheduled"]) expect(activityTone(state)).toBe("accent");
   for (const state of ["retrying", "Deferred", "partial", "PartiallySucceeded", "Conflicted"]) expect(activityTone(state)).toBe("warning");
   for (const state of ["failed", "rejected", "unhealthy"]) expect(activityTone(state)).toBe("danger");
-  for (const state of ["cancelled", "skipped", "partly_checked", "unrecognized"]) expect(activityTone(state)).toBe("neutral");
+  for (const state of ["cancelled", "not_checked", "unrecognized"]) expect(activityTone(state)).toBe("neutral");
   expect(activityHeadline({ ...item("old", "Unknown"), kind: "job", label: "future.opaque" })).toBe("Background task");
   expect(activityHeadline({ ...item("song", "Song"), label: "Tate McRae song cached" })).toBe("Tate McRae song cached");
   expect(activityDuration(null)).toBe(""); expect(activityDuration(NaN)).toBe(""); expect(activityDuration(-1)).toBe("");
   expect(activityDuration(10)).toBe("less than a second");
+});
+
+describe("Activity outcome tones", () => {
+  const outcomes = {
+    success: ["Accepted", "Pinned", "Delivered", "Healthy", "Succeeded", "Success", "Passed", "Completed", "Verified", "Placed", "Saved", "Resolved", "Ok", "Updated", "Released", "Created", "Enriched", "Merged", "already-linked", "concurrent-existing", "Rematched", "Republished"],
+    danger: ["Failed", "Rejected", "Unhealthy", "Unresolved", "Error", "Blocked", "Unauthorized"],
+    accent: ["Pending", "Running", "Started", "Waiting", "Queued", "Scheduled", "Checking", "Active", "In progress"],
+    warning: ["Skipped", "partly_checked", "PartiallySucceeded", "Conflicted", "Conflict", "Ambiguous", "Suggested", "Retrying", "RetryScheduled", "retry_scheduled", "Deferred", "Interrupted", "Partial", "partial-failure", "Warning", "Warn", "Degraded", "Needs attention", "Needs review", "sample-unavailable", "skipped_manual", "skipped_invalid", "skipped_notfound", "skipped_forbidden", "skipped_conflict", "skipped_revision_conflict", "retry_identity_unavailable", "retry_conflict", "retry_exception", "retry_local_library_unavailable"],
+    neutral: ["Cancelled", "Superseded", "not_checked", "Not checked", "Paused", "Automatic", "Unknown", "Neutral", "Info", "Information", "Debug", "Recorded", "Mixed", ""],
+  } as const;
+  for (const [tone, states] of Object.entries(outcomes)) {
+    it.each(states)(`maps %s to ${tone}`, state => {
+      expect(activityTone(state)).toBe(tone);
+      expect(activityTone(state.toUpperCase())).toBe(tone);
+    });
+  }
+  it("uses diagnostic severity for otherwise neutral outcomes", () => {
+    expect(activityTone("mixed", "ERROR")).toBe("danger");
+    expect(activityTone("recorded", "Warning")).toBe("warning");
+    expect(activityTone("not_checked", "error")).toBe("neutral");
+    expect(activityTone("partial-failure", "error")).toBe("warning");
+  });
 });

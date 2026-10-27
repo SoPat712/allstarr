@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { home, type ProviderDefinition } from "$lib/api";
+  import { home, matchReview, type MatchReviewItem, type ProviderDefinition } from "$lib/api";
   import { Button } from "$lib/components/ui/button";
   import { Badge } from "$lib/components/ui/badge";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -8,6 +8,7 @@
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import ProblemContextCard from "$lib/components/ProblemContextCard.svelte";
   import RecordingLyricsPicker from "$lib/components/RecordingLyricsPicker.svelte";
+  import MatchDialog from "$lib/components/MatchDialog.svelte";
   import { Dialog } from "$lib/components/ui/dialog";
   import { X } from "@lucide/svelte";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
@@ -20,6 +21,14 @@
   let cursor = $state<string | null>(null);
   let detail = $state<ProblemReportDetail | null>(null);
   let selectedId = $state("");
+  let matchOpen = $state(false);
+  let matchLoading = $state(false);
+  let selectedMatch = $state<MatchReviewItem | null>(null);
+  let matchError = $state("");
+  let matchTrigger: HTMLElement | undefined;
+  let matchWasOpen = false;
+  let backend = $state("Local library");
+  const wrongMatch = $derived(detail?.kind === "wrong-match");
   let lyricsOpen = $state(false);
   let lyricsTrigger: HTMLElement | undefined;
   const lyricsRecordingId = $derived(detail?.context.song?.canonicalRecordingId);
@@ -36,6 +45,15 @@
   let disposed = false;
   let request = 0;
   const provider = (id: string | null) => reportSourceName(providers, id);
+
+  $effect(() => {
+    if (matchOpen) { matchWasOpen = true; return; }
+    if (!matchWasOpen) return;
+    matchWasOpen = false;
+    const trigger = matchTrigger;
+    matchTrigger = undefined;
+    queueMicrotask(() => { if (trigger?.isConnected) trigger.focus(); });
+  });
 
   async function load(more = false) {
     if (!administrator || busy || disposed || more && !cursor) return;
@@ -56,6 +74,7 @@
   async function open(id: string) {
     if (saving) return;
     lyricsOpen = false;
+    matchOpen = false; matchLoading = false; selectedMatch = null; matchError = "";
     const current = ++request;
     selectedId = id; detail = null;
     detailLoading = true; detailError = ""; conflict = false; savedMessage = "";
@@ -66,25 +85,58 @@
     } catch (cause) { if (current === request) detailError = supportError(cause, "This report could not be loaded. Try again."); }
     finally { if (current === request) detailLoading = false; }
   }
-  async function save(event: SubmitEvent) {
-    event.preventDefault();
-    if (!detail || saving || desired === detail.status || conflict) return;
-    saving = true; detailError = ""; savedMessage = "";
+  async function saveStatus(status: ReportStatus, message = "") {
+    if (!detail || saving || status === detail.status || conflict) return;
+    const report = detail;
+    const current = request;
+    saving = true; detailError = ""; savedMessage = message;
     try {
-      const result = await listenerSupport.status(detail.id, desired, detail.revision);
-      detail = { ...detail, ...result }; savedMessage = `Report marked ${reportStatusLabel(result.status).toLowerCase()}.`;
+      const result = await listenerSupport.status(report.id, status, report.revision);
+      if (disposed || current !== request) return;
+      detail = { ...report, ...result }; desired = result.status;
+      savedMessage = `${message ? `${message} ` : ""}Report marked ${reportStatusLabel(result.status).toLowerCase()}.`;
       await load();
     } catch (cause) {
+      if (disposed || current !== request) return;
       conflict = supportErrorCode(cause) === "report_changed";
       detailError = supportError(cause, "The report status could not be saved. Try again.");
     } finally { saving = false; }
+  }
+  async function save(event: SubmitEvent) {
+    event.preventDefault();
+    await saveStatus(desired);
+  }
+  async function reviewMatch(trigger: HTMLElement) {
+    const song = detail?.context.song;
+    if (!song?.externalSnapshotId || matchLoading || saving) return;
+    const current = request;
+    matchTrigger = trigger; matchLoading = true; matchError = "";
+    try {
+      const match = await matchReview.get(song.externalSnapshotId);
+      if (disposed || current !== request) return;
+      if (!match || match.externalSnapshotId !== song.externalSnapshotId ||
+        song.canonicalRecordingId && match.canonicalRecordingId !== song.canonicalRecordingId)
+        throw new Error("The captured recording no longer has a matching review available.");
+      selectedMatch = match; matchOpen = true;
+    } catch (cause) {
+      if (!disposed && current === request)
+        matchError = cause instanceof Error ? cause.message : "The match review could not be loaded. Try again.";
+    } finally { if (current === request) matchLoading = false; }
+  }
+  async function matchSaved(message: string) {
+    if (disposed || !detail || selectedMatch?.externalSnapshotId !== detail.context.song?.externalSnapshotId) return;
+    savedMessage = message;
+    if (detail.status === "new") {
+      desired = "seen";
+      await saveStatus("seen", message);
+    }
   }
   const scheduler = createRefreshScheduler(() => load());
   onMount(() => {
     if (!administrator) return;
     void load();
     if (initialReportId) void open(initialReportId);
-    void home.schema().then(schema => { providers = schema.providers ?? []; }).catch(() => {});
+    void home.schema().then(schema => { providers = schema.providers ?? []; backend = schema.activeBackend ?? "Local library"; }).catch(() => {});
     const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
     return () => { disposed = true; request++; scheduler.cancel(); unsubscribe(); };
   });
@@ -118,12 +170,18 @@
           <footer><Button type="submit" disabled={saving || conflict || desired === detail.status}>{saving ? "Saving…" : "Save status"}</Button></footer>
         </form>
       </article>
-      <ProblemContextCard context={detail.context} {providers} review onReviewLyrics={(trigger) => {
+      {#if matchError}<div class="degraded-banner" role="alert"><p>{matchError}</p></div>{/if}
+      <ProblemContextCard context={detail.context} {providers} review {matchLoading}
+        onReviewMatch={wrongMatch ? (trigger) => void reviewMatch(trigger) : undefined}
+        matchReviewNote={wrongMatch && detail.context.song && !detail.context.song.externalSnapshotId ? "This song has no provider match to review." : ""}
+        onReviewLyrics={(trigger) => {
         lyricsTrigger = trigger;
         lyricsOpen = true;
       }} />
     {/if}
   </section>
+
+  <MatchDialog bind:open={matchOpen} match={selectedMatch} {providers} {backend} showReject={false} onSaved={matchSaved} />
 
   <Dialog.Root bind:open={lyricsOpen}>
     <Dialog.Portal>

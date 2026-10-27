@@ -79,7 +79,11 @@
     --text: var(--color-ink);
     --text-muted: var(--color-ink-muted);
     --success: #0b6e4f;
+    --success-container: #b9f1d9;
+    --on-success-container: #005138;
     --warning: #7d5700;
+    --warning-container: #ffdea3;
+    --on-warning-container: #644300;
     --danger: var(--md-sys-color-error);
     --info: var(--md-sys-color-primary);
     --category-blue: #0b57d0;
@@ -164,7 +168,11 @@
     --md-sys-color-inverse-surface: #e2e2e9;
     --md-sys-color-inverse-on-surface: #2f3035;
     --success: #8bd8b8;
+    --success-container: #00513a;
+    --on-success-container: #b9f1d9;
     --warning: #f7bd48;
+    --warning-container: #5e4200;
+    --on-warning-container: #ffdea3;
     --category-blue: #adc6ff;
     --category-green: #8bd8b8;
     --category-amber: #f7bd48;
@@ -5941,16 +5949,6 @@
   .event-kind-icon :is(svg, .ui-icon) {
     width: 1.25rem;
     height: 1.25rem;
-  }
-
-  .event-kind-icon[data-severity="error"] {
-    background: color-mix(in srgb, var(--color-danger) 16%, transparent);
-    color: var(--color-danger);
-  }
-
-  .event-kind-icon[data-severity="warning"] {
-    background: color-mix(in srgb, var(--color-warning) 16%, transparent);
-    color: var(--color-warning);
   }
 
   .event-kind-icon img {

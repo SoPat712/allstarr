@@ -7,7 +7,7 @@
   import { liveUpdates, createRefreshScheduler } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button } from "$lib/components/ui/button";
-  import { Badge } from "$lib/components/ui/badge";
+  import ActivityOutcome from "$lib/components/ActivityOutcome.svelte";
   import { Progress } from "$lib/components/ui/progress";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import ActivityIcon from "$lib/components/ActivityIcon.svelte";
@@ -82,9 +82,6 @@
   function statusLabel(job: Job) {
     const label = ({ partly_checked: "Partly checked", not_checked: "Not checked", passed: "Passed" } as Record<string, string>)[job.displayState ?? ""];
     return label || jobState(job.displayState === "failed" ? "Failed" : job.state);
-  }
-  function severity(state: string) {
-    return state === "Failed" ? "error" : state === "RetryScheduled" || state === "Deferred" ? "warning" : "info";
   }
   function meta(job: Job) {
     return [administrator ? job.ownerName || "Household" : "", job.source].filter(Boolean).join(" · ");
@@ -197,9 +194,10 @@
     {#if detailError}<p class="notice-error" role="alert">{detailError}</p><Button variant="secondary" onclick={() => { expanded = ""; void attempts(job); }}>Retry history</Button>{/if}
     {#if !detail && detailBusy}<p role="status">Loading attempts…</p>{/if}
     {#each detail?.attempts ?? [] as attempt (attempt.attemptNumber)}
-      <article><strong>Attempt {attempt.attemptNumber} · {jobState(attempt.outcome ?? "In progress")}</strong><p>{time(attempt.startedAt)} → {time(attempt.completedAt)}</p>{#if attempt.errorMessage}<p>{attempt.errorMessage}</p>{/if}</article>
+      {@const outcome = attempt.outcome || (attempt.completedAt ? "Unknown" : "In progress")}
+      <article><strong>Attempt {attempt.attemptNumber}</strong> <ActivityOutcome state={outcome} label={jobState(outcome)} /><p>{time(attempt.startedAt)} → {time(attempt.completedAt)}</p>{#if attempt.errorMessage}<p>{attempt.errorMessage}</p>{/if}</article>
     {:else}
-      {#if detail}<p>No retained attempts. {job.attemptCount ?? 0} attempts are recorded on this job{job.lastAttemptOutcome ? `; latest outcome: ${jobState(job.lastAttemptOutcome)}` : ""}.</p>{/if}
+      {#if detail}<p>No retained attempts. {job.attemptCount ?? 0} attempts are recorded on this job. {#if job.lastAttemptOutcome}Latest outcome: <ActivityOutcome state={job.lastAttemptOutcome} label={jobState(job.lastAttemptOutcome)} />{/if}</p>{/if}
     {/each}
     {#if detail?.hasMore}<Button variant="secondary" disabled={detailBusy} onclick={() => void attempts(job, true)}>Load earlier attempts</Button>{/if}
   </section>
@@ -215,7 +213,7 @@
   <article class="job-row" data-job-id={job.id} id={`job-${job.id}`} tabindex="-1">
     <div class="job-row-line">
       <button type="button" class="job-row-toggle" aria-expanded={open} aria-controls={`job-${job.id}-attempts`} onclick={() => void attempts(job)}>
-        <span class="event-kind-icon" data-severity={severity(job.state)} data-tone={activityTone(job.displayState || job.state)} aria-hidden="true"><ActivityIcon kind={kind(job.type)} /></span>
+        <span class="event-kind-icon" data-tone={activityTone(job.displayState || job.state)} aria-hidden="true"><ActivityIcon kind={kind(job.type)} /></span>
         <span class="job-row-copy">
           <strong>{job.displayName || jobName(job.type)}{runs.length > 1 ? ` · ${runs.length} runs` : ""}</strong>
           {#if meta(job) || waiting}<small>{meta(job)}{meta(job) && waiting ? " · " : ""}{#if waiting}{job.state === "Pending" ? "Available" : "Next attempt"} <time datetime={job.availableAt}>{time(job.availableAt)}</time>{/if}</small>{/if}
@@ -225,7 +223,7 @@
           {#if job.lastErrorMessage && ["Failed", "RetryScheduled", "Deferred"].includes(job.state) && job.lastErrorMessage !== job.summary}<small class="job-row-error">{activityText(job.lastErrorMessage)}</small>{/if}
         </span>
         <span class="job-row-end">
-          <Badge tone={activityTone(job.displayState || job.state)}>{job.cancellationRequestedAt ? "Cancellation requested" : statusLabel(job)}</Badge>
+          <ActivityOutcome state={job.displayState || job.state} label={job.cancellationRequestedAt ? "Cancellation requested" : statusLabel(job)} />
           <time datetime={finishedAt(job)} title={time(finishedAt(job))}>{runs.length > 1 ? `${clock(finishedAt(runs.at(-1)!))}–${clock(finishedAt(job))}` : clock(finishedAt(job))}</time>
         </span>
         <ChevronDown class="job-row-chevron" size={18} aria-hidden="true" />
@@ -239,7 +237,7 @@
         <details class="event-technical"><summary>Technical details</summary><dl><div><dt>Job reference</dt><dd>{job.id}</dd></div><div><dt>Operation</dt><dd>{job.type}</dd></div>{#if job.lastErrorCode}<div><dt>Reason code</dt><dd>{job.lastErrorCode}</dd></div>{/if}{#each Object.entries(job.technicalDetails ?? {}) as [name, value]}<div><dt>{name}</dt><dd>{value}</dd></div>{/each}</dl></details>
         {#if runs.length > 1}
           <ul class="job-runs" aria-label="Runs">
-            {#each runs as run (run.id)}<li data-job-id={run.id}><time datetime={finishedAt(run)}>{time(finishedAt(run))}</time><span>{jobState(run.state)}</span></li>{/each}
+            {#each runs as run (run.id)}<li data-job-id={run.id}><time datetime={finishedAt(run)}>{time(finishedAt(run))}</time><ActivityOutcome state={run.displayState || run.state} label={statusLabel(run)} /></li>{/each}
           </ul>
         {/if}
         {@render attemptHistory(job)}

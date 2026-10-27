@@ -52,6 +52,8 @@ public sealed record ProviderHealthObservation(
     int ConsecutiveFailures,
     DateTimeOffset? RetryAfter)
 {
+    public DateTimeOffset? PausedAt { get; init; }
+    internal DateTimeOffset? FailureWindowStartedAt { get; init; }
     internal LyricsConfigurationId? LyricsConfiguration { get; init; }
     internal ProviderHealthState? HealthBeforeProbe { get; init; }
 }
@@ -62,6 +64,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
     private const int MaximumObservations = 4096;
     private readonly object _sync = new();
     private readonly Dictionary<ProviderRuntimeStatusKey, ProviderHealthObservation> _observations = [];
+    private readonly Dictionary<ProviderRuntimeStatusKey, List<ProviderCheckResult>> _recent = [];
     private readonly Dictionary<PlaybackItemKey, DateTimeOffset> _playbackFailures = [];
     private readonly Dictionary<PlaybackSourceKey, List<PlaybackStartSample>> _playbackStarts = [];
     private readonly Dictionary<string, SidecarStatus> _sidecars = new(StringComparer.OrdinalIgnoreCase);
@@ -214,11 +217,11 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
             context.Account?.Revision, quality);
 
     public void Record(ProviderRuntimeStatusKey key, long? revision, bool success, long? latency,
-        string? reason, bool authenticationFailure = false, TimeSpan? retryAfter = null) =>
-        RecordCore(key, revision, success, latency, reason, authenticationFailure, retryAfter, passive: false);
+        string? reason, bool authenticationFailure = false, TimeSpan? retryAfter = null, bool recordAttempt = false) =>
+        RecordCore(key, revision, success, latency, reason, authenticationFailure, retryAfter, passive: false, recordAttempt: recordAttempt);
 
     private void RecordCore(ProviderRuntimeStatusKey key, long? revision, bool success, long? latency,
-        string? reason, bool authenticationFailure, TimeSpan? retryAfter, bool passive, LyricsConfigurationId? configuration = null)
+        string? reason, bool authenticationFailure, TimeSpan? retryAfter, bool passive, LyricsConfigurationId? configuration = null, bool recordAttempt = false)
     {
         if (reason == LocalCapacityException.Code) return;
         lock (_sync)
@@ -230,7 +233,8 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
             var now = _clock.UtcNow;
             var comparable = previous != null && previous.AccountRevision == revision &&
                 (!configuration.HasValue || previous.LyricsConfiguration == configuration);
-            var failures = success ? 0 : comparable && IsFresh(previous!)
+            var withinWindow = comparable && previous!.FailureWindowStartedAt?.AddSeconds(_options.SampleTtlSeconds) > now;
+            var failures = success ? 0 : withinWindow
                 ? Math.Min(previous!.ConsecutiveFailures + 1, _options.FailureThreshold) : 1;
             var opens = !success && (authenticationFailure || retryAfter.HasValue || failures >= _options.FailureThreshold);
             var cooldown = TimeSpan.FromSeconds(_options.CircuitOpenSeconds);
@@ -240,7 +244,53 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
             MakeRoom(key);
             _observations[key] = new(revision, health,
                 now, latency, SafeReason(reason), failures, opens ? now.Add(cooldown) : null)
-            { LyricsConfiguration = configuration };
+            {
+                LyricsConfiguration = configuration,
+                FailureWindowStartedAt = success ? null : withinWindow ? previous!.FailureWindowStartedAt : now,
+                PausedAt = opens ? comparable && IsCircuitOpen(previous!) ? previous!.PausedAt ?? now : now : null
+            };
+            if (!passive && !recordAttempt) return;
+            if (!_recent.TryGetValue(key, out var recent)) _recent[key] = recent = [];
+            if (recent.Count >= 20) recent.RemoveAt(0);
+            recent.Add(new(key, revision, new()
+            {
+                Provider = key.Provider,
+                Capability = key.Capability,
+                IsSupported = true,
+                IsEnabled = true,
+                Configuration = ProviderConfigurationState.Configured,
+                Health = success ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
+                TestedAt = now,
+                LatencyMilliseconds = latency,
+                ReasonCode = SafeReason(reason)
+            }));
+        }
+    }
+
+    public IReadOnlyList<ProviderCheckResult> Recent(ProviderRuntimeStatusKey key, long? revision)
+    {
+        lock (_sync)
+            return _recent.TryGetValue(key, out var recent)
+                ? recent.Where(item => item.Revision == revision && item.Status.TestedAt >= _clock.UtcNow.AddDays(-30))
+                    .Reverse().ToArray() : [];
+    }
+
+    public bool Resume(ProviderRuntimeStatusKey key, long? revision)
+    {
+        lock (_sync)
+        {
+            if (!_observations.TryGetValue(key, out var current) || current.AccountRevision != revision) return false;
+            _observations[key] = current with
+            {
+                ConsecutiveFailures = 0,
+                RetryAfter = null,
+                PausedAt = null,
+                FailureWindowStartedAt = null
+            };
+            foreach (var item in _playbackFailures.Keys.Where(item => key.Capability == ProviderCapabilities.Streaming &&
+                Key(item.Provider, item.Account, key.Capability) == key && item.Revision == revision).ToArray())
+                _playbackFailures.Remove(item);
+            return true;
         }
     }
 
@@ -292,6 +342,8 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
                 null, null, previous != null && previous.AccountRevision == revision ? previous.ConsecutiveFailures : 0,
                 previous != null && previous.AccountRevision == revision ? previous.RetryAfter : null)
             {
+                PausedAt = previous != null && previous.AccountRevision == revision ? previous.PausedAt : null,
+                FailureWindowStartedAt = previous != null && previous.AccountRevision == revision ? previous.FailureWindowStartedAt : null,
                 HealthBeforeProbe = previous != null && previous.AccountRevision == revision
                     ? previous.HealthBeforeProbe ?? previous.Health : ProviderHealthState.Unknown
             };
@@ -334,7 +386,9 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
     private void MakeRoom(ProviderRuntimeStatusKey key)
     {
         if (_observations.Count < MaximumObservations || _observations.ContainsKey(key)) return;
-        _observations.Remove(_observations.MinBy(item => item.Value.ObservedAt).Key);
+        var oldest = _observations.MinBy(item => item.Value.ObservedAt).Key;
+        _observations.Remove(oldest);
+        _recent.Remove(oldest);
     }
 
     private static ProviderRuntimeStatusKey Key(string provider, Guid? account, string capability) =>

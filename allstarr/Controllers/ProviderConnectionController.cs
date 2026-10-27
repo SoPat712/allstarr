@@ -59,12 +59,16 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
             .ToListAsync(cancellationToken);
 
         accounts = accounts.Where(item => !ProviderAccountSettings.IsRemoved(item)).ToList();
+        var policyResolver = HttpContext.RequestServices.GetService<IEffectiveProviderPolicyResolver>();
+        var policy = policyResolver == null ? null : await policyResolver.ResolveAsync(cancellationToken);
         var results = new List<object>();
         foreach (var status in statusManager.GetAllAccountFreeStatuses().Concat(statusManager.GetAppleDownloadEndpointStatuses())
             .Where(item => !accounts.Any(account => account.ProviderId.Equals(item.Provider, StringComparison.OrdinalIgnoreCase))))
         {
-            var runtimeEvidence = statusManager.GetCurrentRuntimeEvidence(
-                ProviderRuntimeStatusKey.CreateAccountFree(status.Provider, status.Capability), null, status);
+            var runtimeEvidence = policy?.IsAutomatic(status.Provider) != false
+                ? statusManager.GetCurrentRuntimeEvidence(
+                    ProviderRuntimeStatusKey.CreateAccountFree(status.Provider, status.Capability), null, status)
+                : ProviderRuntimeEvidenceSnapshot.Empty;
             results.Add(new
             {
                 provider = status.Provider,
@@ -83,6 +87,7 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
                 verificationMeasurementId = status.VerificationMeasurementId,
                 verificationMethod = status.VerificationMethod,
                 automaticRetryAt = runtimeEvidence.AutomaticRetryAt,
+                automaticPausedAt = runtimeEvidence.AutomaticPausedAt,
                 failureCount = runtimeEvidence.FailureCount,
                 automaticPauseReasonCode = runtimeEvidence.AutomaticPauseReasonCode,
                 canTest = statusManager.CanTestCapability(status.Provider, status.Capability)
@@ -111,7 +116,7 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
                          account.Id,
                          accountSecrets, account.Revision))
             {
-                var runtimeEvidence = account.Enabled
+                var runtimeEvidence = account.Enabled && policy?.IsAutomatic(status.Provider) != false
                     ? statusManager.GetCurrentRuntimeEvidence(
                         ProviderRuntimeStatusKey.CreateManaged(status.Provider, status.Capability, account.Id),
                         account.Revision, status)
@@ -139,6 +144,7 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
                     verificationMeasurementId = status.VerificationMeasurementId,
                     verificationMethod = status.VerificationMethod,
                     automaticRetryAt = runtimeEvidence.AutomaticRetryAt,
+                    automaticPausedAt = runtimeEvidence.AutomaticPausedAt,
                     failureCount = runtimeEvidence.FailureCount,
                     automaticPauseReasonCode = runtimeEvidence.AutomaticPauseReasonCode,
                     canTest = statusManager.CanTestCapability(status.Provider, status.Capability)
@@ -220,7 +226,10 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
         }
 
         var history = HttpContext.RequestServices.GetRequiredService<ProviderCheckHistory>();
-        var rows = await history.ReadRecentAsync(targets, effectiveLimit, cancellationToken);
+        var stored = await history.ReadRecentAsync(targets, effectiveLimit, cancellationToken);
+        var rows = stored.Concat(targets.SelectMany(target => statusManager.RecentAttempts(target.Key, target.Revision)
+                .Select(result => new ProviderCheckHistoryItem(result, target.AccountLabel, target.AccountScope, result.Status.TestedAt!.Value))))
+            .OrderByDescending(row => row.Result.Status.TestedAt).Take(effectiveLimit);
         var capturedAt = DateTimeOffset.UtcNow;
         var checks = rows.Select(row => new
         {
@@ -245,6 +254,39 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
                 neutral = checks.Count(item => item.outcome == "neutral")
             }
         });
+    }
+
+    [HttpPost("providers/{providerId}/resume/{capability}")]
+    public async Task<IActionResult> ResumeProvider(string providerId, string capability,
+        [FromQuery] Guid? accountId = null, CancellationToken cancellationToken = default)
+    {
+        var adminCheck = RequireAdministratorForSensitiveOperation("resume provider automatic use");
+        if (adminCheck != null) return adminCheck;
+        var statuses = HttpContext.RequestServices.GetRequiredService<ProviderStatusManager>();
+        if (!statuses.IsKnownProvider(providerId)) return NotFound();
+        if (accountId == Guid.Empty) return BadRequest(new { error = "Choose a source account." });
+        var key = accountId.HasValue
+            ? ProviderRuntimeStatusKey.CreateManaged(providerId, capability, accountId.Value)
+            : ProviderRuntimeStatusKey.CreateAccountFree(providerId, capability);
+        var policies = HttpContext.RequestServices.GetService<IEffectiveProviderPolicyResolver>();
+        if (policies != null && !(await policies.ResolveAsync(cancellationToken)).IsAutomatic(key.Provider))
+            return Conflict(new { error = "Choose automatic source use before resuming." });
+        long? revision = null;
+        if (accountId.HasValue)
+        {
+            await using var db = await HttpContext.RequestServices.GetRequiredService<IDbContextFactory<AllstarrDbContext>>()
+                .CreateDbContextAsync(cancellationToken);
+            var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
+            if (account == null || ProviderAccountSettings.IsRemoved(account) || !account.Enabled ||
+                !account.ProviderId.Equals(key.Provider, StringComparison.OrdinalIgnoreCase)) return NotFound();
+            revision = account.Revision;
+            if (!statuses.GetAllManagedStatuses(key.Provider, account.Id, new Dictionary<string, string>(), revision)
+                .Any(status => status.Capability == key.Capability && status.IsSupported)) return BadRequest(new { error = "Unsupported source capability." });
+        }
+        else if (!statuses.GetAllAccountFreeStatuses().Any(status =>
+            status.Provider == key.Provider && status.Capability == key.Capability && status.IsSupported)) return BadRequest(new { error = "Unsupported source capability." });
+        statuses.ResumeAutomaticUse(key, revision);
+        return Ok(new { provider = key.Provider, capability = key.Capability, providerAccountId = accountId, resumed = true });
     }
 
     private static string HistoryOutcome(ProviderRuntimeStatus status) =>
