@@ -63,6 +63,8 @@ public static class ProviderAudioDeliveryRequests
             Channels = Limit(values, "AudioChannels"),
             MaxBitDepth = Limit(values, "MaxAudioBitDepth"),
             StartTimeTicks = Number(values, "StartTimeTicks") ?? 0,
+            InvalidTimeOffset = values.TryGetValue("StartTimeTicks", out var start) && start.Length > 0 &&
+                (!long.TryParse(start, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ticks) || ticks < 0),
             EnableDirectPlay = !Value(values, "EnableDirectPlay").Equals("false", StringComparison.OrdinalIgnoreCase),
             EnableDirectStream = !Value(values, "EnableDirectStream").Equals("false", StringComparison.OrdinalIgnoreCase),
             Error = error
@@ -96,8 +98,9 @@ public static class ProviderAudioDeliveryRequests
         var error = InvalidNumbers(values, ["maxBitRate", "maxAudioBitrate", "maxAudioChannels", "maxAudioSampleRate", "offset", "timeOffset"]);
         var offset = parameters.GetValueOrDefault("timeOffset", parameters.GetValueOrDefault("offset", "0"));
         long ticks = 0;
-        if (!decimal.TryParse(offset, NumberStyles.Number, CultureInfo.InvariantCulture, out var seconds) || seconds < 0 || seconds > long.MaxValue / TimeSpan.TicksPerSecond)
-            error = "Invalid audio time offset.";
+        var invalidOffset = !decimal.TryParse(offset, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out var seconds) ||
+            seconds < 0 || seconds > long.MaxValue / TimeSpan.TicksPerSecond;
+        if (invalidOffset) error = "Invalid audio time offset.";
         else ticks = (long)(seconds * TimeSpan.TicksPerSecond);
         return new()
         {
@@ -108,6 +111,7 @@ public static class ProviderAudioDeliveryRequests
             MaxChannels = Limit(values, "maxAudioChannels"),
             MaxSampleRate = Limit(values, "maxAudioSampleRate"),
             StartTimeTicks = ticks,
+            InvalidTimeOffset = invalidOffset,
             Error = error
         };
     }

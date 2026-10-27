@@ -13,6 +13,60 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
     private static readonly byte[] Original = [0, 0, 0, 16, 102, 116, 121, 112, 109, 52, 97, 32];
     internal static readonly byte[] Converted = [102, 76, 97, 67, 0, 0, 0, 0];
 
+    [Theory]
+    [InlineData("size")]
+    [InlineData("size_bytes")]
+    [InlineData("sizeBytes")]
+    public async Task Conversion_RejectsDeclaredShortInputBeforeStartingMediaTools(string sizeField)
+    {
+        var descriptor = System.Text.Json.Nodes.JsonNode.Parse(Descriptor())!;
+        descriptor[sizeField] = Original.Length + 1;
+        var calls = 0;
+        Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token)
+        {
+            calls++;
+            return FixtureRunner(executable, arguments, output, limit, token);
+        }
+        var error = await Assert.ThrowsAsync<InvalidDataException>(() => new ExtensionDownloadPostProcessor(TimeSpan.FromSeconds(5), Run)
+            .ProcessAsync(input, descriptor.ToJsonString(), 100_000, default));
+        Assert.Equal(ExtensionDownloadPostProcessor.ConversionFailureMessage, error.Message);
+        Assert.Equal(0, calls);
+        await AssertOriginalAsync();
+    }
+
+    [Theory]
+    [InlineData("flac")]
+    [InlineData("alac")]
+    public async Task Conversion_RejectsShortDecodedAudioBeforeEncodingEvenWhenContainerDurationMatches(string codec)
+    {
+        var encoded = false;
+        Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token)
+        {
+            if (executable == "ffprobe") return Task.FromResult(Probe(codec, "mov,mp4,m4a"));
+            if (output != null) encoded = true;
+            return Task.FromResult("MD5=0123456789abcdef0123456789abcdef\nout_time_us=250000\nprogress=end\n");
+        }
+        await AssertFailureAsync(Run, codec: codec);
+        Assert.False(encoded);
+    }
+
+    [Fact]
+    public async Task Conversion_CancellationAfterInputProbeStartsNoDecoderOrEncoder()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var calls = new List<string>();
+        Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token)
+        {
+            calls.Add(executable);
+            cancellation.Cancel();
+            return Task.FromResult(Probe("flac", "mov,mp4,m4a"));
+        }
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new ExtensionDownloadPostProcessor(TimeSpan.FromSeconds(5), Run)
+            .ProcessAsync(input, Descriptor(), 100_000, cancellation.Token));
+        Assert.Equal(["ffprobe"], calls);
+        await AssertOriginalAsync();
+    }
+
     [Fact]
     public async Task ConversionBusyNeverSpawnsFfmpegOrChangesTheInputAndCanRecover()
     {
@@ -51,7 +105,7 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
         Assert.Equal("flac", media.Container);
         Assert.Equal("flac", media.Codec);
         Assert.Equal(Converted, await File.ReadAllBytesAsync(input));
-        Assert.Equal(["ffprobe", "ffmpeg", "ffprobe", "ffmpeg", "ffmpeg", "ffmpeg"], calls);
+        Assert.Equal(["ffprobe", "ffmpeg", "ffmpeg", "ffprobe", "ffmpeg", "ffmpeg"], calls);
         Assert.Single(Directory.GetFiles(root));
     }
 
@@ -84,12 +138,13 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
             }
             if (args.Contains("md5"))
             {
-                Assert.True(decoded);
+                Assert.Equal(!args.Contains("-progress"), decoded);
                 Assert.Contains("-xerror", args);
+                if (args.Contains("-progress")) Assert.Contains("asetpts=N/SR/TB", args);
                 Assert.Equal(pcmCodec, args[Array.IndexOf(args, "-c:a") + 1]);
                 hashes.Add(args[Array.IndexOf(args, "-f") + 1]);
                 Assert.Equal(Original, await File.ReadAllBytesAsync(input, token));
-                return "MD5=0123456789abcdef0123456789abcdef\n";
+                return HashResult(args);
             }
             decoded = true;
             return await FixtureRunner(executable, args, output, limit, token);
@@ -189,13 +244,13 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
         Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token)
         {
             calls++;
-            Assert.Equal("ffprobe", executable);
-            return Task.FromResult(Probe("alac", "mov,mp4,m4a"));
+            return executable == "ffprobe" ? Task.FromResult(Probe("alac", "mov,mp4,m4a"))
+                : FixtureRunner(executable, arguments, output, limit, token);
         }
         var media = await ProcessAsync(Run, "alac");
         Assert.Equal("m4a", media.Container);
         Assert.Equal("alac", media.Codec);
-        Assert.Equal(1, calls);
+        Assert.Equal(2, calls);
         await AssertOriginalAsync();
     }
 
@@ -222,7 +277,7 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
             if (arguments.Contains("md5"))
             {
                 Assert.Contains(bits == 16 ? "pcm_s16le" : "pcm_s24le", arguments);
-                return "MD5=0123456789abcdef0123456789abcdef\n";
+                return HashResult(arguments);
             }
             if (output != null)
             {
@@ -278,7 +333,7 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
                 if (failure == "container") return Probe("flac", "mp4");
                 if (failure == "extra-stream") return Probe("flac", "flac").Replace("\"streams\":[", "\"streams\":[{\"codec_type\":\"video\",\"codec_name\":\"unknown\"},");
             }
-            if (failure == "decode" && executable == "ffmpeg" && output == null) throw new InvalidDataException();
+            if (failure == "decode" && executable == "ffmpeg" && output == null && !arguments.Contains("md5")) throw new InvalidDataException();
             return response;
         }
         await AssertFailureAsync(Run);
@@ -330,6 +385,41 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
         }
         else Assert.Equal("Download container conversion failed.", (await Assert.ThrowsAsync<InvalidDataException>(() => pending)).Message);
         await AssertOriginalAsync();
+    }
+
+    [MediaToolsFact]
+    public async Task Conversion_RejectsIncompleteFragmentedAudioBeforeEncodingWhenProbeClaimsFullDuration()
+    {
+        await ExtensionDownloadDecryptionTests.RunAsync("ffmpeg", ["-v", "error", "-nostdin", "-y", "-filter_threads", "1",
+            "-f", "lavfi", "-i", "sine=frequency=997:duration=3", "-threads", "1", "-c:a", "flac", "-strict", "experimental",
+            "-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-frag_duration", "250000", "-f", "mp4", input]);
+        var complete = await File.ReadAllBytesAsync(input);
+        var end = 0;
+        while (end < complete.Length)
+        {
+            var size = checked((int)System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(complete.AsSpan(end, 4)));
+            Assert.InRange(size, 8, complete.Length - end);
+            var media = complete.AsSpan(end + 4, 4).SequenceEqual("mdat"u8);
+            end += size;
+            if (media) break;
+        }
+        Assert.InRange(end, 1, complete.Length - 1);
+        var partial = complete[..end];
+        await File.WriteAllBytesAsync(input, partial);
+        var encoded = false;
+        Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token)
+        {
+            if (executable == "ffprobe") return Task.FromResult(Probe("flac", "mov,mp4,m4a", "3"));
+            if (output != null) encoded = true;
+            return ExtensionDownloadPostProcessor.RunAsync(executable, arguments, output, limit, token);
+        }
+        var descriptor = System.Text.Json.Nodes.JsonNode.Parse(Descriptor())!;
+        descriptor["duration_ms"] = 3000;
+        await Assert.ThrowsAsync<InvalidDataException>(() => new ExtensionDownloadPostProcessor(TimeSpan.FromSeconds(10), Run)
+            .ProcessAsync(input, descriptor.ToJsonString(), 1_000_000, default));
+        Assert.False(encoded);
+        Assert.Equal(partial, await File.ReadAllBytesAsync(input));
+        Assert.Single(Directory.GetFiles(root));
     }
 
     [MediaToolsFact]
@@ -420,6 +510,10 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
             format = new { format_name = container, duration }
         });
 
+    internal static string HashResult(IEnumerable<string> arguments) =>
+        "MD5=0123456789abcdef0123456789abcdef\n" +
+        (arguments.Contains("-progress") ? "out_time_us=1000000\nprogress=end\n" : "");
+
     internal static async Task<string> FixtureRunner(string executable, IEnumerable<string> arguments, string? output,
         long maximumBytes, CancellationToken token)
     {
@@ -446,7 +540,7 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
             if (args.Contains("md5"))
             {
                 Assert.Contains("pcm_s16le", args);
-                return "MD5=0123456789abcdef0123456789abcdef\n";
+                return HashResult(args);
             }
             Assert.Contains("null", args);
         }

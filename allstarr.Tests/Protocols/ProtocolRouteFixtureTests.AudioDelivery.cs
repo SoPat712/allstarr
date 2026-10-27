@@ -15,7 +15,6 @@ public sealed partial class ProtocolRouteFixtureTests
 {
     [Theory]
     [InlineData("Feishin", "stream.mp3?audioCodec=mp3&static=false&playSessionId=feishin-ext-deezer-song-42-mp3-44100-0&audioBitRate=128000&audioSampleRate=44100", "flac", "flac", 406)]
-    [InlineData("Feishin", "stream.mp3?audioCodec=mp3&static=false&playSessionId=feishin-ext-deezer-song-42-mp3-44100-300000000&audioBitRate=128000&audioSampleRate=44100&startTimeTicks=300000000", "mp3", "mp3", 406)]
     [InlineData("Jellyfin Web", "universal?UserId=user&DeviceId=fixture&MaxStreamingBitrate=120000000&Container=mp3,mp4|aac,aac,ogg|opus,webm|opus&TranscodingContainer=ts&TranscodingProtocol=hls&AudioCodec=aac&MaxAudioSampleRate=48000&MaxAudioBitDepth=16&PlaySessionId=play&StartTimeTicks=0&EnableRedirection=true&EnableRemoteMedia=false&EnableAudioVbrEncoding=true", "flac", "flac", 406)]
     [InlineData("Finamp", "universal?transcodingContainer=mp3&audioCodec=mp3&audioBitRate=128000&maxAudioChannels=2", "flac", "flac", 406)]
     [InlineData("Finamp", "universal?transcodingContainer=mp3&audioCodec=mp3&audioBitRate=128000&maxAudioChannels=1", "mp3", "mp3", 406)]
@@ -110,9 +109,6 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("xml", "format=mp3&maxBitRate=128&estimateContentLength=true", "flac", false)]
     [InlineData("json", "format=mp3&maxBitRate=64", "mp3", false)]
     [InlineData("xml", "format=mp3&maxBitRate=64", "mp3", false)]
-    [InlineData("json", "format=mp3&timeOffset=30", "mp3", false)]
-    [InlineData("xml", "format=mp3&timeOffset=30", "mp3", false)]
-    [InlineData("json", "format=mp3&offset=30", "mp3", false)]
     [InlineData("json", "format=mp3&maxBitRate=128&estimateContentLength=true", "mp3", true)]
     [InlineData("xml", "format=raw&maxBitRate=0", "flac", true)]
     public async Task TempoStream_EnforcesFormatBitrateAndTimeOffset(string format, string query, string codec, bool compatible)
@@ -145,7 +141,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [Theory]
     [InlineData("mp3", 0, true, true, true)]
     [InlineData("flac", 0, false, true, true)]
-    [InlineData("mp3", 300000000, false, true, true)]
+    [InlineData("mp3", 300000000, true, true, true)]
     [InlineData("mp3", 0, true, false, true)]
     [InlineData("mp3", 0, true, true, false)]
     [InlineData("mp3", 0, false, false, false)]
@@ -169,6 +165,11 @@ public sealed partial class ProtocolRouteFixtureTests
         if (compatible)
         {
             var url = source.GetProperty("DirectStreamUrl").GetString()!;
+            if (offset > 0)
+            {
+                Assert.Contains($"StartTimeTicks={offset}", url);
+                return;
+            }
             using var stream = await client.GetAsync(url + "&ApiKey=fixture-key");
             Assert.Equal(HttpStatusCode.OK, stream.StatusCode);
             Assert.Equal(DeliveryBytes(codec), await stream.Content.ReadAsByteArrayAsync());

@@ -29,6 +29,24 @@ public sealed class PlaybackDeliveryActivityStoreTests
     }
 
     [Fact]
+    public void TimeSeekAndRejectionRemainAvailableForScopedProblemContext()
+    {
+        using var store = new PlaybackDeliveryActivityStore();
+        using var response = new HttpResponseMessage(HttpStatusCode.OK);
+        var context = Context("request");
+        var stream = Stream(response, true, "managed-cache", true);
+        store.StreamOpened(context, "ext-deezer-song-42", ProviderAudioQuality.Any, stream);
+        store.SeekRungSelected(context, "ext-deezer-song-42", ProviderAudioQuality.Any, stream, "time-seek");
+        store.SeekRungSelected(context, "ext-deezer-song-42", ProviderAudioQuality.Any, stream, "flac-duration");
+        Assert.Equal("time-seek", store.StreamFor(context, "ext-deezer-song-42", ProviderAudioQuality.Any)!.SeekRung);
+        store.StreamRejected(context, "ext-deezer-song-42", "Unsupported audio profile api_key=private-value");
+        var source = store.StreamFor(context.Actor!.EffectiveUserId, "device", "ext-deezer-song-42")!;
+        Assert.Equal("Unsupported audio profile api_key=<redacted>", source.RejectionReason);
+        Assert.DoesNotContain("private-value", JsonSerializer.Serialize(source));
+        Assert.Null(store.StreamFor(Guid.NewGuid(), "device", "ext-deezer-song-42"));
+    }
+
+    [Fact]
     public void LazyEvidenceCannotOverwriteANewerRequestOrAnotherQuality()
     {
         using var store = new PlaybackDeliveryActivityStore();

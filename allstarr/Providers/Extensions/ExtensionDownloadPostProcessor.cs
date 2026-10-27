@@ -58,6 +58,10 @@ internal sealed class ExtensionDownloadPostProcessor
             var value = result.RootElement;
             conversion = value.TryGetProperty("requires_container_conversion", out var flag) && flag.ValueKind == JsonValueKind.True;
             state.Operation = conversion ? "conversion" : "decryption";
+            cancellationToken.ThrowIfCancellationRequested();
+            state.Step = "declared-size";
+            state.InputBytes = new FileInfo(input).Length;
+            ValidateDeclaredSize(value, state.InputBytes.Value);
             var encrypted = new[] { "decryption", "decryption_key", "encrypted", "needs_decryption", "encryption_scheme" }
                 .Any(name => value.TryGetProperty(name, out var marker) && marker.ValueKind is not
                     (JsonValueKind.Null or JsonValueKind.False) && marker.ToString().Length > 0);
@@ -115,15 +119,19 @@ internal sealed class ExtensionDownloadPostProcessor
             state.DeclaredDuration = Duration(value);
             state.Step = "input-probe";
             var before = await ProbeAsync(input, null, token);
+            token.ThrowIfCancellationRequested();
             state.Step = "input-validation";
             if (string.IsNullOrEmpty(codec)) codec = Text(before.GetProperty("streams")[0], "codec_name");
             if (codec is not ("flac" or "alac")) throw new InvalidDataException();
             state.InputDuration = ProbeDuration(before);
             Validate(before, codec, state.DeclaredDuration);
-            if (codec == "alac") return new("m4a", "alac");
             var expectedDuration = state.DeclaredDuration ?? state.InputDuration;
             state.Step = "input-audio-properties";
             var audio = ProbeAudioProperties(before);
+            state.Step = "input-hash";
+            var beforeHash = await AudioHashAsync(input, "mov", audio.Bits, token, expectedDuration);
+            token.ThrowIfCancellationRequested();
+            if (codec == "alac") return new("m4a", "alac");
             state.Step = "encode";
             await run("ffmpeg", ["-v", "error", "-nostdin", "-y", "-threads", "1", "-protocol_whitelist", "file",
                 "-f", "mov", "-i", input, "-map", "0:a:0", "-map_metadata", "-1", "-map_chapters", "-1",
@@ -152,8 +160,6 @@ internal sealed class ExtensionDownloadPostProcessor
             await run("ffmpeg", ["-v", "error", "-nostdin", "-xerror", "-err_detect", "explode", "-threads", "1",
                 "-protocol_whitelist", "file", "-f", "flac", "-i", output, "-map", "0:a:0", "-threads", "1", "-f", "null", "-"],
                 null, maximumBytes, token);
-            state.Step = "input-hash";
-            var beforeHash = await AudioHashAsync(input, "mov", audio.Bits, token);
             state.Step = "output-hash";
             var afterHash = await AudioHashAsync(output, "flac", audio.Bits, token);
             state.Step = "hash-comparison";
@@ -167,6 +173,19 @@ internal sealed class ExtensionDownloadPostProcessor
         {
             try { if (File.Exists(output)) File.Delete(output); }
             catch { }
+        }
+    }
+
+    private static void ValidateDeclaredSize(JsonElement value, long actualBytes)
+    {
+        foreach (var name in new[] { "size", "size_bytes", "sizeBytes" })
+        {
+            if (!value.TryGetProperty(name, out var item) || item.ValueKind == JsonValueKind.Null) continue;
+            long declared;
+            if (item.ValueKind == JsonValueKind.Number ? !item.TryGetInt64(out declared) :
+                item.ValueKind != JsonValueKind.String || !long.TryParse(item.GetString(), NumberStyles.None, CultureInfo.InvariantCulture, out declared))
+                throw new InvalidDataException();
+            if (declared < 0 || declared > 0 && declared != actualBytes) throw new InvalidDataException();
         }
     }
 
@@ -284,12 +303,30 @@ internal sealed class ExtensionDownloadPostProcessor
         return (sampleRate, channels, bits);
     }
 
-    private async Task<string> AudioHashAsync(string path, string container, int bits, CancellationToken token)
+    private async Task<string> AudioHashAsync(string path, string container, int bits, CancellationToken token,
+        double? expectedDuration = null)
     {
         // Hash full-precision PCM so 24-bit differences cannot disappear through a 16-bit decode.
-        var hash = (await run("ffmpeg", ["-v", "error", "-nostdin", "-xerror", "-err_detect", "explode", "-threads", "1",
-            "-protocol_whitelist", "file", "-f", container, "-i", path, "-map", "0:a:0", "-threads", "1",
-            "-c:a", bits == 16 ? "pcm_s16le" : "pcm_s24le", "-f", "md5", "-"], null, 0, token)).Trim();
+        List<string> arguments = ["-v", "error", "-nostdin", "-xerror", "-err_detect", "explode", "-threads", "1"];
+        if (expectedDuration.HasValue)
+            arguments.AddRange(["-nostats", "-stats_period", "3600", "-progress", "pipe:1"]);
+        arguments.AddRange(["-protocol_whitelist", "file", "-f", container, "-i", path, "-map", "0:a:0", "-threads", "1"]);
+        if (expectedDuration.HasValue) arguments.AddRange(["-af", "asetpts=N/SR/TB"]);
+        arguments.AddRange(["-c:a", bits == 16 ? "pcm_s16le" : "pcm_s24le", "-f", "md5", "-"]);
+        var result = (await run("ffmpeg", arguments, null, 0, token)).Trim();
+        token.ThrowIfCancellationRequested();
+        var hash = result;
+        if (expectedDuration.HasValue)
+        {
+            var lines = result.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            hash = lines.SingleOrDefault(line => line.StartsWith("MD5=", StringComparison.Ordinal)) ?? "";
+            var elapsed = lines.LastOrDefault(line => line.StartsWith("out_time_us=", StringComparison.Ordinal));
+            if (!lines.Contains("progress=end") || elapsed == null ||
+                !long.TryParse(elapsed[12..], NumberStyles.None, CultureInfo.InvariantCulture, out var microseconds) || microseconds <= 0)
+                throw new InvalidDataException();
+            // Container metadata can describe missing fragments; compare the audio actually decoded.
+            ValidateDuration(microseconds / 1_000_000d, expectedDuration.Value);
+        }
         if (hash.Length != 36 || !hash.StartsWith("MD5=", StringComparison.Ordinal) || !hash[4..].All(char.IsAsciiHexDigit))
             throw new InvalidDataException();
         return hash;
@@ -310,8 +347,12 @@ internal sealed class ExtensionDownloadPostProcessor
             !(Text(probe.GetProperty("format"), "format_name") ?? "").Split(',').Contains(container))
             throw new InvalidDataException();
         var duration = ProbeDuration(probe);
-        if (expectedDuration.HasValue && Math.Abs(duration - expectedDuration.Value) > Math.Max(0.25, expectedDuration.Value * 0.02))
-            throw new InvalidDataException();
+        if (expectedDuration.HasValue) ValidateDuration(duration, expectedDuration.Value);
+    }
+
+    private static void ValidateDuration(double actual, double expected)
+    {
+        if (Math.Abs(actual - expected) > Math.Max(0.25, expected * 0.02)) throw new InvalidDataException();
     }
 
     internal static async Task<string> RunAsync(string executable, IEnumerable<string> arguments, string? output,

@@ -195,6 +195,8 @@ public partial class JellyfinController
     {
         if (ex is LocalCapacityException busy) return (503, busy.SafeMessage);
 
+        if (ex is ProviderAudioOffsetException offset) return ((int)offset.StatusCode, offset.Message);
+
         if (ex is ProviderAudioProfileException profile)
             return (StatusCodes.Status406NotAcceptable, profile.Message);
 

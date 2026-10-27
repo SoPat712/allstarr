@@ -182,7 +182,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             var sandbox = new ExtensionSandbox(root, normalized, script, new HttpClientFactory(), Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
                 runtimeStateDirectory: Path.Combine(root, "runtime"));
             sandbox.DownloadPostProcessor = new(TimeSpan.FromSeconds(5), (executable, arguments, output, limit, token) =>
-                codec == "alac" ? Task.FromResult(ExtensionDownloadConversionTests.Probe("alac", "mov,mp4,m4a"))
+                codec == "alac" && executable == "ffprobe" ? Task.FromResult(ExtensionDownloadConversionTests.Probe("alac", "mov,mp4,m4a"))
                     : ExtensionDownloadConversionTests.FixtureRunner(executable, arguments, output, limit, token));
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces") };
             var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);

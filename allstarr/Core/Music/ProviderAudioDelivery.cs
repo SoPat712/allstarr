@@ -26,6 +26,7 @@ public sealed record ProviderAudioDeliveryRequest
     public bool EnableDirectPlay { get; init; } = true;
     public bool EnableDirectStream { get; init; } = true;
     public string? Error { get; init; }
+    public bool InvalidTimeOffset { get; init; }
 
     public ProviderAudioQuality Quality => LosslessOnly(Formats ?? Profiles)
         ? ProviderAudioQuality.Lossless
@@ -43,8 +44,7 @@ public sealed record ProviderAudioDeliveryRequest
             ? profile.Codecs.All(codec => codec.ToLowerInvariant() is "mp3" or "aac" or "opus" or "vorbis")
             : profile.Containers.Length > 0 && profile.Containers.All(container => container.ToLowerInvariant() is "mp3" or "aac" or "m4a" or "opus" or "ogg"));
 
-    public string? RequestError => Error ?? (StartTimeTicks != 0
-        ? "Time offsets require an audio transform that is unavailable. Use byte-range seeking on the original stream."
+    public string? RequestError => Error ?? (StartTimeTicks < 0 ? "Invalid audio time offset."
         : !EnableDirectPlay && !EnableDirectStream ? "Audio transcoding is unavailable." : null);
 
     public ProviderAudioDeliveryDecision Evaluate(ProviderMediaFormat? media, long? size = null)
@@ -59,7 +59,7 @@ public sealed record ProviderAudioDeliveryRequest
             Channels.HasValue && media.Channels.HasValue && media.Channels != Channels))
             reason = "The source does not meet the requested audio limits; transcoding is unavailable.";
         if (reason == null && !Conditions.All(condition => Matches(condition, media!))) reason = "The source violates the audio codec conditions.";
-        return new(media, reason == null && EnableDirectPlay, reason == null && EnableDirectStream, reason) { Size = size };
+        return new(media, reason == null && EnableDirectPlay, reason == null && EnableDirectStream, reason) { Size = size, StartTimeTicks = StartTimeTicks };
     }
 
     private static bool Within(long? actual, long? limit) => !limit.HasValue || !actual.HasValue || actual <= limit;
@@ -117,6 +117,7 @@ public sealed record ProviderAudioDeliveryDecision(
     string? Error)
 {
     public long? Size { get; init; }
+    public long StartTimeTicks { get; init; }
     public bool Supported => SupportsDirectPlay || SupportsDirectStream;
     public bool SupportsTranscoding => false;
 }

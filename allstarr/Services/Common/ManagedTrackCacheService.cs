@@ -392,6 +392,9 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
     private static string Key(DownloadedSongMappingScope scope, long? revision, string provider, string track, bool originalDownload = false) =>
         $"{scope.Key}\n{revision}\n{provider}\n{track}\n{(originalDownload ? "original-download" : "playback")}";
 
+    internal static string? CompletedFilePath(Stream stream) =>
+        (stream is PinnedAudioStream pinned ? pinned.Source : stream) is FileStream file && File.Exists(file.Name) ? file.Name : null;
+
     internal static string? SeekRung(HttpContent content) => content is ProgressiveContent progressive
         ? progressive.Reader.CanSeek ? "progressive-cache" : "sequential-cache" : null;
 

@@ -34,6 +34,7 @@ internal static class JellyfinAudioDeliveryShape
         var parameters = new Dictionary<string, string?>
         {
             ["static"] = "true",
+            ["StartTimeTicks"] = decision.StartTimeTicks > 0 ? decision.StartTimeTicks.ToString(CultureInfo.InvariantCulture) : null,
             ["AudioCodec"] = media.Codec,
             ["MaxStreamingBitrate"] = media.Bitrate?.ToString(CultureInfo.InvariantCulture),
             ["AudioSampleRate"] = media.SampleRate?.ToString(CultureInfo.InvariantCulture),

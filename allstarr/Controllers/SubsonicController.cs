@@ -258,6 +258,13 @@ public partial class SubsonicController : ControllerBase
                 delivery.Quality,
                 delivery);
         }
+        catch (ProviderAudioOffsetException ex)
+        {
+            var result = _responseBuilder.CreateError(format, 0, ex.Message);
+            if (result is JsonResult json) json.StatusCode = (int)ex.StatusCode;
+            if (result is ContentResult content) content.StatusCode = (int)ex.StatusCode;
+            return result;
+        }
         catch (ProviderAudioProfileException ex)
         {
             return _responseBuilder.CreateError(format, 0, ex.Message);
