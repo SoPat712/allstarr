@@ -193,6 +193,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
                 _ => "audio/mpeg"
             };
             var facts = completedMedia.Get<TrackMediaFacts>(path) ??
+                await ReadCompleteHeaderAsync(file, cancellationToken) ??
                 await AudioMediaFacts.ReadFileAsync(path, cancellationToken) ?? new(ReadFileMedia(path, mime, extension), file.Length);
             var media = facts.Media;
             completedMedia.Set(path, facts, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1) });
@@ -208,6 +209,19 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
         catch (IOException) { return null; }
         catch (UnauthorizedAccessException) { return null; }
         finally { file?.Dispose(); }
+    }
+
+    private static async Task<TrackMediaFacts?> ReadCompleteHeaderAsync(Stream file, CancellationToken token)
+    {
+        try
+        {
+            var prefix = new byte[4096];
+            var count = await file.ReadAsync(prefix, token);
+            var facts = AudioMediaFacts.ReadPrefix(prefix.AsSpan(0, count), file.Length);
+            return facts is { DurationSeconds: > 0, Media: { SampleRate: > 0, Channels: > 0 } } &&
+                facts.Media.Container is "flac" or "wav" ? facts : null;
+        }
+        finally { file.Position = 0; }
     }
 
     public bool CanPrepare(ProtocolExecutionContext context) => IsCacheMode() &&
