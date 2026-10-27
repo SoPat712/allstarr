@@ -18,7 +18,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("Download", false)]
     [InlineData("Download", true)]
     [InlineData("File", false)]
-    public async Task CanonicalOriginalUrlRangesUseTheOpeningCredentialWithoutPlaybackWrites(string endpoint, bool differentCredential)
+    public async Task CanonicalOriginalUrlRangesRecoverWithEitherAuthorizedCredentialWithoutPlaybackWrites(string endpoint, bool differentCredential)
     {
         const string canonical = "ext-allstarr-song-76d17d96-70e2-46b1-a3bf-358a6eb67e2b";
         byte[] bytes = Enumerable.Range(0, 32).Select(x => (byte)x).ToArray();
@@ -73,13 +73,10 @@ public sealed partial class ProtocolRouteFixtureTests
             $"/Items/{canonical}/{endpoint}?api_key={(differentCredential ? "other-key" : "fixture-key")}");
         request.Headers.Range = new(24, 31);
         using var resumed = await client.SendAsync(request);
-        Assert.Equal(differentCredential ? HttpStatusCode.Conflict : HttpStatusCode.PartialContent, resumed.StatusCode);
-        if (!differentCredential)
-        {
-            Assert.Equal("bytes 24-31/32", resumed.Content.Headers.ContentRange!.ToString());
-            Assert.Equal(8, resumed.Content.Headers.ContentLength);
-            Assert.Equal(bytes[24..], await resumed.Content.ReadAsByteArrayAsync());
-        }
+        Assert.Equal(HttpStatusCode.PartialContent, resumed.StatusCode);
+        Assert.Equal("bytes 24-31/32", resumed.Content.Headers.ContentRange!.ToString());
+        Assert.Equal(8, resumed.Content.Headers.ContentLength);
+        Assert.Equal(bytes[24..], await resumed.Content.ReadAsByteArrayAsync());
         Assert.False(activity.WasStreamOpened(canonical));
     }
 }

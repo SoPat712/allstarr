@@ -85,8 +85,57 @@ public interface INativeMusicSearch<TPayload>
 /// </summary>
 public sealed class MusicSearchService(
     IProtocolProviderGateway providers,
-    ILibraryIndexService? libraryIndex = null)
+    ILibraryIndexService? libraryIndex = null,
+    SavedLibraryReader? savedLibrary = null)
 {
+    internal static bool MetadataRecordingsMatch(Song left, Song right)
+    {
+        if (left.ExternalProvider?.Contains("artistgrid", StringComparison.OrdinalIgnoreCase) == true ||
+            right.ExternalProvider?.Contains("artistgrid", StringComparison.OrdinalIgnoreCase) == true ||
+            !HasOrdinaryRecordingMetadata(left) || !HasOrdinaryRecordingMetadata(right) ||
+            Math.Abs(RecordingDuration(left)!.Value - RecordingDuration(right)!.Value) > 2 ||
+            RecordingVersion(left) != RecordingVersion(right)) return false;
+        if (RecordingExplicitness(left) is { } firstExplicit && RecordingExplicitness(right) is { } secondExplicit &&
+            firstExplicit != secondExplicit) return false;
+        var artist = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(left.Artist).FirstOrDefault() ?? "");
+        var otherArtist = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(right.Artist).FirstOrDefault() ?? "");
+        var title = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(left.Title));
+        var otherTitle = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(right.Title));
+        if (artist.Length == 0 || title.Length == 0 || artist != otherArtist || title != otherTitle) return false;
+        var album = FuzzyMatcher.NormalizeForMatching(left.Album);
+        var otherAlbum = FuzzyMatcher.NormalizeForMatching(right.Album);
+        // Releases can assign different ISRCs to the same ordinary recording. Require matching
+        // album evidence as well when the identifiers disagree.
+        if (NormalizeIdentifier(left.Isrc) is { } firstIsrc && NormalizeIdentifier(right.Isrc) is { } secondIsrc &&
+            firstIsrc != secondIsrc) return album.Length > 0 && album == otherAlbum;
+        return album.Length == 0 || otherAlbum.Length == 0 || album == otherAlbum;
+    }
+
+    private static string? NormalizeIdentifier(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var normalized = new string(value.Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
+        return normalized.Length == 12 ? normalized : null;
+    }
+
+    private static double? RecordingDuration(Song song) => song.PreciseDuration?.TotalSeconds ?? song.Duration;
+
+    private static bool? RecordingExplicitness(Song song) => song.ExplicitContentLyrics switch
+    {
+        1 => true,
+        0 or 3 => false,
+        _ => null
+    };
+
+    private static string RecordingVersion(Song song) => string.Join("|",
+        FuzzyMatcher.SemanticVersionTags(string.Join(" ", song.Title, song.Album)).Order(StringComparer.Ordinal));
+
+    private static bool HasOrdinaryRecordingMetadata(Song song) => RecordingDuration(song) is > 0 &&
+        !FuzzyMatcher.IsContinuousMixExcerpt(song.Title, song.Album) &&
+        !FuzzyMatcher.HasCoverRecordingLabel(string.Join(" ", song.Title, song.Artist, song.Album)) &&
+        FuzzyMatcher.BackingRecordingTags(string.Join(" ", song.Title, song.Artist, song.Album)).Count == 0 &&
+        FuzzyMatcher.SpecialEditionTags(string.Join(" ", song.Title, song.Album)).Count == 0;
+
     public async Task<MusicSearchResult<TPayload>> SearchAsync<TPayload>(
         ProtocolExecutionContext context,
         MusicSearchRequest request,
@@ -121,6 +170,11 @@ public sealed class MusicSearchService(
         var artists = request.Artists.Apply(provided.Artists).ToList();
         var playlists = request.Playlists.Apply(await playlistTask).ToList();
 
+        if (savedLibrary != null)
+        {
+            try { await savedLibrary.PreferSavedSongIdsAsync(context, songs, cancellationToken); }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested && !context.CancellationToken.IsCancellationRequested) { }
+        }
         await PreferOwnedSongsAsync(context, songs, nativeSongs, native, cancellationToken);
         return Merge(
             request.Query,

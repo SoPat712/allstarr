@@ -6,18 +6,13 @@ namespace allstarr.Core.Protocols;
 public sealed partial class ProtocolProviderGateway
 {
     private async Task<ProtocolProviderStream?> OpenHouseholdKeptAsync(ProtocolExecutionContext protocol,
-        ProviderExternalResourceId track, ProviderAudioQuality quality, Guid? previousFileId, bool resuming, bool headOnly)
+        ProviderExternalResourceId track, ProviderAudioQuality quality, bool headOnly)
     {
         if (keptFiles == null) return null;
         var actor = protocol.RequireActor();
         var opened = await keptFiles.OpenForPlaybackAsync(actor, track, headOnly, protocol.CancellationToken);
         if (opened == null) return null;
         var kept = opened.File;
-        if (resuming && kept.ManagedFileId != previousFileId)
-        {
-            if (opened.Content != null) await opened.Content.DisposeAsync();
-            return null;
-        }
         HttpResponseMessage? response = null;
         try
         {

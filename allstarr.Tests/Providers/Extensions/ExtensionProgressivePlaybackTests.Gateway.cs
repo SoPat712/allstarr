@@ -13,7 +13,7 @@ public sealed partial class ExtensionProgressivePlaybackTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task PlaylistPlayback_SeekKeepsPublishedSourceAndRejectsAnotherEncoding(bool changeEncoding)
+    public async Task PlaylistPlayback_SeekKeepsPublishedSourceOrRecoversWithAFreshSource(bool changeEncoding)
     {
         var (adapter, context, _) = Setup(true);
         var track = new ProviderExternalResourceId(adapter.ProviderId, ProviderResourceKind.Track, "tidal:123");
@@ -28,6 +28,17 @@ public sealed partial class ExtensionProgressivePlaybackTests
         var other = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
         other.SetupGet(item => item.ProviderId).Returns("qobuz");
         other.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        other.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(new("replacement", new Uri("https://media.example.test/replacement"),
+                DateTimeOffset.UtcNow.AddMinutes(1), true, true, new("audio/flac", "flac", "flac"),
+                ProviderStreamRetryBehavior.DoNotRetry, (request, _) =>
+                {
+                    Assert.Equal($"bytes={prefix.Length}-", request.Headers.Range!.ToString());
+                    var response = new HttpResponseMessage(HttpStatusCode.PartialContent) { Content = new ByteArrayContent([5, 6, 7, 8]) };
+                    response.Content.Headers.ContentRange = new(prefix.Length, prefix.Length + 3, prefix.Length + 4);
+                    return Task.FromResult(response);
+                })));
+
         var otherDescriptor = new ProviderDescriptor("qobuz", "qobuz", "Fixture", ProviderOrigin.BuiltIn,
             "1", "1.0", descriptor.Capabilities, new ProviderPermissionDescriptor());
         var registry = new ProviderRegistry([new ProviderRegistration(descriptor, [adapter]),
@@ -39,13 +50,14 @@ public sealed partial class ExtensionProgressivePlaybackTests
             {
                 var resuming = ++plans > 1;
                 var selected = resuming && changeEncoding
-                    ? new ProviderExternalResourceId(adapter.ProviderId, ProviderResourceKind.Track, "other-track")
+                    ? new ProviderExternalResourceId("qobuz", ProviderResourceKind.Track, "other-track")
                     : request.SourceTrackId?.ProviderId == adapter.ProviderId ? request.SourceTrackId : resuming
                         ? new ProviderExternalResourceId(adapter.ProviderId, ProviderResourceKind.Track, "123") : track;
-                var execution = new ProviderExecutionContext(request.Actor, adapter.ProviderId, null, request.Policy,
+                var provider = resuming && changeEncoding ? otherDescriptor : descriptor;
+                var execution = new ProviderExecutionContext(request.Actor, provider.Id, null, request.Policy,
                     request.OperationId, request.CorrelationId, request.Deadline, request.CancellationToken);
-                var candidate = new ProviderRouteCandidate<IProviderStreamingCapability>(0, descriptor,
-                    descriptor.Capabilities.Single(), adapter, execution, selected);
+                var candidate = new ProviderRouteCandidate<IProviderStreamingCapability>(0, provider,
+                    provider.Capabilities.Single(), resuming && changeEncoding ? other.Object : adapter, execution, selected);
                 return new ProviderRoutePlan<IProviderStreamingCapability>(request, [candidate],
                     new(request.CorrelationId, ProviderCapabilityKind.Streaming, adapter.ProviderId, null, []));
             });
@@ -61,8 +73,14 @@ public sealed partial class ExtensionProgressivePlaybackTests
             ProviderAudioQuality.Any, $"bytes={prefix.Length}-");
         if (changeEncoding)
         {
-            var error = await Assert.ThrowsAsync<HttpRequestException>(() => seeking);
-            Assert.Equal(HttpStatusCode.Conflict, error.StatusCode);
+            var opened = await seeking.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.NotNull(opened);
+            Assert.Equal("qobuz", opened.ServingProviderId);
+            using var resumed = opened.Response;
+            Assert.Equal(HttpStatusCode.PartialContent, resumed.StatusCode);
+            Assert.Equal(new byte[] { 5, 6, 7, 8 }, await resumed.Content.ReadAsByteArrayAsync());
+            Assert.Equal(1, requests);
+            other.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Once);
             source.Release([1, 2, 3, 4]);
         }
         else

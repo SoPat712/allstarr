@@ -121,7 +121,7 @@ public sealed partial class RecordingKeptFilesTests
     [InlineData(ProtocolKind.Subsonic, "corrupt")]
     [InlineData(ProtocolKind.Jellyfin, "replaced")]
     [InlineData(ProtocolKind.Subsonic, "replaced")]
-    public async Task KeptPlaybackSeekAfterSourceDisappearsRequiresRestart(ProtocolKind protocol, string change)
+    public async Task KeptPlaybackSeekUsesAReplacementOrResolvesAFreshSource(ProtocolKind protocol, string change)
     {
         var published = await Service().PublishAsync(Request());
         await SetListenerBackendAsync(protocol);
@@ -150,14 +150,29 @@ public sealed partial class RecordingKeptFilesTests
             await db.SaveChangesAsync();
         }
 
-        var error = await Assert.ThrowsAsync<HttpRequestException>(() => gateway.OpenStreamAsync(
-            context, "allstarr", recordingId.ToString("D"), ProviderAudioQuality.Any, "bytes=5-"));
-        Assert.Equal(HttpStatusCode.Conflict, error.StatusCode);
-        router.VerifyNoOtherCalls();
+        if (change != "replaced")
+            router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()))
+                .ReturnsAsync((ProviderRouteRequest request) => EmptyStreamingPlan(request));
+        var resumed = await gateway.OpenStreamAsync(context, "allstarr", recordingId.ToString("D"),
+            ProviderAudioQuality.Any, "bytes=5-");
+        if (change == "replaced")
+        {
+            Assert.NotNull(resumed);
+            Assert.NotEqual(published.ManagedFileId, resumed.ServingManagedFileId);
+            var result = await ExecuteResponseAsync(resumed.Response, HttpMethods.Get, "bytes=5-");
+            Assert.Equal(StatusCodes.Status206PartialContent, result.StatusCode);
+            Assert.Equal(audio[5..], result.Body);
+            router.VerifyNoOtherCalls();
+        }
+        else
+        {
+            Assert.Null(resumed);
+            router.Verify(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()), Times.Once);
+        }
     }
 
     [Fact]
-    public async Task ExistingRemotePlaybackDoesNotSwitchEncodingWhenKeptCopyAppears()
+    public async Task ReplayUsesTheCompleteKeptOriginalWhenItAppears()
     {
         var capability = RemoteCapability();
         var registry = RemoteRegistry(capability.Object);
@@ -185,14 +200,15 @@ public sealed partial class RecordingKeptFilesTests
         var resumed = await gateway.OpenStreamAsync(context, "deezer", "source-track",
             ProviderAudioQuality.Any, "bytes=5-");
         Assert.NotNull(resumed);
-        Assert.Equal("deezer", resumed.ServingProviderId);
-        Assert.Equal("source-track", resumed.ServingExternalId);
-        Assert.Equal(account, resumed.ServingAccountId);
-        Assert.Equal(7L, resumed.ServingAccountRevision);
-        Assert.Null(resumed.ServingManagedFileId);
-        resumed.Response.Dispose();
+        Assert.Equal("allstarr", resumed.ServingProviderId);
+        Assert.Equal(recordingId.ToString("D"), resumed.ServingExternalId);
+        Assert.True(resumed.IsCached);
+        Assert.NotNull(resumed.ServingManagedFileId);
+        var result = await ExecuteResponseAsync(resumed.Response, HttpMethods.Get, "bytes=5-");
+        Assert.Equal(StatusCodes.Status206PartialContent, result.StatusCode);
+        Assert.Equal(audio[5..], result.Body);
         capability.Verify(item => item.GetStreamLeaseAsync(
-            It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Exactly(2));
+            It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Once);
     }
 
     [Theory]

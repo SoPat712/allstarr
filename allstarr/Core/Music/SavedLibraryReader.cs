@@ -1,16 +1,20 @@
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Favorites;
+using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Protocols;
+using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Music;
 
-public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> factory, IBackendPlaylistTargetResolver? targets = null)
+public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> factory,
+    IBackendPlaylistTargetResolver? targets = null, IEffectiveProviderPolicyResolver? effectivePolicies = null,
+    ITrackIdentityService? identities = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
@@ -173,11 +177,54 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
                 Count = albumCounts.GetValueOrDefault(id)
             };
         }
-        return dates.OrderByDescending(item => item.Value).ThenBy(item => item.Key, StringComparer.Ordinal)
+        var saved = dates.OrderByDescending(item => item.Value).ThenBy(item => item.Key, StringComparer.Ordinal)
             .Where(item => FavoriteDisplaySnapshot.Resource(item.Key) != null)
             .Select(item => new FavoriteViewItem(item.Key, FavoriteDisplaySnapshot.Resource(item.Key)!, item.Value, displays[item.Key])
             { SharedScope = sharedScope }).ToArray();
+        var policy = effectivePolicies == null ? null : await effectivePolicies.ResolveForUserAsync(owner, cancellationToken);
+        var hidden = new HashSet<string>(StringComparer.Ordinal);
+        var groups = new List<List<FavoriteViewItem>>();
+        foreach (var item in saved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Track &&
+                     (item.Resource.ProviderId == "allstarr" || policy?.IsAutomatic(ProviderKey(item.Resource.ProviderId)) != false))
+                 .OrderByDescending(item => hearted.Contains(item.ItemId)).ThenBy(item => item.FavoritedAt)
+                 .ThenBy(item => item.ItemId, StringComparer.Ordinal))
+        {
+            var group = groups.FirstOrDefault(members => members.All(member =>
+                ProviderKey(member.Resource.ProviderId) != ProviderKey(item.Resource.ProviderId) &&
+                MusicSearchService.MetadataRecordingsMatch(member.Song(), item.Song())));
+            if (group == null) groups.Add([item]);
+            else
+            {
+                group.Add(item);
+                hidden.Add(item.ItemId);
+            }
+        }
+        return saved.Where(item => !hidden.Contains(item.ItemId)).ToArray();
     }
+
+    internal async Task PreferSavedSongIdsAsync(ProtocolExecutionContext execution, IReadOnlyList<Song> songs,
+        CancellationToken cancellationToken)
+    {
+        if (songs.Count == 0 || execution.Actor?.EffectiveUserId is not { } owner) return;
+        var saved = await ReadAsync(execution, cancellationToken);
+        var policy = effectivePolicies == null ? null : await effectivePolicies.ResolveForUserAsync(owner, cancellationToken);
+        foreach (var song in songs.Where(song => policy?.IsAutomatic(ProviderKey(song.ExternalProvider ?? "")) != false))
+        {
+            var match = saved.FirstOrDefault(item => item.Resource.ResourceKind == ProviderResourceKind.Track &&
+                (item.Resource.ProviderId == "allstarr" || policy?.IsAutomatic(ProviderKey(item.Resource.ProviderId)) != false) &&
+                (item.ItemId == song.Id ||
+                 (ProviderKey(item.Resource.ProviderId) != ProviderKey(song.ExternalProvider ?? "") || item.Resource.Value == song.ExternalId) &&
+                 MusicSearchService.MetadataRecordingsMatch(item.Song(), song)));
+            if (match == null || match.ItemId == song.Id) continue;
+            var recording = identities == null ? null : await identities.ResolveRecordingAsync(execution.Actor!, match.ItemId, cancellationToken);
+            song.Id = match.ItemId;
+            song.CanonicalRecordingId = recording?.Id ??
+                (match.Resource.ProviderId == "allstarr" && Guid.TryParse(match.Resource.Value, out var id) ? id : null);
+        }
+    }
+
+    private static string ProviderKey(string provider) =>
+        allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(provider);
 
     private async Task<HashSet<string>> VisiblePlaylistKeysAsync(ProtocolExecutionContext execution, CancellationToken cancellationToken)
     {

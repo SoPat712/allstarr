@@ -111,7 +111,7 @@ public sealed record ProviderError
     public static ProviderError StreamRangeUnavailable() => new(
         ProviderErrorKind.NotSupported,
         "stream-range-unavailable",
-        "The playback source cannot serve the requested byte range. Restart playback before seeking.");
+        "The requested byte range is outside the available audio file.");
 
     public static ProviderError CompatibilityContractChanged() => new(
         ProviderErrorKind.CapabilityUnavailable,

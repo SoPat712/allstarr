@@ -360,15 +360,6 @@ public sealed partial class ManagedTrackCacheServiceTests
             { ServingExternalId = "track-1", ServingAccountId = fixture.Scope.ProviderAccountId, ServingAccountRevision = previousRevision });
         var gateway = new ProtocolProviderGateway(router.Object, registry,
             Mock.Of<IHttpClientFactory>(MockBehavior.Strict), managedTrackCache: fixture.Service, playbackActivity: activity);
-        if (previousRevision != 4)
-        {
-            var error = await Assert.ThrowsAsync<HttpRequestException>(() => gateway.OpenStreamAsync(protocol,
-                "deezer", "track-1", ProviderAudioQuality.Any, "bytes=2-3"));
-            Assert.Equal(HttpStatusCode.Conflict, error.StatusCode);
-            capability.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
-                It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
-            return;
-        }
         var opened = await gateway.OpenStreamAsync(protocol, "deezer", "track-1", ProviderAudioQuality.Any, "bytes=2-3");
         Assert.NotNull(opened);
         Assert.True(opened.IsCached);
