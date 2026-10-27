@@ -2,7 +2,7 @@
   import { onMount, tick, untrack } from "svelte";
   import { ChevronDown, RefreshCw } from "@lucide/svelte";
   import { activityWork, home, type Job, type JobDetail, type JobProgress } from "$lib/api";
-  import { dayLabel, jobName, jobNames, jobState, progressPercent, outcomeClass } from "$lib/activity";
+  import { dayLabel, jobName, jobNames, jobState, progressPercent, activityTone, activityText, validJobId } from "$lib/activity";
   import { progressDetails } from "$lib/jobs";
   import { liveUpdates, createRefreshScheduler } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
@@ -15,9 +15,12 @@
   import RouteError from "$lib/components/RouteError.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
 
-  let { administrator = false, scope = "mine" }: { administrator?: boolean; scope?: "mine" | "everyone" } = $props();
+  let { administrator = false, scope = "mine", initialJobId = "" }: { administrator?: boolean; scope?: "mine" | "everyone"; initialJobId?: string } = $props();
   const queueStates = ["Pending", "Running", "RetryScheduled", "Deferred"];
   const finishedStates = ["Succeeded", "Failed", "Cancelled"];
+  let linkedJob = $state<Job | null>(null);
+  let linkedLoading = $state(false);
+  let linkedError = $state("");
   let queue = $state<Job[]>([]);
   let finished = $state<Job[]>([]);
   let progress = $state<JobProgress[]>([]);
@@ -49,13 +52,14 @@
   // Routine runs that finished the same way collapse into one row per day.
   const days = $derived.by(() => {
     const result: Array<{ label: string; rows: Job[][] }> = [];
-    for (const job of finished) {
+    for (const job of finished.filter(item => item.id !== linkedJob?.id)) {
       const label = dayLabel(finishedAt(job));
       let day = result.at(-1);
       if (day?.label !== label) result.push(day = { label, rows: [] });
       const previous = day.rows.at(-1)?.[0];
       if (previous && !job.lastErrorMessage && !previous.lastErrorMessage && previous.type === job.type &&
-          previous.state === job.state && previous.ownerName === job.ownerName && previous.source === job.source)
+          previous.state === job.state && previous.ownerName === job.ownerName && previous.source === job.source &&
+          previous.targetName === job.targetName && previous.summary === job.summary && previous.displayName === job.displayName && previous.displayState === job.displayState)
         day.rows.at(-1)!.push(job);
       else day.rows.push([job]);
     }
@@ -74,6 +78,10 @@
   function kind(type: string) {
     const prefix = type.split(".")[0];
     return ({ playlist: "playlist", library: "library", "track-match": "matching", playback: "scrobble", favorite: "scrobble", recording: "caching" } as Record<string, string>)[prefix] ?? "job";
+  }
+  function statusLabel(job: Job) {
+    const label = ({ partly_checked: "Partly checked", not_checked: "Not checked", passed: "Passed" } as Record<string, string>)[job.displayState ?? ""];
+    return label || jobState(job.displayState === "failed" ? "Failed" : job.state);
   }
   function severity(state: string) {
     return state === "Failed" ? "error" : state === "RetryScheduled" || state === "Deferred" ? "warning" : "info";
@@ -111,7 +119,7 @@
           cursorId = nextFinished.nextCursorId ?? "";
         }
       } else if (kind !== "older") { finished = []; hasMore = false; }
-      if (expanded && ![...queue, ...finished].some((job) => job.id === expanded)) expanded = "";
+      if (expanded && expanded !== linkedJob?.id && ![...queue, ...finished].some((job) => job.id === expanded)) expanded = "";
     } catch {
       if (!disposed && version === request) error = "Background work could not be loaded. Try again.";
     } finally {
@@ -138,10 +146,27 @@
     try {
       const next = await activityWork.detail(job.id, older ? detail?.nextCursor ?? "" : "", older ? detail?.nextCursorId ?? "" : "");
       if (disposed || expanded !== job.id) return;
+      if (linkedJob?.id === job.id) linkedJob = next.job;
       detail = older && detail ? { ...next, attempts: [...detail.attempts, ...next.attempts].filter((item, index, all) => all.findIndex((candidate) => candidate.attemptNumber === item.attemptNumber) === index) } : next;
     } catch {
       if (!disposed && expanded === job.id) detailError = "Attempt history could not be loaded. Try again.";
     } finally { if (!disposed && expanded === job.id) detailBusy = false; }
+  }
+
+  async function openLinkedJob(id: string) {
+    if (!id) return;
+    if (!validJobId(id)) { linkedError = "This work reference is not valid."; return; }
+    linkedLoading = true; linkedError = "";
+    try {
+      const next = await activityWork.detail(id);
+      if (disposed) return;
+      linkedJob = next.job; detail = next; expanded = next.job.id;
+      await tick();
+      const target = document.getElementById(`job-${next.job.id}`);
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: "nearest" });
+    } catch { if (!disposed) linkedError = "This work item is unavailable or you no longer have permission to view it."; }
+    finally { if (!disposed) linkedLoading = false; }
   }
 
   async function cancel() {
@@ -161,7 +186,8 @@
 
   onMount(() => {
     mounted = true;
-    const unsubscribe = liveUpdates.subscribe(() => { scheduler.schedule(); if (expanded && !detailBusy) { const job = [...queue, ...finished].find((item) => item.id === expanded); if (job) void attempts(job, true); } });
+    if (initialJobId) void openLinkedJob(initialJobId);
+    const unsubscribe = liveUpdates.subscribe(() => { scheduler.schedule(); if (expanded && !detailBusy) { const job = [...(linkedJob ? [linkedJob] : []), ...queue, ...finished].find((item) => item.id === expanded); if (job) void attempts(job, true); } });
     return () => { disposed = true; request++; unsubscribe(); scheduler.cancel(); };
   });
 </script>
@@ -186,18 +212,20 @@
   {@const percent = progressPercent(info.completed, info.total)}
   {@const open = expanded === job.id}
   {@const waiting = ["RetryScheduled", "Deferred", "Pending"].includes(job.state) && job.availableAt}
-  <article class="job-row" data-job-id={job.id}>
+  <article class="job-row" data-job-id={job.id} id={`job-${job.id}`} tabindex="-1">
     <div class="job-row-line">
       <button type="button" class="job-row-toggle" aria-expanded={open} aria-controls={`job-${job.id}-attempts`} onclick={() => void attempts(job)}>
-        <span class="event-kind-icon" data-severity={severity(job.state)} aria-hidden="true"><ActivityIcon kind={kind(job.type)} /></span>
+        <span class="event-kind-icon" data-severity={severity(job.state)} data-tone={activityTone(job.displayState || job.state)} aria-hidden="true"><ActivityIcon kind={kind(job.type)} /></span>
         <span class="job-row-copy">
-          <strong>{jobName(job.type)}{runs.length > 1 ? ` · ${runs.length} runs` : ""}</strong>
+          <strong>{job.displayName || jobName(job.type)}{runs.length > 1 ? ` · ${runs.length} runs` : ""}</strong>
           {#if meta(job) || waiting}<small>{meta(job)}{meta(job) && waiting ? " · " : ""}{#if waiting}{job.state === "Pending" ? "Available" : "Next attempt"} <time datetime={job.availableAt}>{time(job.availableAt)}</time>{/if}</small>{/if}
+          {#if job.targetName}<small class="job-row-context">{activityText(job.targetName)}</small>{/if}
+          {#if job.summary}<small class="job-row-context">{activityText(job.summary)}</small>{/if}
           {#if info.message || info.playlist || info.track}<small>{[info.message, info.playlist, info.track].filter(Boolean).join(" · ")}</small>{/if}
-          {#if job.lastErrorMessage}<small class="job-row-error">{job.lastErrorMessage}</small>{/if}
+          {#if job.lastErrorMessage && ["Failed", "RetryScheduled", "Deferred"].includes(job.state) && job.lastErrorMessage !== job.summary}<small class="job-row-error">{activityText(job.lastErrorMessage)}</small>{/if}
         </span>
         <span class="job-row-end">
-          <Badge state={outcomeClass(job.state)}>{job.cancellationRequestedAt ? "Cancellation requested" : jobState(job.state)}</Badge>
+          <Badge tone={activityTone(job.displayState || job.state)}>{job.cancellationRequestedAt ? "Cancellation requested" : statusLabel(job)}</Badge>
           <time datetime={finishedAt(job)} title={time(finishedAt(job))}>{runs.length > 1 ? `${clock(finishedAt(runs.at(-1)!))}–${clock(finishedAt(job))}` : clock(finishedAt(job))}</time>
         </span>
         <ChevronDown class="job-row-chevron" size={18} aria-hidden="true" />
@@ -207,6 +235,8 @@
     {#if percent !== null}<div class="job-row-progress"><Progress value={percent} aria-label={`${percent}% complete`} /><small>{info.completed} of {info.total} · {percent}%</small></div>{/if}
     {#if open}
       <div class="job-row-detail">
+        {#if job.recovery}<p><strong>Next step:</strong> {activityText(job.recovery)}</p>{/if}
+        <details class="event-technical"><summary>Technical details</summary><dl><div><dt>Job reference</dt><dd>{job.id}</dd></div><div><dt>Operation</dt><dd>{job.type}</dd></div>{#if job.lastErrorCode}<div><dt>Reason code</dt><dd>{job.lastErrorCode}</dd></div>{/if}{#each Object.entries(job.technicalDetails ?? {}) as [name, value]}<div><dt>{name}</dt><dd>{value}</dd></div>{/each}</dl></details>
         {#if runs.length > 1}
           <ul class="job-runs" aria-label="Runs">
             {#each runs as run (run.id)}<li data-job-id={run.id}><time datetime={finishedAt(run)}>{time(finishedAt(run))}</time><span>{jobState(run.state)}</span></li>{/each}
@@ -224,6 +254,13 @@
     <SelectField label="Job type" bind:value={typeFilter} options={[{ value: "", label: "All work" }, ...Object.entries(jobNames).map(([value, label]) => ({ value, label }))]} />
     <Button bind:ref={refreshButton} variant="secondary" disabled={busy} onclick={() => void load()}><RefreshCw size={16} aria-hidden="true" />Refresh jobs</Button>
   </div>
+  {#if linkedLoading}<p role="status">Opening related work…</p>{/if}
+  {#if linkedError}<p class="notice-error" role="alert">{linkedError}</p>{/if}
+  {#if linkedJob}
+    <section class="event-log-day" aria-label="Selected operation">
+      <h2>Selected operation</h2><div class="event-log-list">{@render jobRow([linkedJob])}</div>
+    </section>
+  {/if}
   {#if loading}
     <Skeleton class="skeleton-panel" aria-label="Loading jobs" aria-busy="true" />
   {:else if error && !queue.length && !finished.length}
@@ -234,7 +271,7 @@
     {#if queue.length}
       <section class="event-log-day" aria-label="Running and waiting">
         <h2>Running and waiting</h2>
-        <div class="event-log-list">{#each queue as job (job.id)}{@render jobRow([job])}{/each}</div>
+        <div class="event-log-list">{#each queue.filter(item => item.id !== linkedJob?.id) as job (job.id)}{@render jobRow([job])}{/each}</div>
       </section>
     {/if}
     {#each days as day (day.label)}
@@ -243,7 +280,7 @@
         <div class="event-log-list">{#each day.rows as runs (runs[0].id)}{@render jobRow(runs)}{/each}</div>
       </section>
     {/each}
-    {#if !queue.length && !finished.length}
+    {#if !queue.length && !finished.length && !linkedJob && !linkedLoading && !linkedError}
       <div class="compact-empty"><strong>{stateFilter || typeFilter ? "No jobs match these filters" : "No background work yet"}</strong><p>Running, waiting and finished work appears here automatically.</p></div>
     {/if}
     {#if hasMore}<nav class="activity-pagination" aria-label="Job pages"><Button variant="secondary" disabled={busy} onclick={() => void load("older")}>Load earlier jobs</Button></nav>{/if}
@@ -267,6 +304,10 @@
   .job-row-copy { display: grid; min-width: 0; gap: .125rem; }
   .job-row-copy strong { overflow: hidden; color: var(--color-ink); font-size: var(--text-sm); line-height: 1.25rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
   .job-row-copy small { overflow: hidden; color: var(--color-ink-muted); font-size: .8125rem; line-height: 1.125rem; text-overflow: ellipsis; white-space: nowrap; }
+  .job-row-copy .job-row-context { white-space: normal; overflow-wrap: anywhere; }
+  .event-technical > summary { min-height: var(--control-md); display: flex; align-items: center; cursor: pointer; }
+  .event-technical dl { display: grid; gap: .5rem; margin: 0; overflow-wrap: anywhere; }
+  .event-technical dd { margin: 0; font-size: .8125rem; }
   .job-row-copy .job-row-error { color: var(--color-danger); white-space: normal; }
   .job-row-end { display: flex; align-items: center; gap: var(--space-4); }
   .job-row-end time { min-width: 4.5rem; color: var(--color-ink-muted); font-size: .8125rem; text-align: right; white-space: nowrap; }

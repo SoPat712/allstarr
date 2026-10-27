@@ -54,6 +54,13 @@ public sealed class JobsController(IDbContextFactory<AllstarrDbContext> contextF
         rows = rows.Take(limit).ToList();
         var owners = rows.Select(x => x.OwnerUserId).Distinct().ToArray();
         var names = await db.Users.AsNoTracking().Where(x => owners.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => new { x.DisplayName, x.BackendType }, cancellationToken);
+        var ownerIds = rows.Select(x => x.OwnerUserId).OfType<Guid>().Distinct().ToArray();
+        var providerAccountIds = rows.Select(x => x.ProviderAccountId).OfType<Guid>().Distinct().ToArray();
+        var providerAccounts = providerAccountIds.Length == 0
+            ? new Dictionary<Guid, ProviderAccountRecord>()
+            : await db.ProviderAccounts.AsNoTracking()
+                .Where(x => providerAccountIds.Contains(x.Id) && (x.OwnerUserId == null || ownerIds.Contains(x.OwnerUserId.Value)))
+                .ToDictionaryAsync(x => x.Id, cancellationToken);
         var ids = rows.Select(x => x.Id.ToString("D")).ToArray();
         var correlations = rows.Select(x => x.CorrelationId).Distinct().ToArray();
         var progressRows = await db.AuditEvents.AsNoTracking().Where(x => x.Category == "job-progress" &&
@@ -65,11 +72,15 @@ public sealed class JobsController(IDbContextFactory<AllstarrDbContext> contextF
             .GroupBy(x => new { x.OwnerUserId, x.CorrelationId })
             .Select(group => new { group.Key.OwnerUserId, group.Key.CorrelationId, Count = group.Count() })
             .ToArrayAsync(cancellationToken);
+        var displays = await ActivityJobPresentation.ResolveAsync(db, rows, cancellationToken, session.IsAdministrator);
         var last = rows.LastOrDefault();
         return Ok(new
         {
             jobs = rows.Select(x => Present(x, x.OwnerUserId is { } owner ? ActivityPresentation.UserName(names.GetValueOrDefault(owner)?.DisplayName) : "Household",
-                x.OwnerUserId is { } user ? names.GetValueOrDefault(user)?.BackendType : null)),
+                x.OwnerUserId is { } user ? names.GetValueOrDefault(user)?.BackendType : null, displays.GetValueOrDefault(x.Id),
+                x.ProviderAccountId is { } providerAccountId && providerAccounts.TryGetValue(providerAccountId, out var providerAccount) &&
+                    (providerAccount.OwnerUserId == null || providerAccount.OwnerUserId == x.OwnerUserId)
+                    ? ActivityPresentation.SafeText(providerAccount.DisplayName) : null)),
             progress = progressRows.Select(x => (Event: x, Job: rows.SingleOrDefault(job => job.OwnerUserId == x.ActorUserId &&
                 (x.SubjectId != null ? x.SubjectType == "job" && x.SubjectId == job.Id.ToString("D") :
                     job.CorrelationId == x.CorrelationId && legacyCounts.Any(count => count.OwnerUserId == x.ActorUserId && count.CorrelationId == x.CorrelationId && count.Count == 1)))))
@@ -98,6 +109,14 @@ public sealed class JobsController(IDbContextFactory<AllstarrDbContext> contextF
         var job = await db.Jobs.AsNoTracking().SingleOrDefaultAsync(x => x.Id == jobId &&
             (session.IsAdministrator || session.AllstarrUserId.HasValue && x.OwnerUserId == session.AllstarrUserId), cancellationToken);
         if (job == null) return NotFound();
+        var owner = job.OwnerUserId is { } ownerId
+            ? await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == ownerId, cancellationToken)
+            : null;
+        var providerAccount = job.ProviderAccountId is { } providerAccountId
+            ? await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item => item.Id == providerAccountId &&
+                (item.OwnerUserId == null || item.OwnerUserId == job.OwnerUserId), cancellationToken)
+            : null;
+        var display = (await ActivityJobPresentation.ResolveAsync(db, [job], cancellationToken, session.IsAdministrator)).GetValueOrDefault(job.Id);
         limit = Math.Clamp(limit, 1, 100);
         var subject = job.Id.ToString("D");
         var events = db.AuditEvents.AsNoTracking().Where(x => x.Category == "job-attempt" && x.SubjectType == "job" &&
@@ -112,7 +131,8 @@ public sealed class JobsController(IDbContextFactory<AllstarrDbContext> contextF
             .OrderByDescending(x => x.CreatedAt).Take(100).ToArrayAsync(cancellationToken);
         return Ok(new
         {
-            job = Present(job, null),
+            job = Present(job, job.OwnerUserId.HasValue ? ActivityPresentation.UserName(owner?.DisplayName) : "Household",
+                owner?.BackendType, display, ActivityPresentation.SafeText(providerAccount?.DisplayName)),
             attempts = page.Select(x => DurableJobHistory.Read(x, jobId)).OfType<DurableJobAttemptHistory>().OrderByDescending(x => x.AttemptNumber),
             progress = progress.Select(x => new { x.Id, x.Action, x.Outcome, DetailsJson = JobProgressPresentation.SafeDetails(x.DetailsJson), x.CreatedAt }),
             hasMore,
@@ -134,34 +154,43 @@ public sealed class JobsController(IDbContextFactory<AllstarrDbContext> contextF
             : Conflict(new { error = "Job is missing or already terminal" });
     }
 
-    private static object Present(DurableJobRecord job, string? ownerName, string? backend = null) => new
-    {
-        job.Id,
-        job.CorrelationId,
-        job.OwnerUserId,
-        ownerName,
-        source = ActivityPresentation.JobSource(job.Type, backend),
-        job.Type,
-        state = job.State == DurableJobState.RetryScheduled && job.LastAttemptOutcome == "deferred" ? "Deferred" : job.State.ToString(),
-        canCancel = job.CancellationRequestedAt == null && job.State is DurableJobState.Pending or DurableJobState.Running or DurableJobState.RetryScheduled,
-        job.Priority,
-        job.AttemptCount,
-        job.FailureCount,
-        job.DeferralCount,
-        job.MaxAttempts,
-        job.MaxDeferrals,
-        job.AvailableAt,
-        job.CancellationRequestedAt,
-        job.StartedAt,
-        job.LastAttemptStartedAt,
-        job.LastAttemptCompletedAt,
-        job.LastAttemptOutcome,
-        job.CompletedAt,
-        LastErrorCode = SafeOperationalText.Sanitize(job.LastErrorCode, 100),
-        LastErrorMessage = SafeOperationalText.Sanitize(job.LastErrorMessage, 1000),
-        job.CreatedAt,
-        job.UpdatedAt
-    };
+    private static object Present(DurableJobRecord job, string? ownerName, string? backend = null, ActivityJobDisplay? display = null,
+        string? sourceName = null) => new
+        {
+            job.Id,
+            job.CorrelationId,
+            job.OwnerUserId,
+            ownerName,
+            source = sourceName ?? ActivityPresentation.JobSource(job.Type, backend),
+            job.Type,
+            state = job.State == DurableJobState.RetryScheduled && job.LastAttemptOutcome == "deferred" ? "Deferred" : job.State.ToString(),
+            displayName = display?.DisplayName ?? "Background task",
+            summary = display?.Summary ?? "Background task details are unavailable.",
+            targetName = display?.TargetName,
+            recovery = display?.Recovery ?? "Review the task details.",
+            actionHref = display?.ActionHref ?? $"#/activity?view=jobs&job={job.Id:N}",
+            actionLabel = display?.ActionLabel ?? "View task",
+            displayState = display?.ActivityState ?? job.State.ToString().ToLowerInvariant(),
+            technicalDetails = display?.TechnicalDetails,
+            canCancel = job.CancellationRequestedAt == null && job.State is DurableJobState.Pending or DurableJobState.Running or DurableJobState.RetryScheduled,
+            job.Priority,
+            job.AttemptCount,
+            job.FailureCount,
+            job.DeferralCount,
+            job.MaxAttempts,
+            job.MaxDeferrals,
+            job.AvailableAt,
+            job.CancellationRequestedAt,
+            job.StartedAt,
+            job.LastAttemptStartedAt,
+            job.LastAttemptCompletedAt,
+            job.LastAttemptOutcome,
+            job.CompletedAt,
+            LastErrorCode = SafeOperationalText.Sanitize(job.LastErrorCode, 100),
+            LastErrorMessage = SafeOperationalText.Sanitize(job.LastErrorMessage, 1000),
+            job.CreatedAt,
+            job.UpdatedAt
+        };
 
     private bool TryGetSession(out AdminAuthSession session)
     {

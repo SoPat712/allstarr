@@ -94,6 +94,15 @@ export type PlaylistResponse = {
 };
 
 export type Job = {
+  displayName?: string;
+  displayState?: string;
+  technicalDetails?: Record<string, string> | null;
+  summary?: string;
+  targetName?: string | null;
+  recovery?: string | null;
+  actionHref?: string | null;
+  actionLabel?: string | null;
+  correlationId?: string | null;
   source?: string;
   id: string;
   type: string;
@@ -102,6 +111,8 @@ export type Job = {
   canCancel?: boolean;
   createdAt?: string;
   completedAt?: string | null;
+  startedAt?: string | null;
+  lastAttemptStartedAt?: string | null;
   lastAttemptOutcome?: string | null;
   lastAttemptCompletedAt?: string | null;
   attemptCount?: number;
@@ -126,9 +137,13 @@ export type JobProgress = {
 export type JobResponse = { jobs: Job[]; progress: JobProgress[]; hasMore?: boolean; nextCursor?: string | null; nextCursorId?: string | null };
 export type JobAttempt = { attemptNumber: number; startedAt: string; completedAt?: string | null; outcome?: string | null; errorCode?: string | null; errorMessage?: string | null };
 export type JobDetail = { job: Job; attempts: JobAttempt[]; hasMore: boolean; nextCursor?: string | null; nextCursorId?: string | null };
-export type ActivityTask = { id: string; name: string; kind: string; state: string; enabled: boolean; ownerName?: string | null; cadence: string; detail?: string; lastRunAt?: string | null; nextRunAt?: string | null; runPlaylistLinkId?: string | null };
+export type ActivityTask = { id: string; name: string; kind: string; state: string; enabled: boolean; ownerName?: string | null; cadence: string; detail?: string; lastRunAt?: string | null; nextRunAt?: string | null; runPlaylistLinkId?: string | null; actionHref?: string | null; actionLabel?: string | null };
 
 export type ActivityItem = {
+  jobId?: string | null;
+  recovery?: string | null;
+  actionHref?: string | null;
+  actionLabel?: string | null;
   id: string;
   kind: string;
   source: string;

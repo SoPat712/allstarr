@@ -17,6 +17,10 @@ public sealed class ActivityPresentationTests
     [InlineData("recording.odesli.enrich", "Recordings")]
     [InlineData("track-match.rematch", "Matching")]
     [InlineData("recommendation.generate", "Recommendations")]
+    [InlineData("health.smoke", "Health")]
+    [InlineData("health.cleanup", "Health")]
+    [InlineData("health.alert", "Health")]
+    [InlineData("storage.backup", "Backups")]
     [InlineData("future.operation", "System")]
     public void JobsHaveReadableSources(string type, string expected) =>
         Assert.Equal(expected, ActivityPresentation.JobSource(type, "jellyfin"));

@@ -437,16 +437,16 @@ public class AdminUiController : ControllerBase
                 .Where(item => playlistLinkIds.Contains(item.Id))
                 .ToDictionaryAsync(item => item.Id, cancellationToken);
         var playlistSnapshots = playlistLinkIds.Length == 0
-            ? new Dictionary<Guid, PlaylistSourceSnapshotRecord>()
+            ? new Dictionary<(Guid OwnerUserId, Guid PlaylistLinkId), PlaylistSourceSnapshotRecord>()
             : (await context.PlaylistSourceSnapshots.AsNoTracking()
                 .Where(item =>
                     playlistLinkIds.Contains(item.PlaylistLinkId) &&
-                    item.PublishedAt.HasValue)
-                .GroupBy(item => item.PlaylistLinkId)
+                    item.PublishedAt.HasValue && context.PlaylistLinks.Any(link => link.Id == item.PlaylistLinkId && link.OwnerUserId == item.OwnerUserId))
+                .GroupBy(item => new { item.OwnerUserId, item.PlaylistLinkId })
                 .Select(group => group.OrderByDescending(item => item.SnapshotVersion)
                     .ThenByDescending(item => item.RetrievedAt).First())
                 .ToListAsync(cancellationToken))
-                .ToDictionary(item => item.PlaylistLinkId);
+                .ToDictionary(item => (item.OwnerUserId, item.PlaylistLinkId));
         var matchActivity = await _trackMatches.GetActivityDataAsync(
             new TrackMatchActor(userId, everyone),
             before,
@@ -484,39 +484,96 @@ public class AdminUiController : ControllerBase
             .OrderByDescending(item => item.VerifiedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
+        var auditJobIds = audits.Select(AuditJobReference).OfType<Guid>();
+        var knownJobIds = jobs.Select(item => item.Id).ToHashSet();
+        var relatedIds = auditJobIds.Concat(downloadArtifacts.Select(item => item.DurableJobId)).Concat(playlistRuns.Select(item => item.JobId).OfType<Guid>())
+            .Where(id => !knownJobIds.Contains(id)).Distinct().ToArray();
+        var relatedJobs = relatedIds.Length == 0 ? [] : await context.Jobs.AsNoTracking()
+            .Where(item => relatedIds.Contains(item.Id) && (everyone || item.OwnerUserId == userId))
+            .Take(scanLimit * 3).ToArrayAsync(cancellationToken);
+        var activityJobs = jobs.Concat(relatedJobs).ToDictionary(item => item.Id);
+        var jobDisplays = await ActivityJobPresentation.ResolveAsync(context, activityJobs.Values.ToArray(), cancellationToken, session.IsAdministrator);
+        var artifactAccountIds = downloadArtifacts.Select(item => item.ProviderAccountId).OfType<Guid>().Distinct().ToArray();
+        var artifactProviderIds = downloadArtifacts.Select(item => item.ProviderId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var artifactExternalIds = downloadArtifacts.Select(item => item.SourceExternalTrackId).OfType<string>()
+            .Distinct(StringComparer.Ordinal).ToArray();
+        var downloadMappings = artifactAccountIds.Length == 0 || artifactExternalIds.Length == 0
+            ? []
+            : await context.DownloadedSongMappings.AsNoTracking()
+                .Where(item => item.ProviderAccountId.HasValue && artifactAccountIds.Contains(item.ProviderAccountId.Value) &&
+                    artifactProviderIds.Contains(item.ProviderId) && artifactExternalIds.Contains(item.ExternalId))
+                .ToArrayAsync(cancellationToken);
+        var mappingByArtifact = new Dictionary<Guid, (string? Title, string? Artist)>();
+        foreach (var artifact in downloadArtifacts)
+        {
+            if (artifact.ProviderAccountId is not { } accountId || artifact.SourceExternalTrackId is not { } externalId ||
+                !accounts.TryGetValue(accountId, out var account) ||
+                account.OwnerUserId is { } accountOwner && accountOwner != artifact.OwnerUserId ||
+                artifact.SourceAccountRevision is { } sourceRevision && sourceRevision != account.Revision) continue;
+            var mapping = downloadMappings.FirstOrDefault(item => item.ProviderAccountId == accountId &&
+                item.ProviderId.Equals(artifact.ProviderId, StringComparison.OrdinalIgnoreCase) && item.ExternalId == externalId);
+            if (mapping != null)
+                mappingByArtifact[artifact.Id] = (ActivityPresentation.SafeText(mapping.Title, 500), ActivityPresentation.SafeText(mapping.Artist, 500));
+        }
 
         var activity = new List<AdminUiActivityItem>();
-        activity.AddRange(jobs.Select(item => new AdminUiActivityItem(
-            item.Id.ToString("N"),
-            "job",
-            item.ProviderAccountId.HasValue && accounts.TryGetValue(item.ProviderAccountId.Value, out var account)
-                ? account.ProviderId
-                : "system",
-            item.Type,
-            item.State.ToString().ToLowerInvariant(),
-            item.LastErrorMessage ?? $"{item.AttemptCount} run attempt{(item.AttemptCount == 1 ? "" : "s")}",
-            item.UpdatedAt,
-            item.CorrelationId,
-            SeverityForState(item.State.ToString()),
-            item.ProviderAccountId.HasValue && accounts.TryGetValue(item.ProviderAccountId.Value, out var providerAccount)
-                ? providerAccount.ProviderId : null,
-            ActorUserId: item.OwnerUserId?.ToString("N"))));
+        activity.AddRange(jobs.Select(item =>
+        {
+            var display = jobDisplays[item.Id];
+            var providerAccount = item.ProviderAccountId.HasValue && accounts.TryGetValue(item.ProviderAccountId.Value, out var account) &&
+                (account.OwnerUserId == null || account.OwnerUserId == item.OwnerUserId) ? account : null;
+            return new AdminUiActivityItem(
+                item.Id.ToString("N"),
+                "job",
+                ActivityPresentation.SafeText(providerAccount?.DisplayName) ?? ActivityPresentation.JobSource(item.Type, null),
+                display.DisplayName,
+                display.ActivityState,
+                display.Summary,
+                item.UpdatedAt,
+                item.CorrelationId,
+                display.Severity,
+                ProviderId: providerAccount?.ProviderId,
+                TargetTitle: display.TargetName,
+                ActorUserId: item.OwnerUserId?.ToString("N"),
+                JobId: item.Id.ToString("N"),
+                Action: item.Type,
+                Recovery: display.Recovery,
+                ActionHref: display.ActionHref,
+                ActionLabel: display.ActionLabel,
+                TechnicalDetails: display.TechnicalDetails);
+        }));
         activity.AddRange(playlistRuns.Select(item =>
         {
             playlistLinks.TryGetValue(item.PlaylistLinkId, out var link);
-            playlistSnapshots.TryGetValue(item.PlaylistLinkId, out var snapshot);
+            if (link?.OwnerUserId != item.OwnerUserId) link = null;
+            playlistSnapshots.TryGetValue((item.OwnerUserId, item.PlaylistLinkId), out var snapshot);
+            var job = item.JobId.HasValue ? activityJobs.GetValueOrDefault(item.JobId.Value) : null;
+            if (job?.OwnerUserId != item.OwnerUserId) job = null;
             return new AdminUiActivityItem(
                 item.Id.ToString("N"),
                 "playlist",
                 "playlists",
                 "Playlist sync",
                 item.State.ToString().ToLowerInvariant(),
-                item.ConflictCode ?? $"Generation {item.Generation}",
+                item.State switch
+                {
+                    PlaylistSyncState.Succeeded => "Playlist update completed.",
+                    PlaylistSyncState.PartiallySucceeded => "Some songs could not be updated. Review this sync before trying again.",
+                    PlaylistSyncState.Conflicted => "The playlist changed during this sync. Review the current playlist before trying again.",
+                    PlaylistSyncState.Failed => "Playlist update failed. Review the related work for its reason.",
+                    PlaylistSyncState.Cancelled => "Playlist update cancelled.",
+                    PlaylistSyncState.Running => "Playlist update is running.",
+                    _ => "Playlist update is queued."
+                },
                 item.CompletedAt ?? item.StartedAt,
                 Severity: SeverityForState(item.State.ToString()),
                 ActorUserId: item.OwnerUserId.ToString("N"),
                 PlaylistLinkId: item.PlaylistLinkId.ToString("N"),
-                PlaylistName: snapshot?.Name ?? "Playlist",
+                PlaylistName: link == null ? "Playlist" : ActivityPresentation.SafeText(snapshot?.Name, 500) ?? "Playlist",
+                JobId: job?.Id.ToString("N"),
+                ActionHref: job == null ? null : $"#/activity?view=jobs&job={job.Id:N}",
+                ActionLabel: job == null ? null : "View task",
+                TechnicalDetails: new Dictionary<string, string> { ["generation"] = item.Generation.ToString(), ["conflictCode"] = ActivityPresentation.SafeText(item.ConflictCode) ?? "none" },
                 ArtworkUrl: snapshot?.ArtworkReferenceKey == null || link == null
                     ? null
                     : PlaylistArtworkUrl(link));
@@ -562,7 +619,33 @@ public class AdminUiController : ControllerBase
                 libraryTracks,
                 routeProviderPriority);
         }));
-        activity.AddRange(audits.Select(AuditActivity));
+        activity.AddRange(audits.Select(item =>
+        {
+            var projected = AuditActivity(item);
+            if (projected.JobId is { } jobText && Guid.TryParse(jobText, out var jobId) &&
+                activityJobs.TryGetValue(jobId, out var boundJob) && boundJob.OwnerUserId == item.ActorUserId &&
+                jobDisplays.TryGetValue(jobId, out var display))
+                return projected with
+                {
+                    Kind = item.Category.Equals("health-check", StringComparison.OrdinalIgnoreCase) ? "health" : projected.Kind,
+                    Source = item.Category.Equals("health-check", StringComparison.OrdinalIgnoreCase) ? "Health" : projected.Source,
+                    Label = item.Category.Equals("health-check", StringComparison.OrdinalIgnoreCase) ? display.DisplayName : projected.Label,
+                    State = item.Category.Equals("health-check", StringComparison.OrdinalIgnoreCase) && item.Action == "completed" ? display.ActivityState : projected.State,
+                    Detail = item.Category.Equals("health-check", StringComparison.OrdinalIgnoreCase) && item.Action == "completed" ? display.Summary : projected.Detail,
+                    Severity = item.Category.Equals("health-check", StringComparison.OrdinalIgnoreCase) && item.Action == "completed" ? display.Severity : projected.Severity,
+                    TargetTitle = item.Category.Equals("health-check", StringComparison.OrdinalIgnoreCase) ? display.TargetName : projected.TargetTitle,
+                    Recovery = display.Recovery,
+                    ActionHref = display.ActionHref,
+                    ActionLabel = display.ActionLabel,
+                    TechnicalDetails = display.TechnicalDetails
+                };
+            return projected with
+            {
+                JobId = null,
+                ActionHref = item.Category == "health-check" && item.Action == "configured" && session.IsAdministrator ? "#/settings/health" : projected.ActionHref,
+                ActionLabel = item.Category == "health-check" && item.Action == "configured" && session.IsAdministrator ? "Open Health" : projected.ActionLabel
+            };
+        }));
         activity.AddRange(extensionLogs.Select(item => new AdminUiActivityItem(
             item.Id.ToString("N"),
             "extension",
@@ -580,40 +663,47 @@ public class AdminUiController : ControllerBase
                 ["extensionPackageId"] = item.ExtensionPackageId.ToString("N"),
                 ["eventCode"] = item.EventCode
             })));
-        activity.AddRange(downloadArtifacts.Select(item => new AdminUiActivityItem(
-            item.Id.ToString("N"),
-            "caching",
-            item.ProviderId,
-            item.State == Core.Downloads.ProviderDownloadArtifactState.Placed
-                ? "Download placed"
-                : "Track cached",
-            item.State.ToString().ToLowerInvariant(),
-            $"{FormatBytes(item.Length)} verified",
-            item.PlacedAt ?? item.VerifiedAt,
-            item.DurableJobId.ToString("N"),
-            SeverityForState(item.State.ToString()),
-            ProviderId: item.ProviderId,
-            ActorUserId: item.OwnerUserId?.ToString("N"),
-            SourceProviderTrackId: item.ProviderArtifactId,
-            BackendItemId: item.ManagedFileId?.ToString("N"),
-            Action: item.State == Core.Downloads.ProviderDownloadArtifactState.Placed
-                ? "download-artifact.placed"
-                : "download-artifact.verified",
-            TechnicalDetails: new Dictionary<string, string>
-            {
-                ["artifactId"] = item.Id.ToString("N"),
-                ["providerArtifactId"] = item.ProviderArtifactId,
-                ["durableJobId"] = item.DurableJobId.ToString("N"),
-                ["sizeBytes"] = item.Length.ToString(),
-                ["sha256"] = item.ContentSha256,
-                ["mimeType"] = item.MimeType ?? "unknown",
-                ["container"] = item.Container ?? "unknown",
-                ["codec"] = item.Codec ?? "unknown",
-                ["bitrate"] = item.Bitrate?.ToString() ?? "unknown",
-                ["sampleRate"] = item.SampleRate?.ToString() ?? "unknown",
-                ["bitDepth"] = item.BitDepth?.ToString() ?? "unknown",
-                ["channels"] = item.Channels?.ToString() ?? "unknown"
-            })));
+        activity.AddRange(downloadArtifacts.Select(item =>
+        {
+            mappingByArtifact.TryGetValue(item.Id, out var mapping);
+            return new AdminUiActivityItem(
+                item.Id.ToString("N"),
+                "caching",
+                item.ProviderId,
+                item.State == Core.Downloads.ProviderDownloadArtifactState.Placed
+                    ? "Download placed"
+                    : "Track cached",
+                item.State.ToString().ToLowerInvariant(),
+                $"{FormatBytes(item.Length)} verified",
+                item.PlacedAt ?? item.VerifiedAt,
+                item.DurableJobId.ToString("N"),
+                SeverityForState(item.State.ToString()),
+                ProviderId: item.ProviderId,
+                ActorUserId: item.OwnerUserId?.ToString("N"),
+                JobId: activityJobs.TryGetValue(item.DurableJobId, out var sourceJob) && sourceJob.OwnerUserId == item.OwnerUserId ? item.DurableJobId.ToString("N") : null,
+                SourceTitle: mapping.Title,
+                SourceArtist: mapping.Artist,
+                SourceProviderTrackId: item.ProviderArtifactId,
+                BackendItemId: item.ManagedFileId?.ToString("N"),
+                Action: item.State == Core.Downloads.ProviderDownloadArtifactState.Placed
+                    ? "download-artifact.placed"
+                    : "download-artifact.verified",
+                TechnicalDetails: new Dictionary<string, string>
+                {
+                    ["artifactId"] = item.Id.ToString("N"),
+                    ["providerArtifactId"] = item.ProviderArtifactId,
+                    ["durableJobId"] = item.DurableJobId.ToString("N"),
+                    ["sizeBytes"] = item.Length.ToString(),
+                    ["sha256"] = item.ContentSha256,
+                    ["mimeType"] = item.MimeType ?? "unknown",
+                    ["container"] = item.Container ?? "unknown",
+                    ["codec"] = item.Codec ?? "unknown",
+                    ["bitrate"] = item.Bitrate?.ToString() ?? "unknown",
+                    ["sampleRate"] = item.SampleRate?.ToString() ?? "unknown",
+                    ["bitDepth"] = item.BitDepth?.ToString() ?? "unknown",
+                    ["channels"] = item.Channels?.ToString() ?? "unknown"
+                });
+        }));
 
         var ordered = activity.OrderByDescending(item => item.OccurredAt).ThenByDescending(item => item.Id).Take(limit + 1).ToArray();
         var actorIds = ordered.Select(item => Guid.TryParse(item.ActorUserId, out var id) ? id : (Guid?)null)
@@ -623,12 +713,13 @@ public class AdminUiController : ControllerBase
         var items = ordered.Take(limit).Select(item =>
         {
             var actor = Guid.TryParse(item.ActorUserId, out var actorId) ? actors.GetValueOrDefault(actorId) : null;
-            var library = item.Label == "library.index" || item.Kind == "library";
+            var library = item.Label == "library.index" || item.Action == "library.index" || item.Kind == "library";
+            var jobType = item.Kind == "job" ? item.Action ?? item.Label : item.Label;
             return item with
             {
                 ActorDisplayName = item.ActorUserId == null ? "Household" : ActivityPresentation.UserName(actor?.DisplayName),
                 Source = library ? ActivityPresentation.LibraryName(actor?.BackendType) : item.Kind == "job" && item.ProviderId == null
-                    ? ActivityPresentation.JobSource(item.Label, actor?.BackendType) : item.Source,
+                    ? ActivityPresentation.JobSource(jobType, actor?.BackendType) : item.Source,
                 ProviderId = library ? "library" : item.ProviderId
             };
         }).ToArray();
@@ -780,28 +871,45 @@ public class AdminUiController : ControllerBase
         identity.ResourceKind == ProviderResourceKind.Track &&
         identity.ExternalIdHash == snapshot.ExternalIdHash;
 
+    private static Guid? AuditJobReference(AuditEventRecord item)
+    {
+        if (item.Category == "health-check" && item.Action == "configured") return null;
+        if ((item.SubjectType == "job" || item.Category == "health-check" && item.SubjectType == "health-run" && item.Action is "started" or "completed" or "artifacts") &&
+            Guid.TryParse(item.SubjectId, out var subject)) return subject;
+        return Guid.TryParse(AuditDetail(item.DetailsJson, "jobId"), out var id) ? id : null;
+    }
+
     private static AdminUiActivityItem AuditActivity(AuditEventRecord item)
     {
         var category = item.Category.Trim().ToLowerInvariant();
         var kind = category switch
         {
+            "health-check" => "health",
+            "background-task" => "job",
             "scrobble" => "scrobble",
             "provider-route" => "streaming",
             "track-identity" or "track-match" => "matching",
             "library-index" => "library",
             _ => "administration"
         };
-        var source = AuditDetail(item.DetailsJson, "providerId")
-            ?? AuditDetail(item.DetailsJson, "selectedProviderId")
-            ?? item.Category;
+        var providerId = ActivityPresentation.SafeText(AuditDetail(item.DetailsJson, "providerId") ?? AuditDetail(item.DetailsJson, "selectedProviderId"), 200);
+        var source = providerId ?? (category == "health-check" ? "Health" : category == "background-task" ? "Maintenance" : item.Category);
         var detail = category switch
         {
+            "background-task" => item.Outcome is "success" or "succeeded" ? "Completed as scheduled."
+                : "The task failed. A detailed reason was not retained; the next automatic check will try again.",
+            "health-check" when item.Action == "configured" => "Health monitoring settings were saved.",
+            "health-check" when item.Action == "started" => "The Health check started.",
             "scrobble" => AuditDetail(item.DetailsJson, "message") ?? TrackDetail(item.DetailsJson),
             "provider-route" => RouteDetail(item.DetailsJson),
             _ => AuditDetail(item.DetailsJson, "message") ?? HumanizeAuditCategory(item.Category)
         };
+        detail = ActivityPresentation.SafeText(detail) ?? HumanizeAuditCategory(item.Action);
         var label = category switch
         {
+            "background-task" => ActivityPresentation.SafeText(AuditDetail(item.DetailsJson, "name"), 200) ?? "Background maintenance",
+            "health-check" when item.Action == "configured" => "Health monitoring updated",
+            "health-check" => "Health check",
             "scrobble" => "Scrobble recorded",
             "provider-route" when item.Action == "plan" => "Playback route selected",
             "provider-route" => "Provider request completed",
@@ -810,9 +918,10 @@ public class AdminUiController : ControllerBase
         var details = SafeAuditDetails(item.DetailsJson);
         var sourceTrackId = Detail(details, "sourceProviderTrackId", "sourceExternalId", "externalId");
         var backendItemId = Detail(details, "backendItemId", "targetBackendItemId");
+        var activityJobId = AuditJobReference(item)?.ToString("N");
         return new AdminUiActivityItem(
             item.Id.ToString("N"), kind, source, label, item.Outcome, detail, item.CreatedAt,
-            item.CorrelationId, SeverityForState(item.Outcome), source,
+            item.CorrelationId, SeverityForState(item.Outcome), providerId,
             AuditDetail(item.DetailsJson, "playlistLinkId"),
             AuditDetail(item.DetailsJson, "playlistName"),
             ArtworkUrl: sourceTrackId == null
@@ -826,7 +935,10 @@ public class AdminUiController : ControllerBase
             ActorUserId: item.ActorUserId?.ToString("N"),
             Action: item.Action,
             DurationMilliseconds: LongDetail(details, "durationMilliseconds", "durationMs"),
-            TechnicalDetails: details);
+            TechnicalDetails: details,
+            JobId: activityJobId,
+            ActionHref: category == "background-task" ? "#/activity?view=tasks" : null,
+            ActionLabel: category == "background-task" ? "Open Tasks" : null);
     }
 
     private static long? AuditDurationMilliseconds(string json)
@@ -874,7 +986,8 @@ public class AdminUiController : ControllerBase
                     _ => null
                 };
                 if (string.IsNullOrWhiteSpace(value)) continue;
-                result[key] = value.Length > 500 ? value[..500] : value;
+                var safe = allstarr.Core.Operations.SafeOperationalText.Sanitize(value, 500);
+                if (!string.IsNullOrWhiteSpace(safe)) result[key] = safe;
             }
         }
         catch (JsonException)
@@ -887,7 +1000,8 @@ public class AdminUiController : ControllerBase
     private static bool IsSensitiveAuditKey(string key)
     {
         var normalized = key.ToLowerInvariant();
-        return normalized.Contains("secret", StringComparison.Ordinal) ||
+        return normalized is "rawpayload" or "rawresponse" or "body" or "requestbody" or "responsebody" or "headers" or "stacktrace" or "exception" ||
+               normalized.Contains("secret", StringComparison.Ordinal) ||
                normalized.Contains("token", StringComparison.Ordinal) ||
                normalized.Contains("password", StringComparison.Ordinal) ||
                normalized.Contains("cookie", StringComparison.Ordinal) ||
@@ -1772,4 +1886,8 @@ public sealed record AdminUiActivityItem(
     string? Action = null,
     long? DurationMilliseconds = null,
     IReadOnlyDictionary<string, string>? TechnicalDetails = null,
-    string? ActorDisplayName = null);
+    string? ActorDisplayName = null,
+    string? JobId = null,
+    string? Recovery = null,
+    string? ActionHref = null,
+    string? ActionLabel = null);

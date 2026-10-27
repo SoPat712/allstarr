@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Activity uses outcome colors, readable operation names, song and playlist context, recovery guidance and links to exact jobs. Health results distinguish failed checks from unavailable details; Tasks includes Health and backup schedules.
+
 - Playback can switch sources after a failure. Fast, Balanced and Best quality start preferences control the wait for alternatives, and seeking works while a track fills the cache.
 - Playback caching defaults to 72 hours after last use. Cached explains when playback caching is off and shows expiry using the current retention setting; hearts and kept copies remain separate.
 - Jellyfin File and Download playback fills the cache too, including when a player starts with a byte range. Replays preserve the original audio and account access.
