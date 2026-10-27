@@ -625,6 +625,29 @@ public class AdminUiController : ControllerBase
             if (projected.JobId is { } jobText && Guid.TryParse(jobText, out var jobId) &&
                 activityJobs.TryGetValue(jobId, out var boundJob) && boundJob.OwnerUserId == item.ActorUserId &&
                 jobDisplays.TryGetValue(jobId, out var display))
+            {
+                if (item.Category == "job-attempt")
+                {
+                    var attempt = DurableJobHistory.Read(item, boundJob.Id);
+                    var currentHealth = boundJob.Type == HealthSmokeService.JobType && attempt != null &&
+                        attempt.AttemptNumber == boundJob.AttemptCount && attempt.Outcome == boundJob.LastAttemptOutcome;
+                    return projected with
+                    {
+                        Kind = "job",
+                        Source = ActivityPresentation.JobSource(boundJob.Type, null),
+                        Label = display.DisplayName,
+                        State = currentHealth ? display.ActivityState : projected.State,
+                        Severity = currentHealth ? display.Severity : projected.Severity,
+                        Detail = currentHealth ? display.Summary : AttemptDetail(attempt, display),
+                        TargetTitle = display.TargetName,
+                        Action = boundJob.Type,
+                        Recovery = "Open related work for the current result and retained attempt history.",
+                        ActionHref = display.ActionHref,
+                        ActionLabel = display.ActionLabel,
+                        DurationMilliseconds = attempt?.CompletedAt is { } end && end > attempt.StartedAt
+                            ? (long)(end - attempt.StartedAt).TotalMilliseconds : null
+                    };
+                }
                 return projected with
                 {
                     Kind = item.Category.Equals("health-check", StringComparison.OrdinalIgnoreCase) ? "health" : projected.Kind,
@@ -639,6 +662,7 @@ public class AdminUiController : ControllerBase
                     ActionLabel = display.ActionLabel,
                     TechnicalDetails = display.TechnicalDetails
                 };
+            }
             return projected with
             {
                 JobId = null,
@@ -879,6 +903,34 @@ public class AdminUiController : ControllerBase
         return Guid.TryParse(AuditDetail(item.DetailsJson, "jobId"), out var id) ? id : null;
     }
 
+    private static string AttemptDetail(DurableJobAttemptHistory? attempt, ActivityJobDisplay display)
+    {
+        var outcome = attempt?.Outcome?.ToLowerInvariant() switch
+        {
+            "succeeded" or "success" => "completed",
+            "failed" => "failed",
+            "cancelled" => "cancelled",
+            "deferred" => "waiting for a retry",
+            "interrupted" => "interrupted",
+            _ => "finished"
+        };
+        var target = display.TargetName ?? display.DisplayName;
+        var number = attempt == null ? "Attempt" : $"Attempt {attempt.AttemptNumber}";
+        return $"{target}: {number.ToLowerInvariant()} {outcome}." +
+            (ActivityPresentation.SafeText(attempt?.ErrorMessage) is { } reason ? $" {reason}" : string.Empty);
+    }
+
+    private static string LibraryScanDetail(string json)
+    {
+        long? Count(string key) => long.TryParse(AuditDetail(json, key), out var value) && value >= 0 ? value : null;
+        var indexed = Count("indexed"); var seen = Count("seen");
+        if (!indexed.HasValue || !seen.HasValue) return "Library scan completed; item counts were not retained.";
+        var skippedPathless = Count("skippedPathless"); var skippedMalformed = Count("skippedMalformed");
+        var skipped = skippedPathless.HasValue && skippedMalformed.HasValue && skippedPathless <= long.MaxValue - skippedMalformed
+            ? $", {skippedPathless + skippedMalformed} skipped" : string.Empty;
+        return $"{indexed} indexed, {seen} seen{skipped}.";
+    }
+
     private static AdminUiActivityItem AuditActivity(AuditEventRecord item)
     {
         var category = item.Category.Trim().ToLowerInvariant();
@@ -900,6 +952,7 @@ public class AdminUiController : ControllerBase
                 : "The task failed. A detailed reason was not retained; the next automatic check will try again.",
             "health-check" when item.Action == "configured" => "Health monitoring settings were saved.",
             "health-check" when item.Action == "started" => "The Health check started.",
+            "library-index" when item.Action == "scan.completed" => LibraryScanDetail(item.DetailsJson),
             "scrobble" => AuditDetail(item.DetailsJson, "message") ?? TrackDetail(item.DetailsJson),
             "provider-route" => RouteDetail(item.DetailsJson),
             _ => AuditDetail(item.DetailsJson, "message") ?? HumanizeAuditCategory(item.Category)

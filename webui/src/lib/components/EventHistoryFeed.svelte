@@ -194,6 +194,7 @@
 
   function groupBadge(entries: ActivityItem[], state: string) {
     if (state !== "mixed") return sentence(state);
+    if (entries.every(item => item.kind !== "matching" && !item.jobId)) return `${entries.length} events`;
     const succeeded = entries.filter((item) => outcomeClass(item.state) === "accepted").length;
     return `${succeeded} of ${entries.length} done`;
   }

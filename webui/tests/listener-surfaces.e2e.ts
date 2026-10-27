@@ -222,7 +222,7 @@ test("listeners always use Mine even when this browser remembers Everyone", asyn
   await page.goto("/#/activity");
   await expect(page.getByLabel("Search", { exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "Activity scope" })).toHaveCount(0);
-  await expect(page.getByText("Your background work", { exact: false })).toBeVisible();
+  await expect(page.getByText("Your activity", { exact: false })).toBeVisible();
   expect(requests.some(request => request.includes("/updates/stream?scope=mine"))).toBe(true);
   expect(requests.some(request => request.includes("/ui/activity?limit=50&scope=mine"))).toBe(true);
   expect(requests.some(request => request.includes("scope=everyone"))).toBe(false);
