@@ -18,6 +18,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
@@ -36,7 +37,10 @@ public sealed class HealthSmokeServiceTests : IAsyncLifetime
     private DateTimeOffset _now = DateTimeOffset.UtcNow;
     private readonly Guid _listener = Guid.NewGuid();
     private readonly Guid _administrator = Guid.NewGuid();
+    private BackendType _backendType = BackendType.Subsonic;
     private HttpClient _client = null!;
+    private IOptions<JellyfinSettings> _jellyfinSettings = null!;
+    private HealthSmokeServerProbe _serverProbe = null!;
     private HealthSmokeProtocolProbeTests.Fixture _upstream = null!;
 
     public async Task InitializeAsync()
@@ -48,11 +52,23 @@ public sealed class HealthSmokeServiceTests : IAsyncLifetime
         var ring = new FileSecretKeyRingProvider(options);
         await ring.CreateIfMissingAsync(false);
         _secrets = new(_factory, ring, options, _clock.Object);
-        _settings = new(_factory, new ConfigurationManager { ["Backend:Type"] = "Jellyfin", ["Backend:Url"] = "http://backend-fixture" }, _clock.Object, new RuntimeSettingsChangeSignal());
+        _settings = new(_factory, new ConfigurationManager
+        {
+            ["Backend:Type"] = "Subsonic",
+            ["Backend:Url"] = "http://backend-fixture"
+        }, _clock.Object, new RuntimeSettingsChangeSignal());
         var jobs = new DurableJobOptions();
         _jobs = new(_factory, jobs, new JobPayloadPolicy(jobs), _clock.Object);
-        _upstream = new("Jellyfin");
+        _upstream = new("Subsonic");
         _client = new(_upstream) { BaseAddress = new("http://fixture/") };
+        _jellyfinSettings = Options.Create(new JellyfinSettings
+        {
+            Url = "http://fixture",
+            ApiKey = "fixture-api-key",
+            ServiceCredentialKind = "api-key",
+            UserId = "fixture-administrator"
+        });
+        _serverProbe = new(_client, _jellyfinSettings, TimeProvider.System);
         await using var db = await _factory.CreateDbContextAsync();
         foreach (var (id, admin, principal) in new[] { (_listener, false, "fixture-principal"), (_administrator, true, "fixture-administrator") })
             db.Users.Add(new()
@@ -60,7 +76,7 @@ public sealed class HealthSmokeServiceTests : IAsyncLifetime
                 Id = id,
                 IsAdmin = admin,
                 Enabled = true,
-                BackendType = "jellyfin",
+                BackendType = "subsonic",
                 BackendInstanceId = "fixture",
                 BackendPrincipalId = principal,
                 DisplayName = admin ? "Administrator" : "Check listener",
@@ -72,16 +88,61 @@ public sealed class HealthSmokeServiceTests : IAsyncLifetime
     }
 
     private HealthSmokeService Service(Factory? factory = null) => new(factory ?? _factory, _secrets, _settings, _verifier.Object,
-        new(BackendType.Jellyfin, "Jellyfin", "fixture", false, false, null), new() { BackendInstanceId = "fixture" },
-        _clock.Object, _jobs, new EffectiveProviderPolicyResolver(_settings), new(_client, TimeProvider.System));
+        new(_backendType, _backendType.ToString(), "fixture", false, false, null), new() { BackendInstanceId = "fixture" },
+        _clock.Object, _jobs, new EffectiveProviderPolicyResolver(_settings), new(_client, TimeProvider.System), _jellyfinSettings, _serverProbe);
 
     private HealthSmokeSaveRequest Request(bool enabled = true, int interval = 30, long revision = 0) =>
         new(enabled, _listener, IntervalMinutes: interval, SearchQuery: "Fixture song", ExpectedRevision: revision,
             Username: "fixture-listener", Password: "fixture-password");
 
-    private void Accept(string user = "fixture-principal", bool admin = false) => _verifier.Setup(item => item.VerifyAsync(BackendType.Jellyfin,
+    private void Accept(string user = "fixture-principal", bool admin = false) => _verifier.Setup(item => item.VerifyAsync(_backendType,
         "http://backend-fixture", "fixture-listener", "fixture-password", It.IsAny<CancellationToken>()))
         .ReturnsAsync(new AdminOidcBackendUser(user, "Check listener", admin, "fixture-session"));
+
+    private async Task UseJellyfinAsync()
+    {
+        _backendType = BackendType.Jellyfin;
+        _client.Dispose();
+        _upstream = new("Jellyfin");
+        _client = new(_upstream) { BaseAddress = new("http://fixture/") };
+        _serverProbe = new(_client, _jellyfinSettings, TimeProvider.System);
+        await using var db = await _factory.CreateDbContextAsync();
+        foreach (var user in db.Users)
+            user.BackendType = "jellyfin";
+        await db.SaveChangesAsync();
+    }
+
+    private async Task<(Guid ScheduleId, Guid ReferenceId)> SeedLegacyJellyfinAsync()
+    {
+        var reference = await _secrets.StoreAsync(_listener, HealthSmokeService.ListenerPurpose,
+            JsonSerializer.SerializeToUtf8Bytes(new HealthSmokeCredentials
+            {
+                UserName = "fixture-listener",
+                Password = "fixture-password",
+                AccessToken = "fixture-session"
+            }));
+        var scheduleId = Guid.NewGuid();
+        await using var db = await _factory.CreateDbContextAsync();
+        db.Users.Single(item => item.Id == _listener).IsSynthetic = true;
+        db.JobSchedules.Add(new()
+        {
+            Id = scheduleId,
+            OwnerUserId = _listener,
+            JobType = HealthSmokeService.JobType,
+            CronExpression = "* * * * *",
+            TimeZoneId = "UTC",
+            OverlapPolicy = ScheduleOverlapPolicy.Skip,
+            MisfirePolicy = ScheduleMisfirePolicy.RunOnce,
+            PayloadTemplateJson = JsonSerializer.Serialize(new HealthSmokeSchedule(1, 0, 30, "Fixture song", 15,
+                reference.Id), new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            Enabled = true,
+            CreatedAt = _now,
+            UpdatedAt = _now,
+            NextRunAt = _now.AddMinutes(30)
+        });
+        await db.SaveChangesAsync();
+        return (scheduleId, reference.Id);
+    }
 
     [Fact]
     public async Task UnconfiguredHealthChecksAreOffAndCreateNoWork()
@@ -120,8 +181,16 @@ public sealed class HealthSmokeServiceTests : IAsyncLifetime
         Assert.True((await db.Users.SingleAsync(item => item.Id == _listener)).IsSynthetic);
         Assert.Equal(_now.AddMinutes(30), schedule.NextRunAt);
         using var stored = await _secrets.OpenAsync(config.CredentialReferenceId, new(_listener, HealthSmokeService.ListenerPurpose));
-        Assert.Contains("fixture-session", stored.ReadUtf8());
-        Assert.DoesNotContain("fixture-password", stored.ReadUtf8());
+        var decrypted = stored.ReadUtf8();
+        Assert.Contains("fixture-session", decrypted);
+        Assert.Contains("fixture-password", decrypted);
+        Assert.DoesNotContain("fixture-session", schedule.PayloadTemplateJson);
+        Assert.DoesNotContain("fixture-password", schedule.PayloadTemplateJson);
+        var ciphertext = Convert.ToBase64String(await db.SecretVersions.AsNoTracking()
+            .Where(item => item.SecretReferenceId == config.CredentialReferenceId)
+            .Select(item => item.Ciphertext).SingleAsync());
+        Assert.DoesNotContain("fixture-session", ciphertext);
+        Assert.DoesNotContain("fixture-password", ciphertext);
         var projection = JsonSerializer.Serialize(await Service().ReadAsync(default));
         Assert.DoesNotContain("fixture-private", projection);
         Assert.DoesNotContain("fixture-session", projection);
@@ -184,7 +253,7 @@ public sealed class HealthSmokeServiceTests : IAsyncLifetime
         await service.ConfigureAsync(Request(), _administrator, default);
         var verifying = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        _verifier.Setup(item => item.VerifyAsync(BackendType.Jellyfin, "http://backend-fixture", "fixture-listener",
+        _verifier.Setup(item => item.VerifyAsync(BackendType.Subsonic, "http://backend-fixture", "fixture-listener",
             "fixture-password", It.IsAny<CancellationToken>())).Returns(async () =>
             {
                 verifying.TrySetResult(true);
@@ -258,6 +327,79 @@ public sealed class HealthSmokeServiceTests : IAsyncLifetime
         await using var db = _factory.CreateDbContext();
         Assert.Empty(await db.JobSchedules.ToArrayAsync());
         Assert.Empty(await db.Jobs.ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task JellyfinServerModeNeedsNoListenerCredentialsOrSyntheticUser()
+    {
+        await UseJellyfinAsync();
+        var request = Request() with { ListenerUserId = Guid.Empty, Username = null, Password = null };
+
+        await Service().ConfigureAsync(request, _administrator, default);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var schedule = await db.JobSchedules.AsNoTracking().SingleAsync();
+        var configuration = JsonSerializer.Deserialize<HealthSmokeSchedule>(schedule.PayloadTemplateJson,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        Assert.Equal(2, configuration.Version);
+        Assert.Equal(Guid.Empty, configuration.CredentialReferenceId);
+        Assert.Equal(_administrator, schedule.OwnerUserId);
+        Assert.False((await db.Users.SingleAsync(item => item.Id == _administrator)).IsSynthetic);
+        Assert.Empty(await db.SecretReferences.Where(item => item.Purpose == HealthSmokeService.ListenerPurpose).ToArrayAsync());
+        _verifier.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task DisabledJellyfinServerModeCanBeSavedWithoutAnApiKey()
+    {
+        await UseJellyfinAsync();
+        _jellyfinSettings.Value.ApiKey = null;
+        var request = Request(enabled: false) with { ListenerUserId = Guid.Empty, Username = null, Password = null };
+
+        await Service().ConfigureAsync(request, _administrator, default);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var schedule = await db.JobSchedules.SingleAsync();
+        Assert.False(schedule.Enabled);
+        Assert.Equal(_administrator, schedule.OwnerUserId);
+        Assert.Empty(await db.SecretReferences.Where(item => item.Purpose == HealthSmokeService.ListenerPurpose).ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task SwitchingJellyfinToServerModeRevokesOnlyThePreviousHealthListenerSecret()
+    {
+        await UseJellyfinAsync();
+        var legacyReference = await _secrets.StoreAsync(_listener, HealthSmokeService.ListenerPurpose,
+            JsonSerializer.SerializeToUtf8Bytes(new HealthSmokeCredentials { AccessToken = "fixture-legacy-token" }));
+        var unrelated = await _secrets.StoreAsync(_listener, HealthSmokeService.ListenerPurpose,
+            "unrelated-health-secret"u8.ToArray());
+        await using (var seed = await _factory.CreateDbContextAsync())
+        {
+            seed.Users.Single(item => item.Id == _listener).IsSynthetic = true;
+            seed.JobSchedules.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = _listener,
+                JobType = HealthSmokeService.JobType,
+                CronExpression = "* * * * *",
+                TimeZoneId = "UTC",
+                OverlapPolicy = ScheduleOverlapPolicy.Skip,
+                MisfirePolicy = ScheduleMisfirePolicy.RunOnce,
+                PayloadTemplateJson = JsonSerializer.Serialize(new HealthSmokeSchedule(1, 0, 30, "Fixture song", 15,
+                    legacyReference.Id), new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                Enabled = false,
+                CreatedAt = _now,
+                UpdatedAt = _now
+            });
+            await seed.SaveChangesAsync();
+        }
+
+        await Service().ConfigureAsync(Request(revision: 0) with { ListenerUserId = Guid.Empty, Username = null, Password = null },
+            _administrator, default);
+
+        await using var afterDb = await _factory.CreateDbContextAsync();
+        Assert.NotNull((await afterDb.SecretReferences.SingleAsync(item => item.Id == legacyReference.Id)).RevokedAt);
+        Assert.Null((await afterDb.SecretReferences.SingleAsync(item => item.Id == unrelated.Id)).RevokedAt);
     }
 
     [Fact]
@@ -421,17 +563,17 @@ public sealed class HealthSmokeServiceTests : IAsyncLifetime
     [InlineData("Jellyfin", "other")]
     public async Task RecoveryNeverSendsSavedCredentialsToADifferentDeployment(string protocol, string instance)
     {
-        Accept();
-        var service = Service();
-        await service.ConfigureAsync(Request(), _administrator, default);
+        await UseJellyfinAsync();
+        var seeded = await SeedLegacyJellyfinAsync();
         var id = Guid.NewGuid();
         await using (var db = _factory.CreateDbContext())
         {
             var listener = await db.Users.SingleAsync(item => item.Id == _listener);
             listener.BackendType = protocol.ToLowerInvariant();
             listener.BackendInstanceId = instance;
-            var schedule = await db.JobSchedules.SingleAsync();
-            var config = JsonSerializer.Deserialize<HealthSmokeSchedule>(schedule.PayloadTemplateJson, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+            var schedule = await db.JobSchedules.SingleAsync(item => item.Id == seeded.ScheduleId);
+            var config = JsonSerializer.Deserialize<HealthSmokeSchedule>(schedule.PayloadTemplateJson,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
             db.HealthSmokeRuns.Add(new()
             {
                 Id = id,
@@ -444,11 +586,67 @@ public sealed class HealthSmokeServiceTests : IAsyncLifetime
             });
             await db.SaveChangesAsync();
         }
+        var service = Service();
         var completion = await service.CleanupRunAsync(id, _listener, default);
         Assert.Equal(DurableJobCompletionKind.Retry, completion.Kind);
         Assert.Empty(_upstream.Requests);
         await using var verify = _factory.CreateDbContext();
         Assert.Null((await verify.HealthSmokeRuns.SingleAsync()).CompletedJson);
+    }
+
+    [Fact]
+    public async Task LegacyJellyfinCleanupUsesTheSavedCredentialWithoutLoginOrPlayback()
+    {
+        await UseJellyfinAsync();
+        var seeded = await SeedLegacyJellyfinAsync();
+        var id = Guid.NewGuid();
+        var playlistName = $"[allstarr-test] Health {id:N}";
+        using var created = await _client.PostAsJsonAsync("/Playlists", new { Name = playlistName });
+        Assert.True(_upstream.PlaylistExists);
+        await using (var db = _factory.CreateDbContext())
+        {
+            var schedule = await db.JobSchedules.SingleAsync(item => item.Id == seeded.ScheduleId);
+            var config = JsonSerializer.Deserialize<HealthSmokeSchedule>(schedule.PayloadTemplateJson,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+            db.HealthSmokeRuns.Add(new()
+            {
+                Id = id,
+                OwnerUserId = _listener,
+                CreatedAt = _now,
+                BindingJson = JsonSerializer.Serialize(new HealthSmokeRunBinding(schedule.Id, _listener, "Jellyfin", "fixture",
+                    "fixture-principal", config, _now), new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                ArtifactsJson = JsonSerializer.Serialize(new HealthSmokeArtifacts(PlaylistName: playlistName),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var completion = await Service().CleanupRunAsync(id, _listener, default);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
+        Assert.False(_upstream.PlaylistExists);
+        Assert.DoesNotContain(_upstream.Requests, path => path.Contains("/Audio/", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(_upstream.Requests, path => path.Contains("AuthenticateByName", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task RecoverPausesLegacyJellyfinScheduleAndRevokesOnlyItsHealthCredential()
+    {
+        await UseJellyfinAsync();
+        var seeded = await SeedLegacyJellyfinAsync();
+        var unrelated = await _secrets.StoreAsync(_listener, HealthSmokeService.ListenerPurpose,
+            "unrelated-health-secret"u8.ToArray());
+
+        await Service().RecoverAsync(default);
+        await Service().RecoverAsync(default);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var schedule = await db.JobSchedules.SingleAsync(item => item.Id == seeded.ScheduleId);
+        Assert.False(schedule.Enabled);
+        Assert.Null(schedule.NextRunAt);
+        Assert.NotNull((await db.SecretReferences.SingleAsync(item => item.Id == seeded.ReferenceId)).RevokedAt);
+        Assert.Null((await db.SecretReferences.SingleAsync(item => item.Id == unrelated.Id)).RevokedAt);
+        Assert.Empty(_upstream.Requests);
     }
 
     [Fact]
@@ -513,7 +711,7 @@ public sealed class HealthSmokeServiceTests : IAsyncLifetime
                 Id = id,
                 OwnerUserId = _listener,
                 CreatedAt = _now,
-                BindingJson = JsonSerializer.Serialize(new HealthSmokeRunBinding(schedule.Id, _listener, "Jellyfin", "fixture", "fixture-principal", config, _now), new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                BindingJson = JsonSerializer.Serialize(new HealthSmokeRunBinding(schedule.Id, _listener, "Subsonic", "fixture", "fixture-principal", config, _now), new JsonSerializerOptions(JsonSerializerDefaults.Web)),
                 ArtifactsJson = JsonSerializer.Serialize(new HealthSmokeArtifacts("ext-deezer-song-fixture", false, "fixture-playlist", "[allstarr-test] Health " + id.ToString("N")), new JsonSerializerOptions(JsonSerializerDefaults.Web))
             });
             await db.SaveChangesAsync();
@@ -531,6 +729,82 @@ public sealed class HealthSmokeServiceTests : IAsyncLifetime
         Assert.DoesNotContain(_upstream.Requests, path => path.Contains("/Audio/", StringComparison.Ordinal));
         await using var verify = _factory.CreateDbContext();
         Assert.Equal(new HealthSmokeArtifacts(), JsonSerializer.Deserialize<HealthSmokeArtifacts>((await verify.HealthSmokeRuns.SingleAsync()).ArtifactsJson, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+    }
+
+    [Fact]
+    public async Task JellyfinServerRunRejectsAChangedAdministratorBeforeAnyBackendRequest()
+    {
+        await UseJellyfinAsync();
+        var service = Service();
+        await service.ConfigureAsync(Request() with { ListenerUserId = Guid.Empty, Username = null, Password = null }, _administrator, default);
+        await service.EnqueueAsync(default);
+        var claim = await _jobs.ClaimNextAsync("check-worker", [HealthSmokeService.JobType]);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.Users.Single(item => item.Id == _administrator).Enabled = false;
+            await db.SaveChangesAsync();
+        }
+
+        using var services = new ServiceCollection().BuildServiceProvider();
+        var completion = await service.ExecuteAsync(new(claim!, services), default);
+
+        Assert.Equal(DurableJobCompletionKind.Failed, completion.Kind);
+        Assert.Equal("health_scope_changed", completion.ErrorCode);
+        Assert.Empty(_upstream.Requests);
+    }
+
+    [Fact]
+    public async Task JellyfinServerRunRejectsAChangedConfigurationRevisionBeforeAnyBackendRequest()
+    {
+        await UseJellyfinAsync();
+        var service = Service();
+        await service.ConfigureAsync(Request() with { ListenerUserId = Guid.Empty, Username = null, Password = null }, _administrator, default);
+        await service.EnqueueAsync(default);
+        var claim = await _jobs.ClaimNextAsync("check-worker", [HealthSmokeService.JobType]);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var schedule = await db.JobSchedules.SingleAsync();
+            var config = JsonSerializer.Deserialize<HealthSmokeSchedule>(schedule.PayloadTemplateJson, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+            schedule.PayloadTemplateJson = JsonSerializer.Serialize(config with { Revision = config.Revision + 1 }, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            await db.SaveChangesAsync();
+        }
+
+        using var services = new ServiceCollection().BuildServiceProvider();
+        var completion = await service.ExecuteAsync(new(claim!, services), default);
+
+        Assert.Equal(DurableJobCompletionKind.Failed, completion.Kind);
+        Assert.Equal("health_scope_changed", completion.ErrorCode);
+        Assert.Empty(_upstream.Requests);
+    }
+
+    [Fact]
+    public async Task JellyfinServerRunRejectsAnExplicitLegacySchedule()
+    {
+        await UseJellyfinAsync();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.JobSchedules.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = _listener,
+                JobType = HealthSmokeService.JobType,
+                CronExpression = "* * * * *",
+                TimeZoneId = "UTC",
+                OverlapPolicy = ScheduleOverlapPolicy.Skip,
+                MisfirePolicy = ScheduleMisfirePolicy.RunOnce,
+                PayloadTemplateJson = JsonSerializer.Serialize(new HealthSmokeSchedule(1, 1, 30, "Fixture song", 15,
+                    Guid.NewGuid()), new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+                Enabled = true,
+                CreatedAt = _now,
+                UpdatedAt = _now
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var error = await Assert.ThrowsAsync<HealthSmokeConfigurationException>(() => Service().EnqueueAsync(default));
+
+        Assert.Equal("legacy_disabled", error.Code);
+        Assert.Empty(_upstream.Requests);
     }
 
     public async Task DisposeAsync()

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Configuration;
+using allstarr.Core.Health;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Playlists;
@@ -111,6 +112,53 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
         await SetSchedule(item => item.Enabled = false);
         _clock.UtcNow = _clock.UtcNow.AddHours(1);
         Assert.Equal(0, (await _engine.TickAsync()).Claimed);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.Jobs.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task HealthScheduleVersionsUseTheSavedIntervalAndEnqueueOnlyOnce(int version)
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var schedule = await db.JobSchedules.SingleAsync();
+            schedule.JobType = HealthSmokeService.JobType;
+            schedule.NextRunAt = _clock.UtcNow;
+            schedule.PayloadTemplateJson = JsonSerializer.Serialize(new HealthSmokeSchedule(version, 7, 60,
+                "Fixture song", 15, version == 1 ? Guid.CreateVersion7() : Guid.Empty),
+                new JsonSerializerOptions(JsonSerializerDefaults.Web));
+            var owner = await db.Users.SingleAsync();
+            owner.IsAdmin = version == 2;
+            owner.IsSynthetic = version == 1;
+            await db.SaveChangesAsync();
+        }
+        var result = await _engine.TickAsync();
+        Assert.Equal(1, result.Enqueued);
+        Assert.Equal(0, (await NewEngine().TickAsync()).Enqueued);
+        await using var after = await _factory.CreateDbContextAsync();
+        var job = Assert.Single(await after.Jobs.ToListAsync());
+        Assert.Equal(HealthSmokeService.JobType, job.Type);
+        Assert.Equal(_user, job.OwnerUserId);
+        Assert.Equal(_clock.UtcNow.AddMinutes(60), (await after.JobSchedules.SingleAsync()).NextRunAt);
+        var payload = JsonSerializer.Deserialize<HealthSmokeJobPayload>(job.PayloadJson,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(_schedule, payload!.ScheduleId);
+        Assert.Equal(7, payload.ConfigurationRevision);
+    }
+
+    [Fact]
+    public async Task UnsupportedHealthScheduleVersionCannotEnqueueWork()
+    {
+        await SetSchedule(schedule =>
+        {
+            schedule.JobType = HealthSmokeService.JobType;
+            schedule.NextRunAt = _clock.UtcNow;
+            schedule.PayloadTemplateJson = JsonSerializer.Serialize(new HealthSmokeSchedule(3, 7, 60,
+                "Fixture song", 15, Guid.Empty), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        });
+        await Assert.ThrowsAsync<InvalidOperationException>(() => _engine.TickAsync());
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Empty(await db.Jobs.ToListAsync());
     }

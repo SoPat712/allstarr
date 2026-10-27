@@ -14,8 +14,8 @@ public sealed class HealthSmokeAlertJobHandler(IDbContextFactory<AllstarrDbConte
     public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext context, CancellationToken token)
     {
         var payload = context.Claim.Payload.Deserialize<HealthSmokeAlertPayload>();
-        if (payload?.Changes is not { Length: > 0 } changes || changes.Length > HealthSmokeProtocolProbe.StepNames.Length ||
-            changes.Any(change => !HealthSmokeProtocolProbe.StepNames.Contains(change.Step) || change.State is not ("failed" or "recovered")) ||
+        if (payload?.Changes is not { Length: > 0 } changes || changes.Length > HealthSmokeProtocolProbe.StepNames.Length + HealthSmokeServerProbe.StepNames.Length ||
+            changes.Any(change => !IsKnownStep(change.Step) || change.State is not ("failed" or "recovered")) ||
             changes.Select(change => change.Step).Distinct(StringComparer.Ordinal).Count() != changes.Length)
             return DurableJobCompletion.Failure("health_alert_invalid", "The health alert is unavailable.");
         using var configuration = await health.LockConfigurationAsync(token);
@@ -64,4 +64,7 @@ public sealed class HealthSmokeAlertJobHandler(IDbContextFactory<AllstarrDbConte
             return DurableJobCompletion.Retry("health_alert_delivery_failed", "The health webhook could not be reached.", TimeSpan.FromMinutes(1));
         }
     }
+
+    private static bool IsKnownStep(string step) => HealthSmokeProtocolProbe.StepNames.Contains(step) ||
+        HealthSmokeServerProbe.StepNames.Contains(step);
 }

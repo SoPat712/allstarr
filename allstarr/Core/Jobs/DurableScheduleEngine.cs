@@ -125,7 +125,7 @@ public sealed class DurableScheduleEngine
             var jobType = schedule.JobType.Trim().ToLowerInvariant();
             var health = jobType == HealthSmokeService.JobType
                 ? HealthSmokeService.Parse<HealthSmokeSchedule>(schedule.PayloadTemplateJson) : null;
-            if (jobType == HealthSmokeService.JobType && health is not { Version: 1, IntervalMinutes: >= 1 and <= 1440 })
+            if (jobType == HealthSmokeService.JobType && health is not { Version: 1 or 2, IntervalMinutes: >= 1 and <= 1440 })
                 throw new InvalidOperationException("The health schedule configuration is invalid.");
             var following = health != null ? dueAt.AddMinutes(health.IntervalMinutes) :
                 GetNextOccurrence(schedule.CronExpression, schedule.TimeZoneId, dueAt)

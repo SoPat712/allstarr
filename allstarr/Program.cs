@@ -125,6 +125,10 @@ builder.Services.AddHttpClient<HealthSmokeProtocolProbe>(client =>
     client.BaseAddress = new Uri("http://127.0.0.1:8080");
     client.Timeout = TimeSpan.FromSeconds(60);
 }).RemoveAllLoggers().ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddHttpClient<HealthSmokeServerProbe>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(60);
+}).RemoveAllLoggers().ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddHttpClient("health-webhook", client => client.Timeout = TimeSpan.FromSeconds(10))
     .RemoveAllLoggers().ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<IDurableJobHandler, HealthSmokeJobHandler>();
