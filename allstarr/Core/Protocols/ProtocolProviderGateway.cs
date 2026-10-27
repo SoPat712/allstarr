@@ -1138,24 +1138,16 @@ public sealed partial class ProtocolProviderGateway(
         var previous = playbackActivity?.StreamFor(protocol, itemId, quality);
         var hasPlaybackIdentity = !protocol.IsOriginalDownload && (!string.IsNullOrWhiteSpace(protocol.Client.DeviceId) ||
             protocol.Protocol == ProtocolKind.Subsonic && !string.IsNullOrWhiteSpace(protocol.Client.ClientId));
-        if (resuming && hasPlaybackIdentity && playbackActivity != null && previous == null)
-            throw new HttpRequestException("Restart playback before seeking this external track.", null,
-                HttpStatusCode.Conflict);
         // Legacy provider requests without a device retain their direct provider route across ranges.
         if ((hasPlaybackIdentity || providerId == "allstarr") &&
-            (providerId == "allstarr" || IsAutomaticProvider(providerId, effectivePolicy)) &&
-            (!resuming || previous?.ManagedFileId != null))
+            (providerId == "allstarr" || IsAutomaticProvider(providerId, effectivePolicy)))
         {
-            var kept = await OpenHouseholdKeptAsync(protocol, trackId, quality, previous?.ManagedFileId,
-                resuming, headOnly);
+            var kept = await OpenHouseholdKeptAsync(protocol, trackId, quality, headOnly);
             if (kept != null)
             {
                 if (protocol.IsPreparation) { kept.Response.Dispose(); return null; }
                 return await OpenedAsync(kept, null, null);
             }
-            if (resuming && previous?.ManagedFileId != null)
-                throw new HttpRequestException("The previous kept playback source is no longer available. Restart playback.",
-                    null, HttpStatusCode.Conflict);
         }
         var exactRouteMissKey = CacheKeyBuilder.BuildPlaybackRouteNegativeKey(
             actor.EffectiveUserId,
@@ -1182,33 +1174,32 @@ public sealed partial class ProtocolProviderGateway(
             if (!providerOrder.Contains(providerId, StringComparer.Ordinal)) return null;
             providerOrder = [providerId];
         }
-        if (resuming)
-        {
-            if (!hasPlaybackIdentity && providerId == "allstarr" && (!protocol.IsOriginalDownload || previous == null))
-                throw new HttpRequestException("Restart playback before seeking this recording.", null,
-                    HttpStatusCode.Conflict);
-            // Byte offsets cannot be transferred between two encodings of the same recording.
-            var resumeProvider = previous?.ProviderId ?? providerId;
-            if (!providerOrder.Contains(resumeProvider, StringComparer.Ordinal)) return null;
-            providerOrder = [resumeProvider];
-        }
+        // Prefer the prior encoding when it still exists, but a lost session must not block playback.
+        if (resuming && previous != null && providerOrder.Contains(previous.ProviderId, StringComparer.Ordinal))
+            providerOrder = new[] { previous.ProviderId }.Concat(providerOrder).Distinct(StringComparer.Ordinal).ToArray();
         var streamRequest = Request(
             protocol,
             actor,
             ProviderCapabilityKind.Streaming,
             "protocol-stream-open",
             providerOrder,
-            resuming && previous != null
+            resuming && previous != null && previous.ManagedFileId == null
                 ? new ProviderExternalResourceId(previous.ProviderId, ProviderResourceKind.Track, previous.ExternalId)
                 : trackId,
             quality,
             allowFallback: true,
             allowManagedDownloads: true);
         var plan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
+        if (plan.Candidates.Count == 0 && streamRequest.SourceTrackId != trackId)
+        {
+            streamRequest = Request(protocol, actor, ProviderCapabilityKind.Streaming, "protocol-stream-open",
+                providerOrder, trackId, quality, allowFallback: true, allowManagedDownloads: true);
+            plan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
+        }
         var availabilityAttempted = false;
         async Task<bool> ResolveAvailabilityAsync()
         {
-            if (protocol.IsOriginalDownload || protocol.IsReadOnly || availabilityAttempted || resuming || !hasPlaybackIdentity && providerId != "allstarr" ||
+            if (protocol.IsOriginalDownload || protocol.IsReadOnly || availabilityAttempted || !hasPlaybackIdentity && providerId != "allstarr" ||
                 providerId != "allstarr" && !IsAutomaticProvider(providerId, effectivePolicy)) return false;
             availabilityAttempted = true;
             var linked = await TryResolvePlaybackAvailabilityAsync(plan, availabilityOrder, trackId,
@@ -1238,6 +1229,26 @@ public sealed partial class ProtocolProviderGateway(
                     ExactRouteMissTtl);
             }
             return null;
+        }
+
+        if (parsedRange != null && !protocol.IsReadOnly && managedTrackCache != null)
+        {
+            // Recover complete originals before opening any upstream source, including after a process restart.
+            foreach (var candidate in plan.Candidates)
+            {
+                if (candidate.Provider.Id != providerId &&
+                    (!IsAutomaticProvider(candidate.Provider.Id, effectivePolicy) ||
+                     providerId != "allstarr" && !IsAutomaticProvider(providerId, effectivePolicy))) continue;
+                var cachedTrack = candidate.TrackId ?? trackId;
+                var scope = managedTrackCache.ScopeFor(protocol, candidate.Context.Account?.AccountId,
+                    quality, candidate.Context.Account?.Revision);
+                var cached = await managedTrackCache.TryOpenAsync(cachedTrack, scope, protocol.CancellationToken,
+                    candidate.Context.Account?.Revision, requestedOffset: rangeStart,
+                    originalDownload: protocol.IsOriginalDownload, retainOriginalMedia: protocol.RetainOriginalMedia,
+                    completeOnly: true);
+                if (cached != null)
+                    return await OpenedAsync(cached with { SelectionReason = "replay:managed-cache" }, candidate.Context, cachedTrack);
+            }
         }
 
         if (effectivePolicy != null && hasPlaybackIdentity && !resuming && !headOnly && !protocol.IsReadOnly &&
@@ -1276,11 +1287,6 @@ public sealed partial class ProtocolProviderGateway(
             if (protocol.IsPreparation && !ProviderStreamOpener.PreparationProviders.Contains(candidate.Provider.Id)) return null;
             var servingTrack = candidate.TrackId ?? trackId;
             if (!attemptedRoutes.Add((candidate.Provider.Id, candidate.Context.Account?.AccountId, servingTrack.Value))) continue;
-            if (resuming && previous != null &&
-                (servingTrack.Value != previous.ExternalId || candidate.Context.Account?.AccountId != previous.AccountId ||
-                    candidate.Context.Account?.Revision != previous.AccountRevision))
-                throw new HttpRequestException("The previous playback source is no longer available. Restart playback.", null,
-                    HttpStatusCode.Conflict);
             var routeReason = string.Join(':',
                 fallbackReason ?? "provider-priority",
                 candidate.Context.Account?.ResolutionReason ?? "account-free");
@@ -1301,9 +1307,6 @@ public sealed partial class ProtocolProviderGateway(
             }
             if (!protocol.IsReadOnly && outcomes?.IsPlaybackCoolingDown(candidate.Context, servingTrack, quality) == true)
             {
-                if (resuming)
-                    throw new HttpRequestException("The previous playback source failed. Restart playback to use another source.",
-                        null, HttpStatusCode.Conflict);
                 fallbackReason = "fallback-source-cooldown";
                 continue;
             }
@@ -1448,7 +1451,8 @@ public sealed partial class ProtocolProviderGateway(
                 }, candidateExecution, servingTrack);
             }
             lastFailure = outcome.Error;
-            var fallback = resuming ? null : router.EvaluateFallback(plan, candidateIndex, outcome.Error!);
+            if (outcome.Error?.Code == "stream-range-unavailable") ThrowRouteFailure(outcome.Error);
+            var fallback = router.EvaluateFallback(plan, candidateIndex, outcome.Error!);
             if (fallback?.Disposition == ProviderFallbackDisposition.Advance)
             {
                 if (!protocol.IsPreparation)

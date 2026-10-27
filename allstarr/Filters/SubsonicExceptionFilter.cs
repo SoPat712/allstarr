@@ -62,9 +62,9 @@ public sealed class SubsonicExceptionFilter(
             HttpRequestException { StatusCode: HttpStatusCode.BadRequest } =>
                 (0, "Invalid byte range request.", StatusCodes.Status400BadRequest),
             HttpRequestException { StatusCode: HttpStatusCode.Conflict } =>
-                (0, "Restart playback to restore the previous source selection.", StatusCodes.Status409Conflict),
+                (0, "The playback source changed. Try again.", StatusCodes.Status409Conflict),
             HttpRequestException { StatusCode: HttpStatusCode.RequestedRangeNotSatisfiable } =>
-                (0, "The requested byte range is unavailable. Restart playback before seeking.", StatusCodes.Status416RangeNotSatisfiable),
+                (0, "The requested byte range is outside the available audio file.", StatusCodes.Status416RangeNotSatisfiable),
             HttpRequestException { StatusCode: HttpStatusCode.TooManyRequests } =>
                 (0, "The requested service is temporarily unavailable.", StatusCodes.Status429TooManyRequests),
             NotSupportedException or InvalidOperationException =>

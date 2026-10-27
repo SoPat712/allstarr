@@ -136,7 +136,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
 
     public async Task<ProtocolProviderStream?> TryOpenAsync(ProviderExternalResourceId track,
         DownloadedSongMappingScope scope, CancellationToken cancellationToken, long? accountRevision = null, bool preparation = false,
-        long? requestedOffset = null, bool originalDownload = false, bool retainOriginalMedia = false)
+        long? requestedOffset = null, bool originalDownload = false, bool retainOriginalMedia = false, bool completeOnly = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var retainedOriginal = originalDownload && retainOriginalMedia && IsCacheMode();
@@ -144,7 +144,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
             scope = retainedOriginal
                 ? new(scope.ProviderAccountId, scope.AudioQuality, DownloadedSongRepresentation.Original, accountRevision)
                 : new(scope.ProviderAccountId, scope.AudioQuality);
-        if (active.TryGetValue(Key(scope, accountRevision, track.ProviderId, track.Value, originalDownload), out var transfer))
+        if (!completeOnly && active.TryGetValue(Key(scope, accountRevision, track.ProviderId, track.Value, originalDownload), out var transfer))
         {
             if (requestedOffset is > 0 && transfer.CanFetchRange(requestedOffset.Value)) return null;
             var reader = transfer.TryOpen(!preparation);

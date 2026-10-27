@@ -310,25 +310,12 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             ProviderAudioQuality.Any, "bytes=1-"))!.Response;
         Assert.Equal("bytes=1-", observedRange);
         router.Verify(item => item.PlanAsync<IProviderStreamingCapability>(It.Is<ProviderRouteRequest>(request =>
-            request.ProviderPriority.SequenceEqual(new[] { "qobuz" }))), Times.Once);
+            request.ProviderPriority.SequenceEqual(new[] { "qobuz", "deezer" }))), Times.Once);
 
         var lastOpened = activity.StreamFor(context, "ext-deezer-song-source-track", ProviderAudioQuality.Any);
         using var head = (await gateway.OpenStreamAsync(context, "deezer", "source-track",
             ProviderAudioQuality.Any, null, headOnly: true))!.Response;
         Assert.Same(lastOpened, activity.StreamFor(context, "ext-deezer-song-source-track", ProviderAudioQuality.Any));
-    }
-
-    [Fact]
-    public async Task OpenStream_ResumeWithoutScopedSelectionRequiresRestart()
-    {
-        using var activity = new PlaybackDeliveryActivityStore();
-        var first = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
-        var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
-        var (gateway, router) = FailoverGateway(first, second, activity);
-        var error = await Assert.ThrowsAsync<HttpRequestException>(() => gateway.OpenStreamAsync(ClientContext(),
-            "deezer", "source-track", ProviderAudioQuality.Any, "bytes=100-"));
-        Assert.Equal(HttpStatusCode.Conflict, error.StatusCode);
-        router.Verify(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()), Times.Never);
     }
 
     [Fact]

@@ -223,9 +223,9 @@ public partial class JellyfinController
                 HttpStatusCode.NotFound => (StatusCodes.Status404NotFound, "External track not found"),
                 HttpStatusCode.BadRequest => (StatusCodes.Status400BadRequest, "Invalid byte range request."),
                 HttpStatusCode.Conflict => (StatusCodes.Status409Conflict,
-                    "Restart playback to restore the previous source selection."),
+                    "The playback source changed. Try again."),
                 HttpStatusCode.RequestedRangeNotSatisfiable => (StatusCodes.Status416RangeNotSatisfiable,
-                    "The requested byte range is unavailable. Restart playback before seeking."),
+                    "The requested byte range is outside the available audio file."),
                 HttpStatusCode.TooManyRequests => (StatusCodes.Status503ServiceUnavailable, "External provider is rate limiting requests"),
                 HttpStatusCode.BadGateway or
                 HttpStatusCode.ServiceUnavailable or

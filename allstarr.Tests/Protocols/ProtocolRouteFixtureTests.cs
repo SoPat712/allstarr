@@ -115,15 +115,15 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public void ExternalStream_RangeFailuresTellBothClientsToRestartWithoutLeakingProviderText()
+    public void ExternalStream_RangeFailuresExplainTheUnavailablePositionWithoutLeakingProviderText()
     {
         var error = new HttpRequestException("raw signed secret", null, HttpStatusCode.RequestedRangeNotSatisfiable);
         var jellyfin = allstarr.Controllers.JellyfinController.MapExternalStreamException(error);
         var subsonic = allstarr.Filters.SubsonicExceptionFilter.Map(error);
         Assert.Equal(StatusCodes.Status416RangeNotSatisfiable, jellyfin.statusCode);
         Assert.Equal(StatusCodes.Status416RangeNotSatisfiable, subsonic.StatusCode);
-        Assert.Contains("Restart playback", jellyfin.errorMessage);
-        Assert.Contains("Restart playback", subsonic.Message);
+        Assert.Contains("outside the available audio file", jellyfin.errorMessage);
+        Assert.Contains("outside the available audio file", subsonic.Message);
         Assert.DoesNotContain("secret", jellyfin.errorMessage);
         Assert.DoesNotContain("secret", subsonic.Message);
     }

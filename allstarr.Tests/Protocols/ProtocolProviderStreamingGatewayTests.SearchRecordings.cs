@@ -1,6 +1,8 @@
 using allstarr.Core.Capabilities;
+using allstarr.Core.Matching;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
+using allstarr.Core.Storage;
 using allstarr.Models.Domain;
 using Moq;
 
@@ -8,6 +10,84 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin, null, 180, null)]
+    [InlineData(ProtocolKind.Subsonic, null, 180, null)]
+    [InlineData(ProtocolKind.Jellyfin, "PRIMA", 0, null)]
+    [InlineData(ProtocolKind.Subsonic, "PRIMA", 0, null)]
+    [InlineData(ProtocolKind.Jellyfin, "PRIMA", 180, 0)]
+    [InlineData(ProtocolKind.Subsonic, "PRIMA", 180, 0)]
+    public async Task SearchWithDifferentIsrcsRequiresAlbumDurationAndCompatibleExplicitness(
+        ProtocolKind protocol, string? album, int seconds, int? explicitLyrics)
+    {
+        var first = new ProviderTrackMetadata(new("deezer", ProviderResourceKind.Track, "original"), "Starving Artist",
+            [new("ADÉLA")], albumTitle: "PRIMA", duration: TimeSpan.FromSeconds(180), isrc: "USUM72606037", explicitContentLyrics: 1);
+        var other = new ProviderTrackMetadata(new("tidal", ProviderResourceKind.Track, "other"), "Starving Artist",
+            [new("Adéla")], albumTitle: album, duration: TimeSpan.FromSeconds(seconds), isrc: "USUM72607796", explicitContentLyrics: explicitLyrics);
+        var (gateway, _) = SearchRankingGateway("deezer,tidal", "deezer,tidal",
+            RecordingSearchCapability("deezer", first), RecordingSearchCapability("tidal", other));
+
+        Assert.Equal(2, (await gateway.SearchAsync(SearchRankingContext(protocol), "Starving Artist ADELA", 20, 0, 0)).Songs.Count);
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task SearchCombinesReleaseIsrcsWhenTheOrdinaryRecordingMetadataAgrees(ProtocolKind protocol)
+    {
+        var (gateway, _) = SearchRankingGateway("deezer,tidal", "deezer,tidal",
+            RecordingSearchCapability("deezer", RecordingSearchTrack("deezer", "original", "Starving Artist", "ADÉLA", 180,
+                "PRIMA", "USUM72606037")),
+            RecordingSearchCapability("tidal",
+                RecordingSearchTrack("tidal", "release", "Starving Artist", "Adéla", 180, "PRIMA", "USUM72607796"),
+                RecordingSearchTrack("tidal", "live", "Starving Artist (Live)", "ADÉLA", 180, "PRIMA", "USUM72607797"),
+                RecordingSearchTrack("tidal", "remix", "Starving Artist (Club Remix)", "ADÉLA", 180, "PRIMA", "USUM72607798"),
+                RecordingSearchTrack("tidal", "different-length", "Starving Artist", "ADÉLA", 187, "PRIMA", "USUM72607799"),
+                RecordingSearchTrack("tidal", "namesake", "Starving Artist", "Adela Valero", 158, "PRIMA", "USUM72607790")));
+
+        var songs = (await gateway.SearchAsync(SearchRankingContext(protocol), "Starving Artist ADELA", 20, 0, 0)).Songs;
+
+        Assert.Equal(5, songs.Count);
+        var original = Assert.Single(songs, song => song.ExternalId == "original");
+        Assert.Equal(["original", "release"], original.SearchRoutes.Select(route => route.Value).Order());
+        Assert.DoesNotContain(songs, song => song.ExternalId == "release");
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task SearchCombinesSeparatelyRememberedCopiesWithoutChangingTheirStoredIdentities(ProtocolKind protocol)
+    {
+        var capabilities = new[]
+        {
+            RecordingSearchCapability("deezer", RecordingSearchTrack("deezer", "newer", "Starving Artist", "ADÉLA", 180, "PRIMA")),
+            RecordingSearchCapability("qobuz", RecordingSearchTrack("qobuz", "saved", "Starving Artist", "Adéla", 180, "PRIMA")),
+            RecordingSearchCapability("youtube", RecordingSearchTrack("youtube", "other-artist", "Starving Artist", "Adela Valero", 158))
+        };
+        var registry = MetadataRegistry(capabilities);
+        var (_, router) = SearchRankingGateway("deezer,qobuz,youtube", "deezer,qobuz,youtube", capabilities);
+        var older = Guid.Parse("01910000-0000-7000-8000-000000000001");
+        var newer = Guid.Parse("01910000-0001-7000-8000-000000000001");
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        identities.Setup(item => item.ResolveManyAsync(It.IsAny<IReadOnlyList<TrackIdentityLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<TrackIdentityLookup> lookups, CancellationToken _) => lookups.Select(lookup =>
+                lookup.ExternalId.ProviderId == "youtube" ? null : new TrackIdentityResolution(
+                    lookup.ExternalId.ProviderId == "qobuz" ? older : newer, Guid.CreateVersion7(), lookup.ExternalId,
+                    ProviderIdentityScope.Catalog, null, ProviderIdentityVerification.Verified, "played", 1)
+                { PublicId = lookup.ExternalId.ProviderId == "qobuz" ? "ext-qobuz-song-saved" : "ext-deezer-song-newer" }).ToArray());
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), identities: identities.Object);
+
+        var songs = (await gateway.SearchAsync(SearchRankingContext(protocol), "Starving Artist ADELA", 20, 0, 0)).Songs;
+
+        Assert.Equal(2, songs.Count);
+        var original = Assert.Single(songs, song => song.ExternalId != "other-artist");
+        Assert.Equal("ext-qobuz-song-saved", original.Id);
+        Assert.Equal(older, original.CanonicalRecordingId);
+        Assert.Equal(["newer", "saved"], original.SearchRoutes.Select(route => route.Value).Order());
+        identities.Verify(item => item.ResolveManyAsync(It.IsAny<IReadOnlyList<TrackIdentityLookup>>(), It.IsAny<CancellationToken>()), Times.Once);
+        identities.VerifyNoOtherCalls();
+    }
+
     [Theory]
     [InlineData(ProtocolKind.Jellyfin, "Get Lucky Daft Punk")]
     [InlineData(ProtocolKind.Subsonic, "Get Lucky Daft Punk")]

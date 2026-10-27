@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Music;
 using allstarr.Core.Routing;
 using allstarr.Core.Settings;
 using allstarr.Models.Domain;
@@ -226,7 +227,8 @@ public sealed partial class ProtocolProviderGateway
                              SearchDurationsCompatible(first, second)))).Where(group => group.Count > 1))
         {
             var chosen = ChooseDisplaySource(protocol, group, providerOrder);
-            var first = group.FirstOrDefault(song => song.CanonicalRecordingId != null) ?? group[0];
+            var first = group.Where(song => song.CanonicalRecordingId != null)
+                .OrderBy(song => song.CanonicalRecordingId).FirstOrDefault() ?? group[0];
             chosen.Id = first.Id;
             chosen.CanonicalRecordingId = first.CanonicalRecordingId;
             chosen.SearchRoutes = SearchRoutes(group);
@@ -251,20 +253,8 @@ public sealed partial class ProtocolProviderGateway
 
     private static bool MetadataSearchTracksMatch(Song left, Song right)
     {
-        if (NormalizeProvider(left.ExternalProvider) == NormalizeProvider(right.ExternalProvider) ||
-            !SearchDurationsCompatible(left, right) || SearchVersionKey(left) != SearchVersionKey(right)) return false;
-        if (left.CanonicalRecordingId is { } leftRecording && right.CanonicalRecordingId is { } rightRecording &&
-            leftRecording != rightRecording) return false;
-        if (NormalizeIsrc(left.Isrc) is { } leftIsrc && NormalizeIsrc(right.Isrc) is { } rightIsrc &&
-            leftIsrc != rightIsrc) return false;
-        var artist = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(left.Artist).FirstOrDefault() ?? "");
-        var otherArtist = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(right.Artist).FirstOrDefault() ?? "");
-        var title = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(left.Title));
-        var otherTitle = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(right.Title));
-        if (artist.Length == 0 || title.Length == 0 || artist != otherArtist || title != otherTitle) return false;
-        var album = FuzzyMatcher.NormalizeForMatching(left.Album);
-        var otherAlbum = FuzzyMatcher.NormalizeForMatching(right.Album);
-        return album.Length == 0 || otherAlbum.Length == 0 || album == otherAlbum;
+        return NormalizeProvider(left.ExternalProvider) != NormalizeProvider(right.ExternalProvider) &&
+            MusicSearchService.MetadataRecordingsMatch(left, right);
     }
 
     private static double? SearchDuration(Song song) => song.PreciseDuration?.TotalSeconds ?? song.Duration;

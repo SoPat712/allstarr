@@ -10,7 +10,7 @@ namespace allstarr.Tests;
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
     [Fact]
-    public async Task CanonicalOriginalDownloadCannotBorrowAPlaybackSelection()
+    public async Task CanonicalOriginalDownloadStartsFreshWithoutBorrowingAPlaybackSelection()
     {
         using var activity = new PlaybackDeliveryActivityStore();
         var canonical = Guid.NewGuid().ToString("D");
@@ -22,9 +22,12 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.NotNull(activity.StreamFor(context, context.RequestedItemId, ProviderAudioQuality.Any));
         var original = context with { IsOriginalDownload = true };
         Assert.Null(activity.StreamFor(original, context.RequestedItemId, ProviderAudioQuality.Any));
-        var error = await Assert.ThrowsAsync<HttpRequestException>(() => gateway.OpenStreamAsync(original,
-            "allstarr", canonical, ProviderAudioQuality.Any, "bytes=1-"));
-        Assert.Equal(HttpStatusCode.Conflict, error.StatusCode);
+        var playback = activity.StreamFor(context, context.RequestedItemId, ProviderAudioQuality.Any);
+        using var reopened = (await gateway.OpenStreamAsync(original,
+            "allstarr", canonical, ProviderAudioQuality.Any, "bytes=1-"))!.Response;
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, await reopened.Content.ReadAsByteArrayAsync());
+        Assert.Same(playback, activity.StreamFor(context, context.RequestedItemId, ProviderAudioQuality.Any));
+        Assert.NotSame(playback, activity.StreamFor(original, context.RequestedItemId, ProviderAudioQuality.Any));
     }
 
     [Theory]
@@ -60,10 +63,12 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 context.VerifiedBackendPrincipalId, context.Principal, context.CorrelationId, context.Deadline,
                 context.CancellationToken, new("client", "other"))
             { IsOriginalDownload = true, RequestedItemId = context.RequestedItemId };
-            var error = await Assert.ThrowsAsync<HttpRequestException>(() => gateway.OpenStreamAsync(other,
-                "allstarr", canonical, ProviderAudioQuality.Any, "bytes=1-"));
-            Assert.Equal(HttpStatusCode.Conflict, error.StatusCode);
-            Assert.Equal(0, ranges);
+            Assert.Null(activity.StreamFor(other, context.RequestedItemId, ProviderAudioQuality.Any));
+            using var reopened = (await gateway.OpenStreamAsync(other,
+                "allstarr", canonical, ProviderAudioQuality.Any, "bytes=1-"))!.Response;
+            Assert.Equal(HttpStatusCode.PartialContent, reopened.StatusCode);
+            Assert.Equal(new byte[] { 2, 3, 4 }, await reopened.Content.ReadAsByteArrayAsync());
+            Assert.Equal(1, ranges);
             return;
         }
         var opening = await Task.WhenAll(gateway.OpenStreamAsync(context, "allstarr", canonical, ProviderAudioQuality.Any, "bytes=1-2"),
@@ -76,7 +81,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Equal(new byte[] { 4 }, await two.Content.ReadAsByteArrayAsync());
         Assert.Equal(2, ranges);
         router.Verify(item => item.PlanAsync<IProviderStreamingCapability>(It.Is<ProviderRouteRequest>(request =>
-            request.ProviderPriority.SequenceEqual(new[] { "qobuz" }) && request.SourceTrackId!.Value == "qobuz-track")), Times.Exactly(2));
+            request.ProviderPriority.SequenceEqual(new[] { "qobuz", "deezer", "allstarr" }) && request.SourceTrackId!.Value == "qobuz-track")), Times.Exactly(2));
         Assert.Null(activity.StreamFor(context.Actor.EffectiveUserId, "device", context.RequestedItemId));
         Assert.False(activity.WasStreamOpened(context.RequestedItemId));
     }

@@ -204,12 +204,19 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [InlineData("policy")]
     [InlineData("manual")]
     [InlineData("health")]
-    [InlineData("resume")]
     public async Task RecordingAvailability_RestrictedRoutesDoNotResolve(string restriction)
     {
         var fixture = new AvailabilityFixture("pandora", restriction: restriction);
-        Assert.Null(await fixture.Open(restriction == "resume" ? "bytes=10-19" : null));
+        Assert.Null(await fixture.Open());
         fixture.VerifyLookups(0);
+    }
+
+    [Fact]
+    public async Task RecordingAvailability_FirstRangeCanResolveAFreshSource()
+    {
+        var fixture = new AvailabilityFixture("pandora");
+        using var response = (await fixture.Open("bytes=10-19"))!.Response;
+        fixture.VerifyLookups(1);
     }
 
     [Fact]
