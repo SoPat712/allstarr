@@ -58,6 +58,7 @@ export function humanize(value?: string | null) {
 export function relativeTime(value?: string | null, fallback = "Not checked") {
   if (!value) return fallback;
   const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1_000);
+  if (!Number.isFinite(seconds)) return fallback;
   const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
   if (Math.abs(seconds) < 60) return formatter.format(seconds, "second");
   const minutes = Math.round(seconds / 60);
@@ -69,22 +70,28 @@ export function relativeTime(value?: string | null, fallback = "Not checked") {
 
 export function filterActivity(items: ActivityItem[], filters: ActivityFilters) {
   const query = filters.query.trim().toLowerCase();
-  return items.filter((item) => {
+  const jobs = new Map<string, ActivityItem[]>();
+  for (const item of items) {
+    const key = activityJobKey(item);
+    if (key) jobs.set(key, [...(jobs.get(key) ?? []), item]);
+  }
+  const matches = (item: ActivityItem) => {
     if (filters.category && activityCategory(item.kind) !== filters.category) return false;
     if (filters.provider && item.providerId !== filters.provider) return false;
-    if (filters.problemsOnly && !isProblem(item)) return false;
-    return !query || [
-      item.actorDisplayName,
-      item.label,
-      item.detail,
-      item.source,
-      item.providerId,
-      item.playlistName,
-      item.correlationId,
-      item.sourceTitle,
-      item.targetTitle,
-    ].some((value) => value?.toLowerCase().includes(query));
+    return !query || [item.actorDisplayName, item.label, item.detail, item.source, item.providerId,
+      item.playlistName, item.correlationId, item.sourceTitle, item.targetTitle, item.jobId, item.recovery]
+      .some(value => value?.toLowerCase().includes(query));
+  };
+  return items.filter(item => {
+    const family = jobs.get(activityJobKey(item));
+    const latest = family?.toSorted((a, b) => b.occurredAt.localeCompare(a.occurredAt))[0] ?? item;
+    if (filters.problemsOnly && !isProblem(latest)) return false;
+    return family ? family.some(matches) : matches(item);
   });
+}
+
+function activityJobKey(item: ActivityItem) {
+  return item.jobId ? `${item.actorUserId ?? "household"}|job:${item.jobId.toLowerCase().replaceAll("-", "")}` : "";
 }
 
 export function mergeActivity(current: ActivityItem[], incoming: ActivityItem[]) {
@@ -97,10 +104,11 @@ export function groupActivity(items: ActivityItem[]) {
   const groups: ActivityGroup[] = [];
   const operations = new Map<string, ActivityGroup>();
   for (const item of items) {
-    const correlated = Boolean(item.correlationId && item.action);
-    const operationKey = correlated
+    const jobKey = activityJobKey(item);
+    const correlated = Boolean(jobKey || item.correlationId && item.action);
+    const operationKey = jobKey || (correlated
       ? `${item.actorUserId ?? "household"}|${item.correlationId}|${item.action}`
-      : item.id;
+      : item.id);
     const group = correlated ? operations.get(operationKey) : undefined;
     if (group) {
       const duplicate = group.entries.some((entry) =>
@@ -109,13 +117,14 @@ export function groupActivity(items: ActivityItem[]) {
         entry.detail === item.detail &&
         entry.action === item.action);
       if (!duplicate) group.entries.push(item);
+      group.entries.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
       group.title = groupTitle(group.entries);
     } else {
       const created = {
         key: operationKey,
         operationKey,
         entries: [item],
-        title: humanize(item.label),
+        title: item.kind === "job" || activityJobKey(item) ? activityHeadline(item) : humanize(item.label),
       };
       groups.push(created);
       if (correlated) operations.set(operationKey, created);
@@ -125,7 +134,7 @@ export function groupActivity(items: ActivityItem[]) {
 }
 
 function groupTitle(entries: ActivityItem[]) {
-  if (entries.length === 1) return humanize(entries[0].label);
+  if (entries.length === 1 || activityJobKey(entries[0])) return activityHeadline(entries[0]);
   const first = entries[0];
   if (first.kind === "matching") {
     const accepted = entries.every((item) =>
@@ -139,11 +148,13 @@ function groupTitle(entries: ActivityItem[]) {
 }
 
 export function groupOutcome(entries: ActivityItem[]) {
+  if (activityJobKey(entries[0])) return entries[0].state.toLowerCase();
   const states = uniqueStates(entries.map((item) => item.state));
   return states.length === 1 ? states[0] : "mixed";
 }
 
 export function groupSeverity(entries: ActivityItem[]) {
+  if (activityJobKey(entries[0])) return entries[0].severity || "info";
   const severities = uniqueStates(entries.map((item) => item.severity || "info"));
   return severities.includes("error")
     ? "error"
@@ -172,6 +183,8 @@ export function activityIcon(kind: string) {
 }
 
 export function activityLink(item: ActivityItem) {
+  if (internalActivityLink(item.actionHref)) return item.actionHref!;
+  if (validJobId(item.jobId)) return `#/activity?view=jobs&job=${encodeURIComponent(item.jobId!)}`;
   if (item.playlistLinkId)
     return `#/library/playlists?playlist=${encodeURIComponent(item.playlistLinkId)}`;
   if (item.kind === "caching") return "#/library/cached";
@@ -187,6 +200,8 @@ export function activityLink(item: ActivityItem) {
 export function activityAction(item: ActivityItem, providerName: (id: string) => string) {
   const href = activityLink(item);
   if (!href) return null;
+  if (internalActivityLink(item.actionHref) && item.actionLabel) return { href, label: item.actionLabel };
+  if (validJobId(item.jobId)) return { href, label: "Open related work" };
   if (item.playlistLinkId) return { href, label: `Open ${item.playlistName || "playlist"}` };
   if (item.kind === "caching") return { href, label: "Open cached songs" };
   if (item.kind === "matching") return { href, label: "Review match" };
@@ -197,7 +212,7 @@ export function outcomeClass(state: string) {
   const normalized = state.toLowerCase();
   if (["accepted", "delivered", "healthy", "pinned", "succeeded", "success"].includes(normalized))
     return "accepted";
-  if (["ambiguous", "partial", "retrying", "suggested", "warning"].includes(normalized))
+  if (["ambiguous", "partial", "partiallysucceeded", "conflicted", "retrying", "suggested", "warning"].includes(normalized))
     return "suggested";
   if (["failed", "rejected", "unhealthy", "unresolved"].includes(normalized))
     return "rejected";
@@ -206,16 +221,48 @@ export function outcomeClass(state: string) {
 
 
 export const jobNames: Record<string, string> = {
+  "health.smoke": "Check music server", "health.cleanup": "Clean up earlier checks", "health.alert": "Send health alert", "storage.backup": "Back up database and keyring",
   "playlist.materialize": "Update playlist",
   "playback.signal": "Record a listen", "favorite.process": "Update favorites", "favorite.display-backfill": "Recover favorite details",
   "recording.kept-cleanup": "Remove unused kept copy", "recording.keep": "Keep a song", "playlist.retain-track": "Keep playlist song",
   "track-match.rematch": "Refresh matches", "library.index": "Refresh library index", "recording.musicbrainz.enrich": "Identify recording", "recording.odesli.enrich": "Find recording links",
 };
-export function jobName(type: string) { return jobNames[type] ?? humanize(type); }
+export function jobName(type: string) { return jobNames[type] ?? "Background task"; }
 export function jobState(state: string) {
   return ({ Pending: "Waiting", Running: "Running", RetryScheduled: "Retrying", Deferred: "Deferred", Succeeded: "Completed", Failed: "Failed", Cancelled: "Cancelled" } as Record<string, string>)[state] ?? humanize(state);
 }
 export function progressPercent(completed?: number | null, total?: number | null) {
   return typeof total === "number" && Number.isFinite(total) && total > 0 && typeof completed === "number" && Number.isFinite(completed)
     ? Math.min(100, Math.max(0, Math.round(completed / total * 100))) : null;
+}
+
+export type ActivityTone = "neutral" | "accent" | "success" | "warning" | "danger";
+export function activityTone(state: string, severity = "info"): ActivityTone {
+  const normalized = state.toLowerCase().replaceAll(/[-_ ]/g, "");
+  if (["cancelled", "canceled", "skipped", "notchecked", "partlychecked", "info"].includes(normalized)) return "neutral";
+  if (severity === "error" || ["failed", "rejected", "unhealthy", "unresolved", "error", "blocked", "unauthorized"].includes(normalized)) return "danger";
+  if (severity === "warning" || ["ambiguous", "partial", "partiallysucceeded", "conflicted", "retrying", "retryscheduled", "deferred", "suggested", "warning", "degraded", "needsattention", "needsreview"].includes(normalized)) return "warning";
+  if (["accepted", "delivered", "healthy", "pinned", "succeeded", "success", "passed", "completed", "verified", "placed", "saved", "resolved", "ok"].includes(normalized)) return "success";
+  if (["running", "started", "pending", "waiting", "queued", "scheduled", "checking", "active"].includes(normalized)) return "accent";
+  return "neutral";
+}
+export function validJobId(value?: string | null) {
+  return Boolean(value && /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(value));
+}
+export function internalActivityLink(value?: string | null) {
+  return Boolean(value && /^#\/(?:activity(?:\?|$)|library\/(?:playlists|mappings|cached|kept)(?:[/?]|$)|integrations\/(?:services|accounts|routing)(?:[/?]|$)|settings\/(?:health|backups|setup)(?:[/?]|$))/.test(value));
+}
+const opaqueReference = /\b(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{24,})\b/gi;
+export function activityText(value?: string | null) {
+  if (!value) return "";
+  if (/^(?:[0-9a-f]{24,}|[0-9a-f-]{36})$/i.test(value.trim())) return "Details were not retained for this older event.";
+  return value.replace(opaqueReference, "the recorded item");
+}
+export function activityHeadline(item: ActivityItem) {
+  if (item.kind === "job" && /^[a-z0-9-]+\.[a-z0-9.-]+$/.test(item.label)) return jobName(item.label);
+  return activityText(item.label) || "Activity update";
+}
+export function activityDuration(value?: number | null) {
+  if (value == null || !Number.isFinite(value) || value < 0) return "";
+  return value < 1000 ? "less than a second" : `${Number((value / 1000).toFixed(1))} seconds`;
 }

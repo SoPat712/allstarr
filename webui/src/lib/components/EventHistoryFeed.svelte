@@ -14,6 +14,10 @@
   } from "$lib/api";
   import {
     activityAction,
+    activityHeadline,
+    activityText,
+    activityTone,
+    activityDuration,
     activityCategories,
     activityCategory,
     activityIcon,
@@ -33,8 +37,7 @@
   import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import { formatDuration } from "$lib/playlists";
-  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
+    import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { findProviderDefinition } from "$lib/sources";
 
   let { administrator = false, scope = "mine" }: { administrator?: boolean; scope?: "mine" | "everyone" } = $props();
@@ -161,6 +164,7 @@
   }
 
   function clockTime(value: string) {
+    if (Number.isNaN(Date.parse(value))) return "Time unavailable";
     return new Intl.DateTimeFormat(undefined, { timeStyle: "short" }).format(new Date(value));
   }
 
@@ -182,7 +186,10 @@
       return [first.actorDisplayName || "Household", playlists.join(", "), `${matched} matched`, entries.length - matched ? `${entries.length - matched} need review` : ""]
         .filter(Boolean).join(" · ");
     }
-    return [first.actorDisplayName || "Household", sourceName(first), first.detail].filter(Boolean).join(" · ");
+    const title = first.sourceTitle || first.targetTitle || first.playlistName;
+    const target = title && !first.detail.includes(title)
+      ? [title, first.sourceArtist || first.targetArtist].filter(Boolean).join(" · ") : "";
+    return [first.actorDisplayName || "Household", sourceName(first), target, activityText(first.detail)].filter(Boolean).join(" · ");
   }
 
   function groupBadge(entries: ActivityItem[], state: string) {
@@ -199,6 +206,7 @@
   }
 
   function fullTime(value: string) {
+    if (Number.isNaN(Date.parse(value))) return "Time unavailable";
     return new Intl.DateTimeFormat(undefined, {
       dateStyle: "medium",
       timeStyle: "short",
@@ -207,6 +215,9 @@
 
   function technical(item: ActivityItem) {
     const fields: Array<[string, string | null | undefined]> = [
+      ["Job reference", item.jobId],
+      ["Source reference", item.providerId],
+      ["Original details", activityText(item.detail) !== item.detail ? item.detail : null],
       ["ISRC", item.isrc],
       ["Source provider ID", item.sourceProviderTrackId],
       ["Target provider ID", item.targetProviderTrackId],
@@ -291,6 +302,7 @@
             {@const first = group.entries[0]}
             {@const groupState = groupOutcome(group.entries)}
             {@const severityState = groupSeverity(group.entries)}
+            {@const tone = activityTone(groupState, severityState)}
             <details
               class="event-log-group"
               class:streaming={group.entries.some((item) => streamedIds.has(item.id))}
@@ -299,14 +311,14 @@
               ontoggle={(event) => rememberExpanded(group.key, event.currentTarget.open)}
             >
               <summary>
-                <span class="event-kind-icon" data-severity={severityState} data-kind={first.kind} aria-hidden="true">
+                <span class="event-kind-icon" data-severity={severityState} data-tone={tone} data-kind={first.kind} aria-hidden="true">
                   <span><ActivityIcon kind={first.kind} /></span>
                   {#if first.artworkUrl}
                     <img src={adminUrl(first.artworkUrl)} alt="" loading="lazy" onerror={(event) => event.currentTarget.remove()} />
                   {/if}
                 </span>
                 <span class="event-summary-copy">
-                  <strong>{group.entries.length > 1 ? group.title : sentence(first.label)}</strong>
+                  <strong>{group.entries.length > 1 ? group.title : activityHeadline(first)}</strong>
                   {#if first.kind === "matching" && group.entries.length === 1}
                     <span class="event-route">
                       <small>{first.actorDisplayName || "Household"}</small>
@@ -320,7 +332,7 @@
                   {/if}
                 </span>
                 <span class="event-summary-end">
-                  <Badge state={outcomeClass(groupState)}>{groupBadge(group.entries, groupState)}</Badge>
+                  <Badge {tone}>{groupBadge(group.entries, groupState)}</Badge>
                   <time datetime={first.occurredAt} title={fullTime(first.occurredAt)}>{clockTime(first.occurredAt)}</time>
                 </span>
                 <ChevronDown class="event-chevron" size={18} aria-hidden="true" />
@@ -334,7 +346,7 @@
                     <MediaArtwork class="event-art" url={item.artworkUrl} fallback={activityIcon(item.kind)} />
                     <div class="event-child-copy">
                       <header>
-                        <strong>{item.kind === "matching" ? (item.sourceTitle || item.detail) : sentence(item.label)}</strong>
+                        <strong>{item.kind === "matching" ? (item.sourceTitle || activityText(item.detail)) : activityHeadline(item)}</strong>
                         <time datetime={item.occurredAt}>{fullTime(item.occurredAt)}</time>
                       </header>
                       {#if item.kind === "matching"}
@@ -342,12 +354,14 @@
                           <ArrowRight size={13} aria-hidden="true" />
                           {item.targetTitle || "No playable match"}{item.confidenceLabel ? ` · ${item.confidenceLabel} confidence` : ""}</p>
                       {:else}
-                        <p>{item.detail}</p>
+                        {#if (item.sourceTitle || item.targetTitle) && !item.detail.includes(item.sourceTitle || item.targetTitle || "")}<p><strong>{item.sourceTitle || item.targetTitle}</strong>{item.sourceArtist || item.targetArtist ? ` · ${item.sourceArtist || item.targetArtist}` : ""}</p>{/if}
+                        <p>{activityText(item.detail)}</p>
+                        {#if item.recovery}<p class="notice-copy"><strong>Next step:</strong> {activityText(item.recovery)}</p>{/if}
                       {/if}
                       <div class="event-child-meta">
                         <span>{item.actorDisplayName || "Household"} · {sourceName(item)}</span>
-                        <Badge state={outcomeClass(item.state)}>{sentence(item.state)}</Badge>
-                        {#if item.durationMilliseconds}<span>Took {formatDuration(item.durationMilliseconds)}</span>{/if}
+                        <Badge tone={activityTone(item.state, item.severity)}>{sentence(item.state)}</Badge>
+                        {#if activityDuration(item.durationMilliseconds)}<span>Took {activityDuration(item.durationMilliseconds)}</span>{/if}
                         {#if item.playlistName}<span>{item.playlistName}</span>{/if}
                       </div>
                       {#if action || details.length}

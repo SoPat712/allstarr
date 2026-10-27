@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   activityAction,
+  activityTone,
+  activityDuration,
+  activityHeadline,
   activityLink,
   dayLabel,
   filterActivity,
@@ -131,4 +134,32 @@ it("keeps different household owners separate even with colliding correlations",
   const second = { ...item("two", "Song A"), actorUserId: "second", actorDisplayName: "Alex" };
   expect(groupActivity([first, second])).toHaveLength(2);
   expect(filterActivity([first, second], { query: "Alex", category: "", provider: "", problemsOnly: false })).toEqual([second]);
+});
+
+it("keeps job stages together using the current outcome and exact owner", () => {
+  const done = { ...item("done", "Song kept"), kind: "job", jobId: "job", actorUserId: "one", state: "succeeded", occurredAt: "2026-10-26T12:00:09Z" };
+  const failed = { ...done, id: "failed", state: "failed", detail: "Earlier source failed", occurredAt: "2026-10-26T12:00:00Z" };
+  const groups = groupActivity([done, failed, { ...done, id: "other", actorUserId: "two" }]);
+  expect(groups).toHaveLength(2); expect(groups[0].entries).toHaveLength(2); expect(groupOutcome(groups[0].entries)).toBe("succeeded");
+  expect(filterActivity([done, failed], { query: "", category: "", provider: "", problemsOnly: true })).toEqual([]);
+});
+it("links known work to its own history and rejects external actions", () => {
+  const jobId = "11111111-1111-4111-8111-111111111111";
+  expect(activityAction({ ...item("work", "Song kept"), kind: "job", jobId }, () => "Source")).toEqual({ href: `#/activity?view=jobs&job=${jobId}`, label: "Open related work" });
+  expect(activityAction({ ...item("work", "Song kept"), kind: "job", actionHref: "javascript:alert(1)", actionLabel: "Unsafe" }, () => "Source")).toBeNull();
+});
+it("keeps invalid dates readable instead of crashing the feed", () => {
+  expect(relativeTime("not-a-date", "Time unavailable")).toBe("Time unavailable");
+});
+
+it("uses meaningful outcome tones without marking cancelled or unknown work as failed", () => {
+  for (const state of ["passed", "verified", "placed", "succeeded", "ok"]) expect(activityTone(state)).toBe("success");
+  for (const state of ["running", "started", "pending", "scheduled"]) expect(activityTone(state)).toBe("accent");
+  for (const state of ["retrying", "Deferred", "partial", "PartiallySucceeded", "Conflicted"]) expect(activityTone(state)).toBe("warning");
+  for (const state of ["failed", "rejected", "unhealthy"]) expect(activityTone(state)).toBe("danger");
+  for (const state of ["cancelled", "skipped", "partly_checked", "unrecognized"]) expect(activityTone(state)).toBe("neutral");
+  expect(activityHeadline({ ...item("old", "Unknown"), kind: "job", label: "future.opaque" })).toBe("Background task");
+  expect(activityHeadline({ ...item("song", "Song"), label: "Tate McRae song cached" })).toBe("Tate McRae song cached");
+  expect(activityDuration(null)).toBe(""); expect(activityDuration(NaN)).toBe(""); expect(activityDuration(-1)).toBe("");
+  expect(activityDuration(10)).toBe("less than a second");
 });

@@ -16,6 +16,7 @@
   let { kind, size = 18 }: { kind: string; size?: number } = $props();
   const icons = {
     administration: Settings,
+    health: HeartPulse,
     caching: ArrowDownToLine,
     extension: Boxes,
     job: RefreshCw,

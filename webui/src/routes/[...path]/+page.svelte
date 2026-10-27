@@ -161,7 +161,7 @@
                         onSetupChanged: (value: OnboardingState) => { onboardingState = value; },
                       }
                     : route === "/activity"
-                      ? { administrator, initialView: routeQuery.get("view") ?? "history", initialReportId: routeQuery.get("report") ?? "" }
+                      ? { administrator, initialView: routeQuery.get("view") ?? "history", initialReportId: routeQuery.get("report") ?? "", initialJobId: routeQuery.get("job") ?? "" }
                     : route === "/getting-started"
                       ? { administrator }
                     : route === "/report"
