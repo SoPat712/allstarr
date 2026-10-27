@@ -11,6 +11,79 @@ namespace allstarr.Tests;
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
     [Theory]
+    [InlineData(ProtocolKind.Jellyfin, "Housewife", "Tate McRae", "Housewife", 208, "B0HMZ6W375", "B0HMZ6W376")]
+    [InlineData(ProtocolKind.Subsonic, "Housewife", "Tate McRae", "Housewife", 208, "B0HMZ6W375", "B0HMZ6W376")]
+    [InlineData(ProtocolKind.Jellyfin, "Starving Artist", "ADÉLA", "PRIMA", 180, "B0HHC1HLZZ", "B0H9P8D5Z9")]
+    [InlineData(ProtocolKind.Subsonic, "Starving Artist", "ADÉLA", "PRIMA", 180, "B0HHC1HLZZ", "B0H9P8D5Z9")]
+    public async Task SearchCombinesMultipleSparseAmazonCopiesUnderAKnownRecording(ProtocolKind protocol,
+        string title, string artist, string album, int seconds, string firstId, string secondId)
+    {
+        var anchor = RecordingSearchTrack("deezer", "known", title, artist, seconds, album);
+        var sparse = new[] { firstId, secondId }.Select(id => new ProviderTrackMetadata(
+            new("spotiflac-amazon", ProviderResourceKind.Track, id), title, [new(artist)], isExplicit: false)).ToArray();
+        var (gateway, _) = SearchRankingGateway("spotiflac-amazon,deezer", "spotiflac-amazon,deezer",
+            RecordingSearchCapability("spotiflac-amazon", sparse), RecordingSearchCapability("deezer", anchor));
+
+        var song = Assert.Single((await gateway.SearchAsync(SearchRankingContext(protocol), $"{title} {artist}", 20, 0, 0)).Songs);
+
+        Assert.Equal("known", song.ExternalId);
+        Assert.Equal(seconds, song.Duration);
+        Assert.Equal(album, song.Album);
+        Assert.Equal(new[] { firstId, secondId, "known" }.Order(), song.SearchRoutes.Select(route => route.Value).Order());
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task SparseCopiesNeverBridgeIncompatibleKnownRecordingsOrAbsorbVersions(ProtocolKind protocol)
+    {
+        var (gateway, _) = SearchRankingGateway("spotiflac-amazon,deezer,qobuz", "spotiflac-amazon,deezer,qobuz",
+            RecordingSearchCapability("spotiflac-amazon",
+                new(new("spotiflac-amazon", ProviderResourceKind.Track, "sparse-one"), "Housewife", [new("Tate McRae")]),
+                new(new("spotiflac-amazon", ProviderResourceKind.Track, "sparse-two"), "Housewife", [new("Tate McRae")]),
+                new(new("spotiflac-amazon", ProviderResourceKind.Track, "live"), "Housewife (Live)", [new("Tate McRae")]),
+                new(new("spotiflac-amazon", ProviderResourceKind.Track, "remix"), "Housewife (Club Remix)", [new("Tate McRae")]),
+                new(new("spotiflac-amazon", ProviderResourceKind.Track, "other-artist"), "Housewife", [new("Other Artist")])),
+            RecordingSearchCapability("deezer", RecordingSearchTrack("deezer", "first", "Housewife", "Tate McRae", 208, "Housewife")),
+            RecordingSearchCapability("qobuz",
+                RecordingSearchTrack("qobuz", "different-duration", "Housewife", "Tate McRae", 220, "Housewife"),
+                RecordingSearchTrack("qobuz", "different-album", "Housewife", "Tate McRae", 208, "Other Album")));
+
+        var songs = (await gateway.SearchAsync(SearchRankingContext(protocol), "Housewife Tate McRae", 20, 0, 0)).Songs;
+
+        Assert.Equal(6, songs.Count);
+        foreach (var id in new[] { "first", "different-duration", "different-album", "live", "remix", "other-artist" })
+            Assert.Contains(songs, song => song.ExternalId == id);
+        Assert.Equal(3, Assert.Single(songs, song => song.ExternalId == "first").SearchRoutes.Count);
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task SparseOnlyResultsRemainSeparateWithoutAKnownDurationAnchor(ProtocolKind protocol)
+    {
+        var (gateway, _) = SearchRankingGateway("deezer,qobuz", "deezer,qobuz",
+            RecordingSearchCapability("deezer", new ProviderTrackMetadata(new("deezer", ProviderResourceKind.Track, "one"), "Housewife", [new("Tate McRae")])),
+            RecordingSearchCapability("qobuz", new ProviderTrackMetadata(new("qobuz", ProviderResourceKind.Track, "two"), "Housewife", [new("Tate McRae")])));
+
+        Assert.Equal(2, (await gateway.SearchAsync(SearchRankingContext(protocol), "Housewife Tate McRae", 20, 0, 0)).Songs.Count);
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin, "artistgrid", ProviderUseMode.Automatic)]
+    [InlineData(ProtocolKind.Subsonic, "artistgrid", ProviderUseMode.Automatic)]
+    [InlineData(ProtocolKind.Jellyfin, "spotiflac-amazon", ProviderUseMode.ManualOnly)]
+    [InlineData(ProtocolKind.Subsonic, "spotiflac-amazon", ProviderUseMode.ManualOnly)]
+    public async Task SparseArtistGridAndManualSelectionsRemainSeparate(ProtocolKind protocol, string provider, ProviderUseMode mode)
+    {
+        var (gateway, _) = SearchRankingGateway($"deezer,{provider}", $"deezer,{provider}",
+            RecordingSearchCapability("deezer", RecordingSearchTrack("deezer", "known", "Housewife", "Tate McRae", 208, "Housewife")),
+            RecordingSearchCapability(provider, new ProviderTrackMetadata(new(provider, ProviderResourceKind.Track, "sparse"), "Housewife", [new("Tate McRae")])));
+
+        Assert.Equal(2, (await gateway.SearchAsync(DisplayPolicyContext(protocol, provider, mode), "Housewife Tate McRae", 20, 0, 0)).Songs.Count);
+    }
+
+    [Theory]
     [InlineData(ProtocolKind.Jellyfin, null, 180, null)]
     [InlineData(ProtocolKind.Subsonic, null, 180, null)]
     [InlineData(ProtocolKind.Jellyfin, "PRIMA", 0, null)]
@@ -106,8 +179,10 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Equal(3, result.Songs.Count(song => genuine.Contains(song.ExternalId)));
         if (query.Contains("Daft Punk", StringComparison.Ordinal))
             Assert.All(result.Songs.Take(3), song => Assert.Contains(song.ExternalId, genuine));
-        Assert.Equal(21, result.Songs.Count);
+        Assert.Equal(20, result.Songs.Count);
         Assert.DoesNotContain(result.Songs, song => song.ExternalId == "album-alias");
+        Assert.DoesNotContain(result.Songs, song => song.ExternalId == "unknown");
+        Assert.Contains(result.Songs[0].SearchRoutes, route => route.Value == "unknown");
 
         var merged = MusicSearchService.Merge<object>(query, [], result.Songs, [], [], [], false);
         Assert.Equal(result.Songs.Select(song => song.ExternalId), merged.Songs.Select(row => row.Song!.ExternalId));
@@ -283,7 +358,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [InlineData("Get Lucky (Live)", "Daft Punk", 369, "Random Access Memories")]
     [InlineData("Get Lucky", "Other Artist", 369, "Random Access Memories")]
     [InlineData("Get Lucky", "Daft Punk", 369, "Until the morning 2")]
-    [InlineData("Get Lucky", "Daft Punk", 0, "Random Access Memories")]
     [InlineData("Get Lucky (Mixed)", "Daft Punk", 369, "Random Access Memories")]
     public async Task SearchWithoutIsrcKeepsDifferentRecordingsSeparate(string title, string artist, double seconds, string album)
     {

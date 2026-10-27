@@ -4,6 +4,8 @@ using System.Text.Json;
 using System.Xml.Linq;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Favorites;
+using allstarr.Core.Identity;
+using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
@@ -27,19 +29,22 @@ public sealed partial class ProtocolRouteFixtureTests
         var protocol = backend.ToLowerInvariant();
         await SeedFavoriteViewsAsync(storage, protocol);
         const string savedId = "ext-deezer-song-saved";
-        var original = new FavoriteDisplaySnapshot(1, savedId, "song", "Starving Artist", ["ADÉLA"], "PRIMA", 180000);
+        var original = new FavoriteDisplaySnapshot(1, savedId, "song", "Starving Artist", ["ADÉLA"], "PRIMA", 180000)
+        { AlbumId = "ext-deezer-album-recording" };
         await using (var db = storage.CreateDbContext())
         {
             var saved = await db.Set<FavoriteStateRecord>().SingleAsync(item => item.OwnerUserId == FavoriteViewer && item.ItemId == savedId);
             var jobId = await db.Set<FavoriteEventRecord>().Where(item => item.Id == saved.LastEventId).Select(item => item.JobId).SingleAsync();
             saved.DisplayMetadataJson = JsonSerializer.Serialize(original, FavoriteDisplaySnapshot.JsonOptions);
-            foreach (var (id, title, artist, milliseconds) in new[]
+            foreach (var (id, title, artist, milliseconds) in new (string, string, string, long?)[]
             {
                 ("ext-qobuz-song-copy", "Starving Artist", "Adéla", 180000L),
                 ("ext-qobuz-song-live", "Starving Artist (Live)", "ADÉLA", 180000L),
                 ("ext-qobuz-song-remix", "Starving Artist (Club Remix)", "ADÉLA", 180000L),
                 ("ext-qobuz-song-namesake", "Starving Artist", "Adela Valero", 158000L),
-                ("ext-artistgrid-song-version", "Starving Artist", "ADÉLA", 180000L)
+                ("ext-artistgrid-song-version", "Starving Artist", "ADÉLA", 180000L),
+                ("ext-spotiflac-amazon-song-B0HHC1HLZZ", "Starving Artist", "ADÉLA", null),
+                ("ext-spotiflac-amazon-song-B0H9P8D5Z9", "Starving Artist", "Adéla", null)
             })
             {
                 var eventId = Guid.CreateVersion7();
@@ -72,7 +77,7 @@ public sealed partial class ProtocolRouteFixtureTests
                     IsFavorite = true,
                     UpdatedAt = date,
                     DisplayMetadataJson = JsonSerializer.Serialize(original with
-                    { ItemId = id, Title = title, Artists = [artist], DurationMilliseconds = milliseconds }, FavoriteDisplaySnapshot.JsonOptions)
+                    { ItemId = id, Title = title, Artists = [artist], Album = milliseconds == null ? null : original.Album, DurationMilliseconds = milliseconds }, FavoriteDisplaySnapshot.JsonOptions)
                 });
             }
             db.ProviderUserData.Add(new()
@@ -93,8 +98,12 @@ public sealed partial class ProtocolRouteFixtureTests
             {
                 Songs = [new()
                 {
-                    Id = "ext-qobuz-song-search", ExternalProvider = "qobuz", ExternalId = "search",
-                    Title = "Starving Artist", Artist = "Adéla", Album = "PRIMA", Duration = 180
+                    Id = "ext-spotiflac-amazon-song-B0HHC1HLZZ", ExternalProvider = "spotiflac-amazon", ExternalId = "B0HHC1HLZZ",
+                    Title = "Starving Artist", Artist = "Adéla"
+                }, new()
+                {
+                    Id = "ext-spotiflac-amazon-song-B0H9P8D5Z9", ExternalProvider = "spotiflac-amazon", ExternalId = "B0H9P8D5Z9",
+                    Title = "Starving Artist", Artist = "ADÉLA"
                 }]
             });
         var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
@@ -134,9 +143,16 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.True(response.IsSuccessStatusCode, body);
         Assert.Contains(savedId, body, StringComparison.Ordinal);
         Assert.DoesNotContain("ext-qobuz-song-copy", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("ext-spotiflac-amazon-song-", body, StringComparison.Ordinal);
         foreach (var suffix in new[] { "live", "remix", "namesake" })
             Assert.Contains("ext-qobuz-song-" + suffix, body, StringComparison.Ordinal);
         Assert.Contains("ext-artistgrid-song-version", body, StringComparison.Ordinal);
+        var principal = protocol == "jellyfin" ? "user-1" : "fixture";
+        var execution = new ProtocolExecutionContext(backend == "Jellyfin" ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic,
+            "primary", principal, new AllstarrPrincipal(FavoriteViewer, protocol, "primary", principal, "Listener", false),
+            "saved-count", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var membership = await factory.Services.GetRequiredService<SavedLibraryReader>().ReadAsync(execution);
+        Assert.Equal(5, Assert.Single(membership, item => item.ItemId == original.AlbumId).Display.Count);
         if (backend == "Jellyfin")
         {
             using var document = JsonDocument.Parse(body);
@@ -150,7 +166,15 @@ public sealed partial class ProtocolRouteFixtureTests
         var searchBody = await search.Content.ReadAsStringAsync();
         Assert.True(search.IsSuccessStatusCode, searchBody);
         Assert.Contains(savedId, searchBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("ext-qobuz-song-search", searchBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("ext-spotiflac-amazon-song-", searchBody, StringComparison.Ordinal);
+        if (format == "xml")
+            Assert.Single(XDocument.Parse(searchBody).Descendants(), item => item.Name.LocalName == "song");
+        else
+        {
+            using var document = JsonDocument.Parse(searchBody);
+            Assert.Single((backend == "Jellyfin" ? document.RootElement.GetProperty("Items") :
+                document.RootElement.GetProperty("subsonic-response").GetProperty("searchResult3").GetProperty("song")).EnumerateArray());
+        }
         gateway.Verify(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Starving Artist", It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), null), Times.Once);
         gateway.VerifyNoOtherCalls();
         await using var unchanged = storage.CreateDbContext();

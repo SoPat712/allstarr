@@ -183,23 +183,36 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
             { SharedScope = sharedScope }).ToArray();
         var policy = effectivePolicies == null ? null : await effectivePolicies.ResolveForUserAsync(owner, cancellationToken);
         var hidden = new HashSet<string>(StringComparer.Ordinal);
-        var groups = new List<List<FavoriteViewItem>>();
-        foreach (var item in saved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Track &&
+        var replacements = new Dictionary<string, FavoriteViewItem>(StringComparer.Ordinal);
+        var candidates = saved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Track &&
                      (item.Resource.ProviderId == "allstarr" || policy?.IsAutomatic(ProviderKey(item.Resource.ProviderId)) != false))
                  .OrderByDescending(item => hearted.Contains(item.ItemId)).ThenBy(item => item.FavoritedAt)
-                 .ThenBy(item => item.ItemId, StringComparer.Ordinal))
+                 .ThenBy(item => item.ItemId, StringComparer.Ordinal).ToArray();
+        var displaysBySong = candidates.ToDictionary(item => item.Song(), item => item);
+        foreach (var group in MusicSearchService.PartitionMetadataRecordings(displaysBySong.Keys).Where(group => group.Count > 1))
         {
-            var group = groups.FirstOrDefault(members => members.All(member =>
-                ProviderKey(member.Resource.ProviderId) != ProviderKey(item.Resource.ProviderId) &&
-                MusicSearchService.MetadataRecordingsMatch(member.Song(), item.Song())));
-            if (group == null) groups.Add([item]);
-            else
+            var members = group.Select(song => displaysBySong[song]).ToArray();
+            var chosen = members.OrderByDescending(item => hearted.Contains(item.ItemId)).ThenBy(item => item.FavoritedAt)
+                .ThenBy(item => item.ItemId, StringComparer.Ordinal).First();
+            var anchor = members.First(item => item.Display.DurationMilliseconds is > 0);
+            replacements[chosen.ItemId] = chosen with
             {
-                group.Add(item);
-                hidden.Add(item.ItemId);
-            }
+                Display = chosen.Display with
+                {
+                    Album = string.IsNullOrWhiteSpace(chosen.Display.Album) ? anchor.Display.Album : chosen.Display.Album,
+                    AlbumId = chosen.Display.AlbumId ?? anchor.Display.AlbumId,
+                    DurationMilliseconds = chosen.Display.DurationMilliseconds is > 0 ? chosen.Display.DurationMilliseconds : anchor.Display.DurationMilliseconds
+                }
+            };
+            foreach (var item in members.Where(item => item.ItemId != chosen.ItemId)) hidden.Add(item.ItemId);
         }
-        return saved.Where(item => !hidden.Contains(item.ItemId)).ToArray();
+        var visibleSaved = saved.Where(item => !hidden.Contains(item.ItemId))
+            .Select(item => replacements.GetValueOrDefault(item.ItemId, item)).ToArray();
+        var visibleSongCounts = visibleSaved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Track && item.Display.AlbumId != null)
+            .GroupBy(item => item.Display.AlbumId!, itemComparer).ToDictionary(group => group.Key, group => group.Count(), itemComparer);
+        return visibleSaved.Select(item => item.Resource.ResourceKind == ProviderResourceKind.Album
+            ? item with { Display = item.Display with { Count = visibleSongCounts.GetValueOrDefault(item.ItemId) } }
+            : item).ToArray();
     }
 
     internal async Task PreferSavedSongIdsAsync(ProtocolExecutionContext execution, IReadOnlyList<Song> songs,
@@ -214,12 +227,19 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
                 (item.Resource.ProviderId == "allstarr" || policy?.IsAutomatic(ProviderKey(item.Resource.ProviderId)) != false) &&
                 (item.ItemId == song.Id ||
                  (ProviderKey(item.Resource.ProviderId) != ProviderKey(song.ExternalProvider ?? "") || item.Resource.Value == song.ExternalId) &&
-                 MusicSearchService.MetadataRecordingsMatch(item.Song(), song)));
+                 (item.Display.DurationMilliseconds is > 0 || song.PreciseDuration?.TotalSeconds is > 0 || song.Duration is > 0) &&
+                 MusicSearchService.MetadataRecordingsMatch(item.Song(), song, allowSparse: true)));
             if (match == null || match.ItemId == song.Id) continue;
             var recording = identities == null ? null : await identities.ResolveRecordingAsync(execution.Actor!, match.ItemId, cancellationToken);
             song.Id = match.ItemId;
             song.CanonicalRecordingId = recording?.Id ??
                 (match.Resource.ProviderId == "allstarr" && Guid.TryParse(match.Resource.Value, out var id) ? id : null);
+            if (song.PreciseDuration?.TotalSeconds is not > 0 && song.Duration is not > 0 && match.Display.DurationMilliseconds is > 0)
+            {
+                song.PreciseDuration = TimeSpan.FromMilliseconds(match.Display.DurationMilliseconds.Value);
+                song.Duration = (int)(match.Display.DurationMilliseconds.Value / 1000);
+            }
+            if (string.IsNullOrWhiteSpace(song.Album)) song.Album = match.Display.Album ?? string.Empty;
         }
     }
 

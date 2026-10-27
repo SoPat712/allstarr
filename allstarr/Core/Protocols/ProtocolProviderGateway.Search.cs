@@ -211,22 +211,18 @@ public sealed partial class ProtocolProviderGateway
         IReadOnlyList<string> providerOrder, EffectiveProviderPolicySnapshot? policy, ProtocolExecutionContext protocol,
         IReadOnlyDictionary<Song, IReadOnlyList<Song>> evidence)
     {
-        var eligible = songs.Where(song => IsAutomaticProvider(NormalizeProvider(song.ExternalProvider), policy) &&
-            SearchDuration(song) is > 0 &&
-            !FuzzyMatcher.IsContinuousMixExcerpt(song.Title, song.Album) &&
-            !FuzzyMatcher.HasCoverRecordingLabel(string.Join(" ", song.Title, song.Artist, song.Album)) &&
-            FuzzyMatcher.BackingRecordingTags(string.Join(" ", song.Title, song.Artist, song.Album)).Count == 0 &&
-            FuzzyMatcher.SpecialEditionTags(string.Join(" ", song.Title, song.Album)).Count == 0);
+        var eligible = songs.Where(song => IsAutomaticProvider(NormalizeProvider(song.ExternalProvider), policy));
         var replacements = new Dictionary<Song, Song>(ReferenceEqualityComparer.Instance);
         var hidden = new HashSet<Song>(ReferenceEqualityComparer.Instance);
-        foreach (var group in PartitionSearchTracks(eligible, (left, right) =>
-                     MetadataSearchTracksMatch(left, right) &&
+        foreach (var group in MusicSearchService.PartitionMetadataRecordings(eligible, (left, right) =>
                      evidence.GetValueOrDefault(left, [left]).All(first =>
                          evidence.GetValueOrDefault(right, [right]).All(second =>
-                             SearchDuration(first) is > 0 && SearchDuration(second) is > 0 &&
-                             SearchDurationsCompatible(first, second)))).Where(group => group.Count > 1))
+                             SearchDurationsCompatible(first, second) &&
+                             (SearchDuration(left) is > 0 && SearchDuration(right) is > 0 ||
+                              MusicSearchService.MetadataRecordingsMatch(first, second, allowSparse: true)))))
+                 .Where(group => group.Count > 1))
         {
-            var chosen = ChooseDisplaySource(protocol, group, providerOrder);
+            var chosen = ChooseDisplaySource(protocol, group.Where(song => SearchDuration(song) is > 0).ToArray(), providerOrder);
             var first = group.Where(song => song.CanonicalRecordingId != null)
                 .OrderBy(song => song.CanonicalRecordingId).FirstOrDefault() ?? group[0];
             chosen.Id = first.Id;
@@ -249,12 +245,6 @@ public sealed partial class ProtocolProviderGateway
             else group.Add(song);
         }
         return groups;
-    }
-
-    private static bool MetadataSearchTracksMatch(Song left, Song right)
-    {
-        return NormalizeProvider(left.ExternalProvider) != NormalizeProvider(right.ExternalProvider) &&
-            MusicSearchService.MetadataRecordingsMatch(left, right);
     }
 
     private static double? SearchDuration(Song song) => song.PreciseDuration?.TotalSeconds ?? song.Duration;
