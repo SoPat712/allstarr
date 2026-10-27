@@ -104,7 +104,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token)
             {
                 Assert.True(conversion, "Lossy audio must not enter post-processing.");
-                return codec == "alac"
+                return codec == "alac" && executable == "ffprobe"
                     ? Task.FromResult(ExtensionDownloadConversionTests.Probe("alac", "mov,mp4,m4a"))
                     : ExtensionDownloadConversionTests.FixtureRunner(executable, arguments, output, limit, token);
             }

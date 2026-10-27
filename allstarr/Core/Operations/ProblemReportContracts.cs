@@ -24,7 +24,10 @@ public sealed record ProblemReportMatch([property: JsonPropertyName("decisionId"
     [property: JsonPropertyName("confidence")] double? Confidence, [property: JsonPropertyName("authorityScope")] string AuthorityScope, [property: JsonPropertyName("reasonCodes")] IReadOnlyList<string> ReasonCodes);
 public sealed record ProblemReportPlayback([property: JsonPropertyName("providerId")] string? ProviderId, [property: JsonPropertyName("sourceConfirmed")] bool SourceConfirmed, [property: JsonPropertyName("providerAccountId")] Guid? ProviderAccountId,
     [property: JsonPropertyName("accountRevision")] long? AccountRevision, [property: JsonPropertyName("openedAt")] DateTimeOffset? OpenedAt, [property: JsonPropertyName("observedAt")] DateTimeOffset? ObservedAt, [property: JsonPropertyName("cached")] bool? Cached,
-    [property: JsonPropertyName("seekRung")] string? SeekRung, [property: JsonPropertyName("selectionReason")] string? SelectionReason, [property: JsonPropertyName("positionTicks")] long? PositionTicks, [property: JsonPropertyName("clientName")] string? ClientName);
+    [property: JsonPropertyName("seekRung")] string? SeekRung, [property: JsonPropertyName("selectionReason")] string? SelectionReason, [property: JsonPropertyName("positionTicks")] long? PositionTicks, [property: JsonPropertyName("clientName")] string? ClientName)
+{
+    [JsonPropertyName("rejectionReason")] public string? RejectionReason { get; init; }
+}
 public sealed record ProblemReportCheck([property: JsonPropertyName("providerId")] string ProviderId, [property: JsonPropertyName("capability")] string Capability, [property: JsonPropertyName("state")] string State,
     [property: JsonPropertyName("checkedAt")] DateTimeOffset CheckedAt, [property: JsonPropertyName("reasonCode")] string? ReasonCode);
 public sealed record ProblemReportContext([property: JsonPropertyName("schemaVersion")] int SchemaVersion, [property: JsonPropertyName("capturedAt")] DateTimeOffset CapturedAt,

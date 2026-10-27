@@ -75,6 +75,7 @@ public sealed record PlaybackStreamSource(
     public ProviderAudioQuality EffectiveQuality { get; init; } = ProviderAudioQuality.Any;
     public Guid? ManagedFileId { get; init; }
     public string SeekRung { get; init; } = "sequential";
+    public string? RejectionReason { get; init; }
     internal object? ObservationToken { get; init; }
 
     public bool Matches(string protocol, string backendInstanceId) =>
@@ -171,10 +172,23 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
                 source.AccountId != stream.ServingAccountId || source.AccountRevision != stream.ServingAccountRevision ||
                 source.ManagedFileId != stream.ServingManagedFileId) return;
             // A duration hint must not replace proof of an available byte reader.
-            if (source.SeekRung is "byte-range" or "progressive-cache") return;
+            if (rung != "time-seek" && source.SeekRung is ("byte-range" or "progressive-cache" or "time-seek")) return;
             var updated = source with { SeekRung = rung };
             Set(exactKey, updated);
             if (_delivered.Get<PlaybackStreamSource>(key) == source) Set(key, updated);
+        }
+    }
+
+    public void StreamRejected(ProtocolExecutionContext context, string itemId, string? reason)
+    {
+        if (context.IsOriginalDownload || context.IsPreparation || context.Actor?.EffectiveUserId is not { } userId ||
+            string.IsNullOrWhiteSpace(StreamDeviceId(context))) return;
+        var key = (userId, StreamDeviceId(context), StreamItemKey(itemId));
+        lock (sourceGate)
+        {
+            if (_delivered.Get<PlaybackStreamSource>(key) is { } source &&
+                source.Matches(context.Protocol.ToString().ToLowerInvariant(), context.BackendInstanceId))
+                Set(key, source with { RejectionReason = allstarr.Core.Operations.ProblemReportText.Clean(reason) });
         }
     }
 

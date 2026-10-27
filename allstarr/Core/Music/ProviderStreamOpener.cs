@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Operations;
 using allstarr.Services.Local;
 using allstarr.Core.Protocols;
 using allstarr.Services.Common;
@@ -18,7 +19,8 @@ public sealed class ProviderStreamOpener(
     ManagedTrackCacheService? cache = null,
     PlaybackDeliveryActivityStore? activity = null,
     ILogger<ProviderStreamOpener>? logger = null,
-    ProviderStreamAdmission? admission = null)
+    ProviderStreamAdmission? admission = null,
+    MediaConversionGate? conversions = null)
 {
     internal static readonly IReadOnlySet<string> PreparationProviders = new HashSet<string>(StringComparer.Ordinal)
     { "apple-musickit", "apple-download" };
@@ -109,16 +111,19 @@ public sealed class ProviderStreamOpener(
                 context = context with { AudioDelivery = null };
             }
             else delivery ??= context.AudioDelivery;
+            if (delivery?.InvalidTimeOffset == true || delivery?.StartTimeTicks < 0)
+                throw new ProviderAudioOffsetException("Invalid audio time offset.", System.Net.HttpStatusCode.BadRequest);
             if (delivery?.RequestError is { } invalid) throw new ProviderAudioProfileException(invalid);
             if (delivery != null) context = context with { AudioDelivery = delivery };
+            var timeSeek = delivery?.StartTimeTicks > 0;
             var headOnly = HttpMethods.IsHead(http.Request.Method);
             var routed = await providers.OpenStreamAsync(
                 context,
                 providerId,
                 externalId,
                 quality,
-                http.Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null,
-                headOnly);
+                !timeSeek && http.Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null,
+                headOnly && !timeSeek);
             if (routed == null)
             {
                 return new ObjectResult(new { error = "No verified playback source is available." })
@@ -147,13 +152,18 @@ public sealed class ProviderStreamOpener(
             {
                 var itemId = context.RequestedItemId ?? $"ext-{providerId}-song-{externalId}";
                 void Selected(string rung) => activity?.SeekRungSelected(context, itemId, routed.EffectiveQuality, routed, rung);
-                if (!context.IsOriginalDownload && !headOnly) StreamDurationGuidance.Attach(routed, Metadata, Selected);
+                if (!context.IsOriginalDownload && (!headOnly || timeSeek)) StreamDurationGuidance.Attach(routed, Metadata, Selected);
                 if (cache != null)
-                    await cache.WrapAsync(routed, context, routed.ServingProviderId, servingId, headOnly, Metadata, http.RequestAborted);
+                    await cache.WrapAsync(routed, context, routed.ServingProviderId, servingId, headOnly && !timeSeek, Metadata, http.RequestAborted);
                 var cacheRung = ManagedTrackCacheService.SeekRung(routed.Response.Content);
                 if (!context.IsOriginalDownload && !headOnly && cacheRung != null) Selected(cacheRung);
+                if (timeSeek)
+                {
+                    await ProviderAudioTimeSeek.ApplyAsync(routed.Response, http.Response, delivery!.StartTimeTicks, conversions, http.RequestAborted);
+                    Selected("time-seek");
+                }
                 var result = await responses.CreateAsync(http, routed.Response, http.RequestAborted,
-                    enableRangeProcessing: routed.IsCached || cacheRung != null, providerStream: true, responseLease: capacity);
+                    enableRangeProcessing: timeSeek || routed.IsCached || cacheRung != null, providerStream: true, responseLease: capacity);
                 capacity = null;
                 return result;
             }
@@ -162,6 +172,18 @@ public sealed class ProviderStreamOpener(
                 routed.Response.Dispose();
                 throw;
             }
+        }
+        catch (Exception error) when (error is ProviderAudioProfileException or ProviderAudioOffsetException)
+        {
+            var reason = ProblemReportText.Clean(error.Message);
+            Activity.Current?.SetTag("audio.rejection_reason", reason);
+            activity?.StreamRejected(context, context.RequestedItemId ?? $"ext-{providerId}-song-{externalId}", reason);
+            logger?.LogWarning("Provider stream rejected: {Reason}; client={Client}; device={Device}; containers={Containers}; codecs={Codecs}; maxBitrate={MaxBitrate}; maxSampleRate={MaxSampleRate}; sampleRate={SampleRate}; maxChannels={MaxChannels}; channels={Channels}; maxBitDepth={MaxBitDepth}; startTimeTicks={StartTimeTicks}",
+                reason, ProblemReportText.Clean(context.Client.ClientId, 200), ProblemReportText.Clean(context.Client.DeviceName, 200),
+                ProblemReportText.Clean(string.Join(",", (delivery?.Formats ?? delivery?.Profiles ?? []).SelectMany(profile => profile.Containers))),
+                ProblemReportText.Clean(string.Join(",", (delivery?.Formats ?? delivery?.Profiles ?? []).SelectMany(profile => profile.Codecs))),
+                delivery?.MaxBitrate, delivery?.MaxSampleRate, delivery?.SampleRate, delivery?.MaxChannels, delivery?.Channels, delivery?.MaxBitDepth, delivery?.StartTimeTicks);
+            throw;
         }
         catch (LocalCapacityException)
         {

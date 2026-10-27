@@ -152,7 +152,8 @@ public sealed partial class ProblemReportService
             playback = new(stream == null ? native ? actor.BackendType : null : SafeProvider(stream.ProviderId), stream != null || native,
                 stream?.AccountId, stream?.AccountRevision, stream?.OpenedAt, new DateTimeOffset(activity.LastActivity.ToUniversalTime()),
                 stream?.Cached, ProblemReportText.Rung(stream?.SeekRung), native ? "native-local-library" : ProblemReportText.Route(stream?.SelectionReason),
-                activity.PositionTicks >= 0 ? activity.PositionTicks : null, ProblemReportText.Clean(activity.Client, 200));
+                activity.PositionTicks >= 0 ? activity.PositionTicks : null, ProblemReportText.Clean(activity.Client, 200))
+            { RejectionReason = ProblemReportText.Clean(stream?.RejectionReason) };
         }
         IReadOnlyList<ProblemReportCheck> checks = canonicalContext?.Checks ?? [];
         if (stream != null)

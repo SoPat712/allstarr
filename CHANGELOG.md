@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Lyric taps, resume and time-based seeking work for provider songs in Jellyfin and Subsonic clients, reusing cached audio. Incomplete downloads are rejected before conversion, and stream rejections include safe diagnostic reasons.
+
 - Activity uses outcome colors, readable operation names, song and playlist context, recovery guidance and links to exact jobs. Health results distinguish failed checks from unavailable details; Tasks includes Health and backup schedules.
 
 - Playback can switch sources after a failure. Fast, Balanced and Best quality start preferences control the wait for alternatives, and seeking works while a track fills the cache.

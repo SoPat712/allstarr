@@ -28,7 +28,7 @@ public sealed class ExtensionDownloadConversionDiagnosticsTests : IDisposable
         if (declaration == "missing") descriptor.AsObject().Remove("audio_codec");
         else descriptor["audio_codec"] = declaration == "null" ? null : declaration;
         Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token) =>
-            codec == "alac" ? Task.FromResult(ExtensionDownloadConversionTests.Probe(codec, "mov,mp4,m4a"))
+            codec == "alac" && executable == "ffprobe" ? Task.FromResult(ExtensionDownloadConversionTests.Probe(codec, "mov,mp4,m4a"))
                 : ExtensionDownloadConversionTests.FixtureRunner(executable, arguments, output, limit, token);
         var media = await new ExtensionDownloadPostProcessor(TimeSpan.FromSeconds(5), Run)
             .ProcessAsync(input, descriptor.ToJsonString(), 100_000, default);
