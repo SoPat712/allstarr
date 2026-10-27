@@ -1,20 +1,22 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { expectContainedMobileGeometry } from "./mobile-geometry";
 
-function snapshot(configured = false) {
+function snapshot(configured = false, protocol = "Jellyfin") {
+  const server = protocol === "Jellyfin";
   return {
     configuration: {
-      enabled: false, intervalMinutes: 30, listenerUserId: configured ? "test-listener" : null,
+      enabled: false, intervalMinutes: 30, listenerUserId: !server && configured ? "test-listener" : null,
       searchQuery: "Get Lucky Daft Punk", firstByteBudgetSeconds: 15, revision: configured ? 1 : 0,
-      hasListenerCredential: configured, hasWebhook: false, nextRunAt: null as string | null,
+      hasListenerCredential: !server && configured, hasWebhook: false, nextRunAt: null as string | null,
+      mode: server ? "server-api-key" : "listener", hasConfiguration: configured, serviceCredentialReady: server,
     },
-    protocol: "Jellyfin", inactiveProtocol: "Subsonic",
-    listeners: [
-      { id: "test-listener", displayName: "Test listener", protocol: "Jellyfin", isSynthetic: configured },
-      { id: "second-listener", displayName: "Other listener", protocol: "Jellyfin", isSynthetic: false },
+    protocol, inactiveProtocol: server ? "Subsonic" : "Jellyfin",
+    listeners: server ? [] : [
+      { id: "test-listener", displayName: "Test listener", protocol: "Subsonic", isSynthetic: configured },
+      { id: "second-listener", displayName: "Other listener", protocol: "Subsonic", isSynthetic: false },
     ],
     runs: [] as Array<{
-      id: string; protocol: string; startedAt: string; completedAt: string; passed: boolean;
+      id: string; protocol: string; mode?: string; startedAt: string; completedAt: string; passed: boolean;
       steps: Array<{ name: string; status: string; latencyMilliseconds: number; reason: string | null }>;
       alertStatus: string;
     }>,
@@ -48,7 +50,7 @@ async function mockHealth(page: Page, health: (route: Route) => Promise<void>, a
 }
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
-  test(`Health defaults and configuration keep secrets private at ${width}px ${theme}`, async ({ page }, testInfo) => {
+  test(`Health uses the server API key without listener setup at ${width}px ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
     let view = snapshot();
@@ -68,45 +70,34 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     });
     await page.goto("/#/settings/health");
     await expect(page.getByRole("heading", { name: "Health", exact: true })).toBeVisible();
-    await expect(page.getByText("Subsonic is not exposed by this deployment.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Check provider playback and listener actions with a dedicated test account.", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Server API key ready", { exact: true })).toBeVisible();
     await expect(page.getByText("No checks yet", { exact: true })).toBeVisible();
-    if (width === 390) await expectContainedMobileGeometry(page);
     await expect(page.getByRole("button", { name: "Run now", exact: true })).toBeDisabled();
-    await expect(page.getByLabel("Enable scheduled checks", { exact: true })).not.toBeChecked();
     const form = page.getByRole("form", { name: "Health monitoring", exact: true });
     await expect(form.getByLabel("Check interval (minutes)")).toHaveValue("30");
     await expect(form.getByLabel("Search query", { exact: true })).toHaveValue("Get Lucky Daft Punk");
     await expect(form.getByLabel("First audio byte budget (seconds)")).toHaveValue("15");
-    await expect(form.getByLabel("Listener username", { exact: true })).toHaveValue("");
-    await expect(form.getByLabel("Listener password", { exact: true })).toHaveValue("");
-    await expect(form.getByLabel("Webhook URL", { exact: true })).toHaveValue("");
-    await expect(form).toContainText("permanently");
-    await expect(form).toContainText("even after monitoring is disabled");
-    await expect(form).toContainText("listening history, recommendations and external scrobbles");
-    await form.getByRole("button", { name: "Health listener", exact: true }).focus();
-    await page.keyboard.press("Enter");
-    await page.getByRole("option", { name: "Test listener", exact: true }).click();
-    await form.getByLabel("Listener username", { exact: true }).fill("fixture-listener");
-    await form.getByLabel("Listener password", { exact: true }).fill("fixture-password");
+    for (const label of ["Health listener", "Listener username", "Listener password"])
+      await expect(form.getByLabel(label, { exact: true })).toHaveCount(0);
+    await expect(form).not.toContainText("permanently marks");
+    await expect(form).toContainText("Read-only checks leave listening history and saved music unchanged.");
+    if (width === 390) await expectContainedMobileGeometry(page);
     await form.getByLabel("Webhook URL", { exact: true }).fill("https://example.invalid/fixture-webhook");
     await form.getByLabel("Enable scheduled checks", { exact: true }).check();
     await form.getByLabel("Check interval (minutes)").fill("60");
     await form.getByRole("button", { name: "Save health settings", exact: true }).click();
     await expect.poll(() => writes[0]).toEqual({
-      enabled: true, listenerUserId: "test-listener", intervalMinutes: 60,
-      searchQuery: "Get Lucky Daft Punk", firstByteBudgetSeconds: 15, expectedRevision: 0,
-      username: "fixture-listener", password: "fixture-password",
-      webhookUrl: "https://example.invalid/fixture-webhook", clearWebhook: false,
+      enabled: true, intervalMinutes: 60, searchQuery: "Get Lucky Daft Punk", firstByteBudgetSeconds: 15,
+      expectedRevision: 0, webhookUrl: "https://example.invalid/fixture-webhook", clearWebhook: false,
     });
     await expect(page.getByRole("status").filter({ hasText: "Health settings saved." })).toBeVisible();
-    for (const label of ["Listener username", "Listener password", "Webhook URL"])
-      await expect(form.getByLabel(label, { exact: true })).toHaveValue("");
+    await expect(form.getByLabel("Webhook URL", { exact: true })).toHaveValue("");
     await expect(form.getByLabel("Check interval (minutes)")).toHaveValue("60");
     await expect(page.getByRole("button", { name: "Run now", exact: true })).toBeEnabled();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     const saveButton = form.getByRole("button", { name: "Save health settings", exact: true });
     await saveButton.scrollIntoViewIfNeeded();
-    await expect(form.getByText(/^Saving permanently marks this listener/)).toBeInViewport();
     if (width === 390) {
       const buttonBox = await saveButton.boundingBox();
       const navigationBox = await page.locator(".mobile-navigation").boundingBox();
@@ -115,21 +106,17 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.screenshot({ path: testInfo.outputPath(`health-form-${width}-${theme}.png`) });
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: testInfo.outputPath(`health-${width}-${theme}.png`) });
-
     await form.getByLabel("Enable scheduled checks", { exact: true }).uncheck();
     await form.getByRole("button", { name: "Save health settings", exact: true }).click();
     await expect.poll(() => writes.length).toBe(2);
-    expect(writes[1]).toEqual({ enabled: false, listenerUserId: "test-listener", intervalMinutes: 60,
+    expect(writes[1]).toEqual({ enabled: false, intervalMinutes: 60,
       searchQuery: "Get Lucky Daft Punk", firstByteBudgetSeconds: 15, expectedRevision: 1, clearWebhook: false });
     await form.getByLabel("Remove saved webhook", { exact: true }).check();
     await form.getByRole("button", { name: "Save health settings", exact: true }).click();
     await expect.poll(() => writes.length).toBe(3);
     expect(writes[2].clearWebhook).toBe(true);
-    expect(writes[2]).not.toHaveProperty("webhookUrl");
-    await form.getByRole("button", { name: "Health listener", exact: true }).click();
-    await page.getByRole("option", { name: "Other listener", exact: true }).click();
-    await expect(form.getByLabel("Listener username", { exact: true })).toHaveAttribute("required", "");
-    await expect(form.getByLabel("Listener password", { exact: true })).toHaveAttribute("required", "");
+    for (const body of writes) for (const key of ["username", "password", "listenerUserId", "apiKey"])
+      expect(body).not.toHaveProperty(key);
   });
 }
 
@@ -260,7 +247,7 @@ test("Health conflicts keep edits and offer a safe reload", async ({ page }) => 
 
 for (const [code, message] of [
   ["check_running", "A health check is already running. Refresh results to follow it."],
-  ["not_configured", "Configure and save a listener before running a check."],
+  ["not_configured", "Save health settings before running a check."],
 ]) {
   test(`Health explains ${code} without exposing a response payload`, async ({ page }) => {
     await mockHealth(page, route => route.request().method() === "POST"
@@ -279,4 +266,44 @@ test("Health is inaccessible to a non-administrator", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "This workspace is for administrators.", exact: true })).toBeVisible();
   await expect(page.getByRole("form", { name: "Health monitoring", exact: true })).toHaveCount(0);
   expect(healthRequests).toBe(0);
+});
+
+
+test("Health requires a server API key and never offers a Jellyfin listener login", async ({ page }) => {
+  const view = snapshot();
+  view.configuration.serviceCredentialReady = false;
+  await mockHealth(page, route => respond(route, view));
+  await page.goto("/#/settings/health");
+  await expect(page.getByText("Server API key needed", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Run now", exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Listener username", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Listener password", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Open Setup", exact: true })).toHaveAttribute("href", "/#/settings/setup");
+});
+
+test("Health keeps unavailable optional media neutral and identifies legacy listener results", async ({ page }) => {
+  const view = snapshot(true);
+  view.runs.push({ id: "partial", mode: "server-api-key", protocol: "Jellyfin", startedAt: "2026-10-26T12:00:00Z",
+    completedAt: "2026-10-26T12:00:01Z", passed: true,
+    steps: [{ name: "backend", status: "passed", latencyMilliseconds: 40, reason: null },
+      { name: "artwork", status: "skipped", latencyMilliseconds: 0, reason: "artwork_unavailable" }], alertStatus: "none" });
+  view.runs.push({ id: "legacy", mode: "listener", protocol: "Jellyfin", startedAt: "2026-10-25T12:00:00Z",
+    completedAt: "2026-10-25T12:00:01Z", passed: true,
+    steps: [{ name: "heart", status: "passed", latencyMilliseconds: 40, reason: null }], alertStatus: "none" });
+  await mockHealth(page, route => respond(route, view));
+  await page.goto("/#/settings/health");
+  const latest = page.getByRole("article", { name: "Latest health check", exact: true });
+  await expect(latest).toContainText("Partly checked");
+  await expect(latest).toContainText("Not checked");
+  await expect(latest).toContainText("Server connection");
+  await expect(page.getByRole("region", { name: "Check history", exact: true })).toContainText("Listener check");
+});
+
+test("Subsonic Health keeps its existing optional listener setup", async ({ page }) => {
+  const view = snapshot(false, "Subsonic");
+  await mockHealth(page, route => respond(route, view));
+  await page.goto("/#/settings/health");
+  await expect(page.getByLabel("Listener username", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Listener password", { exact: true })).toBeVisible();
+  await expect(page.getByText("Server API key ready", { exact: true })).toHaveCount(0);
 });

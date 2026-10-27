@@ -2,6 +2,9 @@ import { ApiError, json } from "$lib/api";
 import { adminUrl } from "$lib/admin-url";
 
 export type HealthConfiguration = {
+  mode: "server-api-key" | "listener";
+  hasConfiguration: boolean;
+  serviceCredentialReady: boolean;
   enabled: boolean;
   intervalMinutes: number;
   listenerUserId: string | null;
@@ -21,6 +24,7 @@ export type HealthStep = {
 };
 
 export type HealthRun = {
+  mode?: "server-api-key" | "listener";
   id: string;
   protocol: string;
   startedAt: string;
@@ -40,8 +44,9 @@ export type HealthSnapshot = {
 };
 
 export type HealthUpdate = Pick<HealthConfiguration,
-  "enabled" | "listenerUserId" | "intervalMinutes" | "searchQuery" | "firstByteBudgetSeconds"> & {
+  "enabled" | "intervalMinutes" | "searchQuery" | "firstByteBudgetSeconds"> & {
   expectedRevision: number;
+  listenerUserId?: string;
   username?: string;
   password?: string;
   webhookUrl?: string;
@@ -58,9 +63,36 @@ export const health = {
   }),
 };
 
-export function healthReason(reason: string | null): string {
+export function healthReason(reason: string | null, mode?: HealthConfiguration["mode"]): string {
   if (!reason) return "";
+  if (mode === "server-api-key") {
+    const serverMessages: Record<string, string> = {
+      http_401: "Jellyfin rejected the saved server API key. Review the connection in Setup.",
+      http_403: "The server API key cannot read this resource. Review the server connection.",
+      transport_failure: "Jellyfin could not be reached. Check the server connection.",
+      invalid_response: "Jellyfin returned an unreadable response.",
+      response_too_large: "The server response exceeded the check's size limit.",
+      check_unavailable: "The server check could not run. Review the connection in Setup.",
+    };
+    if (serverMessages[reason]) return serverMessages[reason];
+    const status = /^http_(\d{3})$/.exec(reason);
+    if (status && !["http_429", "http_503"].includes(reason)) return `Jellyfin returned HTTP ${status[1]}.`;
+  }
   const messages: Record<string, string> = {
+    service_api_key_unavailable: "The saved Jellyfin server API key is unavailable. Review the connection in Setup.",
+    no_library_sample: "No library audio sample is available for this check.",
+    library_sample_fallback: "The query did not find a song. Another library sample was checked.",
+    no_native_audio: "No library audio sample is available for this check.",
+    query_no_match_fallback: "The query did not find a song. Another library sample was checked.",
+    range_length_unavailable: "The sample did not supply a verified length for the seek check.",
+    metadata_unavailable: "Song details must be available before this step can run.",
+    backend_unavailable: "The server connection must pass before this step can run.",
+    search_unavailable: "A library sample must be available before this step can run.",
+    range_ignored: "The server did not return the requested byte range.",
+    short_body: "The server stopped before the requested audio sample was complete.",
+    empty_body: "The server returned an empty media sample.",
+    artwork_unavailable: "No artwork is available for this sample.",
+    lyrics_unavailable: "No lyrics are available for this sample.",
     no_eligible_song: "No eligible provider song was found. Check the query and automatic sources.",
     search_required: "Search must pass before this step can run.",
     playlist_required: "A temporary playlist must be created before this step can run.",
@@ -101,7 +133,8 @@ export function healthError(cause: unknown): string {
     const messages: Record<string, string> = {
       revision_conflict: "Health settings changed. Reload settings and try again.",
       check_running: "A health check is already running. Refresh results to follow it.",
-      not_configured: "Configure and save a listener before running a check.",
+      not_configured: "Save health settings before running a check.",
+      service_api_key_unavailable: "Set up a Jellyfin server API key in Setup before enabling checks.",
     };
     return messages[details?.code ?? details?.error ?? ""] ?? cause.message;
   }

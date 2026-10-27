@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Data;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Configuration;
@@ -13,21 +14,29 @@ using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using allstarr.Models.Settings;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Health;
 
-public sealed record HealthSmokeSaveRequest(bool Enabled, Guid ListenerUserId, int IntervalMinutes = 30,
+public sealed record HealthSmokeSaveRequest(bool Enabled, Guid ListenerUserId = default, int IntervalMinutes = 30,
     string SearchQuery = "Get Lucky Daft Punk", int FirstByteBudgetSeconds = 15, long ExpectedRevision = 0,
     string? Username = null, string? Password = null, string? WebhookUrl = null, bool ClearWebhook = false);
 public sealed record HealthSmokeSchedule(int Version, long Revision, int IntervalMinutes, string SearchQuery,
-    int FirstByteBudgetSeconds, Guid CredentialReferenceId, Guid? WebhookReferenceId = null);
+    int FirstByteBudgetSeconds, Guid CredentialReferenceId, Guid? WebhookReferenceId = null)
+{
+    [JsonIgnore]
+    public bool IsServerMode => Version == 2;
+}
 public sealed record HealthSmokeJobPayload(Guid ScheduleId, long ConfigurationRevision);
 public sealed record HealthSmokeCleanupPayload(Guid RunId);
 public sealed record HealthSmokeAlertPayload(Guid RunId, HealthSmokeAlertChange[] Changes);
 internal sealed record HealthSmokeRunBinding(Guid ScheduleId, Guid OwnerUserId, string Protocol,
     string BackendInstanceId, string PrincipalId, HealthSmokeSchedule Configuration, DateTimeOffset StartedAt);
 internal sealed record HealthSmokeCompleted(string Protocol, DateTimeOffset StartedAt, DateTimeOffset CompletedAt,
-    long ConfigurationRevision, HealthSmokeStep[] Steps, string[] OpenAlertSteps, string AlertStatus);
+    long ConfigurationRevision, HealthSmokeStep[] Steps, string[] OpenAlertSteps, string AlertStatus)
+{
+    public string Mode { get; init; } = "listener";
+}
 
 public sealed class HealthSmokeConfigurationException(string code, string message) : InvalidOperationException(message)
 { public string Code { get; } = code; }
@@ -36,13 +45,16 @@ public sealed partial class HealthSmokeService(
     IDbContextFactory<AllstarrDbContext> factory, EncryptedSecretStore secrets,
     IDurableRuntimeSettings settings, IBackendConnectionVerifier verifier, BackendSelectionAuthority backend,
     IdentityOptions identity, IPlatformClock clock, DurableJobQueue jobs,
-    IEffectiveProviderPolicyResolver policies, HealthSmokeProtocolProbe probe)
+    IEffectiveProviderPolicyResolver policies, HealthSmokeProtocolProbe probe,
+    IOptions<JellyfinSettings>? jellyfinSettings = null, HealthSmokeServerProbe? serverProbe = null)
 {
     public const string JobType = "health.smoke";
     public const string CleanupJobType = "health.cleanup";
     public const string AlertJobType = "health.alert";
     public const string ListenerPurpose = "health-smoke-listener";
     public const string WebhookPurpose = "health-smoke-webhook";
+    private readonly JellyfinSettings _jellyfinSettings = jellyfinSettings?.Value ?? new();
+    private readonly HealthSmokeServerProbe? _serverProbe = serverProbe;
     internal static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly SemaphoreSlim _configurationGate = new(1, 1);
 
@@ -64,7 +76,8 @@ public sealed partial class HealthSmokeService(
                 row.Result!.Protocol,
                 row.Result.StartedAt,
                 row.Result.CompletedAt,
-                passed = row.Result.Steps.All(step => step.Status == "passed"),
+                passed = IsSuccessful(row.Result.Mode, row.Result.Steps),
+                mode = row.Result.Mode,
                 row.Result.Steps,
                 row.AlertStatus
             }).ToArray();
@@ -75,13 +88,16 @@ public sealed partial class HealthSmokeService(
         {
             configuration = new
             {
-                enabled = schedule?.Enabled == true,
+                enabled = schedule?.Enabled == true && config != null && (IsSubsonic || config.IsServerMode),
                 intervalMinutes = config?.IntervalMinutes ?? 30,
-                listenerUserId = (Guid?)schedule?.OwnerUserId,
+                listenerUserId = IsSubsonic && config != null ? (Guid?)schedule?.OwnerUserId : null,
                 searchQuery = config?.SearchQuery ?? "Get Lucky Daft Punk",
                 firstByteBudgetSeconds = config?.FirstByteBudgetSeconds ?? 15,
                 revision = config?.Revision ?? 0,
-                hasListenerCredential = config != null,
+                mode = IsJellyfin ? "server-api-key" : "listener",
+                serviceCredentialReady = IsServiceCredentialReady,
+                hasConfiguration = config != null && (IsSubsonic || config.IsServerMode),
+                hasListenerCredential = IsSubsonic && config != null,
                 hasWebhook = config?.WebhookReferenceId != null,
                 nextRunAt = schedule?.NextRunAt
             },
@@ -95,10 +111,12 @@ public sealed partial class HealthSmokeService(
 
     public async Task ConfigureAsync(HealthSmokeSaveRequest request, Guid administrator, CancellationToken token)
     {
-        if (request.ListenerUserId == Guid.Empty || request.IntervalMinutes is < 1 or > 1440 ||
+        if ((!IsJellyfin && request.ListenerUserId == Guid.Empty) || request.IntervalMinutes is < 1 or > 1440 ||
             request.FirstByteBudgetSeconds is < 1 or > 60 || string.IsNullOrWhiteSpace(request.SearchQuery) ||
             request.SearchQuery.Length > 200 || request.SearchQuery.Any(char.IsControl))
-            throw new ArgumentException("Choose a dedicated listener, a song, an interval from 1 to 1440 minutes, and a playback budget from 1 to 60 seconds.");
+            throw new ArgumentException(IsJellyfin
+                ? "Enter a song, an interval from 1 to 1440 minutes, and a playback budget from 1 to 60 seconds."
+                : "Choose a dedicated listener, a song, an interval from 1 to 1440 minutes, and a playback budget from 1 to 60 seconds.");
         Uri? webhook = null;
         if (!string.IsNullOrWhiteSpace(request.WebhookUrl) &&
             (!Uri.TryCreate(request.WebhookUrl.Trim(), UriKind.Absolute, out webhook) ||
@@ -108,38 +126,55 @@ public sealed partial class HealthSmokeService(
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);
-            var user = await db.Users.SingleOrDefaultAsync(user => user.Id == request.ListenerUserId && user.Enabled && !user.IsAdmin &&
+            var admin = await db.Users.SingleOrDefaultAsync(user => user.Id == administrator && user.Enabled && user.IsAdmin &&
                 user.BackendType == backend.EffectiveValue.ToLower() && user.BackendInstanceId == identity.BackendInstanceId, token)
-                ?? throw new ArgumentException("Choose an enabled, non-administrator listener from this deployment.");
+                ?? throw new UnauthorizedAccessException("The current administrator is unavailable for this deployment.");
+            UserRecord? user = null;
+            if (IsSubsonic)
+            {
+                user = await db.Users.SingleOrDefaultAsync(item => item.Id == request.ListenerUserId && item.Enabled && !item.IsAdmin &&
+                    item.BackendType == backend.EffectiveValue.ToLower() && item.BackendInstanceId == identity.BackendInstanceId, token)
+                    ?? throw new ArgumentException("Choose an enabled, non-administrator listener from this deployment.");
+            }
             var schedule = await db.JobSchedules.SingleOrDefaultAsync(item => item.JobType == JobType, token);
             var before = schedule == null ? null : Parse<HealthSmokeSchedule>(schedule.PayloadTemplateJson);
+            var beforeOwnerId = schedule?.OwnerUserId;
             if ((before?.Revision ?? 0) != request.ExpectedRevision)
                 throw new HealthSmokeConfigurationException("revision_conflict", "Health settings changed. Reload before saving.");
             if (await HasActiveRunAsync(db, token))
                 throw new HealthSmokeConfigurationException("check_running", "Wait for the current health check and cleanup before changing its listener or settings.");
+            if (IsJellyfin)
+            {
+                if (!string.IsNullOrWhiteSpace(request.Username) || !string.IsNullOrWhiteSpace(request.Password))
+                    throw new ArgumentException("Jellyfin health checks use the configured server API key; listener sign-in is not supported.");
+                if (await HasOutstandingArtifactsAsync(db, token))
+                    throw new HealthSmokeConfigurationException("cleanup_pending", "Wait for the previous health check cleanup before changing Health mode.");
+                if (request.Enabled && !IsServiceCredentialReady)
+                    throw new HealthSmokeConfigurationException("service_api_key_unavailable", "Configure a valid Jellyfin server API key before enabling Health.");
+            }
             HealthSmokeCredentials? credentials = null;
-            if (!string.IsNullOrWhiteSpace(request.Username) && !string.IsNullOrEmpty(request.Password))
+            if (IsSubsonic && !string.IsNullOrWhiteSpace(request.Username) && !string.IsNullOrEmpty(request.Password))
             {
                 var endpoint = (await settings.GetAsync("Backend:Url", token)).NormalizedValue.TrimEnd('/');
                 var verified = await verifier.VerifyAsync(Enum.Parse<BackendType>(backend.EffectiveValue), endpoint,
                     request.Username, request.Password, token);
-                if (verified == null || verified.IsAdministrator || verified.UserId != user.BackendPrincipalId)
+                if (verified == null || verified.IsAdministrator || verified.UserId != user!.BackendPrincipalId)
                     throw new ArgumentException("The sign-in must belong to the selected dedicated listener.");
-                credentials = new() { UserName = request.Username, Password = user.BackendType == "subsonic" ? request.Password : "", AccessToken = verified.AccessToken };
+                credentials = new() { UserName = request.Username, Password = request.Password, AccessToken = verified.AccessToken };
             }
-            else if (before == null || schedule?.OwnerUserId != user.Id)
+            else if (IsSubsonic && (before == null || schedule?.OwnerUserId != user!.Id))
                 throw new ArgumentException("Sign in as the selected dedicated listener to configure its check.");
             await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, token);
             if (await HasActiveRunAsync(db, token))
                 throw new HealthSmokeConfigurationException("check_running", "Wait for the current health check and cleanup before changing its listener or settings.");
-            var reference = credentials == null ? before!.CredentialReferenceId :
-                (await secrets.StoreWithinTransactionAsync(db, user.Id, ListenerPurpose,
+            var reference = IsJellyfin ? Guid.Empty : credentials == null ? before!.CredentialReferenceId :
+                (await secrets.StoreWithinTransactionAsync(db, user!.Id, ListenerPurpose,
                     JsonSerializer.SerializeToUtf8Bytes(credentials, Json), cancellationToken: token)).Id;
             var webhookReference = request.ClearWebhook ? null : before?.WebhookReferenceId;
             if (webhook != null)
                 webhookReference = (await secrets.StoreWithinTransactionAsync(db, null, WebhookPurpose,
                     System.Text.Encoding.UTF8.GetBytes(webhook.AbsoluteUri), cancellationToken: token)).Id;
-            var config = new HealthSmokeSchedule(1, (before?.Revision ?? 0) + 1, request.IntervalMinutes,
+            var config = new HealthSmokeSchedule(IsJellyfin ? 2 : 1, (before?.Revision ?? 0) + 1, request.IntervalMinutes,
                 request.SearchQuery.Trim(), request.FirstByteBudgetSeconds, reference, webhookReference);
             var now = clock.UtcNow;
             if (schedule == null)
@@ -147,8 +182,8 @@ public sealed partial class HealthSmokeService(
                 schedule = new() { Id = Guid.CreateVersion7(), JobType = JobType, CreatedAt = now };
                 db.JobSchedules.Add(schedule);
             }
-            user.IsSynthetic = true;
-            schedule.OwnerUserId = user.Id;
+            if (IsSubsonic) user!.IsSynthetic = true;
+            schedule.OwnerUserId = IsJellyfin ? admin.Id : user!.Id;
             schedule.Enabled = request.Enabled;
             schedule.CronExpression = "* * * * *";
             schedule.TimeZoneId = "UTC";
@@ -159,6 +194,13 @@ public sealed partial class HealthSmokeService(
             schedule.NextRunAt = request.Enabled ? now.AddMinutes(config.IntervalMinutes) : null;
             schedule.UpdatedAt = now;
             schedule.Revision++;
+            if (IsJellyfin && before is { Version: < 2 } && before.CredentialReferenceId != Guid.Empty && beforeOwnerId.HasValue &&
+                schedule.OwnerUserId != beforeOwnerId)
+            {
+                var previous = await db.SecretReferences.SingleOrDefaultAsync(item => item.Id == before.CredentialReferenceId &&
+                    item.UserId == beforeOwnerId && item.Purpose == ListenerPurpose && item.RevokedAt == null, token);
+                if (previous != null) previous.RevokedAt = now;
+            }
             db.AuditEvents.Add(Event(Guid.CreateVersion7(), administrator, "configured", "success", "{}", now));
             await db.SaveChangesAsync(token);
             await transaction.CommitAsync(token);
@@ -174,10 +216,20 @@ public sealed partial class HealthSmokeService(
             await using var db = await factory.CreateDbContextAsync(token);
             await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, token);
             var schedule = await db.JobSchedules.AsNoTracking().SingleOrDefaultAsync(item => item.JobType == JobType, token)
-                ?? throw new HealthSmokeConfigurationException("not_configured", "Configure a dedicated listener first.");
+                ?? throw new HealthSmokeConfigurationException("not_configured", "Configure Health first.");
             if (await HasActiveRunAsync(db, token))
                 throw new HealthSmokeConfigurationException("check_running", "A health check or its cleanup is already running.");
             var config = Parse<HealthSmokeSchedule>(schedule.PayloadTemplateJson) ?? throw new InvalidOperationException("Health configuration is unavailable.");
+            if (IsJellyfin && !config.IsServerMode)
+                throw new HealthSmokeConfigurationException("legacy_disabled", "The previous Jellyfin listener Health mode is disabled. Configure server API-key checks.");
+            if (IsSubsonic && config.IsServerMode)
+                throw new HealthSmokeConfigurationException("health_scope_changed", "The saved Health mode belongs to a different backend.");
+            if (IsJellyfin && !IsServiceCredentialReady)
+                throw new HealthSmokeConfigurationException("service_api_key_unavailable", "Configure a valid Jellyfin server API key before running Health.");
+            if (schedule.OwnerUserId == null || !await db.Users.AsNoTracking().AnyAsync(user => user.Id == schedule.OwnerUserId &&
+                    user.Enabled && (IsJellyfin ? user.IsAdmin : user.IsSynthetic && !user.IsAdmin) &&
+                    user.BackendType == backend.EffectiveValue.ToLower() && user.BackendInstanceId == identity.BackendInstanceId, token))
+                throw new HealthSmokeConfigurationException("health_scope_changed", "The current Health administrator is unavailable.");
             var queued = await jobs.EnqueueInExistingTransactionAsync(db, new DurableJobEnqueueRequest<HealthSmokeJobPayload>(JobType,
                 $"health-manual:{Guid.NewGuid():N}", new(schedule.Id, config.Revision), schedule.OwnerUserId, MaxAttempts: 1), token);
             await db.SaveChangesAsync(token);
@@ -201,6 +253,22 @@ public sealed partial class HealthSmokeService(
     internal static Task<bool> HasActiveRunAsync(AllstarrDbContext db, CancellationToken token) => db.Jobs.AnyAsync(item =>
         (item.Type == JobType || item.Type == CleanupJobType) &&
         (item.State == DurableJobState.Pending || item.State == DurableJobState.RetryScheduled || item.State == DurableJobState.Running), token);
+
+    private static Task<bool> HasOutstandingArtifactsAsync(AllstarrDbContext db, CancellationToken token) => db.HealthSmokeRuns.AnyAsync(item =>
+        item.CompletedJson == null || item.ArtifactsJson != "{}" && item.ArtifactsJson != EmptyArtifacts, token);
+
+    internal static bool IsSuccessful(string mode, IReadOnlyList<HealthSmokeStep> steps) =>
+        string.Equals(mode, "server-api-key", StringComparison.OrdinalIgnoreCase)
+            ? steps.Any(step => step.Status == "passed") && steps.All(step => step.Status != "failed")
+            : steps.Count == HealthSmokeProtocolProbe.StepNames.Length &&
+                steps.All(step => step.Status == "passed");
+
+    private bool IsJellyfin => backend.EffectiveValue.Equals("Jellyfin", StringComparison.OrdinalIgnoreCase);
+    private bool IsSubsonic => backend.EffectiveValue.Equals("Subsonic", StringComparison.OrdinalIgnoreCase);
+    private bool IsServiceCredentialReady => IsJellyfin &&
+        string.Equals(_jellyfinSettings.ServiceCredentialKind, "api-key", StringComparison.OrdinalIgnoreCase) &&
+        !string.IsNullOrWhiteSpace(_jellyfinSettings.ApiKey) && Uri.TryCreate(_jellyfinSettings.Url, UriKind.Absolute, out var uri) &&
+        uri.Scheme is "http" or "https";
 
     internal static T? Parse<T>(string json)
     {

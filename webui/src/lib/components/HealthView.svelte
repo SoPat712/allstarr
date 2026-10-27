@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { health, healthError, healthReason, type HealthSnapshot, type HealthStep } from "$lib/health";
+  import { health, healthError, healthReason, type HealthRun, type HealthSnapshot, type HealthStep } from "$lib/health";
   import SelectField from "$lib/components/SelectField.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import { Badge } from "$lib/components/ui/badge";
@@ -19,7 +19,11 @@
   const abort = new AbortController();
   const running = $derived(Boolean(snapshot?.runningJobId));
   const locked = $derived(Boolean(action) || running);
-  const credentialsNeeded = $derived(Boolean(listenerUserId) &&
+  const serverMode = $derived(snapshot?.configuration.mode === "server-api-key" || snapshot?.protocol === "Jellyfin");
+  const configured = $derived(Boolean(snapshot?.configuration.hasConfiguration ?? snapshot?.configuration.hasListenerCredential));
+  const serviceReady = $derived(Boolean(snapshot?.configuration.serviceCredentialReady));
+  const canRun = $derived(configured && (serverMode ? serviceReady : Boolean(snapshot?.configuration.listenerUserId)));
+  const credentialsNeeded = $derived(!serverMode && Boolean(listenerUserId) &&
     (!snapshot?.configuration.hasListenerCredential || listenerUserId !== snapshot.configuration.listenerUserId));
   const listenerOptions = $derived((snapshot?.listeners ?? []).map(listener => ({
     value: listener.id, label: listener.displayName,
@@ -27,6 +31,7 @@
   const latest = $derived(snapshot?.runs[0]);
   const failure = $derived(latest?.steps.find(step => step.status === "failed"));
   const stepLabels: Record<string, string> = {
+    backend: "Server connection", metadata: "Song details", artwork: "Artwork",
     search: "Search", playback: "Playback", seek: "Seek", "now-playing": "Now playing", scrobble: "Scrobble",
     heart: "Favorite", unheart: "Remove favorite", "playlist-create": "Create playlist", "playlist-add": "Add playlist track",
     "playlist-remove": "Remove playlist track", "playlist-delete": "Delete playlist", download: "Download", "download-seek": "Seek in download",
@@ -48,6 +53,13 @@
   }
 
   function stepLabel(step: HealthStep) { return stepLabels[step.name] ?? "Check"; }
+
+  function outcome(run: HealthRun) {
+    if (run.steps.some(step => step.status === "failed")) return { label: "Failed", tone: "danger" as const };
+    if (run.mode === "server-api-key" && run.steps.some(step => step.status === "skipped"))
+      return { label: run.steps.some(step => step.status === "passed") ? "Partly checked" : "Not checked", tone: "neutral" as const };
+    return run.passed ? { label: "Passed", tone: "success" as const } : { label: "Not checked", tone: "neutral" as const };
+  }
 
   function applyConfiguration(value: HealthSnapshot) {
     const config = value.configuration;
@@ -81,13 +93,13 @@
 
   async function save(event: SubmitEvent) {
     event.preventDefault();
-    if (!snapshot || locked || !listenerUserId) return;
+    if (!snapshot || locked || !serverMode && !listenerUserId) return;
     action = "save"; error = ""; message = "";
     try {
       const value = await health.save({
-        enabled, listenerUserId, intervalMinutes, searchQuery: searchQuery.trim(), firstByteBudgetSeconds,
+        enabled, intervalMinutes, searchQuery: searchQuery.trim(), firstByteBudgetSeconds,
         expectedRevision: revision, clearWebhook,
-        ...(username || password ? { username: username.trim(), password } : {}),
+        ...(!serverMode ? { listenerUserId, ...(username || password ? { username: username.trim(), password } : {}) } : {}),
         ...(!clearWebhook && webhookUrl.trim() ? { webhookUrl: webhookUrl.trim() } : {}),
       }, abort.signal);
       snapshot = value; applyConfiguration(value); message = "Health settings saved.";
@@ -97,7 +109,7 @@
   }
 
   async function run() {
-    if (!snapshot?.configuration.hasListenerCredential || !snapshot.configuration.listenerUserId || locked) return;
+    if (!snapshot || !canRun || locked) return;
     action = "run"; error = ""; message = "";
     try {
       const result = await health.run(abort.signal);
@@ -120,16 +132,23 @@
 {:else}
   <article class="settings-card" aria-label="Health checks">
     <header>
-      <div><h3>{snapshot.protocol} checks</h3><small>Provider search, playback and listener actions</small></div>
+      <div><h3>{snapshot.protocol} checks</h3><small>{serverMode ? "Read-only server and library checks" : "Provider search, playback and listener actions"}</small></div>
       <Badge tone={running ? "accent" : snapshot.configuration.enabled ? "success" : "neutral"}>{running ? "Running" : snapshot.configuration.enabled ? "Scheduled" : "Off"}</Badge>
     </header>
     <div class="settings-row">
       <div>
-        <strong>{snapshot.configuration.hasListenerCredential ? "Listener configured" : "Choose a dedicated test listener"}</strong>
-        <small>{snapshot.configuration.hasListenerCredential ? "Run a check now, or enable a schedule below." : "Save a verified listener sign-in before running checks."}</small>
+        {#if serverMode}
+          <strong>{serviceReady ? "Server API key ready" : "Server API key needed"}</strong>
+          <small>{serviceReady ? "Uses the server connection saved in Setup. No test listener is needed." : "Set up a Jellyfin server API key before enabling checks."}</small>
+          {#if serviceReady && !configured}<small>Save monitoring settings, then run a check.</small>{/if}
+          {#if !serviceReady}<Button href="/#/settings/setup" variant="secondary">Open Setup</Button>{/if}
+        {:else}
+          <strong>{configured ? "Listener configured" : "Choose a dedicated test listener"}</strong>
+          <small>{configured ? "Run a check now, or enable a schedule below." : "Save a verified listener sign-in before running checks."}</small>
+        {/if}
         <small>{snapshot.inactiveProtocol} is not exposed by this deployment.</small>
       </div>
-      <Button disabled={locked || !snapshot.configuration.hasListenerCredential || !snapshot.configuration.listenerUserId} onclick={() => void run()}>{action === "run" ? "Queuing…" : "Run now"}</Button>
+      <Button disabled={locked || !canRun} onclick={() => void run()}>{action === "run" ? "Queuing…" : "Run now"}</Button>
     </div>
     {#if running}<p class="settings-impact" role="status">A check is running. {pollLimitReached ? "Refresh results to keep following it." : "Results update automatically."}</p>{/if}
     {#if snapshot.configuration.enabled && snapshot.configuration.nextRunAt}<p class="settings-impact">Next check: {when(snapshot.configuration.nextRunAt)}</p>{/if}
@@ -143,31 +162,31 @@
   {#if latest}
     <article class="settings-card" aria-label="Latest health check">
       <header>
-        <div><h3>Latest check</h3><small>{latest.protocol} · {when(latest.completedAt ?? latest.startedAt)}</small></div>
-        <Badge tone={latest.passed ? "success" : "danger"}>{latest.passed ? "Passed" : "Failed"}</Badge>
+        <div><h3>Latest check</h3><small>{latest.protocol} · {latest.mode === "server-api-key" ? "Server API-key check" : "Listener check"} · {when(latest.completedAt ?? latest.startedAt)}</small></div>
+        <Badge tone={outcome(latest).tone}>{outcome(latest).label}</Badge>
       </header>
-      {#if failure}<p class="settings-impact"><strong>{stepLabel(failure)} failed.</strong> {healthReason(failure.reason)} {latency(failure.latencyMilliseconds)}</p>{/if}
+      {#if failure}<p class="settings-impact"><strong>{stepLabel(failure)} failed.</strong> {healthReason(failure.reason, latest.mode)} {latency(failure.latencyMilliseconds)}</p>{/if}
       <ul class="backup-list" aria-label="Check steps">
         {#each latest.steps as step, index (`${step.name}-${index}`)}
           <li>
-            <span><strong>{stepLabel(step)}</strong>{#if step.status !== "skipped"}<small>{latency(step.latencyMilliseconds)}</small>{/if}{#if step.reason && step !== failure}<small>{healthReason(step.reason)}</small>{/if}</span>
-            <Badge tone={step.status === "passed" ? "success" : step.status === "failed" ? "danger" : "neutral"}>{step.status === "passed" ? "Passed" : step.status === "failed" ? "Failed" : "Skipped"}</Badge>
+            <span><strong>{stepLabel(step)}</strong>{#if step.status !== "skipped"}<small>{latency(step.latencyMilliseconds)}</small>{/if}{#if step.reason && step !== failure}<small>{healthReason(step.reason, latest.mode)}</small>{/if}</span>
+            <Badge tone={step.status === "passed" ? "success" : step.status === "failed" ? "danger" : "neutral"}>{step.status === "passed" ? "Passed" : step.status === "failed" ? "Failed" : latest.mode === "server-api-key" ? "Not checked" : "Skipped"}</Badge>
           </li>
         {/each}
       </ul>
       <p class="settings-impact">{alertLabels[latest.alertStatus]}</p>
     </article>
   {:else}
-    <div class="compact-empty"><strong>No checks yet</strong><p>{snapshot.configuration.hasListenerCredential ? "Run a check to see each step and its timing." : "Configure a listener, then run a check to see each step and its timing."}</p></div>
+    <div class="compact-empty"><strong>No checks yet</strong><p>{configured ? "Run a check to see each step and its timing." : "Save monitoring settings, then run a check to see each step and its timing."}</p></div>
   {/if}
 
   <form class="settings-card" aria-label="Health monitoring" onsubmit={(event) => void save(event)}>
     <header><h3>Monitoring</h3></header>
     <div class="settings-row">
-      <div><label for="health-enabled"><strong>Enable scheduled checks</strong></label><small>Checks use the selected listener and provider tracks.</small></div>
+      <div><label for="health-enabled"><strong>Enable scheduled checks</strong></label><small>{serverMode ? "Checks use your saved server API key and library media." : "Checks use the selected listener and provider tracks."}</small></div>
       <span class="settings-toggle"><Checkbox id="health-enabled" bind:checked={enabled} disabled={locked} /></span>
     </div>
-    <div class="settings-row">
+    {#if !serverMode}<div class="settings-row">
       <div><strong>Health listener</strong><small>A dedicated, active listener without administrator permissions.</small></div>
       <SelectField label="Health listener" bind:value={listenerUserId} options={listenerOptions} placeholder="Choose a listener" disabled={locked || !listenerOptions.length} onchange={() => { username = ""; password = ""; }} />
     </div>
@@ -179,13 +198,13 @@
     <div class="settings-row">
       <div><label for="health-password"><strong>Listener password</strong></label><small>Used to verify and save encrypted listener access.</small></div>
       <input id="health-password" type="password" autocomplete="current-password" bind:value={password} required={credentialsNeeded || Boolean(username)} disabled={locked} />
-    </div>
+    </div>{/if}
     <div class="settings-row">
       <div><label for="health-interval"><strong>Check interval (minutes)</strong></label><small>Between 1 and 1,440 minutes.</small></div>
       <input id="health-interval" type="number" min="1" max="1440" required bind:value={intervalMinutes} disabled={locked} />
     </div>
     <div class="settings-row">
-      <div><label for="health-query"><strong>Search query</strong></label><small>The provider track to find for each check.</small></div>
+      <div><label for="health-query"><strong>Search query</strong></label><small>{serverMode ? "A library song to look for. Another library sample can be used if unavailable." : "The provider track to find for each check."}</small></div>
       <input id="health-query" maxlength="200" required bind:value={searchQuery} disabled={locked} />
     </div>
     <div class="settings-row">
@@ -202,9 +221,13 @@
         <span class="settings-toggle"><Checkbox id="health-clear-webhook" bind:checked={clearWebhook} disabled={locked} /></span>
       </div>
     {/if}
-    <p class="settings-impact">Saving permanently marks this listener as synthetic. Its provider playback is excluded from listening history, recommendations and external scrobbles, even after monitoring is disabled or another listener is selected.</p>
+    {#if serverMode}
+      <p class="settings-impact">Read-only checks leave listening history and saved music unchanged. App sign-in, favorites and playlist actions remain manual checks. Source diagnostics are in Integrations → Services.</p>
+    {:else}
+      <p class="settings-impact">Saving permanently marks this listener as synthetic. Its provider playback is excluded from listening history, recommendations and external scrobbles, even after monitoring is disabled or another listener is selected.</p>
+    {/if}
     {#if message}<p class="settings-impact" role="status">{message}</p>{/if}
-    <footer><Button type="submit" disabled={locked || !listenerUserId}>{action === "save" ? "Saving…" : "Save health settings"}</Button></footer>
+    <footer><Button type="submit" disabled={locked || !serverMode && !listenerUserId}>{action === "save" ? "Saving…" : "Save health settings"}</Button></footer>
   </form>
 
   {#if snapshot.runs.length > 1}
@@ -215,10 +238,10 @@
           {@const failed = run.steps.find(step => step.status === "failed")}
           <li>
             <span>
-              <strong>{when(run.completedAt ?? run.startedAt)}</strong><small>{run.protocol} · {alertLabels[run.alertStatus]}</small>
-              {#if failed}<small>{stepLabel(failed)}: {healthReason(failed.reason)} {latency(failed.latencyMilliseconds)}</small>{/if}
+              <strong>{when(run.completedAt ?? run.startedAt)}</strong><small>{run.protocol} · {run.mode === "server-api-key" ? "Server API-key check" : "Listener check"} · {alertLabels[run.alertStatus]}</small>
+              {#if failed}<small>{stepLabel(failed)}: {healthReason(failed.reason, run.mode)} {latency(failed.latencyMilliseconds)}</small>{/if}
             </span>
-            <Badge tone={run.passed ? "success" : "danger"}>{run.passed ? "Passed" : "Failed"}</Badge>
+            <Badge tone={outcome(run).tone}>{outcome(run).label}</Badge>
           </li>
         {/each}
       </ul>

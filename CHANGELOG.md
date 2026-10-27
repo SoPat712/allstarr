@@ -5,6 +5,7 @@
 - Playback can switch sources after a failure. Fast, Balanced and Best quality start preferences control the wait for alternatives, and seeking works while a track fills the cache.
 - Playback caching defaults to 72 hours after last use. Cached explains when playback caching is off and shows expiry using the current retention setting; hearts and kept copies remain separate.
 - Jellyfin File and Download playback fills the cache too, including when a player starts with a byte range. Replays preserve the original audio and account access.
+- Jellyfin Health uses the saved server API key for read-only checks, with no dedicated listener account or simulated listening session. Results distinguish server checks from earlier listener checks and leave unavailable media neutral.
 - Desktop navigation stays pinned while pages scroll, with the profile and all destinations reachable in short windows.
 - Jellyfin root discovery returns music libraries and native playlist folders, allowing sign-in and playlist browsing to complete.
 - Favorites and playlist entries make provider music available in normal library browsing. Linked listening profiles can share hearts; mixed playlists and offline downloads preserve stable track entries.
