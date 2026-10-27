@@ -1,7 +1,6 @@
 <script lang="ts">
   import ServicePolicyCard from "$lib/components/ServicePolicyCard.svelte";
   import ProviderUseControl from "$lib/components/ProviderUseControl.svelte";
-  import SourceHealthHistory from "$lib/components/SourceHealthHistory.svelte";
   import { diagnosticFailureMessage, diagnosticIsNeutral, type DiagnosticFailure } from "$lib/diagnostics";
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
@@ -672,8 +671,10 @@
 
     {#if administrator}
       {#key source.id}
-        <SourceHealthHistory providerId={source.id} statuses={providerHealth(source.id)}
-          refreshKey={JSON.stringify(providerHealth(source.id))} onRetryWindow={refresh} />
+        {#await import("$lib/components/SourceHealthHistory.svelte") then { default: SourceHealthHistory }}
+          <SourceHealthHistory providerId={source.id} statuses={providerHealth(source.id)} automatic={source.useMode !== "manualOnly" && source.useMode !== "off"}
+            refreshKey={JSON.stringify(providerHealth(source.id))} onRetryWindow={refresh} />
+        {/await}
       {/key}
     {/if}
 

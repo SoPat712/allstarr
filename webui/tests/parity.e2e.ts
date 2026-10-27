@@ -8571,7 +8571,7 @@ const sourcePause = {
   provider: "lumen-audio", providerAccountId: "account", providerAccountName: "Household account",
   capability: "streaming", accountScope: "shared", supported: true, enabled: true,
   configuration: "configured", health: "degraded", ready: false, canAttempt: false, canTest: true,
-  automaticRetryAt: "2030-04-05T12:01:00.000Z", failureCount: 3, automaticPauseReasonCode: "RateLimited",
+  automaticPausedAt: "2030-04-05T12:00:00.000Z", automaticRetryAt: "2030-04-05T12:01:00.000Z", failureCount: 3, automaticPauseReasonCode: "RateLimited",
 };
 
 for (const width of [320, 390, 1280]) {
@@ -8590,7 +8590,7 @@ for (const width of [320, 390, 1280]) {
       });
       await page.goto("#/integrations/services/lumen-audio");
       const routing = page.getByRole("region", { name: "Automatic routing" });
-      await expect(routing).toContainText("Temporarily skipped");
+      await expect(routing).toContainText("Paused from automatic use after repeated failures");
       await expect(routing).toContainText("Household account");
       await expect(routing).toContainText("Public access");
       await expect(routing).toContainText("Rate limited");
@@ -8613,6 +8613,32 @@ for (const width of [320, 390, 1280]) {
     });
   }
 }
+
+test("Source health Resume now clears the pause and recovers from a failed request", async ({ page }) => {
+  await mockApi(page);
+  let resumed = false;
+  let attempts = 0;
+  await page.route("**/api/admin/providers/status", route => route.fulfill({ json: resumed ? [{
+    ...sourcePause, canAttempt: true, automaticRetryAt: null, automaticPausedAt: null,
+  }] : [sourcePause] }));
+  await page.route("**/api/admin/providers/lumen-audio/health-history**", route => route.fulfill({ json: sourceHistory }));
+  await page.route("**/api/admin/providers/lumen-audio/resume/streaming?accountId=account", route => {
+    expect(route.request().method()).toBe("POST");
+    attempts++;
+    if (attempts === 1) return route.fulfill({ status: 503, json: { error: "Unavailable" } });
+    resumed = true;
+    return route.fulfill({ json: { resumed: true } });
+  });
+  await page.goto("#/integrations/services/lumen-audio");
+  const routing = page.getByRole("region", { name: "Automatic routing" });
+  await expect(routing).toContainText("Started");
+  await expect(page.getByRole("list", { name: "Recent outcomes" }).getByRole("listitem")).toHaveCount(9);
+  await routing.getByRole("button", { name: "Resume now" }).click();
+  await expect(routing).toContainText("Couldn’t resume automatic use. Try again.");
+  await routing.getByRole("button", { name: "Resume now" }).click();
+  await expect(routing).toHaveCount(0);
+  expect(attempts).toBe(2);
+});
 
 test("Source health history recovers from an error without busying Refresh", async ({ page }) => {
   await mockApi(page);
@@ -8672,7 +8698,7 @@ test("Source health retry follows server time and refreshes quietly once", async
   });
   await page.goto("#/integrations/services/lumen-audio");
   const routing = page.getByRole("region", { name: "Automatic routing" });
-  await expect(routing).toContainText("Temporarily skipped");
+  await expect(routing).toContainText("Paused from automatic use after repeated failures");
   expect(statusReads).toBe(1);
   await page.clock.runFor(2_100);
   await expect.poll(() => statusReads).toBe(2);

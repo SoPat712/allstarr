@@ -69,14 +69,16 @@
 
 <style>
   .activity-content :global(.event-summary-copy > :is(strong, small)) { white-space: normal; overflow-wrap: anywhere; }
-  .activity-content :global(.event-kind-icon[data-tone]) {
-    color: var(--activity-ink, var(--color-ink-muted));
-    background: color-mix(in srgb, var(--activity-ink, var(--color-ink-muted)) 14%, transparent);
+  .activity-content :global(:is(.event-kind-icon[data-tone], .activity-outcome)) {
+    color: var(--activity-ink, var(--md-sys-color-on-surface-variant));
+    background: var(--activity-container, var(--md-sys-color-surface-container-highest));
   }
-  .activity-content :global([data-tone="success"]) { --activity-ink: var(--color-success); }
-  .activity-content :global([data-tone="accent"]) { --activity-ink: var(--color-info); }
-  .activity-content :global([data-tone="warning"]) { --activity-ink: var(--color-warning); }
-  .activity-content :global([data-tone="danger"]) { --activity-ink: var(--color-danger); }
+  .activity-content :global(.activity-outcome) { max-width: 100%; gap: .35rem; border-color: transparent; padding-block: .25rem; line-height: 1.25; white-space: normal; }
+  .activity-content :global(.activity-outcome svg) { flex: none; }
+  .activity-content :global(:is([data-tone="success"], .badge-success)) { --activity-ink: var(--on-success-container); --activity-container: var(--success-container); }
+  .activity-content :global(:is([data-tone="accent"], .badge-accent)) { --activity-ink: var(--md-sys-color-on-primary-container); --activity-container: var(--md-sys-color-primary-container); }
+  .activity-content :global(:is([data-tone="warning"], .badge-warning)) { --activity-ink: var(--on-warning-container); --activity-container: var(--warning-container); }
+  .activity-content :global(:is([data-tone="danger"], .badge-danger)) { --activity-ink: var(--md-sys-color-on-error-container); --activity-container: var(--md-sys-color-error-container); }
 
   .activity-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1rem; margin-block: var(--space-5) var(--section-gap); }
   .activity-audience { display: flex; gap: .5rem; }

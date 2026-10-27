@@ -23,7 +23,8 @@ public sealed record ProviderRuntimeEvidenceSnapshot(
     bool CircuitOpen,
     DateTimeOffset? AutomaticRetryAt,
     int? FailureCount,
-    string? AutomaticPauseReasonCode)
+    string? AutomaticPauseReasonCode,
+    DateTimeOffset? AutomaticPausedAt = null)
 {
     public static ProviderRuntimeEvidenceSnapshot Empty { get; } = new(false, null, null, null);
 }
@@ -312,8 +313,14 @@ public class ProviderStatusManager
             true,
             observation.RetryAfter,
             observation.ConsecutiveFailures,
-            observation.ReasonCode ?? "circuit_open");
+            observation.ReasonCode ?? "circuit_open",
+            observation.PausedAt);
     }
+
+    public IReadOnlyList<ProviderCheckResult> RecentAttempts(ProviderRuntimeStatusKey key, long? revision) =>
+        _health.Recent(key, revision);
+
+    public bool ResumeAutomaticUse(ProviderRuntimeStatusKey key, long? revision) => _health.Resume(key, revision);
 
     public void RestoreCheckResult(ProviderRuntimeStatusKey key, long? revision, ProviderRuntimeStatus status)
     {
@@ -780,7 +787,7 @@ public class ProviderStatusManager
             "canceled" or "busy" or "temporary-storage-full" or "invalid-input" or "needs-artist") return;
         var key = accountId.HasValue ? ProviderRuntimeStatusKey.CreateManaged(provider, capability, accountId.Value) :
             ProviderRuntimeStatusKey.CreateAccountFree(provider, capability);
-        _health.Record(key, revision, succeeded, elapsedMilliseconds, reasonCode);
+        _health.Record(key, revision, succeeded, elapsedMilliseconds, reasonCode, recordAttempt: true);
         if (_recordedChecks.ContainsKey(key))
             RestoreCheckResult(key, revision, BuildBaselineStatus(key) with
             {

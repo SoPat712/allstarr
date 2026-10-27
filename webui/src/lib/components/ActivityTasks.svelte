@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { activityTone, internalActivityLink } from "$lib/activity";
+  import { internalActivityLink } from "$lib/activity";
   import { activityWork, playlistLinks, type ActivityTask } from "$lib/api";
   import { liveUpdates, createRefreshScheduler } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button } from "$lib/components/ui/button";
-  import { Badge } from "$lib/components/ui/badge";
+  import ActivityOutcome from "$lib/components/ActivityOutcome.svelte";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import RouteError from "$lib/components/RouteError.svelte";
 
@@ -66,7 +66,7 @@
     {#each items as task (task.id)}
       <article class="activity-task">
         <div class="task-copy"><h3>{task.name}</h3><p>{administrator && task.ownerName ? `${task.ownerName} · ` : ""}{task.cadence}</p>{#if task.detail}<p>{task.detail}</p>{/if}</div>
-        <Badge tone={activityTone(task.state)}>{task.state}</Badge>
+        <ActivityOutcome state={task.state} label={task.state} />
         <dl><div><dt>Last run</dt><dd>{time(task.lastRunAt)}</dd></div><div><dt>{task.kind === "maintenance" ? "Next check (approximate)" : "Next run"}</dt><dd>{task.enabled ? task.nextRunAt ? time(task.nextRunAt) : task.state === "Running" ? "After this run" : "When needed" : "Paused"}</dd></div></dl>
         {#if task.runPlaylistLinkId}<Button variant="secondary" disabled={Boolean(running) || queued.has(task.id)} onclick={() => void run(task)}>{queued.has(task.id) ? "Queued" : running === task.id ? "Queuing…" : "Run now"}</Button>{:else if internalActivityLink(task.actionHref)}<Button variant="secondary" href={task.actionHref!}>{task.actionLabel || "Open settings"}</Button>{:else}<span class="task-automatic">Runs automatically</span>{/if}
       </article>

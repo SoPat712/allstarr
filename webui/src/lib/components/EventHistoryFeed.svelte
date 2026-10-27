@@ -4,7 +4,7 @@
   import { ArrowRight, ChevronDown, CircleAlert, RefreshCw } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import { Badge } from "$lib/components/ui/badge";
+  import ActivityOutcome from "$lib/components/ActivityOutcome.svelte";
   import { Button } from "$lib/components/ui/button";
   import {
     eventLog,
@@ -194,7 +194,7 @@
 
   function groupBadge(entries: ActivityItem[], state: string) {
     if (state !== "mixed") return sentence(state);
-    if (entries.every(item => item.kind !== "matching" && !item.jobId)) return `${entries.length} events`;
+    if (entries.every(item => item.kind !== "matching" && !item.jobId)) return `${humanize(groupSeverity(entries))} · ${entries.length} events`;
     const succeeded = entries.filter((item) => outcomeClass(item.state) === "accepted").length;
     return `${succeeded} of ${entries.length} done`;
   }
@@ -312,7 +312,7 @@
               ontoggle={(event) => rememberExpanded(group.key, event.currentTarget.open)}
             >
               <summary>
-                <span class="event-kind-icon" data-severity={severityState} data-tone={tone} data-kind={first.kind} aria-hidden="true">
+                <span class="event-kind-icon" data-tone={tone} data-kind={first.kind} aria-hidden="true">
                   <span><ActivityIcon kind={first.kind} /></span>
                   {#if first.artworkUrl}
                     <img src={adminUrl(first.artworkUrl)} alt="" loading="lazy" onerror={(event) => event.currentTarget.remove()} />
@@ -333,7 +333,7 @@
                   {/if}
                 </span>
                 <span class="event-summary-end">
-                  <Badge {tone}>{groupBadge(group.entries, groupState)}</Badge>
+                  <ActivityOutcome state={groupState} severity={severityState} label={groupBadge(group.entries, groupState)} />
                   <time datetime={first.occurredAt} title={fullTime(first.occurredAt)}>{clockTime(first.occurredAt)}</time>
                 </span>
                 <ChevronDown class="event-chevron" size={18} aria-hidden="true" />
@@ -361,7 +361,7 @@
                       {/if}
                       <div class="event-child-meta">
                         <span>{item.actorDisplayName || "Household"} · {sourceName(item)}</span>
-                        <Badge tone={activityTone(item.state, item.severity)}>{sentence(item.state)}</Badge>
+                        <ActivityOutcome state={item.state} severity={item.severity} label={sentence(item.state)} />
                         {#if activityDuration(item.durationMilliseconds)}<span>Took {activityDuration(item.durationMilliseconds)}</span>{/if}
                         {#if item.playlistName}<span>{item.playlistName}</span>{/if}
                       </div>

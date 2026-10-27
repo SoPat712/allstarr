@@ -528,6 +528,7 @@ export type ProviderHealth = {
   verificationMeasurementId?: string | null;
   verificationMethod?: string | null;
   automaticRetryAt?: string | null;
+  automaticPausedAt?: string | null;
   failureCount?: number | null;
   automaticPauseReasonCode?: string | null;
 };
@@ -1709,6 +1710,8 @@ export const sources = {
   health: () => json<ProviderHealth[]>("/api/admin/providers/status"),
   history: (provider: string, signal?: AbortSignal) =>
     json<ProviderCheckHistory>(`/api/admin/providers/${encodeURIComponent(provider)}/health-history?limit=24`, { signal }),
+  resume: (provider: string, capability: string, accountId?: string | null) =>
+    json(`/api/admin/providers/${encodeURIComponent(provider)}/resume/${encodeURIComponent(capability)}${accountId ? `?accountId=${encodeURIComponent(accountId)}` : ""}`, { method: "POST" }),
   cts: () =>
     json<{ measurements: CtsMeasurement[] }>("/api/admin/provider-diagnostics/deep-stream/latest"),
   create: (input: {

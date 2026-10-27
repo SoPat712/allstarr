@@ -5,8 +5,9 @@
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
 
-  let { providerId, statuses, refreshKey, onRetryWindow }: {
+  let { providerId, statuses, refreshKey, onRetryWindow, automatic = true }: {
     providerId: string;
+    automatic?: boolean;
     statuses: ProviderHealth[];
     refreshKey: string;
     onRetryWindow: () => Promise<void>;
@@ -15,6 +16,8 @@
   let history = $state<ProviderCheckHistory | null>(null);
   let loading = $state(true);
   let retrying = $state(false);
+  let resuming = $state(false);
+  let resumeError = $state(false);
   let error = $state(false);
   let visibleCount = $state(6);
   let anchor = $state<{ server: number; received: number } | null>(null);
@@ -32,9 +35,21 @@
       : "Time unavailable";
   }
 
-  const pauses = $derived(statuses.filter(status => status.supported && status.enabled &&
+  const pauses = $derived(statuses.filter(status => automatic && status.supported && status.enabled &&
     status.configuration !== "needs_configuration" && !status.canAttempt &&
     Number.isFinite(dateValue(status.automaticRetryAt)) && dateValue(status.automaticRetryAt) > now));
+
+  async function resume(status: ProviderHealth) {
+    if (resuming) return;
+    resuming = true;
+    resumeError = false;
+    try {
+      await sources.resume(providerId, status.capability, status.providerAccountId);
+      await onRetryWindow();
+      await load();
+    } catch { resumeError = true; }
+    finally { resuming = false; }
+  }
 
   async function load(manual = false) {
     const current = ++request;
@@ -87,13 +102,29 @@
     {#each pauses as pause}
       <div class="settings-row" style="grid-template-columns: minmax(0, 1fr);">
         <div style="overflow-wrap: anywhere;">
-          <strong>{pause.providerAccountName || "Public access"} · {humanize(pause.capability)}</strong>
+          <strong>Paused from automatic use{pause.failureCount && pause.failureCount > 1 ? " after repeated failures" : ""}</strong>
+          <small>{pause.providerAccountName || "Public access"} · {humanize(pause.capability)}</small>
           <small>{checkGuide(pause.automaticPauseReasonCode)?.label ?? "Recent requests failed"}{#if pause.failureCount && pause.failureCount > 0} · {pause.failureCount} recent failures{/if}</small>
-          <small>Retry after {timeLabel(pause.automaticRetryAt!)}</small>
+          <small>{#if pause.automaticPausedAt}Started {timeLabel(pause.automaticPausedAt)} · {/if}Retry after {timeLabel(pause.automaticRetryAt!)}</small>
         </div>
-        <div><Badge tone="warning">Temporarily skipped</Badge></div>
+        <div class="panel-heading-actions"><Badge tone="warning">Paused</Badge>
+          <Button variant="secondary" disabled={resuming} onclick={() => void resume(pause)}>{resuming ? "Resuming…" : "Resume now"}</Button></div>
       </div>
     {/each}
+    {#if resumeError}<p class="settings-impact" role="alert">Couldn’t resume automatic use. Try again.</p>{/if}
+  </section>
+{/if}
+
+{#if history?.checks.length}
+  <section class="settings-card" aria-label="Recent source outcomes">
+    <header><div><h3>Recent outcomes</h3><small>Latest checks and attempts, newest first. A success clears the automatic pause.</small></div></header>
+    <ol aria-label="Recent outcomes" style="display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: var(--space-3) var(--surface-gutter); list-style: none;">
+      {#each history.checks.slice(0, 20) as check}
+        <li title={`${humanize(check.capability)} · ${check.accountLabel} · ${timeLabel(check.testedAt)}`}>
+          <Badge tone={check.outcome === "passed" ? "success" : check.outcome === "failed" ? "danger" : "neutral"}>{humanize(check.outcome)}</Badge>
+        </li>
+      {/each}
+    </ol>
   </section>
 {/if}
 
@@ -102,7 +133,7 @@
     <div><strong>Recent diagnostic checks ▾</strong><small>{#if history}{history.counts.passed} passed · {history.counts.failed} failed · {history.counts.neutral} neutral{:else if loading}Loading recent checks…{:else}Recent checks unavailable{/if}</small></div>
   </summary>
   <div class="settings-row" style="grid-template-columns: minmax(0, 1fr);">
-    <div><small>The latest recorded checks from the last 30 days. These samples do not measure every stream.</small></div>
+    <div><small>The latest recorded checks from the last 30 days. Includes recent attempts from this server session. These samples do not measure every stream.</small></div>
   </div>
   {#if error}
     <div class="settings-row" style="grid-template-columns: minmax(0, 1fr) auto;">

@@ -428,6 +428,61 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         Assert.False(status.GetProperty("canAttempt").GetBoolean());
     }
 
+    [Theory]
+    [InlineData("manualOnly")]
+    [InlineData("off")]
+    public async Task NonautomaticSourcesDoNotExposeOrResumeAnAutomaticPause(string mode)
+    {
+        var health = CreateHealthStore();
+        var key = ProviderRuntimeStatusKey.CreateAccountFree("lrclib", ProviderCapabilities.Lyrics);
+        for (var index = 0; index < 3; index++) health.Record(key, null, false, 4, "timeout");
+        var controller = Diagnostics(CreateController(CreateHttpContextWithSession(true), healthStore: health));
+        var settings = controller.HttpContext.RequestServices.GetRequiredService<IDurableRuntimeSettings>();
+        var preferences = await settings.GetPreferencesAsync(null);
+        await settings.UpdateProviderModeAsync(null, "lrclib", mode, preferences.Revision, _userId);
+        var result = Assert.IsType<OkObjectResult>(await controller.GetProvidersStatus());
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        var status = json.RootElement.EnumerateArray().Single(item => item.GetProperty("provider").GetString() == "lrclib");
+        Assert.Equal(JsonValueKind.Null, status.GetProperty("automaticPausedAt").ValueKind);
+        Assert.Equal(JsonValueKind.Null, status.GetProperty("automaticRetryAt").ValueKind);
+        Assert.IsType<ConflictObjectResult>(await controller.ResumeProvider("lrclib", "lyrics"));
+        Assert.True(health.IsCircuitOpen(health.Get(key)!));
+    }
+
+    [Theory]
+    [InlineData("lrclib", "lyrics")]
+    [InlineData("fixture-extension", "metadata")]
+    public async Task ResumeSourceIsAdministratorOnlyAndClearsPauseWithoutProviderCalls(string provider, string capability)
+    {
+        var implementation = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        implementation.SetupGet(item => item.ProviderId).Returns("fixture-extension");
+        implementation.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        var registry = new ProviderRegistry([new(new ProviderDescriptor("fixture-extension", "Fixture", "Fixture source",
+            ProviderOrigin.Extension, "1", "1", [new(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.None, "1", ["searchTracks"])], new(), entryPoint: "index.js"), [implementation.Object])]);
+        var clients = new Mock<IHttpClientFactory>(MockBehavior.Strict);
+        var health = CreateHealthStore();
+        var key = ProviderRuntimeStatusKey.CreateAccountFree(provider, capability);
+        for (var index = 0; index < 3; index++) health.Record(key, null, false, 4, "timeout", recordAttempt: true);
+        var denied = Diagnostics(CreateController(CreateHttpContextWithSession(false), healthStore: health, providerRegistry: registry, httpClientFactory: clients.Object));
+        AssertForbidden(await denied.ResumeProvider(provider, capability));
+        Assert.True(health.IsCircuitOpen(health.Get(key)!));
+        var controller = Diagnostics(CreateController(CreateHttpContextWithSession(true), healthStore: health, providerRegistry: registry, httpClientFactory: clients.Object));
+        var before = Assert.IsType<OkObjectResult>(await controller.GetProvidersStatus());
+        using var status = JsonDocument.Parse(JsonSerializer.Serialize(before.Value));
+        Assert.NotEqual(JsonValueKind.Null, status.RootElement.EnumerateArray().Single(item =>
+            item.GetProperty("provider").GetString() == provider).GetProperty("automaticPausedAt").ValueKind);
+        var history = Assert.IsType<OkObjectResult>(await controller.GetProviderHealthHistory(provider));
+        using var recent = JsonDocument.Parse(JsonSerializer.Serialize(history.Value));
+        Assert.Equal(3, recent.RootElement.GetProperty("checks").GetArrayLength());
+        Assert.IsType<OkObjectResult>(await controller.ResumeProvider(provider, capability));
+        Assert.False(health.IsCircuitOpen(health.Get(key)!));
+        clients.Verify(item => item.CreateClient(It.IsAny<string>()), Times.Never);
+        Assert.IsType<NotFoundResult>(await controller.ResumeProvider("unknown-source", "lyrics"));
+        Assert.IsType<BadRequestObjectResult>(await controller.ResumeProvider(provider, "streaming"));
+        Assert.IsType<BadRequestObjectResult>(await controller.ResumeProvider(provider, capability, Guid.Empty));
+    }
+
     [Fact]
     public async Task ProviderHealthHistoryIsAdministratorOnlyAndReturnsBoundedCurrentDiagnosticRows()
     {

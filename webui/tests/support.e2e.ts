@@ -472,3 +472,168 @@ test("closing report lyrics discards a late preview before reopening", async ({ 
   release();
   await expect(dialog.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Current preview");
 });
+
+async function mockReportMatch(page: Page, options: { native?: boolean; missing?: boolean; changed?: boolean; status?: string; failure?: boolean } = {}) {
+  const state = await mockSupport(page, true);
+  state.status = options.status ?? "new";
+  const reads: string[] = [];
+  const writes: Array<{ snapshot: string; input: Record<string, unknown> }> = [];
+  let failSave = options.failure ?? false;
+  await page.route(`**/api/admin/problem-reports/${reportId}`, route => reply(route, {
+    id: reportId, kind: "wrong-match", status: state.status, note: "The wrong recording version plays.",
+    reporterName: "Another listener", createdAt: captured.capturedAt, revision: state.revision,
+    context: { ...captured, song: { ...captured.song, canonicalRecordingId: reportRecordingId,
+      ...(options.native ? { itemId: "native-fixture", externalSnapshotId: null, catalogProviderId: "jellyfin" } : {}) } },
+  }));
+  await page.route("**/api/admin/track-matches?*", route => {
+    const snapshot = new URL(route.request().url()).searchParams.get("externalSnapshotId") ?? "";
+    reads.push(snapshot);
+    return reply(route, { matches: options.missing ? [] : [{ externalSnapshotId: snapshot,
+      canonicalRecordingId: options.changed ? "different-recording" : reportRecordingId,
+      providerId: "deezer", state: "accepted", decisionSource: "automatic",
+      title: captured.song.title, artist: captured.song.artist, durationMilliseconds: 180000,
+      allowedAuthorityScopes: ["personal", "household"], manualAuthorities: [], providerIdentities: [],
+      reasons: [], warnings: [], candidates: [{ libraryTrackId: "correct-recording", isLocal: true,
+        title: "Correct recording version", artist: captured.song.artist, confidence: 0.97 }] }] });
+  });
+  await page.route("**/api/admin/track-matches/*/resolve", route => {
+    writes.push({ snapshot: new URL(route.request().url()).pathname.split("/").at(-2)!, input: route.request().postDataJSON() });
+    return failSave ? reply(route, { error: "Could not save the match. Try again." }, 503) : reply(route, { success: true });
+  });
+  return { state, reads, writes, allowSave: () => { failSave = false; } };
+}
+
+for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"] as const) {
+  test(`wrong match report reviews its captured recording at ${width}px in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    const fixture = await mockReportMatch(page);
+    await page.goto(`/#/activity?view=reports&report=${reportId}`);
+    const button = page.getByRole("button", { name: "Review match", exact: true });
+    await expect(button).toBeVisible();
+    expect(fixture.reads).toEqual([]);
+    await button.click();
+    const dialog = page.getByRole("dialog", { name: captured.song.title, exact: true });
+    await expect(dialog).toContainText("Correct recording version");
+    expect(fixture.reads).toEqual([snapshotId]);
+    expect(fixture.writes).toEqual([]);
+    expect(fixture.state.updates).toEqual([]);
+    await dialog.getByRole("radio", { name: /^Household/ }).check();
+    if (width < 768) await expectContainedMobileGeometry(page);
+    await page.screenshot({ path: `test-results/report-match-${width}-${theme}.png` });
+    await dialog.getByRole("button", { name: "Choose candidate", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect.poll(() => fixture.writes).toEqual([{ snapshot: snapshotId, input: {
+      targetType: "local", libraryTrackId: "correct-recording", reason: "Selected from automatic candidate evidence",
+      authorityScope: "household", expectedAuthority: null,
+    } }]);
+    await expect.poll(() => fixture.state.updates).toEqual([{ status: "seen", expectedRevision: 1 }]);
+    await expect(page.getByRole("article", { name: "Report note" })).toContainText("Local match saved. Report marked seen.");
+    await expect(page.getByRole("button", { name: "Report status", exact: true })).toContainText("Seen");
+    await expect(button).toBeFocused();
+    await expect(page).toHaveURL(new RegExp(`activity\\?view=reports&report=${reportId}`));
+  });
+}
+
+test("cancelling report match review leaves the report untouched", async ({ page }) => {
+  const fixture = await mockReportMatch(page);
+  await page.goto(`/#/activity?view=reports&report=${reportId}`);
+  const button = page.getByRole("button", { name: "Review match", exact: true });
+  await button.click();
+  const dialog = page.getByRole("dialog", { name: captured.song.title, exact: true });
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(button).toBeFocused();
+  expect(fixture.writes).toEqual([]);
+  expect(fixture.state.updates).toEqual([]);
+});
+
+test("native wrong match reports explain the unavailable action", async ({ page }) => {
+  const fixture = await mockReportMatch(page, { native: true });
+  await page.goto(`/#/activity?view=reports&report=${reportId}`);
+  await expect(page.getByRole("article", { name: "Included report details" })).toContainText("This song has no provider match to review.");
+  await expect(page.getByRole("button", { name: "Review match", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Review match", exact: true })).toHaveCount(0);
+  expect(fixture.reads).toEqual([]);
+  expect(fixture.writes).toEqual([]);
+  expect(fixture.state.updates).toEqual([]);
+});
+
+for (const options of [{ missing: true }, { changed: true }]) {
+  test(`report match review does not substitute an unavailable captured recording ${JSON.stringify(options)}`, async ({ page }) => {
+    const fixture = await mockReportMatch(page, options);
+    await page.goto(`/#/activity?view=reports&report=${reportId}`);
+    await page.getByRole("button", { name: "Review match", exact: true }).click();
+    await expect(page.getByRole("alert")).toContainText("The captured recording no longer has a matching review available.");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(fixture.reads).toEqual([snapshotId]);
+    expect(fixture.state.updates).toEqual([]);
+  });
+}
+
+test("a failed report match decision can retry without marking the report seen", async ({ page }) => {
+  const fixture = await mockReportMatch(page, { failure: true });
+  await page.goto(`/#/activity?view=reports&report=${reportId}`);
+  await page.getByRole("button", { name: "Review match", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: captured.song.title, exact: true });
+  await dialog.getByRole("button", { name: "Choose candidate", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toBeVisible();
+  expect(fixture.state.updates).toEqual([]);
+  fixture.allowSave();
+  await dialog.getByRole("button", { name: "Choose candidate", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect.poll(() => fixture.state.updates.length).toBe(1);
+});
+
+test("a saved report match preserves feedback when the report status changed elsewhere", async ({ page }) => {
+  const fixture = await mockReportMatch(page);
+  fixture.state.conflict = true;
+  await page.goto(`/#/activity?view=reports&report=${reportId}`);
+  await page.getByRole("button", { name: "Review match", exact: true }).click();
+  await page.getByRole("dialog", { name: captured.song.title, exact: true }).getByRole("button", { name: "Choose candidate", exact: true }).click();
+  await expect(page.getByRole("article", { name: "Report note" })).toContainText("Local match saved.");
+  await expect(page.getByRole("alert")).toContainText("This report changed. Reload it before saving.");
+  await expect(page.getByRole("button", { name: "Save status", exact: true })).toBeDisabled();
+  expect(fixture.writes).toHaveLength(1);
+});
+
+for (const status of ["seen", "fixed"]) {
+  test(`saving a report match preserves its ${status} status`, async ({ page }) => {
+    const fixture = await mockReportMatch(page, { status });
+    await page.goto(`/#/activity?view=reports&report=${reportId}`);
+    await page.getByRole("button", { name: "Review match", exact: true }).click();
+    await page.getByRole("dialog", { name: captured.song.title, exact: true }).getByRole("button", { name: "Choose candidate", exact: true }).click();
+    await expect(page.getByRole("article", { name: "Report note" })).toContainText("Local match saved.");
+    expect(fixture.state.updates).toEqual([]);
+    await expect(page.getByRole("button", { name: "Report status", exact: true })).toContainText(status === "fixed" ? "Fixed" : "Seen");
+  });
+}
+
+test("reopening a report discards a late match review read", async ({ page }) => {
+  const fixture = await mockReportMatch(page);
+  let release!: () => void;
+  const delayed = new Promise<void>(resolve => { release = resolve; });
+  let reads = 0;
+  let completed = false;
+  await page.route("**/api/admin/track-matches?*", async route => {
+    reads++;
+    if (reads !== 1) return route.fallback();
+    await delayed;
+    await reply(route, { matches: [{ externalSnapshotId: snapshotId, canonicalRecordingId: reportRecordingId,
+      title: "Late recording", providerId: "deezer", state: "accepted", decisionSource: "automatic",
+      providerIdentities: [], candidates: [], reasons: [], warnings: [] }] });
+    completed = true;
+  });
+  await page.goto(`/#/activity?view=reports&report=${reportId}`);
+  await page.getByRole("button", { name: "Review match", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Loading match…", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: `Open report for ${captured.song.title}`, exact: true }).click();
+  await page.getByRole("button", { name: "Review match", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: captured.song.title, exact: true });
+  await expect(dialog).toBeVisible();
+  release();
+  await expect.poll(() => completed).toBe(true);
+  await expect(dialog).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Late recording", exact: true })).toHaveCount(0);
+  expect(fixture.state.updates).toEqual([]);
+});
