@@ -115,3 +115,13 @@ test("An unavailable related job gives a readable explanation without changes", 
   await expect(page.getByRole("alert")).toContainText("unavailable or you no longer have permission");
   expect(fixture.writes).toEqual([]);
 });
+
+test("Diagnostic event groups do not pretend to be unfinished jobs", async ({ page }) => {
+  await mockActivity(page, [
+    { id: "info", kind: "extension", label: "Runtime log", state: "info", detail: "Extension started.", action: "runtime.log", correlationId: "startup", occurredAt: "2026-10-26T12:00:01Z" },
+    { id: "warning", kind: "extension", label: "Runtime log", state: "warning", severity: "warning", detail: "Optional source unavailable.", action: "runtime.log", correlationId: "startup", occurredAt: "2026-10-26T12:00:00Z" },
+  ]);
+  await page.goto("/#/activity");
+  const group = page.locator(".event-log-group"); await expect(group).toHaveCount(1);
+  await expect(group.locator(":scope > summary [data-slot=badge]")).toHaveText("2 events");
+});

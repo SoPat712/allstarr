@@ -4,6 +4,7 @@ using allstarr.Core.Downloads;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Favorites;
 using allstarr.Core.Identity;
+using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
@@ -704,6 +705,44 @@ public sealed class AdminUiActivityTests
         var foreign = Assert.Single(rows, row => Text(row, "Id") == otherRun.ToString("N"));
         Assert.Equal("Playlist", Text(foreign, "PlaylistName"));
         Assert.Null(Text(foreign, "ArtworkUrl"));
+    }
+
+    [Fact]
+    public async Task AttemptHistoryUsesItsRealJobContextWithoutRewritingAnEarlierFailure()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var owner = Guid.CreateVersion7();
+        var jobId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        Guid auditId;
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new() { Id = owner, DisplayName = "Listener", Enabled = true, BackendType = "jellyfin", BackendInstanceId = "fixture", BackendPrincipalId = owner.ToString("N") });
+            var job = new DurableJobRecord { Id = jobId, OwnerUserId = owner, ScopeKey = owner.ToString("N"), IdempotencyKey = "attempt", RequestFingerprint = new string('a', 64), Type = "library.index", CorrelationId = "attempt", State = DurableJobState.Failed, AvailableAt = now, CreatedAt = now, UpdatedAt = now, MaxAttempts = 3, MaxDeferrals = 3, AttemptCount = 1, LastAttemptOutcome = "failed", LastAttemptStartedAt = now.AddSeconds(-1), LastAttemptCompletedAt = now, LastErrorMessage = "Server unavailable token=fixture-private-attempt" };
+            db.Jobs.Add(job);
+            DurableJobHistory.Append(db, job, now);
+            auditId = Assert.Single(db.AuditEvents.Local).Id;
+            job.State = DurableJobState.Succeeded; job.LastAttemptOutcome = "succeeded"; job.UpdatedAt = now.AddSeconds(1); job.LastErrorMessage = null;
+            db.AuditEvents.Add(new() { Id = Guid.CreateVersion7(), ActorUserId = owner, Category = "library-index", Action = "scan.completed", Outcome = "succeeded", CorrelationId = "attempt", CreatedAt = now, DetailsJson = JsonSerializer.Serialize(new { Seen = 12, Indexed = 9, SkippedPathless = 2, SkippedMalformed = 1, Pages = 2 }) });
+            await db.SaveChangesAsync();
+        }
+        var matches = new TrackMatchCommandService(factory, new TrackMatchDecisionEngine(), new ProviderAccountResolver(factory), new SystemPlatformClock(), Mock.Of<IBackendLibraryAccessResolver>());
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await Controller(factory, matches, owner).GetDashboardActivity()).Value));
+        var rows = json.RootElement.GetProperty("items").EnumerateArray().ToArray();
+        var attempt = Assert.Single(rows, row => Text(row, "Id") == auditId.ToString("N"));
+        Assert.Equal("Refresh library index", Text(attempt, "Label"));
+        Assert.Equal("Jellyfin library", Text(attempt, "Source"));
+        Assert.Equal("job", Text(attempt, "Kind"));
+        Assert.Equal(jobId, JobId(attempt));
+        Assert.Contains("Library", RequiredText(attempt, "Detail"));
+        Assert.Contains("failed", RequiredText(attempt, "Detail"), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("completed", RequiredText(attempt, "Detail"), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("fixture-private-attempt", JsonSerializer.Serialize(attempt));
+        var scan = Assert.Single(rows, row => Text(row, "Action") == "scan.completed");
+        Assert.Contains("9 indexed", RequiredText(scan, "Detail"));
+        Assert.Contains("12 seen", RequiredText(scan, "Detail"));
+        Assert.Contains("3 skipped", RequiredText(scan, "Detail"));
     }
 
     private static JsonElement FindJobOrActivity(IEnumerable<JsonElement> items, Guid jobId)
