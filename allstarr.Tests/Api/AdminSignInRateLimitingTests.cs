@@ -240,6 +240,7 @@ public sealed class AdminSignInRateLimitingTests
             .ConfigureWebHost(web => web.UseTestServer()
                 .ConfigureServices(services =>
                 {
+                    services.AddSingleton<IStartupFilter, TestRateLimiterCleanup>();
                     services.AddControllers().AddApplicationPart(typeof(AdminAuthController).Assembly)
                         .ConfigureApplicationPartManager(manager =>
                         {
@@ -331,6 +332,7 @@ public sealed class AdminSignInRateLimitingTests
                     .UseTestServer()
                     .ConfigureServices(services =>
                     {
+                        services.AddSingleton<IStartupFilter, TestRateLimiterCleanup>();
                         services.AddRouting();
                         services.AddSingleton(accessor);
                         services.AddSingleton(new AdminBasePath(new ConfigurationBuilder()

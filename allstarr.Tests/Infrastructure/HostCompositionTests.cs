@@ -722,6 +722,7 @@ public sealed class HostCompositionTests
             });
             builder.ConfigureServices(services =>
             {
+                services.AddSingleton<IStartupFilter, TestRateLimiterCleanup>();
                 services.RemoveAll<IHostedService>();
                 if (_effectivePolicy == null) return;
                 services.RemoveAll<IEffectiveProviderPolicyResolver>();

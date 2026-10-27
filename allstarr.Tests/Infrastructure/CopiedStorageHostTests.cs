@@ -98,6 +98,7 @@ public sealed class CopiedStorageHostTests
             builder.UseSetting("Jobs:PollIntervalMilliseconds", "50");
             builder.ConfigureServices(services =>
             {
+                services.AddSingleton<IStartupFilter, TestRateLimiterCleanup>();
                 services.RemoveAll<IHostedService>();
                 services.AddHostedService<ManagedStorageRecoveryStartup>();
                 services.AddHostedService<DurableJobWorker>();
