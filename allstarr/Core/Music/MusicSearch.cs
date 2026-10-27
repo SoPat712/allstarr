@@ -88,12 +88,15 @@ public sealed class MusicSearchService(
     ILibraryIndexService? libraryIndex = null,
     SavedLibraryReader? savedLibrary = null)
 {
-    internal static bool MetadataRecordingsMatch(Song left, Song right)
+    internal static bool MetadataRecordingsMatch(Song left, Song right, bool allowSparse = false)
     {
+        var leftDuration = RecordingDuration(left);
+        var rightDuration = RecordingDuration(right);
         if (left.ExternalProvider?.Contains("artistgrid", StringComparison.OrdinalIgnoreCase) == true ||
             right.ExternalProvider?.Contains("artistgrid", StringComparison.OrdinalIgnoreCase) == true ||
             !HasOrdinaryRecordingMetadata(left) || !HasOrdinaryRecordingMetadata(right) ||
-            Math.Abs(RecordingDuration(left)!.Value - RecordingDuration(right)!.Value) > 2 ||
+            !allowSparse && (leftDuration is not > 0 || rightDuration is not > 0) ||
+            leftDuration is > 0 && rightDuration is > 0 && Math.Abs(leftDuration.Value - rightDuration.Value) > 2 ||
             RecordingVersion(left) != RecordingVersion(right)) return false;
         if (RecordingExplicitness(left) is { } firstExplicit && RecordingExplicitness(right) is { } secondExplicit &&
             firstExplicit != secondExplicit) return false;
@@ -107,8 +110,34 @@ public sealed class MusicSearchService(
         // Releases can assign different ISRCs to the same ordinary recording. Require matching
         // album evidence as well when the identifiers disagree.
         if (NormalizeIdentifier(left.Isrc) is { } firstIsrc && NormalizeIdentifier(right.Isrc) is { } secondIsrc &&
-            firstIsrc != secondIsrc) return album.Length > 0 && album == otherAlbum;
+            firstIsrc != secondIsrc) return leftDuration is > 0 && rightDuration is > 0 && album.Length > 0 && album == otherAlbum;
         return album.Length == 0 || otherAlbum.Length == 0 || album == otherAlbum;
+    }
+
+    internal static IReadOnlyList<List<Song>> PartitionMetadataRecordings(IEnumerable<Song> songs,
+        Func<Song, Song, bool>? compatibleEvidence = null)
+    {
+        var rows = songs.ToArray();
+        var groups = new List<List<Song>>();
+        bool Compatible(Song left, Song right, bool sparse) =>
+            (allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(left.ExternalProvider ?? "") !=
+             allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(right.ExternalProvider ?? "") ||
+             sparse && RecordingDuration(left) is not > 0 && RecordingDuration(right) is not > 0) &&
+            MetadataRecordingsMatch(left, right, sparse) && compatibleEvidence?.Invoke(left, right) != false;
+        foreach (var song in rows.Where(song => RecordingDuration(song) is > 0))
+        {
+            var group = groups.FirstOrDefault(members => members.All(member => Compatible(member, song, false)));
+            if (group == null) groups.Add([song]);
+            else group.Add(song);
+        }
+        foreach (var song in rows.Where(song => RecordingDuration(song) is not > 0))
+        {
+            var group = groups.FirstOrDefault(members => members.Any(member => RecordingDuration(member) is > 0) &&
+                members.All(member => Compatible(member, song, true)));
+            if (group == null) groups.Add([song]);
+            else group.Add(song);
+        }
+        return groups;
     }
 
     private static string? NormalizeIdentifier(string? value)
@@ -130,8 +159,7 @@ public sealed class MusicSearchService(
     private static string RecordingVersion(Song song) => string.Join("|",
         FuzzyMatcher.SemanticVersionTags(string.Join(" ", song.Title, song.Album)).Order(StringComparer.Ordinal));
 
-    private static bool HasOrdinaryRecordingMetadata(Song song) => RecordingDuration(song) is > 0 &&
-        !FuzzyMatcher.IsContinuousMixExcerpt(song.Title, song.Album) &&
+    private static bool HasOrdinaryRecordingMetadata(Song song) => !FuzzyMatcher.IsContinuousMixExcerpt(song.Title, song.Album) &&
         !FuzzyMatcher.HasCoverRecordingLabel(string.Join(" ", song.Title, song.Artist, song.Album)) &&
         FuzzyMatcher.BackingRecordingTags(string.Join(" ", song.Title, song.Artist, song.Album)).Count == 0 &&
         FuzzyMatcher.SpecialEditionTags(string.Join(" ", song.Title, song.Album)).Count == 0;
@@ -174,6 +202,7 @@ public sealed class MusicSearchService(
         {
             try { await savedLibrary.PreferSavedSongIdsAsync(context, songs, cancellationToken); }
             catch (Exception) when (!cancellationToken.IsCancellationRequested && !context.CancellationToken.IsCancellationRequested) { }
+            songs = songs.DistinctBy(song => song.Id, StringComparer.Ordinal).ToList();
         }
         await PreferOwnedSongsAsync(context, songs, nativeSongs, native, cancellationToken);
         return Merge(

@@ -1491,7 +1491,9 @@ public sealed partial class ProtocolProviderGateway(
                 };
             var prefixFacts = PrefetchedStream.Facts(stream.Response.Content);
             var measured = stream.FileFacts.Measured ?? prefixFacts;
-            if (protocol.Actor != null && servingTrack != null && MediaFacts is { } retainedFacts)
+            var measuredCache = stream.IsCached && measured is { Media: { SampleRate: > 0, Channels: > 0 } } &&
+                measured.Media.Codec != "unknown";
+            if (!measuredCache && protocol.Actor != null && servingTrack != null && MediaFacts is { } retainedFacts)
             {
                 var retained = new Song { ExternalProvider = servingTrack.ProviderId, ExternalId = servingTrack.Value };
                 try
@@ -1526,7 +1528,7 @@ public sealed partial class ProtocolProviderGateway(
                 stream.FileFacts.Media = measured.Media;
                 stream.FileFacts.Size = measured.Size;
                 stream.FileFacts.Measured = measured;
-                if (!protocol.IsOriginalDownload && !protocol.IsReadOnly && !headOnly && execution != null && servingTrack != null && MediaFacts is { } mediaStore)
+                if (!measuredCache && !protocol.IsOriginalDownload && !protocol.IsReadOnly && !headOnly && execution != null && servingTrack != null && MediaFacts is { } mediaStore)
                 {
                     try { await mediaStore.RememberMediaFactsAsync(execution, servingTrack, measured, streamCancellation); }
                     catch (Exception error) when (error is not OperationCanceledException)
@@ -1552,7 +1554,7 @@ public sealed partial class ProtocolProviderGateway(
                 }
                 catch { stream.Response.Dispose(); throw; }
             }
-            if (!protocol.IsOriginalDownload && !protocol.IsReadOnly && !headOnly && !protocol.IsPreparation && execution != null && servingTrack != null)
+            if (!(measuredCache && providerId == "allstarr") && !protocol.IsOriginalDownload && !protocol.IsReadOnly && !headOnly && !protocol.IsPreparation && execution != null && servingTrack != null)
                 await RememberPlayedTrackAsync(execution, servingTrack, itemId);
             if (!protocol.IsOriginalDownload && !protocol.IsReadOnly && !headOnly && stream.ServingProviderId == "monochrome" && !stream.Lease.SupportsByteRanges &&
                 execution != null && identities != null)

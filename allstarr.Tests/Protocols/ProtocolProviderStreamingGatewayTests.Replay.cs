@@ -1,6 +1,8 @@
 using System.Net;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
+using allstarr.Core.Matching;
+using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
@@ -17,6 +19,59 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
+    [Theory]
+    [InlineData("allstarr", 0)]
+    [InlineData("deezer", 1)]
+    public async Task CompleteMeasuredReplayDoesNotReadOrRewriteStoredMediaFacts(string provider, int identityWrites)
+    {
+        var root = Directory.CreateTempSubdirectory("allstarr-replay-").FullName;
+        var path = Path.Combine(root, "original.wav");
+        using var bytes = new MemoryStream();
+        using (var writer = new BinaryWriter(bytes, System.Text.Encoding.ASCII, leaveOpen: true))
+        {
+            writer.Write("RIFF"u8);
+            writer.Write(16036);
+            writer.Write("WAVEfmt "u8);
+            writer.Write(16);
+            writer.Write((short)1);
+            writer.Write((short)1);
+            writer.Write(8000);
+            writer.Write(16000);
+            writer.Write((short)2);
+            writer.Write((short)16);
+            writer.Write("data"u8);
+            writer.Write(16000);
+            writer.Write(new byte[16000]);
+        }
+        await File.WriteAllBytesAsync(path, bytes.ToArray());
+        try
+        {
+            var library = new Mock<ILocalLibraryService>(MockBehavior.Strict);
+            library.Setup(item => item.GetLocalPathForExternalSongAsync(It.IsAny<DownloadedSongMappingScope>(), "deezer", It.IsAny<string>()))
+                .ReturnsAsync(path);
+            await using var cache = new ManagedTrackCacheService(new ConfigurationBuilder().Build(),
+                Options.Create(new SubsonicSettings()), library.Object, NullLogger<ManagedTrackCacheService>.Instance);
+            var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+            var media = identities.As<ITrackMediaFactsStore>();
+            identities.Setup(item => item.RememberSourceAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderExternalResourceId>(),
+                It.IsAny<string>(), It.IsAny<allstarr.Core.Storage.ProviderIdentityScope>(), null, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Guid.NewGuid());
+            var first = Streaming("deezer", (_, _) => throw new InvalidOperationException("No upstream open is needed."));
+            var second = Streaming("qobuz", (_, _) => throw new InvalidOperationException("No upstream open is needed."));
+            var (gateway, _) = FailoverGateway(first, second, managedTrackCache: cache, identities: identities.Object);
+            using var response = (await gateway.OpenStreamAsync(ClientContext(), provider, "recording", ProviderAudioQuality.Any, "bytes=44-"))!.Response;
+            Assert.Equal("audio/wav", response.Content.Headers.ContentType!.MediaType);
+            Assert.Equal(bytes.ToArray(), await response.Content.ReadAsByteArrayAsync());
+            media.Verify(item => item.ApplyStoredMediaFactsAsync(It.IsAny<ProviderActorContext>(), It.IsAny<IReadOnlyList<allstarr.Models.Domain.Song>>(),
+                It.IsAny<CancellationToken>()), Times.Never);
+            media.Verify(item => item.RememberMediaFactsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderExternalResourceId>(),
+                It.IsAny<TrackMediaFacts>(), It.IsAny<CancellationToken>()), Times.Never);
+            identities.Verify(item => item.RememberSourceAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderExternalResourceId>(),
+                It.IsAny<string>(), It.IsAny<allstarr.Core.Storage.ProviderIdentityScope>(), null, It.IsAny<CancellationToken>()), Times.Exactly(identityWrites));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     [Theory]
     [InlineData(ProtocolKind.Jellyfin, "bytes=10-19")]
     [InlineData(ProtocolKind.Subsonic, "bytes=10-19")]
