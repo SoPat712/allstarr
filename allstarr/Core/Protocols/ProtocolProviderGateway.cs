@@ -179,6 +179,7 @@ public sealed record ProtocolProviderStream(
 
 internal sealed class PlaybackFileFacts
 {
+    internal Song? Catalog { get; init; }
     internal Func<TrackMediaFacts, CancellationToken, Task>? RecordAsync { get; set; }
     internal TrackMediaFacts? Measured { get; set; }
     internal double? ExpectedDurationSeconds { get; set; }
@@ -1608,6 +1609,7 @@ public sealed partial class ProtocolProviderGateway(
             ProviderExecutionContext? execution, ProviderExternalResourceId? servingTrack)
         {
             PlaybackStartTimings.Current?.Select(stream.ServingProviderId, stream.IsCached, execution?.Account?.Scope.ToString());
+            PlaybackStartTimings.Current?.Catalog(stream.FileFacts.Catalog);
             if (execution != null && servingTrack != null && PlaybackStartTimings.Current is { } trace)
             {
                 try { trace.Catalog(await ReadPlaybackMetadataAsync(execution, servingTrack)); }
