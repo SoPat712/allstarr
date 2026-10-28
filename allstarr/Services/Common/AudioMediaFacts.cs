@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Music;
+using AudioTagReader = TagLib.File;
 
 namespace allstarr.Services.Common;
 
@@ -148,7 +149,7 @@ internal static class AudioMediaFacts
                 CreateNoWindow = true
             };
             foreach (var arg in new[] { "-v", "error", "-threads", "1", "-protocol_whitelist", "file,pipe", "-select_streams", "a:0",
-                "-show_entries", "stream=codec_name,sample_rate,channels,bits_per_raw_sample,bits_per_sample,bit_rate,duration:format=format_name,duration,bit_rate:format_tags=replaygain_track_gain,replaygain_album_gain,replaygain_track_peak,replaygain_album_peak:stream_tags=replaygain_track_gain,replaygain_album_gain,replaygain_track_peak,replaygain_album_peak",
+                "-show_entries", "stream=codec_name,sample_rate,channels,bits_per_raw_sample,bits_per_sample,bit_rate,duration:format=format_name,duration,bit_rate:format_tags=title,artist,album,isrc,explicit,replaygain_track_gain,replaygain_album_gain,replaygain_track_peak,replaygain_album_peak:stream_tags=title,artist,album,isrc,explicit,replaygain_track_gain,replaygain_album_gain,replaygain_track_peak,replaygain_album_peak",
                 "-of", "json", path }) start.ArgumentList.Add(arg);
             using var process = Process.Start(start);
             if (process == null) return prefixFacts;
@@ -222,7 +223,43 @@ internal static class AudioMediaFacts
         if (gain.TrackGain == null && gain.AlbumGain == null && gain.TrackPeak == null && gain.AlbumPeak == null) gain = null;
         return new(new(mime, container, codec, Positive(audio, "bit_rate") ?? Positive(format, "bit_rate") ?? AverageBitrate(size, seconds),
             Positive(audio, "sample_rate"), bits, Positive(audio, "channels")), size,
-            seconds is > 0 ? seconds : null, gain);
+            seconds is > 0 ? seconds : null, gain, ProbeTags(audio, format));
+    }
+
+    private static TrackAudioTags? ProbeTags(JsonElement audio, JsonElement format)
+    {
+        string? Tag(string name)
+        {
+            foreach (var source in new[] { audio, format })
+                if (source.TryGetProperty("tags", out var tags) && tags.ValueKind == JsonValueKind.Object)
+                    foreach (var property in tags.EnumerateObject())
+                        if (property.Name.Equals(name, StringComparison.OrdinalIgnoreCase) && property.Value.ValueKind == JsonValueKind.String)
+                            return allstarr.Core.Playback.PlayTraceText.Clean(property.Value.GetString());
+            return null;
+        }
+        var title = Tag("title"); var artist = Tag("artist"); var album = Tag("album"); var isrc = Tag("isrc");
+        var explicitValue = Tag("explicit")?.ToLowerInvariant();
+        bool? isExplicit = explicitValue switch { "1" or "true" or "explicit" => true, "0" or "false" or "clean" => false, _ => null };
+        return title == null && artist == null && album == null && isrc == null && isExplicit == null ? null : new(title, artist, album, isrc, isExplicit);
+    }
+
+    internal static TrackAudioTags? ReadTags(string path, ProviderMediaFormat media)
+    {
+        try
+        {
+            var type = media.Container switch { "mp4" => "m4a", "ogg" => "ogg", _ => media.Container };
+            using var file = AudioTagReader.Create(path, $"taglib/{type}", TagLib.ReadStyle.None);
+            var tags = file.Tag;
+            var xiph = file.GetTag(TagLib.TagTypes.Xiph) as TagLib.Ogg.XiphComment;
+            var title = allstarr.Core.Playback.PlayTraceText.Clean(tags.Title);
+            var artist = allstarr.Core.Playback.PlayTraceText.Clean(tags.FirstPerformer);
+            var album = allstarr.Core.Playback.PlayTraceText.Clean(tags.Album);
+            var isrc = allstarr.Core.Playback.PlayTraceText.Clean(tags.ISRC);
+            bool? isExplicit = xiph?.GetFirstField("EXPLICIT") switch { "1" => true, "0" => false, _ => null };
+            return title == null && artist == null && album == null && isrc == null && isExplicit == null ? null : new(title, artist, album, isrc, isExplicit);
+        }
+        catch (Exception error) when (error is IOException or ArgumentException or NotSupportedException or TagLib.CorruptFileException or TagLib.UnsupportedFormatException)
+        { return null; }
     }
 
     internal static string Mime(string container) => container switch

@@ -32,7 +32,10 @@ public sealed record ProblemReportCheck([property: JsonPropertyName("providerId"
     [property: JsonPropertyName("checkedAt")] DateTimeOffset CheckedAt, [property: JsonPropertyName("reasonCode")] string? ReasonCode);
 public sealed record ProblemReportContext([property: JsonPropertyName("schemaVersion")] int SchemaVersion, [property: JsonPropertyName("capturedAt")] DateTimeOffset CapturedAt,
     [property: JsonPropertyName("subjectUserId")] Guid? SubjectUserId, [property: JsonPropertyName("subjectName")] string? SubjectName, [property: JsonPropertyName("song")] ProblemReportSong? Song, [property: JsonPropertyName("match")] ProblemReportMatch? Match,
-    [property: JsonPropertyName("playback")] ProblemReportPlayback? Playback, [property: JsonPropertyName("checks")] IReadOnlyList<ProblemReportCheck> Checks);
+    [property: JsonPropertyName("playback")] ProblemReportPlayback? Playback, [property: JsonPropertyName("checks")] IReadOnlyList<ProblemReportCheck> Checks)
+{
+    [JsonPropertyName("playbackRequestId")] public Guid? PlaybackRequestId { get; init; }
+}
 public sealed record ProblemReportSummary([property: JsonPropertyName("id")] Guid Id, [property: JsonPropertyName("kind")] string Kind, [property: JsonPropertyName("status")] string Status, [property: JsonPropertyName("notePreview")] string NotePreview,
     [property: JsonPropertyName("reporterName")] string ReporterName, [property: JsonPropertyName("subjectName")] string? SubjectName, [property: JsonPropertyName("songTitle")] string? SongTitle, [property: JsonPropertyName("artist")] string? Artist, [property: JsonPropertyName("providerId")] string? ProviderId,
     [property: JsonPropertyName("clientName")] string? ClientName, [property: JsonPropertyName("createdAt")] DateTimeOffset CreatedAt, [property: JsonPropertyName("updatedAt")] DateTimeOffset UpdatedAt, [property: JsonPropertyName("revision")] long Revision);

@@ -202,6 +202,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
                 await AudioMediaFacts.ReadFileAsync(path, cancellationToken) ?? new(ReadFileMedia(path, mime, extension), file.Length);
             if (verifiedDuration is > 0)
                 facts = AudioMediaFacts.WithDecodedDuration(facts, file.Length, verifiedDuration.Value);
+            facts = facts with { Tags = facts.Tags ?? AudioMediaFacts.ReadTags(path, facts.Media) };
             var media = facts.Media;
             completedMedia.Set(path, facts, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1) });
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(file) };

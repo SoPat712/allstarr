@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using allstarr.Core.Storage;
+using allstarr.Core.Protocols;
+using allstarr.Core.Music;
 using allstarr.Models.Domain;
 using Microsoft.EntityFrameworkCore;
 
@@ -13,7 +15,7 @@ public enum PlaybackStartPhase { Route, Account, Lease, Source, Verify, Retry, S
 public sealed record PlaybackStartPhaseTiming(PlaybackStartPhase Phase, string? Provider, double StartedMs, double ElapsedMs);
 public sealed record PlaybackStartSample(Guid Id, DateTimeOffset StartedAt, string Outcome, string? Provider,
     string? Title, string? Artist, string? AccountScope, bool Cached, double ElapsedMs,
-    double? HeadersMs, double? FirstByteMs, IReadOnlyList<PlaybackStartPhaseTiming> Phases, int OmittedPhases);
+    double? HeadersMs, double? FirstByteMs, IReadOnlyList<PlaybackStartPhaseTiming> Phases, int OmittedPhases, PlayTraceData? Trace = null);
 
 public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
 {
@@ -28,6 +30,8 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
     private int omitted;
     private string? provider, title, artist, accountScope;
     private bool cached;
+    private PlayTraceData? play;
+    private Func<TrackMediaFacts?>? received;
     private double? headers, firstByte;
     public const int MaximumPhases = 96;
     public static PlaybackStartTimings? Current => Ambient.Value;
@@ -56,7 +60,7 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
         }
     }
     private static string? Label(string? value) => string.IsNullOrWhiteSpace(value) ? null :
-        new string(value.Where(character => !char.IsControl(character)).Take(200).ToArray());
+        PlayTraceText.Clean(new string(value.Where(character => !char.IsControl(character)).Take(200).ToArray()));
     public void Prepared(HttpResponseMessage response, string source)
     {
         if (!Enabled || !response.IsSuccessStatusCode) return;
@@ -84,6 +88,98 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
             }
         }
     }
+    public void BeginPlay(ProtocolExecutionContext context, string itemId)
+    {
+        if (!Enabled || context.IsPreparation || context.IsReadOnly || context.Principal == null) return;
+        lock (sync)
+        {
+            if (closed || play != null) return;
+            play = new(context.Principal.UserId, new(context.Protocol.ToString(), PlayTraceText.Reference(itemId),
+                PlayTraceText.Clean(context.Client.ClientId), PlayTraceText.Clean(context.Client.DeviceName), new()), new());
+        }
+    }
+    public void Present(Song song)
+    {
+        lock (sync)
+        {
+            if (!closed && play != null)
+            {
+                var metadata = PlayTraceText.Metadata(song);
+                if (song.CanonicalRecordingId.HasValue) play = play with { Resolution = play.Resolution with { CanonicalRecordingId = song.CanonicalRecordingId } };
+                var artwork = play.Resolution.ExternalSnapshotId is { } snapshot && metadata.Artwork != null
+                    ? $"/api/admin/track-matches/{snapshot:D}/artwork" : metadata.Artwork;
+                play = play with { Request = play.Request with { Presented = metadata with { Artwork = artwork } } };
+            }
+        }
+    }
+    public void Resolve(PlayTraceResolution resolution)
+    {
+        lock (sync)
+        {
+            if (closed || play == null) return;
+            var selected = resolution with
+            {
+                CanonicalRecordingId = resolution.CanonicalRecordingId ?? play.Resolution.CanonicalRecordingId,
+                State = PlayTraceText.Reference(resolution.State),
+                Provider = PlayTraceText.Reference(resolution.Provider),
+                Route = ProblemRoute(resolution.Route),
+                AccountLabel = PlayTraceText.Clean(resolution.AccountLabel),
+                Score = resolution.Score is { } score && double.IsFinite(score) ? Math.Clamp(score, 0, 1) : null
+            };
+            play = play with { Resolution = selected };
+        }
+    }
+    public void Route(string source, bool fromCache, string? reason, string quality, string? scope, string? servingExternalId = null)
+    {
+        lock (sync)
+        {
+            if (closed || play == null) return;
+            var selected = play.Resolution with
+            {
+                ExternalId = PlayTraceText.Reference(servingExternalId),
+                Provider = PlayTraceText.Reference(source),
+                Cached = fromCache,
+                Route = ProblemRoute(reason),
+                Quality = PlayTraceText.Reference(quality),
+                AccountLabel = scope == null ? "Account-free" : scope == "Personal" ? "Personal account" : scope == "Shared" ? "Shared account" : "Selected account"
+            };
+            play = play with { Resolution = selected };
+        }
+    }
+    private static string? ProblemRoute(string? value) => allstarr.Core.Operations.ProblemReportText.Route(value);
+    public void AccountLabel(string? value)
+    {
+        lock (sync) { if (!closed && play != null && value != null) play = play with { Resolution = play.Resolution with { AccountLabel = PlayTraceText.Clean(value) } }; }
+    }
+    public void Artwork(string? value)
+    {
+        lock (sync)
+        {
+            if (!closed && play != null && play.Request.Presented.Artwork != null)
+                play = play with { Request = play.Request with { Presented = play.Request.Presented with { Artwork = value } } };
+        }
+    }
+    public void Receive(TrackMediaFacts facts)
+    {
+        lock (sync) { if (!closed && play != null) play = play with { Received = PlayTraceText.Facts(facts) }; }
+    }
+    internal void ObserveMedia(Func<TrackMediaFacts?> read)
+    {
+        lock (sync) { if (!closed) received = read; }
+    }
+    public void Deliver(ProviderAudioDeliveryRequest? request, ProviderAudioConversion? conversion)
+    {
+        lock (sync)
+        {
+            if (closed || play == null) return;
+            var delivery = new PlayTraceDelivery(request?.MaxBitrate, request?.MaxSampleRate,
+                request?.MaxChannels, request?.MaxBitDepth, conversion != null, PlayTraceText.Reference(conversion?.Media.Container),
+                PlayTraceText.Reference(conversion?.Media.Codec), request?.StartTimeTicks ?? 0,
+                (request?.Formats ?? request?.Profiles ?? []).SelectMany(profile => profile.Containers).Select(PlayTraceText.Reference).OfType<string>().Distinct().Take(12).ToArray(),
+                (request?.Formats ?? request?.Profiles ?? []).SelectMany(profile => profile.Codecs).Select(PlayTraceText.Reference).OfType<string>().Distinct().Take(12).ToArray(), conversion?.Media);
+            play = play with { Delivery = delivery };
+        }
+    }
     public void Headers() { lock (sync) { if (!closed) headers ??= Elapsed; } }
     public bool FirstByte()
     {
@@ -107,9 +203,10 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
     {
         lock (sync)
         {
-            if (complete) closed = true;
+            if (!closed && received?.Invoke() is { } facts && play != null) play = play with { Received = PlayTraceText.Facts(facts) };
+            if (complete) { closed = true; received = null; }
             return new(id, startedAt, outcome, provider ?? phases.LastOrDefault(phase => phase.Provider != null)?.Provider, title, artist, accountScope, cached,
-                Elapsed, headers, firstByte, phases.OrderBy(item => item.StartedMs).ToArray(), omitted);
+                Elapsed, headers, firstByte, phases.OrderBy(item => item.StartedMs).ToArray(), omitted, play);
         }
     }
     public void Dispose() => Ambient.Value = previous;
@@ -155,6 +252,7 @@ public sealed class PlaybackStartTimingStore(IDbContextFactory<AllstarrDbContext
                 db.AuditEvents.Add(row);
             }
             else if (row.Category != Category) return;
+            row.ActorUserId = sample.Trace?.OwnerUserId;
             row.Outcome = sample.Outcome;
             row.DetailsJson = JsonSerializer.Serialize(sample);
             await db.SaveChangesAsync(timeout.Token);

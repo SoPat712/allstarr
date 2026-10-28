@@ -98,7 +98,7 @@ public sealed class ProviderAudioVerifier(MediaConversionGate? conversions = nul
             if (duration is > 0 && total is > 0 && media.Codec is "flac" or "alac")
                 media = new(media.MimeType, media.Container, media.Codec,
                     (int)Math.Min(int.MaxValue, total.Value * 8d / duration.Value), media.SampleRate, media.BitDepth, media.Channels);
-            var facts = new TrackMediaFacts(media, total, duration, measured.ReplayGain);
+            var facts = new TrackMediaFacts(media, total, duration, measured.ReplayGain, measured.Tags ?? AudioMediaFacts.ReadTags(path, media));
             PrefetchedStream.ReplaceContent(response, buffered, facts);
             response.Content.Headers.ContentType = new(media.MimeType);
             return ProviderOutcome<TrackMediaFacts>.Success(facts);

@@ -3,8 +3,10 @@ using allstarr.Models.Domain;
 
 namespace allstarr.Core.Music;
 
+public sealed record TrackAudioTags(string? Title = null, string? Artist = null, string? Album = null, string? Isrc = null, bool? IsExplicit = null);
+
 public sealed record TrackMediaFacts(ProviderMediaFormat Media, long? Size = null,
-    double? DurationSeconds = null, ProviderReplayGain? ReplayGain = null)
+    double? DurationSeconds = null, ProviderReplayGain? ReplayGain = null, TrackAudioTags? Tags = null)
 {
     public TrackMediaFacts WithFallback(TrackMediaFacts fallback)
     {
@@ -20,7 +22,8 @@ public sealed record TrackMediaFacts(ProviderMediaFormat Media, long? Size = nul
             Media.Channels ?? (compatible ? fallback.Media.Channels : null)),
             Size ?? (compatible ? fallback.Size : null),
             DurationSeconds ?? (compatible ? fallback.DurationSeconds : null),
-            ReplayGain ?? (compatible ? fallback.ReplayGain : null));
+            ReplayGain ?? (compatible ? fallback.ReplayGain : null),
+            Tags ?? (compatible ? fallback.Tags : null));
     }
 
     public void Apply(Song song)

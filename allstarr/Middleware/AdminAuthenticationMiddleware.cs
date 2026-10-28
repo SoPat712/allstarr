@@ -75,6 +75,12 @@ public class AdminAuthenticationMiddleware
         var path = request.Path.Value ?? string.Empty;
         var method = request.Method;
 
+        var traceSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (traceSegments.Length >= 3 && traceSegments[2].Equals("play-traces", StringComparison.OrdinalIgnoreCase))
+            return HttpMethods.IsGet(method) && (traceSegments.Length == 3 || traceSegments.Length == 4 && Guid.TryParse(traceSegments[3], out _) ||
+                       traceSegments.Length == 5 && Guid.TryParse(traceSegments[3], out _) && traceSegments[4] == "diagnostics") ||
+                   HttpMethods.IsPost(method) && traceSegments.Length == 5 && Guid.TryParse(traceSegments[3], out _) && traceSegments[4] is "report" or "version" or "forget";
+
         var reportPath = path.TrimEnd('/');
         if (reportPath.Equals("/api/admin/problem-reports", StringComparison.OrdinalIgnoreCase) ||
             reportPath.Equals("/api/admin/problem-reports/context", StringComparison.OrdinalIgnoreCase))
