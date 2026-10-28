@@ -211,7 +211,15 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
             return new(response, CacheLease(media, true), track.ProviderId, track.Value,
                 scope.ProviderAccountId, IsCached: true, EffectiveQuality: scope.AudioQuality,
                 ServingAccountRevision: accountRevision)
-            { FileFacts = new() { Measured = facts, Media = facts.Media, Size = facts.Size } };
+            {
+                FileFacts = new()
+                {
+                    Measured = facts,
+                    Media = facts.Media,
+                    Size = facts.Size,
+                    Catalog = originalMapping == null ? null : new Song { Title = originalMapping.Title, Artist = originalMapping.Artist }
+                }
+            };
         }
         catch (IOException) { return null; }
         catch (UnauthorizedAccessException) { return null; }
