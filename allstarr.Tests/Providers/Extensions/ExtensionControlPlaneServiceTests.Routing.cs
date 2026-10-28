@@ -45,7 +45,7 @@ public sealed partial class ExtensionControlPlaneServiceTests
     public async Task SignedConnections_ListenerSearchAndMetadataUseSettingsWithoutASecret(bool personal)
     {
         var fixture = await SignedRoutesAsync("tidal-web", personal);
-        var gateway = new ProtocolProviderGateway(fixture.Router, fixture.Registry, fixture.Clients);
+        var gateway = new ProtocolProviderGateway(fixture.Router, fixture.Registry, fixture.Clients, audioVerifier: FixtureAudioVerifier.Instance);
         var result = await gateway.SearchAsync(fixture.Protocol, "The Infamous Stringdusters Get Lucky", 40, 0, 0);
         var song = Assert.Single(result.Songs);
         Assert.Equal(fixture.Signed.ExtensionId, song.ExternalProvider);
@@ -77,7 +77,7 @@ public sealed partial class ExtensionControlPlaneServiceTests
     {
         var fixture = await SignedRoutesAsync(name, personal, requiresPreparation);
         await using var runtime = fixture.Runtime;
-        var gateway = new ProtocolProviderGateway(fixture.Router, fixture.Registry, fixture.Clients);
+        var gateway = new ProtocolProviderGateway(fixture.Router, fixture.Registry, fixture.Clients, audioVerifier: FixtureAudioVerifier.Instance);
         var stream = await gateway.OpenStreamAsync(fixture.Protocol, fixture.Signed.ExtensionId, "track",
             ProviderAudioQuality.Any, null);
         Assert.NotNull(stream);
@@ -210,7 +210,7 @@ public sealed partial class ExtensionControlPlaneServiceTests
         var clients = new Mock<IHttpClientFactory>();
         clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(() => new HttpClient(handler, false));
         var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "route-downloads"), MaximumArtifactBytes = 1024 };
-        var artifacts = new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options);
+        var artifacts = new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options, audioVerifier: FixtureAudioVerifier.Instance);
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         var runtime = new ExtensionRuntimeCoordinator(_factory, _service, registry, registry, clients.Object,
             Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(MockBehavior.Strict),

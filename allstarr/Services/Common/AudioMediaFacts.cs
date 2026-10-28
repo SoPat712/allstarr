@@ -9,6 +9,15 @@ namespace allstarr.Services.Common;
 
 internal static class AudioMediaFacts
 {
+    internal static TrackMediaFacts WithDecodedDuration(TrackMediaFacts facts, long size, double seconds)
+    {
+        var media = facts.Media;
+        if (media.Codec is "flac" or "alac")
+            media = new(media.MimeType, media.Container, media.Codec,
+                (int)Math.Min(int.MaxValue, size * 8d / seconds), media.SampleRate, media.BitDepth, media.Channels);
+        return facts with { Media = media, Size = size, DurationSeconds = seconds };
+    }
+
     internal static bool IsPartialHeader(ReadOnlySpan<byte> bytes) => !bytes.IsEmpty &&
         (Partial(bytes, "RIFF"u8) || Partial(bytes, "fLaC"u8) || Partial(bytes, "OggS"u8) ||
          Partial(bytes, "ID3"u8) || bytes[0] == 0xff);
@@ -53,7 +62,7 @@ internal static class AudioMediaFacts
             var codec = encoding == 3 ? $"pcm_f{storageBits}le" : storageBits == 8 ? "pcm_u8" : $"pcm_s{storageBits}le";
             var bitrate = (long)rate * block * 8;
             return new(new("audio/wav", "wav", codec, bitrate <= int.MaxValue ? (int)bitrate : null,
-                rate, bits, channels), size, data is > 0 ? (double)data.Value / block / rate : null);
+                rate, bits, channels), size, data is > 0 and < uint.MaxValue ? (double)data.Value / block / rate : null);
         }
         if (bytes.Length >= 42 && bytes[..4].SequenceEqual("fLaC"u8) &&
             (bytes[4] & 0x7f) == 0 && bytes[7] == 34)

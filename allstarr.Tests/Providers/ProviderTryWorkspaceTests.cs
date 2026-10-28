@@ -9,7 +9,7 @@ public sealed class ProviderTryWorkspaceTests
     public async Task TransientBudget_BoundsProviderWritesAndStartupOnlyRemovesTryWorkspaces()
     {
         var root = Path.Combine(Path.GetTempPath(), "try-workspace-tests", Guid.NewGuid().ToString("N"));
-        var resolver = new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), new() { RootPath = root });
+        var resolver = new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), new() { RootPath = root }, audioVerifier: FixtureAudioVerifier.Instance);
         var job = Guid.NewGuid();
         var workspace = resolver.CreateTransientWorkspace(new(null, job, "fixture", null, "provider-try-test")
         { MaximumBytes = 3 });

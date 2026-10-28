@@ -472,7 +472,8 @@ public sealed partial class ExtensionProgressivePlaybackTests : IAsyncLifetime
         Assert.Empty(Directory.GetFiles(options.RootPath, "*", SearchOption.AllDirectories));
     }
 
-    private (ExtensionDownloadStreamingCapabilityAdapter, ProviderExecutionContext, ProviderExternalResourceId) Setup(bool knownLength, string processing = "", string mimeType = "audio/flac", bool segmented = false, long maximumBytes = 1024 * 1024, bool deezer = false, string extension = "")
+    private (ExtensionDownloadStreamingCapabilityAdapter, ProviderExecutionContext, ProviderExternalResourceId) Setup(bool knownLength, string processing = "", string mimeType = "audio/flac", bool segmented = false, long maximumBytes = 1024 * 1024, bool deezer = false, string extension = "",
+        allstarr.Core.Music.IProviderAudioVerifier? audioVerifier = null)
     {
         var manifestSource = """
             {"name":"growing-test","displayName":"Growing test","version":"1.0.0","type":["download_provider"],
@@ -510,7 +511,7 @@ public sealed partial class ExtensionProgressivePlaybackTests : IAsyncLifetime
             new ExtensionRuntimePermissionSet(new HashSet<string>([origin]), new HashSet<string>(["retry"]), new HashSet<string>()),
             Path.Combine(root, "runtime"), timeProvider: clock);
         options = new() { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = maximumBytes };
-        var resolver = new ProviderDownloadArtifactResolver(new Mock<IProviderDownloadArtifactStore>().Object, options);
+        var resolver = new ProviderDownloadArtifactResolver(new Mock<IProviderDownloadArtifactStore>().Object, options, audioVerifier: audioVerifier ?? FixtureAudioVerifier.Instance);
         var actor = new ProviderActorContext(ProviderActorKind.User, Guid.CreateVersion7(), new ProviderBackendPrincipal("jellyfin", "test", "user"));
         var context = new ProviderExecutionContext(actor, manifest.Id, null,
             new ProviderExecutionPolicy(new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),

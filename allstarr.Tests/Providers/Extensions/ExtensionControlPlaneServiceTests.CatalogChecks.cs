@@ -76,7 +76,7 @@ public sealed partial class ExtensionControlPlaneServiceTests
         var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "downloads") };
         await using var runtime = new ExtensionRuntimeCoordinator(_factory, _service, registry, registry, clients.Object,
             Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
-            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options), options,
+            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options, audioVerifier: FixtureAudioVerifier.Instance), options,
             _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance);
         await runtime.ActivateAsync(package.Id, package.Revision);
 

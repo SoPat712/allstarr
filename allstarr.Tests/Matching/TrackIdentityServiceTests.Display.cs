@@ -43,7 +43,7 @@ public sealed partial class TrackIdentityServiceTests
         }
         var gateway = new ProtocolProviderGateway(Mock.Of<IProviderRouter>(MockBehavior.Strict),
             new ProviderRegistry([]), Mock.Of<IHttpClientFactory>(MockBehavior.Strict),
-            playbackActivity: activity, identities: _service);
+            playbackActivity: activity, identities: _service, audioVerifier: FixtureAudioVerifier.Instance);
         var expected = songs[playingProvider == "deezer" ? 1 : 3];
         foreach (var alias in songs)
         {
@@ -128,7 +128,7 @@ public sealed partial class TrackIdentityServiceTests
                 new(request.CorrelationId, ProviderCapabilityKind.Metadata, "deezer", null, [])));
         using var cache = new MemoryApplicationCache(_clock);
         var gateway = new ProtocolProviderGateway(router.Object, registry, Mock.Of<IHttpClientFactory>(),
-            identities: _service, applicationCache: cache);
+            identities: _service, applicationCache: cache, audioVerifier: FixtureAudioVerifier.Instance);
         var protocol = DisplayProtocol(kind);
         await using var before = await _factory.CreateDbContextAsync();
         var snapshots = await before.ExternalMetadataSnapshots.CountAsync();
@@ -207,7 +207,7 @@ public sealed partial class TrackIdentityServiceTests
                 new(request.CorrelationId, ProviderCapabilityKind.Metadata, "apple-musickit", null, [])));
         using var cache = new MemoryApplicationCache(_clock);
         var gateway = new ProtocolProviderGateway(router.Object, new ProviderRegistry([registration]), Mock.Of<IHttpClientFactory>(),
-            identities: _service, applicationCache: cache);
+            identities: _service, applicationCache: cache, audioVerifier: FixtureAudioVerifier.Instance);
         foreach (var alias in songs.Concat(songs))
         {
             var song = await gateway.GetSongAsync(DisplayProtocol(kind), alias.ExternalProvider!, alias.ExternalId!);
@@ -280,7 +280,7 @@ public sealed partial class TrackIdentityServiceTests
             await db.SaveChangesAsync();
         }
         var gateway = new ProtocolProviderGateway(Mock.Of<IProviderRouter>(MockBehavior.Strict), new ProviderRegistry([]),
-            Mock.Of<IHttpClientFactory>(), identities: _service);
+            Mock.Of<IHttpClientFactory>(), identities: _service, audioVerifier: FixtureAudioVerifier.Instance);
         foreach (var alias in songs)
         {
             var song = await gateway.GetStoredSongAsync(DisplayProtocol(ProtocolKind.Jellyfin), alias.ExternalProvider!, alias.ExternalId!);
@@ -299,7 +299,7 @@ public sealed partial class TrackIdentityServiceTests
     {
         var songs = await SeedDisplaySourcesAsync();
         var gateway = new ProtocolProviderGateway(Mock.Of<IProviderRouter>(MockBehavior.Strict),
-            new ProviderRegistry([]), Mock.Of<IHttpClientFactory>(MockBehavior.Strict), identities: _service);
+            new ProviderRegistry([]), Mock.Of<IHttpClientFactory>(MockBehavior.Strict), identities: _service, audioVerifier: FixtureAudioVerifier.Instance);
         foreach (var alias in songs)
         {
             var song = await gateway.GetPublicSongAsync(alias.ExternalProvider!, alias.ExternalId!);
@@ -315,7 +315,7 @@ public sealed partial class TrackIdentityServiceTests
     {
         var songs = await SeedDisplaySourcesAsync(appleOwnedByAnotherListener: true);
         var gateway = new ProtocolProviderGateway(Mock.Of<IProviderRouter>(MockBehavior.Strict),
-            new ProviderRegistry([]), Mock.Of<IHttpClientFactory>(MockBehavior.Strict), identities: _service);
+            new ProviderRegistry([]), Mock.Of<IHttpClientFactory>(MockBehavior.Strict), identities: _service, audioVerifier: FixtureAudioVerifier.Instance);
         var song = await gateway.GetStoredSongAsync(DisplayProtocol(ProtocolKind.Jellyfin), "spotiflac-soundcloud", "1886663583");
         Assert.Equal("deezer", song!.ExternalProvider);
         Assert.Equal(songs[1].AlbumId, song.AlbumId);

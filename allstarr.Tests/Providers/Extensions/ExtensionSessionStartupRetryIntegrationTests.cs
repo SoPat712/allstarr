@@ -29,7 +29,7 @@ public sealed partial class ExtensionControlPlaneServiceTests
         var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "startup-renewal-downloads") };
         var coordinator = new ExtensionRuntimeCoordinator(_factory, _service, registry, registry, clients.Object,
             Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
-            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options), options,
+            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options, audioVerifier: FixtureAudioVerifier.Instance), options,
             _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance, timeProvider: clock);
 
         package = await coordinator.ActivateAsync(package.Id, package.Revision);

@@ -137,7 +137,7 @@ public sealed class ApplePriorityRematchIntegrationTests
             ["Providers:MetadataOrder"] = "deezer,apple-musickit"
         }).Build();
         var gateway = new ProtocolProviderGateway(router, registry,
-            Mock.Of<IHttpClientFactory>(MockBehavior.Strict), configuration, identities: identities);
+            Mock.Of<IHttpClientFactory>(MockBehavior.Strict), configuration, identities: identities, audioVerifier: FixtureAudioVerifier.Instance);
         var protocol = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", userId.ToString("N"),
             new AllstarrPrincipal(userId, "jellyfin", "backend", userId.ToString("N"), "Owner", true),
             "apple-priority", now.AddMinutes(5), default);

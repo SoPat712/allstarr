@@ -67,7 +67,7 @@ public sealed partial class RecordingKeptFilesTests : IAsyncLifetime
         await identities.LinkAsync(SourceContext(), new(recordingId,
             new("deezer", ProviderResourceKind.Track, "source-track"), ProviderIdentityScope.Catalog,
             ProviderIdentityVerification.Verified, "fixture-exact", 1));
-        artifacts = new(new EfProviderDownloadArtifactStore(factory), new() { RootPath = Path.Combine(root, "workspaces") });
+        artifacts = new(new EfProviderDownloadArtifactStore(factory), new() { RootPath = Path.Combine(root, "workspaces") }, audioVerifier: FixtureAudioVerifier.Instance);
         var workspace = await artifacts.CreateWorkspaceAsync(new(owner, jobId, "deezer", account, "fixture-source"));
         await using var input = new MemoryStream(audio);
         var written = await artifacts.WriteAsync(new(workspace.Reference, jobId, "deezer", "source.flac", input, 1000));
@@ -519,8 +519,8 @@ public sealed partial class RecordingKeptFilesTests : IAsyncLifetime
         db.SaveChanges();
     };
 
-    private RecordingKeptFiles Service() => new(factory, artifacts, services.GetRequiredService<IServiceScopeFactory>(),
-        placement, identities, new SystemPlatformClock());
+    private RecordingKeptFiles Service(allstarr.Core.Music.IProviderAudioVerifier? verifier = null) => new(factory, artifacts, services.GetRequiredService<IServiceScopeFactory>(),
+        placement, identities, new SystemPlatformClock(), audioVerifier: verifier ?? FixtureAudioVerifier.Instance);
     private KeptRecordingPublication Request() => new(recordingId, owner, jobId, artifact.Id,
         "deezer", $"keep:fixture:{owner:N}:{recordingId:N}", new("Fixture", "Artist", Extension: ".flac"))
     { AttemptNumber = 1 };

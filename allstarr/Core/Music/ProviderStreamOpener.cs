@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Net;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Operations;
 using allstarr.Services.Local;
@@ -45,7 +47,7 @@ public sealed class ProviderStreamOpener(
             if (routed == null) return;
             using var response = routed.Response;
             selected = routed.ServingProviderId;
-            if (context.AudioDelivery?.Evaluate(routed.Lease.Media) is { Supported: false } rejected)
+            if (context.AudioDelivery?.Decide(routed.FileFacts.Media ?? routed.Lease.Media) is { Supported: false } rejected)
                 throw new ProviderAudioProfileException(rejected.Error!);
             if (routed.IsCached || !PreparationProviders.Contains(selected) || !response.IsSuccessStatusCode) return;
             var servingId = routed.ServingExternalId ?? id;
@@ -82,7 +84,7 @@ public sealed class ProviderStreamOpener(
         if (routed == null) return request.Evaluate(null);
         using var response = routed.Response;
         return response.IsSuccessStatusCode
-            ? request.Evaluate(routed.Lease.Media, response.Content.Headers.ContentLength)
+            ? request.Decide(routed.FileFacts.Media ?? routed.Lease.Media, response.Content.Headers.ContentLength)
             : request.Evaluate(null);
     }
 
@@ -138,7 +140,27 @@ public sealed class ProviderStreamOpener(
                 return new StatusCodeResult(status);
             }
 
-            if (delivery?.Evaluate(routed.Lease.Media) is { Supported: false } rejected)
+            var sourceMedia = routed.FileFacts.Media ?? routed.Lease.Media;
+            var conversion = delivery == null ? null : ProviderAudioTranscoder.Plan(delivery, sourceMedia);
+            if (conversion != null && routed.Response.StatusCode == HttpStatusCode.PartialContent && !headOnly)
+            {
+                var previous = routed;
+                try
+                {
+                    routed = cache == null && previous.OpenOriginalResponseAsync != null
+                        ? previous with { Response = await previous.OpenOriginalResponseAsync(http.RequestAborted) }
+                        : await providers.OpenStreamAsync(context, providerId, externalId, quality, null, false);
+                }
+                finally { previous.Response.Dispose(); }
+                if (routed == null || !routed.Response.IsSuccessStatusCode)
+                {
+                    routed?.Response.Dispose();
+                    return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
+                }
+                sourceMedia = PrefetchedStream.Facts(routed.Response.Content)?.Media ?? routed.FileFacts.Media ?? routed.Lease.Media;
+                conversion = ProviderAudioTranscoder.Plan(delivery!, sourceMedia);
+            }
+            if (delivery?.Decide(sourceMedia) is { Supported: false } rejected)
             {
                 routed.Response.Dispose();
                 throw new ProviderAudioProfileException(rejected.Error!);
@@ -155,15 +177,37 @@ public sealed class ProviderStreamOpener(
                 if (!context.IsOriginalDownload && (!headOnly || timeSeek)) StreamDurationGuidance.Attach(routed, Metadata, Selected);
                 if (cache != null)
                     await cache.WrapAsync(routed, context, routed.ServingProviderId, servingId, headOnly && !timeSeek, Metadata, http.RequestAborted);
+                if (!headOnly && (conversion != null || timeSeek))
+                {
+                    await ManagedTrackCacheService.PrepareForConversionAsync(routed.Response.Content, http.RequestAborted, useDownloadCompletion: false);
+                    sourceMedia = routed.FileFacts.Media ?? PrefetchedStream.Facts(routed.Response.Content)?.Media ?? routed.Lease.Media;
+                    conversion = ProviderAudioTranscoder.Plan(delivery!, sourceMedia);
+                    if (delivery!.Decide(sourceMedia) is { Supported: false } incompatible)
+                        throw new ProviderAudioProfileException(incompatible.Error!);
+                }
                 var cacheRung = ManagedTrackCacheService.SeekRung(routed.Response.Content);
                 if (!context.IsOriginalDownload && !headOnly && cacheRung != null) Selected(cacheRung);
-                if (timeSeek)
+                if (conversion != null)
                 {
-                    await ProviderAudioTimeSeek.ApplyAsync(routed.Response, http.Response, delivery!.StartTimeTicks, conversions, http.RequestAborted);
+                    var duration = routed.FileFacts.Measured?.DurationSeconds;
+                    if (duration == null && routed.Response.Headers.TryGetValues("X-Allstarr-Duration-Seconds", out var durations))
+                    {
+                        var values = durations.ToArray();
+                        if (values.Length == 1 && double.TryParse(values[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) && double.IsFinite(seconds) && seconds > 0)
+                            duration = seconds;
+                    }
+                    if (headOnly) ProviderAudioTranscoder.ApplyHead(routed.Response, http.Response, conversion, delivery!.StartTimeTicks, duration);
+                    else await ProviderAudioTranscoder.ApplyAsync(routed.Response, http.Response, conversion, conversions, http.RequestAborted, delivery!.StartTimeTicks, duration);
+                    Selected("transcoded");
+                }
+                else if (timeSeek)
+                {
+                    await ProviderAudioTimeSeek.ApplyAsync(routed.Response, http.Response, delivery!.StartTimeTicks, conversions, http.RequestAborted,
+                        routed.FileFacts.Media ?? routed.Lease.Media, routed.FileFacts.Measured?.DurationSeconds);
                     Selected("time-seek");
                 }
                 var result = await responses.CreateAsync(http, routed.Response, http.RequestAborted,
-                    enableRangeProcessing: timeSeek || routed.IsCached || cacheRung != null, providerStream: true, responseLease: capacity);
+                    enableRangeProcessing: conversion == null && (timeSeek || routed.IsCached || cacheRung != null), providerStream: true, responseLease: capacity);
                 capacity = null;
                 return result;
             }

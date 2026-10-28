@@ -245,7 +245,7 @@ public sealed partial class RecordingKeptFilesTests
     }
 
     private RecordingKeptFiles RepairService() => new(factory, artifacts,
-        services.GetRequiredService<IServiceScopeFactory>(), placement, identities, new SystemPlatformClock(), jobs: queue);
+        services.GetRequiredService<IServiceScopeFactory>(), placement, identities, new SystemPlatformClock(), jobs: queue, audioVerifier: FixtureAudioVerifier.Instance);
 
     private async Task<FavoriteFixture> PrepareReplacementFavoriteAsync(
         string sourceTrack = "source-track", byte[]? sourceBytes = null)

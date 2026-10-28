@@ -181,7 +181,7 @@ public sealed partial class RecordingKeptFilesTests
             .ReturnsAsync((ProviderRouteRequest request) => RemotePlan(request, registry, capability.Object));
         using var activity = new PlaybackDeliveryActivityStore();
         var gateway = new ProtocolProviderGateway(router.Object, registry, new ThrowingHttpClientFactory(),
-            playbackActivity: activity, identities: identities, keptFiles: Service());
+            playbackActivity: activity, identities: identities, keptFiles: Service(), audioVerifier: FixtureAudioVerifier.Instance);
         var itemId = "ext-deezer-song-source-track";
         var context = PlaybackContext(ProtocolKind.Jellyfin, owner, itemId);
 
@@ -271,7 +271,7 @@ public sealed partial class RecordingKeptFilesTests
             .ReturnsAsync((ProviderRouteRequest request) => RemotePlan(request, registry, capability.Object));
         using var activity = new PlaybackDeliveryActivityStore();
         var gateway = new ProtocolProviderGateway(router.Object, registry, new ThrowingHttpClientFactory(),
-            playbackActivity: activity, identities: identities, keptFiles: Service());
+            playbackActivity: activity, identities: identities, keptFiles: Service(), audioVerifier: FixtureAudioVerifier.Instance);
         var original = PlaybackContext(ProtocolKind.Jellyfin, owner, "ext-deezer-song-source-track");
         var context = new ProtocolExecutionContext(original.Protocol, original.BackendInstanceId,
             original.VerifiedBackendPrincipalId, original.Principal, original.CorrelationId,

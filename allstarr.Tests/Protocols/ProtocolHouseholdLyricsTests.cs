@@ -33,7 +33,7 @@ public sealed class ProtocolHouseholdLyricsTests
         var health = new Mock<IProviderRouteHealthSource>();
         health.Setup(item => item.Get(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<ProviderCapabilityKind>())).Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Unknown, false));
         var router = new ProviderRouter(registry, accounts.Object, health.Object, Mock.Of<IProviderRouteSidecarSource>(), Mock.Of<ITrackIdentityService>());
-        var gateway = new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>());
+        var gateway = new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(), audioVerifier: FixtureAudioVerifier.Instance);
         var result = await gateway.GetHouseholdLyricsAsync(Context(), "spicylyrics", SpicyLyricsTestData.TrackId);
         Assert.Equal("First plain line\nSecond plain line", result!.Content);
         Assert.Equal(1, handler.Calls);
@@ -208,7 +208,7 @@ public sealed class ProtocolHouseholdLyricsTests
         health.Setup(item => item.Get(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<ProviderCapabilityKind>()))
             .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Unknown, false));
         var router = new ProviderRouter(registry, accounts, health.Object, Mock.Of<IProviderRouteSidecarSource>(), identities ?? Mock.Of<ITrackIdentityService>(), effectivePolicies: policies);
-        return new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(), effectivePolicies: policies);
+        return new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(), effectivePolicies: policies, audioVerifier: FixtureAudioVerifier.Instance);
     }
 
     private static ProtocolExecutionContext Context() => new(ProtocolKind.Jellyfin, "backend", "listener",

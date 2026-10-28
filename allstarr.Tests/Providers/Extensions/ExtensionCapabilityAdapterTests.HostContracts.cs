@@ -10,6 +10,62 @@ namespace allstarr.Tests;
 
 public sealed partial class ExtensionCapabilityAdapterTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FileDownloadResumesIdenticalBytesAfterAnInterruptedUpstream(bool changedEntity)
+    {
+        var root = Directory.CreateTempSubdirectory("allstarr-resume-contract-").FullName;
+        try
+        {
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(),
+                new ProviderDownloadWorkspaceOptions { RootPath = root, MaximumArtifactBytes = 1024 }, audioVerifier: FixtureAudioVerifier.Instance);
+            var job = Guid.CreateVersion7();
+            var workspace = await resolver.CreateWorkspaceAsync(new(Guid.CreateVersion7(), job, "fixture-extension", null, "download"));
+            using var scope = ExtensionArtifactInvocationScope.Open(resolver, workspace.Reference, job, "fixture-extension", 1024, default);
+            var handler = new ResumingDownloadHandler(changedEntity);
+            using var result = ProbeHost("return file.download('https://api.example.test/audio','song');", handler);
+            Assert.Equal(!changedEntity, result.RootElement.GetProperty("success").GetBoolean());
+            Assert.Equal(2, handler.Requests);
+            if (changedEntity) Assert.False(File.Exists(scope.ResolveTemporaryPath("song")));
+            else Assert.Equal(Enumerable.Range(0, 512).Select(value => (byte)value).ToArray(), await File.ReadAllBytesAsync(scope.ResolveTemporaryPath("song")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    private sealed class ResumingDownloadHandler(bool changedEntity) : HttpMessageHandler
+    {
+        public int Requests { get; private set; }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var bytes = Enumerable.Range(0, 512).Select(value => (byte)value).ToArray();
+            var response = new HttpResponseMessage(++Requests == 1 ? HttpStatusCode.OK : HttpStatusCode.PartialContent) { RequestMessage = request };
+            response.Headers.ETag = new(Requests > 1 && changedEntity ? "\"changed\"" : "\"original\"");
+            if (Requests == 1)
+            {
+                response.Content = new StreamContent(new InterruptedDownload(bytes));
+                response.Content.Headers.ContentLength = bytes.Length;
+            }
+            else
+            {
+                Assert.Equal("bytes=256-", request.Headers.Range!.ToString());
+                Assert.Equal("\"original\"", request.Headers.IfRange!.ToString());
+                response.Content = new ByteArrayContent(bytes[256..]);
+                response.Content.Headers.ContentRange = new(256, 511, 512);
+            }
+            return Task.FromResult(response);
+        }
+    }
+
+    private sealed class InterruptedDownload(byte[] bytes) : MemoryStream(bytes)
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (Position == 256) throw new IOException("Interrupted fixture download.");
+            return base.ReadAsync(buffer[..(int)Math.Min(buffer.Length, 256 - Position)], cancellationToken);
+        }
+    }
+
     [Fact]
     public void HttpRequest_AcceptsUrlAndOptionsAndSerializesBodies()
     {
@@ -174,7 +230,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
         try
         {
             var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(),
-                new ProviderDownloadWorkspaceOptions { RootPath = root, MaximumArtifactBytes = 16 });
+                new ProviderDownloadWorkspaceOptions { RootPath = root, MaximumArtifactBytes = 16 }, audioVerifier: FixtureAudioVerifier.Instance);
             var job = Guid.CreateVersion7();
             var workspace = await resolver.CreateWorkspaceAsync(new(Guid.CreateVersion7(), job, "fixture-extension", null, "download"));
             using var scope = ExtensionArtifactInvocationScope.Open(resolver, workspace.Reference, job, "fixture-extension", 16, CancellationToken.None);
@@ -225,7 +281,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
         var root = Path.Combine(Path.GetTempPath(), "allstarr-cancellation-contract", Guid.NewGuid().ToString("N"));
         try
         {
-            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), new ProviderDownloadWorkspaceOptions { RootPath = root });
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), new ProviderDownloadWorkspaceOptions { RootPath = root }, audioVerifier: FixtureAudioVerifier.Instance);
             var job = Guid.CreateVersion7();
             var workspace = await resolver.CreateWorkspaceAsync(new(Guid.CreateVersion7(), job, "fixture-extension", null, "download"));
             using var cancelled = new CancellationTokenSource();

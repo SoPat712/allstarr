@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using System.Globalization;
 using System.Xml.Linq;
 using System.Text.Json;
 using allstarr.Models.Domain;
@@ -97,6 +98,19 @@ public partial class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts 
             ["canTranscode"] = delivery.SupportsTranscoding
         };
         if (delivery.Error != null) decision["errorReason"] = delivery.Error;
+        if (delivery.SupportsTranscoding && delivery.Media is { } target)
+        {
+            var parameters = new Dictionary<string, string?>
+            {
+                ["format"] = target.Container,
+                ["audioCodec"] = target.Codec,
+                ["maxBitRate"] = target.Bitrate is { } bitrate ? ((bitrate + 999) / 1000).ToString(CultureInfo.InvariantCulture) : null,
+                ["maxAudioSampleRate"] = target.SampleRate?.ToString(CultureInfo.InvariantCulture),
+                ["maxAudioChannels"] = target.Channels?.ToString(CultureInfo.InvariantCulture),
+                ["timeOffset"] = delivery.StartTimeTicks > 0 ? (delivery.StartTimeTicks / (double)TimeSpan.TicksPerSecond).ToString("0.#######", CultureInfo.InvariantCulture) : null
+            };
+            decision["transcodeParams"] = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString("", parameters).TrimStart('?');
+        }
         var source = new Dictionary<string, object?> { ["protocol"] = "http" };
         if (delivery.Media is { } media)
         {

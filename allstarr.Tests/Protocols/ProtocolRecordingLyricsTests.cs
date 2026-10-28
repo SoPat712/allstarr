@@ -158,7 +158,7 @@ public sealed class ProtocolRecordingLyricsTests
         health.Setup(item => item.Get(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<ProviderCapabilityKind>()))
             .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Unknown, false));
         return new ProtocolProviderGateway(new ProviderRouter(registry, Mock.Of<IProviderRouteAccountResolver>(), health.Object,
-            Mock.Of<IProviderRouteSidecarSource>(), identities), registry, Mock.Of<IHttpClientFactory>());
+            Mock.Of<IProviderRouteSidecarSource>(), identities), registry, Mock.Of<IHttpClientFactory>(), audioVerifier: FixtureAudioVerifier.Instance);
     }
 
     private static ProtocolExecutionContext Context() => new(ProtocolKind.Jellyfin, "backend", "listener",

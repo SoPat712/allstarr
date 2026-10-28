@@ -169,7 +169,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         identities.Setup(item => item.ResolveManyAsync(It.IsAny<IReadOnlyList<TrackIdentityLookup>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new TrackIdentityResolution?[] { null });
         var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), applicationCache: cache,
-            identities: identities.Object, timeProvider: clock);
+            identities: identities.Object, timeProvider: clock, audioVerifier: FixtureAudioVerifier.Instance);
         var context = Context();
 
         var first = Assert.Single((await gateway.SearchAsync(context, "Track", 10, 0, 0)).Songs);

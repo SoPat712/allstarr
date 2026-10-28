@@ -75,7 +75,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             var sandbox = new ExtensionSandbox(root, normalized, script, new HttpClientFactory(new DashSegmentHandler(segments)), logger,
                 permissions, Path.Combine(root, "runtime"));
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 128 * 1024 * 1024 };
-            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance);
             var context = Context(manifest.Id);
             byte[] bytes;
             if (streaming)
@@ -144,7 +144,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             sandbox.DownloadPostProcessor = new(TimeSpan.FromSeconds(5), (_, _, _, _, _) =>
                 throw new InvalidDataException("https://media.example.test/?token=private-value key=00112233445566778899aabbccddeeff"));
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces") };
-            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance);
             var context = Context(manifest.Id);
             var job = Guid.CreateVersion7();
             var workspace = await resolver.CreateWorkspaceAsync(new(context.Actor.EffectiveUserId, job, manifest.Id, null, context.IdempotencyKey!));
@@ -185,7 +185,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 codec == "alac" && executable == "ffprobe" ? Task.FromResult(ExtensionDownloadConversionTests.Probe("alac", "mov,mp4,m4a"))
                     : ExtensionDownloadConversionTests.FixtureRunner(executable, arguments, output, limit, token));
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces") };
-            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance);
             var context = Context(manifest.Id);
             var job = Guid.CreateVersion7();
             var workspace = await resolver.CreateWorkspaceAsync(new(context.Actor.EffectiveUserId, job, manifest.Id, null, context.IdempotencyKey!));

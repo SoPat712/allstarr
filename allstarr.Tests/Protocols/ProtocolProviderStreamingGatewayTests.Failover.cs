@@ -146,7 +146,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 new ConfigurationBuilder().Build(),
                 Options.Create(new SubsonicSettings()),
                 local.Object,
-                NullLogger<ManagedTrackCacheService>.Instance);
+                NullLogger<ManagedTrackCacheService>.Instance, audioVerifier: FixtureAudioVerifier.Instance);
             var preferred = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
             var cachedFallback = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
             var (gateway, _) = FailoverGateway(
@@ -323,7 +323,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     {
         var local = new Mock<ILocalLibraryService>(MockBehavior.Strict);
         var cache = new ManagedTrackCacheService(new ConfigurationBuilder().Build(),
-            Options.Create(new SubsonicSettings()), local.Object, NullLogger<ManagedTrackCacheService>.Instance);
+            Options.Create(new SubsonicSettings()), local.Object, NullLogger<ManagedTrackCacheService>.Instance, audioVerifier: FixtureAudioVerifier.Instance);
         var capability = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
         var registry = Registry(capability.Object);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
@@ -331,7 +331,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             .ReturnsAsync((ProviderRouteRequest request) => new ProviderRoutePlan<IProviderStreamingCapability>(request, [],
                 new ProviderRouteDecisionRecord(request.CorrelationId, ProviderCapabilityKind.Streaming, null, null,
                     [new ProviderRouteCandidateDecision("deezer", null, ProviderRouteDecisionStatus.Rejected, "account-scope-denied", 0)])));
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), managedTrackCache: cache);
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), managedTrackCache: cache, audioVerifier: FixtureAudioVerifier.Instance);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => gateway.OpenStreamAsync(Context(), "deezer", "source-track",
             ProviderAudioQuality.Any, null));
         local.VerifyNoOtherCalls();
@@ -429,7 +429,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
         router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()))
             .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, download.Object));
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration);
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration, audioVerifier: FixtureAudioVerifier.Instance);
         var before = DateTimeOffset.UtcNow;
 
         using var response = (await gateway.OpenStreamAsync(
@@ -624,7 +624,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         string householdAudioQuality = AudioQualityPolicy.DefaultStep,
         ManagedTrackCacheService? managedTrackCache = null,
         IProviderOutcomeObserver? outcomes = null, TimeProvider? clock = null,
-        allstarr.Core.Matching.ITrackIdentityService? identities = null)
+        allstarr.Core.Matching.ITrackIdentityService? identities = null,
+        allstarr.Core.Music.IProviderAudioVerifier? audioVerifier = null)
     {
         var registry = Registry(first.Object, second.Object);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
@@ -664,7 +665,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         }
         return (new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration,
             managedTrackCache: managedTrackCache, playbackActivity: activity, effectivePolicies: policies,
-            outcomes: outcomes, timeProvider: clock, identities: identities), router);
+            outcomes: outcomes, timeProvider: clock, identities: identities, audioVerifier: audioVerifier ?? FixtureAudioVerifier.Instance), router);
     }
 
     private static ProtocolExecutionContext ClientContext(CancellationToken cancellationToken = default)

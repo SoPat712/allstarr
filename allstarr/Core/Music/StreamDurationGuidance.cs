@@ -105,7 +105,10 @@ internal static class StreamDurationGuidance
                 catch (Exception) { /* Metadata failure must not interrupt a valid audio response. */ }
             }
             if (duration.HasValue && MediaDurationHeaders.TryPatch(prepared.AsSpan(skip), container, duration.Value))
+            {
+                routed.FileFacts.DurationIsDerived = true;
                 selected?.Invoke($"{(container == "m4a" ? "mp4" : container)}-duration");
+            }
         }
         return new(new PrefetchedStream(source, original, prepared.AsMemory(skip)), skip);
     }

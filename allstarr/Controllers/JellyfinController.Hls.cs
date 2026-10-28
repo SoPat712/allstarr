@@ -23,13 +23,14 @@ public partial class JellyfinController
 
         try
         {
-            var delivery = ProviderAudioDeliveryRequests.Jellyfin(Request.Query);
+            var delivery = ProviderAudioDeliveryRequests.Jellyfin(Request.Query) with { RequireHls = true };
             var start = delivery.StartTimeTicks / (double)TimeSpan.TicksPerSecond;
             var container = Request.Query["segmentContainer"].ToString();
             if (container.Length > 0 && !container.Equals("mp4", StringComparison.OrdinalIgnoreCase))
-                throw new ProviderAudioProfileException("Only original fragmented MP4 HLS segments are available; segment conversion is unavailable.");
+                throw new ProviderAudioProfileException("Only AAC fragmented MP4 HLS segments are supported.");
             var session = await sessions.CreateAsync(HttpContext.RequireProtocolExecutionContext(), itemId,
                 provider!, externalId!, delivery with { StartTimeTicks = 0 }, start);
+            ApplyHlsMediaHeaders(session);
             var credentials = QueryString.Create(Request.Query
                 .Where(pair => pair.Key.Equals("ApiKey", StringComparison.OrdinalIgnoreCase) ||
                     pair.Key.Equals("api_key", StringComparison.OrdinalIgnoreCase) ||
@@ -62,6 +63,7 @@ public partial class JellyfinController
         var context = HttpContext.RequireProtocolExecutionContext();
         if (session.ItemId != itemId || session.BackendInstanceId != context.BackendInstanceId ||
             session.PrincipalId != context.VerifiedBackendPrincipalId) return NotFound();
+        ApplyHlsMediaHeaders(session);
         var initialization = part == "init.mp4";
         Response.Headers.CacheControl = "private, no-store";
         var capacity = admission.TryEnter(context);
@@ -80,5 +82,13 @@ public partial class JellyfinController
             capacity.Dispose();
             throw;
         }
+    }
+
+    private void ApplyHlsMediaHeaders(ProviderHlsSession session)
+    {
+        if (session.Media is not { } media) return;
+        Response.Headers["X-Allstarr-Audio-Codec"] = media.Codec;
+        Response.Headers["X-Allstarr-Audio-Container"] = media.Container;
+        if (media.Bitrate is { } bitrate) Response.Headers["X-Allstarr-Audio-Bitrate"] = bitrate.ToString(CultureInfo.InvariantCulture);
     }
 }

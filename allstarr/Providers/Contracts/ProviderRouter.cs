@@ -69,6 +69,7 @@ public sealed class ProviderRouter(
         ArgumentNullException.ThrowIfNull(request);
         request = ResolveAliases(request);
         RequireTypedContract<TCapability>(request.Capability);
+        var cacheOnly = request.CacheOnly && request.Capability == ProviderCapabilityKind.Streaming;
         request.CancellationToken.ThrowIfCancellationRequested();
         if (request.Deadline <= DateTimeOffset.UtcNow)
         {
@@ -150,7 +151,7 @@ public sealed class ProviderRouter(
                 continue;
             }
 
-            if (!state.RateLimitBudgetAvailable)
+            if (!cacheOnly && !state.RateLimitBudgetAvailable)
             {
                 Reject("rate-limit-budget-exhausted");
                 continue;
@@ -225,32 +226,35 @@ public sealed class ProviderRouter(
                 continue;
             }
 
-            var snapshot = health.Get(provider.Id, account?.AccountId, request.Capability);
-            if (snapshot.AccountRevision.HasValue && snapshot.AccountRevision != account?.Revision)
-                snapshot = new(ProviderRouteHealthState.Unknown, false);
-            if (snapshot.CircuitOpen)
+            if (!cacheOnly)
             {
-                Reject("circuit-open");
-                continue;
-            }
+                var snapshot = health.Get(provider.Id, account?.AccountId, request.Capability);
+                if (snapshot.AccountRevision.HasValue && snapshot.AccountRevision != account?.Revision)
+                    snapshot = new(ProviderRouteHealthState.Unknown, false);
+                if (snapshot.CircuitOpen)
+                {
+                    Reject("circuit-open");
+                    continue;
+                }
 
-            var healthRejection = snapshot.State switch
-            {
-                ProviderRouteHealthState.Degraded => "health-degraded",
-                ProviderRouteHealthState.Unavailable => "health-unavailable",
-                ProviderRouteHealthState.Unauthorized => "health-unauthorized",
-                _ => null
-            };
-            if (healthRejection != null)
-            {
-                Reject(snapshot.ReasonCode ?? healthRejection);
-                continue;
-            }
+                var healthRejection = snapshot.State switch
+                {
+                    ProviderRouteHealthState.Degraded => "health-degraded",
+                    ProviderRouteHealthState.Unavailable => "health-unavailable",
+                    ProviderRouteHealthState.Unauthorized => "health-unauthorized",
+                    _ => null
+                };
+                if (healthRejection != null)
+                {
+                    Reject(snapshot.ReasonCode ?? healthRejection);
+                    continue;
+                }
 
-            if (descriptor.SidecarDependency != null && !sidecars.IsReady(descriptor.SidecarDependency))
-            {
-                Reject("sidecar-not-ready");
-                continue;
+                if (descriptor.SidecarDependency != null && !sidecars.IsReady(descriptor.SidecarDependency))
+                {
+                    Reject("sidecar-not-ready");
+                    continue;
+                }
             }
 
             if (request.Capability == ProviderCapabilityKind.Download &&
@@ -441,7 +445,8 @@ public sealed class ProviderRouter(
                 state.TrackCatalog, state.IsExplicit, state.RateLimitBudgetAvailable, state.StorageCapacityAvailable,
                 state.ProviderTermsAllowed, state.AllowedAccountScopes)),
             request.SourceTrackId is { } source ? new(Resolve(source.ProviderId), source.ResourceKind, source.Value) : null,
-            request.IdempotencyKey, request.CancellationToken, request.Purpose);
+            request.IdempotencyKey, request.CancellationToken, request.Purpose)
+        { CacheOnly = request.CacheOnly };
     }
 
     private async Task<ProviderExecutionContext?> CreateSourceContextAsync(ProviderRouteRequest request)

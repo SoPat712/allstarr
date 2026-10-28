@@ -162,7 +162,7 @@ public sealed class ExtensionStreamingDeadlineTests : IAsyncLifetime
         using (sandbox.OpenSignedSessionAccount(account.AccountId))
             Assert.Equal(ExtensionSessionStates.SignedIn, (await sandbox.CompleteSignedSessionGrantAsync("fixture-grant")).State);
         var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
-        var artifacts = new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options);
+        var artifacts = new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options, audioVerifier: FixtureAudioVerifier.Instance);
         var values = new AccountValues();
         IProviderStreamingCapability streaming = downloadAdapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, values, artifacts, options);
         if (direct)
@@ -197,7 +197,7 @@ public sealed class ExtensionStreamingDeadlineTests : IAsyncLifetime
         {
             ["ProtocolExecution:DownloadStreamTimeoutSeconds"] = configuredSeconds ?? "150"
         }).Build();
-        var gateway = new ProtocolProviderGateway(router, registry, clients, configuration, timeProvider: clock);
+        var gateway = new ProtocolProviderGateway(router, registry, clients, configuration, timeProvider: clock, audioVerifier: FixtureAudioVerifier.Instance);
         var protocol = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", "listener",
             new AllstarrPrincipal(Guid.CreateVersion7(), "jellyfin", "fixture", "listener", "Listener", false),
             "stream-deadline", clock.GetUtcNow().AddSeconds(30), default);

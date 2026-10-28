@@ -85,7 +85,7 @@ public sealed class ExtensionRetryTests : IAsyncLifetime
         var workspace = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "downloads") };
         var runtime = new ExtensionRuntimeCoordinator(_factory, _service, registry, registry, _clients,
             Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
-            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), workspace), workspace,
+            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), workspace, audioVerifier: FixtureAudioVerifier.Instance), workspace,
             _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance);
         Assert.Equal(ExtensionPackageState.Active, (await runtime.ActivateAsync(retried.Id, retried.Revision)).State);
         Assert.True(registry.TryGet(package.ExtensionId, out _));

@@ -121,7 +121,7 @@ public sealed partial class ProtocolRouteFixtureTests
             { ["Library:DownloadPath"] = Root }).Build();
             cache = new(configuration, Options.Create(new SubsonicSettings
             { StorageMode = backend == "Jellyfin" ? StorageMode.Permanent : StorageMode.Cache }),
-                Local.Object, NullLogger<ManagedTrackCacheService>.Instance);
+                Local.Object, NullLogger<ManagedTrackCacheService>.Instance, audioVerifier: FixtureAudioVerifier.Instance);
             var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
             streaming.SetupGet(item => item.ProviderId).Returns("deezer");
             streaming.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
@@ -163,7 +163,7 @@ public sealed partial class ProtocolRouteFixtureTests
                         new(request.CorrelationId, ProviderCapabilityKind.Streaming, "deezer", null, []));
                 });
             var gateway = new ProtocolProviderGateway(router.Object, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict),
-                configuration, managedTrackCache: cache, playbackActivity: Activity);
+                configuration, managedTrackCache: cache, playbackActivity: Activity, audioVerifier: FixtureAudioVerifier.Instance);
             factory = new(backend, _ => DownloadAuthentication(backend), services =>
             {
                 services.AddSingleton<IStartupFilter, SonicPrincipalStartupFilter>();

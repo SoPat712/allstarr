@@ -181,7 +181,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         router.Setup(item => item.EvaluateFallback(It.IsAny<ProviderRoutePlan<IProviderStreamingCapability>>(),
             It.IsAny<int>(), It.IsAny<ProviderError>())).Returns(new ProviderFallbackDecision<IProviderStreamingCapability>(
                 ProviderFallbackDisposition.Advance, "fallback-transient-failure", null));
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory());
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
         await Assert.ThrowsAsync<HttpRequestException>(() => gateway.OpenStreamAsync(
             playbackStartPreference ? StartPreferenceContext("Balanced") : Context(),
             "source-0", "track", ProviderAudioQuality.Any, null));

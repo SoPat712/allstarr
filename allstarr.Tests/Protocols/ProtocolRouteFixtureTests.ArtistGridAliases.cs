@@ -73,7 +73,7 @@ public sealed partial class ProtocolRouteFixtureTests
             var policies = ArtistGridAliasPolicies(user, mode);
             var router = ArtistGridAliasRouter(registry, policies.Object);
             var gateway = new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict),
-                applicationCache: cache, effectivePolicies: policies.Object, timeProvider: clock);
+                applicationCache: cache, effectivePolicies: policies.Object, timeProvider: clock, audioVerifier: FixtureAudioVerifier.Instance);
             using var host = new ProtocolFactory(backend, request => ArtistGridAliasNative(request, backend, method, format),
                 services =>
                 {

@@ -46,7 +46,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             }
             sandbox.DownloadPostProcessor = new(TimeSpan.FromSeconds(5), Run, conversions);
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 100_000 };
-            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance);
             var context = Context(manifest.Id);
             ProviderError? error;
             if (streaming)
@@ -110,7 +110,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             }
             sandbox.DownloadPostProcessor = new(TimeSpan.FromSeconds(5), Run);
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 100_000 };
-            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance);
             var context = Context(manifest.Id);
             var container = codec == "flac" ? "flac" : "m4a";
             ProviderMediaFormat media;

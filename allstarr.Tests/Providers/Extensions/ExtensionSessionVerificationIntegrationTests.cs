@@ -158,7 +158,7 @@ public sealed partial class ExtensionControlPlaneServiceTests
         var protection = new EphemeralDataProtectionProvider();
         ExtensionRuntimeCoordinator CreateRuntime() => new(_factory, _service, registry, registry, clients.Object,
             Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
-            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), downloads), downloads,
+            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), downloads, audioVerifier: FixtureAudioVerifier.Instance), downloads,
             config, NullLogger<ExtensionRuntimeCoordinator>.Instance, dataProtectionProvider: protection, timeProvider: clock,
             sessionVerification: new(clients.Object, config), sessionJobs: queue);
         var runtime = CreateRuntime();

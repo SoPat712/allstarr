@@ -39,7 +39,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             local.Setup(item => item.GetLocalPathForExternalSongAsync(It.IsAny<DownloadedSongMappingScope>(), "qobuz", "qobuz-track"))
                 .ReturnsAsync(path);
             await using var cache = new ManagedTrackCacheService(new ConfigurationBuilder().Build(),
-                Options.Create(new SubsonicSettings()), local.Object, NullLogger<ManagedTrackCacheService>.Instance);
+                Options.Create(new SubsonicSettings()), local.Object, NullLogger<ManagedTrackCacheService>.Instance, audioVerifier: FixtureAudioVerifier.Instance);
             var first = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
             var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
             var context = StartPreferenceContext("Balanced", protocol: protocol);

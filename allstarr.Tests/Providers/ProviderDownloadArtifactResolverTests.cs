@@ -233,7 +233,7 @@ public sealed class ProviderDownloadArtifactResolverTests : IDisposable
         download.VerifyAll();
     }
 
-    private ProviderDownloadArtifactResolver Resolver(MemoryStore store) => new(store, new() { RootPath = root });
+    private ProviderDownloadArtifactResolver Resolver(MemoryStore store) => new(store, new() { RootPath = root }, audioVerifier: FixtureAudioVerifier.Instance);
     private ProviderDownloadWorkspaceRequest Request() => new(Guid.CreateVersion7(), Guid.CreateVersion7(), "qobuz", Guid.CreateVersion7(), "favorite:event:download");
     private string Write(ProviderManagedWorkspaceReference workspace, string relative, byte[] content)
     { var path = Path.Combine(root, workspace.WorkspaceId, relative); Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllBytes(path, content); return path; }

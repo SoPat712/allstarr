@@ -58,7 +58,7 @@ public sealed class ProviderUseSearchTests
             Mock.Of<IProviderRouteSidecarSource>(), new Mock<ITrackIdentityService>(MockBehavior.Strict).Object,
             effectivePolicies: policies.Object);
         var gateway = new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict),
-            effectivePolicies: policies.Object);
+            effectivePolicies: policies.Object, audioVerifier: FixtureAudioVerifier.Instance);
         var context = new ProtocolExecutionContext(protocol, "fixture", "listener",
             new AllstarrPrincipal(user, protocol.ToString().ToLowerInvariant(), "fixture", "listener", "Listener", false),
             "search", DateTimeOffset.UtcNow.AddMinutes(1), default);
@@ -145,7 +145,7 @@ public sealed class ProviderUseSearchTests
             Mock.Of<IProviderRouteSidecarSource>(), new Mock<ITrackIdentityService>(MockBehavior.Strict).Object,
             effectivePolicies: policies.Object);
         var gateway = new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict),
-            effectivePolicies: policies.Object);
+            effectivePolicies: policies.Object, audioVerifier: FixtureAudioVerifier.Instance);
         var context = new ProtocolExecutionContext(protocol, "fixture", "listener",
             new AllstarrPrincipal(user, protocol.ToString().ToLowerInvariant(), "fixture", "listener", "Listener", false),
             "search", DateTimeOffset.UtcNow.AddMinutes(1), default);

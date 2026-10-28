@@ -1,11 +1,14 @@
 using System.Security.Cryptography;
 using System.Collections.Concurrent;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Music;
 
 namespace allstarr.Core.Downloads;
 
-public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactStore store, ProviderDownloadWorkspaceOptions options)
+public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactStore store, ProviderDownloadWorkspaceOptions options,
+    IProviderAudioVerifier? audioVerifier = null)
 {
+    private readonly IProviderAudioVerifier verifier = audioVerifier ?? new ProviderAudioVerifier();
     private readonly ConcurrentDictionary<string, ProviderDownloadWorkspaceRequest> transientWorkspaces = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> transientWriteGates = new(StringComparer.Ordinal);
 
@@ -194,7 +197,7 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         var hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
         if (!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(hash), Convert.FromHexString(output.Sha256)))
             throw new InvalidOperationException("The provider download artifact checksum does not match its contract.");
-        var media = (await allstarr.Services.Common.AudioMediaFacts.ReadFileAsync(path, cancellationToken))?.Media ?? output.Media;
+        var media = await VerifyAudioAsync(path, output.Media, cancellationToken);
         var stored = await store.AddVerifiedAsync(new()
         {
             Id = Guid.CreateVersion7(),
@@ -228,7 +231,8 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
     public async Task<ProviderTransientDownloadArtifact> ResolveTransientAsync(
         ProviderTransientDownloadWorkspace workspace,
         ProviderDownloadedArtifact output,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool progressivePlayback = false)
     {
         if (!transientWorkspaces.ContainsKey(workspace.Reference.WorkspaceId))
             throw new InvalidOperationException("The transient provider workspace is not registered.");
@@ -249,8 +253,20 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         { throw new InvalidOperationException("The provider download artifact checksum is invalid.", exception); }
         if (expected.Length != SHA256.HashSizeInBytes || !CryptographicOperations.FixedTimeEquals(hash, expected))
             throw new InvalidOperationException("The provider download artifact checksum does not match its contract.");
-        return new(path, info.Length,
-            (await allstarr.Services.Common.AudioMediaFacts.ReadFileAsync(path, cancellationToken))?.Media ?? output.Media);
+        // Published progressive playback is verified by its streaming consumer. A second decoder
+        // here can hold up source EOF while that consumer owns the conversion capacity.
+        var media = progressivePlayback
+            ? (await allstarr.Services.Common.AudioMediaFacts.ReadFileAsync(path, cancellationToken))?.Media ?? output.Media
+            : await VerifyAudioAsync(path, output.Media, cancellationToken);
+        return new(path, info.Length, media);
+    }
+
+    private async Task<ProviderMediaFormat> VerifyAudioAsync(string path, ProviderMediaFormat claimed,
+        CancellationToken cancellationToken)
+    {
+        var measured = await allstarr.Services.Common.AudioMediaFacts.ReadFileAsync(path, cancellationToken);
+        var complete = await verifier.VerifyFileAsync(path, measured?.Media ?? claimed, null, cancellationToken);
+        return complete.Media;
     }
 
     public void DeleteTransientWorkspace(ProviderTransientDownloadWorkspace workspace)

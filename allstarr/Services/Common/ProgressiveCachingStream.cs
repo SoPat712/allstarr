@@ -18,6 +18,8 @@ public sealed class ProgressiveCachingStream : Stream
     internal static readonly TimeSpan InitialReadWaitTimeout = TimeSpan.FromSeconds(60);
     private readonly Stream source;
     private readonly Func<ProgressiveCacheReadState> readState;
+    private readonly Func<ProgressiveCacheReadState>? downloadState;
+    private bool downloadCompletion;
     private readonly Action closed;
     private readonly Action? started;
     private readonly TimeSpan waitTimeout;
@@ -36,7 +38,8 @@ public sealed class ProgressiveCachingStream : Stream
         Action? started = null,
         TimeSpan? initialWaitTimeout = null,
         TimeProvider? timeProvider = null,
-        TimeSpan? maximumWaitTimeout = null)
+        TimeSpan? maximumWaitTimeout = null,
+        Func<ProgressiveCacheReadState>? downloadState = null)
     {
         ArgumentNullException.ThrowIfNull(file);
         ArgumentNullException.ThrowIfNull(state);
@@ -51,6 +54,7 @@ public sealed class ProgressiveCachingStream : Stream
 
         source = file;
         readState = state;
+        this.downloadState = downloadState;
         this.closed = closed;
         this.waitTimeout = waitTimeout;
         this.initialWaitTimeout = initialWaitTimeout ?? waitTimeout;
@@ -58,6 +62,10 @@ public sealed class ProgressiveCachingStream : Stream
         this.timeProvider = timeProvider ?? TimeProvider.System;
         this.maximumWaitTimeout = maximumWaitTimeout;
     }
+
+    internal void UseDownloadCompletion(bool enabled = true) => downloadCompletion = enabled;
+
+    private ProgressiveCacheReadState State() => downloadCompletion && downloadState != null ? downloadState() : readState();
 
     public override bool CanRead => Volatile.Read(ref disposed) == 0 && source.CanRead;
 
@@ -120,7 +128,7 @@ public sealed class ProgressiveCachingStream : Stream
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var snapshot = readState();
+            var snapshot = State();
             if (snapshot.Failed && snapshot.Failure is LocalCapacityException) throw new LocalCapacityException("audio-cache");
             if (snapshot.Failed || snapshot.AvailableLength < 0 || snapshot.TotalLength is < 0 ||
                 snapshot.TotalLength is { } total && snapshot.AvailableLength > total)
@@ -172,7 +180,7 @@ public sealed class ProgressiveCachingStream : Stream
         {
             while (true)
             {
-                var snapshot = readState();
+                var snapshot = State();
                 if (snapshot.Failed && snapshot.Failure is LocalCapacityException) throw new LocalCapacityException("audio-cache");
                 if (snapshot.Failed) throw FailedTransfer();
                 if (snapshot.TotalLength is { } total)
@@ -195,7 +203,7 @@ public sealed class ProgressiveCachingStream : Stream
         length = 0;
         if (Volatile.Read(ref disposed) != 0)
             return false;
-        var total = readState().TotalLength;
+        var total = State().TotalLength;
         if (total is not { } value || value < 0)
             return false;
         length = value;

@@ -39,7 +39,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 ExtensionRuntimePermissionSet.None, Path.Combine(root, "runtime"));
             sandbox.DownloadPostProcessor = new(TimeSpan.FromSeconds(30), ExtensionDownloadDecryptionTests.MediaRunner);
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 100_000 };
-            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance);
             var adapter = new ExtensionDownloadCapabilityAdapter(sandbox, manifest, artifacts: resolver, options: options);
             var context = Context(manifest.Id);
             var job = Guid.CreateVersion7();

@@ -108,6 +108,9 @@ public sealed record ProviderError
         "needs_artist",
         "This source needs the artist too");
 
+    public static ProviderError AudioProfileUnavailable() => new(ProviderErrorKind.NotSupported,
+        "audio-profile-unavailable", "No source can satisfy this audio profile.");
+
     public static ProviderError StreamRangeUnavailable() => new(
         ProviderErrorKind.NotSupported,
         "stream-range-unavailable",

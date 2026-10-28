@@ -47,7 +47,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, 0.07)
                 { Preferences = new ListeningPreferences { ShowExternalLabel = showLabel.Value } }
             };
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory());
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
         var song = Assert.IsType<Song>(await gateway.GetSongAsync(context, "deezer", "42"));
         if (canonical)
         {
@@ -124,7 +124,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     {
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
         var gateway = new ProtocolProviderGateway(router.Object, MetadataRegistry(), new HttpClientFactory(),
-            applicationCache: new TestMemoryApplicationCache());
+            applicationCache: new TestMemoryApplicationCache(), audioVerifier: FixtureAudioVerifier.Instance);
         var context = Context() with { IsReadOnly = true };
 
         Assert.Empty(await gateway.GetArtistAlbumsAsync(context, "deezer", "2"));
@@ -160,7 +160,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 return new ProviderRoutePlan<IProviderMetadataCapability>(request,
                     [new(candidate.Priority, candidate.Provider, candidate.Descriptor, candidate.Implementation, accountContext, null)], plan.Decision);
             });
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), applicationCache: new TestMemoryApplicationCache());
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), applicationCache: new TestMemoryApplicationCache(), audioVerifier: FixtureAudioVerifier.Instance);
         await gateway.GetAlbumAsync(context, "deezer", "7");
         capability.Invocations.Clear();
 
@@ -190,7 +190,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
         router.Setup(value => value.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
             .ReturnsAsync((ProviderRouteRequest request) => MetadataPlan(request, registry, capability.Object));
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), applicationCache: new TestMemoryApplicationCache());
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), applicationCache: new TestMemoryApplicationCache(), audioVerifier: FixtureAudioVerifier.Instance);
         var context = Context();
         await gateway.GetArtistAlbumsAsync(context, "deezer", "2");
         await gateway.GetArtistTracksAsync(context, "deezer", "2");

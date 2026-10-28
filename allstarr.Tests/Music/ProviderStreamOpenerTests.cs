@@ -174,7 +174,8 @@ public sealed partial class ProviderStreamOpenerTests
         var cache = cacheEnabled ? new allstarr.Services.Common.ManagedTrackCacheService(configuration,
             Microsoft.Extensions.Options.Options.Create(new allstarr.Models.Settings.SubsonicSettings
             { StorageMode = allstarr.Models.Settings.StorageMode.Cache }), library.Object,
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.ManagedTrackCacheService>.Instance) : null;
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.ManagedTrackCacheService>.Instance,
+            audioVerifier: FixtureAudioVerifier.Instance) : null;
         using var canceled = new CancellationTokenSource();
         var source = new DelayedAudio(Flac());
         using var upstream = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(source) };

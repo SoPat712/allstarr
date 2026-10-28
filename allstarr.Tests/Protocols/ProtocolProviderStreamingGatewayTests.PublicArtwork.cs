@@ -35,7 +35,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Unknown, false));
         var router = new ProviderRouter(registry, accounts.Object, health.Object,
             Mock.Of<IProviderRouteSidecarSource>(MockBehavior.Strict), Mock.Of<ITrackIdentityService>(MockBehavior.Strict));
-        var gateway = new ProtocolProviderGateway(router, registry, new HttpClientFactory());
+        var gateway = new ProtocolProviderGateway(router, registry, new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
         var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "unlinked", null,
             "public-track", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
 
@@ -100,7 +100,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Unknown, false));
         var router = new ProviderRouter(registry, accounts.Object, health.Object,
             Mock.Of<IProviderRouteSidecarSource>(MockBehavior.Strict), Mock.Of<ITrackIdentityService>(MockBehavior.Strict));
-        var gateway = new ProtocolProviderGateway(router, registry, new HttpClientFactory());
+        var gateway = new ProtocolProviderGateway(router, registry, new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
 
         var result = await gateway.GetPublicArtworkUriAsync("applemusic", kind, id.Value);
 
@@ -131,7 +131,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             new ProviderPermissionDescriptor()), [capability.Object])]);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
         var accounts = new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict);
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory());
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
 
         Assert.Null(await gateway.GetPublicArtworkUriAsync("private", ProviderResourceKind.Track, "private-resource"));
         Assert.Null(await gateway.GetPublicSongAsync("private", "private-resource"));
@@ -151,7 +151,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             ["Providers:Disabled"] = "deezer"
         }).Build();
         var gateway = new ProtocolProviderGateway(router.Object, MetadataRegistry(capability.Object),
-            new HttpClientFactory(), configuration);
+            new HttpClientFactory(), configuration, audioVerifier: FixtureAudioVerifier.Instance);
 
         Assert.Null(await gateway.GetPublicArtworkUriAsync("deezer", ProviderResourceKind.Track, "track"));
         Assert.Null(await gateway.GetPublicSongAsync("deezer", "track"));

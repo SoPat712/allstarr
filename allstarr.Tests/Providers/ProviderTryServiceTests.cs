@@ -399,7 +399,7 @@ public sealed class ProviderTryServiceTests
             var streaming = fixture.Streaming.Object;
             fixture.registry.Setup(item => item.TryGetCapability("fixture", ProviderCapabilityKind.Metadata, out metadata)).Returns(true);
             fixture.registry.Setup(item => item.TryGetCapability("fixture", ProviderCapabilityKind.Streaming, out streaming)).Returns(true);
-            fixture.Artifacts = new(fixture.Store.Object, new() { RootPath = fixture.WorkspaceRoot, MaximumArtifactBytes = 1024 });
+            fixture.Artifacts = new(fixture.Store.Object, new() { RootPath = fixture.WorkspaceRoot, MaximumArtifactBytes = 1024 }, audioVerifier: FixtureAudioVerifier.Instance);
             fixture.tickets = new(temporaryDirectory: fixture.TicketRoot);
             fixture.selector = new(fixture.factory);
             var execution = new ProviderDiagnosticExecutionFactory(fixture.registry.Object, Mock.Of<IProviderRouteAccountResolver>());

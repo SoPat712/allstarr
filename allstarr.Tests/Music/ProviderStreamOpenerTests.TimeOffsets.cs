@@ -34,7 +34,7 @@ public sealed partial class ProviderStreamOpenerTests
             .Callback<DownloadedSongMappingScope, Song, string>((_, _, path) => published = path).Returns(Task.CompletedTask);
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Library:DownloadPath"] = root }).Build();
         await using var cache = new ManagedTrackCacheService(configuration, Options.Create(new SubsonicSettings { StorageMode = StorageMode.Cache }),
-            local.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<ManagedTrackCacheService>.Instance);
+            local.Object, Microsoft.Extensions.Logging.Abstractions.NullLogger<ManagedTrackCacheService>.Instance, audioVerifier: FixtureAudioVerifier.Instance);
         var scope = new DownloadedSongMappingScope(null, ProviderAudioQuality.Any);
         var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "listener",
             new AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "backend", "listener", "Listener", false), "seek",
@@ -99,7 +99,7 @@ public sealed partial class ProviderStreamOpenerTests
     }
 
     [MediaToolsFact]
-    public async Task TimeOffsets_ColdSourceCompletesBeforeSeekingAndRejectsPartialInput()
+    public async Task TimeOffsets_ColdSourceStreamsTheRemainingAudioAndRejectsPartialInput()
     {
         foreach (var truncated in new[] { false, true })
         {
@@ -112,14 +112,16 @@ public sealed partial class ProviderStreamOpenerTests
                     false, false, new("audio/wav", "wav", "pcm_s16le"), ProviderStreamRetryBehavior.DoNotRetry), "deezer", "42"));
             var opening = new ProviderStreamOpener(gateway.Object, new ProtocolStreamingResponseAdapter())
                 .OpenAsync(new DefaultHttpContext(), _context, "deezer", "42", ProviderAudioQuality.Any, new() { StartTimeTicks = 360000000 });
-            if (truncated) await Assert.ThrowsAsync<IOException>(() => opening);
-            else
+            async Task<byte[]> ReadRemainingAsync()
             {
                 var result = await opening;
                 await using var stream = Assert.IsType<FileStreamResult>(result).FileStream;
-                Assert.True(stream.Length > 64000);
-                Assert.True(stream.Length < 65000);
+                using var output = new MemoryStream();
+                await stream.CopyToAsync(output);
+                return output.ToArray();
             }
+            if (truncated) await Assert.ThrowsAsync<IOException>(ReadRemainingAsync);
+            else Assert.InRange((await ReadRemainingAsync()).Length, 64001, 64999);
         }
     }
 
@@ -196,9 +198,9 @@ public sealed partial class ProviderStreamOpenerTests
         using var trace = new System.Diagnostics.Activity("stream").Start();
         await Assert.ThrowsAsync<ProviderAudioProfileException>(() => new ProviderStreamOpener(gateway.Object,
             new ProtocolStreamingResponseAdapter(), logger: logger).OpenAsync(http, context, "deezer", "42", ProviderAudioQuality.Any,
-                new() { EnableDirectPlay = false, EnableDirectStream = false, Formats = [new(["flac"], ["flac"], ["http"])], MaxBitrate = 128000, StartTimeTicks = 360000000 }));
+                new() { EnableDirectPlay = false, EnableDirectStream = false, EnableTranscoding = false, Formats = [new(["flac"], ["flac"], ["http"])], MaxBitrate = 128000, StartTimeTicks = 360000000 }));
         var log = Assert.Single(logger.Messages);
-        Assert.Contains("Audio transcoding is unavailable", log);
+        Assert.Contains("All audio delivery methods are disabled", log);
         Assert.Contains("Musiver", log);
         Assert.Contains("Phone", log);
         Assert.Contains("flac", log);
@@ -206,7 +208,7 @@ public sealed partial class ProviderStreamOpenerTests
         Assert.Contains("360000000", log);
         Assert.DoesNotContain("private-", log);
         Assert.DoesNotContain("never-log-this", log);
-        Assert.Equal("Audio transcoding is unavailable.", trace.GetTagItem("audio.rejection_reason"));
+        Assert.Equal("All audio delivery methods are disabled.", trace.GetTagItem("audio.rejection_reason"));
         gateway.VerifyNoOtherCalls();
     }
 

@@ -153,6 +153,6 @@ public sealed partial class RecordingKeptFilesTests
             return scope.Object;
         });
         return new(factory, artifacts, factoryScope.Object, placement, identities, new SystemPlatformClock(),
-            jobs: queue, libraryAccess: new TestBackendLibraryAccess(factory, "music"));
+            jobs: queue, libraryAccess: new TestBackendLibraryAccess(factory, "music"), audioVerifier: FixtureAudioVerifier.Instance);
     }
 }

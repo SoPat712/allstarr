@@ -15,7 +15,12 @@ public sealed class ProtocolStreamingResponseAdapter(TimeProvider? timeProvider 
         "Last-Modified",
         "Cache-Control",
         "X-Allstarr-Provider",
-        "X-Allstarr-Route-Reason"
+        "X-Allstarr-Route-Reason",
+        "X-Allstarr-Audio-Codec",
+        "X-Allstarr-Audio-Bitrate",
+        "X-Allstarr-Audio-Container",
+        "X-Allstarr-Start-Seconds",
+        "X-Content-Duration"
     ];
 
     public void ForwardRangeRequestHeaders(

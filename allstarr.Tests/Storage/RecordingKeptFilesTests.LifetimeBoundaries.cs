@@ -121,7 +121,7 @@ public sealed partial class RecordingKeptFilesTests
             new InterruptRevokedRead(provider.GetRequiredService<EfManagedFileOwnershipStore>()));
         await using var interruptedServices = collection.BuildServiceProvider();
         var interrupted = new RecordingKeptFiles(factory, artifacts,
-            interruptedServices.GetRequiredService<IServiceScopeFactory>(), placement, identities, clock, jobs: jobs);
+            interruptedServices.GetRequiredService<IServiceScopeFactory>(), placement, identities, clock, jobs: jobs, audioVerifier: FixtureAudioVerifier.Instance);
 
         await Assert.ThrowsAsync<CleanupInterrupted>(() => interrupted.CleanupAsync(claim));
         await using (var verify = new AllstarrDbContext(database.Options))

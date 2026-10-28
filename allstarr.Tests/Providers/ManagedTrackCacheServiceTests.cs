@@ -427,7 +427,7 @@ public sealed partial class ManagedTrackCacheServiceTests
                 StorageMode = Enum.Parse<StorageMode>(storageMode)
             }),
             local,
-            NullLogger<ManagedTrackCacheService>.Instance, lifetime, timeProvider);
+            NullLogger<ManagedTrackCacheService>.Instance, lifetime, timeProvider, audioVerifier: FixtureAudioVerifier.Instance);
     }
 
     private static HttpResponseMessage Response(HttpStatusCode status, byte[] bytes)

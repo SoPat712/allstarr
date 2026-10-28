@@ -34,8 +34,7 @@ public sealed partial class ProtocolProviderGateway
             var track = candidate.TrackId ?? requestedTrack;
             var measurement = outcomes?.GetPlaybackStart(candidate.Context, quality);
             var media = measurement?.Media;
-            var cached = managedTrackCache == null ? null : await managedTrackCache.ReadCachedMediaAsync(track,
-                new(candidate.Context.Account?.AccountId, quality), protocol.CancellationToken, candidate.Context.Account?.Revision);
+            var cached = await AvailableCachedMediaAsync(protocol, candidate.Context, track, quality, protocol.CancellationToken);
             if (cached != null)
             {
                 media = cached;
@@ -117,9 +116,14 @@ public sealed partial class ProtocolProviderGateway
                 if (managedTrackCache != null)
                 {
                     gate = await managedTrackCache.BeginOpenAsync(track, scope, candidate.Context.Account?.Revision, false, cancellation);
-                    var cached = await managedTrackCache.TryOpenAsync(track, scope, cancellation, candidate.Context.Account?.Revision);
+                    var cached = await OpenAvailableCacheAsync(protocol, candidate.Context, track, quality, null, false, false, cancellation);
                     if (cached != null)
                     {
+                        if (!CanDeliverCached(protocol, cached))
+                        {
+                            cached.Response.Dispose();
+                            return new(index, null, candidate.Context, track, ProviderError.AudioProfileUnavailable(), null);
+                        }
                         transferred = true;
                         return new(index, cached with { SelectionReason = $"{startReason}:managed-cache" },
                             candidate.Context, track, null, gate);
@@ -169,7 +173,14 @@ public sealed partial class ProtocolProviderGateway
                 try
                 {
                     outcome = await OpenCandidateAsync(ResolveAsync,
-                        lease => OpenAtAsync(lease, null, null, sourceCancellation.Token), false, null, sourceCancellation.Token);
+                        lease => OpenAtAsync(lease, null, null, sourceCancellation.Token), false, null, sourceCancellation.Token,
+                        await ExpectedPlaybackDurationAsync(execution, track, requestedTrack), protocol.AudioDelivery,
+                        async (_, offset, end, token) =>
+                        {
+                            var refreshed = await candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(execution, token), new(track, quality, offset));
+                            if (!refreshed.IsSuccess) ThrowRouteFailure(refreshed.Error!);
+                            return await OpenAtAsync(refreshed.RequireValue(), new(offset, end), null, token);
+                        });
                 }
                 catch (OperationCanceledException) when (abandonment.IsCancellationRequested && !protocol.CancellationToken.IsCancellationRequested)
                 {
@@ -190,25 +201,51 @@ public sealed partial class ProtocolProviderGateway
                 }
                 cancellation.ThrowIfCancellationRequested();
                 if (outcome.Error?.Code == LocalCapacityException.Code) Interlocked.Exchange(ref localCapacity, 1);
-                outcomes?.ObservePlayback(execution, track, quality, outcome.Error, clock.GetElapsedTime(started),
+                if (outcome.Error?.Code != "audio-profile-unavailable") outcomes?.ObservePlayback(execution, track, quality, outcome.Error, clock.GetElapsedTime(started),
                     outcome.IsSuccess ? outcome.RequireValue().Lease.Media : null);
-                if (!leaseFailed) outcomes?.Observe(execution, ProviderCapabilityKind.Streaming, outcome.Error, clock.GetElapsedTime(started));
+                if (!leaseFailed && outcome.Error?.Code != "audio-profile-unavailable") outcomes?.Observe(execution, ProviderCapabilityKind.Streaming, outcome.Error, clock.GetElapsedTime(started));
                 if (!outcome.IsSuccess) return new(index, null, execution, track, outcome.Error, null);
                 var lease = outcome.RequireValue().Lease;
                 response = outcome.RequireValue().Response;
-                await ProviderPlaybackStream.AttachAsync(response, lease.SupportsByteRanges,
-                    (offset, end, tag, token) => OpenAtAsync(lease, new(offset, end), tag, token), () =>
-                    {
-                        var failure = new ProviderError(ProviderErrorKind.TransientFailure);
-                        outcomes?.ObservePlayback(execution, track, quality, failure, clock.GetElapsedTime(started));
-                        outcomes?.Observe(execution, ProviderCapabilityKind.Streaming, failure, clock.GetElapsedTime(started));
-                        logger?.LogInformation("Playback source {Provider} stopped after opening ({FailureCode})", candidate.Provider.Id, failure.Code);
-                    }, clock, streamCancellation);
+                var failureReported = 0;
+                void Failed()
+                {
+                    if (Interlocked.Exchange(ref failureReported, 1) != 0) return;
+                    var failure = new ProviderError(ProviderErrorKind.TransientFailure);
+                    outcomes?.ObservePlayback(execution, track, quality, failure, clock.GetElapsedTime(started));
+                    outcomes?.Observe(execution, ProviderCapabilityKind.Streaming, failure, clock.GetElapsedTime(started));
+                    logger?.LogInformation("Playback source {Provider} stopped after opening ({FailureCode})", candidate.Provider.Id, failure.Code);
+                }
+                async Task<HttpResponseMessage> ResumeAsync(long offset, long? end, EntityTagHeaderValue tag, CancellationToken token)
+                {
+                    var renewed = await candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(execution, token), new(track, quality, offset));
+                    if (!renewed.IsSuccess) ThrowRouteFailure(renewed.Error!);
+                    return await OpenAtAsync(renewed.RequireValue(), new(offset, end), tag, token);
+                }
+                await ProviderPlaybackStream.AttachAsync(response, lease.SupportsByteRanges, ResumeAsync, Failed, clock, streamCancellation);
+                var sourceFacts = new PlaybackFileFacts
+                {
+                    ExpectedDurationSeconds = await ExpectedPlaybackDurationAsync(execution, track, requestedTrack),
+                    SourceFailed = Failed
+                };
+                async Task<HttpResponseMessage> FullAsync(CancellationToken token)
+                {
+                    var full = await OpenCandidateAsync(
+                        () => candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(execution, token), new(track, quality)),
+                        selected => OpenAtAsync(selected, null, null, token), false, null, token, sourceFacts.ExpectedDurationSeconds);
+                    if (!full.IsSuccess) ThrowRouteFailure(full.Error!);
+                    var complete = full.RequireValue();
+                    sourceFacts.Measured = PrefetchedStream.Facts(complete.Response.Content);
+                    sourceFacts.Media = sourceFacts.Measured?.Media ?? complete.Lease.Media;
+                    await ProviderPlaybackStream.AttachAsync(complete.Response, complete.Lease.SupportsByteRanges, ResumeAsync, Failed, clock, token);
+                    return complete.Response;
+                }
                 var reason = string.Join(':', fallbackReason ?? startReason,
                     execution.Account?.ResolutionReason ?? "account-free", "remote");
                 var stream = new ProtocolProviderStream(response, lease, candidate.Provider.Id, track.Value,
                     execution.Account?.AccountId, EffectiveQuality: quality, SelectionReason: reason,
-                    ServingAccountRevision: execution.Account?.Revision);
+                    ServingAccountRevision: execution.Account?.Revision)
+                { FileFacts = sourceFacts, OpenOriginalResponseAsync = FullAsync };
                 transferred = true;
                 return new(index, stream, execution, track, null, gate, abandoning);
             }

@@ -20,7 +20,7 @@ public sealed partial class RecordingKeptFilesTests
         }
         var service = new RecordingKeptFiles(factory, artifacts,
             services.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
-            placement, identities, new allstarr.Core.Operations.SystemPlatformClock(), jobs: queue);
+            placement, identities, new allstarr.Core.Operations.SystemPlatformClock(), jobs: queue, audioVerifier: FixtureAudioVerifier.Instance);
         var published = await service.PublishAsync(Request());
         await using var read = await factory.CreateDbContextAsync();
         var route = await read.Set<RecordingKeptRouteEntity>().SingleAsync();
@@ -36,7 +36,7 @@ public sealed partial class RecordingKeptFilesTests
     public async Task BackgroundCheckPersistsWithDownloadAndKeptMetadataAndSurvivesReload(bool workspaceRemoved)
     {
         var service = new RecordingKeptFiles(factory, artifacts, services.GetRequiredService<IServiceScopeFactory>(),
-            placement, identities, new allstarr.Core.Operations.SystemPlatformClock(), jobs: queue);
+            placement, identities, new allstarr.Core.Operations.SystemPlatformClock(), jobs: queue, audioVerifier: FixtureAudioVerifier.Instance);
         await service.PublishAsync(Request());
         if (workspaceRemoved) File.Delete(artifact.SourcePath);
         var claim = await queue.ClaimNextAsync("quality-fixture", [AudioQualityCheckJobHandler.Type]);

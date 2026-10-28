@@ -191,7 +191,7 @@ public sealed partial class RecordingKeptFilesTests
     }
 
     private RecordingKeptFiles SharedKept() => new(factory, artifacts, services.GetRequiredService<IServiceScopeFactory>(),
-        placement, identities, new SystemPlatformClock(), jobs: queue);
+        placement, identities, new SystemPlatformClock(), jobs: queue, audioVerifier: FixtureAudioVerifier.Instance);
     private FavoriteActionPipeline SharedPipeline() => new(factory, queue, new SystemPlatformClock(), SharedKept());
     private static FavoriteMutationRequest SharedMutation(UserRecord user, bool favorite, string revision) => new(
         FavoriteLinkTests.Fixture.Context(user), SharedFavoriteItem, favorite ? FavoriteOperation.Favorite : FavoriteOperation.Unfavorite, revision);

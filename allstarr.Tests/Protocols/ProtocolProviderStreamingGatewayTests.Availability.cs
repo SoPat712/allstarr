@@ -132,7 +132,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             store.Setup(item => item.GetWorkspaceAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((ProviderDownloadWorkspaceEntity?)null);
             var streaming = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null,
-                new ProviderDownloadArtifactResolver(store.Object, options), options);
+                new ProviderDownloadArtifactResolver(store.Object, options, audioVerifier: FixtureAudioVerifier.Instance), options);
             var fixture = new AvailabilityFixture(inOrder ? manifest.Id : "qobuz", implementation: streaming);
 
             var first = await fixture.Open();
@@ -548,7 +548,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     { UserId = protocol.RequireActor().EffectiveUserId, Preferences = new(explicitDenied ? "CleanOnly" : "All") }
                 };
             gateway = new(router, registry, new HttpClientFactory(), configuration,
-                applicationCache: new TestMemoryApplicationCache(), identities: identities.Object, timeProvider: clock);
+                applicationCache: new TestMemoryApplicationCache(), identities: identities.Object, timeProvider: clock, audioVerifier: FixtureAudioVerifier.Instance);
         }
 
         public Task<ProtocolProviderStream?> Open(string? range = null, CancellationToken cancellation = default,

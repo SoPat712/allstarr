@@ -210,6 +210,8 @@ public sealed record ProviderRouteRequest
     public CancellationToken CancellationToken { get; }
 
     public ProviderRoutePurpose Purpose { get; }
+
+    public bool CacheOnly { get; init; }
 }
 
 public enum ProviderRouteDecisionStatus

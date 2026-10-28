@@ -33,7 +33,7 @@ public sealed partial class ProtocolRouteFixtureTests
                     ExternalId = "1780787517", Year = 2024, Isrc = "GBUM72403956", CoverArtUrl = "https://images.example.test/album" }
             });
         var local = new ProtocolProviderGateway(Mock.Of<IProviderRouter>(MockBehavior.Strict), new ProviderRegistry([]),
-            Mock.Of<IHttpClientFactory>(MockBehavior.Strict), identities: identities.Object);
+            Mock.Of<IHttpClientFactory>(MockBehavior.Strict), identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>()))
             .Returns((ProtocolExecutionContext context, string provider, string id) => local.GetSongAsync(context, provider, id));

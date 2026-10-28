@@ -52,7 +52,8 @@ public sealed partial class RecordingKeptFiles(
     IPlatformClock clock,
     ILogger<RecordingKeptFiles>? logger = null,
     DurableJobQueue? jobs = null,
-    allstarr.Core.Protocols.IBackendLibraryAccessResolver? libraryAccess = null)
+    allstarr.Core.Protocols.IBackendLibraryAccessResolver? libraryAccess = null,
+    allstarr.Core.Music.IProviderAudioVerifier? audioVerifier = null)
 {
     public async Task<KeptRecordingFile> PublishAsync(KeptRecordingPublication publication,
         CancellationToken cancellationToken = default)
@@ -85,6 +86,10 @@ public sealed partial class RecordingKeptFiles(
         var recording = await identities.ResolveRecordingAsync(actor, publication.RecordingId.ToString("D"), cancellationToken);
         var sourceRecording = await identities.ResolveRecordingAsync(actor, link.CanonicalRecordingId.ToString("D"), cancellationToken);
         if (recording == null || sourceRecording?.Id != recording.Id) throw Denied();
+        await (audioVerifier ?? new allstarr.Core.Music.ProviderAudioVerifier()).VerifyFileAsync(source.SourcePath,
+            new(source.MimeType ?? "application/octet-stream", source.Container ?? "unknown", source.Codec ?? "unknown",
+                source.Bitrate, source.SampleRate, source.BitDepth, source.Channels),
+            publication.Metadata?.DurationMilliseconds / 1000d, cancellationToken);
 
         await using var scope = scopes.CreateAsyncScope();
         var files = scope.ServiceProvider.GetRequiredService<FilePlacementService>();

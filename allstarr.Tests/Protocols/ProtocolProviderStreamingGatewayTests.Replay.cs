@@ -50,7 +50,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             library.Setup(item => item.GetLocalPathForExternalSongAsync(It.IsAny<DownloadedSongMappingScope>(), "deezer", It.IsAny<string>()))
                 .ReturnsAsync(path);
             await using var cache = new ManagedTrackCacheService(new ConfigurationBuilder().Build(),
-                Options.Create(new SubsonicSettings()), library.Object, NullLogger<ManagedTrackCacheService>.Instance);
+                Options.Create(new SubsonicSettings()), library.Object, NullLogger<ManagedTrackCacheService>.Instance, audioVerifier: FixtureAudioVerifier.Instance);
             var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
             var media = identities.As<ITrackMediaFactsStore>();
             identities.Setup(item => item.RememberSourceAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderExternalResourceId>(),
@@ -92,7 +92,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             library.Setup(item => item.GetLocalPathForExternalSongAsync(It.IsAny<DownloadedSongMappingScope>(), "qobuz", "qobuz-track"))
                 .ReturnsAsync(path);
             await using var cache = new ManagedTrackCacheService(new ConfigurationBuilder().Build(),
-                Options.Create(new SubsonicSettings()), library.Object, NullLogger<ManagedTrackCacheService>.Instance);
+                Options.Create(new SubsonicSettings()), library.Object, NullLogger<ManagedTrackCacheService>.Instance, audioVerifier: FixtureAudioVerifier.Instance);
             using var emptySelections = new PlaybackDeliveryActivityStore();
             var first = Streaming("deezer", (_, _) => throw new InvalidOperationException("Replay must use the complete original."));
             var second = Streaming("qobuz", (_, _) => throw new InvalidOperationException("Replay must use the complete original."));

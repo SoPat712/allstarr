@@ -828,7 +828,7 @@ public sealed class ProtocolLyricsAutomaticTests
             });
             var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             { ["Providers:LyricsOrder"] = string.Join(',', sources.Select(source => source.ProviderId)) }).Build();
-            var gateway = Gateway = new ProtocolProviderGateway(router.Object, registry, Mock.Of<IHttpClientFactory>(), configuration, effectivePolicies: policies.Object, outcomes: health, timeProvider: Clock);
+            var gateway = Gateway = new ProtocolProviderGateway(router.Object, registry, Mock.Of<IHttpClientFactory>(), configuration, effectivePolicies: policies.Object, outcomes: health, timeProvider: Clock, audioVerifier: FixtureAudioVerifier.Instance);
             Resolver = new(gateway, NullLogger<ProtocolLyricsResolver>.Instance, crossLinks: links, effectivePolicies: policies.Object, timeProvider: Clock, identities: identities);
             Protocol = new(ProtocolKind.Jellyfin, "fixture", "listener", new AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "fixture", "listener", "Listener", false),
                 "lyrics", Clock.GetUtcNow().AddMinutes(1), default);

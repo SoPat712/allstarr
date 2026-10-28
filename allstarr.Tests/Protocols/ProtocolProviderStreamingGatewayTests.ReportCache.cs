@@ -246,7 +246,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     if (json.RootElement.TryGetProperty("ExternalId", out var external) && external.GetString() == "track") songKeys.Add(key);
                     return await fixture.Cache.SetStringAsync(key, value, expiry);
                 });
-            var gateway = new ProtocolProviderGateway(fixture.router.Object, registry, fixture.http.Object, applicationCache: cache.Object);
+            var gateway = new ProtocolProviderGateway(fixture.router.Object, registry, fixture.http.Object, applicationCache: cache.Object, audioVerifier: FixtureAudioVerifier.Instance);
             Assert.Single((await gateway.SearchAsync(context, "Fresh", 10, 0, 0, "deezer")).Songs);
             fixture.SongKey = Assert.Single(songKeys.Distinct());
             fixture.router.Reset();

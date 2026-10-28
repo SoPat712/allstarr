@@ -50,7 +50,7 @@ public sealed partial class TrackIdentityServiceTests
             Mock.Of<IProviderRouteSidecarSource>(), _service, new ProviderRuntimeHealth(), policies.Object);
         using var activity = new PlaybackDeliveryActivityStore();
         var gateway = new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict),
-            identities: _service, playbackActivity: activity);
+            identities: _service, playbackActivity: activity, audioVerifier: FixtureAudioVerifier.Instance);
         var protocol = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", _userA.ToString("N"),
             new AllstarrPrincipal(_userA, "jellyfin", "fixture", _userA.ToString("N"), "User", false), "monochrome-playback",
             DateTimeOffset.UtcNow.AddMinutes(1), default, new("client", "device"))

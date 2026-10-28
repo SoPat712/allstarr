@@ -11,6 +11,7 @@ using Jint.Native;
 using Jint.Runtime;
 using allstarr.Core.Extensions;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Protocols;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using allstarr.Models.Domain;
@@ -1655,6 +1656,7 @@ public partial class ExtensionHostBridge
             throw new UnauthorizedAccessException("Extension artifact redirect left its approved origin.");
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException("Extension artifact request failed.", null, response.StatusCode);
+        AttachDownloadResumeAsync(response, client, safeUri, headersObj, scope.CancellationToken).GetAwaiter().GetResult();
         using var content = response.Content.ReadAsStream();
         var written = scope.Write(artifactId, content, response.Content.Headers.ContentLength);
         return new Dictionary<string, object>(StringComparer.Ordinal)
@@ -1684,6 +1686,7 @@ public partial class ExtensionHostBridge
             response.EnsureSuccessStatusCode();
             if (response.Content.Headers.ContentLength > scope.MaximumBytes)
                 throw new InvalidDataException("Extension download exceeds the managed artifact size limit.");
+            AttachDownloadResumeAsync(response, client, safeUri, HeaderObject(options), scope.CancellationToken).GetAwaiter().GetResult();
             using var source = response.Content.ReadAsStream(scope.CancellationToken);
             using var decrypted = scope.Progressive?.StartDeezerDownload(safeUri, finalUri, target, response.Content.Headers.ContentLength);
             if (decrypted == null)
@@ -1722,6 +1725,20 @@ public partial class ExtensionHostBridge
             };
         }
     }
+
+    private Task AttachDownloadResumeAsync(HttpResponseMessage response, HttpClient client, Uri uri,
+        object? headers, CancellationToken token) => ProviderPlaybackStream.AttachAsync(response,
+        supportsByteRanges: true, (offset, end, tag, cancellation) =>
+        {
+            var reopened = SendHttpRequest(client, "GET", uri, null, headers,
+                HttpCompletionOption.ResponseHeadersRead, cancellation, new(offset, end), tag);
+            if (reopened.RequestMessage?.RequestUri != response.RequestMessage?.RequestUri)
+            {
+                reopened.Dispose();
+                throw new IOException("The download source changed while resuming.");
+            }
+            return Task.FromResult(reopened);
+        }, () => { }, TimeProvider.System, token);
 
     public bool FileExists(string path) => File.Exists(RequireFileScope().ResolveTemporaryPath(path));
 
@@ -2059,7 +2076,8 @@ public partial class ExtensionHostBridge
 
     // Behaviour matches SpotiFLAC-Module-Version (MIT).
     private HttpResponseMessage SendHttpRequest(HttpClient client, string method, Uri uri, string? body, object? headers,
-        HttpCompletionOption completion = HttpCompletionOption.ResponseContentRead, CancellationToken? cancellationToken = null)
+        HttpCompletionOption completion = HttpCompletionOption.ResponseContentRead, CancellationToken? cancellationToken = null,
+        System.Net.Http.Headers.RangeHeaderValue? range = null, System.Net.Http.Headers.EntityTagHeaderValue? entityTag = null)
     {
         for (var redirects = 0; ; redirects++)
         {
@@ -2070,6 +2088,8 @@ public partial class ExtensionHostBridge
             if (body != null)
                 request.Content = new StringContent(ResolveSecretMarkers(body), Encoding.UTF8, "application/json");
             AddHeaders(request, headers);
+            if (range != null) request.Headers.Range = range;
+            if (entityTag != null) request.Headers.IfRange = new System.Net.Http.Headers.RangeConditionHeaderValue(entityTag);
             AddCookies(request);
             if (!request.Headers.Contains("User-Agent"))
                 request.Headers.TryAddWithoutValidation("User-Agent", "Spotiflac-Extension/1.0");
