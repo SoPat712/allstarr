@@ -9,6 +9,7 @@ public static class TrackRematchScopes
     public const string Playlist = "playlist";
     public const string All = "all";
     public const string Algorithm = "algorithm";
+    public const string Publication = "publication";
 }
 
 public sealed record TrackRematchSongPayload(
@@ -18,7 +19,8 @@ public sealed record TrackRematchSongPayload(
 public sealed class TrackRematchJobHandler(
     PlaylistRematchJobHandler playlist,
     TrackRematchAllJobHandler all,
-    ITrackMatchRepository trackMatches) : IDurableJobHandler
+    ITrackMatchRepository trackMatches,
+    PlaylistMatchPublication? publications = null) : IDurableJobHandler
 {
     public const string Type = "track-match.rematch";
 
@@ -31,6 +33,7 @@ public sealed class TrackRematchJobHandler(
         var scope = ReadScope(context.Claim.Payload);
         return scope switch
         {
+            TrackRematchScopes.Publication when publications != null => publications.ExecuteAsync(context, cancellationToken),
             TrackRematchScopes.Playlist => playlist.ExecuteAsync(context, cancellationToken),
             TrackRematchScopes.All or TrackRematchScopes.Algorithm =>
                 all.ExecuteAsync(context, cancellationToken),

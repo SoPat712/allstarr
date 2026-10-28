@@ -459,7 +459,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         long expectedLinkRevision,
         Guid sourceSnapshotId,
         IReadOnlyCollection<Guid> externalSnapshotIds,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyDictionary<Guid, Guid>? expectedAcceptedDecisions = null)
     {
         var actor = execution.RequireActor();
         var access = _kept == null ? BackendLibraryAccessContext.Unavailable :
@@ -497,6 +498,23 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             link.OwnerUserId, externalIds, cancellationToken);
         if (latest.Count != externalIds.Length)
             throw new InvalidOperationException("A rematched playlist cannot publish without one decision per source entry.");
+        if (expectedAcceptedDecisions != null)
+        {
+            var protectedIds = await ManualTrackOverrides.ProtectedSnapshotIdsAsync(db, externalIds, cancellationToken);
+            var sources = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => externalIds.Contains(item.Id))
+                .ToDictionaryAsync(item => item.Id, cancellationToken);
+            var ownerCurrent = await db.Users.AsNoTracking().AnyAsync(item => item.Id == link.OwnerUserId && item.Enabled &&
+                item.BackendType == execution.Principal!.BackendType && item.BackendInstanceId == execution.BackendInstanceId &&
+                item.BackendPrincipalId == execution.VerifiedBackendPrincipalId, cancellationToken);
+            if (!ownerCurrent || protectedIds.Count > 0 || externalIds.Any(id => !expectedAcceptedDecisions.TryGetValue(id, out var expected) ||
+                latest[id].Id != expected || latest[id].State != TrackMatchState.Accepted ||
+                latest[id].MatcherVersion != TrackMatchDecisionEngine.AlgorithmVersion ||
+                !sources.TryGetValue(id, out var source) || latest[id].SourceSnapshotVersion != source.SnapshotVersion ||
+                source.OwnerUserId != link.OwnerUserId || source.ProviderAccountId != link.ProviderAccountId ||
+                (source.Protocol == "opensubsonic" ? "subsonic" : source.Protocol) != execution.Principal!.BackendType ||
+                source.BackendInstanceId != execution.BackendInstanceId || source.BackendPrincipalId != execution.VerifiedBackendPrincipalId))
+                throw new DbUpdateConcurrencyException("The accepted playlist selection changed before publication.");
+        }
         foreach (var entry in entries)
             entry.PublishedTrackMatchId = latest[entry.ExternalMetadataSnapshotId].Id;
         await db.SaveChangesAsync(cancellationToken);

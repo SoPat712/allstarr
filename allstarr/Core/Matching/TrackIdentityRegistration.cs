@@ -16,6 +16,7 @@ public static class TrackIdentityRegistration
         services.TryAddSingleton<MatchLibrarySearch>();
         services.TryAddSingleton<TrackMatchCommandService>();
         services.TryAddSingleton<PlaylistRematchService>();
+        services.TryAddSingleton<PlaylistMatchPublication>();
         services.TryAddSingleton<TrackRematchAllService>();
         services.TryAddSingleton<ITrackMatchRepository>(provider =>
             provider.GetRequiredService<TrackMatchCommandService>());

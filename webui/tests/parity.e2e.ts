@@ -932,6 +932,9 @@ for (const width of [390, 1280]) {
           matchState: "accepted", targetStatus: "streamed", outcomeCode: "streamed_through_allstarr",
           targetEligible: false, providerRoutes: [{ providerId: "apple-musickit", externalId: "12345", pinned: false },
             { providerId: "apple-download", externalId: "12345", pinned: false }] },
+        { title: "Review song", routeKind: "external", routeProviderId: "apple-musickit",
+          matchState: "ambiguous", targetStatus: "streamed", outcomeCode: "streamed_through_allstarr",
+          targetEligible: false, providerRoutes: [{ providerId: "apple-musickit", externalId: "suggested", pinned: false }] },
         { title: "Local song", routeKind: "local", matchState: "accepted", targetStatus: "included",
           outcomeCode: "included_native_backend_item", targetEligible: true, providerRoutes: [] },
         { title: "Duplicate song", routeKind: "local", matchState: "accepted", targetStatus: "duplicate",
@@ -946,17 +949,17 @@ for (const width of [390, 1280]) {
           id: "playlist-link", snapshotId: "playlist-snapshot", snapshotVersion: 1,
           name: "Test playlist", sourceProviderId: "spotify", targetProtocol: "jellyfin",
           targetPlaylistId: "jellyfin-playlist", projectionMode: "resolved", retrievedAt: "2026-10-16",
-          trackCount: 4, localCount: 2, externalCount: 1, unresolvedCount: 1,
-          matchedCount: 3, reviewCount: 0, rejectedCount: 0, playableCount: 3,
+          trackCount: 5, localCount: 2, externalCount: 2, unresolvedCount: 1,
+          matchedCount: 3, reviewCount: 1, rejectedCount: 0, playableCount: 4,
           durationMs: 720_000, unknownDurationCount: 0, routeCoverage: [], tracks: rows,
           clientProjection: { protocolId: "allstarr-vpl-playlist-link", projectionMode: "resolved",
-            trackCount: 4, tracks: rows.map((row) => ({ ...row, itemId: `item-${row.sourcePosition}` })) },
+            trackCount: 5, tracks: rows.map((row) => ({ ...row, itemId: `item-${row.sourcePosition}` })) },
         }),
       }));
       await page.goto("#/library/playlists");
       await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
       const details = page.getByRole("dialog", { name: "Test playlist" });
-      await expect(details.locator("tbody tr")).toHaveCount(4);
+      await expect(details.locator("tbody tr")).toHaveCount(5);
       const streamed = details.getByRole("row").filter({ hasText: "Streamed song" });
       await expect(streamed).toContainText("Streams through Allstarr");
       await expect(streamed).not.toContainText(/unresolved|failed|no playable match/i);
@@ -967,13 +970,18 @@ for (const width of [390, 1280]) {
       const mapped = page.getByRole("list", { name: "Mapped providers for Streamed song" });
       await expect(mapped.getByRole("listitem")).toHaveCount(1);
       await expect(mapped).toContainText("Apple Music");
-      await expect(mapped).toContainText("Verified match · 2 sources");
+      await expect(mapped).toContainText("Automatically matched · 2 sources");
       const tile = await mapped.locator(".route-tile").first().boundingBox();
       expect(Math.round(tile!.width)).toBe(32); expect(Math.round(tile!.height)).toBe(32);
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/track-routes-${width}-${theme}.png` });
       await page.keyboard.press("Escape");
-      const labels = ["Streams through Allstarr", "Will be included in Jellyfin playlist",
+      await details.getByRole("row").filter({ hasText: "Review song" }).getByRole("button", { name: "Routes for Review song" }).click();
+      const suggested = page.getByRole("list", { name: "Mapped providers for Review song" });
+      await expect(suggested).toContainText("Suggested source — check recording");
+      await expect(suggested).not.toContainText(/Verified match|Automatically matched/);
+      await page.keyboard.press("Escape");
+      const labels = ["Streams through Allstarr", "Streams through Allstarr", "Will be included in Jellyfin playlist",
         "Duplicate: not added twice to Jellyfin playlist", "Not added to Jellyfin playlist: no playable match yet"];
       for (const [index, row] of rows.entries()) {
         await details.getByRole("button", { name: `Technical details for ${row.title}`, exact: true }).click();
