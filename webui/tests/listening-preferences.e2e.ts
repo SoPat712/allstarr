@@ -8,6 +8,7 @@ type PreferenceState = {
   lyricsOrder?: string;
   revision: string;
   usesHouseholdDefaults: boolean;
+  cleanOnlyLocked?: boolean;
 };
 
 function response(state: PreferenceState) {
@@ -26,7 +27,45 @@ function response(state: PreferenceState) {
     },
     UsesHouseholdDefaults: state.usesHouseholdDefaults,
     Revision: state.revision,
+    CleanOnlyLocked: state.cleanOnlyLocked ?? false,
   };
+}
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`listener clean only unlocked and locked at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    let locked = false, selected = "All";
+    await mockShell(page, false, async route => {
+      if (route.request().method() === "PUT") {
+        expect(route.request().postDataJSON().explicitFilter).toBe("CleanOnly");
+        selected = "CleanOnly";
+      }
+      return fulfillJson(route, response({ explicitFilter: locked ? "CleanOnly" : selected,
+        showExternalLabel: true, showExplicitLabel: true, revision: "current",
+        usesHouseholdDefaults: false, cleanOnlyLocked: locked }));
+    });
+    await page.goto("/#/preferences");
+    const clean = page.getByRole("radio", { name: "Clean only", exact: false });
+    await expect(page.getByText("Hides explicit songs and songs whose rating isn't known.", { exact: true })).toBeVisible();
+    await clean.check();
+    await page.screenshot({ path: `test-results/shots-uisettings/clean-only-unlocked-${width}-${theme}.png`, fullPage: true });
+    await page.getByRole("button", { name: "Save preferences", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Listening preferences saved." })).toBeVisible();
+    await expect(clean).toBeChecked();
+    locked = true;
+    await page.reload();
+    await expect(clean).toBeChecked();
+    const radios = page.getByRole("group", { name: "Release filter" }).getByRole("radio");
+    await expect(radios).toHaveCount(3);
+    for (const radio of await radios.all())
+      await expect(radio).toBeDisabled();
+    await expect(page.getByText("Your administrator turned this on.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: "Show [E] for explicit tracks", exact: true })).toBeEnabled();
+    await page.screenshot({ path: `test-results/shots-uisettings/clean-only-locked-${width}-${theme}.png`, fullPage: true });
+    if (width === 390) await expectContainedMobileGeometry(page);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
 }
 
 async function fulfillJson(route: Route, body: unknown, status = 200) {

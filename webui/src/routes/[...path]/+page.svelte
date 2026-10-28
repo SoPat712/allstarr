@@ -74,8 +74,9 @@
 
   const administrator = $derived(session?.user?.isAdministrator === true);
   // Intelligence remains available only in the explicit development composition.
-  const navigationDestinations = $derived(destinations.filter((item) =>
-    item.href !== "#/intelligence" && (administrator || item.href !== "#/settings")));
+  const navigationDestinations = $derived(destinations.filter((item) => item.href !== "#/intelligence")
+    .map(item => !administrator && item.href === "#/settings"
+      ? { ...item, href: "#/settings/alerts", label: "Alerts", mobileLabel: "Alerts" } : item));
   const mobileDestinations = $derived(navigationDestinations.filter((item) => item.mobile));
   const moreDestinations = $derived([preferencesDestination, ...navigationDestinations.filter((item) => !item.mobile)]);
   const librarySections = $derived(administrator
@@ -98,7 +99,7 @@
 
   const route = $derived(currentRoute(`/${page.params.path ?? ""}`));
   const forbiddenRoute = $derived(!administrator && (
-    route.startsWith("/settings") ||
+    (route.startsWith("/settings") && route !== "/settings/alerts") ||
     route === "/integrations/routing" ||
     route === "/library/cached" ||
     route === "/library/kept" ||
@@ -106,7 +107,7 @@
   ));
   const routeQuery = $derived(new URLSearchParams(page.url.hash.split("?", 2)[1] ?? ""));
   const activeDestination = $derived(
-    route === "/report" ? { href: "#/report", label: "Report a problem", mobileLabel: "Report", icon: "activity", mobile: false } : [...destinations, preferencesDestination].find((item) =>
+    route === "/report" ? { href: "#/report", label: "Report a problem", mobileLabel: "Report", icon: "activity", mobile: false } : [...navigationDestinations, ...destinations, preferencesDestination].find((item) =>
       item.href === "#/" ? route === "/" : route.startsWith(item.prefix ?? item.href.slice(1)),
     ) ?? destinations[0],
   );

@@ -72,6 +72,16 @@ export type PersonalListeningPreferences = {
   householdDefaults: ListeningPreferences;
   usesHouseholdDefaults: boolean;
   revision: string;
+  cleanOnlyLocked?: boolean;
+};
+
+export type ListenerPlaylistCopy = {
+  id: string;
+  name: string;
+  originalPlaylistId: string;
+  originalTargetPlaylistId: string | null;
+  backendInstanceId: string;
+  createdAt: string;
 };
 
 export type PlaylistSummary = {
@@ -2023,6 +2033,12 @@ export const providerUse = {
 
 export const listeningPreferences = {
   get: () => json<PersonalListeningPreferences>("/api/admin/preferences"),
+  lock: (userId: string) => json<PersonalListeningPreferences>(`/api/admin/preferences/users/${encodeURIComponent(userId)}/clean-only-lock`),
+  saveLock: (userId: string, locked: boolean, expectedRevision: string) =>
+    json<PersonalListeningPreferences>(`/api/admin/preferences/users/${encodeURIComponent(userId)}/clean-only-lock`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ locked, expectedRevision }),
+    }),
+  copies: (userId: string) => json<ListenerPlaylistCopy[]>(`/api/admin/listeners/${encodeURIComponent(userId)}/playlist-forks`),
   save: (values: {
     explicitFilter: ExplicitFilter;
     showExternalLabel: boolean;
@@ -2517,3 +2533,28 @@ export const setupAccess = {
 function accessBody(value: object, csrf: string, method: string) {
   return { method, headers: { "Content-Type": "application/json", "X-Allstarr-CSRF": csrf }, body: JSON.stringify(value) };
 }
+
+export type AlertChannelKind = "ntfy" | "discord" | "webhook";
+export type AlertChannel = { id: string; displayName: string; kind: AlertChannelKind; enabled: boolean; household: boolean; hasDestination: boolean; revision: number };
+export type AlertChannelInput = { displayName: string; kind: AlertChannelKind; enabled: boolean; household: boolean; destination?: string; expectedRevision: number };
+export type AlertDelivery = { id: string; channelId: string; incidentId?: string | null; event?: string; kind?: string; severity?: string;
+  status: string; attempt?: number; nextAttemptAt?: string | null; safeError?: string | null; createdAt: string };
+export type AlertIncident = { id: string; kind: string; severity: string; state: string; openedAt?: string | null;
+  resolvedAt?: string | null; lastObservedAt?: string; revision?: number; resource?: string; message: string; action: string };
+export type ProblemAlertThresholds = { warningBytes: number; warningPercent: number; criticalBytes: number; criticalPercent: number;
+  hysteresisBytes: number; hysteresisPercent: number; cooldownMinutes: number };
+export type AlertSettings = { channels: AlertChannel[]; deliveries: AlertDelivery[]; thresholds: ProblemAlertThresholds | null;
+  permittedDestinations: string[] | null; revision: number };
+export const problemAlerts = {
+  read: () => json<AlertSettings>("/api/admin/alerts"),
+  incidents: () => json<AlertIncident[]>("/api/admin/alerts/incidents"),
+  saveChannel: (id: string | null, input: AlertChannelInput) => json<AlertChannel>(
+    id ? `/api/admin/alerts/channels/${encodeURIComponent(id)}` : "/api/admin/alerts/channels",
+    { method: id ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }),
+  test: (id: string) => json<{ deliveryId: string; preview: { message: string; action: string } }>(
+    `/api/admin/alerts/channels/${encodeURIComponent(id)}/test`, { method: "POST" }),
+  thresholds: (thresholds: ProblemAlertThresholds, expectedRevision: number) => json<AlertSettings>("/api/admin/alerts/thresholds",
+    { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ thresholds, expectedRevision }) }),
+  destinations: (permittedDestinations: string[], expectedRevision: number) => json<AlertSettings>("/api/admin/alerts/destinations",
+    { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ permittedDestinations, expectedRevision }) }),
+};

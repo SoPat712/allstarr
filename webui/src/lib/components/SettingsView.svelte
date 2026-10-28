@@ -18,6 +18,8 @@
   import StorageVerificationCard from "$lib/components/StorageVerificationCard.svelte";
   import HealthView from "$lib/components/HealthView.svelte";
   import BackupsView from "$lib/components/BackupsView.svelte";
+  import ListenersView from "$lib/components/ListenersView.svelte";
+  import AlertsView from "$lib/components/AlertsView.svelte";
   import type { OnboardingState } from "$lib/api";
   import RouteError from "$lib/components/RouteError.svelte";
   import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
@@ -28,7 +30,7 @@
   import { fieldValue, playbackStartLabel, playbackStartOptions } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { onThemeModeChange, readThemeMode, saveThemeMode, themeOptions, type ThemeMode } from "$lib/theme";
-  import { Activity, Archive, HardDrive, Lock, Network, Palette, Rocket, SlidersHorizontal } from "@lucide/svelte";
+  import { Activity, Archive, Bell, HardDrive, Lock, Network, Palette, Rocket, SlidersHorizontal, Users } from "@lucide/svelte";
 
   let {
     section = "general",
@@ -46,10 +48,12 @@
     onSetupChanged?: (state: OnboardingState) => void;
   } = $props();
 
-  const pages = [
+  const allPages = [
     { id: "appearance", label: "Appearance", group: "This browser", icon: Palette, title: "Appearance", description: "How Allstarr looks in this browser. Other devices keep their own choice." },
     { id: "access", label: "Access", group: "Server", icon: Lock, title: "Access", description: "Manage media-server access for playlist sync and library scans." },
     { id: "general", label: "General", group: "Server", icon: SlidersHorizontal, title: "General", description: "Server-wide behavior for every listener." },
+    { id: "listeners", label: "Listeners", group: "Server", icon: Users, title: "Listeners", description: "Manage clean listening and see personal playlist copies." },
+    { id: "alerts", label: "Alerts", group: "Server", icon: Bell, title: "Alerts", description: "Choose where Allstarr sends problem alerts." },
     { id: "storage", label: "Storage", group: "Server", icon: HardDrive, title: "Storage", description: "Manage saved music, cache space, and playback capacity." },
     { id: "network", label: "Network", group: "Server", icon: Network, title: "Network and security", description: "How the admin interface is exposed. These are usually set by your deployment." },
     { id: "backups", label: "Backups", group: "Maintenance", icon: Archive, title: "Backups", description: "Save and restore Allstarr's database, accounts and encryption keys." },
@@ -57,6 +61,7 @@
     { id: "diagnostics", label: "Diagnostics", group: "Maintenance", icon: Activity, title: "Diagnostics", description: "Run checks when playback or playlists aren't working." },
     { id: "setup", label: "Setup", group: "Maintenance", icon: Rocket, title: "Setup", description: "Reopen the setup guide or import settings from Allstarr v2." },
   ] as const;
+  const pages = $derived(allPages.filter(item => administrator || item.id === "alerts"));
   const navGroups = ["This browser", "Server", "Maintenance"] as const;
   const sectionPages: Record<string, string> = { general: "general", paths: "storage", cache: "storage", "audio-limits": "storage", network: "network", "client-address": "network" };
   const contextualTrackCacheKeys = new Set([
@@ -87,8 +92,8 @@
 
   const active = $derived(section === "maintenance"
     ? "backups"
-    : pages.some((item) => item.id === section) ? section : "general");
-  const activePage = $derived(pages.find((item) => item.id === active) ?? pages[1]);
+    : pages.some((item) => item.id === section) ? section : administrator ? "general" : "alerts");
+  const activePage = $derived(pages.find((item) => item.id === active) ?? pages[0]);
   const configSections = $derived.by(() => {
     return (schema?.configSections ?? [])
       .filter((item) => item.id !== "spotify-import")
@@ -257,13 +262,15 @@
   <section class="settings-workspace settings-layout" aria-busy={refreshing}>
     <nav class="settings-nav" aria-label="Settings sections">
       {#each navGroups as group}
-        <p>{group}</p>
-        {#each pages.filter((item) => item.group === group) as item (item.id)}
-          {@const Icon = item.icon}
-          <a href={`#/settings/${item.id}`} aria-current={active === item.id ? "page" : undefined}>
-            <Icon size={18} aria-hidden="true" />{item.label}
-          </a>
-        {/each}
+        {#if pages.some(item => item.group === group)}
+          <p>{group}</p>
+          {#each pages.filter((item) => item.group === group) as item (item.id)}
+            {@const Icon = item.icon}
+            <a href={`#/settings/${item.id}`} aria-current={active === item.id ? "page" : undefined}>
+              <Icon size={18} aria-hidden="true" />{item.label}
+            </a>
+          {/each}
+        {/if}
       {/each}
     </nav>
     <SegmentedNav items={pages.map((item) => ({ id: item.id, label: item.label, href: `#/settings/${item.id}` }))} {active} label="Settings sections" class="route-tabs settings-tabs" />
@@ -297,6 +304,10 @@
         </section>
       {:else if active === "access"}
         <AccessSettingsCard kind="backend" />
+      {:else if active === "listeners" && administrator}
+        <ListenersView />
+      {:else if active === "alerts"}
+        <AlertsView {administrator} />
       {:else if ["general", "storage", "network"].includes(active)}
         {#if administrator && active === "network"}<AccessSettingsCard kind="oidc" />{/if}
         {#if administrator && active === "storage"}<StorageVerificationCard />{/if}
