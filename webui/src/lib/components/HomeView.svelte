@@ -52,7 +52,7 @@
       !snapshot.nowPlaying,
   );
 
-  async function refresh() {
+  async function refresh(includePlayback = true) {
     if (refreshing) {
       pendingRefresh = true;
       return;
@@ -62,10 +62,10 @@
     const playbackRequest = ++nowPlayingRequest;
     const requests = [
       ["Home overview", home.overview()],
-      ["Now playing", readNowPlaying()],
+      ...(includePlayback ? [["Now playing", readNowPlaying()] as const] : []),
     ] as const;
     const results = await Promise.allSettled(requests.map((request) => request[1]));
-    const next: HomeSnapshot = { failures: [] };
+    const next: HomeSnapshot = { ...snapshot, failures: [] };
     let nextPlayback: Awaited<ReturnType<typeof readNowPlaying>> | null = null;
 
     results.forEach((result, index) => {
@@ -104,7 +104,7 @@
     }
   }
 
-  const refreshScheduler = createRefreshScheduler(refresh);
+  const refreshScheduler = createRefreshScheduler(() => refresh(false));
   const scheduleRefresh = refreshScheduler.schedule;
 
   async function readNowPlaying() {
@@ -118,7 +118,7 @@
   }
 
   async function refreshNowPlaying() {
-    if (!snapshot) return;
+    if (!snapshot || !visible) return;
     const playbackRequest = ++nowPlayingRequest;
     try {
       const response = await readNowPlaying();
@@ -217,7 +217,10 @@
     document.addEventListener("visibilitychange", syncVisibility);
     void refresh();
     nowPlayingTimer = setInterval(() => void refreshNowPlaying(), 5_000);
-    const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
+    const unsubscribe = liveUpdates.subscribe(update => {
+      scheduleRefresh();
+      if (update.reason !== "poll") void refreshNowPlaying();
+    });
     return () => {
       unsubscribe();
       refreshScheduler.cancel();

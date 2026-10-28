@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { acceptUpdate, createRefreshScheduler, liveUpdates } from "./live-updates.svelte";
+import { acceptUpdate, createManualRefresh, createRefreshScheduler, liveUpdates } from "./live-updates.svelte";
 
 afterEach(() => {
   liveUpdates.close();
@@ -45,7 +45,7 @@ describe("acceptUpdate", () => {
     ).toBe(false);
   });
 
-  it("polls only while the unified stream is unavailable", () => {
+  it("checks for changes even while the unified stream is available", () => {
     vi.useFakeTimers();
     const listener = vi.fn();
     const unsubscribe = liveUpdates.subscribe(listener, 1_000);
@@ -56,12 +56,12 @@ describe("acceptUpdate", () => {
 
     liveUpdates.state.status = "live";
     vi.advanceTimersByTime(1_000);
-    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledTimes(2);
 
     unsubscribe();
     liveUpdates.state.status = "stale";
     vi.advanceTimersByTime(1_000);
-    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 
   it("coalesces refreshes and cancels pending work", () => {
@@ -94,10 +94,10 @@ it("refreshes subscribers after reconnect and ignores malformed stream messages"
   const unsubscribe = liveUpdates.subscribe(listener);
   liveUpdates.connect();
   handlers.get("stream-status")?.({ data: "{}" });
-  expect(listener).not.toHaveBeenCalled();
+  expect(listener).toHaveBeenCalledOnce();
   fail?.();
   handlers.get("stream-status")?.({ data: "{}" });
-  expect(listener).toHaveBeenCalledOnce();
+  expect(listener).toHaveBeenCalledTimes(2);
   expect(() => handlers.get("update")?.({ data: "invalid-json" })).not.toThrow();
   unsubscribe();
   liveUpdates.close();
@@ -148,4 +148,45 @@ it("ignores queued messages from the previous household stream after switching t
   unsubscribe();
   liveUpdates.close();
   vi.unstubAllGlobals();
+});
+
+ it("refreshes on focus and visibility, pauses hidden polling, and removes listeners", () => {
+  vi.useFakeTimers();
+  const surface = new EventTarget();
+  const doc = new EventTarget() as EventTarget & { visibilityState: string };
+  doc.visibilityState = "visible";
+  vi.stubGlobal("window", surface);
+  vi.stubGlobal("document", doc);
+  const receive = vi.fn();
+  const unsubscribe = liveUpdates.subscribe(receive, 1000);
+  doc.visibilityState = "hidden";
+  vi.advanceTimersByTime(1000);
+  expect(receive).not.toHaveBeenCalled();
+  surface.dispatchEvent(new Event("focus"));
+  expect(receive).not.toHaveBeenCalled();
+  doc.visibilityState = "visible";
+  doc.dispatchEvent(new Event("visibilitychange"));
+  surface.dispatchEvent(new Event("focus"));
+  expect(receive).toHaveBeenCalledTimes(2);
+  unsubscribe();
+  surface.dispatchEvent(new Event("focus"));
+  vi.advanceTimersByTime(1000);
+  expect(receive).toHaveBeenCalledTimes(2);
+  vi.unstubAllGlobals();
+});
+
+it("shows manual progress only for explicitly requested work and clears it on failure", async () => {
+  const manual = createManualRefresh();
+  let finish!: () => void;
+  const work = new Promise<void>(resolve => { finish = resolve; });
+  expect(manual.pending).toBe(false);
+  const running = manual.run(() => work);
+  expect(manual.pending).toBe(true);
+  const duplicate = vi.fn();
+  await manual.run(duplicate);
+  expect(duplicate).not.toHaveBeenCalled();
+  finish(); await running;
+  expect(manual.pending).toBe(false);
+  await expect(manual.run(async () => { throw new Error("offline"); })).rejects.toThrow("offline");
+  expect(manual.pending).toBe(false);
 });

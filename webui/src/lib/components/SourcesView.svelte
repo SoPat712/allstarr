@@ -6,11 +6,12 @@
   import { onMount } from "svelte";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import { ArrowLeft, ChevronRight, MoreHorizontal, PackagePlus, Plus, RefreshCw } from "@lucide/svelte";
+  import { ArrowLeft, ChevronRight, MoreHorizontal, PackagePlus, Plus } from "@lucide/svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import {
     home,
     appleDownload,
@@ -260,13 +261,6 @@
   function refresh(): Promise<void> {
     if (!refreshTask) refreshTask = loadSources().finally(() => { refreshTask = null; });
     return refreshTask;
-  }
-
-  async function refreshManually() {
-    if (refreshing) return;
-    refreshing = true;
-    try { await refresh(); }
-    finally { refreshing = false; }
   }
 
   async function loadSources() {
@@ -856,7 +850,7 @@
           <p>Everywhere Allstarr finds music, playlists, lyrics and scrobbling. Open a source to see its checks, accounts and settings.</p>
         </div>
         <div class="sources-heading-actions">
-          <Button variant="secondary" disabled={refreshing} onclick={() => void refreshManually()}><RefreshCw size={16} aria-hidden="true" />{refreshing ? "Refreshing…" : "Refresh"}</Button>
+          <RefreshButton variant="secondary" onrefresh={refresh} />
           {#if administrator}<Button variant="secondary" onclick={() => { addSourceOpen = true; }}><PackagePlus size={16} aria-hidden="true" />Add a source</Button>{/if}
           {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}><Plus size={16} aria-hidden="true" />Connect Source</Button>{/if}
         </div>

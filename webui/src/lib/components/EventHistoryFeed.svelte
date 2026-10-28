@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
   import { flip } from "svelte/animate";
-  import { ArrowRight, ChevronDown, CircleAlert, RefreshCw } from "@lucide/svelte";
+  import { ArrowRight, ChevronDown, CircleAlert } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import ActivityOutcome from "$lib/components/ActivityOutcome.svelte";
   import { Button } from "$lib/components/ui/button";
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import {
     eventLog,
     home,
@@ -289,9 +290,7 @@
             { value: "", label: "All sources" }, ...eventProviders.map((value) => ({ value, label: providerName(value) })),
           ]} />
         {/if}
-        <Button variant="secondary" class="event-log-refresh" aria-label={refreshing ? "Refreshing…" : "Refresh"} disabled={refreshing || loadingEarlier} onclick={() => void load("refresh")}>
-          <RefreshCw size={16} aria-hidden="true" /><span>{refreshing ? "Refreshing…" : "Refresh"}</span>
-        </Button>
+        <RefreshButton variant="secondary" class="event-log-refresh" disabled={loadingEarlier} onrefresh={() => load("refresh")} />
       </div>
     </div>
 

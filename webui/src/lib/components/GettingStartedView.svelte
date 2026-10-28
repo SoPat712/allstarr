@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import RouteError from "$lib/components/RouteError.svelte";
@@ -36,9 +37,13 @@
   ] : []);
 
   async function load() {
-    loading = true;
+    loading = !context;
     error = "";
-    try { context = await listenerSupport.context(); address = context.musicClientUrl ?? ""; }
+    try {
+      const next = await listenerSupport.context();
+      if (!context || address === (context.musicClientUrl ?? "")) address = next.musicClientUrl ?? "";
+      context = next;
+    }
     catch (cause) { error = supportError(cause, "Connection details could not be loaded. Try again."); }
     finally { loading = false; }
   }
@@ -54,7 +59,12 @@
       toast.info("Select and copy the highlighted text.");
     }
   }
-  onMount(() => { void load(); });
+  const scheduler = createRefreshScheduler(load);
+  onMount(() => {
+    void load();
+    const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
+    return () => { unsubscribe(); scheduler.cancel(); };
+  });
 </script>
 
 {#if loading}

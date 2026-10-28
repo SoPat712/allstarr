@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { ApiError, providerFavoriteLinks, type FavoriteLinkPair, type FavoriteLinkPreview,
     type ProviderFavoriteLink, type ProviderFavoriteMember } from "$lib/api";
   import { newReportRequestId as newRequestId, supportDate } from "$lib/support";
   import SelectField from "$lib/components/SelectField.svelte";
   import { Button } from "$lib/components/ui/button";
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Badge } from "$lib/components/ui/badge";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -183,9 +185,11 @@
     } catch (cause) { if (!disposed) error = failure(cause, "Combining hearts could not be retried. Refresh its status before trying again."); }
     finally { if (!disposed) action = ""; }
   }
+  const scheduler = createRefreshScheduler(refresh);
   onMount(() => {
-    if (administrator) void refresh();
-    return () => { disposed = true; clearTimeout(timer); reads.abort(); };
+    void refresh();
+    const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
+    return () => { disposed = true; unsubscribe(); scheduler.cancel(); clearTimeout(timer); reads.abort(); };
   });
 </script>
 
@@ -193,7 +197,7 @@
 <section class="settings-card p-5 my-4 space-y-3" aria-labelledby="shared-hearts-title">
   <div class="panel-heading">
     <div><h3 id="shared-hearts-title" class="font-semibold">Shared provider hearts</h3><p>Combine provider hearts for two profiles of the same person.</p></div>
-    <div class="panel-heading-actions"><Button variant="secondary" disabled={refreshing || Boolean(action)} onclick={() => void refresh()}>{refreshing ? "Refreshing…" : "Refresh profiles"}</Button></div>
+    <div class="panel-heading-actions"><RefreshButton variant="secondary" disabled={Boolean(action)} onrefresh={refresh} label="Refresh profiles" /></div>
   </div>
   {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
   {#if message}<p class="notice-info" role="status">{message}</p>{/if}

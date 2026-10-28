@@ -8735,3 +8735,76 @@ test("Source health history stays private to administrators", async ({ page }) =
   await expect(page.getByRole("group", { name: /Recent diagnostic checks/ })).toHaveCount(0);
   expect(reads).toBe(0);
 });
+
+for (const target of [
+  { name: "Home", route: "#/", endpoint: "/api/admin/ui/now-playing", fixture: "/api/admin/ui/now-playing", field: "items", property: "title" },
+  { name: "Sources", route: "#/integrations/services", endpoint: "/api/admin/ui/schema", fixture: "/api/admin/ui/schema", field: "providers", property: "name" },
+  { name: "Activity", route: "#/activity", endpoint: "/api/admin/ui/activity", fixture: "/api/admin/ui/activity?limit=8", field: "items", property: "label" },
+  { name: "Playlists", route: "#/library/playlists", endpoint: "/api/admin/playlist-links", fixture: "/api/admin/playlist-links", field: "playlistLinks", property: "name" },
+  { name: "Storage", route: "#/library/cached", endpoint: "/api/admin/downloads", fixture: "", field: "files", property: "title" },
+]) for (const width of [390, 1280]) {
+  test(`freshness reconciles ${target.name} silently at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await mockApi(page);
+    await page.addInitScript(() => {
+      class Stream {
+        listeners = new Map<string, (event: MessageEvent<string>) => void>();
+        onerror?: () => void;
+        constructor() { (window as any).__freshnessStream = this; }
+        addEventListener(name: string, listener: (event: MessageEvent<string>) => void) {
+          this.listeners.set(name, listener);
+          if (name === "stream-status") setTimeout(() => listener(new MessageEvent(name, { data: "{}" })), 0);
+        }
+        close() {}
+      }
+      Object.defineProperty(window, "EventSource", { value: Stream });
+    });
+    let version = 1;
+    let hold = false;
+    const gate: { release?: () => void } = {};
+    const openGate = () => gate.release?.();
+    await page.route(url => url.pathname === target.endpoint, async route => {
+      if (hold) await new Promise<void>(resolve => { gate.release = resolve; });
+      const body = target.fixture ? structuredClone(responses[target.fixture]) as Record<string, any> : {
+        storage: "cache", files: [{ path: "/managed/song.flac", title: "Test song", artist: "Artist", fileName: "song.flac", size: 1024,
+          storage: "cache", removable: true }], count: 1, totalSize: 1024, totalSizeFormatted: "1 KiB",
+      };
+      body[target.field][0][target.property] = `Freshness ${version}`;
+      await route.fulfill({ json: body });
+    });
+    await page.goto(target.route);
+    await expect(page.getByText("Freshness 1", { exact: true }).first()).toBeVisible();
+    // A healthy SSE connection can miss writes without an outbox event.
+    version = 2;
+    await expect(page.getByText("Freshness 2", { exact: true }).first()).toBeVisible({ timeout: 8000 });
+    version = 3;
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(page.getByText("Freshness 3", { exact: true }).first()).toBeVisible();
+    version = 4;
+    await page.evaluate(() => {
+      const stream = (window as any).__freshnessStream;
+      stream.onerror?.();
+      stream.listeners.get("stream-status")?.(new MessageEvent("stream-status", { data: "{}" }));
+    });
+    await expect(page.getByText("Freshness 4", { exact: true }).first()).toBeVisible();
+    const refresh = page.getByRole("button", { name: "Refresh", exact: true });
+    if (await refresh.count()) {
+      hold = true;
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await expect.poll(() => Boolean(gate.release)).toBe(true);
+      await expect(refresh).toHaveAttribute("aria-busy", "false");
+      await expect(refresh.locator("svg")).not.toHaveClass(/refresh-spinning/);
+      await expect(page.getByText("Freshness 4", { exact: true }).first()).toBeVisible();
+      hold = false; openGate();
+      await expect.poll(() => refresh.isEnabled()).toBe(true);
+      await page.waitForTimeout(100);
+      hold = true; gate.release = undefined;
+      await refresh.click();
+      await expect(page.getByRole("button", { name: "Refreshing…", exact: true })).toHaveAttribute("aria-busy", "true");
+      await expect.poll(() => Boolean(gate.release)).toBe(true);
+      hold = false; openGate();
+      await expect(refresh).toHaveAttribute("aria-busy", "false");
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}

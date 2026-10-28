@@ -321,3 +321,5 @@ Scrobbling saves the destination account and revision with accepted playback, th
 - Back up deployment configuration, retained media, extension packages, and optional provider sessions separately; see [storage operations](operations/storage.md).
 
 For exact procedures, see [configuration](operations/configuration.md), [storage and recovery](operations/storage.md), and [client compatibility](operations/client-compatibility.md).
+
+Visible dashboard pages reconcile changes automatically within about five seconds, including updates made in other tabs or by background work. Returning to a tab or reconnecting refreshes its data while retaining the displayed rows. Refresh buttons show progress only when you use them; automatic refreshes stay quiet. Unsaved form edits are preserved.

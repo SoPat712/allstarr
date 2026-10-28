@@ -1188,6 +1188,8 @@
   text-transform: uppercase;
 }
 
+.refresh-spinning { animation: signal-boot-spin 1s linear infinite; }
+
 @keyframes signal-boot-spin { to { transform: rotate(360deg); } }
 @keyframes signal-boot-breathe {
   0%, 100% { opacity: 0.4; transform: scale(0.92); }
@@ -1244,6 +1246,7 @@
     .signal-boot::after,
     .signal-boot-orbit,
     .signal-boot-pulse,
+    .refresh-spinning,
     .signal-boot-meter span,
     .event-children,
     .event-log-group.streaming > summary,

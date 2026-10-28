@@ -1,12 +1,13 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
-  import { ChevronDown, RefreshCw } from "@lucide/svelte";
+  import { ChevronDown } from "@lucide/svelte";
   import { activityWork, home, type Job, type JobDetail, type JobProgress } from "$lib/api";
   import { dayLabel, jobName, jobNames, jobState, progressPercent, activityTone, activityText, validJobId } from "$lib/activity";
   import { progressDetails } from "$lib/jobs";
   import { liveUpdates, createRefreshScheduler } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button } from "$lib/components/ui/button";
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import ActivityOutcome from "$lib/components/ActivityOutcome.svelte";
   import { Progress } from "$lib/components/ui/progress";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -250,7 +251,7 @@
   <div class="job-toolbar">
     <SelectField label="Job state" bind:value={stateFilter} options={[{ value: "", label: "All states" }, ...stateOptions]} />
     <SelectField label="Job type" bind:value={typeFilter} options={[{ value: "", label: "All work" }, ...Object.entries(jobNames).map(([value, label]) => ({ value, label }))]} />
-    <Button bind:ref={refreshButton} variant="secondary" disabled={busy} onclick={() => void load()}><RefreshCw size={16} aria-hidden="true" />Refresh jobs</Button>
+    <RefreshButton bind:ref={refreshButton} variant="secondary" onrefresh={() => load()} label="Refresh jobs" />
   </div>
   {#if linkedLoading}<p role="status">Opening related work…</p>{/if}
   {#if linkedError}<p class="notice-error" role="alert">{linkedError}</p>{/if}
