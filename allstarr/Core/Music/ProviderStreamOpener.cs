@@ -24,7 +24,8 @@ public sealed class ProviderStreamOpener(
     ILogger<ProviderStreamOpener>? logger = null,
     ProviderStreamAdmission? admission = null,
     MediaConversionGate? conversions = null,
-    PlaybackStartTimingStore? timings = null)
+    PlaybackStartTimingStore? timings = null,
+    PlayTraceService? traces = null)
 {
     internal static readonly IReadOnlySet<string> PreparationProviders = new HashSet<string>(StringComparer.Ordinal)
     { "apple-musickit", "apple-download" };
@@ -112,6 +113,19 @@ public sealed class ProviderStreamOpener(
             if (timing != null && timings != null && !HttpMethods.IsHead(http.Request.Method))
             {
                 timing.Enable();
+                timing.BeginPlay(context, context.RequestedItemId ?? $"ext-{providerId}-song-{externalId}");
+                if (traces != null && !context.IsReadOnly && !context.IsPreparation)
+                {
+                    try
+                    {
+                        await traces.CaptureAsync(timing, context, providerId, externalId);
+                        if (!context.IsOriginalDownload && providers is ProtocolProviderGateway gateway &&
+                            await gateway.GetStoredSongAsync(context, providerId, externalId) is { } presented)
+                            timing.Present(presented);
+                    }
+                    catch (Exception error) when (error is not OutOfMemoryException)
+                    { logger?.LogDebug("Playback trace context is unavailable ({ErrorType})", error.GetType().Name); }
+                }
                 http.Response.Headers["X-Allstarr-Playback-Request"] = timing.Id.ToString("N");
                 await timings.RecordAsync(timing.Snapshot("opening"));
             }
@@ -149,6 +163,18 @@ public sealed class ProviderStreamOpener(
                 return new StatusCodeResult(status);
             }
 
+            if (traces != null && timing?.Enabled == true)
+            {
+                try
+                {
+                    await traces.CaptureAsync(timing, context, providerId, externalId, resolutionOnly: true);
+                    timing.Route(routed.ServingProviderId, routed.IsCached, routed.SelectionReason, routed.EffectiveQuality.ToString(), routed.ServingAccountId.HasValue ? "Selected" : null, routed.ServingExternalId);
+                    if (routed.ServingAccountId is { } accountId)
+                        timing.AccountLabel(await traces.AccountLabelAsync(accountId, context.CancellationToken));
+                }
+                catch (Exception error) when (error is not OutOfMemoryException)
+                { logger?.LogDebug("Playback resolution is unavailable ({ErrorType})", error.GetType().Name); }
+            }
             var sourceMedia = routed.FileFacts.Media ?? routed.Lease.Media;
             var conversion = delivery == null ? null : ProviderAudioTranscoder.Plan(delivery, sourceMedia);
             if (conversion != null && routed.Response.StatusCode == HttpStatusCode.PartialContent && !headOnly)
@@ -196,6 +222,9 @@ public sealed class ProviderStreamOpener(
                 }
                 var cacheRung = ManagedTrackCacheService.SeekRung(routed.Response.Content);
                 if (!context.IsOriginalDownload && !headOnly && cacheRung != null) Selected(cacheRung);
+                timing?.ObserveMedia(() => routed.FileFacts.Measured);
+                timing?.Receive(routed.FileFacts.Measured ?? new(sourceMedia));
+                timing?.Deliver(delivery, conversion);
                 if (conversion != null)
                 {
                     var duration = routed.FileFacts.Measured?.DurationSeconds;

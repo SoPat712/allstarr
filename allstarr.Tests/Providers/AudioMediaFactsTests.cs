@@ -6,6 +6,61 @@ namespace allstarr.Tests;
 public sealed class AudioMediaFactsTests
 {
     [Fact]
+    public void ProbeDoesNotTreatUnknownRatingsAsClean()
+    {
+        var facts = AudioMediaFacts.ParseProbe("""
+            {"streams":[{"codec_name":"flac","sample_rate":"44100","channels":2}],
+             "format":{"format_name":"flac","duration":"200","tags":{"title":"Song","explicit":"2","itunesadvisory":"0"}}}
+            """, 1000000);
+        Assert.Null(facts!.Tags!.IsExplicit);
+    }
+
+    [Fact]
+    public async Task CachedFileTagsRemainAvailableWithoutProbing()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"audio-tags-{Guid.NewGuid():N}.wav");
+        try
+        {
+            var bytes = new byte[1024];
+            Wave()[..44].CopyTo(bytes, 0);
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(4), (uint)(bytes.Length - 8));
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(40), (uint)(bytes.Length - 44));
+            await File.WriteAllBytesAsync(path, bytes);
+            using (var file = TagLib.File.Create(path))
+            {
+                file.Tag.Title = "Received song";
+                file.Tag.Performers = ["Received artist"];
+                file.Tag.Album = "Received album";
+                file.Tag.ISRC = "USABC1234567";
+                file.Save();
+            }
+            var original = await File.ReadAllBytesAsync(path);
+            var tags = AudioMediaFacts.ReadTags(path, new("audio/wav", "wav", "pcm_s24le"));
+            Assert.Equal(original, await File.ReadAllBytesAsync(path));
+            Assert.Equal("Received song", tags!.Title);
+            Assert.Equal("Received artist", tags.Artist);
+            Assert.Equal("Received album", tags.Album);
+            Assert.Equal("USABC1234567", tags.Isrc);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public void ProbeRetainsOnlyKnownAudioTags()
+    {
+        var facts = AudioMediaFacts.ParseProbe("""
+            {"streams":[{"codec_name":"flac","sample_rate":"44100","channels":2}],
+             "format":{"format_name":"flac","duration":"200","tags":{"TITLE":"Received title","artist":"Received artist",
+               "album":"Received album","ISRC":"USABC1234567","explicit":"0","comment":"private-value"}}}
+            """, 1000000);
+        Assert.Equal("Received title", facts!.Tags!.Title);
+        Assert.Equal("Received artist", facts.Tags.Artist);
+        Assert.Equal("USABC1234567", facts.Tags.Isrc);
+        Assert.False(facts.Tags.IsExplicit);
+        Assert.DoesNotContain("private-value", System.Text.Json.JsonSerializer.Serialize(facts));
+    }
+
+    [Fact]
     public void SingleMpegFrameDoesNotClaimAWholeTrackBitrate()
     {
         var facts = AudioMediaFacts.ReadPrefix([0xff, 0xfb, 0x90, 0x00], 5000000);

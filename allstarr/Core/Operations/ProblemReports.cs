@@ -6,6 +6,7 @@ using allstarr.Core.Health;
 using allstarr.Core.Identity;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Core.Playback;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
@@ -39,10 +40,29 @@ public sealed partial class ProblemReportService(
         return await CaptureAsync(db, session, actor, selector, token);
     }
 
-    public async Task<ProblemReportReceipt> CreateAsync(AdminAuthSession session, CreateProblemReportRequest request, CancellationToken token)
+    public Task<ProblemReportReceipt> CreateAsync(AdminAuthSession session, CreateProblemReportRequest request, CancellationToken token) =>
+        CreateCoreAsync(session, request, null, token);
+
+    internal Task<ProblemReportReceipt> CreatePlaybackAsync(AdminAuthSession session, PlayTraceReportRequest request, PlayTraceDetail trace, CancellationToken token)
+    {
+        var song = trace.Request.Presented;
+        var resolution = trace.Resolution;
+        var context = new ProblemReportContext(1, clock.UtcNow, trace.ListenerId,
+            trace.ListenerId == session.AllstarrUserId ? PlayTraceText.Clean(session.UserName) : null,
+            new(trace.Request.ItemId, resolution.ExternalSnapshotId, resolution.CanonicalRecordingId, null, song.Title, song.Artist, song.Album,
+                song.DurationMilliseconds, resolution.Provider),
+            new(resolution.DecisionId, resolution.State, null, resolution.Score, resolution.AuthorityScope, []),
+            new(resolution.Provider, resolution.Provider != null, null, null, trace.StartedAt, trace.StartedAt, resolution.Cached,
+                null, resolution.Route, null, trace.Request.Client), [])
+        { PlaybackRequestId = trace.Id };
+        return CreateCoreAsync(session, new(request.RequestId, "wrong-match", request.Note), context, token);
+    }
+
+    private async Task<ProblemReportReceipt> CreateCoreAsync(AdminAuthSession session, CreateProblemReportRequest request, ProblemReportContext? captured, CancellationToken token)
     {
         var normalized = NormalizeRequest(request);
-        var fingerprint = Convert.ToHexStringLower(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(normalized, JsonOptions)));
+        var fingerprint = Convert.ToHexStringLower(SHA256.HashData(captured == null ? JsonSerializer.SerializeToUtf8Bytes(normalized, JsonOptions) :
+            JsonSerializer.SerializeToUtf8Bytes(new { request = normalized, playbackRequestId = captured.PlaybackRequestId }, JsonOptions)));
         for (var attempt = 0; ; attempt++)
         {
             await using var db = await factory.CreateDbContextAsync(token);
@@ -58,7 +78,7 @@ public sealed partial class ProblemReportService(
                         throw new ProblemReportException(409, "report_request_conflict", "This request was already used for another problem report.");
                     return new(existing.Id, existing.Status, existing.CreatedAt, true);
                 }
-                var context = await CaptureAsync(db, session, actor, normalized.Selector, token);
+                var context = captured ?? await CaptureAsync(db, session, actor, normalized.Selector, token);
                 var contextJson = JsonSerializer.Serialize(context, JsonOptions);
                 if (Encoding.UTF8.GetByteCount(contextJson) > 32768) throw ProblemReportException.Invalid();
                 var record = new ProblemReportRecord

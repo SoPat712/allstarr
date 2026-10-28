@@ -1611,6 +1611,8 @@ public sealed partial class ProtocolProviderGateway(
         {
             PlaybackStartTimings.Current?.Select(stream.ServingProviderId, stream.IsCached, execution?.Account?.Scope.ToString());
             PlaybackStartTimings.Current?.Catalog(stream.FileFacts.Catalog);
+            PlaybackStartTimings.Current?.Route(stream.ServingProviderId, stream.IsCached, stream.SelectionReason,
+                stream.EffectiveQuality.ToString(), execution?.Account?.Scope.ToString(), stream.ServingExternalId);
             if (execution != null && servingTrack != null && PlaybackStartTimings.Current is { } trace)
             {
                 try { trace.Catalog(await ReadPlaybackMetadataAsync(execution, servingTrack)); }
@@ -1673,6 +1675,8 @@ public sealed partial class ProtocolProviderGateway(
                     { logger?.LogDebug("Could not retain measured media facts ({ErrorType})", error.GetType().Name); }
                 }
             }
+            PlaybackStartTimings.Current?.Receive(measured ?? new(stream.Lease.Media));
+            PlaybackStartTimings.Current?.ObserveMedia(() => stream.FileFacts.Measured);
             if (!protocol.IsOriginalDownload && !protocol.IsReadOnly && protocol.AudioDelivery is { } delivery &&
                 delivery.Evaluate(stream.Lease.Media) is { Supported: false } rejected &&
                 ProviderAudioTranscoder.Plan(delivery, stream.Lease.Media) == null)
