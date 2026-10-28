@@ -57,6 +57,8 @@ public interface IProtocolProviderGateway
 
     Task<Song?> GetSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
 
+    Task<bool> CanPlaySongAsync(ProtocolExecutionContext protocol, Song song);
+
     Task<Song?> GetStoredSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId) =>
         Task.FromResult<Song?>(null);
 

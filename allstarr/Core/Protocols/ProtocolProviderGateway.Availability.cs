@@ -7,12 +7,45 @@ using allstarr.Core.Matching;
 using allstarr.Core.Routing;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
+using allstarr.Services.Common;
+using allstarr.Services.Spotify;
 
 namespace allstarr.Core.Protocols;
 
 public sealed partial class ProtocolProviderGateway
 {
     private readonly ConcurrentDictionary<string, Lazy<Task<bool>>> availabilityLookups = new(StringComparer.Ordinal);
+
+    public async Task<bool> CanPlaySongAsync(ProtocolExecutionContext protocol, Song song)
+    {
+        if (protocol.Actor == null || !ExternalTrackPlaybackPolicy.CanUseForPlayback(song) ||
+            string.IsNullOrWhiteSpace(song.ExternalProvider) || string.IsNullOrWhiteSpace(song.ExternalId)) return false;
+        var policy = await ResolveEffectivePolicyAsync(protocol);
+        var provider = NormalizeProvider(song.ExternalProvider);
+        if (policy?.Includes(song) == false || provider != "allstarr" && policy?.IsEnabled(provider) == false) return false;
+        var source = new ProviderExternalResourceId(provider, ProviderResourceKind.Track, song.ExternalId);
+        if (keptFiles != null && await keptFiles.FindBySourceAsync(protocol.Actor, source, protocol.CancellationToken) != null) return true;
+        var order = ResolveProviderOrder(ProviderCapabilityKind.Streaming, policy);
+        var quality = policy == null ? ProviderAudioQuality.Any : AudioQualityPolicy.RequestedQuality(policy.AudioQuality);
+        var request = Request(protocol, protocol.Actor, ProviderCapabilityKind.Streaming, "protocol-radio-availability",
+            order, source, quality, allowFallback: true, allowManagedDownloads: true);
+        var plan = await router.PlanAsync<IProviderStreamingCapability>(request);
+        if (plan.Candidates.Count == 0 && await TryResolvePlaybackAvailabilityAsync(plan,
+                StoredStreamingOrder(policy), source, CacheKeyBuilder.BuildPlaybackRouteNegativeKey(
+                    protocol.Actor.EffectiveUserId, provider, song.ExternalId, quality.ToString()), policy, quality))
+            plan = await router.PlanAsync<IProviderStreamingCapability>(request);
+        for (var index = 0; index < plan.Candidates.Count; index++)
+        {
+            var candidate = plan.Candidates[index];
+            // Resolving a lease checks availability without opening or probing audio.
+            var outcome = await candidate.Implementation.GetStreamLeaseAsync(candidate.Context,
+                new(candidate.TrackId ?? source, quality));
+            if (outcome.IsSuccess && outcome.RequireValue().ExpiresAt > (timeProvider ?? TimeProvider.System).GetUtcNow()) return true;
+            if (outcome.IsSuccess || router.EvaluateFallback(plan, index, outcome.Error!)?.Disposition != ProviderFallbackDisposition.Advance) break;
+        }
+        return false;
+    }
 
     private IReadOnlyList<string> StoredStreamingOrder(EffectiveProviderPolicySnapshot? policy)
     {

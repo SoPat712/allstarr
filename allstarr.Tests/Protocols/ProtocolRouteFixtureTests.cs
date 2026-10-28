@@ -1941,7 +1941,7 @@ public sealed partial class ProtocolRouteFixtureTests
     public async Task JellyfinExternalSimilarAndInstantMix_StayOnTheTypedProvider()
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        // No provider recommendations: both routes fall back to the seed artist's catalog.
+        // Similar keeps its catalog fallback; radio returns the playable seed without catalog filler.
         gateway.Setup(service => service.GetSimilarSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), "deezer", "42", 2))
             .ReturnsAsync([]);
@@ -1955,6 +1955,9 @@ public sealed partial class ProtocolRouteFixtureTests
                 Title = "Seed",
                 Artist = "Fixture Artist"
             });
+        gateway.Setup(service => service.CanPlaySongAsync(
+                It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>()))
+            .ReturnsAsync(true);
         gateway.Setup(service => service.SearchAsync(
                 It.IsAny<ProtocolExecutionContext>(), "Fixture Artist", 2, 0, 0, "deezer"))
             .ReturnsAsync(new SearchResult
@@ -2018,11 +2021,11 @@ public sealed partial class ProtocolRouteFixtureTests
             body.RootElement.GetProperty("Items")[0].GetProperty("Id").GetString());
         Assert.Equal(1, mixBody.RootElement.GetProperty("TotalRecordCount").GetInt32());
         Assert.Equal(
-            "ext-deezer-song-43",
+            "ext-deezer-song-42",
             mixBody.RootElement.GetProperty("Items")[0].GetProperty("Id").GetString());
         gateway.Verify(service => service.SearchAsync(
             It.IsAny<ProtocolExecutionContext>(), "Fixture Artist", 2, 0, 0, "deezer"),
-            Times.Exactly(2));
+            Times.Once);
         gateway.VerifyAll();
         interaction.VerifyAll();
     }
@@ -2077,8 +2080,8 @@ public sealed partial class ProtocolRouteFixtureTests
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         var songs = new List<Song>
         {
-            new() { Id = "mix-1", Title = "First", Artist = "Fixture Artist" },
-            new() { Id = "mix-2", Title = "Second", Artist = "Fixture Artist" }
+            new() { Id = "mix-1", ExternalProvider = "deezer", ExternalId = "mix-1", Title = "First", Artist = "Fixture Artist" },
+            new() { Id = "mix-2", ExternalProvider = "deezer", ExternalId = "mix-2", Title = "Second", Artist = "Fixture Artist" }
         };
         if (resourceType == "album")
         {
@@ -2109,33 +2112,25 @@ public sealed partial class ProtocolRouteFixtureTests
                     ExternalId = "42",
                     Name = "Fixture Artist"
                 });
-            gateway.Setup(service => service.GetArtistAlbumsAsync(
+            gateway.Setup(service => service.GetArtistTracksAsync(
                     It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
                         context.VerifiedBackendPrincipalId == "user-1"),
                     "deezer", "42"))
-                .ReturnsAsync([
-                    new Album
-                    {
-                        Id = "ext-deezer-album-a1",
-                        ExternalProvider = "deezer",
-                        ExternalId = "a1",
-                        Title = "Fixture Album",
-                        Artist = "Fixture Artist"
-                    }
-                ]);
-            gateway.Setup(service => service.GetAlbumAsync(
+                .ReturnsAsync([songs[0]]);
+            gateway.Setup(service => service.GetSimilarArtistsAsync(
                     It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
                         context.VerifiedBackendPrincipalId == "user-1"),
-                    "deezer", "a1"))
-                .ReturnsAsync(new Album
+                    "deezer", "42", 5))
+                .ReturnsAsync([new Artist
                 {
-                    Id = "ext-deezer-album-a1",
-                    ExternalProvider = "deezer",
-                    ExternalId = "a1",
-                    Title = "Fixture Album",
-                    Artist = "Fixture Artist",
-                    Songs = songs
-                });
+                    Id = "ext-deezer-artist-43", ExternalProvider = "deezer", ExternalId = "43", Name = "Related Artist"
+                }]);
+            gateway.Setup(service => service.GetArtistTracksAsync(
+                    It.IsAny<ProtocolExecutionContext>(), "deezer", "43"))
+                .ReturnsAsync([songs[1]]);
+            gateway.Setup(service => service.CanPlaySongAsync(
+                    It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>()))
+                .ReturnsAsync(true);
         }
 
         var interaction = new Mock<IJellyfinInteractionProtocolAdapter>(MockBehavior.Strict);

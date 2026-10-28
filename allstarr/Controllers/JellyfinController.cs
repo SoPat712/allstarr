@@ -943,15 +943,20 @@ public partial class JellyfinController : ControllerBase
         return HandleProxyResponse(result, statusCode);
     }
 
-    private async Task<List<Dictionary<string, object?>>> ProjectMixSongsAsync(IReadOnlyList<Song> songs)
+    private JellyfinNativeMusicSearch MixNativeSearch()
     {
         var context = HttpContext.RequireProtocolExecutionContext();
-        var entries = await _musicSearch.ProjectSongsAsync(context, songs,
-            new JellyfinNativeMusicSearch(
-                _ => Task.FromResult<(JsonDocument?, int)>((null, 200)),
-                (id, _) => _proxyService.GetJsonAsync(
-                    $"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items/{Uri.EscapeDataString(id)}",
-                    null, Request.Headers)), HttpContext.RequestAborted);
+        return new JellyfinNativeMusicSearch(
+            _ => Task.FromResult<(JsonDocument?, int)>((null, 200)),
+            (id, token) => _proxyService.GetJsonAsync(
+                $"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items/{Uri.EscapeDataString(id)}",
+                null, Request.Headers, token));
+    }
+
+    private async Task<List<Dictionary<string, object?>>> ProjectMixSongsAsync(IReadOnlyList<Song> songs)
+    {
+        var entries = await _musicSearch.ProjectSongsAsync(HttpContext.RequireProtocolExecutionContext(), songs,
+            MixNativeSearch(), HttpContext.RequestAborted);
         return entries.Select(RenderSearchEntry).ToList();
     }
 
@@ -994,7 +999,10 @@ public partial class JellyfinController : ControllerBase
 
             try
             {
-                var shuffledMix = await ProjectMixSongsAsync(await _musicMix.InstantMixAsync(
+                var shuffledMix = resourceType is "song" or "artist"
+                    ? (await _musicMix.RadioAsync(HttpContext.RequireProtocolExecutionContext(), provider!, resourceType!,
+                        externalId!, itemId, limit, MixNativeSearch(), HttpContext.RequestAborted)).Select(RenderSearchEntry).ToList()
+                    : await ProjectMixSongsAsync(await _musicMix.InstantMixAsync(
                         HttpContext.RequireProtocolExecutionContext(), provider!, resourceType!, externalId!, itemId, limit));
 
                 return CreateProtocolResponse(_interactionProtocolAdapter.ShapeInstantMix(shuffledMix));

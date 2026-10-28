@@ -21,17 +21,21 @@ public sealed partial class ProtocolRouteFixtureTests
 
     [Theory]
     [InlineData("Similar", "ext-deezer-song-44,native-song-43,ext-deezer-song-45")]
-    [InlineData("InstantMix", "ext-deezer-song-45,native-song-43,ext-deezer-song-44")]
-    public async Task JellyfinMixNativeReplacementPreservesRecommendationAndShuffleOrder(string method, string expected)
+    [InlineData("InstantMix", "ext-deezer-song-42,ext-deezer-song-44,native-song-43,ext-deezer-song-45")]
+    public async Task JellyfinMixNativeReplacementPreservesRecommendationOrder(string method, string expected)
     {
         var gateway = MixGateway();
-        gateway.Setup(service => service.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42", 3))
+        var limit = method == "InstantMix" ? 4 : 3;
+        gateway.Setup(service => service.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42", limit))
             .ReturnsAsync([MixSong("ext-deezer-song-44", "First"), MixSong(MixProviderSongId, "Second"),
                 MixSong("ext-deezer-song-45", "Third")]);
         var index = new Mock<ILibraryIndexService>();
         index.Setup(service => service.FindKnownRecordingTracksAsync(It.IsAny<ProtocolExecutionContext>(),
                 It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new Dictionary<string, string> { [MixProviderSongId] = MixNativeSongId });
+            .ReturnsAsync((ProtocolExecutionContext _, IReadOnlyList<LibraryRecordingLookup> lookups, CancellationToken _) =>
+                (IReadOnlyDictionary<string, string>)(lookups.Any(lookup => lookup.PublicId == MixProviderSongId)
+                    ? new Dictionary<string, string> { [MixProviderSongId] = MixNativeSongId }
+                    : new Dictionary<string, string>()));
         var interaction = new Mock<IJellyfinInteractionProtocolAdapter>();
         interaction.Setup(adapter => adapter.CanRunOptionalUserWork(It.IsAny<ProtocolExecutionContext?>())).Returns(true);
         interaction.Setup(adapter => adapter.ShapeInstantMix(It.IsAny<IReadOnlyList<Dictionary<string, object?>>>()))
@@ -49,29 +53,32 @@ public sealed partial class ProtocolRouteFixtureTests
             services.RemoveAll<IJellyfinInteractionProtocolAdapter>(); services.AddSingleton(interaction.Object);
         });
         using var client = factory.CreateClient();
-        using var response = await client.GetAsync($"/Items/ext-deezer-song-42/{method}?Limit=3&api_key=fixture-key");
+        using var response = await client.GetAsync($"/Items/ext-deezer-song-42/{method}?Limit={limit}&api_key=fixture-key");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var items = document.RootElement.GetProperty("Items").EnumerateArray().ToArray();
         Assert.Equal(expected.Split(','), items.Select(item => item.GetProperty("Id").GetString()));
-        Assert.Equal("retained", items[1].GetProperty("FutureField").GetString());
+        Assert.Equal("retained", items.Single(item => item.GetProperty("Id").GetString() == MixNativeSongId)
+            .GetProperty("FutureField").GetString());
     }
 
     [Theory]
     [InlineData("/Items/ext-deezer-song-42/Similar?Limit=1&api_key=fixture-key", true)]
     [InlineData("/Items/ext-deezer-song-42/Similar?Limit=1&api_key=fixture-key", false)]
-    [InlineData("/Items/ext-deezer-song-42/InstantMix?Limit=1&api_key=fixture-key", true)]
-    [InlineData("/Items/ext-deezer-song-42/InstantMix?Limit=1&api_key=fixture-key", false)]
+    [InlineData("/Items/ext-deezer-song-42/InstantMix?Limit=2&api_key=fixture-key", true)]
+    [InlineData("/Items/ext-deezer-song-42/InstantMix?Limit=2&api_key=fixture-key", false)]
     public async Task JellyfinExternalMix_ProjectsReadableNativePayloadAndRetainsUnreadableProvider(
         string path, bool nativeReadable)
     {
         var gateway = MixGateway();
         var index = MixIndex();
+        var isRadio = path.Contains("InstantMix", StringComparison.Ordinal);
+        var expectedCount = isRadio ? 2 : 1;
         var interaction = new Mock<IJellyfinInteractionProtocolAdapter>(MockBehavior.Strict);
         interaction.Setup(adapter => adapter.CanRunOptionalUserWork(It.IsAny<ProtocolExecutionContext?>()))
             .Returns(true);
         interaction.Setup(adapter => adapter.ShapeInstantMix(
-                It.Is<IReadOnlyList<Dictionary<string, object?>>>(items => items.Count == 1)))
+                It.Is<IReadOnlyList<Dictionary<string, object?>>>(items => items.Count == expectedCount)))
             .Returns((IReadOnlyList<Dictionary<string, object?>> items) =>
                 new JellyfinInteractionProtocolAdapter().ShapeInstantMix(items));
 
@@ -106,7 +113,10 @@ public sealed partial class ProtocolRouteFixtureTests
 
         using var response = await client.GetAsync(path);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        var item = Assert.Single(body.RootElement.GetProperty("Items").EnumerateArray());
+        var items = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
+        Assert.Equal(expectedCount, items.Length);
+        if (isRadio) Assert.Equal("ext-deezer-song-42", items[0].GetProperty("Id").GetString());
+        var item = items[^1];
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         if (nativeReadable)
@@ -128,12 +138,15 @@ public sealed partial class ProtocolRouteFixtureTests
             It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
                 context.VerifiedBackendPrincipalId == "user-1"),
             It.Is<IReadOnlyList<LibraryRecordingLookup>>(lookups =>
-                lookups.Count == 1 && lookups[0].PublicId == MixProviderSongId),
-            It.IsAny<CancellationToken>()), Times.Once);
-        gateway.VerifyAll();
-        if (path.Contains("InstantMix", StringComparison.Ordinal))
+                lookups.Any(lookup => lookup.PublicId == MixProviderSongId)),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        VerifyMixGateway(gateway);
+        if (isRadio && nativeReadable)
+            gateway.Verify(service => service.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(),
+                It.Is<Song>(song => song.Id == MixProviderSongId)), Times.Never);
+        if (isRadio)
             interaction.Verify(adapter => adapter.ShapeInstantMix(
-                It.Is<IReadOnlyList<Dictionary<string, object?>>>(items => items.Count == 1)), Times.Once);
+                It.Is<IReadOnlyList<Dictionary<string, object?>>>(items => items.Count == expectedCount)), Times.Once);
     }
 
     [Theory]
@@ -179,7 +192,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync(
-            $"/rest/getSimilarSongs2.view?u=fixture&p=fixture-password&v=1.16.1&c=fixture&f={format}&id=ext-deezer-song-42&count=1");
+            $"/rest/getSimilarSongs2.view?u=fixture&p=fixture-password&v=1.16.1&c=fixture&f={format}&id=ext-deezer-song-42&count=2");
         var body = await response.Content.ReadAsStringAsync();
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -187,8 +200,11 @@ public sealed partial class ProtocolRouteFixtureTests
         if (format == "json")
         {
             using var document = JsonDocument.Parse(body);
-            var song = Assert.Single(document.RootElement.GetProperty("subsonic-response")
-                .GetProperty("similarSongs2").GetProperty("song").EnumerateArray());
+            var songs = document.RootElement.GetProperty("subsonic-response")
+                .GetProperty("similarSongs2").GetProperty("song").EnumerateArray().ToArray();
+            Assert.Equal(2, songs.Length);
+            Assert.Equal("ext-deezer-song-42", songs[0].GetProperty("id").GetString());
+            var song = songs[1];
             Assert.Equal(nativeReadable ? MixNativeSongId : MixProviderSongId, song.GetProperty("id").GetString());
             if (nativeReadable)
             {
@@ -199,8 +215,11 @@ public sealed partial class ProtocolRouteFixtureTests
         }
         else
         {
-            var song = Assert.Single(XDocument.Parse(body).Descendants(
-                XName.Get("song", "http://subsonic.org/restapi")));
+            var songs = XDocument.Parse(body).Descendants(
+                XName.Get("song", "http://subsonic.org/restapi")).ToArray();
+            Assert.Equal(2, songs.Length);
+            Assert.Equal("ext-deezer-song-42", songs[0].Attribute("id")?.Value);
+            var song = songs[1];
             Assert.Equal(nativeReadable ? MixNativeSongId : MixProviderSongId, song.Attribute("id")?.Value);
             if (nativeReadable)
             {
@@ -214,9 +233,12 @@ public sealed partial class ProtocolRouteFixtureTests
             It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Subsonic &&
                 context.VerifiedBackendPrincipalId == "fixture"),
             It.Is<IReadOnlyList<LibraryRecordingLookup>>(lookups =>
-                lookups.Count == 1 && lookups[0].PublicId == MixProviderSongId),
-            It.IsAny<CancellationToken>()), Times.Once);
-        gateway.VerifyAll();
+                lookups.Any(lookup => lookup.PublicId == MixProviderSongId)),
+            It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        VerifyMixGateway(gateway);
+        if (nativeReadable)
+            gateway.Verify(service => service.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(),
+                It.Is<Song>(song => song.Id == MixProviderSongId)), Times.Never);
     }
 
     private static Mock<IProtocolProviderGateway> MixGateway()
@@ -228,7 +250,17 @@ public sealed partial class ProtocolRouteFixtureTests
         gateway.Setup(service => service.GetSimilarSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), "deezer", "42", It.IsAny<int>()))
             .ReturnsAsync([MixSong(MixProviderSongId, "Related")]);
+        gateway.Setup(service => service.CanPlaySongAsync(
+                It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>()))
+            .ReturnsAsync(true);
         return gateway;
+    }
+
+    private static void VerifyMixGateway(Mock<IProtocolProviderGateway> gateway)
+    {
+        gateway.Verify(service => service.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42"), Times.Once);
+        gateway.Verify(service => service.GetSimilarSongsAsync(
+            It.IsAny<ProtocolExecutionContext>(), "deezer", "42", It.IsAny<int>()), Times.Once);
     }
 
     private static Mock<ILibraryIndexService> MixIndex()
@@ -237,9 +269,15 @@ public sealed partial class ProtocolRouteFixtureTests
         index.Setup(service => service.FindKnownRecordingTracksAsync(
                 It.IsAny<ProtocolExecutionContext>(),
                 It.Is<IReadOnlyList<LibraryRecordingLookup>>(lookups =>
-                    lookups.Count == 1 && lookups[0].PublicId == MixProviderSongId),
+                    lookups.Any(lookup => lookup.PublicId == MixProviderSongId)),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, string> { [MixProviderSongId] = MixNativeSongId });
+        index.Setup(service => service.FindKnownRecordingTracksAsync(
+                It.IsAny<ProtocolExecutionContext>(),
+                It.Is<IReadOnlyList<LibraryRecordingLookup>>(lookups =>
+                    lookups.All(lookup => lookup.PublicId != MixProviderSongId)),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, string>());
         return index;
     }
 
@@ -249,7 +287,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Title = title,
         Artist = "Fixture Artist",
         ExternalProvider = "deezer",
-        ExternalId = id.EndsWith("42", StringComparison.Ordinal) ? "42" : "43",
+        ExternalId = id[(id.LastIndexOf('-') + 1)..],
         IsLocal = false
     };
 

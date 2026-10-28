@@ -55,16 +55,20 @@ public sealed partial class ProtocolRouteFixtureTests
             else
             {
                 var seed = method.StartsWith("getSimilar", StringComparison.Ordinal)
-                    ? new Song { Id = "ext-deezer-song-41", ExternalProvider = "deezer", ExternalId = "41", Title = "Seed" }
+                    ? new Song { Id = "ext-deezer-song-42", ExternalProvider = "deezer", ExternalId = "42", Title = "Seed" }
                     : song;
                 gateway.Setup(service => service.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42"))
                     .ReturnsAsync(seed);
                 if (method.StartsWith("getSimilar", StringComparison.Ordinal))
+                {
                     gateway.Setup(service => service.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(),
-                        "deezer", "41", It.IsAny<int>())).ReturnsAsync([new Song
+                        "deezer", "42", It.IsAny<int>())).ReturnsAsync([new Song
                         {
                             Id = "ext-deezer-song-43", ExternalProvider = "deezer", ExternalId = "43", Title = "Sparse"
                         }]);
+                    gateway.Setup(service => service.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>()))
+                        .ReturnsAsync(true);
+                }
             }
             var nativeJson = $$$$"""{"subsonic-response":{"status":"ok","version":"1.16.1","{{{{collection}}}}":{"{{{{entry}}}}":[{"id":"native","title":"Native","artist":"Native artist","contentType":"audio/flac","suffix":"flac","size":5000,"future":{"keep":9}}]}}}""";
             var nativeXml = $"<subsonic-response xmlns=\"http://subsonic.org/restapi\" status=\"ok\" version=\"1.16.1\"><{collection}><{entry} id=\"native\" title=\"Native\" artist=\"Native artist\" contentType=\"audio/flac\" suffix=\"flac\" size=\"5000\" future=\"kept\" /></{collection}></subsonic-response>";
