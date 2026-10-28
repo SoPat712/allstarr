@@ -408,7 +408,8 @@ public sealed class TrackRematchAllJobHandler(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     TrackRematchAllService rematches,
     ITrackMatchRepository trackMatches,
-    IPlatformClock clock)
+    IPlatformClock clock,
+    PlaylistMatchPublication? publications = null)
 {
     private const int BatchSize = 25;
 
@@ -439,7 +440,10 @@ public sealed class TrackRematchAllJobHandler(
                 "track_rematch_scope_changed",
                 "The confirmed snapshot scope changed before the rematch finished; queue a new preview.");
         if (work.Pending.Count == 0)
+        {
+            if (publications != null) await publications.QueueAsync(cancellationToken);
             return DurableJobCompletion.Success();
+        }
 
         var batch = work.Pending.Take(BatchSize).ToArray();
         var runtimes = await LoadRuntimesAsync(
@@ -506,6 +510,7 @@ public sealed class TrackRematchAllJobHandler(
         }
 
         await SaveAuditsAsync(audits, cancellationToken);
+        if (publications != null) await publications.QueueAsync(cancellationToken);
         var remaining = Math.Max(0, total - completed);
         await context.ReportProgressAsync(new(
             "track.rematch",
@@ -635,7 +640,8 @@ public sealed class TrackRematchAllJobHandler(
 public sealed class TrackMatchAlgorithmRolloutService(
     TrackRematchAllService rematches,
     DurableStorageState storageState,
-    ILogger<TrackMatchAlgorithmRolloutService> logger) : BackgroundService
+    ILogger<TrackMatchAlgorithmRolloutService> logger,
+    PlaylistMatchPublication? publications = null) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -649,6 +655,7 @@ public sealed class TrackMatchAlgorithmRolloutService(
             try
             {
                 var queued = await rematches.QueueAlgorithmUpgradesAsync(stoppingToken);
+                if (publications != null) await publications.QueueAsync(stoppingToken);
                 if (queued > 0)
                     logger.LogInformation(
                         "Queued {Count} matching algorithm rollout jobs for {AlgorithmVersion}",

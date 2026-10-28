@@ -4,11 +4,13 @@
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import type { PlaylistTrack, ProviderDefinition } from "$lib/api";
   import { findProviderDefinition, providerDisplayName } from "$lib/sources";
+  import { isReviewTrack } from "$lib/playlists";
 
   let { track, providers, backend }: {
     track: PlaylistTrack; providers: ProviderDefinition[]; backend: string;
   } = $props();
   const local = $derived(track.routeKind === "local");
+  const review = $derived(isReviewTrack(track));
   const routes = $derived([...new Set([
     ...(track.routeProviderId ? [track.routeProviderId] : []),
     ...track.providerRoutes.map((route) => route.providerId),
@@ -61,7 +63,7 @@
           {#each services as service (service.name)}
             <li>
               <span class="route-tile"><ProviderMark id={service.id} definition={findProviderDefinition(providers, service.id)} /></span>
-              <span>{service.name}<small>{service.pinned ? "Pinned by you" : "Verified match"}{service.count > 1 ? ` · ${service.count} sources` : ""}</small></span>
+              <span>{service.name}<small>{service.pinned ? "Manually chosen" : review ? "Suggested source — check recording" : track.matchState === "accepted" ? "Automatically matched" : "Playback source"}{service.count > 1 ? ` · ${service.count} sources` : ""}</small></span>
             </li>
           {/each}
         </ul>
