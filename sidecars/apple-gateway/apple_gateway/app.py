@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import importlib.metadata
 import logging
+import os
 import shutil
 import time
 import uuid
@@ -259,15 +260,15 @@ def create_app(
         for path in cache_root.glob("*"):
             if not path.is_symlink() and path.is_file() and not path.name.endswith(".partial"):
                 tracks.setdefault(path.name.split(".")[0], []).append(path)
-        ordered = sorted(tracks.values(), key=lambda paths: max(path.stat().st_mtime for path in paths), reverse=True)
+        ordered = sorted(tracks.values(), key=lambda paths: max(path.stat().st_atime for path in paths), reverse=True)
         found = None
         for index, paths in enumerate(ordered):
-            if index >= PREPARED_CACHE_MAX_TRACKS or now - max(path.stat().st_mtime for path in paths) > PREPARED_CACHE_TTL_SECONDS:
+            if index >= PREPARED_CACHE_MAX_TRACKS or now - max(path.stat().st_atime for path in paths) > PREPARED_CACHE_TTL_SECONDS:
                 for path in paths:
                     path.unlink(missing_ok=True)
             elif paths[0].name.split(".")[0] == key:
                 for path in paths:
-                    path.touch()
+                    os.utime(path, ns=(time.time_ns(), path.stat().st_mtime_ns))
                     if (".audio." in path.name) == audio_file and (
                         not audio_file or (".audio.original." in path.name) == original_container
                     ):

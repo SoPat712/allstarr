@@ -18,6 +18,7 @@ public interface IProviderAudioVerifier
 public sealed class ProviderAudioVerifier(MediaConversionGate? conversions = null) : IProviderAudioVerifier
 {
     private const int PrefixBytes = 256 * 1024;
+    private const int MaximumMoviePrefixBytes = 4 * 1024 * 1024;
     private static readonly MediaConversionGate DefaultGate = new();
 
     public async Task<ProviderOutcome<TrackMediaFacts>> VerifyPrefixAsync(HttpResponseMessage response,
@@ -28,7 +29,7 @@ public sealed class ProviderAudioVerifier(MediaConversionGate? conversions = nul
         if (range?.From is > 0 || range?.To is < 4095)
         {
             if (openRange == null) return Invalid();
-            using var prefix = await openRange(0, PrefixBytes - 1, token);
+            using var prefix = await openRange(0, null, token);
             if (!prefix.IsSuccessStatusCode || prefix.Content.Headers.ContentRange?.From is > 0 ||
                 response.Headers.ETag is { IsWeak: false } tag && !tag.Equals(prefix.Headers.ETag)) return Invalid();
             return await VerifyPrefixAsync(prefix, expected, recordingSeconds, token, openRange);
@@ -52,10 +53,28 @@ public sealed class ProviderAudioVerifier(MediaConversionGate? conversions = nul
             pending = null;
             if (read == 0) { ended = true; break; }
             count += read;
+            if (count == bytes.Length)
+            {
+                var required = MoviePrefixBytes(bytes.AsSpan(0, count), total);
+                var available = (int)Math.Min(required, content.Headers.ContentLength ?? required);
+                if (available > bytes.Length) Array.Resize(ref bytes, available);
+            }
         }
         var buffered = new BufferedPrefix(input, content, bytes, count, pending);
         PrefetchedStream.ReplaceContent(response, buffered, null);
         if (count == 0) return Invalid();
+        if (MoviePrefixBytes(bytes.AsSpan(0, count), total) > count &&
+            range is { To: { } end, Length: { } length } && end < length - 1 && openRange != null)
+        {
+            using var expanded = await openRange(0, null, token);
+            if (!expanded.IsSuccessStatusCode || expanded.Content.Headers.ContentRange?.From is > 0 ||
+                expanded.Content.Headers.ContentRange is { To: { } last, Length: { } size } && last < size - 1 ||
+                (expanded.Content.Headers.ContentRange?.Length ?? expanded.Content.Headers.ContentLength) is { } expandedLength && expandedLength != total ||
+                response.Headers.ETag is { IsWeak: false } tag && !tag.Equals(expanded.Headers.ETag)) return Invalid();
+            var result = await VerifyPrefixAsync(expanded, expected, recordingSeconds, token, openRange);
+            if (result.IsSuccess) PrefetchedStream.ReplaceContent(response, buffered, result.RequireValue());
+            return result;
+        }
         var directory = Directory.CreateTempSubdirectory("allstarr-audio-check-").FullName;
         try
         {
@@ -87,6 +106,31 @@ public sealed class ProviderAudioVerifier(MediaConversionGate? conversions = nul
         catch (Exception error) when (error is IOException or InvalidDataException)
         { return Invalid(); }
         finally { Directory.Delete(directory, true); }
+    }
+
+    private static int MoviePrefixBytes(ReadOnlySpan<byte> bytes, long? total)
+    {
+        if (bytes.Length < 12 || !bytes.Slice(4, 4).SequenceEqual("ftyp"u8)) return bytes.Length;
+        var offset = 0;
+        while (offset <= bytes.Length - 8)
+        {
+            ulong length = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(bytes[offset..]);
+            var header = 8;
+            if (length == 1)
+            {
+                if (offset > bytes.Length - 16) return bytes.Length;
+                length = System.Buffers.Binary.BinaryPrimitives.ReadUInt64BigEndian(bytes[(offset + 8)..]);
+                header = 16;
+            }
+            if (length < (ulong)header || length > long.MaxValue || total is { } size && (size < offset || length > (ulong)(size - offset))) return bytes.Length;
+            if (bytes.Slice(offset + 4, 4).SequenceEqual("moov"u8))
+                return (int)Math.Min(total ?? MaximumMoviePrefixBytes,
+                    Math.Min(MaximumMoviePrefixBytes, Math.Max(PrefixBytes,
+                        (long)Math.Min(length, (ulong)MaximumMoviePrefixBytes) + offset + PrefixBytes / 2)));
+            if (length > (ulong)(bytes.Length - offset)) return bytes.Length;
+            offset += (int)length;
+        }
+        return bytes.Length;
     }
 
     private static bool HasMovieHeader(ReadOnlySpan<byte> bytes)
