@@ -166,7 +166,9 @@ public sealed partial class HealthSmokeService
         row.AlertStatus = alertStatus;
         db.AuditEvents.Add(Event(runId, binding.OwnerUserId, "completed",
             IsSuccessful(binding.Configuration.IsServerMode ? "server-api-key" : "listener", results) ? "passed" : "failed", "{}", clock.UtcNow));
-        if (binding.Configuration.WebhookReferenceId != null && decision.Changes.Count > 0)
+        if (problemAlerts != null)
+            await problemAlerts.ObserveHealthWithinAsync(db, binding, completed, decision, runId, token, sameRevision ? previous : null);
+        if (problemAlerts == null && binding.Configuration.WebhookReferenceId != null && decision.Changes.Count > 0)
             await jobs.EnqueueInExistingTransactionAsync(db, new DurableJobEnqueueRequest<HealthSmokeAlertPayload>(AlertJobType,
                 $"health-alert:{runId:N}", new(runId, decision.Changes.ToArray()), binding.OwnerUserId, MaxAttempts: 3), token);
         if (row.ArtifactsJson != "{}" && row.ArtifactsJson != EmptyArtifacts)

@@ -121,6 +121,12 @@ builder.Services.AddSingleton<ProviderTryOperations>();
 builder.Services.AddSingleton<ProviderTryMediaStore>();
 builder.Services.AddSingleton<ProviderTryService>();
 builder.Services.AddHostedService<AuditEventRetentionService>();
+builder.Services.AddSingleton<ProblemAlertService>();
+builder.Services.AddSingleton<IProblemDiskSampler, ProblemDiskSampler>();
+builder.Services.AddHostedService<ProblemAlertMonitor>();
+builder.Services.AddSingleton<IDurableJobHandler, ProblemAlertDeliveryHandler>();
+builder.Services.AddHttpClient("problem-alerts", client => client.Timeout = TimeSpan.FromSeconds(10))
+    .RemoveAllLoggers().ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, MaxResponseHeadersLength = 16 });
 builder.Services.AddSingleton<HealthSmokeService>();
 builder.Services.AddHttpClient<HealthSmokeProtocolProbe>(client =>
 {

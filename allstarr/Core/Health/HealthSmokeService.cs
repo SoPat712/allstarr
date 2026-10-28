@@ -46,7 +46,8 @@ public sealed partial class HealthSmokeService(
     IDurableRuntimeSettings settings, IBackendConnectionVerifier verifier, BackendSelectionAuthority backend,
     IdentityOptions identity, IPlatformClock clock, DurableJobQueue jobs,
     IEffectiveProviderPolicyResolver policies, HealthSmokeProtocolProbe probe,
-    IOptions<JellyfinSettings>? jellyfinSettings = null, HealthSmokeServerProbe? serverProbe = null)
+    IOptions<JellyfinSettings>? jellyfinSettings = null, HealthSmokeServerProbe? serverProbe = null,
+    ProblemAlertService? problemAlerts = null)
 {
     public const string JobType = "health.smoke";
     public const string CleanupJobType = "health.cleanup";
@@ -199,6 +200,14 @@ public sealed partial class HealthSmokeService(
             {
                 var previous = await db.SecretReferences.SingleOrDefaultAsync(item => item.Id == before.CredentialReferenceId &&
                     item.UserId == beforeOwnerId && item.Purpose == ListenerPurpose && item.RevokedAt == null, token);
+                if (previous != null) previous.RevokedAt = now;
+            }
+            if (problemAlerts != null)
+                await problemAlerts.ReconcileHealthChannelWithinAsync(db, schedule.Id, webhookReference, token);
+            if (before?.WebhookReferenceId is { } previousWebhook && previousWebhook != webhookReference)
+            {
+                var previous = await db.SecretReferences.SingleOrDefaultAsync(item => item.Id == previousWebhook &&
+                    item.UserId == null && item.Purpose == WebhookPurpose && item.RevokedAt == null, token);
                 if (previous != null) previous.RevokedAt = now;
             }
             db.AuditEvents.Add(Event(Guid.CreateVersion7(), administrator, "configured", "success", "{}", now));

@@ -276,6 +276,16 @@ public sealed class ProviderHealthMigrationTests
             Assert.Equal(sql, CollapseSql(Assert.Single(after, row => row.Type == "index" && row.Name == name).Sql));
 
         var sharedFavoriteObjects = AssertSharedFavoriteSchema(before, after);
+        string[] alertObjects =
+        [
+            "notification_channels", "IX_notification_channels_HealthScheduleId", "IX_notification_channels_OwnerUserId",
+            "IX_notification_channels_DestinationReferenceId", "problem_incidents", "IX_problem_incidents_ScopeKey_Resource_Kind",
+            "IX_problem_incidents_OwnerUserId", "notification_deliveries", "IX_notification_deliveries_IncidentId_Transition_ChannelId",
+            "IX_notification_deliveries_JobId", "IX_notification_deliveries_ChannelId", "problem_alert_configuration"
+        ];
+        Assert.DoesNotContain(before, row => alertObjects.Contains(row.Name));
+        Assert.Equal(alertObjects.Order(StringComparer.Ordinal), after.Where(row => alertObjects.Contains(row.Name))
+            .Select(row => row.Name).Order(StringComparer.Ordinal));
 
         var oldSchema = before
             .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
@@ -288,7 +298,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name) && !reportObjects.Contains(row.Name) && !sharedFavoriteObjects.Contains(row.Name))
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name) && !reportObjects.Contains(row.Name) && !sharedFavoriteObjects.Contains(row.Name) && !alertObjects.Contains(row.Name))
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();
