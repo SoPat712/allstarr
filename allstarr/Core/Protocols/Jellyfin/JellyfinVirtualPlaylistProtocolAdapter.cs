@@ -81,7 +81,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     ILogger<JellyfinVirtualPlaylistProtocolAdapter>? logger = null,
     IProtocolProviderGateway? providerGateway = null,
     IHttpContextAccessor? httpContexts = null,
-    UpcomingSongPreparation? upcomingSongs = null)
+    UpcomingSongPreparation? upcomingSongs = null,
+    WritablePlaylistMembership? writablePlaylists = null)
 {
     private const string FullItemFields =
         "AirTime,CanDelete,CanDownload,ChannelInfo,Chapters,Trickplay,ChildCount," +
@@ -98,9 +99,19 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     public bool IsVirtualPlaylistId(string? value) =>
         PlaylistVirtualizationService.TryParseProtocolId(value, out _);
 
-    public async Task<string?> GetTargetPlaylistIdAsync(ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
+    public async Task<VirtualPlaylistReadModel?> ReadOriginalAsync(ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
     {
         var playlist = await playlists.ReadAsync(context, id, cancellationToken);
+        return playlist == null ? null : ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
+    }
+
+    private async Task<VirtualPlaylistReadModel?> ReadViewAsync(ProtocolExecutionContext context, string id, CancellationToken cancellationToken) =>
+        (writablePlaylists == null ? null : await writablePlaylists.ReadForkAsync(context, id, cancellationToken))?.Playlist ??
+        await playlists.ReadAsync(context, id, cancellationToken);
+
+    public async Task<string?> GetTargetPlaylistIdAsync(ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
+    {
+        var playlist = await ReadViewAsync(context, id, cancellationToken);
         return playlist?.Mode is PlaylistLinkMode.Materialized or PlaylistLinkMode.Hybrid ? playlist.TargetPlaylistId : null;
     }
 
@@ -111,9 +122,21 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         mutationResolver.ResolveAsync(context, id, cancellationToken);
 
     public async Task<IReadOnlyList<VirtualPlaylistReadModel>> ListAsync(
-        ProtocolExecutionContext context, CancellationToken cancellationToken) =>
-        (await playlists.ListAsync(context, cancellationToken))
-        .Select(item => ExternalTrackPresentation.ApplyPreferences(item, context.Policy)).ToArray();
+        ProtocolExecutionContext context, CancellationToken cancellationToken)
+    {
+        var result = new List<VirtualPlaylistReadModel>();
+        foreach (var original in await playlists.ListAsync(context, cancellationToken))
+        {
+            var fork = writablePlaylists == null ? null : await writablePlaylists.ReadForkAsync(context, original.ProtocolId, cancellationToken);
+            var view = fork == null ? original : fork.Playlist with
+            {
+                ProtocolId = original.ProtocolId,
+                TargetPlaylistId = original.TargetPlaylistId
+            };
+            result.Add(ExternalTrackPresentation.ApplyPreferences(view, context.Policy));
+        }
+        return result;
+    }
 
     public async Task<IReadOnlyList<Dictionary<string, object?>>> ListItemsAsync(
         ProtocolExecutionContext context,
@@ -127,7 +150,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     public async Task<IActionResult?> ReadItemAsync(
         ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
     {
-        var playlist = await playlists.ReadAsync(context, id, cancellationToken);
+        var playlist = await ReadViewAsync(context, id, cancellationToken);
         if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
         if (playlist == null) return null;
         return new JsonResult(ToItem(playlist, id, await ServerIdAsync(context), includeAllFields: true));
@@ -142,6 +165,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     {
         var playlist = await playlists.ReadBySourceAsync(
             context, sourceProviderId, sourcePlaylistId, cancellationToken);
+        if (playlist != null && writablePlaylists != null)
+            playlist = (await writablePlaylists.ReadForkAsync(context, playlist.ProtocolId, cancellationToken))?.Playlist ?? playlist;
         if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
         return playlist == null ? null : new JsonResult(ToItem(playlist, responsePlaylistId, await ServerIdAsync(context), includeAllFields: true));
     }
@@ -149,7 +174,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     public async Task<IActionResult?> ReadDefinitionAsync(
         ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
     {
-        var playlist = await playlists.ReadAsync(context, id, cancellationToken);
+        var playlist = await ReadViewAsync(context, id, cancellationToken);
         if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
         return playlist == null ? null : await DefinitionAsync(context, playlist, cancellationToken);
     }
@@ -162,6 +187,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     {
         var playlist = await playlists.ReadBySourceAsync(
             context, sourceProviderId, sourcePlaylistId, cancellationToken);
+        if (playlist != null && writablePlaylists != null)
+            playlist = (await writablePlaylists.ReadForkAsync(context, playlist.ProtocolId, cancellationToken))?.Playlist ?? playlist;
         if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
         return playlist == null ? null : await DefinitionAsync(context, playlist, cancellationToken);
     }
@@ -191,7 +218,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     {
         if (context != null)
         {
-            var playlist = await playlists.ReadAsync(context, id, cancellationToken);
+            var playlist = await ReadViewAsync(context, id, cancellationToken);
             if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
             return playlist?.ArtworkReferenceKey == null
                 ? null
@@ -240,7 +267,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         IQueryCollection? clientQuery,
         CancellationToken cancellationToken)
     {
-        var playlist = await playlists.ReadAsync(context, id, cancellationToken);
+        var playlist = await ReadViewAsync(context, id, cancellationToken);
         if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
         if (playlist == null) return null;
         return await CreateItemsResponseAsync(
@@ -258,6 +285,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     {
         var playlist = await playlists.ReadBySourceAsync(
             context, sourceProviderId, sourcePlaylistId, cancellationToken);
+        if (playlist != null && writablePlaylists != null)
+            playlist = (await writablePlaylists.ReadForkAsync(context, playlist.ProtocolId, cancellationToken))?.Playlist ?? playlist;
         if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
         return playlist == null
             ? null

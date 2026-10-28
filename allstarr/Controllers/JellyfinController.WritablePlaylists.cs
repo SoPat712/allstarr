@@ -18,6 +18,16 @@ public partial class JellyfinController
     public async Task<IActionResult> GetPlaylistPermissions(string playlistId, string? userId = null)
     {
         var protocol = HttpContext.RequireProtocolExecutionContext();
+        var fork = await WritablePlaylists.ReadForkAsync(protocol, playlistId, HttpContext.RequestAborted);
+        var imported = fork == null ? await WritablePlaylists.FindImportedPlaylistAsync(protocol, playlistId, HttpContext.RequestAborted) : null;
+        if (fork != null || imported != null)
+        {
+            if (fork == null && await _virtualPlaylistProtocolAdapter.ReadOriginalAsync(protocol,
+                    PlaylistVirtualizationService.CreateProtocolId(imported!.Id), HttpContext.RequestAborted) == null) return NotFound();
+            var permission = new { UserId = protocol.VerifiedBackendPrincipalId, CanEdit = true };
+            return userId == null ? new JsonResult(new[] { permission }) :
+                new JsonResult(new { UserId = userId, CanEdit = userId == protocol.VerifiedBackendPrincipalId });
+        }
         if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(playlistId))
         {
             var target = await _virtualPlaylistProtocolAdapter.GetTargetPlaylistIdAsync(protocol, playlistId, HttpContext.RequestAborted);
@@ -70,6 +80,7 @@ public partial class JellyfinController
     private async Task<IActionResult?> ReadWritablePlaylistDefinitionAsync(string playlistId)
     {
         var protocol = HttpContext.RequireProtocolExecutionContext();
+        if (await WritablePlaylists.ReadForkAsync(protocol, playlistId, HttpContext.RequestAborted) != null) return null;
         var id = _virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(playlistId)
             ? await _virtualPlaylistProtocolAdapter.GetTargetPlaylistIdAsync(protocol, playlistId, HttpContext.RequestAborted)
             : playlistId;
@@ -102,6 +113,7 @@ public partial class JellyfinController
         if (!create && !items && !replace && !move) return null;
         var protocol = HttpContext.RequireProtocolExecutionContext();
         var id = create ? null : segments[1];
+        if (isRead && id != null && await WritablePlaylists.ReadForkAsync(protocol, id, HttpContext.RequestAborted) != null) return null;
         var originalId = id;
         if (id != null && JellyfinMusicEndpointPolicy.IsSynthesizedPlaylistId(id))
         {
