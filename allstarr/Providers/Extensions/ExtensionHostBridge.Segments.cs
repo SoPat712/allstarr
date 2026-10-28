@@ -1,3 +1,4 @@
+using allstarr.Core.Playback;
 // Adapted from SpotiFLAC-Mobile (MIT), rust_backend/crates/extensions/src/download/segments.rs.
 using System.Text.Json;
 using allstarr.Core.Extensions;
@@ -8,6 +9,7 @@ public partial class ExtensionHostBridge
 {
     public object DownloadSegments(string segmentsJson, string output, string optionsJson, Action<long, long, int, int>? onProgress)
     {
+        using var timing = PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Segments, _extensionId);
         var files = new List<string>();
         var tasks = new List<Task>();
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(

@@ -1,3 +1,4 @@
+using allstarr.Core.Playback;
 using System.Net;
 using System.Diagnostics;
 using allstarr.Core.Health;
@@ -1100,6 +1101,7 @@ public sealed partial class ProtocolProviderGateway(
         if (protocol.Actor is null) return null;
 
         protocol.CancellationToken.ThrowIfCancellationRequested();
+        using var routeTiming = PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Route);
         var clock = timeProvider ?? TimeProvider.System;
         var streamCancellation = protocol.CancellationToken;
         var streamOpeningStartedAt = clock.GetUtcNow();
@@ -1211,6 +1213,7 @@ public sealed partial class ProtocolProviderGateway(
             allowFallback: true,
             allowManagedDownloads: true);
         var plan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
+        routeTiming?.Dispose();
         if (pinnedDownload != null)
         {
             plan = plan with
@@ -1505,7 +1508,7 @@ public sealed partial class ProtocolProviderGateway(
                             new(servingTrack, sourceQuality, offset));
                         if (!refreshed.IsSuccess) ThrowRouteFailure(refreshed.Error!);
                         return await OpenLeaseAtAsync(refreshed.RequireValue(), new(offset, end), null, token);
-                    });
+                    }, candidate.Provider.Id);
             }
             catch (OperationCanceledException) when (!protocol.CancellationToken.IsCancellationRequested)
             {
@@ -1604,6 +1607,13 @@ public sealed partial class ProtocolProviderGateway(
         async Task<ProtocolProviderStream> OpenedAsync(ProtocolProviderStream stream,
             ProviderExecutionContext? execution, ProviderExternalResourceId? servingTrack)
         {
+            PlaybackStartTimings.Current?.Select(stream.ServingProviderId, stream.IsCached, execution?.Account?.Scope.ToString());
+            if (execution != null && servingTrack != null && PlaybackStartTimings.Current is { } trace)
+            {
+                try { trace.Catalog(await ReadPlaybackMetadataAsync(execution, servingTrack)); }
+                catch (Exception error) when (error is not OperationCanceledException)
+                { logger?.LogDebug("Playback catalog label is unavailable ({ErrorType})", error.GetType().Name); }
+            }
             if (!protocol.IsOriginalDownload && !protocol.IsReadOnly && execution != null && servingTrack != null && MediaFacts is { } store)
                 stream.FileFacts.RecordAsync ??= async (facts, token) =>
                 {
@@ -1723,6 +1733,7 @@ public sealed partial class ProtocolProviderGateway(
         if (applicationCache?.IsEnabled == true)
         {
             var song = await ReadPlaybackMetadataAsync(execution, track);
+            PlaybackStartTimings.Current?.Catalog(song);
             var seconds = song?.PreciseDuration?.TotalSeconds ?? song?.Duration;
             if (seconds is > 0) return seconds;
         }
@@ -1791,12 +1802,14 @@ public sealed partial class ProtocolProviderGateway(
         CancellationToken cancellationToken,
         double? expectedDuration = null,
         ProviderAudioDeliveryRequest? delivery = null,
-        Func<ProviderStreamLease, long, long?, CancellationToken, Task<HttpResponseMessage>>? openVerificationRange = null)
+        Func<ProviderStreamLease, long, long?, CancellationToken, Task<HttpResponseMessage>>? openVerificationRange = null,
+        string? timingProvider = null)
     {
         ProviderStreamLease? lease = null;
         ProviderError error = new(ProviderErrorKind.TransientFailure);
         for (var attempt = 0; attempt < 2; attempt++)
         {
+            using var retryTiming = attempt > 0 ? PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Retry, timingProvider) : null;
             cancellationToken.ThrowIfCancellationRequested();
             HttpResponseMessage? response = null;
             var transferred = false;
@@ -1804,11 +1817,13 @@ public sealed partial class ProtocolProviderGateway(
             {
                 if (lease == null || lease.RetryBehavior == ProviderStreamRetryBehavior.RefreshLease)
                 {
+                    using var leaseTiming = PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Lease, timingProvider);
                     var result = await resolve().WaitAsync(cancellationToken);
                     if (!result.IsSuccess) return ProviderOutcome<(HttpResponseMessage, ProviderStreamLease)>.Failure(result.Error!);
                     lease = result.RequireValue();
                 }
-                response = await open(lease);
+                using (PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Source, timingProvider))
+                    response = await open(lease);
                 if (response.IsSuccessStatusCode)
                 {
                     if (!headOnly && !StreamByteRanges.Matches(response, requestedRange))
@@ -1828,6 +1843,7 @@ public sealed partial class ProtocolProviderGateway(
                         mediaType is "application/octet-stream" or "video/mp4") &&
                         (headOnly || await PrefetchedStream.PrepareAsync(response, cancellationToken).WaitAsync(cancellationToken)))
                     {
+                        using var verificationTiming = PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Verify, timingProvider);
                         var measured = PrefetchedStream.Facts(response.Content);
                         if (!headOnly)
                         {

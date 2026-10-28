@@ -1,3 +1,4 @@
+using allstarr.Core.Playback;
 using System.Net.Http.Headers;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
@@ -186,7 +187,7 @@ public sealed partial class ProtocolProviderGateway
                             var refreshed = await candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(execution, token, opening: true), new(track, quality, offset));
                             if (!refreshed.IsSuccess) ThrowRouteFailure(refreshed.Error!);
                             return await OpenAtAsync(refreshed.RequireValue(), new(offset, end), null, token);
-                        });
+                        }, candidate.Provider.Id);
                 }
                 catch (OperationCanceledException) when (abandonment.IsCancellationRequested && !protocol.CancellationToken.IsCancellationRequested)
                 {

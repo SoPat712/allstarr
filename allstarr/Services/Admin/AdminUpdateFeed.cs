@@ -106,6 +106,7 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
             .ToListAsync(cancellationToken);
 
         var audits = await context.AuditEvents.AsNoTracking()
+            .Where(item => item.Category != allstarr.Core.Playback.PlaybackStartTimingStore.Category)
             .Where(item => (everyone || item.ActorUserId == scope.UserId || scope.IsAdministrator &&
                     (item.Outcome == "failed" || item.Outcome == "error" || item.Outcome == "unhealthy")) &&
                 (item.CreatedAt > cursor.OccurredAt ||

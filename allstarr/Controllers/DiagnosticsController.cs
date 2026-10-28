@@ -1,3 +1,4 @@
+using allstarr.Core.Playback;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using allstarr.Models.Settings;
@@ -40,6 +41,20 @@ public class DiagnosticsController : ControllerBase
             false,
             false,
             null);
+    }
+
+    [HttpGet("diagnostics/playback-starts")]
+    public async Task<IActionResult> PlaybackStarts([FromQuery] int limit = 50, CancellationToken cancellationToken = default)
+    {
+        if (HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] is not AdminAuthSession { IsAdministrator: true })
+            return StatusCode(StatusCodes.Status403Forbidden);
+        var store = HttpContext.RequestServices.GetRequiredService<PlaybackStartTimingStore>();
+        return Ok(new
+        {
+            items = await store.ReadAsync(limit, cancellationToken),
+            maximumSamples = PlaybackStartTimingStore.MaximumSamples,
+            retentionDays = PlaybackStartTimingStore.Retention.TotalDays
+        });
     }
 
     [HttpGet("media-probe")]

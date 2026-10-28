@@ -455,6 +455,7 @@ builder.Services.AddBuiltInLyricsCapabilities();
 builder.Services.AddSingleton<ExtensionManager>();
 builder.Services.AddSingleton<ProviderStatusManager>();
 builder.Services.AddSingleton<ProviderCheckHistory>();
+builder.Services.AddSingleton<allstarr.Core.Playback.PlaybackStartTimingStore>();
 builder.Services.AddSingleton<IProviderCheckSessions, ProviderCheckSessions>();
 builder.Services.AddSingleton<IProviderCheckRunner, ProviderAccountCheckRunner>();
 builder.Services.AddSingleton<ProviderCheckRequests>();
@@ -598,6 +599,7 @@ app.UseMiddleware<RequestLoggingMiddleware>();
 app.UseExceptionHandler();
 
 app.UseMiddleware<CorrelationMiddleware>();
+app.UseMiddleware<PlaybackStartTimingMiddleware>();
 
 app.UseResponseCompression();
 

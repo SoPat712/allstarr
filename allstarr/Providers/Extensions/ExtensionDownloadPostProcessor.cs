@@ -1,3 +1,4 @@
+using allstarr.Core.Playback;
 using allstarr.Services.Common;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -358,6 +359,7 @@ internal sealed class ExtensionDownloadPostProcessor
     internal static async Task<string> RunAsync(string executable, IEnumerable<string> arguments, string? output,
         long maximumBytes, CancellationToken token)
     {
+        using var timing = PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Process);
         token.ThrowIfCancellationRequested();
         var start = new ProcessStartInfo(executable)
         {
