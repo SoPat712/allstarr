@@ -155,6 +155,18 @@ test("match review hides unlabeled and internal rows while keeping saved manual 
   await expect(page.getByRole("toolbar", { name: "Actions for selected songs" })).toContainText("4 selected");
 });
 
+for (const theme of ["light", "dark"] as const) {
+  test(`manual mapping row actions retain phone touch targets in ${theme} mode`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+    await mockMatching(page, { administrator: false });
+    await page.goto("#/library/mappings");
+    await expect(page.locator(".mapping-row").first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Clear personal", exact: true })).toBeVisible();
+    await expectContainedMobileGeometry(page);
+  });
+}
+
 test("match dialog shows field scores at 320px in dark mode", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await page.setViewportSize({ width: 320, height: 844 });

@@ -882,7 +882,7 @@
   .manual-authority-row :global([data-slot="button"]) {
     min-width: 0;
     height: auto;
-    min-height: var(--control-sm);
+    min-height: var(--control-md);
     padding-block: var(--space-2);
     line-height: 1.25;
     white-space: normal;
