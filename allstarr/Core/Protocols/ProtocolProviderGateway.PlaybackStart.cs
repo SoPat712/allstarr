@@ -34,6 +34,7 @@ public sealed partial class ProtocolProviderGateway
         {
             var candidate = eligible[index];
             var track = candidate.TrackId ?? requestedTrack;
+            if (!await AllowsCleanPlaybackAsync(protocol, track, candidate.Context)) continue;
             var measurement = outcomes?.GetPlaybackStart(candidate.Context, quality);
             var media = measurement?.Media;
             var cached = await AvailableCachedMediaAsync(protocol, candidate.Context, track, quality, protocol.CancellationToken);

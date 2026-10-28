@@ -15,6 +15,24 @@ namespace allstarr.Tests;
 public sealed class ProtocolLyricsResolverTests
 {
     [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task CleanOnlyLyricsNeverUseUnratedTextSearchSources(ProtocolKind protocol)
+    {
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrclib"]);
+        var policy = new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+            ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, 0.07)
+        { Preferences = new("CleanOnly") };
+        var context = new ProtocolExecutionContext(protocol, "backend", "listener", null, "clean-lyrics", DateTimeOffset.UtcNow.AddMinutes(1), default)
+        { Policy = policy };
+        var resolver = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance);
+        Assert.Null(await resolver.FindAsync(context, new Song { Id = "clean", Title = "Track", Artist = "Artist", ExplicitContentLyrics = 3 }, "clean"));
+        providers.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics), Times.Once);
+        providers.VerifyNoOtherCalls();
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task SpicyNoAliasNeverStartsItsOwnCrossLinkSearch(bool automatic)

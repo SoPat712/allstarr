@@ -243,6 +243,7 @@ public sealed class MusicRadioTests
         Title = id,
         Artist = "Artist",
         Duration = 200,
+        ExplicitContentLyrics = 0,
         ExternalProvider = provider,
         ExternalId = id
     };

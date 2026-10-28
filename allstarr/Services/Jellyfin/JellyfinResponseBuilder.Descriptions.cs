@@ -33,6 +33,7 @@ public partial class JellyfinResponseBuilder
         if (song.TotalDiscs is > 0) item["TotalDiscs"] = song.TotalDiscs.Value;
         if (song.Bpm is > 0) item["BeatsPerMinute"] = song.Bpm.Value;
         if (!string.IsNullOrWhiteSpace(song.MusicalKey)) item["Key"] = song.MusicalKey;
+        if (song.OriginalItemId != null) item["OriginalItemId"] = song.OriginalItemId;
         if (song.ExplicitContentLyrics is 0 or 1 or 3) item["OfficialRating"] = song.ExplicitContentLyrics == 1 ? "Explicit" : "Clean";
         var genres = (song.Genres.Count > 0 ? song.Genres : string.IsNullOrWhiteSpace(song.Genre) ? [] : new[] { song.Genre }.ToList())
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -52,6 +53,7 @@ public partial class JellyfinResponseBuilder
 
     private static void AddAlbumDescription(Album album, Dictionary<string, object?> item, ListeningPreferences? preferences)
     {
+        if (album.IsExplicit is { } rating) item["OfficialRating"] = rating ? "Explicit" : "Clean";
         var credits = ArtistCredits(MusicDescriptiveMetadata.AlbumArtists(album), preferences);
         item["AlbumArtists"] = credits;
         item["ArtistItems"] = credits;

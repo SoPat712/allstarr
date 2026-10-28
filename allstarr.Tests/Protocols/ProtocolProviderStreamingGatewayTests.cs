@@ -416,7 +416,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new(
                     providerId, [new ProviderTrackMetadata(
                         new(providerId, ProviderResourceKind.Track, $"{providerId}-track"),
-                        "Shared title", [new("Artist")], isExplicit: providerId == "apple-musickit" ? true : null)])));
+                        "Shared title", [new("Artist")], isExplicit: providerId == "apple-musickit" ? true : explicitFilter == "CleanOnly" ? false : null)])));
             capability.Setup(item => item.SearchAlbumsAsync(
                     It.IsAny<ProviderExecutionContext>(),
                     It.IsAny<ProviderMetadataSearchRequest>()))

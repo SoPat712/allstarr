@@ -87,6 +87,8 @@ public partial class JellyfinController
 
     private async Task<IActionResult> ProxyJellyfinStream(string path, string itemId)
     {
+        if (!await HttpContext.RequestServices.GetRequiredService<CleanOnlyProtocolContent>().AllowsAsync(HttpContext, itemId))
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = CleanOnlyProtocolContent.UnavailableMessage });
         var jellyfinUrl = JellyfinProxyService.NormalizeQueryCredentials(
             $"{_settings.Url?.TrimEnd('/')}/{path}");
 

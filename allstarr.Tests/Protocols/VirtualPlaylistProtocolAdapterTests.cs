@@ -23,6 +23,118 @@ public sealed class VirtualPlaylistProtocolAdapterTests
     private static readonly string ProtocolId = PlaylistVirtualizationService.CreateProtocolId(LinkId);
 
     [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task CleanOnlyPlaylistDoesNotCertifyAnExplicitSelectedRouteFromCleanSourceMetadata(ProtocolKind protocol)
+    {
+        var track = Model().Tracks[2] with
+        {
+            RouteKind = TrackRouteKind.External,
+            RouteProviderId = "deezer",
+            RouteExternalId = "explicit",
+            SourceProviderId = "spotify",
+            SourceExternalId = "clean",
+            SourceMetadata = new(IsExplicit: false)
+        };
+        var service = new StubVirtualizationService(Model() with { Tracks = [track] });
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "explicit"))
+            .ReturnsAsync(new Song { Id = "explicit", ExplicitContentLyrics = 1 });
+        var context = Context(protocol) with
+        {
+            Policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(
+                System.Collections.Immutable.ImmutableDictionary<allstarr.Core.Capabilities.ProviderCapabilityKind,
+                    System.Collections.Immutable.ImmutableArray<string>>.Empty,
+                System.Collections.Immutable.ImmutableHashSet<string>.Empty, "Lossless", 0.07)
+            { Preferences = new("CleanOnly") }
+        };
+        if (protocol == ProtocolKind.Jellyfin)
+        {
+            var adapter = new JellyfinVirtualPlaylistProtocolAdapter(service, new StubJellyfinMutationResolver(null), providerGateway: gateway.Object);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(context, ProtocolId, default)).Value));
+            Assert.Empty(json.RootElement.GetProperty("Items").EnumerateArray());
+        }
+        else
+        {
+            var adapter = new SubsonicVirtualPlaylistProtocolAdapter(service, new StubMutationResolver(null), providerGateway: gateway.Object);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<JsonResult>(await adapter.ReadAsync(context, ProtocolId, "json", default)).Value));
+            Assert.Empty(json.RootElement.GetProperty("subsonic-response").GetProperty("playlist").GetProperty("entry").EnumerateArray());
+        }
+        gateway.Verify(item => item.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "explicit"), Times.Once);
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin, "json", false)]
+    [InlineData(ProtocolKind.Jellyfin, "json", true)]
+    [InlineData(ProtocolKind.Subsonic, "json", false)]
+    [InlineData(ProtocolKind.Subsonic, "json", true)]
+    [InlineData(ProtocolKind.Subsonic, "xml", false)]
+    [InlineData(ProtocolKind.Subsonic, "xml", true)]
+    public async Task CleanOnlyPlaylistSubstitutesCleanRecordingAndPreservesSourceIdentity(ProtocolKind protocol, string format, bool local)
+    {
+        var original = Model().Tracks[2] with
+        {
+            BackendItemId = "explicit",
+            Title = "Track",
+            Artist = "Artist",
+            Album = "Album",
+            DurationMilliseconds = 180000,
+            RouteKind = local ? TrackRouteKind.Local : TrackRouteKind.External,
+            SourceMetadata = new(IsExplicit: true)
+        };
+        var model = Model() with { Tracks = [original, original with { BackendItemId = "unknown", SourceMetadata = new(IsExplicit: null) }] };
+        var service = new StubVirtualizationService(model);
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Track Artist", 20, 0, 0, null))
+            .ReturnsAsync(new allstarr.Models.Search.SearchResult
+            {
+                Songs = [new Song { Id = "ext-deezer-song-clean", Title = "Track (Clean)", Artist = "Artist", Album = "Album",
+                    Duration = 180, ExplicitContentLyrics = 3, ExternalProvider = "deezer", ExternalId = "clean" }]
+            });
+        var context = Context(protocol) with
+        {
+            Policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(
+                System.Collections.Immutable.ImmutableDictionary<allstarr.Core.Capabilities.ProviderCapabilityKind,
+                    System.Collections.Immutable.ImmutableArray<string>>.Empty,
+                System.Collections.Immutable.ImmutableHashSet<string>.Empty, "Lossless", 0.07)
+            { Preferences = new("CleanOnly", false, false) }
+        };
+        if (protocol == ProtocolKind.Jellyfin)
+        {
+            var adapter = new JellyfinVirtualPlaylistProtocolAdapter(service, new StubJellyfinMutationResolver(null), providerGateway: gateway.Object);
+            var result = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(context, ProtocolId, default));
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+            var row = Assert.Single(json.RootElement.GetProperty("Items").EnumerateArray());
+            Assert.Equal("ext-deezer-song-clean", row.GetProperty("Id").GetString());
+            Assert.Equal("explicit", row.GetProperty("OriginalItemId").GetString());
+            Assert.Equal("Clean", row.GetProperty("OfficialRating").GetString());
+        }
+        else
+        {
+            var adapter = new SubsonicVirtualPlaylistProtocolAdapter(service, new StubMutationResolver(null), providerGateway: gateway.Object);
+            var result = await adapter.ReadAsync(context, ProtocolId, format, default);
+            if (format == "json")
+            {
+                using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<JsonResult>(result).Value));
+                var row = Assert.Single(json.RootElement.GetProperty("subsonic-response").GetProperty("playlist").GetProperty("entry").EnumerateArray());
+                Assert.Equal("ext-deezer-song-clean", row.GetProperty("id").GetString());
+                Assert.Equal("explicit", row.GetProperty("originalItemId").GetString());
+            }
+            else
+            {
+                var row = Assert.Single(XDocument.Parse(Assert.IsType<ContentResult>(result).Content!).Descendants(), item => item.Name.LocalName == "entry");
+                Assert.Equal("ext-deezer-song-clean", row.Attribute("id")!.Value);
+                Assert.Equal("explicit", row.Attribute("originalItemId")!.Value);
+            }
+        }
+        Assert.Equal("explicit", model.Tracks[0].BackendItemId);
+        Assert.True(model.Tracks[0].SourceMetadata!.IsExplicit);
+        gateway.Verify(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Track Artist", 20, 0, 0, null), Times.Once);
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task JellyfinPlaylistEntries_IncludeOccurrenceIdentityAndHonorFields(bool includeFields)
@@ -596,7 +708,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
                 System.Collections.Immutable.ImmutableHashSet<string>.Empty, "lossless", 0.07)
             { Preferences = new(filter, false, false) };
             var context = Context(protocol) with { Policy = policy };
-            var expected = filter == "CleanOnly" ? 3 : 4;
+            var expected = filter == "CleanOnly" ? 1 : 4;
             string[] titles;
             if (protocol == ProtocolKind.Jellyfin)
             {
@@ -622,8 +734,8 @@ public sealed class VirtualPlaylistProtocolAdapterTests
                 Assert.Equal(expected.ToString(), playlist.Attribute("songCount")!.Value);
                 titles = playlist.Elements().Select(item => item.Attribute("title")!.Value).ToArray();
             }
-            Assert.Contains("Second", titles);
-            Assert.Contains("Unknown", titles);
+            Assert.Equal(filter != "CleanOnly", titles.Contains("Second"));
+            Assert.Equal(filter != "CleanOnly", titles.Contains("Unknown"));
             Assert.Equal(filter != "CleanOnly", titles.Contains("Explicit"));
             Assert.Contains("Clean", titles);
             Assert.DoesNotContain(titles, title => title.Contains("[A]", StringComparison.Ordinal) || title.Contains("[E]", StringComparison.Ordinal));

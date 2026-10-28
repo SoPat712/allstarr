@@ -17,6 +17,14 @@ public class SubsonicResponseBuilderTests
     }
 
     [Fact]
+    public void AlbumRowsPreserveVerifiedCleanEvidence()
+    {
+        var album = new Album { Id = "clean", Title = "Album (Clean)", IsExplicit = false };
+        Assert.Equal("clean", _builder.ConvertAlbumToJson(album)["explicitStatus"]);
+        Assert.Equal("clean", _builder.ConvertAlbumToXml(album, XNamespace.None).Attribute("explicitStatus")!.Value);
+    }
+
+    [Fact]
     public void CreateLyricsBySongIdResponse_Json_SyncedBuildsOpenSubsonicShape()
     {
         var lyrics = new SubsonicStructuredLyrics(

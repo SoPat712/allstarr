@@ -15,6 +15,32 @@ public sealed class MusicSearchServiceTests
         DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
 
     [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task CleanOnlySearchAndMixKeepVerifiedProviderWhenNativeCopyIsUnknown(ProtocolKind protocol)
+    {
+        var policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(
+            System.Collections.Immutable.ImmutableDictionary<allstarr.Core.Capabilities.ProviderCapabilityKind,
+                System.Collections.Immutable.ImmutableArray<string>>.Empty,
+            System.Collections.Immutable.ImmutableHashSet<string>.Empty, "Lossless", 0.07)
+        { Preferences = new("CleanOnly") };
+        var context = new ProtocolExecutionContext(protocol, "backend", "principal", null, "clean-search", _context.Deadline, default)
+        { Policy = policy };
+        var song = new Song { Id = "external", Title = "Track", Artist = "Artist", ExplicitContentLyrics = 0 };
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.SearchAsync(context, It.IsAny<string>(), 20, 20, 20, null))
+            .ReturnsAsync(new SearchResult { Songs = [song] });
+        var index = new Mock<ILibraryIndexService>();
+        index.Setup(item => item.FindKnownRecordingTracksAsync(context, It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, string> { ["external"] = "unknown-native" });
+        var native = new FakeNative([new(MusicItemKind.Song, "unknown-native", "Track", "Artist", "native")],
+            new NativeMusicItem<string>(MusicItemKind.Song, "unknown-native", "Track", "Artist", "native"));
+        var service = new MusicSearchService(gateway.Object, index.Object);
+        Assert.Equal("external", Assert.Single((await service.SearchAsync(context, Request("Track"), native)).Songs).Song!.Id);
+        Assert.Equal("external", Assert.Single(await service.ProjectSongsAsync(context, [song], native)).Song!.Id);
+    }
+
+    [Theory]
     [InlineData(ProtocolKind.Jellyfin, "Daft Punk Get Lucky")]
     [InlineData(ProtocolKind.Subsonic, "Daft Punk Get Lucky")]
     [InlineData(ProtocolKind.Jellyfin, "Get Lucky")]

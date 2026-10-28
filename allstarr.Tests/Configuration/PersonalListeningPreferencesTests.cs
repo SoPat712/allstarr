@@ -36,6 +36,136 @@ public sealed class PersonalListeningPreferencesTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task AdministratorLockPersistsAndOnlyRestrictsTheSelectedListener()
+    {
+        var service = CreateService();
+        var initial = await service.GetPreferencesAsync(_userA);
+        var personal = await service.UpdatePreferencesAsync(_userA,
+            new("ExplicitOnly", false, false), initial.Revision);
+
+        var locked = await service.UpdateCleanOnlyLockAsync(_userA, true, personal.Revision, _userB);
+        var restored = await CreateService().GetPreferencesAsync(_userA);
+
+        Assert.True(locked.CleanOnlyLocked);
+        Assert.Equal("CleanOnly", locked.Values.ExplicitFilter);
+        Assert.Equal("All", locked.HouseholdDefaults.ExplicitFilter);
+        Assert.NotEqual(personal.Revision, locked.Revision);
+        Assert.Equal(locked.Revision, restored.Revision);
+        Assert.True(restored.CleanOnlyLocked);
+        Assert.Equal("CleanOnly", restored.Values.ExplicitFilter);
+        Assert.Equal("CleanOnly", (await new EffectiveProviderPolicyResolver(CreateService())
+            .ResolveForUserAsync(_userA)).Preferences.ExplicitFilter);
+        Assert.False((await service.GetPreferencesAsync(_userB)).CleanOnlyLocked);
+        Assert.Equal("All", (await service.GetPreferencesAsync(_userB)).Values.ExplicitFilter);
+        Assert.False((await service.GetPreferencesAsync(null)).CleanOnlyLocked);
+        Assert.Equal("All", (await service.GetPreferencesAsync(null)).Values.ExplicitFilter);
+    }
+
+    [Fact]
+    public async Task ListenerUpdatesAndResetPreserveTheAdministratorLock()
+    {
+        var service = CreateService();
+        var initial = await service.GetPreferencesAsync(_userA);
+        var locked = await service.UpdateCleanOnlyLockAsync(_userA, true, initial.Revision, _userB);
+        var updated = await service.UpdatePreferencesAsync(_userA,
+            new("All", false, false), locked.Revision);
+        var reset = await service.UpdatePreferencesAsync(_userA, null, updated.Revision);
+
+        Assert.True(updated.CleanOnlyLocked);
+        Assert.Equal("CleanOnly", updated.Values.ExplicitFilter);
+        Assert.True(reset.CleanOnlyLocked);
+        Assert.False(reset.UsesHouseholdDefaults);
+        Assert.Equal("CleanOnly", reset.Values.ExplicitFilter);
+        Assert.NotEqual(updated.Revision, reset.Revision);
+
+        var unlocked = await service.UpdateCleanOnlyLockAsync(_userA, false, reset.Revision, _userB);
+        Assert.False(unlocked.CleanOnlyLocked);
+        Assert.True(unlocked.UsesHouseholdDefaults);
+        Assert.Equal("All", unlocked.Values.ExplicitFilter);
+        Assert.NotEqual(reset.Revision, unlocked.Revision);
+        Assert.NotEqual(initial.Revision, unlocked.Revision);
+        Assert.False((await CreateService().GetPreferencesAsync(_userA)).CleanOnlyLocked);
+    }
+
+    [Fact]
+    public async Task LockChangesInvalidateListenerAndAdministratorRevisions()
+    {
+        var service = CreateService();
+        var initial = await service.GetPreferencesAsync(_userA);
+        var locked = await service.UpdateCleanOnlyLockAsync(_userA, true, initial.Revision, _userB);
+
+        await Assert.ThrowsAsync<RuntimeSettingConflictException>(() => service.UpdatePreferencesAsync(
+            _userA, new("All", false, false), initial.Revision));
+        await Assert.ThrowsAsync<RuntimeSettingConflictException>(() => service.UpdateCleanOnlyLockAsync(
+            _userA, false, initial.Revision, _userB));
+        var personal = await service.UpdatePreferencesAsync(_userA, new("All", false, false), locked.Revision);
+        await Assert.ThrowsAsync<RuntimeSettingConflictException>(() => service.UpdateCleanOnlyLockAsync(
+            _userA, false, locked.Revision, _userB));
+
+        var current = await service.GetPreferencesAsync(_userA);
+        Assert.Equal(personal.Revision, current.Revision);
+        Assert.True(current.CleanOnlyLocked);
+        Assert.Equal("CleanOnly", current.Values.ExplicitFilter);
+    }
+
+    [Fact]
+    public async Task ManagingLocksRequiresAnActiveAdministratorAndActiveTarget()
+    {
+        var service = CreateService();
+        var current = await service.GetPreferencesAsync(_userA);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var disabledAdministrator = await db.Users.SingleAsync(item => item.Id == _disabledUser);
+            disabledAdministrator.IsAdmin = true;
+            await db.SaveChangesAsync();
+        }
+        foreach (var actor in new[] { _userA, _missingUser, _disabledUser, Guid.Empty })
+        {
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.GetManagedPreferencesAsync(_userA, actor));
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.UpdateCleanOnlyLockAsync(
+                _userA, true, current.Revision, actor));
+        }
+        foreach (var target in new[] { _missingUser, _disabledUser })
+        {
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.GetManagedPreferencesAsync(target, _userB));
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.UpdateCleanOnlyLockAsync(
+                target, true, current.Revision, _userB));
+        }
+        await Assert.ThrowsAsync<ArgumentException>(() => service.UpdateCleanOnlyLockAsync(
+            _userA, true, "", _userB));
+        var managed = await service.GetManagedPreferencesAsync(_userA, _userB);
+        Assert.Equal(current.Revision, managed.Revision);
+        Assert.False(managed.CleanOnlyLocked);
+
+        await using var changed = await _factory.CreateDbContextAsync();
+        var administrator = await changed.Users.SingleAsync(item => item.Id == _userB);
+        administrator.IsAdmin = false;
+        await changed.SaveChangesAsync();
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.UpdateCleanOnlyLockAsync(
+            _userA, true, current.Revision, _userB));
+    }
+
+    [Fact]
+    public async Task GenericRuntimeWritesCannotChangeTheProtectedLock()
+    {
+        var service = CreateService();
+        var initial = await service.GetPreferencesAsync(_userA);
+        var locked = await service.UpdateCleanOnlyLockAsync(_userA, true, initial.Revision, _userB);
+        await using var db = await _factory.CreateDbContextAsync();
+        var row = Assert.Single(await db.RuntimeSettings.Where(item => item.OwnerUserId == null).ToListAsync());
+        Assert.Equal(RuntimeSettingValueType.Boolean, RuntimeSettingCatalog.Require(row.Key).ValueType);
+        Assert.DoesNotContain(row.Key, RuntimeSettingCatalog.Definitions.Keys);
+        Assert.Equal("true", (await service.GetAsync(row.Key)).NormalizedValue);
+
+        foreach (var actor in new[] { _userA, _userB })
+            await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
+                [new(row.Key, "false", row.Revision)], "fixture", actor));
+        var current = await service.GetPreferencesAsync(_userA);
+        Assert.Equal(locked.Revision, current.Revision);
+        Assert.True(current.CleanOnlyLocked);
+    }
+
+    [Fact]
     public async Task PlaybackStartIsListenerScopedAndResetUsesTheLatestHouseholdDefault()
     {
         var service = CreateService();
@@ -205,8 +335,8 @@ public sealed class PersonalListeningPreferencesTests : IAsyncLifetime
                 { Policy = policy };
             Assert.Equal(user == _userB, policy.Includes(song));
             Assert.Equal(user, policy.UserId);
-            Assert.True(policy.Includes((int?)null));
-            Assert.True(policy.Includes(new allstarr.Models.Domain.Song { IsLocal = true, ExplicitContentLyrics = 1 }));
+            Assert.Equal(user == _userB, policy.Includes((int?)null));
+            Assert.Equal(user == _userB, policy.Includes(new allstarr.Models.Domain.Song { IsLocal = true, ExplicitContentLyrics = 1 }));
             var expected = user == _userA ? "Shared metadata" : "Shared metadata [A]/[E]";
             Assert.Equal(expected, jellyfin.ConvertSongToJellyfinItem(song)["Name"]);
             Assert.Equal(expected, subsonic.ConvertSongToJson(song)["title"]);

@@ -37,6 +37,7 @@ namespace allstarr.Controllers;
 [Route("")]
 [ServiceFilter(typeof(JellyfinAuthFilter), Order = int.MinValue)]
 [ServiceFilter(typeof(ProtocolExecutionContextFilter), Order = int.MinValue + 1)]
+[ServiceFilter(typeof(CleanOnlyProtocolFilter), Order = int.MinValue + 2)]
 public partial class JellyfinController : ControllerBase
 {
     private const int MaximumArtworkBytes = 10 * 1024 * 1024;

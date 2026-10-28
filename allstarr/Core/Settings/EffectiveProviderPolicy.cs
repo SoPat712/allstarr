@@ -69,7 +69,7 @@ public sealed record EffectiveProviderPolicySnapshot(
         ProviderCapabilityKind capability, IEnumerable<string> availableProviders) =>
         ApplyProviderAvailability(capability, availableProviders).Where(IsAutomatic).ToArray();
 
-    public bool Includes(Song song) => song.IsLocal || Includes(song.ExplicitContentLyrics);
+    public bool Includes(Song song) => song.IsLocal && Preferences.ExplicitFilter != "CleanOnly" || Includes(song.ExplicitContentLyrics);
 
     public bool Includes(int? explicitContent) => ExplicitContentFilter.ShouldInclude(
         explicitContent, Enum.Parse<ExplicitFilter>(Preferences.ExplicitFilter));

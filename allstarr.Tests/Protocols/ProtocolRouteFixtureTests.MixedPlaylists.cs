@@ -363,6 +363,10 @@ public sealed partial class ProtocolRouteFixtureTests
                 ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
                 ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, 0.07)
             { UserId = Guid.Parse("018f1f6e-8e9c-77f5-9a79-3d8a494d60cd") });
+        policies.Setup(service => service.ResolveAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(
+                ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, 0.07));
         services.RemoveAll<allstarr.Core.Settings.IEffectiveProviderPolicyResolver>();
         services.AddSingleton(policies.Object);
     }

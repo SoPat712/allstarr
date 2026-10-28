@@ -25,7 +25,11 @@ public sealed record VirtualPlaylistTrack(
     PlaylistSourceMetadata? SourceMetadata = null,
     string? NativePlaylistEntryId = null,
     string? NativeEntryJson = null,
-    Guid? SourceEntryId = null);
+    Guid? SourceEntryId = null)
+{
+    public string? OriginalItemId { get; init; }
+    public int? PlaybackExplicitContentLyrics { get; init; }
+}
 
 public sealed record VirtualPlaylistReadModel(
     string ProtocolId,

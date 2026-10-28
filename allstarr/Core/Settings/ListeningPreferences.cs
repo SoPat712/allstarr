@@ -15,6 +15,17 @@ public sealed record PersonalListeningPreferences(
     string Revision)
 {
     public IReadOnlyDictionary<string, string>? ProviderModeOverrides { get; init; }
+    public bool CleanOnlyLocked { get; init; }
+}
+
+internal static class CleanOnlyLockKeys
+{
+    private const string Prefix = "Listening:CleanOnlyLock:";
+
+    internal static string ForUser(Guid userId) => Prefix + userId.ToString("N");
+
+    internal static bool IsLockKey(string key) => key.StartsWith(Prefix, StringComparison.Ordinal) &&
+        Guid.TryParseExact(key[Prefix.Length..], "N", out var userId) && userId != Guid.Empty;
 }
 
 internal static class ListeningPreferenceKeys

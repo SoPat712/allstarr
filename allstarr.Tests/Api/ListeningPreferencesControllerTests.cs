@@ -34,6 +34,64 @@ public sealed class ListeningPreferencesControllerTests
     }
 
     [Fact]
+    public async Task AdministratorCanReadAndUpdateTheSelectedListenersLock()
+    {
+        var actor = Guid.CreateVersion7();
+        var target = Guid.CreateVersion7();
+        var snapshot = new PersonalListeningPreferences(new("CleanOnly"), new(), false, "next")
+        {
+            CleanOnlyLocked = true
+        };
+        var settings = new Mock<IDurableRuntimeSettings>(MockBehavior.Strict);
+        settings.Setup(item => item.GetManagedPreferencesAsync(target, actor, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(snapshot);
+        settings.Setup(item => item.UpdateCleanOnlyLockAsync(target, true, "current", actor, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(snapshot);
+        var controller = Controller(settings.Object, actor, true);
+
+        var read = Assert.IsType<OkObjectResult>(await controller.GetCleanOnlyLock(target, default));
+        Assert.True(Assert.IsType<PersonalListeningPreferences>(read.Value).CleanOnlyLocked);
+        var updated = Assert.IsType<OkObjectResult>(await controller.UpdateCleanOnlyLock(target, new(true, "current"), default));
+        Assert.Equal("CleanOnly", Assert.IsType<PersonalListeningPreferences>(updated.Value).Values.ExplicitFilter);
+        settings.VerifyAll();
+        settings.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task ListenerCannotReadOrChangeAnotherListenersLock()
+    {
+        var settings = new Mock<IDurableRuntimeSettings>(MockBehavior.Strict);
+        var controller = Controller(settings.Object, Guid.CreateVersion7(), false);
+        var target = Guid.CreateVersion7();
+
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await controller.GetCleanOnlyLock(target, default)).StatusCode);
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await controller.UpdateCleanOnlyLock(target, new(false, "current"), default)).StatusCode);
+        controller.HttpContext.Items.Clear();
+        Assert.IsType<UnauthorizedResult>(await controller.UpdateCleanOnlyLock(target, new(false, "current"), default));
+        settings.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task LockEndpointsReturnSafeConflictAndAuthorizationErrors()
+    {
+        var actor = Guid.CreateVersion7();
+        var target = Guid.CreateVersion7();
+        var settings = new Mock<IDurableRuntimeSettings>(MockBehavior.Strict);
+        settings.Setup(item => item.UpdateCleanOnlyLockAsync(target, false, "stale", actor, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new RuntimeSettingConflictException("private storage detail"));
+        settings.Setup(item => item.GetManagedPreferencesAsync(target, actor, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new UnauthorizedAccessException("private user detail"));
+        var controller = Controller(settings.Object, actor, true);
+
+        var conflict = Assert.IsType<ConflictObjectResult>(await controller.UpdateCleanOnlyLock(target, new(false, "stale"), default));
+        Assert.DoesNotContain("private", System.Text.Json.JsonSerializer.Serialize(conflict.Value));
+        var forbidden = Assert.IsType<ObjectResult>(await controller.GetCleanOnlyLock(target, default));
+        Assert.Equal(403, forbidden.StatusCode);
+        Assert.DoesNotContain("private", System.Text.Json.JsonSerializer.Serialize(forbidden.Value));
+        settings.VerifyAll();
+    }
+
+    [Fact]
     public async Task LyricsOrderUsesTheSignedInListenerAndTheExistingRevision()
     {
         var user = Guid.NewGuid();

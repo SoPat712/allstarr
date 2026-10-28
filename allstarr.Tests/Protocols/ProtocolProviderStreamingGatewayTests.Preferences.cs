@@ -93,7 +93,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 new AllstarrPrincipal(user, protocol.ToString().ToLowerInvariant(), "backend", "listener", "Listener", false),
                 "preferences", DateTimeOffset.UtcNow.AddMinutes(1), default);
             var expected = user == userB ? tracks : modeA == "CleanOnly"
-                ? tracks.Where(track => track.ExplicitContentLyrics != 1).ToArray()
+                ? tracks.Where(track => track.ExplicitContentLyrics is 0 or 3).ToArray()
                 : tracks.Where(track => track.ExplicitContentLyrics != 3).ToArray();
             var ids = expected.Select(track => track.Id.Value).Order().ToArray();
             Assert.Equal(ids, (await gateway.SearchAsync(context, "Track", 20, 0, 0)).Songs.Select(s => s.ExternalId).Order());

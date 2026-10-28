@@ -26,10 +26,22 @@ public sealed class ListeningPreferencesController(IDurableRuntimeSettings setti
         userId => settings.UpdatePreferencesAsync(userId, null,
             request.ExpectedRevision, cancellationToken));
 
-    private async Task<IActionResult> ExecuteAsync(Func<Guid, Task<PersonalListeningPreferences>> action)
+    [HttpGet("users/{userId:guid}/clean-only-lock")]
+    public Task<IActionResult> GetCleanOnlyLock(Guid userId, CancellationToken cancellationToken) => ExecuteAsync(
+        actorUserId => settings.GetManagedPreferencesAsync(userId, actorUserId, cancellationToken), administrator: true);
+
+    [HttpPut("users/{userId:guid}/clean-only-lock")]
+    public Task<IActionResult> UpdateCleanOnlyLock(Guid userId, [FromBody] UpdateCleanOnlyLockRequest request,
+        CancellationToken cancellationToken) => ExecuteAsync(
+        actorUserId => settings.UpdateCleanOnlyLockAsync(userId, request.Locked,
+            request.ExpectedRevision, actorUserId, cancellationToken), administrator: true);
+
+    private async Task<IActionResult> ExecuteAsync(Func<Guid, Task<PersonalListeningPreferences>> action, bool administrator = false)
     {
         if (HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] is not AdminAuthSession session)
             return Unauthorized();
+        if (administrator && !session.IsAdministrator)
+            return StatusCode(403, new { error = "Administrator permissions required." });
         if (session.AllstarrUserId is not { } userId)
             return StatusCode(403, new { error = "A linked backend user is required." });
         try { return Ok(await action(userId)); }
@@ -43,3 +55,4 @@ public sealed record UpdateListeningPreferencesRequest(
     string ExplicitFilter, bool ShowExternalLabel, bool ShowExplicitLabel, string ExpectedRevision,
     string? LyricsOrder = null, string? PlaybackStart = null);
 public sealed record ResetListeningPreferencesRequest(string ExpectedRevision);
+public sealed record UpdateCleanOnlyLockRequest(bool Locked, string ExpectedRevision);

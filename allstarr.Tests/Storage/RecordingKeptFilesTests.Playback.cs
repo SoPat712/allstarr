@@ -22,6 +22,38 @@ namespace allstarr.Tests;
 public sealed partial class RecordingKeptFilesTests
 {
     [Theory]
+    [InlineData(ProtocolKind.Jellyfin, null, false)]
+    [InlineData(ProtocolKind.Subsonic, null, false)]
+    [InlineData(ProtocolKind.Jellyfin, 1, false)]
+    [InlineData(ProtocolKind.Subsonic, 1, false)]
+    [InlineData(ProtocolKind.Jellyfin, 0, true)]
+    [InlineData(ProtocolKind.Subsonic, 3, true)]
+    public async Task CleanOnlyKeptPlaybackRequiresVerifiedEvidenceForCanonicalAndLegacyIds(ProtocolKind protocol, int? rating, bool allowed)
+    {
+        await Service().PublishAsync(Request() with { Metadata = new KeptRecordingMetadata("Track", ["Artist"], "Album", 180000, rating) });
+        await SetListenerBackendAsync(protocol);
+        var policy = new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+            ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, 0.07)
+        { Preferences = new("CleanOnly") };
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        policies.Setup(item => item.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(policy);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        var gateway = KeptGateway(router.Object, effectivePolicies: policies.Object);
+        var context = PlaybackContext(protocol, other, CanonicalItemId());
+        foreach (var source in new[] { ("allstarr", recordingId.ToString("D")), ("deezer", "source-track") })
+        {
+            if (allowed)
+            {
+                using var response = (await gateway.OpenStreamAsync(context, source.Item1, source.Item2, ProviderAudioQuality.Any, null))!.Response;
+                Assert.Equal(audio, await response.Content.ReadAsByteArrayAsync());
+            }
+            else
+                await Assert.ThrowsAsync<UnauthorizedAccessException>(() => gateway.OpenStreamAsync(context, source.Item1, source.Item2, ProviderAudioQuality.Any, "bytes=0-"));
+        }
+        router.VerifyNoOtherCalls();
+    }
+
+    [Theory]
     [InlineData(ProtocolKind.Jellyfin)]
     [InlineData(ProtocolKind.Subsonic)]
     public async Task HouseholdKeptPlaybackWinsBeforeProviderAndNegativeCache(ProtocolKind protocol)

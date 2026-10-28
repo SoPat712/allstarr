@@ -23,6 +23,23 @@ public class JellyfinResponseBuilderTests
         _builder = new JellyfinResponseBuilder(httpContexts: new HttpContextAccessor { HttpContext = http });
     }
 
+    [Fact]
+    public void AlbumRowsAndHintsPreserveVerifiedCleanEvidence()
+    {
+        var album = new Album { Id = "clean", Title = "Album (Clean)", IsExplicit = false };
+        Assert.Equal("Clean", _builder.ConvertAlbumToJellyfinItem(album)["OfficialRating"]);
+        Assert.Equal("Clean", _builder.ConvertAlbumToSearchHint(album)["OfficialRating"]);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)]
+    public void SearchHintsPreserveVerifiedCleanEvidence(int rating)
+    {
+        var hint = _builder.ConvertSongToSearchHint(new Song { Id = "clean", Title = "Track", ExplicitContentLyrics = rating });
+        Assert.Equal("Clean", hint["OfficialRating"]);
+    }
+
     [Theory]
     [InlineData("artistgrid", true, "⭐ Song [A]")]
     [InlineData("artistgrid", false, "Song [A]")]

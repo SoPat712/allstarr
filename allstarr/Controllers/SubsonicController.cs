@@ -25,6 +25,7 @@ namespace allstarr.Controllers;
 [Route("")]
 [ServiceFilter(typeof(SubsonicAuthFilter), Order = int.MinValue)]
 [ServiceFilter(typeof(ProtocolExecutionContextFilter), Order = int.MinValue + 1)]
+[ServiceFilter(typeof(CleanOnlyProtocolFilter), Order = int.MinValue + 2)]
 [ServiceFilter(typeof(SubsonicExceptionFilter))]
 public partial class SubsonicController : ControllerBase
 {
@@ -235,7 +236,8 @@ public partial class SubsonicController : ControllerBase
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(id);
         if (isExternal && _libraryIndex != null &&
-            await _libraryIndex.ResolveKnownTrackAsync(CurrentProtocolContext, id, HttpContext.RequestAborted) is { } nativeId)
+            await _libraryIndex.ResolveKnownTrackAsync(CurrentProtocolContext, id, HttpContext.RequestAborted) is { } nativeId &&
+            await HttpContext.RequestServices.GetRequiredService<allstarr.Core.Protocols.CleanOnlyProtocolContent>().AllowsAsync(HttpContext, nativeId))
         {
             id = nativeId;
             parameters = parameters.SetValue("id", nativeId);
@@ -244,6 +246,8 @@ public partial class SubsonicController : ControllerBase
 
         if (!isExternal)
         {
+            if (!await HttpContext.RequestServices.GetRequiredService<allstarr.Core.Protocols.CleanOnlyProtocolContent>().AllowsAsync(HttpContext, id))
+                return StatusCode(403, new { error = allstarr.Core.Protocols.CleanOnlyProtocolContent.UnavailableMessage });
             return await _proxyService.RelayStreamAsync(parameters, HttpContext.RequestAborted);
         }
 
@@ -570,7 +574,8 @@ public partial class SubsonicController : ControllerBase
         var mediaId = parameters.GetValueOrDefault("mediaId", "");
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(mediaId);
         if (isExternal && _libraryIndex != null &&
-            await _libraryIndex.ResolveKnownTrackAsync(CurrentProtocolContext, mediaId, HttpContext.RequestAborted) is { } nativeId)
+            await _libraryIndex.ResolveKnownTrackAsync(CurrentProtocolContext, mediaId, HttpContext.RequestAborted) is { } nativeId &&
+            await HttpContext.RequestServices.GetRequiredService<allstarr.Core.Protocols.CleanOnlyProtocolContent>().AllowsAsync(HttpContext, nativeId))
         {
             parameters = parameters.SetValue("mediaId", nativeId);
             isExternal = false;
@@ -608,7 +613,8 @@ public partial class SubsonicController : ControllerBase
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(id);
         if (isExternal && _libraryIndex != null &&
-            await _libraryIndex.ResolveKnownTrackAsync(CurrentProtocolContext, id, HttpContext.RequestAborted) is { } nativeId)
+            await _libraryIndex.ResolveKnownTrackAsync(CurrentProtocolContext, id, HttpContext.RequestAborted) is { } nativeId &&
+            await HttpContext.RequestServices.GetRequiredService<allstarr.Core.Protocols.CleanOnlyProtocolContent>().AllowsAsync(HttpContext, nativeId))
         {
             id = nativeId;
             parameters = parameters.SetValue("id", nativeId);

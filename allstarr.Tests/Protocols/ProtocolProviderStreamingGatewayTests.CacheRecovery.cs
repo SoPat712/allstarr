@@ -20,6 +20,20 @@ namespace allstarr.Tests;
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
     [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task CleanOnlyDoesNotRecoverUnknownCachedAudio(ProtocolKind protocol)
+    {
+        await using var fixture = await CacheRecoveryFixture.CreateAsync(protocol, "healthy", cleanOnly: true);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => fixture.Gateway.OpenStreamAsync(fixture.Context,
+            "allstarr", fixture.Recording, ProviderAudioQuality.Any, "bytes=0-"));
+        Assert.Empty(fixture.Router.Requests);
+        fixture.AssertNoProviderOpens();
+        fixture.Library.Verify(item => item.GetLocalPathForExternalSongAsync(It.IsAny<DownloadedSongMappingScope>(),
+            It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Theory]
     [InlineData(ProtocolKind.Jellyfin, "circuit")]
     [InlineData(ProtocolKind.Subsonic, "circuit")]
     [InlineData(ProtocolKind.Jellyfin, "degraded")]
@@ -209,7 +223,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         public Mock<ILocalLibraryService> Library { get; } = new(MockBehavior.Strict);
 
         public static async Task<CacheRecoveryFixture> CreateAsync(ProtocolKind dialect, string failure,
-            bool alternate = false, bool cached = true, string? denial = null)
+            bool alternate = false, bool cached = true, string? denial = null, bool cleanOnly = false)
         {
             var fixture = new CacheRecoveryFixture { Context = PipelineContext(dialect) };
             var path = Path.Combine(fixture.root, "original.wav");
@@ -239,7 +253,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             var policy = new EffectiveProviderPolicySnapshot(
                 ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
                 ImmutableHashSet<string>.Empty, "High", 0.07)
-            { ProviderModes = modes };
+            { ProviderModes = modes, Preferences = new(cleanOnly ? "CleanOnly" : "All") };
             var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
             policies.Setup(item => item.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(policy);
             var registrations = new List<ProviderRegistration>();
