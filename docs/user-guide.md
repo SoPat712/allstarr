@@ -323,3 +323,5 @@ Scrobbling saves the destination account and revision with accepted playback, th
 For exact procedures, see [configuration](operations/configuration.md), [storage and recovery](operations/storage.md), and [client compatibility](operations/client-compatibility.md).
 
 Visible dashboard pages reconcile changes automatically within about five seconds, including updates made in other tabs or by background work. Returning to a tab or reconnecting refreshes its data while retaining the displayed rows. Refresh buttons show progress only when you use them; automatic refreshes stay quiet. Unsaved form edits are preserved.
+
+Home’s stored-song totals count unique existing cache paths and active managed kept files, including a separately configured Kept folder. Removed or missing files are excluded.
