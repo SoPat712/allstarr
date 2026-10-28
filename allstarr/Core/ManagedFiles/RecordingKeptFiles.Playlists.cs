@@ -130,10 +130,12 @@ public sealed partial class RecordingKeptFiles
                 : new[] { (Target: item.RecordingId, Direct: true, item.FileId) })
             .GroupBy(item => item.Target).ToDictionary(group => group.Key,
                 group => group.OrderByDescending(item => item.Direct).First().FileId);
+        var suppressed = await SuppressedRetentionKeysAsync(db, cancellationToken);
         foreach (var entry in entries)
         {
             var key = prefix + PlaylistTrackRetentionQueue.RetentionKey(link.Id, entry.RouteProviderId!, entry.ExternalId);
-            desired[key] = recordings[entry.Position] is { } recordingId ? files.GetValueOrDefault(recordingId) : Guid.Empty;
+            desired[key] = !suppressed.Contains(key) && recordings[entry.Position] is { } recordingId
+                ? files.GetValueOrDefault(recordingId) : Guid.Empty;
         }
         return (projection, desired, recordings);
     }
@@ -212,6 +214,7 @@ public sealed partial class RecordingKeptFiles
         catch (JsonException) { return null; }
         if (!PlaylistTrackRetentionJobHandler.Valid(payload)) return null;
         var request = payload!;
+        if (await AutomaticRetentionSuppressedAsync(db, PlaylistKey(request), cancellationToken: cancellationToken)) return null;
         var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
             item.Id == request.PlaylistLinkId && item.OwnerUserId == ownerId && item.TrackRetention == PlaylistTrackRetention.KeepAll,
             cancellationToken);

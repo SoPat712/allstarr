@@ -393,6 +393,7 @@ public sealed partial class RecordingKeptFiles(
             item.SourceExternalTrackId != null, cancellationToken);
         if (job == null || artifact == null || !await db.Users.AnyAsync(item =>
                 item.Id == request.InitiatingUserId && item.Enabled, cancellationToken)) throw Denied();
+        if (await PublicationPredatesDeletionAsync(db, request.RecordingId, job, cancellationToken)) throw Denied();
         await AuthorizeFavoritePublicationAsync(db, job, request, cancellationToken);
         playlistAccess = await AuthorizePlaylistPublicationAsync(db, job, request, playlistAccess, cancellationToken);
         await AuthorizeExplicitKeepPublicationAsync(db, job, request, cancellationToken);

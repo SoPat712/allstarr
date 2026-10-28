@@ -1,4 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { expectContainedMobileGeometry } from "./mobile-geometry";
 
 async function json(route: Route, body: unknown, status = 200) {
   await route.fulfill({
@@ -93,7 +94,8 @@ async function mockDownloadsApp(page: Page): Promise<DownloadFixture> {
     if (url.pathname === "/api/admin/ui/schema") {
       return json(route, {
         activeBackend: "Jellyfin",
-        providers: [{ id: "lumen-audio", name: "Lumen Audio", categories: ["streaming"] }],
+        providers: [{ id: "lumen-audio", name: "Lumen Audio", categories: ["streaming"] },
+          { id: "apple-musickit", name: "Apple Music", categories: ["streaming"] }],
         settings: [],
         priorityGroups: [],
       });
@@ -222,3 +224,95 @@ for (const width of [390, 1280]) {
     });
   }
 }
+
+for (const width of [390, 1280]) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    test(`referenced kept copy deletion requires clear confirmation at ${width}px in ${colorScheme} mode`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+      await mockDownloadsApp(page);
+      let previewRequests = 0;
+      const deletionRequests: unknown[] = [];
+      await page.route("**/api/admin/downloads?storage=kept", route => json(route, {
+        storage: "kept", files: [{ ...baseFile, path: "FLO/Access All Areas/Unknown - Check.flac", storage: "kept",
+          title: "Check", artist: "FLO", album: "Access All Areas", provider: "apple-musickit", externalId: "1780787517",
+          publicationState: "Referenced", referenceCount: 1, removable: false, canDeleteKeptCopy: true }],
+        totalSize: baseFile.size, totalSizeFormatted: baseFile.sizeFormatted, count: 1, managedCount: 1, diagnosticCount: 0,
+      }));
+      const preview = { managedFileId: "11111111-1111-4111-8111-111111111111", revision: 5,
+        referenceFingerprint: "reference-proof", title: "Check", artist: "FLO", album: "Access All Areas",
+        referenceCount: 1, favoriteReferences: 1, playlistReferences: 0, keepReferences: 0, otherReferences: 0 };
+      await page.route("**/api/admin/downloads/kept/delete-preview", route => {
+        previewRequests++;
+        expect(route.request().postDataJSON()).toEqual({ path: "FLO/Access All Areas/Unknown - Check.flac" });
+        return json(route, preview);
+      });
+      await page.route("**/api/admin/downloads/kept/delete", route => {
+        deletionRequests.push(route.request().postDataJSON());
+        return json(route, { jobId: "delete-job", queued: true }, 202);
+      });
+      await page.goto("/#/library/kept");
+      const row = page.locator(".download-row").filter({ hasText: "Check" });
+      await expect(row).toContainText("Apple Music");
+      await expect(row).not.toContainText("Unknown source");
+      const remove = row.getByRole("button", { name: "Delete kept copy…", exact: true });
+      await expect(remove).toBeVisible();
+      if (width === 390) await expectContainedMobileGeometry(page);
+      await remove.focus();
+      await page.keyboard.press("Enter");
+      const dialog = page.getByRole("alertdialog", { name: "Delete the kept copy of Check?" });
+      await expect(dialog).toBeVisible();
+      await expect(dialog).toContainText("audio and lyrics for everyone");
+      await expect(dialog).toContainText("1 favorite");
+      await expect(dialog).toContainText("Hearts and playlist entries stay");
+      await expect(dialog).toContainText("stream or download again");
+      if (width === 390) await expectContainedMobileGeometry(page);
+      await page.screenshot({ path: `test-results/kept-delete-confirm-${width}-${colorScheme}.png`, fullPage: true });
+      await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+      expect(deletionRequests).toHaveLength(0);
+      await remove.click();
+      await dialog.getByRole("button", { name: "Delete kept copy", exact: true }).click();
+      await expect.poll(() => deletionRequests.length).toBe(1);
+      expect(deletionRequests[0]).toMatchObject({ managedFileId: preview.managedFileId, revision: 5,
+        referenceFingerprint: "reference-proof", confirmation: "Delete kept copy" });
+      expect(previewRequests).toBe(2);
+      await expect(page.getByText("Kept copy deletion queued.", { exact: true })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.screenshot({ path: `test-results/kept-delete-${width}-${colorScheme}.png`, fullPage: true });
+    });
+  }
+}
+
+test("kept deletion keeps a changed confirmation open and requires a fresh preview", async ({ page }) => {
+  await mockDownloadsApp(page);
+  await page.route("**/api/admin/downloads?storage=kept", route => json(route, {
+    storage: "kept", files: [{ ...baseFile, canDeleteKeptCopy: true, removable: false }],
+    totalSize: baseFile.size, totalSizeFormatted: baseFile.sizeFormatted, count: 1, managedCount: 1, diagnosticCount: 0,
+  }));
+  let previews = 0;
+  const requests: { revision: number; referenceFingerprint: string }[] = [];
+  await page.route("**/api/admin/downloads/kept/delete-preview", route => json(route, {
+    managedFileId: "11111111-1111-4111-8111-111111111111", revision: ++previews,
+    referenceFingerprint: `proof-${previews}`, title: baseFile.title, referenceCount: 1,
+    favoriteReferences: 1, playlistReferences: 0, keepReferences: 0, otherReferences: 0,
+  }));
+  await page.route("**/api/admin/downloads/kept/delete", route => {
+    requests.push(route.request().postDataJSON());
+    return requests.length === 1
+      ? json(route, { error: "The references changed. Close this dialog and check the kept copy again." }, 409)
+      : json(route, { jobId: "delete-job", queued: true }, 202);
+  });
+  await page.goto("/#/library/kept");
+  const remove = page.getByRole("button", { name: "Delete kept copy…", exact: true });
+  await remove.click();
+  const dialog = page.getByRole("alertdialog", { name: "Delete the kept copy of Fixture Song?" });
+  await dialog.getByRole("button", { name: "Delete kept copy", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("The references changed");
+  expect(requests).toHaveLength(1);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await remove.click();
+  await dialog.getByRole("button", { name: "Delete kept copy", exact: true }).click();
+  await expect.poll(() => requests.length).toBe(2);
+  expect(requests[1]).toMatchObject({ revision: 2, referenceFingerprint: "proof-2" });
+  await expect(dialog).not.toBeVisible();
+});

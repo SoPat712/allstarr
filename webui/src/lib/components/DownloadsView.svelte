@@ -13,6 +13,7 @@
     settings,
     type DownloadsResponse,
     type ManagedDownload,
+    type KeptCopyDeletionPreview,
     type ProviderDefinition,
   } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
@@ -32,7 +33,8 @@
 
   let { storage }: { storage: "cache" | "kept" } = $props();
 
-  type Removal = { kind: "one"; file: ManagedDownload } | { kind: "release"; file: ManagedDownload } | { kind: "all" };
+  type Removal = { kind: "one"; file: ManagedDownload } | { kind: "release"; file: ManagedDownload } | { kind: "all" }
+    | { kind: "delete-kept"; file: ManagedDownload; preview: KeptCopyDeletionPreview; requestId: string };
 
   let data = $state<DownloadsResponse | null>(null);
   let providers = $state<ProviderDefinition[]>([]);
@@ -45,6 +47,7 @@
   let action = $state("");
   let removal = $state<Removal | null>(null);
   let confirmOpen = $state(false);
+  let removalError = $state("");
   let storageMode = $state("Cache");
   let cacheDurationHours = $state(72);
   let transcodeCacheMinutes = $state(60);
@@ -156,15 +159,33 @@
   }
 
   function confirm(next: Removal) {
+    removalError = "";
     removal = next;
     confirmOpen = true;
+  }
+
+  async function previewDeletion(file: ManagedDownload) {
+    if (action) return;
+    action = "preview-delete";
+    try {
+      const preview = await downloads.previewKeptDeletion(file.path);
+      confirm({ kind: "delete-kept", file, preview, requestId: crypto.randomUUID() });
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "The kept copy could not be checked. Refresh and retry.");
+    } finally {
+      action = "";
+    }
   }
 
   async function remove() {
     if (!removal || action) return;
     action = "remove";
+    removalError = "";
     try {
-      if (removal.kind === "all") {
+      if (removal.kind === "delete-kept") {
+        await downloads.deleteKeptCopy(removal.preview, removal.requestId);
+        toast.success("Kept copy deletion queued.");
+      } else if (removal.kind === "all") {
         const result = await downloads.removeAll(storage);
         toast.success(result.message || `${result.deletedCount} indexed ${label.toLowerCase()} track${result.deletedCount === 1 ? "" : "s"} removed${result.skippedUnknown ? `; ${result.skippedUnknown} diagnostic file${result.skippedUnknown === 1 ? "" : "s"} skipped` : ""}${result.skippedReferenced ? `; ${result.skippedReferenced} referenced file${result.skippedReferenced === 1 ? "" : "s"} protected` : ""}.`);
       } else {
@@ -176,7 +197,7 @@
       confirmOpen = false;
       await refresh();
     } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "Removal failed.");
+      removalError = cause instanceof Error ? cause.message : "Removal failed. Refresh and retry.";
     } finally {
       action = "";
     }
@@ -298,6 +319,9 @@
               </span>
               <span class="download-actions" role="cell">
                 <Button variant="secondary" href={downloads.fileUrl(file.path, storage)}>Download</Button>
+                {#if !cached && file.canDeleteKeptCopy}
+                  <Button variant="destructive" disabled={Boolean(action)} onclick={() => void previewDeletion(file)}>Delete kept copy…</Button>
+                {/if}
                 {#if file.removable}
                   {#if file.explicitlyKept}
                     <Button disabled={Boolean(action)} onclick={() => confirm({ kind: "release", file })}>Release Keep</Button>
@@ -362,15 +386,20 @@
 
   <ConfirmDialog
     bind:open={confirmOpen}
-    title={removal?.kind === "all"
+    title={removal?.kind === "delete-kept" ? `Delete the kept copy of ${removal.preview.title}?` : removal?.kind === "all"
       ? `Remove all ${label.toLowerCase()} tracks?`
       : removal?.kind === "release" ? "Release this Keep?" : "Remove this track?"}
-    description={removal?.kind === "all"
+    description={removal?.kind === "delete-kept"
+      ? `This removes the audio and lyrics for everyone in this household. ${removal.preview.favoriteReferences} favorite${removal.preview.favoriteReferences === 1 ? "" : "s"}, ${removal.preview.playlistReferences} playlist reference${removal.preview.playlistReferences === 1 ? "" : "s"}, and ${removal.preview.keepReferences} explicit Keep${removal.preview.keepReferences === 1 ? "" : "s"}${removal.preview.otherReferences ? `, and ${removal.preview.otherReferences} other reference${removal.preview.otherReferences === 1 ? "" : "s"}` : ""} currently protect it. Hearts and playlist entries stay. This ends offline playback from this copy; the song will stream or download again when played online. A new Keep can save it again.`
+      : removal?.kind === "all"
       ? bulkDescription
       : removal?.kind === "release"
         ? "This releases your Keep. Other household interests stay protected. If none remain, the file enters a 24-hour grace period before cleanup."
         : "This deletes the indexed audio file and its lyrics sidecar. This cannot be undone."}
-    confirmLabel={removal?.kind === "all" ? "Remove all" : removal?.kind === "release" ? "Release Keep" : "Remove track"}
+    confirmLabel={removal?.kind === "delete-kept" ? "Delete kept copy" : removal?.kind === "all" ? "Remove all" : removal?.kind === "release" ? "Release Keep" : "Remove track"}
+    disabled={Boolean(action)}
+    closeOnConfirm={false}
+    error={removalError}
     onConfirm={remove}
   />
 {/if}

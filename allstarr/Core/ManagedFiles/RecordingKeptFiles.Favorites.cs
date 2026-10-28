@@ -71,6 +71,7 @@ public sealed partial class RecordingKeptFiles
                                 where canonical.Id == recordingId || canonical.MergedIntoId == recordingId
                                 orderby adoption.Kept descending, adoption.CreatedAt, adoption.ManagedFileId
                                 select adoption.MetadataJson).FirstOrDefaultAsync(cancellationToken);
+            snapshot ??= await DeletedDisplaySnapshotAsync(db, recordingId.Value, cancellationToken);
             if (snapshot == null) return null;
             KeptRecordingMetadata? metadata;
             try { metadata = JsonSerializer.Deserialize<KeptRecordingMetadata>(snapshot); }
@@ -154,6 +155,7 @@ public sealed partial class RecordingKeptFiles
     private async Task FenceFavoritePublicationAsync(AllstarrDbContext db, KeptRecordingPublication request, CancellationToken token)
     {
         var job = await db.Jobs.AsNoTracking().SingleOrDefaultAsync(item => item.Id == request.DurableJobId, token) ?? throw Denied();
+        if (await PublicationPredatesDeletionAsync(db, request.RecordingId, job, token)) throw Denied();
         await AuthorizeFavoritePublicationAsync(db, job, request, token);
     }
 
@@ -181,6 +183,7 @@ public sealed partial class RecordingKeptFiles
             item.BackendInstanceId == favorite.BackendInstanceId && item.ItemId == favorite.ItemId &&
             item.IsFavorite && item.LastEventId == favorite.Id, cancellationToken);
         if (state == null || !await FavoriteLinkScope.ProveAsync(db, favorite, db.Database.CurrentTransaction != null, false, cancellationToken)) return null;
+        if (await AutomaticRetentionSuppressedAsync(db, HeartKey(state.Id), favorite.Id, cancellationToken)) return null;
         return new(favorite, state, new(ProviderActorKind.User, favorite.OwnerUserId,
             new(favorite.Protocol, favorite.BackendInstanceId, favorite.BackendPrincipalId)));
     }
