@@ -763,6 +763,11 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
             Artists = CatalogDescriptiveMetadata.AlbumArtists(album, "deezer"),
             Label = CatalogDescriptiveMetadata.Label(album),
             Notes = CatalogDescriptiveMetadata.Text(album, "description"),
+            IsExplicit = album.TryGetProperty("explicit_lyrics", out var explicitValue) &&
+                         explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? explicitValue.GetBoolean() : null,
+            Upc = DeezerText(album, "upc"),
+            Edition = DeezerText(album, "edition"),
             IsLocal = false,
             ExternalProvider = "deezer",
             ExternalId = externalId

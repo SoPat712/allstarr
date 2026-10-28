@@ -476,7 +476,10 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
             label: album.Label,
             notes: album.Notes,
             providerIds: album.ProviderIds,
-            lastFmUrl: album.LastFmUrl);
+            lastFmUrl: album.LastFmUrl,
+            isExplicit: album.IsExplicit,
+            upc: album.Upc,
+            edition: album.Edition);
     }
 
     private ProviderArtistMetadata MapArtist(Artist artist) => new(

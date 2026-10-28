@@ -23,7 +23,7 @@ public sealed partial class ProtocolRouteFixtureTests
     public async Task JellyfinNativeCatalog_AppendsMissingProviderChildrenAndPreservesNativeFields(string kind, bool userScoped)
     {
         var gateway = JellyfinCatalogGateway(kind, false);
-        const string nativeAlbum = """{"Id":"native-child","Name":"Visions","Type":"MusicAlbum","Future" : { "value" : [1, true,"Björk"] },"ImageTags":{"Primary":"original"}}""";
+        const string nativeAlbum = """{"Id":"native-child","Name":"Visions","Type":"MusicAlbum","ProviderIds":{"UPC":"012345678905"},"Future" : { "value" : [1, true,"Björk"] },"ImageTags":{"Primary":"original"}}""";
         const string nativeSong = """{"Id":"native-child","Name":"Oblivion","Type":"Audio","Future" : { "value" : [1, true,"Björk"] },"UserData":{"PlayCount":7}}""";
         var native = kind == "artist" ? nativeAlbum : nativeSong;
         using var factory = JellyfinCatalogFactory(gateway.Object, kind,
@@ -62,7 +62,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var gateway = JellyfinCatalogGateway(kind, true, fails);
         var name = kind == "artist" ? "Visions" : "Oblivion";
         var type = kind == "artist" ? "MusicAlbum" : "Audio";
-        var native = $$"""{ "Items": [ {"Id":"native-child","Name":"{{name}}","Type":"{{type}}","Future":true} ], "TotalRecordCount":1 }""";
+        var native = $$"""{ "Items": [ {"Id":"native-child","Name":"{{name}}","Type":"{{type}}","ProviderIds":{"UPC":"012345678905"},"Future":true} ], "TotalRecordCount":1 }""";
         using var factory = JellyfinCatalogFactory(gateway.Object, kind, native);
         using var client = factory.CreateClient();
         if (kind == "album")
@@ -89,7 +89,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var gateway = JellyfinCatalogGateway(kind, false);
         var name = kind == "artist" ? "Visions" : "Oblivion";
         var type = kind == "artist" ? "MusicAlbum" : "Audio";
-        var owned = $$"""{"Items":[{"Id":"native-child","Name":"{{name}}","Type":"{{type}}"}],"TotalRecordCount":1}""";
+        var owned = $$"""{"Items":[{"Id":"native-child","Name":"{{name}}","Type":"{{type}}","ProviderIds":{"UPC":"012345678905"} }],"TotalRecordCount":1}""";
         using var factory = JellyfinCatalogFactory(gateway.Object, kind,
             """{"Items":[],"TotalRecordCount":1,"StartIndex":1}""",
             request => QueryHelpers.ParseQuery(request.RequestUri!.Query)["StartIndex"] == "0" ? owned : null,

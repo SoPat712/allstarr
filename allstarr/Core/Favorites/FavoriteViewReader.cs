@@ -1,5 +1,7 @@
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Music;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Favorites;
@@ -69,7 +71,7 @@ public sealed class FavoriteViewReader(IDbContextFactory<AllstarrDbContext> fact
                 if (state.IsFavorite) values[key] = state.EffectiveAt;
                 else values.Remove(key);
             }
-            return values.OrderByDescending(item => item.Value).ThenBy(item => item.Key.ProviderId, StringComparer.Ordinal)
+            return ProjectAlbums(values.OrderByDescending(item => item.Value).ThenBy(item => item.Key.ProviderId, StringComparer.Ordinal)
                 .ThenBy(item => item.Key.Kind, StringComparer.Ordinal).ThenBy(item => item.Key.ExternalId, StringComparer.Ordinal).Select(pair =>
                 {
                     var own = rows.FirstOrDefault(item => FavoriteLinkScope.Key(item.ItemId) == pair.Key);
@@ -78,7 +80,7 @@ public sealed class FavoriteViewReader(IDbContextFactory<AllstarrDbContext> fact
                     return new FavoriteViewItem(id, resource, pair.Value, FavoriteDisplaySnapshot.Read(id, own?.DisplayMetadataJson)
                         ?? FavoriteDisplaySnapshot.Placeholder(id, resource.ResourceKind))
                     { SharedScope = true };
-                }).ToArray();
+                }).ToArray());
         }
         var result = new List<FavoriteViewItem>();
         foreach (var row in rows.Where(item => item.IsFavorite))
@@ -87,6 +89,23 @@ public sealed class FavoriteViewReader(IDbContextFactory<AllstarrDbContext> fact
             result.Add(new(row.ItemId, resource, row.CreatedAt, FavoriteDisplaySnapshot.Read(row.ItemId, row.DisplayMetadataJson)
                 ?? FavoriteDisplaySnapshot.Placeholder(row.ItemId, resource.ResourceKind)));
         }
-        return result;
+        return ProjectAlbums(result);
+    }
+
+    private static IReadOnlyList<FavoriteViewItem> ProjectAlbums(IReadOnlyList<FavoriteViewItem> items)
+    {
+        var albums = items.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Album)
+            .ToDictionary(item => item.Album(), item => item);
+        var hidden = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var group in MusicAlbumReleases.Partition(albums.Keys).Where(group => group.Count > 1))
+        {
+            var chosen = group.Select(album => albums[album]).OrderBy(item => item.FavoritedAt)
+                .ThenBy(item => item.ItemId, StringComparer.Ordinal).First();
+            foreach (var album in group.Where(album => album.Id != chosen.ItemId)) hidden.Add(album.Id);
+        }
+        var labels = MusicAlbumReleases.Collapse(albums.Keys.Where(album => !hidden.Contains(album.Id)))
+            .ToDictionary(album => album.Id, album => album.Title, StringComparer.Ordinal);
+        return items.Where(item => !hidden.Contains(item.ItemId)).Select(item => labels.TryGetValue(item.ItemId, out var title)
+            ? item with { Display = item.Display with { Title = title } } : item).ToArray();
     }
 }

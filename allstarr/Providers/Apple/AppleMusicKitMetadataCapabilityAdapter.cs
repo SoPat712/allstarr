@@ -101,7 +101,9 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
             if (!HasNext(trackDocument.RootElement))
                 return ProviderOutcome<ProviderAlbumMetadata>.Success(new(album.Id, album.Title, album.Artists,
                     album.TrackCount, album.Artwork, album.SnapshotVersion, tracks: tracks,
-                    year: album.Year, genre: album.Genre, releaseDate: album.ReleaseDate));
+                    year: album.Year, genre: album.Genre, releaseDate: album.ReleaseDate,
+                    label: album.Label, notes: album.Notes, providerIds: album.ProviderIds, lastFmUrl: album.LastFmUrl,
+                    isExplicit: album.IsExplicit, upc: album.Upc, edition: album.Edition));
             if (entries.Length == 0) break;
         }
         return ProviderOutcome<ProviderAlbumMetadata>.Failure(ProviderError.CompatibilityContractChanged());
@@ -287,7 +289,9 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
         return new(id, Required(attributes, "name"), ArtistCredits(item, Required(attributes, "artistName")),
             trackCount is > 0 ? trackCount : null, Artwork(id, attributes, revision), revision,
             releaseDate: releaseDate, year: ReleaseYear(releaseDate), genre: Strings(attributes, "genreNames").FirstOrDefault(),
-            label: String(attributes, "recordLabel"), notes: Notes(attributes));
+            label: String(attributes, "recordLabel"), notes: Notes(attributes),
+            isExplicit: String(attributes, "contentRating") switch { "explicit" => true, "clean" => false, _ => null },
+            upc: String(attributes, "upc"), edition: String(attributes, "edition"));
     }
 
     private static ProviderArtistMetadata MapArtist(JsonElement item, string? revision)

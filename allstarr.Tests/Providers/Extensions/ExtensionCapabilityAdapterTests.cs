@@ -2285,6 +2285,32 @@ public sealed partial class ExtensionCapabilityAdapterTests
         }
     }
 
+    [Theory]
+    [InlineData("isExplicit:true", true)]
+    [InlineData("isExplicit:false", false)]
+    [InlineData("isExplicit:null", null)]
+    [InlineData("", null)]
+    public async Task Metadata_TypedAlbumHooksPreserveNullableReleaseEvidence(string rating, bool? expectedExplicit)
+    {
+        var manifest = Manifest(ProviderCapabilityKind.Metadata, "getAlbum", "searchAlbums");
+        var sandbox = Sandbox(manifest, $$$"""
+            const album = {id:'album-1',title:'Album',artists:[{name:'Artist'}],
+              {{{rating}}}{{{(rating.Length > 0 ? "," : "")}}}upc:'0123456789012',edition:'Deluxe'};
+            registerExtension({getAlbum:function(){return album;},searchAlbums:function(){return {items:[album]};}});
+            """);
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
+
+        var full = (await adapter.GetAlbumAsync(Context(), new(Id(ProviderResourceKind.Album, "album-1")))).RequireValue();
+        var searched = Assert.Single((await adapter.SearchAlbumsAsync(Context(), new("album", new(1)))).RequireValue().Items);
+
+        foreach (var album in new[] { full, searched })
+        {
+            Assert.Equal(expectedExplicit, album.IsExplicit);
+            Assert.Equal("0123456789012", album.Upc);
+            Assert.Equal("Deluxe", album.Edition);
+        }
+    }
+
     [Fact]
     public async Task Metadata_AllDeclaredAlbumAndArtistHooksMapTypedSchemas()
     {

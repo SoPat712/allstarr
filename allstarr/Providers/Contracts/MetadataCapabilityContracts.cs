@@ -244,7 +244,10 @@ public sealed record ProviderAlbumMetadata
         string? label = null,
         string? notes = null,
         IReadOnlyDictionary<string, string>? providerIds = null,
-        string? lastFmUrl = null)
+        string? lastFmUrl = null,
+        bool? isExplicit = null,
+        string? upc = null,
+        string? edition = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         id.RequireOwner(id.ProviderId, ProviderResourceKind.Album);
@@ -284,6 +287,9 @@ public sealed record ProviderAlbumMetadata
             providerIds == null ? new Dictionary<string, string>(StringComparer.Ordinal)
                 : new Dictionary<string, string>(providerIds, StringComparer.Ordinal));
         LastFmUrl = ProviderContractValidation.OptionalText(lastFmUrl, nameof(lastFmUrl), 4000);
+        IsExplicit = isExplicit;
+        Upc = ProviderContractValidation.OptionalText(upc, nameof(upc), 100);
+        Edition = ProviderContractValidation.OptionalText(edition, nameof(edition), 500);
         Tracks = tracks == null ? [] : ProviderContractValidation.Copy(tracks);
         if (Tracks.Any(track => !track.Id.ProviderId.Equals(id.ProviderId, StringComparison.Ordinal)))
         {
@@ -318,6 +324,12 @@ public sealed record ProviderAlbumMetadata
     public IReadOnlyDictionary<string, string> ProviderIds { get; }
 
     public string? LastFmUrl { get; }
+
+    public bool? IsExplicit { get; }
+
+    public string? Upc { get; }
+
+    public string? Edition { get; }
 }
 
 public sealed record ProviderArtistMetadata

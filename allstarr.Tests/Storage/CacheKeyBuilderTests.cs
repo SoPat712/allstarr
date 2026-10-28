@@ -15,6 +15,11 @@ public class CacheKeyBuilderTests
                 limit, true, albums, false);
         var key = Key();
         Assert.StartsWith("search:v3:", key, StringComparison.Ordinal);
+        Assert.StartsWith("search:v4:", Key(albums: true), StringComparison.Ordinal);
+        Assert.Equal(ApplicationCacheCategory.SearchResults, ApplicationCachePolicyRegistry.Classify(Key(albums: true)));
+        var albumMetadata = CacheKeyBuilder.BuildProtocolMetadataKey("deezer", "scope", "Album:detail", "album");
+        Assert.StartsWith("protocol:metadata:v2:", albumMetadata, StringComparison.Ordinal);
+        Assert.Equal(ApplicationCacheCategory.ProviderResponse, ApplicationCachePolicyRegistry.Classify(albumMetadata));
         Assert.Equal(ApplicationCacheCategory.SearchResults, ApplicationCachePolicyRegistry.Classify(key));
         Assert.Equal(ApplicationCacheCategory.SearchResults, ApplicationCachePolicyRegistry.Classify(key.Replace("search:v3:", "search:v2:", StringComparison.Ordinal)));
         Assert.DoesNotContain("private query", key);

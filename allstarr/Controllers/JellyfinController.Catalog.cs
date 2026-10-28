@@ -53,7 +53,11 @@ public partial class JellyfinController
                 var additions = new List<Dictionary<string, object?>>();
                 if (artistAlbums)
                 {
-                    foreach (var album in await merge.MissingArtistAlbumsAsync(context, name.GetString() ?? "", titles))
+                    var nativeAlbums = owned.Select(row => NativeAlbumMetadata(row.Deserialize<Dictionary<string, object?>>() ?? []))
+                        .ToArray();
+                    foreach (var nativeAlbum in nativeAlbums)
+                        if (string.IsNullOrWhiteSpace(nativeAlbum.Artist)) nativeAlbum.Artist = name.GetString() ?? "";
+                    foreach (var album in await merge.MissingArtistAlbumsAsync(context, name.GetString() ?? "", nativeAlbums))
                     {
                         var item = _responseBuilder.ConvertAlbumForQuery(album);
                         item["Name"] = ExternalTrackPresentation.Title(album.Title, false, context.Policy?.Preferences);

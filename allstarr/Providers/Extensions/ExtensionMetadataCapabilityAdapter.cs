@@ -126,7 +126,10 @@ public sealed class ExtensionMetadataCapabilityAdapter : ExtensionCapabilityAdap
         year: Positive(value, "year"), genre: OptionalText(value, "genre"), releaseDate: OptionalText(value, "releaseDate"),
         label: OptionalText(value, "label"), notes: OptionalText(value, "notes"), providerIds: ProviderIds(value),
         lastFmUrl: OptionalText(value, "lastFmUrl"), tracks: value.TryGetProperty("tracks", out var tracks) && tracks.ValueKind == JsonValueKind.Array
-            ? tracks.EnumerateArray().Select(MapTrack) : []);
+            ? tracks.EnumerateArray().Select(MapTrack) : [],
+        isExplicit: value.TryGetProperty("isExplicit", out var explicitValue) &&
+                    explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? explicitValue.GetBoolean() : null,
+        upc: OptionalText(value, "upc"), edition: OptionalText(value, "edition"));
 
     private ProviderArtistMetadata MapArtist(JsonElement value) => new(Id(ProviderResourceKind.Artist, Text(value, "id")),
         Text(value, "name"), Artwork(value), OptionalText(value, "snapshotVersion"),

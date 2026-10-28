@@ -197,6 +197,55 @@ public sealed partial class ExtensionCapabilityAdapterTests
         Assert.Equal("1", counter.RootElement.GetProperty("id").GetString());
     }
 
+    [Theory]
+    [InlineData("isExplicit:true,upc:'0123456789012',edition:'Deluxe'", true, "0123456789012", "Deluxe")]
+    [InlineData("isExplicit:false,upc:'0123456789012',edition:'Deluxe'", false, "0123456789012", "Deluxe")]
+    [InlineData("is_explicit:false,external_ids:{upc:'0123456789012'},album_version:'Deluxe'", false, "0123456789012", "Deluxe")]
+    [InlineData("explicit_lyrics:false", false, null, null)]
+    [InlineData("explicit:true", true, null, null)]
+    [InlineData("contentRating:'explicit'", true, null, null)]
+    [InlineData("content_rating:'clean'", false, null, null)]
+    [InlineData("content_rating:'cleaned'", false, null, null)]
+    [InlineData("isExplicit:'false',explicit_lyrics:0,version:'resource-v2'", null, null, null)]
+    [InlineData("", null, null, null)]
+    public async Task MetadataCompatibility_AlbumEvidencePreservesNullableSourceFacts(
+        string evidence, bool? expectedExplicit, string? expectedUpc, string? expectedEdition)
+    {
+        var script = $$$"""
+            registerExtension({getAlbum:function(){return {
+              id:'album-1',name:'Album',artists:'Artist',{{{evidence}}}{{{(evidence.Length > 0 ? "," : "")}}}
+              tracks:[{id:'track-1',name:'Song',artists:'Artist',explicit:true}]};}});
+            """;
+        var (sandbox, manifest) = CompatibilitySandbox(script);
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
+
+        var album = (await adapter.GetAlbumAsync(Context(manifest.Id),
+            new(new(manifest.Id, ProviderResourceKind.Album, "album-1")))).RequireValue();
+
+        Assert.Equal(expectedExplicit, album.IsExplicit);
+        Assert.Equal(expectedUpc, album.Upc);
+        Assert.Equal(expectedEdition, album.Edition);
+        Assert.True(Assert.Single(album.Tracks).IsExplicit);
+    }
+
+    [Theory]
+    [InlineData("apple-music", "apple-musickit", "123")]
+    [InlineData("deezer", "deezer", "deezer:123")]
+    [InlineData("spotify-web", "spotify", "opaqueCaseID")]
+    public async Task MetadataCompatibility_AlbumCatalogAliasUsesDeclaredSource(string source, string provider, string id)
+    {
+        var (sandbox, manifest) = CompatibilitySandbox($$$"""
+            registerExtension({getAlbum:function(id){return {
+              id:id,name:'Album',artists:'Artist',provider_id:'{{{source}}}'
+            };}});
+            """);
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
+        var album = (await adapter.GetAlbumAsync(Context(manifest.Id),
+            new(new(manifest.Id, ProviderResourceKind.Album, id)))).RequireValue();
+        Assert.Equal(id.StartsWith(provider + ":", StringComparison.Ordinal) ? id[(provider.Length + 1)..] : id,
+            album.ProviderIds[provider]);
+    }
+
     [Fact]
     public async Task MetadataCompatibility_PreservesCamelCaseFactsAndDescriptions()
     {

@@ -200,6 +200,8 @@ Provider songs retain available release dates, credits, genres, identifiers, lab
 
 External songs, albums and artists use real artwork when available. Missing artwork uses a square raster cover of the provider's icon, including installed extension icons, or a letter tile when no icon exists. The same covers appear in Jellyfin, Subsonic and dashboard rows; native library artwork keeps its existing behavior.
 
+Copies of the same album release share one row when catalog identifiers, UPC or a complete recording list establish equivalence. An existing library or saved album keeps its identity. Different editions remain separate. When both explicit and clean editions appear, their names include **(Explicit)** and **(Clean)**; a lone edition keeps its ordinary name. The existing **[A]** marker still identifies external items.
+
 ArtistGrid's alternate titles also work in music-app search. For example, searching for **Communicate Ariana Grande** can find **Diva Shit [V1]** while keeping that version's own title and duration. Alternate titles improve search relevance without changing recording match scores or combining different versions.
 
 ArtistGrid uses the tracker's file date for the song date and keeps leak dates, version notes, quality descriptions and original filenames in the overview. Eras provide album grouping. A tracker quality label alone does not establish the delivered codec or container.

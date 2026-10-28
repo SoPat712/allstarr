@@ -52,7 +52,11 @@ public sealed partial class FavoriteActionPipeline
                         {
                             ArtistIds = Names([album.ArtistId ?? ""]),
                             AlbumArtistIds = Names([album.ArtistId ?? ""]),
-                            Genres = Names([album.Genre ?? ""])
+                            Genres = Names([album.Genre ?? ""]),
+                            IsExplicit = album.IsExplicit,
+                            Upc = album.Upc,
+                            Edition = album.Edition,
+                            ProviderIds = new(album.ProviderIds, StringComparer.Ordinal)
                         };
                     break;
                 case ProviderResourceKind.Artist:
@@ -106,7 +110,9 @@ public sealed partial class FavoriteActionPipeline
                 : song.Artists.Select((name, index) => string.Equals(name, song.AlbumArtist, StringComparison.OrdinalIgnoreCase) &&
                     index < song.ArtistIds.Count ? song.ArtistIds[index] : "")),
             AlbumId = FavoriteDisplaySnapshot.Text(song.AlbumId) ? song.AlbumId : null,
-            Genres = Names([song.Genre ?? ""])
+            Genres = Names([song.Genre ?? ""]),
+            IsExplicit = song.ExplicitContentLyrics switch { 1 => true, 0 or 3 => false, _ => null },
+            Upc = song.Upc
         };
     }
 

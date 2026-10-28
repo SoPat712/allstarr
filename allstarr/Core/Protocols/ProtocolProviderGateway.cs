@@ -429,6 +429,8 @@ public sealed partial class ProtocolProviderGateway(
             routed.Artists.AddRange(result.Artists);
         }
 
+        if (albumLimit > 0 && routed.Albums.Count > 1)
+            routed.Albums = await EnrichAlbumReleasesAsync(protocol, routed.Albums, plan.Candidates);
         var songs = await CollapseVerifiedSearchTracksAsync(
             routed.Songs.Where(song => effectivePolicy?.Includes(song) != false).ToArray(),
             trackLookups.Where(item => effectivePolicy?.Includes(item.Song) != false).ToArray(),
@@ -441,7 +443,7 @@ public sealed partial class ProtocolProviderGateway(
             Songs = MergeSearch(songs, songLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
                 item => item.ExternalProvider, item => SearchRelevanceRanker.ScoreSong(query, item,
                     knownDurationTitles.Contains(SearchRelevanceRanker.RecordingTitle(item.Title, item.Artist, item.AlbumArtist))), providerOrder),
-            Albums = MergeSearch(routed.Albums, albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
+            Albums = MergeSearch(MusicAlbumReleases.Collapse(routed.Albums), albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
                 item => item.ExternalProvider, item => SearchRelevanceRanker.Score(query, item.Title, item.Artist), providerOrder),
             Artists = MergeSearch(routed.Artists, artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
                 item => item.ExternalProvider, item => SearchRelevanceRanker.Score(query, item.Name), providerOrder)
@@ -804,7 +806,7 @@ public sealed partial class ProtocolProviderGateway(
         ArgumentNullException.ThrowIfNull(protocol);
         var routedProviderId = NormalizeProvider(providerId);
         if (protocol.IsReadOnly)
-            return await ReadKnownRelationshipsAsync<Album>(protocol, routedProviderId, externalId, "albums");
+            return MusicAlbumReleases.Collapse(await ReadKnownRelationshipsAsync<Album>(protocol, routedProviderId, externalId, "albums"));
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-artist-albums");
         if (routed.Candidate != null)
@@ -834,7 +836,7 @@ public sealed partial class ProtocolProviderGateway(
             await ApplyKnownPublicIdsAsync(routed.Candidate.Context, albums.SelectMany(album => album.Songs).ToArray(), protocol);
             await CacheResourcesAsync(routed.Candidate.Context, albums, []);
             await CacheKnownRelationshipsAsync(protocol, routed.Candidate.Context, externalId, "albums", albums);
-            return albums;
+            return MusicAlbumReleases.Collapse(albums);
         }
 
         return [];
@@ -2378,6 +2380,9 @@ public sealed partial class ProtocolProviderGateway(
                 : null,
             Artists = artists,
             Label = item.Label,
+            IsExplicit = item.IsExplicit,
+            Upc = item.Upc,
+            Edition = item.Edition,
             Notes = item.Notes,
             ProviderIds = new Dictionary<string, string>(item.ProviderIds, StringComparer.Ordinal),
             LastFmUrl = item.LastFmUrl,

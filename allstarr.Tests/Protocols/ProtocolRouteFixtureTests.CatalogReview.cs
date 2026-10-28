@@ -46,7 +46,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var gateway = JellyfinCatalogGateway(kind, false);
         var name = kind == "artist" ? "Visions" : "Oblivion";
         var type = kind == "artist" ? "MusicAlbum" : "Audio";
-        var native = $$"""{"Items":[{"Id":"native-z","Name":"{{name}}","Type":"{{type}}","Future":true},{"Id":"native-a","Name":"Owned","Type":"{{type}}"}],"TotalRecordCount":2}""";
+        var native = $$"""{"Items":[{"Id":"native-z","Name":"{{name}}","Type":"{{type}}","ProviderIds":{"UPC":"012345678905"},"Future":true},{"Id":"native-a","Name":"Owned","Type":"{{type}}"}],"TotalRecordCount":2}""";
         using var factory = JellyfinCatalogFactory(gateway.Object, kind, native, request =>
             Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri!.Query)
                 .TryGetValue("ParentId", out var parentId) && parentId == "library"
