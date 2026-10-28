@@ -18,6 +18,14 @@ public partial class JellyfinController
         var nativeIds = new List<string>();
         foreach (var itemId in requested.Distinct(StringComparer.Ordinal))
         {
+            var execution = HttpContext.RequireProtocolExecutionContext();
+            var fork = await WritablePlaylists.ReadForkAsync(execution, itemId, HttpContext.RequestAborted);
+            if (fork != null)
+            {
+                items[itemId] = JsonSerializer.SerializeToNode(_virtualPlaylistProtocolAdapter.ToItem(
+                    ExternalTrackPresentation.ApplyPreferences(fork.Playlist, execution.Policy), itemId))!.AsObject();
+                continue;
+            }
             var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(itemId);
             if (!isExternal)
             {

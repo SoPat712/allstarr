@@ -1210,6 +1210,8 @@ public partial class JellyfinController : ControllerBase
             });
         }
 
+        var playlistFork = await TryEditPlaylistForkAsync(path);
+        if (playlistFork != null) return playlistFork;
         var deletedPlaylist = await TryDeleteWritablePlaylistAsync(path);
         if (deletedPlaylist != null) return deletedPlaylist;
         var writablePlaylist = await TryWritablePlaylistAsync(path);

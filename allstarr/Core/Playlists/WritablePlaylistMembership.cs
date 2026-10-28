@@ -20,7 +20,7 @@ public sealed record WritablePlaylistMember(string OccurrenceId, string ItemId, 
 
 public sealed record WritablePlaylistState(IReadOnlyList<WritablePlaylistMember> Members);
 
-public sealed class WritablePlaylistMembership(
+public sealed partial class WritablePlaylistMembership(
     IDbContextFactory<AllstarrDbContext> factory,
     IProtocolProviderGateway providers,
     ILibraryIndexService library)
