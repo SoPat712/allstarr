@@ -41,6 +41,7 @@ public sealed class HealthSmokeServiceTests : IAsyncLifetime
     private HttpClient _client = null!;
     private IOptions<JellyfinSettings> _jellyfinSettings = null!;
     private HealthSmokeServerProbe _serverProbe = null!;
+    private ProblemAlertService? _problemAlerts;
     private HealthSmokeProtocolProbeTests.Fixture _upstream = null!;
 
     public async Task InitializeAsync()
@@ -89,7 +90,7 @@ public sealed class HealthSmokeServiceTests : IAsyncLifetime
 
     private HealthSmokeService Service(Factory? factory = null) => new(factory ?? _factory, _secrets, _settings, _verifier.Object,
         new(_backendType, _backendType.ToString(), "fixture", false, false, null), new() { BackendInstanceId = "fixture" },
-        _clock.Object, _jobs, new EffectiveProviderPolicyResolver(_settings), new(_client, TimeProvider.System), _jellyfinSettings, _serverProbe);
+        _clock.Object, _jobs, new EffectiveProviderPolicyResolver(_settings), new(_client, TimeProvider.System), _jellyfinSettings, _serverProbe, _problemAlerts);
 
     private HealthSmokeSaveRequest Request(bool enabled = true, int interval = 30, long revision = 0) =>
         new(enabled, _listener, IntervalMinutes: interval, SearchQuery: "Fixture song", ExpectedRevision: revision,
@@ -450,6 +451,79 @@ public sealed class HealthSmokeServiceTests : IAsyncLifetime
             await _jobs.CompleteAsync(claim, completion);
         }
         Assert.Equal(["failed", "recovered"], states);
+    }
+
+    [Fact]
+    public async Task SharedHealthIncidentsReuseTheConfiguredWebhookWithoutParallelDeliveries()
+    {
+        Accept();
+        _problemAlerts = new(_factory, _secrets, _jobs, _clock.Object,
+            new(_backendType, _backendType.ToString(), "fixture", false, false, null), new() { BackendInstanceId = "fixture" });
+        var service = Service();
+        await service.ConfigureAsync(Request() with { WebhookUrl = "http://webhook-fixture/notify?key=fixture-private" }, _administrator, default);
+        using var services = new ServiceCollection().BuildServiceProvider();
+        async Task Run(string? failure)
+        {
+            _upstream.FailNextRunAt(failure);
+            _now = _now.AddMinutes(1);
+            await service.EnqueueAsync(default);
+            var claim = await _jobs.ClaimNextAsync("check-worker", [HealthSmokeService.JobType]);
+            await _jobs.CompleteAsync(claim!, await service.ExecuteAsync(new(claim!, services), default));
+        }
+        await Run("lyrics");
+        await Run("lyrics");
+        await Run("lyrics");
+        await Run(null);
+        await using var db = _factory.CreateDbContext();
+        Assert.Empty(await db.Jobs.Where(item => item.Type == HealthSmokeService.AlertJobType).ToArrayAsync());
+        Assert.Single(await db.ProblemIncidents.ToArrayAsync());
+        Assert.Equal(2, await db.NotificationDeliveries.CountAsync());
+        Assert.Equal("resolved", (await db.ProblemIncidents.SingleAsync()).State);
+        Assert.Single(await db.NotificationChannels.ToArrayAsync());
+        var bodies = new List<string>();
+        using var transport = new WebhookHandler(async request =>
+        {
+            bodies.Add(await request.Content!.ReadAsStringAsync());
+            return new(HttpStatusCode.NoContent);
+        });
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient("problem-alerts")).Returns(() => new HttpClient(transport, false));
+        var handler = new ProblemAlertDeliveryHandler(_factory, _secrets, clients.Object, _problemAlerts, _clock.Object);
+        while (await _jobs.ClaimNextAsync("delivery", [ProblemAlertService.DeliveryJobType]) is { } claim)
+            await _jobs.CompleteAsync(claim, await handler.ExecuteAsync(new(claim, services), default));
+        Assert.Single(bodies);
+        Assert.Contains("lyrics", bodies[0]);
+        Assert.All(bodies, body => Assert.DoesNotContain("fixture-private", body));
+    }
+
+    [Fact]
+    public async Task PreviouslyOpenHealthStateIsAdoptedWithoutAnotherOpening()
+    {
+        Accept();
+        var service = Service();
+        await service.ConfigureAsync(Request() with { WebhookUrl = "http://webhook-fixture/notify" }, _administrator, default);
+        using var services = new ServiceCollection().BuildServiceProvider();
+        async Task Run(string? failure)
+        {
+            _upstream.FailNextRunAt(failure);
+            _now = _now.AddMinutes(1);
+            await service.EnqueueAsync(default);
+            var claim = await _jobs.ClaimNextAsync("check-worker", [HealthSmokeService.JobType]);
+            await _jobs.CompleteAsync(claim!, await service.ExecuteAsync(new(claim!, services), default));
+        }
+        await Run("lyrics");
+        await Run("lyrics");
+        var oldDelivery = await _jobs.ClaimNextAsync("legacy-delivery", [HealthSmokeService.AlertJobType]);
+        await _jobs.CompleteAsync(oldDelivery!, DurableJobCompletion.Success());
+        _problemAlerts = new(_factory, _secrets, _jobs, _clock.Object,
+            new(_backendType, _backendType.ToString(), "fixture", false, false, null), new() { BackendInstanceId = "fixture" });
+        service = Service();
+        await Run("lyrics");
+        await using var db = _factory.CreateDbContext();
+        Assert.Empty(await db.NotificationDeliveries.ToArrayAsync());
+        Assert.Equal("open", (await db.ProblemIncidents.SingleAsync()).State);
+        await Run(null);
+        Assert.Equal("resolved", (await db.NotificationDeliveries.SingleAsync()).Event);
     }
 
     [Theory]

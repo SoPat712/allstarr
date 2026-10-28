@@ -14,6 +14,7 @@ namespace allstarr.Tests;
 public sealed class SharedProviderHeartsMigrationTests
 {
     private const string Before = "20261025040000_ProblemReports";
+    private const string Target = "20261025080051_SharedProviderHearts";
     private static readonly string[] AddedObjects =
     [
         "index|IX_favorite_event_link_baseline", "index|IX_favorite_event_link_item", "index|IX_favorite_events_OwnerUserId_SharedLinkId",
@@ -78,7 +79,7 @@ public sealed class SharedProviderHeartsMigrationTests
         Assert.Contains("FK_favorite_event_job_lineage", before["table|favorite_events"]);
         var oldRows = await OriginalEvents(db);
 
-        if (synchronous) migrator.Migrate(); else await migrator.MigrateAsync();
+        if (synchronous) migrator.Migrate(Target); else await migrator.MigrateAsync(Target);
 
         var after = await Objects(db);
         Assert.Equal(AddedObjects.Order(), after.Keys.Except(before.Keys).Order());
@@ -122,6 +123,7 @@ public sealed class SharedProviderHeartsMigrationTests
         var link = await f.Service.CreateAsync(f.Admin, f.CreateRequest(), default);
         var heart = await f.Heart(f.Jellyfin, true, "scope");
         await using var db = f.Factory.CreateDbContext();
+        await db.GetService<IMigrator>().MigrateAsync(Target);
         var before = await Objects(db);
         var events = await OriginalEvents(db);
         var error = await Assert.ThrowsAsync<SqliteException>(() => db.GetService<IMigrator>().MigrateAsync(Before));
@@ -208,14 +210,14 @@ public sealed class SharedProviderHeartsMigrationTests
         await migrator.MigrateAsync(Before);
         var before = await Objects(db);
         failure.Enabled = true;
-        if (synchronous) Assert.Throws<InvalidOperationException>(() => migrator.Migrate());
-        else await Assert.ThrowsAsync<InvalidOperationException>(() => migrator.MigrateAsync());
+        if (synchronous) Assert.Throws<InvalidOperationException>(() => migrator.Migrate(Target));
+        else await Assert.ThrowsAsync<InvalidOperationException>(() => migrator.MigrateAsync(Target));
         failure.Enabled = false;
         Assert.Equal(before, await Objects(db));
         await db.Database.CloseConnectionAsync();
         await db.Database.OpenConnectionAsync();
         await Assert.ThrowsAsync<SqliteException>(() => db.Database.SqlQueryRaw<int>("SELECT allstarr_valid_favorite_resource('ext-deezer-song-42') AS Value").SingleAsync());
-        await migrator.MigrateAsync();
+        await migrator.MigrateAsync(Target);
         var after = await Objects(db);
         Assert.All(before.Where(item => item.Key != "table|favorite_events"), item => Assert.Equal(item.Value, after[item.Key]));
         Assert.Equal("ok", await db.Database.SqlQueryRaw<string>("SELECT integrity_check AS Value FROM pragma_integrity_check").SingleAsync());

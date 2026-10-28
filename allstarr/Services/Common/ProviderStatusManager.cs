@@ -331,6 +331,12 @@ public class ProviderStatusManager
             previous.Revision > revision || previous.Status.TestedAt > status.TestedAt ? previous : (revision, status));
     }
 
+    public bool CanProveAccountAuthentication(ProviderRuntimeStatusKey key) =>
+        IsCapabilitySupported(key.Provider, key.Capability) && !CanRunWithoutAccount(key.Provider, key.Capability);
+
+    public bool IsAlertObservationEnabled(ProviderRuntimeStatusKey key) =>
+        IsCapabilitySupported(key.Provider, key.Capability) && BuildBaselineStatus(key).IsEnabled;
+
     public bool CanTestCapability(string provider, string capability) =>
         HasProbe(Normalize(provider), Normalize(capability));
 

@@ -81,6 +81,16 @@ public class AdminAuthenticationMiddleware
                        traceSegments.Length == 5 && Guid.TryParse(traceSegments[3], out _) && traceSegments[4] == "diagnostics") ||
                    HttpMethods.IsPost(method) && traceSegments.Length == 5 && Guid.TryParse(traceSegments[3], out _) && traceSegments[4] is "report" or "version" or "forget";
 
+        var alertSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (alertSegments.Length >= 3 && alertSegments[0].Equals("api", StringComparison.OrdinalIgnoreCase) &&
+            alertSegments[1].Equals("admin", StringComparison.OrdinalIgnoreCase) && alertSegments[2].Equals("alerts", StringComparison.OrdinalIgnoreCase))
+            return alertSegments.Length == 3 && HttpMethods.IsGet(method) ||
+                alertSegments.Length == 4 && alertSegments[3] == "incidents" && HttpMethods.IsGet(method) ||
+                alertSegments.Length == 4 && alertSegments[3] == "channels" && HttpMethods.IsPost(method) ||
+                alertSegments.Length == 5 && alertSegments[3] == "channels" && Guid.TryParse(alertSegments[4], out _) && HttpMethods.IsPut(method) ||
+                alertSegments.Length == 6 && alertSegments[3] == "channels" && Guid.TryParse(alertSegments[4], out _) &&
+                    alertSegments[5] == "test" && HttpMethods.IsPost(method);
+
         var reportPath = path.TrimEnd('/');
         if (reportPath.Equals("/api/admin/problem-reports", StringComparison.OrdinalIgnoreCase) ||
             reportPath.Equals("/api/admin/problem-reports/context", StringComparison.OrdinalIgnoreCase))

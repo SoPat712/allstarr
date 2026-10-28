@@ -99,6 +99,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         modelBuilder.ConfigureManualLyricsMappings();
         ConfigureLyricsChoices(modelBuilder);
         ConfigureHealth(modelBuilder);
+        ConfigureProblemAlerts(modelBuilder);
         ConfigureBackups(modelBuilder);
         ConfigurePortableDateTimeOffsets(modelBuilder);
         // Durable identifiers are assigned explicitly; omit provider-specific identifier limits.

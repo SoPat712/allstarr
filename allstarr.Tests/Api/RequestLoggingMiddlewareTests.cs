@@ -7,6 +7,28 @@ namespace allstarr.Tests;
 
 public sealed class RequestLoggingMiddlewareTests
 {
+    [Fact]
+    public async Task NotificationDestinationInSettingsBodyIsNeverLogged()
+    {
+        var messages = new List<string>();
+        var exceptions = new List<Exception>();
+        var context = new DefaultHttpContext();
+        context.Request.Method = "POST";
+        context.Request.Path = "/api/admin/alerts/channels";
+        context.Request.ContentType = "application/json";
+        context.Request.Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(
+            "{\"destination\":\"https://notification.test/private-topic?key=fixture-private\"}"));
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["Debug:LogAllRequests"] = "true" }).Build();
+        var middleware = new RequestLoggingMiddleware(_ => Task.CompletedTask,
+            new CollectingLogger<RequestLoggingMiddleware>(messages, exceptions), configuration);
+        await middleware.InvokeAsync(context);
+        var log = string.Join('\n', messages);
+        Assert.DoesNotContain("private-topic", log);
+        Assert.DoesNotContain("fixture-private", log);
+        Assert.Empty(exceptions);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

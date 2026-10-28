@@ -53,6 +53,7 @@ public sealed record ProviderHealthObservation(
     DateTimeOffset? RetryAfter)
 {
     public DateTimeOffset? PausedAt { get; init; }
+    public bool ReauthenticationRequired { get; init; }
     internal DateTimeOffset? FailureWindowStartedAt { get; init; }
     internal LyricsConfigurationId? LyricsConfiguration { get; init; }
     internal ProviderHealthState? HealthBeforeProbe { get; init; }
@@ -65,6 +66,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
     private readonly object _sync = new();
     private readonly Dictionary<ProviderRuntimeStatusKey, ProviderHealthObservation> _observations = [];
     private readonly Dictionary<ProviderRuntimeStatusKey, List<ProviderCheckResult>> _recent = [];
+    private readonly Dictionary<ProviderRuntimeStatusKey, List<ProviderHealthObservation>> _alertSamples = [];
     private readonly Dictionary<PlaybackItemKey, DateTimeOffset> _playbackFailures = [];
     private readonly Dictionary<PlaybackSourceKey, List<PlaybackStartSample>> _playbackStarts = [];
     private readonly Dictionary<string, SidecarStatus> _sidecars = new(StringComparer.OrdinalIgnoreCase);
@@ -114,7 +116,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
             context.Account?.Revision, error == null, (long)Math.Max(0, elapsed.TotalMilliseconds),
             error?.Code, error?.Kind is ProviderErrorKind.Unauthorized or
                 ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.AccountNeedsConfiguration,
-            error?.RetryAfter, passive: true);
+            error?.RetryAfter, passive: true, loginExpired: error?.Kind is ProviderErrorKind.Unauthorized or ProviderErrorKind.AccountNeedsReauthentication);
     }
 
     void ILyricsOutcomeObserver.ObserveLyrics(ProviderExecutionContext context, ProviderError? error,
@@ -125,7 +127,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
         RecordCore(Key(context.ProviderId, context.Account?.AccountId, ProviderCapabilityKind.Lyrics.ToString()),
             context.Account?.Revision, error == null, (long)Math.Max(0, elapsed.TotalMilliseconds), error?.Code,
             error?.Kind is ProviderErrorKind.Unauthorized or ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.AccountNeedsConfiguration,
-            error?.RetryAfter, passive: true, configuration);
+            error?.RetryAfter, passive: true, configuration, loginExpired: error?.Kind is ProviderErrorKind.Unauthorized or ProviderErrorKind.AccountNeedsReauthentication);
     }
 
     internal ProviderHealthObservation? GetLyrics(ProviderRuntimeStatusKey key, long? revision, LyricsConfigurationId configuration)
@@ -221,7 +223,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
         RecordCore(key, revision, success, latency, reason, authenticationFailure, retryAfter, passive: false, recordAttempt: recordAttempt);
 
     private void RecordCore(ProviderRuntimeStatusKey key, long? revision, bool success, long? latency,
-        string? reason, bool authenticationFailure, TimeSpan? retryAfter, bool passive, LyricsConfigurationId? configuration = null, bool recordAttempt = false)
+        string? reason, bool authenticationFailure, TimeSpan? retryAfter, bool passive, LyricsConfigurationId? configuration = null, bool recordAttempt = false, bool loginExpired = false)
     {
         if (reason == LocalCapacityException.Code) return;
         lock (_sync)
@@ -245,10 +247,14 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
             _observations[key] = new(revision, health,
                 now, latency, SafeReason(reason), failures, opens ? now.Add(cooldown) : null)
             {
+                ReauthenticationRequired = loginExpired || reason is "unauthorized" or "account-needs-reauthentication" or "authentication-required",
                 LyricsConfiguration = configuration,
                 FailureWindowStartedAt = success ? null : withinWindow ? previous!.FailureWindowStartedAt : now,
                 PausedAt = opens ? comparable && IsCircuitOpen(previous!) ? previous!.PausedAt ?? now : now : null
             };
+            if (!_alertSamples.TryGetValue(key, out var alertSamples)) _alertSamples[key] = alertSamples = [];
+            if (alertSamples.Count >= 20) alertSamples.RemoveAt(0);
+            alertSamples.Add(_observations[key]);
             if (!passive && !recordAttempt) return;
             if (!_recent.TryGetValue(key, out var recent)) _recent[key] = recent = [];
             if (recent.Count >= 20) recent.RemoveAt(0);
@@ -299,6 +305,17 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
         lock (_sync)
             return _observations.TryGetValue(key, out var value) && IsFresh(value) &&
                 (!revision.HasValue || value.AccountRevision == revision) ? value : null;
+    }
+
+    public IReadOnlyList<ProviderHealthObservation> AlertSamples(ProviderRuntimeStatusKey key, long? revision)
+    {
+        lock (_sync) return _alertSamples.TryGetValue(key, out var samples)
+            ? samples.Where(item => item.AccountRevision == revision).ToArray() : [];
+    }
+
+    public IReadOnlyDictionary<ProviderRuntimeStatusKey, ProviderHealthObservation> Snapshot()
+    {
+        lock (_sync) return new Dictionary<ProviderRuntimeStatusKey, ProviderHealthObservation>(_observations);
     }
 
     public ProviderHealthObservation? GetForDisplay(ProviderRuntimeStatusKey key, long? revision = null)
@@ -389,6 +406,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
         var oldest = _observations.MinBy(item => item.Value.ObservedAt).Key;
         _observations.Remove(oldest);
         _recent.Remove(oldest);
+        _alertSamples.Remove(oldest);
     }
 
     private static ProviderRuntimeStatusKey Key(string provider, Guid? account, string capability) =>
