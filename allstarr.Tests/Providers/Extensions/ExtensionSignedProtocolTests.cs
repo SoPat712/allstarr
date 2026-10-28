@@ -132,6 +132,22 @@ public sealed class ExtensionSignedProtocolTests : IDisposable
         Assert.Equal(200, response.RootElement.GetProperty("statusCode").GetInt32());
     }
 
+    [Fact]
+    public async Task SignedFetch_ReturnsProviderFailureWhenRetryDelayExceedsResolutionBudget()
+    {
+        var client = await SignedInAsync();
+        handler.Failures = 2;
+        handler.RetryAfter = 25;
+        handler.ErrorBody = """{"origin":"provider","code":"PROVIDER_UNAVAILABLE","retryable":true,"retry_mode":"same_operation"}""";
+        using var budget = new ExtensionInvocationBudget(TimeSpan.FromSeconds(150), default, clock, isDownload: true,
+            resolutionDeadline: clock.GetUtcNow().AddSeconds(1));
+        var pending = Task.Run(() => client.SignedFetch("POST", "/dl/tid", "{}", null));
+        using var result = JsonDocument.Parse(JsonSerializer.Serialize(await pending.WaitAsync(TimeSpan.FromSeconds(10))));
+        Assert.Equal(503, result.RootElement.GetProperty("statusCode").GetInt32());
+        Assert.Single(handler.Requests.Skip(1));
+        Assert.False(budget.Token.IsCancellationRequested);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

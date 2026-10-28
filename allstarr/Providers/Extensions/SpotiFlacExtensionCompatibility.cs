@@ -1293,7 +1293,8 @@ public static class SpotiFlacExtensionCompatibility
               result = _spotiflacExtension.download(trackId, quality, output, function() {}, _sfDownloadOptions(request, trackId, track));
               if (result && result.success === false) throw result;
             } catch (error) {
-              if (!selection.fallback || _sfStopQualityFallback(error) || utils.getResolutionRemainingMs() < 30000)
+              if (!selection.fallback || _sfStopQualityFallback(error) ||
+                  utils.getResolutionRemainingMs() < (request.prepareForStreaming ? 1000 : 30000))
                 throw _sfDownloadError(error);
               quality = selection.fallback;
               _sfForgetPrepared(request.trackId);

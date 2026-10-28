@@ -110,7 +110,7 @@ public abstract class ExtensionCapabilityAdapterBase : IProviderUrlCapability
 
     protected async Task<ProviderOutcome<T>> InvokeAsync<T>(ProviderExecutionContext context, string hook,
         object request, Func<JsonElement, T> map, bool requireAccount = false,
-        Func<IDisposable>? openInvocationScope = null)
+        Func<IDisposable>? openInvocationScope = null, DateTimeOffset? resolutionDeadline = null)
     {
         if (!Hooks.Contains(hook) && !(hook == "handleUrl" && UrlPatterns.Count > 0))
             return Failure<T>(ProviderErrorKind.NotSupported);
@@ -133,7 +133,7 @@ public abstract class ExtensionCapabilityAdapterBase : IProviderUrlCapability
                 context.CancellationToken.ThrowIfCancellationRequested();
                 if (context.IsExpired(DateTimeOffset.UtcNow)) return Failure<T>(ProviderErrorKind.CapabilityUnavailable);
                 var cacheContext = context.Account == null ? null : JsonSerializer.Serialize(new { context.Account.AccountId, context.Account.Revision });
-                var json = _sandbox.InvokeJson(hook, JsonSerializer.Serialize(request, JsonOptions), context.CancellationToken, cacheContext);
+                var json = _sandbox.InvokeJson(hook, JsonSerializer.Serialize(request, JsonOptions), context.CancellationToken, cacheContext, resolutionDeadline);
                 if (json == null) return Failure<T>(ProviderErrorKind.NotSupported);
                 using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 32 });
                 return ProviderOutcome<T>.Success(map(document.RootElement));
@@ -300,7 +300,8 @@ public sealed class ExtensionDownloadCapabilityAdapter : ExtensionCapabilityAdap
         CheckAvailabilityAsync(context, request, prepareForStreaming: false);
 
     internal Task<ProviderOutcome<ProviderDownloadAvailability>> CheckAvailabilityAsync(
-        ProviderExecutionContext context, ProviderDownloadAvailabilityRequest request, bool prepareForStreaming)
+        ProviderExecutionContext context, ProviderDownloadAvailabilityRequest request, bool prepareForStreaming,
+        DateTimeOffset? resolutionDeadline = null)
     {
         context.RequireResourceOwner(request.TrackId, ProviderResourceKind.Track);
         object hookRequest = prepareForStreaming
@@ -309,7 +310,7 @@ public sealed class ExtensionDownloadCapabilityAdapter : ExtensionCapabilityAdap
         return InvokeAsync(context, "checkAvailability", hookRequest, value =>
             new ProviderDownloadAvailability(EnumValue<ProviderDownloadAvailabilityState>(value, "state"),
                 value.TryGetProperty("availableQualities", out var qualities) ? qualities.EnumerateArray().Select(item => Enum.Parse<ProviderAudioQuality>(item.GetString()!, true)) : [], Long(value, "estimatedBytes")),
-            requireAccount: accountRequired);
+            requireAccount: accountRequired, resolutionDeadline: resolutionDeadline);
     }
     internal Task<ProviderOutcome<ProviderRecordingAvailability>> ResolveRecordingAsync(
         ProviderExecutionContext context, ProviderRecordingAvailabilityRequest recording, ProviderAudioQuality quality)
@@ -344,7 +345,7 @@ public sealed class ExtensionDownloadCapabilityAdapter : ExtensionCapabilityAdap
 
     internal Task<ProviderOutcome<ProviderDownloadedArtifact>> DownloadAsync(
         ProviderExecutionContext context, ProviderDownloadRequest request, bool prepareForStreaming, IProgress<ProviderDownloadProgress>? progress = null,
-        ExtensionProgressiveTransfer? progressive = null)
+        ExtensionProgressiveTransfer? progressive = null, DateTimeOffset? resolutionDeadline = null)
     {
         context.RequireResourceOwner(request.TrackId, ProviderResourceKind.Track);
         context.RequireIdempotencyKey();
@@ -368,7 +369,7 @@ public sealed class ExtensionDownloadCapabilityAdapter : ExtensionCapabilityAdap
                 artifacts, request.Workspace, request.DurableJobId, ProviderId, maximumArtifactBytes, context.CancellationToken);
             artifactScope.SetProgressive(progressive);
             return artifactScope;
-        });
+        }, resolutionDeadline: resolutionDeadline);
     }
 }
 
@@ -378,6 +379,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter :
     private readonly ExtensionDownloadCapabilityAdapter download;
     private readonly ProviderDownloadArtifactResolver artifacts;
     private readonly bool requiresPreparedContext;
+    private readonly TimeSpan resolutionTimeout;
 
     public ExtensionDownloadStreamingCapabilityAdapter(
         ExtensionSandbox sandbox,
@@ -389,6 +391,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter :
         download = new ExtensionDownloadCapabilityAdapter(sandbox, manifest, secrets, artifacts, options);
         this.artifacts = artifacts;
         clock = sandbox.Clock;
+        resolutionTimeout = sandbox.StreamResolutionTimeout;
         deezerSpeculation = sandbox.DeezerSpeculation;
         allowsProgressive = sandbox.AllowsProgressiveDownload && manifest.Compatibility == SpotiFlacExtensionCompatibility.Marker;
         allowsImmutableFlac = sandbox.AllowsImmutableFlacDownload && manifest.Compatibility == SpotiFlacExtensionCompatibility.Marker;
@@ -429,7 +432,8 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter :
         if (requiresPreparedContext)
         {
             var availability = await download.CheckAvailabilityAsync(context,
-                new ProviderDownloadAvailabilityRequest(request.TrackId, request.RequestedQuality), prepareForStreaming: true);
+                new ProviderDownloadAvailabilityRequest(request.TrackId, request.RequestedQuality), prepareForStreaming: true,
+                resolutionDeadline: session.ResolutionDeadline);
             if (!availability.IsSuccess && availability.Error!.Kind is not
                 (ProviderErrorKind.NotSupported or ProviderErrorKind.TransientFailure))
                 return ProviderOutcome<ProviderStreamLease>.Failure(availability.Error);
@@ -460,7 +464,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter :
             var outcome = await download.DownloadAsync(
                 downloadContext,
                 new ProviderDownloadRequest(request.TrackId, jobId, workspace.Reference, request.RequestedQuality),
-                prepareForStreaming: true, progressive: session.Transfer);
+                prepareForStreaming: true, progressive: session.Transfer, resolutionDeadline: session.ResolutionDeadline);
             if (!outcome.IsSuccess)
             {
                 return ProviderOutcome<ProviderStreamLease>.Failure(outcome.Error!);

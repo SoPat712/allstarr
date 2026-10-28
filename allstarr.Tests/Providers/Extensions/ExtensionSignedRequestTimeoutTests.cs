@@ -171,10 +171,71 @@ public sealed class ExtensionSignedRequestTimeoutTests : IDisposable
         Assert.Equal(TimeSpan.FromSeconds(seconds), options.GetSignedDownloadRequestTimeout());
     }
 
-    private async Task<ExtensionSandbox> SandboxAsync(int requestSeconds = 120, int budgetSeconds = 300)
+    [Theory]
+    [InlineData(0)]
+    [InlineData(31)]
+    public void StreamResolutionConfiguration_RejectsOutOfBoundsValues(int seconds)
+    {
+        Assert.Throws<InvalidOperationException>(() => new ExtensionExecutionOptions
+        { StreamResolutionSeconds = seconds }.GetStreamResolutionTimeout());
+    }
+
+    [Fact]
+    public void StreamResolutionConfiguration_DefaultIsFifteenSeconds()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(15), new ExtensionExecutionOptions().GetStreamResolutionTimeout());
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(30)]
+    public void StreamResolutionConfiguration_AcceptsBounds(int seconds)
+    {
+        Assert.Equal(TimeSpan.FromSeconds(seconds), new ExtensionExecutionOptions
+        { StreamResolutionSeconds = seconds }.GetStreamResolutionTimeout());
+    }
+
+    [Fact]
+    public async Task SignedRequest_GateWaitHonorsResolutionCancellation()
+    {
+        var bridge = Bridge();
+        bridge.SessionCompleteGrant("fixture-grant");
+        var first = Task.Run(() => bridge.SessionSignedFetch("POST", "/prepare", "{}", null));
+        await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        using var budget = new ExtensionInvocationBudget(TimeSpan.FromSeconds(150), default, clock, isDownload: true,
+            resolutionDeadline: clock.GetUtcNow().AddSeconds(1));
+        var second = Task.Run(() => bridge.SessionSignedFetch("POST", "/prepare", "{}", null));
+        try
+        {
+            await clock.WaitForTimersAsync(TimeSpan.FromSeconds(35));
+            clock.Advance(TimeSpan.FromSeconds(1));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => second.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(1, handler.PreparationCalls);
+        }
+        finally { handler.Release.TrySetResult(); }
+        await first.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [Fact]
+    public async Task SignedDownloadRequest_ResolutionDeadlineBoundsRepeatedDescriptors()
+    {
+        var sandbox = await SandboxAsync(script: """
+            registerExtension({download:function(){
+              for(var i=0;i<100;i++) session.signedFetch('POST','/prepare',{});
+              return {};
+            }});
+            """);
+        handler.AdvanceOnPreparation = () => clock.Advance(TimeSpan.FromMilliseconds(250));
+        var deadline = clock.GetUtcNow().AddSeconds(1);
+        await Assert.ThrowsAsync<TimeoutException>(() => Task.Run(() =>
+            sandbox.InvokeJson("download", "{}", resolutionDeadline: deadline)));
+        Assert.InRange(handler.PreparationCalls, 1, 4);
+    }
+
+    private async Task<ExtensionSandbox> SandboxAsync(int requestSeconds = 120, int budgetSeconds = 300, string? script = null)
     {
         var sandbox = new ExtensionSandbox(root, Manifest,
-            "function work(){return session.signedFetch('POST','/prepare',{});} registerExtension({download:work,searchTracks:work});",
+            script ?? "function work(){return session.signedFetch('POST','/prepare',{});} registerExtension({download:work,searchTracks:work});",
             new Factory(handler), NullLogger.Instance, Permissions, root, protector,
             hookTimeout: TimeSpan.FromMinutes(1), downloadTimeout: TimeSpan.FromSeconds(budgetSeconds), timeProvider: clock,
             executionOptions: requestSeconds == 120 ? null : new ExtensionExecutionOptions { SignedDownloadRequestSeconds = requestSeconds });
@@ -202,6 +263,7 @@ public sealed class ExtensionSignedRequestTimeoutTests : IDisposable
         public int MaximumConcurrency { get; private set; }
         public int PreparationCalls { get; private set; }
         public bool IgnoreCancellation { get; set; }
+        public Action? AdvanceOnPreparation { get; set; }
         public HttpClient? Client { get; set; }
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -216,6 +278,12 @@ public sealed class ExtensionSignedRequestTimeoutTests : IDisposable
                 if (request.RequestUri!.AbsolutePath.EndsWith("/prepare", StringComparison.Ordinal))
                 {
                     PreparationCalls++;
+                    if (AdvanceOnPreparation is { } advance)
+                    {
+                        advance();
+                        cancellationToken.ThrowIfCancellationRequested();
+                        return new(HttpStatusCode.OK) { RequestMessage = request, Content = new StringContent("{}") };
+                    }
                     using var registration = cancellationToken.Register(() => Canceled.TrySetResult());
                     Entered.TrySetResult();
                     try { await Release.Task.WaitAsync(IgnoreCancellation ? CancellationToken.None : cancellationToken); }

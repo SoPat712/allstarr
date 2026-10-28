@@ -45,7 +45,7 @@ public partial class ExtensionHostBridge
                 var path = scope.ResolveTemporaryPath(prefix + "." + index);
                 files.Add(path);
                 var task = DownloadSegmentAsync(client, segment.Uri, segment.Headers, path, attempts, scope.MaximumBytes,
-                    count => Interlocked.Add(ref received, count), cancellation.Token);
+                    count => Interlocked.Add(ref received, count), cancellation.Token, target);
                 tasks.Add(task);
                 workers.Add(task, (index, path));
             }
@@ -135,7 +135,8 @@ public partial class ExtensionHostBridge
     }
 
     private async Task DownloadSegmentAsync(HttpClient client, Uri uri, Dictionary<string, string> headers,
-        string path, int maximumAttempts, long maximumBytes, Func<long, long> accountBytes, CancellationToken cancellationToken)
+        string path, int maximumAttempts, long maximumBytes, Func<long, long> accountBytes, CancellationToken cancellationToken,
+        string target)
     {
         for (var attempt = 1; attempt <= maximumAttempts; attempt++)
         {
@@ -179,6 +180,7 @@ public partial class ExtensionHostBridge
                         }, attempt, status, delay);
                     }
                     if (response.Content.Headers.ContentLength > maximumBytes) throw new SegmentFailure("storage_error", attempt);
+                    ExtensionInvocationBudget.Current?.AcceptMediaResponse(response, target);
                     using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
                     using var destination = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 65536, true);
                     var buffer = new byte[65536];

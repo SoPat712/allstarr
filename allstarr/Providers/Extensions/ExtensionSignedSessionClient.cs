@@ -266,7 +266,7 @@ internal sealed class ExtensionSignedSessionClient
 
     private T RunScript<T>(Func<CancellationToken, Task<T>> operation, bool retryRequests = false)
     {
-        WaitForGateAsync(CancellationToken.None).GetAwaiter().GetResult();
+        WaitForGateAsync(ExtensionInvocationBudget.Current?.Token ?? CancellationToken.None).GetAwaiter().GetResult();
         try
         {
             var budget = ExtensionInvocationBudget.Current;
@@ -599,10 +599,15 @@ internal sealed class ExtensionSignedSessionClient
                         var contract = ErrorContract.Parse(response.Response.Body);
                         if (contract.ProviderRetry(response.StatusCode) && retry < 2)
                         {
-                            using var retryTiming = PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Retry);
-                            await Task.Delay(response.Response.ProviderDelay(contract.RetryAfterSeconds, _timeProvider.GetUtcNow()),
-                                _timeProvider, limit);
-                            continue;
+                            var delay = response.Response.ProviderDelay(contract.RetryAfterSeconds, _timeProvider.GetUtcNow());
+                            var remaining = ExtensionInvocationBudget.Current is { HasResolutionDeadline: true } budget
+                                ? budget.ResolutionRemainingMilliseconds : (long?)null;
+                            if (!remaining.HasValue || delay.TotalMilliseconds < remaining.Value)
+                            {
+                                using var retryTiming = PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Retry);
+                                await Task.Delay(delay, _timeProvider, limit);
+                                continue;
+                            }
                         }
                         var reset = contract.GatewayAction(response.StatusCode).Length > 0;
                         if (reset)

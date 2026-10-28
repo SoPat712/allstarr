@@ -85,7 +85,7 @@ public sealed class ExtensionArtifactInvocationScope : IDisposable
         long? expectedBytes)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        cancellationToken.ThrowIfCancellationRequested();
+        CancellationToken.ThrowIfCancellationRequested();
         if (Result != null)
             throw new InvalidOperationException("An extension download invocation may create only one artifact.");
         Result = resolver.WriteAsync(new(
@@ -97,7 +97,7 @@ public sealed class ExtensionArtifactInvocationScope : IDisposable
             maximumBytes)
         {
             ExpectedBytes = expectedBytes is > 0 ? expectedBytes : null
-        }, cancellationToken).GetAwaiter().GetResult();
+        }, CancellationToken).GetAwaiter().GetResult();
         return Result;
     }
 
