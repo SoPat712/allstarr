@@ -263,7 +263,7 @@ public sealed class ProviderTargetProjectionTests
             }, decision, new ManualTrackOverrideLayers(null, null), source,
                 new Dictionary<Guid, LibraryTrackRecord>(),
                 new Dictionary<Guid, ProviderTrackIdentityRecord[]> { [source.CanonicalRecordingId] = identities },
-                new[] { "apple-musickit" }, Guid.NewGuid(), true, null])!;
+                new[] { "apple-musickit" }, Guid.NewGuid(), true, null, null])!;
         return JsonSerializer.SerializeToElement(row.GetType().GetProperty("Value")!.GetValue(row),
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }

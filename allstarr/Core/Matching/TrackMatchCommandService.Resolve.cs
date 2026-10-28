@@ -38,7 +38,7 @@ public sealed partial class TrackMatchCommandService
             return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.NotFound, "Spotify track is not indexed");
 
         var snapshots = db.ExternalMetadataSnapshots
-            .Where(item => item.ProviderTrackIdentityId.HasValue &&
+            .Where(item => item.ResourceKind == "track" && item.ProviderTrackIdentityId.HasValue &&
                            identityIds.Contains(item.ProviderTrackIdentityId.Value));
         if (!actor.IsAdministrator)
             snapshots = snapshots.Where(item => item.OwnerUserId == actor.UserId);
@@ -80,7 +80,7 @@ public sealed partial class TrackMatchCommandService
             return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.NotFound, "Spotify track is not indexed");
 
         var snapshots = db.ExternalMetadataSnapshots.AsNoTracking()
-            .Where(item => item.ProviderTrackIdentityId.HasValue &&
+            .Where(item => item.ResourceKind == "track" && item.ProviderTrackIdentityId.HasValue &&
                            identityIds.Contains(item.ProviderTrackIdentityId.Value));
         if (!actor.IsAdministrator)
             snapshots = snapshots.Where(item => item.OwnerUserId == actor.UserId);
@@ -116,6 +116,9 @@ public sealed partial class TrackMatchCommandService
             return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.NotFound, "Track snapshot was not found");
         if (!actor.IsAdministrator && snapshot.OwnerUserId != actor.UserId)
             return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.Forbidden, "Track snapshot is outside your account");
+
+        if (snapshot.ResourceKind != "track" || snapshot.ProviderId == "allstarr")
+            return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.Invalid, "A track snapshot is required");
 
         Guid? libraryTrackId = null;
         string? providerId = null, externalId = null;

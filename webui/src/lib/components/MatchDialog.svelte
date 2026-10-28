@@ -22,6 +22,7 @@
     providerResultCounts,
     rankedTargets,
     reportedAudio,
+    reviewProviderIdentities,
     routingPreference,
     scoreComponents,
     targetRoutingPreference,
@@ -477,7 +478,7 @@
             {#if match.canonicalRecordingId}<div><dt>Canonical recording</dt><dd>{match.canonicalRecordingId}</dd></div>{/if}
             {#if match.libraryTrackId}<div><dt>Library track</dt><dd>{match.libraryTrackId}</dd></div>{/if}
             {#if match.algorithmVersion}<div><dt>Algorithm</dt><dd>{match.algorithmVersion}</dd></div>{/if}
-            {#each match.providerIdentities as identity}
+            {#each reviewProviderIdentities(match) as identity}
               <div><dt>{providerName(identity.providerId)}</dt><dd>{identity.externalId} · {identity.verification}</dd></div>
             {/each}
           </dl>

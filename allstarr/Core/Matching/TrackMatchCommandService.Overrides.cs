@@ -167,6 +167,9 @@ public sealed partial class TrackMatchCommandService
         if (!actor.IsAdministrator && snapshot.OwnerUserId != actor.UserId)
             return new(false, TrackMatchCommandFailure.Forbidden, "Track snapshot is outside your account");
 
+        if (snapshot.ResourceKind != "track" || snapshot.ProviderId == "allstarr")
+            return new(false, TrackMatchCommandFailure.Invalid, "A track snapshot is required");
+
         if (authorityScope is not ("personal" or "household"))
             return new(false, TrackMatchCommandFailure.Invalid, "AuthorityScope must be personal or household");
         if (authorityScope == "household" && !actor.IsAdministrator)

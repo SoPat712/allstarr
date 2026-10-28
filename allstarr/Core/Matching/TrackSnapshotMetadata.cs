@@ -4,6 +4,17 @@ namespace allstarr.Core.Matching;
 
 public static class TrackSnapshotMetadata
 {
+    public static bool HasDisplayLabels(string payload)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            return !string.IsNullOrWhiteSpace(Text(document.RootElement, "title", "Title", "name", "Name")) &&
+                   !string.IsNullOrWhiteSpace(Artist(document.RootElement));
+        }
+        catch (JsonException) { return false; }
+    }
+
     public static bool? IsExplicit(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object) return null;

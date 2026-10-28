@@ -16,6 +16,88 @@ namespace allstarr.Tests;
 
 public sealed partial class TrackIdentityServiceTests
 {
+    [Fact]
+    public async Task PlaybackLabelsSurviveRestartAsTrackDisplaySnapshots()
+    {
+        var actor = Actor(_userA);
+        var execution = Context(actor, "qobuz");
+        var track = Track("qobuz", "played-display");
+        var id = await _service.RememberSourceAsync(execution, track, "ext-qobuz-song-played-display", ProviderIdentityScope.Catalog);
+        var metadata = new Song { Title = "Retained song", Artist = "Retained performer", Album = "Retained album", Duration = 180 };
+        await _service.RememberPlaybackMetadataAsync(execution, track, metadata);
+        await _service.RememberPlaybackMetadataAsync(execution, track, metadata);
+        var restarted = new allstarr.Core.Matching.TrackIdentityService(_factory, _storageState, _clock);
+        var song = Assert.Single(await restarted.GetStoredSongsAsync(actor, "ext-qobuz-song-played-display"));
+        Assert.Equal(id, song.CanonicalRecordingId);
+        Assert.Equal(metadata.Title, song.Title);
+        Assert.Equal(metadata.Artist, song.Artist);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Single(await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "track").ToArrayAsync());
+        Assert.Single(await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "playback-metadata").ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task StoredDisplayHidesIdentityOnlyRecordsWithoutLabels()
+    {
+        var actor = Actor(_userA);
+        await _service.RememberSourceAsync(Context(actor, "qobuz"), Track("qobuz", "unlabeled"),
+            "ext-qobuz-song-unlabeled", ProviderIdentityScope.Catalog);
+        Assert.Empty(await _service.GetStoredSongsAsync(actor, "ext-qobuz-song-unlabeled"));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Single(await db.CanonicalRecordings.ToArrayAsync());
+        Assert.Single(await db.ProviderTrackIdentities.ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task ConflictingRetainedLabelsDoNotBackfillAnIdentityOnlySource()
+    {
+        var songs = await SeedDisplaySourcesAsync();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var snapshot = await db.ExternalMetadataSnapshots.SingleAsync(item => item.ProviderId == "deezer");
+            var conflicting = JsonSerializer.Deserialize<ExternalMetadataSnapshotRecord>(JsonSerializer.Serialize(snapshot))!;
+            conflicting.Id = Guid.CreateVersion7();
+            conflicting.SnapshotVersion++;
+            conflicting.PayloadJson = """{"Title":"Another title","Artist":"Another artist"}""";
+            conflicting.PayloadSha256 = Hash(conflicting.PayloadJson);
+            db.ExternalMetadataSnapshots.Add(conflicting);
+            await db.SaveChangesAsync();
+        }
+        await _service.RememberSourceAsync(Context(Actor(_userA), "qobuz"), Track("qobuz", "uncertain-route"),
+            songs[0].Id, ProviderIdentityScope.Catalog);
+        Assert.DoesNotContain(await _service.GetStoredSongsAsync(Actor(_userA), songs[0].Id), item => item.ExternalProvider == "qobuz");
+        await using var saved = await _factory.CreateDbContextAsync();
+        Assert.Contains(await saved.ProviderTrackIdentities.ToArrayAsync(), item => item.ProviderId == "qobuz");
+        Assert.DoesNotContain(await saved.ExternalMetadataSnapshots.ToArrayAsync(), item => item.ProviderId == "qobuz");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SourceUseBackfillsLabelsOnlyFromTheSameListenersRecording(bool foreignOwner)
+    {
+        var songs = await SeedDisplaySourcesAsync(appleOwnedByAnotherListener: foreignOwner,
+            foreignPayload: """{"Title":"Private title","Artist":"Private artist"}""");
+        var actor = Actor(_userA);
+        var execution = Context(actor, "qobuz");
+        await _service.RememberSourceAsync(execution, Track("qobuz", "new-route"), songs[0].Id, ProviderIdentityScope.Catalog);
+        var restarted = new allstarr.Core.Matching.TrackIdentityService(_factory, _storageState, _clock);
+        var stored = await restarted.GetStoredSongsAsync(actor, songs[0].Id);
+        var backfilled = Assert.Single(stored, item => item.ExternalProvider == "qobuz");
+        Assert.Equal("Check", backfilled.Title);
+        Assert.Equal("FLO", backfilled.Artist);
+        var otherListener = await restarted.GetStoredSongsAsync(Actor(_userB), songs[0].Id);
+        Assert.DoesNotContain(otherListener, item => item.ExternalProvider == "qobuz");
+        if (foreignOwner) Assert.Single(otherListener);
+        else Assert.Empty(otherListener);
+        Assert.All(otherListener, item => { Assert.Equal("Private title", item.Title); Assert.Equal("Private artist", item.Artist); });
+        await using var db = await _factory.CreateDbContextAsync();
+        var snapshot = Assert.Single(await db.ExternalMetadataSnapshots.Where(item => item.ProviderId == "qobuz" && item.ResourceKind == "track").ToArrayAsync());
+        Assert.Equal(_userA, snapshot.OwnerUserId);
+        Assert.Equal(songs[0].CanonicalRecordingId ?? (await db.ProviderTrackIdentities.FirstAsync()).CanonicalRecordingId,
+            backfilled.CanonicalRecordingId);
+    }
+
     [Theory]
     [InlineData(ProtocolKind.Jellyfin, null)]
     [InlineData(ProtocolKind.Subsonic, null)]
@@ -326,7 +408,7 @@ public sealed partial class TrackIdentityServiceTests
         new AllstarrPrincipal(_userA, kind.ToString().ToLowerInvariant(), "fixture", _userA.ToString("N"), "User", false),
         "display", DateTimeOffset.UtcNow.AddMinutes(1), default, new("client", "device"));
 
-    private async Task<Song[]> SeedDisplaySourcesAsync(bool appleOwnedByAnotherListener = false, bool retainSnapshots = true)
+    private async Task<Song[]> SeedDisplaySourcesAsync(bool appleOwnedByAnotherListener = false, bool retainSnapshots = true, string? foreignPayload = null)
     {
         const string publicId = "ext-allstarr-song-01a1540a-0842-7777-969e-50303caad5c3";
         var recording = (await _service.CreateRecordingAsync(Actor(_userA), "display", "GBUM72403956", null, publicId)).Recording;
@@ -369,7 +451,8 @@ public sealed partial class TrackIdentityServiceTests
             if (!retainSnapshots) continue;
             await using var db = await _factory.CreateDbContextAsync();
             var link = await db.ProviderTrackIdentities.SingleAsync(item => item.ExternalId == externalId);
-            var payload = JsonSerializer.Serialize(song);
+            var payload = provider == "apple-musickit" && appleOwnedByAnotherListener && foreignPayload != null
+                ? foreignPayload : JsonSerializer.Serialize(song);
             db.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
             {
                 Id = Guid.CreateVersion7(),

@@ -27,7 +27,7 @@ public sealed class TrackMatchesControllerContractTests
         };
         var row = typeof(TrackMatchesController).GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null,
             [source, null, new ManualTrackOverrideLayers(null, null), null, new Dictionary<Guid, LibraryTrackRecord>(),
-                new Dictionary<Guid, ProviderTrackIdentityRecord[]>(), Array.Empty<string>(), Guid.NewGuid(), false, null])!;
+                new Dictionary<Guid, ProviderTrackIdentityRecord[]>(), Array.Empty<string>(), Guid.NewGuid(), false, null, null])!;
         var value = JsonSerializer.SerializeToElement(row.GetType().GetProperty("Value")!.GetValue(row));
         var actual = value.GetProperty("isExplicit");
         if (expected.HasValue) Assert.Equal(expected.Value, actual.GetBoolean());
@@ -130,7 +130,7 @@ public sealed class TrackMatchesControllerContractTests
                 { Id = Guid.NewGuid(), CanonicalRecordingId = canonicalId, ProviderId = "spotify", ExternalId = "source", ResourceKind = ProviderResourceKind.Track },
                 new Dictionary<Guid, LibraryTrackRecord> { [localId] = local },
                 new Dictionary<Guid, ProviderTrackIdentityRecord[]> { [canonicalId] = [identity] },
-                new[] { "qobuz", "deezer" }, Guid.NewGuid(), false, null])!;
+                new[] { "qobuz", "deezer" }, Guid.NewGuid(), false, null, null])!;
         var value = JsonSerializer.SerializeToElement(row.GetType().GetProperty("Value")!.GetValue(row));
         var candidate = Assert.Single(value.GetProperty("candidates").EnumerateArray());
         Assert.True(candidate.GetProperty("isCurrent").GetBoolean());

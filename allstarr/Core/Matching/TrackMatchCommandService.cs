@@ -56,7 +56,11 @@ public sealed record TrackMatchReviewData(
     IReadOnlyList<TrackMatchRecord> LatestDecisions,
     IReadOnlyList<ManualTrackOverrideRecord> ActiveOverrides,
     IReadOnlyList<LibraryTrackRecord> LibraryTracks,
-    IReadOnlyList<ProviderTrackIdentityRecord> ProviderIdentities);
+    IReadOnlyList<ProviderTrackIdentityRecord> ProviderIdentities)
+{
+    public IReadOnlyDictionary<Guid, ExternalMetadataSnapshotRecord> MediaSnapshots { get; init; } =
+        new Dictionary<Guid, ExternalMetadataSnapshotRecord>();
+}
 
 public sealed record TrackMatchActivityData(
     IReadOnlyList<TrackMatchRecord> Decisions,

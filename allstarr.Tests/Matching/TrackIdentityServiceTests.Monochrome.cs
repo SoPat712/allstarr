@@ -79,6 +79,54 @@ public sealed partial class TrackIdentityServiceTests
         Assert.Equal(nativeId, (await db.ProviderTrackIdentities.SingleAsync(item => item.ProviderId == "monochrome")).ExternalId);
     }
 
+    [Theory]
+    [InlineData("tidal:258048607")]
+    [InlineData("45675112")]
+    public async Task InvalidMonochromePlaybackLeavesNoRecordingOrMatch(string externalId)
+    {
+        using var http = new HttpClient(new MonochromePlaybackHandler(true));
+        var registry = new ProviderRegistry([MonochromeProviderRegistration.CreateRegistration(new(http))]);
+        var health = new Mock<IProviderRouteHealthSource>();
+        health.Setup(item => item.Get(It.IsAny<string>(), null, It.IsAny<ProviderCapabilityKind>()))
+            .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Healthy, false));
+        var router = new ProviderRouter(registry, Mock.Of<IProviderRouteAccountResolver>(), health.Object,
+            Mock.Of<IProviderRouteSidecarSource>(), _service);
+        var gateway = new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict),
+            identities: _service, audioVerifier: FixtureAudioVerifier.Instance);
+        await Assert.ThrowsAsync<FileNotFoundException>(() => gateway.OpenStreamAsync(DisplayProtocol(ProtocolKind.Jellyfin), "monochrome", externalId, ProviderAudioQuality.Any, null));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.CanonicalRecordings.ToArrayAsync());
+        Assert.Empty(await db.ProviderTrackIdentities.ToArrayAsync());
+        Assert.Empty(await db.TrackMatches.ToArrayAsync());
+        Assert.Empty(await db.ExternalMetadataSnapshots.ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task FailedAmazonPlaybackLeavesNoRecordingOrMatch()
+    {
+        var streaming = new Mock<IProviderStreamingCapability>();
+        streaming.SetupGet(item => item.ProviderId).Returns("amazon");
+        streaming.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Failure(new(ProviderErrorKind.NotFound)));
+        var registry = new ProviderRegistry([new ProviderRegistration(new ProviderDescriptor("amazon", "Amazon Music", "Fixture",
+            ProviderOrigin.BuiltIn, "1", "1.0", [new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.None, "1.0", ["getStreamLease"])], new ProviderPermissionDescriptor()), [streaming.Object])]);
+        var health = new Mock<IProviderRouteHealthSource>();
+        health.Setup(item => item.Get(It.IsAny<string>(), null, It.IsAny<ProviderCapabilityKind>()))
+            .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Healthy, false));
+        var router = new ProviderRouter(registry, Mock.Of<IProviderRouteAccountResolver>(), health.Object,
+            Mock.Of<IProviderRouteSidecarSource>(), _service);
+        var gateway = new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict),
+            identities: _service, audioVerifier: FixtureAudioVerifier.Instance);
+        await Assert.ThrowsAsync<FileNotFoundException>(() => gateway.OpenStreamAsync(DisplayProtocol(ProtocolKind.Jellyfin), "amazon", "B01M001FTH", ProviderAudioQuality.Any, null));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.CanonicalRecordings.ToArrayAsync());
+        Assert.Empty(await db.ProviderTrackIdentities.ToArrayAsync());
+        Assert.Empty(await db.TrackMatches.ToArrayAsync());
+        Assert.Empty(await db.ExternalMetadataSnapshots.ToArrayAsync());
+    }
+
     private sealed class MonochromePlaybackHandler(bool ranges) : HttpMessageHandler
     {
         public int Searches { get; private set; }

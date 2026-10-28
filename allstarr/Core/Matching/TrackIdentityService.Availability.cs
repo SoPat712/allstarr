@@ -30,30 +30,34 @@ public sealed partial class TrackIdentityService
             song.ExplicitContentLyrics
         });
         var hash = CanonicalCatalogKeys.Hash(track.Value);
-        var previous = await db.ExternalMetadataSnapshots.Where(item => item.OwnerUserId == user &&
-            item.ProviderId == track.ProviderId && item.ProviderAccountId == accountId &&
-            item.ResourceKind == "playback-metadata" && item.ExternalIdHash == hash)
-            .OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(cancellationToken);
-        if (previous?.PayloadJson == payload && previous.ProviderTrackIdentityId == link.LinkId) return;
-        db.ExternalMetadataSnapshots.Add(new()
+        foreach (var kind in new[] { "playback-metadata", "track" })
         {
-            Id = Guid.CreateVersion7(),
-            OwnerUserId = user,
-            ProviderAccountId = accountId,
-            ProviderTrackIdentityId = link.LinkId,
-            BackendInstanceId = backend.BackendInstanceId,
-            BackendPrincipalId = backend.PrincipalId,
-            Protocol = backend.BackendType,
-            ProviderId = track.ProviderId,
-            ResourceKind = "playback-metadata",
-            ExternalIdHash = hash,
-            SnapshotVersion = (previous?.SnapshotVersion ?? 0) + 1,
-            ProviderRevision = "playback:" + (account?.Revision ?? 0),
-            PayloadJson = payload,
-            PayloadSha256 = CanonicalCatalogKeys.Hash(payload),
-            CorrelationId = execution.CorrelationId,
-            RetrievedAt = _clock.UtcNow
-        });
+            var previous = await db.ExternalMetadataSnapshots.Where(item => item.OwnerUserId == user &&
+                item.ProviderId == track.ProviderId && item.ProviderAccountId == accountId &&
+                item.ResourceKind == kind && item.ExternalIdHash == hash)
+                .OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(cancellationToken);
+            if (previous?.PayloadJson == payload && previous.ProviderTrackIdentityId == link.LinkId ||
+                kind == "track" && previous != null && TrackSnapshotMetadata.HasDisplayLabels(previous.PayloadJson)) continue;
+            db.ExternalMetadataSnapshots.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = user,
+                ProviderAccountId = accountId,
+                ProviderTrackIdentityId = link.LinkId,
+                BackendInstanceId = backend.BackendInstanceId,
+                BackendPrincipalId = backend.PrincipalId,
+                Protocol = backend.BackendType,
+                ProviderId = track.ProviderId,
+                ResourceKind = kind,
+                ExternalIdHash = hash,
+                SnapshotVersion = (previous?.SnapshotVersion ?? 0) + 1,
+                ProviderRevision = "playback:" + (account?.Revision ?? 0),
+                PayloadJson = payload,
+                PayloadSha256 = CanonicalCatalogKeys.Hash(payload),
+                CorrelationId = execution.CorrelationId,
+                RetrievedAt = _clock.UtcNow
+            });
+        }
         await db.SaveChangesAsync(cancellationToken);
     }
 

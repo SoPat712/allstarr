@@ -233,6 +233,8 @@ public sealed partial class TrackMatchCommandService
             .SingleOrDefaultAsync(item => item.Id == id,
                 cancellationToken) ?? throw new KeyNotFoundException("Snapshot not found.");
         PersistenceGuard.RequireOwner(actor, record.OwnerUserId);
+        if (record.ResourceKind != "track" || record.ProviderId == "allstarr")
+            throw new ArgumentException("A track snapshot is required.", nameof(id));
         return record;
     }
 

@@ -382,7 +382,7 @@ public sealed class TrackMatchesController(
                     library,
                     identities,
                     playableProviders,
-                    userId, session.IsAdministrator, providerPolicy);
+                    userId, session.IsAdministrator, providerPolicy, review.MediaSnapshots.GetValueOrDefault(snapshot.Id));
             })
             .ToArray();
         var filteredRows = allRows.Where(row => state?.ToLowerInvariant() switch
@@ -876,7 +876,8 @@ public sealed class TrackMatchesController(
         IReadOnlyDictionary<Guid, LibraryTrackRecord> library,
         IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord[]> identities,
         IReadOnlyCollection<string> playableProviders, Guid viewerUserId, bool isAdministrator,
-        EffectiveProviderPolicySnapshot? providerPolicy = null)
+        EffectiveProviderPolicySnapshot? providerPolicy = null,
+        ExternalMetadataSnapshotRecord? mediaSnapshot = null)
     {
         var manual = layers.Effective;
         var routeCanonicalId = decision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId;
@@ -928,6 +929,18 @@ public sealed class TrackMatchesController(
         var hasManualMatch = manualAuthorities.Any(item => item.Kind != "rejection");
         var hasManualRejection = manualAuthorities.Any(item => item.Kind == "rejection");
         var metadata = Metadata(snapshot.PayloadJson);
+        var measured = new Song();
+        if (mediaSnapshot != null)
+        {
+            try
+            {
+                if (JsonSerializer.Deserialize<allstarr.Core.Music.TrackMediaFacts>(mediaSnapshot.PayloadJson) is { Media: not null } facts)
+                    facts.Apply(measured);
+            }
+            catch (JsonException) { }
+        }
+        var measuredDuration = measured.PreciseDuration is { } duration ? (long?)Math.Round(duration.TotalMilliseconds) : null;
+        var sourceDuration = measuredDuration ?? metadata.DurationMilliseconds;
         var sourceArtworkUrl = metadata.ArtworkUrl == null
             ? ProviderArtworkFallback.CoverPath(snapshot.ProviderId)
             : SourceArtworkUrl(snapshot.Id);
@@ -970,13 +983,14 @@ public sealed class TrackMatchesController(
             candidateArtworkUrl,
             isrc = metadata.Isrc,
             isExplicit = metadata.IsExplicit,
-            durationMilliseconds = track?.DurationMilliseconds ?? metadata.DurationMilliseconds,
+            durationMilliseconds = track?.DurationMilliseconds ?? sourceDuration,
+            media = ReportedMedia(measured),
             durationProvenance = track?.DurationMilliseconds.HasValue == true
                 ? track.DurationProvenance ?? track.Protocol
-                : metadata.DurationMilliseconds.HasValue ? snapshot.ProviderId : null,
+                : sourceDuration.HasValue ? snapshot.ProviderId : null,
             durationRetrievedAt = track?.DurationMilliseconds.HasValue == true
                 ? (DateTimeOffset?)(track.DurationRetrievedAt ?? track.IndexedAt)
-                : metadata.DurationMilliseconds.HasValue ? snapshot.RetrievedAt : null,
+                : sourceDuration.HasValue ? measuredDuration.HasValue ? mediaSnapshot!.RetrievedAt : snapshot.RetrievedAt : null,
             localTrack = track == null ? null : new
             {
                 id = track.Id,
