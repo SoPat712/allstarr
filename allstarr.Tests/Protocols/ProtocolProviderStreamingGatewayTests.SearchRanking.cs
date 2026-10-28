@@ -28,7 +28,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             Result = new SearchResult
             {
                 Albums = [new Album { Id = "ext-deezer-album-release", ExternalProvider = "deezer",
-                ExternalId = "release", Title = "Release", Artist = "Artist" }]
+                ExternalId = "release", Title = "Release", Artist = "Artist", IsExplicit = false }]
             },
             Durations = Array.Empty<TimeSpan?>(),
             TrackIds = Array.Empty<ProviderExternalResourceId>()

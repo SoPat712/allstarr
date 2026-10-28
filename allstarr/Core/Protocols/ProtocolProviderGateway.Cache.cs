@@ -24,7 +24,7 @@ public sealed partial class ProtocolProviderGateway
         ProviderExecutionContext execution, ProviderExternalResourceId track, ProviderAudioQuality quality,
         long? offset, bool completeOnly, bool range, CancellationToken token)
     {
-        if (managedTrackCache == null) return null;
+        if (managedTrackCache == null || !await AllowsCleanPlaybackAsync(protocol, track, execution)) return null;
         foreach (var variant in CachedQualities(protocol, quality, range))
         {
             var scope = managedTrackCache.ScopeFor(protocol, execution.Account?.AccountId, variant, execution.Account?.Revision);

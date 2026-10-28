@@ -13,6 +13,44 @@ public sealed class ProtocolPlaylistGatewayTests
     [Theory]
     [InlineData(ProtocolKind.Jellyfin)]
     [InlineData(ProtocolKind.Subsonic)]
+    public async Task CleanOnlyProviderPlaylistUsesCleanCounterpartIdentityAndKeepsOccurrences(ProtocolKind protocol)
+    {
+        var user = Guid.CreateVersion7();
+        var context = Context(protocol, user) with
+        {
+            Policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(
+                System.Collections.Immutable.ImmutableDictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>.Empty,
+                System.Collections.Immutable.ImmutableHashSet<string>.Empty, "Lossless", 0.07)
+            { UserId = user, Preferences = new("CleanOnly") }
+        };
+        var explicitId = new ProviderExternalResourceId("spotify", ProviderResourceKind.Track, "explicit");
+        var cleanId = new ProviderExternalResourceId("spotify", ProviderResourceKind.Track, "clean");
+        var unknownId = new ProviderExternalResourceId("spotify", ProviderResourceKind.Track, "unknown");
+        var source = new ProviderTrackMetadata(explicitId, "Track", [new("Artist")], albumTitle: "Album", duration: TimeSpan.FromSeconds(180), explicitContentLyrics: 1);
+        var clean = new ProviderTrackMetadata(cleanId, "Track (Clean)", [new("Artist")], albumTitle: "Album", duration: TimeSpan.FromSeconds(180), explicitContentLyrics: 3);
+        var capability = new Mock<IProviderPlaylistCapability>(MockBehavior.Strict);
+        capability.SetupGet(item => item.ProviderId).Returns("spotify");
+        capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Playlist);
+        capability.Setup(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistTracksRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPlaylistTrackPage>.Success(new(PlaylistSummary(),
+                new ProviderPage<ProviderPlaylistTrack>("spotify", [new(0, explicitId, metadata: source), new(1, cleanId, metadata: clean),
+                    new(2, unknownId, metadata: new(unknownId, "Unknown", [new("Artist")]))]))));
+        var descriptor = Descriptor(true);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderPlaylistCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, descriptor, capability.Object,
+                new ProviderAccountContext(Guid.CreateVersion7(), "spotify", ProviderAccountScope.Personal, 1, ownerUserId: user)));
+        var tracks = await Gateway(router.Object, Registry(descriptor, capability.Object)).GetPlaylistTracksAsync(context, "spotify", "playlist-1");
+        Assert.Equal(new[] { "ext-spotify-song-clean", "ext-spotify-song-clean" }, tracks.Select(item => item.Id));
+        Assert.Equal("ext-spotify-song-explicit", tracks[0].OriginalItemId);
+        Assert.Null(tracks[1].OriginalItemId);
+        Assert.Equal(1, source.ExplicitContentLyrics);
+        Assert.NotEqual(tracks[0].Id, tracks[0].OriginalItemId);
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
     public async Task PlaylistSearch_UsesResolvedActorAccountAndDoesNotQueryLegacyProviders(
         ProtocolKind protocolKind)
     {

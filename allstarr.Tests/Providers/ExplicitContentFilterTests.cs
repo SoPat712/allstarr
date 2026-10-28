@@ -8,13 +8,13 @@ namespace allstarr.Tests;
 public class ExplicitContentFilterTests
 {
     [Fact]
-    public void ShouldIncludeSong_ShouldIncludeUnknownExplicitState()
+    public void ShouldIncludeSong_UnknownRequiresAnUnrestrictedMode()
     {
         var song = new Song { ExplicitContentLyrics = null };
 
         Assert.True(ExplicitContentFilter.ShouldIncludeSong(song, ExplicitFilter.All));
         Assert.True(ExplicitContentFilter.ShouldIncludeSong(song, ExplicitFilter.ExplicitOnly));
-        Assert.True(ExplicitContentFilter.ShouldIncludeSong(song, ExplicitFilter.CleanOnly));
+        Assert.False(ExplicitContentFilter.ShouldIncludeSong(song, ExplicitFilter.CleanOnly));
     }
 
     [Fact]
@@ -34,6 +34,19 @@ public class ExplicitContentFilterTests
         Assert.True(ExplicitContentFilter.ShouldIncludeSong(new Song { ExplicitContentLyrics = 0 }, ExplicitFilter.CleanOnly));
         Assert.False(ExplicitContentFilter.ShouldIncludeSong(new Song { ExplicitContentLyrics = 1 }, ExplicitFilter.CleanOnly));
         Assert.True(ExplicitContentFilter.ShouldIncludeSong(new Song { ExplicitContentLyrics = 3 }, ExplicitFilter.CleanOnly));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(6)]
+    [InlineData(7)]
+    public void CleanOnlyWithholdsUnverifiedLocalAndExternalSongs(int? rating)
+    {
+        foreach (var local in new[] { false, true })
+            Assert.False(ExplicitContentFilter.ShouldIncludeSong(
+                new Song { IsLocal = local, ExplicitContentLyrics = rating }, ExplicitFilter.CleanOnly));
     }
 
     [Fact]

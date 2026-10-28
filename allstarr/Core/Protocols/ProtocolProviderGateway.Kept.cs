@@ -8,7 +8,7 @@ public sealed partial class ProtocolProviderGateway
     private async Task<ProtocolProviderStream?> OpenHouseholdKeptAsync(ProtocolExecutionContext protocol,
         ProviderExternalResourceId track, ProviderAudioQuality quality, bool headOnly)
     {
-        if (keptFiles == null) return null;
+        if (keptFiles == null || !await AllowsCleanPlaybackAsync(protocol, track)) return null;
         var actor = protocol.RequireActor();
         var opened = await keptFiles.OpenForPlaybackAsync(actor, track, headOnly, protocol.CancellationToken);
         if (opened == null) return null;

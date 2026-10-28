@@ -28,6 +28,7 @@ public sealed record NativeMusicItem<TPayload>(
     public string? AlbumArtistText { get; init; }
     public double? DurationSeconds { get; init; }
     public Album? AlbumMetadata { get; init; }
+    public int? ExplicitContentLyrics { get; init; }
 }
 
 /// <summary>One merged search row: a native backend payload or a typed provider item.</summary>
@@ -190,7 +191,8 @@ public sealed class MusicSearchService(
         await Task.WhenAll(nativeTask, providerTask, playlistTask);
 
         var nativeRows = await nativeTask;
-        var nativeSongs = nativeRows.Where(item => item.Kind == MusicItemKind.Song).ToList();
+        var nativeSongs = nativeRows.Where(item => item.Kind == MusicItemKind.Song &&
+            context.Policy?.Includes(item.ExplicitContentLyrics) != false).ToList();
         var nativeAlbums = nativeRows.Where(item => item.Kind == MusicItemKind.Album).ToList();
         var nativeArtists = nativeRows.Where(item => item.Kind == MusicItemKind.Artist).ToList();
         var provided = await providerTask;
@@ -372,7 +374,9 @@ public sealed class MusicSearchService(
             }
             finally { slots.Release(); }
         }));
-        var byId = fetched.OfType<NativeMusicItem<TPayload>>().ToDictionary(item => item.Id, StringComparer.Ordinal);
+        var byId = fetched.OfType<NativeMusicItem<TPayload>>()
+            .Where(item => context.Policy?.Includes(item.ExplicitContentLyrics) != false)
+            .ToDictionary(item => item.Id, StringComparer.Ordinal);
         return matches.Where(item => byId.ContainsKey(item.Value))
             .ToDictionary(item => item.Key, item => byId[item.Value], StringComparer.Ordinal);
     }

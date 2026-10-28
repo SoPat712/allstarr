@@ -80,6 +80,8 @@ builder.Services.AddSingleton(releaseComposition);
 builder.Services.AddSingleton<TrackMatchPolicy>();
 builder.Services.AddProtocolExecution(builder.Configuration);
 builder.Services.AddScoped<ProtocolExecutionContextFilter>();
+builder.Services.AddScoped<CleanOnlyProtocolFilter>();
+builder.Services.AddSingleton<CleanOnlyProtocolContent>();
 builder.Services.AddSingleton<ManagedStorageRecovery>();
 builder.Services.AddHostedService<ManagedStorageRecoveryStartup>();
 builder.Services.AddSingleton<IDurableJobHandler, ManagedStorageRecoveryJobHandler>();

@@ -330,7 +330,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     public async Task RecordingAvailability_ExplicitPolicyDenialDoesNotResolve()
     {
         var fixture = new AvailabilityFixture("pandora", explicitDenied: true);
-        Assert.Null(await fixture.Open());
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => fixture.Open());
         fixture.VerifyLookups(0);
     }
 

@@ -44,6 +44,7 @@ public partial class SubsonicResponseBuilder
     private static void AddAlbumDescription(Album album, Dictionary<string, object?> item)
     {
         if (album.IsLocal) return;
+        if (album.IsExplicit is { } rating) item["explicitStatus"] = rating ? "explicit" : "clean";
         var artists = MusicDescriptiveMetadata.AlbumArtists(album).Select(ArtistCredit).ToArray();
         if (artists.Length > 0) item["artists"] = artists;
         if (!string.IsNullOrWhiteSpace(album.Label)) item["recordLabels"] = new[] { new { name = album.Label } };
@@ -55,6 +56,7 @@ public partial class SubsonicResponseBuilder
     private static void AddAlbumDescription(Album album, XElement item)
     {
         if (album.IsLocal) return;
+        if (album.IsExplicit is { } rating) item.SetAttributeValue("explicitStatus", rating ? "explicit" : "clean");
         var ns = item.Name.Namespace;
         foreach (var artist in MusicDescriptiveMetadata.AlbumArtists(album)) item.Add(CreditElement(ns + "artists", artist));
         if (!string.IsNullOrWhiteSpace(album.Label)) item.Add(new XElement(ns + "recordLabels", new XAttribute("name", album.Label)));

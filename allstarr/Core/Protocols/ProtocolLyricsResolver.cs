@@ -221,11 +221,13 @@ public sealed partial class ProtocolLyricsResolver(
         IReadOnlyList<string> order = providers.GetProviderOrder(ProviderCapabilityKind.Lyrics).Concat(localSources.Keys)
             .Distinct(StringComparer.Ordinal).ToArray();
         IReadOnlyList<string> enabledOrder = order;
+        var cleanOnly = protocol.Policy?.Preferences.ExplicitFilter == "CleanOnly";
         if (effectivePolicies != null)
         {
             var effectivePolicy = householdOnly || protocol.Actor?.EffectiveUserId == null
                 ? await effectivePolicies.ResolveAsync(protocol.CancellationToken)
                 : await effectivePolicies.ResolveForUserAsync(protocol.Actor!.EffectiveUserId!.Value, protocol.CancellationToken);
+            cleanOnly = effectivePolicy.Preferences.ExplicitFilter == "CleanOnly";
             var enabled = effectivePolicy.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, order);
             enabledOrder = enabled;
             order = automaticLookup && sources?.OnlySourceId == null
@@ -233,6 +235,12 @@ public sealed partial class ProtocolLyricsResolver(
                 : enabled;
             if (preferredSourceId != null && enabled.Contains(preferredSourceId, StringComparer.Ordinal))
                 order = new[] { preferredSourceId }.Concat(order).Distinct(StringComparer.Ordinal).ToArray();
+        }
+        if (cleanOnly)
+        {
+            if (!CleanRecordingPolicy.IsVerifiedClean(song)) yield break;
+            order = order.Where(id => id is "backend" or "kept").ToArray();
+            enabledOrder = order;
         }
         IReadOnlyList<CrossProviderLinkCandidate>? resolvedLinks = null;
 

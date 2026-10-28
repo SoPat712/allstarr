@@ -55,12 +55,19 @@ public static class ExternalTrackPresentation
         return label == null ? title : $"{title} {label}";
     }
 
+    internal static bool? Explicitness(VirtualPlaylistTrack track) => track.PlaybackExplicitContentLyrics switch
+    {
+        0 or 3 => false,
+        1 => true,
+        _ => track.SourceMetadata?.IsExplicit
+    };
+
     public static VirtualPlaylistReadModel ApplyPreferences(VirtualPlaylistReadModel playlist,
         EffectiveProviderPolicySnapshot? policy) => policy == null ? playlist : playlist with
         {
             Tracks = playlist.Tracks.Where(track =>
-                playlist.ProjectionMode != PlaylistProjectionMode.Source && track.RouteKind == TrackRouteKind.Local ||
-                policy.Includes(track.SourceMetadata?.IsExplicit is { } value ? value ? 1 : 0 : null)).ToArray()
+                policy.Preferences.ExplicitFilter != "CleanOnly" && playlist.ProjectionMode != PlaylistProjectionMode.Source && track.RouteKind == TrackRouteKind.Local ||
+                policy.Includes(Explicitness(track) is { } value ? value ? 1 : 0 : null)).ToArray()
         };
 
     public const string PlaybackDescription =

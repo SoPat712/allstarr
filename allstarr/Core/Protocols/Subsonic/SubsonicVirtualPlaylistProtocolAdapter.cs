@@ -81,7 +81,10 @@ public sealed class SubsonicPlaylistMutationResolver(
 public sealed class SubsonicVirtualPlaylistProtocolAdapter(
     IPlaylistVirtualizationService playlists,
     ISubsonicPlaylistMutationResolver mutationResolver,
-    UpcomingSongPreparation? upcomingSongs = null)
+    UpcomingSongPreparation? upcomingSongs = null,
+    IProtocolProviderGateway? providerGateway = null,
+    CleanOnlyProtocolContent? cleanContent = null,
+    IHttpContextAccessor? httpContexts = null)
 {
     private const string Version = "1.16.1";
     private const string Namespace = "http://subsonic.org/restapi";
@@ -112,8 +115,8 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         if (!IsSuccessfulNativeResponse(nativeResponse.Body, nativeFormat))
             return nativeResponse;
 
-        var visible = (await playlists.ListAsync(context, cancellationToken))
-            .Select(item => ExternalTrackPresentation.ApplyPreferences(item, context.Policy)).ToArray();
+        var visible = await Task.WhenAll((await playlists.ListAsync(context, cancellationToken))
+            .Select(item => ProjectAsync(item, context)));
         if (visible.Length == 0) return nativeResponse;
 
         var merged = nativeFormat == NativeFormat.Json
@@ -127,7 +130,7 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
     {
         var playlist = await playlists.ReadAsync(context, id, cancellationToken);
         if (playlist == null) return null;
-        playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
+        playlist = await ProjectAsync(playlist, context);
         var tracks = playlist.Tracks.ToArray();
         upcomingSongs?.RememberPlaylist(context, tracks.Select(track => track.BackendItemId));
         if (format.Equals("json", StringComparison.OrdinalIgnoreCase))
@@ -171,9 +174,13 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         return new ContentResult { Content = document.ToString(), ContentType = "application/xml" };
     }
 
+    private Task<VirtualPlaylistReadModel> ProjectAsync(VirtualPlaylistReadModel playlist, ProtocolExecutionContext context) =>
+        CleanOnlyPlaylistProjection.ApplyAsync(playlist, context, providerGateway,
+            cleanContent != null && httpContexts?.HttpContext is { } http ? id => cleanContent.AllowsAsync(http, id) : null);
+
     private static string TrackTitle(VirtualPlaylistTrack track, ListeningPreferences? preferences) =>
         track.RouteKind == TrackRouteKind.Local ? track.Title :
-            ExternalTrackPresentation.Title(track.Title, track.SourceMetadata?.IsExplicit == true, preferences);
+            ExternalTrackPresentation.Title(track.Title, ExternalTrackPresentation.Explicitness(track) == true, preferences);
 
     private static Dictionary<string, object?> ToJsonEntry(VirtualPlaylistTrack track, ListeningPreferences? preferences)
     {
@@ -192,6 +199,9 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
             ["isDir"] = false,
             ["type"] = "music"
         };
+        if (track.OriginalItemId != null) result["originalItemId"] = track.OriginalItemId;
+        if (ExternalTrackPresentation.Explicitness(track) is { } rating && track.RouteKind != TrackRouteKind.Local)
+            result["explicitStatus"] = rating ? "explicit" : "clean";
         if (track.RouteKind != TrackRouteKind.Local)
             result["contentType"] = SubsonicResponseBuilder.UnknownSongContentType;
         if (track.Album != null) result["album"] = track.Album;
@@ -217,6 +227,9 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
             }
             yield break;
         }
+        if (track.OriginalItemId != null) yield return new XAttribute("originalItemId", track.OriginalItemId);
+        if (ExternalTrackPresentation.Explicitness(track) is { } rating && track.RouteKind != TrackRouteKind.Local)
+            yield return new XAttribute("explicitStatus", rating ? "explicit" : "clean");
         yield return new XAttribute("id", track.BackendItemId);
         yield return new XAttribute("title", TrackTitle(track, preferences));
         yield return new XAttribute("artist", track.Artist);

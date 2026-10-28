@@ -12,6 +12,43 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [Theory]
     [InlineData(ProtocolKind.Jellyfin)]
     [InlineData(ProtocolKind.Subsonic)]
+    public async Task CleanOnlySearchAndArtistAlbumsPreferLabeledCleanEditionWithoutDetailCalls(ProtocolKind protocol)
+    {
+        var capability = SearchRankingCapability("deezer");
+        var albums = new ProviderAlbumMetadata[]
+        {
+            new(new("deezer", ProviderResourceKind.Album, "explicit"), "Album", [new("Artist")], isExplicit: true),
+            new(new("deezer", ProviderResourceKind.Album, "clean"), "Album", [new("Artist")], isExplicit: false),
+            new(new("deezer", ProviderResourceKind.Album, "unknown"), "Other Album", [new("Artist")])
+        };
+        Mock.Get(capability).Setup(item => item.SearchAlbumsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Success(new("deezer", albums)));
+        Mock.Get(capability).Setup(item => item.GetArtistAlbumsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderArtistItemsRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Success(new("deezer", albums)));
+        var registry = MetadataRegistry(capability);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => MetadataPlan(request, registry, capability));
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
+        var context = SearchRankingContext(protocol);
+        context = context with
+        {
+            Policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(
+                System.Collections.Immutable.ImmutableDictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>.Empty,
+                System.Collections.Immutable.ImmutableHashSet<string>.Empty, "Lossless", 0.07)
+            { UserId = context.Actor?.EffectiveUserId, Preferences = new("CleanOnly") }
+        };
+        var search = Assert.Single((await gateway.SearchAsync(context, "Album", 0, 20, 0)).Albums);
+        var artist = Assert.Single(await gateway.GetArtistAlbumsAsync(context, "deezer", "artist"));
+        Assert.Equal("clean", search.ExternalId);
+        Assert.Equal("Album (Clean)", search.Title);
+        Assert.Equal("clean", artist.ExternalId);
+        Mock.Get(capability).Verify(item => item.GetAlbumAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderAlbumLookupRequest>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
     public async Task DifferentCatalogUpcsUseCompleteRecordingEvidenceBeforeKeepingDuplicateAlbums(ProtocolKind protocol)
     {
         var capabilities = new[] { SearchRankingCapability("deezer"), SearchRankingCapability("qobuz") };

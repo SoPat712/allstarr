@@ -77,7 +77,7 @@ public sealed class EffectiveProviderPolicyTests
     }
 
     [Fact]
-    public async Task ResolveForUser_KeepsPersonalFiltersIsolatedAndIncludesUnknownExplicitState()
+    public async Task ResolveForUser_KeepsPersonalFiltersIsolatedAndRequiresVerifiedCleanEvidence()
     {
         var userA = Guid.CreateVersion7();
         var userB = Guid.CreateVersion7();
@@ -102,7 +102,7 @@ public sealed class EffectiveProviderPolicyTests
         Assert.Equal(userB, policyB.UserId);
         Assert.False(policyA.Includes(1));
         Assert.True(policyB.Includes(1));
-        Assert.True(policyA.Includes((int?)null));
+        Assert.False(policyA.Includes((int?)null));
         Assert.True(policyB.Includes((int?)null));
         Assert.Equal("user-a-revision", policyA.PreferenceRevision);
         Assert.Equal("user-b-revision", policyB.PreferenceRevision);

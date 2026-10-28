@@ -62,6 +62,11 @@ public interface IDurableRuntimeSettings
     Task<PersonalListeningPreferences> UpdatePreferencesAsync(
         Guid userId, ListeningPreferences? overrides, string expectedRevision,
         CancellationToken cancellationToken = default);
+    Task<PersonalListeningPreferences> GetManagedPreferencesAsync(
+        Guid userId, Guid actorUserId, CancellationToken cancellationToken = default);
+    Task<PersonalListeningPreferences> UpdateCleanOnlyLockAsync(
+        Guid userId, bool locked, string expectedRevision, Guid actorUserId,
+        CancellationToken cancellationToken = default);
     Task UpdateProviderModeAsync(Guid? ownerUserId, string providerId, string? mode,
         string expectedRevision, Guid actorUserId, CancellationToken cancellationToken = default);
 }
@@ -107,6 +112,8 @@ public static class RuntimeSettingCatalog
 
     public static RuntimeSettingDefinition Require(string key)
     {
+        if (!string.IsNullOrWhiteSpace(key) && CleanOnlyLockKeys.IsLockKey(key.Trim()))
+            return new(key.Trim(), RuntimeSettingValueType.Boolean, key.Trim(), DefaultValue: "false");
         if (string.IsNullOrWhiteSpace(key) || !DefinitionsInternal.TryGetValue(key.Trim(), out var definition))
             throw new ArgumentException($"Runtime setting '{key}' is not supported.", nameof(key));
         return definition;
@@ -234,7 +241,7 @@ public static class RuntimeSettingCatalog
     }
 }
 
-public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableRuntimeSettings
+public sealed partial class DurableRuntimeSettingsService : BackgroundService, IDurableRuntimeSettings
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly IDbContextFactory<AllstarrDbContext> _factory;
@@ -370,6 +377,8 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
             !source.Trim().All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.' or ':'))
             throw new ArgumentException("A bounded source identifier is required.", nameof(source));
         if (writes.Count == 0) throw new ArgumentException("At least one setting is required.", nameof(writes));
+        if (writes.Any(item => !string.IsNullOrWhiteSpace(item.Key) && CleanOnlyLockKeys.IsLockKey(item.Key.Trim())))
+            throw new ArgumentException("Clean-only locks require the dedicated administrator operation.", nameof(writes));
         var duplicate = writes.GroupBy(item => RuntimeSettingCatalog.Require(item.Key).Key, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault(group => group.Count() > 1);
         if (duplicate != null) throw new ArgumentException($"Runtime setting '{duplicate.Key}' appears more than once.", nameof(writes));
@@ -605,11 +614,14 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
     private async Task<PersonalListeningPreferences> ReadPreferencesAsync(
         AllstarrDbContext db, Guid? userId, CancellationToken cancellationToken)
     {
+        var lockKey = userId.HasValue ? CleanOnlyLockKeys.ForUser(userId.Value) : null;
         var rows = await db.RuntimeSettings.AsNoTracking()
             .Where(item => (item.OwnerUserId == null || userId.HasValue && item.OwnerUserId == userId) &&
-                           ListeningPreferenceKeys.All.Contains(item.Key))
+                           (ListeningPreferenceKeys.All.Contains(item.Key) || item.OwnerUserId == null && item.Key == lockKey))
             .ToListAsync(cancellationToken);
-        var householdRows = rows.Where(item => item.OwnerUserId == null)
+        var lockRow = rows.SingleOrDefault(item => item.Key == lockKey);
+        var cleanOnlyLocked = lockRow != null && (bool)FromRecord(lockRow, RuntimeSettingCatalog.Require(lockRow.Key)).Value;
+        var householdRows = rows.Where(item => item.OwnerUserId == null && item.Key != lockKey)
             .ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
         var personalRows = rows.Where(item => item.OwnerUserId == userId && userId.HasValue)
             .ToDictionary(item => item.Key, StringComparer.OrdinalIgnoreCase);
@@ -635,9 +647,11 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
                     .GroupBy(item => item.Key, StringComparer.Ordinal)
                     .ToDictionary(group => group.Key, group => group.Last().Value, StringComparer.Ordinal)
             };
-        return new(effective, household, personalRows.Count == 0,
-            ComputePreferencesRevision(userId, householdSettings, personalRows))
+        if (cleanOnlyLocked) effective = effective with { ExplicitFilter = "CleanOnly" };
+        return new(effective, household, personalRows.Count == 0 && !cleanOnlyLocked,
+            ComputePreferencesRevision(userId, householdSettings, personalRows, lockRow))
         {
+            CleanOnlyLocked = cleanOnlyLocked,
             ProviderModeOverrides = personalRows.TryGetValue(ProviderUsePolicy.SettingKey, out var modeRow)
                 ? ProviderUsePolicy.ParseModes((string)FromRecord(modeRow,
                     RuntimeSettingCatalog.Require(ProviderUsePolicy.SettingKey)).Value).ToDictionary(item => item.Key,
@@ -662,7 +676,8 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
     private static string ComputePreferencesRevision(
         Guid? userId,
         IReadOnlyDictionary<string, EffectiveRuntimeSetting> household,
-        IReadOnlyDictionary<string, RuntimeSettingRecord> personal)
+        IReadOnlyDictionary<string, RuntimeSettingRecord> personal,
+        RuntimeSettingRecord? cleanOnlyLock)
     {
         var input = new StringBuilder()
             .Append("user=").Append(userId?.ToString("N", CultureInfo.InvariantCulture) ?? "household");
@@ -675,6 +690,10 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
                 input.Append(";p:").Append(key).Append(':').Append(row.Id.ToString("N", CultureInfo.InvariantCulture))
                     .Append(':').Append(row.Revision.ToString(CultureInfo.InvariantCulture));
         }
+        if (cleanOnlyLock != null)
+            input.Append(";lock:").Append(cleanOnlyLock.Id.ToString("N", CultureInfo.InvariantCulture))
+                .Append(':').Append(cleanOnlyLock.Revision.ToString(CultureInfo.InvariantCulture))
+                .Append(':').Append(cleanOnlyLock.ValueJson);
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input.ToString()))).ToLowerInvariant();
     }
 

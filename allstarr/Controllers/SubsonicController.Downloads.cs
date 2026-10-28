@@ -21,7 +21,8 @@ public partial class SubsonicController
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(id);
         if (isExternal && _libraryIndex != null &&
-            await _libraryIndex.ResolveKnownTrackAsync(CurrentProtocolContext, id, HttpContext.RequestAborted) is { } nativeId)
+            await _libraryIndex.ResolveKnownTrackAsync(CurrentProtocolContext, id, HttpContext.RequestAborted) is { } nativeId &&
+            await HttpContext.RequestServices.GetRequiredService<allstarr.Core.Protocols.CleanOnlyProtocolContent>().AllowsAsync(HttpContext, nativeId))
         {
             id = nativeId;
             parameters = parameters.SetValue("id", nativeId);
@@ -29,6 +30,8 @@ public partial class SubsonicController
         }
         if (!isExternal)
         {
+            if (!await HttpContext.RequestServices.GetRequiredService<allstarr.Core.Protocols.CleanOnlyProtocolContent>().AllowsAsync(HttpContext, id))
+                return StatusCode(403, new { error = allstarr.Core.Protocols.CleanOnlyProtocolContent.UnavailableMessage });
             var endpoint = Request.Path.Value?.TrimStart('/') ?? "rest/download";
             var relayed = await _proxyService.RelayRawAsync(endpoint, parameters, HttpContext.RequestAborted, Request.Headers);
             return _relayProtocolAdapter.CreateResult(relayed, $"application/{format}");

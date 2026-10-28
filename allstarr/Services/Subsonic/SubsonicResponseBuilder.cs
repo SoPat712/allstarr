@@ -416,6 +416,7 @@ public partial class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts 
             ["explicitStatus"] = ExplicitStatus(song)
         };
 
+        if (song.OriginalItemId != null) result["originalItemId"] = song.OriginalItemId;
         if (!string.IsNullOrWhiteSpace(song.AlbumId))
         {
             result["parent"] = song.AlbumId;
@@ -520,6 +521,7 @@ public partial class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts 
             new XAttribute("explicitStatus", ExplicitStatus(song))
         );
 
+        if (song.OriginalItemId != null) element.SetAttributeValue("originalItemId", song.OriginalItemId);
         if (!string.IsNullOrWhiteSpace(song.Isrc))
             element.Add(new XElement(ns + "isrc", song.Isrc));
         if (!string.IsNullOrWhiteSpace(song.Genre))

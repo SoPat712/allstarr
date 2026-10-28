@@ -433,7 +433,7 @@ public sealed partial class ProtocolProviderGateway(
             routed.Artists.AddRange(result.Artists);
         }
 
-        if (albumLimit > 0 && routed.Albums.Count > 1)
+        if (albumLimit > 0 && routed.Albums.Count > 1 && effectivePolicy?.Preferences.ExplicitFilter != "CleanOnly")
             routed.Albums = await EnrichAlbumReleasesAsync(protocol, routed.Albums, plan.Candidates);
         var songs = await CollapseVerifiedSearchTracksAsync(
             routed.Songs.Where(song => effectivePolicy?.Includes(song) != false).ToArray(),
@@ -447,7 +447,7 @@ public sealed partial class ProtocolProviderGateway(
             Songs = MergeSearch(songs, songLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
                 item => item.ExternalProvider, item => SearchRelevanceRanker.ScoreSong(query, item,
                     knownDurationTitles.Contains(SearchRelevanceRanker.RecordingTitle(item.Title, item.Artist, item.AlbumArtist))), providerOrder),
-            Albums = MergeSearch(MusicAlbumReleases.Collapse(routed.Albums), albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
+            Albums = MergeSearch(CleanAlbums(MusicAlbumReleases.Collapse(routed.Albums), effectivePolicy), albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
                 item => item.ExternalProvider, item => SearchRelevanceRanker.ScoreAlbum(query, item), providerOrder),
             Artists = MergeSearch(routed.Artists, artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
                 item => item.ExternalProvider, item => SearchRelevanceRanker.Score(query, item.Name), providerOrder)
@@ -840,7 +840,7 @@ public sealed partial class ProtocolProviderGateway(
             await ApplyKnownPublicIdsAsync(routed.Candidate.Context, albums.SelectMany(album => album.Songs).ToArray(), protocol);
             await CacheResourcesAsync(routed.Candidate.Context, albums, []);
             await CacheKnownRelationshipsAsync(protocol, routed.Candidate.Context, externalId, "albums", albums);
-            return MusicAlbumReleases.Collapse(albums);
+            return CleanAlbums(MusicAlbumReleases.Collapse(albums), await ResolveEffectivePolicyAsync(protocol)).ToList();
         }
 
         return [];
@@ -1054,8 +1054,9 @@ public sealed partial class ProtocolProviderGateway(
                 cursor = page.NextCursor;
             } while (cursor != null);
             var policy = await ResolveEffectivePolicyAsync(protocol);
+            await CacheSongsAsync(routed.Candidate.Context, tracks);
             await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks, protocol);
-            return tracks.Where(song => policy?.Includes(song) != false).ToList();
+            return await ProjectCleanPlaylistAsync(protocol, tracks, policy);
         }
 
         return [];
@@ -1148,6 +1149,8 @@ public sealed partial class ProtocolProviderGateway(
             quality == ProviderAudioQuality.DataSaver || effectivePolicy?.AudioQuality == "DataSaver")) return null;
         var trackId = new ProviderExternalResourceId(
             providerId, ProviderResourceKind.Track, externalId);
+        if (!await AllowsCleanPlaybackAsync(protocol, trackId))
+            throw new UnauthorizedAccessException(CleanOnlyProtocolContent.UnavailableMessage);
         var itemId = protocol.RequestedItemId ?? ProtocolItemId(trackId);
         if (protocol.IsPreparation && playbackActivity?.WasStreamOpened(itemId) == true) return null;
         var previous = playbackActivity?.StreamFor(protocol, itemId, quality);
@@ -1365,6 +1368,7 @@ public sealed partial class ProtocolProviderGateway(
                 continue;
             if (protocol.IsPreparation && !ProviderStreamOpener.PreparationProviders.Contains(candidate.Provider.Id)) return null;
             var servingTrack = candidate.TrackId ?? trackId;
+            if (!await AllowsCleanPlaybackAsync(protocol, servingTrack, candidate.Context)) continue;
             var sourceQuality = resuming && previous != null && previous.ProviderId == candidate.Provider.Id &&
                 previous.ExternalId == servingTrack.Value && previous.AccountId == candidate.Context.Account?.AccountId &&
                 previous.AccountRevision == candidate.Context.Account?.Revision ? previous.SourceQuality : quality;
@@ -1611,6 +1615,13 @@ public sealed partial class ProtocolProviderGateway(
         async Task<ProtocolProviderStream> OpenedAsync(ProtocolProviderStream stream,
             ProviderExecutionContext? execution, ProviderExternalResourceId? servingTrack)
         {
+            var selectedTrack = servingTrack ?? new ProviderExternalResourceId(stream.ServingProviderId,
+                ProviderResourceKind.Track, stream.ServingExternalId ?? trackId.Value);
+            if (!await AllowsCleanPlaybackAsync(protocol, selectedTrack, execution))
+            {
+                stream.Response.Dispose();
+                throw new UnauthorizedAccessException(CleanOnlyProtocolContent.UnavailableMessage);
+            }
             PlaybackStartTimings.Current?.Select(stream.ServingProviderId, stream.IsCached, execution?.Account?.Scope.ToString());
             PlaybackStartTimings.Current?.Catalog(stream.FileFacts.Catalog);
             PlaybackStartTimings.Current?.Route(stream.ServingProviderId, stream.IsCached, stream.SelectionReason,

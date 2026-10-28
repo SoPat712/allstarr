@@ -208,7 +208,7 @@ public partial class JellyfinResponseBuilder
     public Dictionary<string, object?> ConvertAlbumToSearchHint(Album album)
     {
         var item = ConvertAlbumToJellyfinItem(album);
-        return new Dictionary<string, object?>
+        var hint = new Dictionary<string, object?>
         {
             ["Id"] = item["Id"],
             ["ItemId"] = item["Id"],
@@ -220,12 +220,14 @@ public partial class JellyfinResponseBuilder
             ["RunTimeTicks"] = 0,
             ["ImageTags"] = item["ImageTags"]
         };
+        if (item.TryGetValue("OfficialRating", out var rating)) hint["OfficialRating"] = rating;
+        return hint;
     }
 
     public Dictionary<string, object?> ConvertSongToSearchHint(Song song)
     {
         var item = ConvertSongToJellyfinItem(song);
-        return new Dictionary<string, object?>
+        var hint = new Dictionary<string, object?>
         {
             ["Id"] = item["Id"],
             ["ItemId"] = item["Id"],
@@ -237,6 +239,8 @@ public partial class JellyfinResponseBuilder
             ["RunTimeTicks"] = item["RunTimeTicks"],
             ["ImageTags"] = item["ImageTags"]
         };
+        if (item.TryGetValue("OfficialRating", out var rating)) hint["OfficialRating"] = rating;
+        return hint;
     }
 
     public IActionResult CreateError(int statusCode, string message)
