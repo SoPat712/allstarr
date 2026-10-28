@@ -29,6 +29,7 @@
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { pathValue } from "$lib/settings";
   import { relativeTime } from "$lib/activity";
+  import { newReportRequestId as newRequestId } from "$lib/support";
   import { findProviderDefinition, providerDisplayName } from "$lib/sources";
 
   let { storage }: { storage: "cache" | "kept" } = $props();
@@ -169,7 +170,7 @@
     action = "preview-delete";
     try {
       const preview = await downloads.previewKeptDeletion(file.path);
-      confirm({ kind: "delete-kept", file, preview, requestId: crypto.randomUUID() });
+      confirm({ kind: "delete-kept", file, preview, requestId: newRequestId() });
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "The kept copy could not be checked. Refresh and retry.");
     } finally {
