@@ -1,3 +1,4 @@
+using allstarr.Core.Playback;
 using allstarr.Services.Common;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -83,6 +84,7 @@ public partial class ExtensionHostBridge
 
     public object FfmpegConvert(string input, string output, string optionsJson)
     {
+        using var timing = PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Process, _extensionId);
         string? staged = null;
         try
         {

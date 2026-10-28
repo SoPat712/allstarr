@@ -1,3 +1,4 @@
+using allstarr.Core.Playback;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO.Compression;
@@ -1872,6 +1873,7 @@ public partial class ExtensionHostBridge
 
     public bool Sleep(int milliseconds)
     {
+        using var timing = PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Retry, _extensionId);
         if (milliseconds is < 0 or > 300_000) throw new ArgumentOutOfRangeException(nameof(milliseconds));
         (ExtensionInvocationBudget.Current is { } budget
             ? budget.DelayAsync(milliseconds)

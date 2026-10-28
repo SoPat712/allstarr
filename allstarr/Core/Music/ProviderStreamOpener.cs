@@ -1,3 +1,4 @@
+using allstarr.Core.Playback;
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
@@ -22,7 +23,8 @@ public sealed class ProviderStreamOpener(
     PlaybackDeliveryActivityStore? activity = null,
     ILogger<ProviderStreamOpener>? logger = null,
     ProviderStreamAdmission? admission = null,
-    MediaConversionGate? conversions = null)
+    MediaConversionGate? conversions = null,
+    PlaybackStartTimingStore? timings = null)
 {
     internal static readonly IReadOnlySet<string> PreparationProviders = new HashSet<string>(StringComparer.Ordinal)
     { "apple-musickit", "apple-download" };
@@ -106,6 +108,13 @@ public sealed class ProviderStreamOpener(
         }
         try
         {
+            var timing = PlaybackStartTimings.Current;
+            if (timing != null && timings != null && !HttpMethods.IsHead(http.Request.Method))
+            {
+                timing.Enable();
+                http.Response.Headers["X-Allstarr-Playback-Request"] = timing.Id.ToString("N");
+                await timings.RecordAsync(timing.Snapshot("opening"));
+            }
             if (context.IsOriginalDownload)
             {
                 delivery = null;

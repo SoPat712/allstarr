@@ -1,3 +1,4 @@
+using allstarr.Core.Playback;
 using System.Globalization;
 using System.IO.Compression;
 using System.Net;
@@ -598,6 +599,7 @@ internal sealed class ExtensionSignedSessionClient
                         var contract = ErrorContract.Parse(response.Response.Body);
                         if (contract.ProviderRetry(response.StatusCode) && retry < 2)
                         {
+                            using var retryTiming = PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Retry);
                             await Task.Delay(response.Response.ProviderDelay(contract.RetryAfterSeconds, _timeProvider.GetUtcNow()),
                                 _timeProvider, limit);
                             continue;

@@ -106,6 +106,52 @@ public sealed class DiagnosticsControllerTests
         Assert.Equal(4, handler.RequestCount);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PlaybackStartsRequiresAdministratorBeforeReadingStorage(bool signedIn)
+    {
+        var controller = CreateController();
+        if (signedIn) controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            SessionId = "listener-session",
+            UserId = "listener",
+            UserName = "Listener",
+            IsAdministrator = false,
+            JellyfinAccessToken = "unused",
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+        };
+        Assert.Equal(403, Assert.IsType<StatusCodeResult>(await controller.PlaybackStarts()).StatusCode);
+    }
+
+    [Fact]
+    public async Task PlaybackStartsReturnsBoundedDurableDiagnosticsForAdministrator()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new ProviderCheckServiceTests.Factory(database.Options);
+        var clock = new ManualTimeProvider();
+        var store = new allstarr.Core.Playback.PlaybackStartTimingStore(factory, clock,
+            NullLogger<allstarr.Core.Playback.PlaybackStartTimingStore>.Instance);
+        await store.RecordAsync(new(Guid.CreateVersion7(), clock.GetUtcNow(), "completed", "deezer", "Song", "Artist",
+            "Shared", false, 100, 90, 100, [], 0));
+        var controller = CreateController(requestServices: new ServiceCollection().AddSingleton(store).BuildServiceProvider());
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            SessionId = "admin-session",
+            UserId = "admin",
+            UserName = "Administrator",
+            IsAdministrator = true,
+            JellyfinAccessToken = "unused",
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+        };
+        var result = Assert.IsType<OkObjectResult>(await controller.PlaybackStarts(int.MaxValue));
+        var json = JsonSerializer.Serialize(result.Value);
+        Assert.Contains("Song", json, StringComparison.Ordinal);
+        Assert.Contains("maximumSamples", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("admin-session", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("unused", json, StringComparison.Ordinal);
+    }
+
     private DiagnosticsController CreateController(
         JellyfinSettings? jellyfinSettings = null,
         IServiceProvider? requestServices = null)

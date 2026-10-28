@@ -1,3 +1,4 @@
+using allstarr.Core.Playback;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -37,6 +38,7 @@ public sealed class ProviderAccountResolver(IDbContextFactory<AllstarrDbContext>
         ProviderAccountResolutionRequest request,
         CancellationToken cancellationToken = default)
     {
+        using var timing = PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Account);
         if (string.IsNullOrWhiteSpace(request.ProviderId) || string.IsNullOrWhiteSpace(request.Capability))
             throw new ArgumentException("Provider and capability are required.", nameof(request));
 

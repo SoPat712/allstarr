@@ -476,6 +476,7 @@ public class AdminUiController : ControllerBase
             .ToDictionary(group => group.Key, group => group.ToArray());
         var libraryTracks = matchActivity.LibraryTracks;
         var audits = await context.AuditEvents.AsNoTracking()
+            .Where(item => item.Category != allstarr.Core.Playback.PlaybackStartTimingStore.Category)
             .Where(item => (everyone || item.ActorUserId == userId) &&
                 (!before.HasValue || item.CreatedAt < before.Value ||
                 (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
