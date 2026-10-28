@@ -10,7 +10,7 @@
   const manual = createManualRefresh();
 </script>
 
-<Button {...props} bind:ref disabled={props.disabled || manual.pending} aria-busy={manual.pending} onclick={() => void manual.run(onrefresh)}>
+<Button {...props} bind:ref aria-label={manual.pending ? "Refreshing…" : label} disabled={props.disabled || manual.pending} aria-busy={manual.pending} onclick={() => void manual.run(onrefresh)}>
   <RefreshCw size={16} class={manual.pending ? "refresh-spinning" : ""} aria-hidden="true" />
   <span>{manual.pending ? "Refreshing…" : label}</span>
 </Button>

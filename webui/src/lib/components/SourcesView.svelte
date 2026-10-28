@@ -295,7 +295,7 @@
     loading = false;
   }
 
-  const refreshScheduler = createRefreshScheduler(refresh, 5_000);
+  const refreshScheduler = createRefreshScheduler(refresh);
   const scheduleRefresh = refreshScheduler.schedule;
 
   async function completed(message: string) {
