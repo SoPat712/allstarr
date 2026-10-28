@@ -24,7 +24,7 @@
   const filterOptions: Array<{ value: ExplicitFilter; label: string; description: string }> = [
     { value: "All", label: "All", description: "Show clean and explicit releases." },
     { value: "ExplicitOnly", label: "Hide clean/edited versions", description: "Keep naturally clean, explicit, and unrated releases." },
-    { value: "CleanOnly", label: "Clean only", description: "Hide releases marked explicit." },
+    { value: "CleanOnly", label: "Clean only", description: "Hides explicit songs and songs whose rating isn't known." },
   ];
 
   let snapshot = $state<PersonalListeningPreferences | null>(null);
@@ -72,7 +72,7 @@
 
   function apply(next: PersonalListeningPreferences) {
     snapshot = next;
-    explicitFilter = next.values.explicitFilter;
+    explicitFilter = next.cleanOnlyLocked ? "CleanOnly" : next.values.explicitFilter;
     showExternalLabel = next.values.showExternalLabel;
     showExplicitLabel = next.values.showExplicitLabel;
     playbackStart = next.values.playbackStart ?? "Balanced";
@@ -193,15 +193,16 @@
         <div>
 
           <h3>Explicit releases</h3>
-          <p>Control which release versions appear in your Allstarr results. Tracks with unknown explicit status always remain visible.</p>
+          <p>Choose which songs appear in your Allstarr results.</p>
         </div>
         <span class="scope-status">
           {snapshot.usesHouseholdDefaults ? "Using household defaults" : "Personal choices"}
         </span>
       </header>
 
-      <fieldset class="filter-options" disabled={busy}>
+      <fieldset class="filter-options" disabled={busy || snapshot.cleanOnlyLocked}>
         <legend>Release filter</legend>
+        {#if snapshot.cleanOnlyLocked}<p class="unknown-value">Your administrator turned this on.</p>{/if}
         {#each filterOptions as option}
           <label class:active={explicitFilter === option.value}>
             <input bind:group={explicitFilter} type="radio" name="explicit-filter" value={option.value} />
