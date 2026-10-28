@@ -515,6 +515,30 @@ public class DeezerProviderTests
     }
 
     [Fact]
+    public async Task GetAlbumAsync_KeepsCompleteEmbeddedTracksWhenIdentifierEnrichmentIsUnavailable()
+    {
+        SetupHttpResponse(request => request.RequestUri!.AbsolutePath.EndsWith("/tracks", StringComparison.Ordinal)
+            ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            : CreateJsonResponse("""{"id":456789,"title":"PRIMA","nb_tracks":1,"artist":{"id":123,"name":"ADÉLA"},"tracks":{"data":[{"id":111,"title":"KGB","duration":180,"artist":{"id":123,"name":"ADÉLA"}}]}}"""));
+
+        var result = await _service.GetAlbumAsync("deezer", "456789");
+
+        Assert.Equal("KGB", Assert.Single(result!.Songs).Title);
+    }
+
+    [Fact]
+    public async Task GetAlbumAsync_EnrichesCompleteEmbeddedTracksWithRecordingIdentifiers()
+    {
+        SetupHttpResponse(request => CreateJsonResponse(request.RequestUri!.AbsolutePath.EndsWith("/tracks", StringComparison.Ordinal)
+            ? """{"data":[{"id":111,"title":"KGB","duration":180,"isrc":"USUM72601922","artist":{"id":123,"name":"ADÉLA"}}]}"""
+            : """{"id":456789,"title":"PRIMA","nb_tracks":1,"artist":{"id":123,"name":"ADÉLA"},"tracks":{"data":[{"id":111,"title":"KGB","duration":180,"artist":{"id":123,"name":"ADÉLA"}}]}}"""));
+
+        var result = await _service.GetAlbumAsync("deezer", "456789");
+
+        Assert.Equal("USUM72601922", Assert.Single(result!.Songs).Isrc);
+    }
+
+    [Fact]
     public async Task GetAlbumAsync_WithNonDeezerProvider_ReturnsNull()
     {
         var result = await _service.GetAlbumAsync("spotify", "123456");

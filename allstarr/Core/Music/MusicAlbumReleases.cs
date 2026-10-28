@@ -131,7 +131,9 @@ internal static class MusicAlbumReleases
 
     internal static string FamilyKey(Album album) => ArtistKey(album) + "|" + TitleKey(album) + "|" + EditionKey(album);
 
-    internal static bool HasReleaseEvidence(Album album) => NormalizeUpc(album.Upc) != null || Complete(album) && album.Songs.All(song => !string.IsNullOrWhiteSpace(song.Isrc));
+    internal static bool HasReleaseEvidence(Album album) => NormalizeUpc(album.Upc) != null || HasTrackEvidence(album);
+
+    internal static bool HasTrackEvidence(Album album) => Complete(album) && album.Songs.All(song => !string.IsNullOrWhiteSpace(song.Isrc));
 
     private static List<Album> Present(IReadOnlyList<Album> albums)
     {

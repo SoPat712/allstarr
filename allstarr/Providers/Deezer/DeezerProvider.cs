@@ -404,20 +404,30 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
             }
         }
 
-        if (album.SongCount.HasValue && embeddedTrackCount < album.SongCount.Value)
+        if (album.SongCount.HasValue && embeddedTrackCount < album.SongCount.Value ||
+            album.Songs.Any(song => string.IsNullOrWhiteSpace(song.Isrc)))
         {
             var pagedSongs = new List<Song>();
             trackIndex = 1;
 
-            var pagedTrackCount = await ReadPagedDataAsync(
-                index => BuildMetadataPageUrl($"album/{Uri.EscapeDataString(externalId)}/tracks", index),
-                track => AddTrack(track, pagedSongs),
-                cancellationToken);
-
-            if (pagedTrackCount > embeddedTrackCount)
+            try
             {
-                album.Songs.Clear();
-                album.Songs.AddRange(pagedSongs);
+                var pagedTrackCount = await ReadPagedDataAsync(
+                    index => BuildMetadataPageUrl($"album/{Uri.EscapeDataString(externalId)}/tracks", index),
+                    track => AddTrack(track, pagedSongs),
+                    cancellationToken);
+
+                if (pagedTrackCount > embeddedTrackCount || pagedTrackCount == embeddedTrackCount &&
+                    pagedSongs.Zip(album.Songs).All(pair => pair.First.ExternalId == pair.Second.ExternalId))
+                {
+                    album.Songs.Clear();
+                    album.Songs.AddRange(pagedSongs);
+                }
+            }
+            catch (Exception exception) when (embeddedTrackCount >= album.SongCount &&
+                                              exception is HttpRequestException or JsonException)
+            {
+                // Full embedded tracks remain usable when optional recording evidence is unavailable.
             }
         }
 
