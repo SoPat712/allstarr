@@ -1172,3 +1172,19 @@ async def test_audio_waiter_cancellation_removes_conversion_partial(settings):
     assert canceled.is_set()
     assert not list(settings.data_root.rglob("*.partial"))
     assert not list(settings.data_root.rglob("*.audio.flac"))
+
+
+@pytest.mark.parametrize("original_container", [False, True])
+def test_prepared_audio_cache_keeps_strong_etag_for_range_reopens(settings, original_container):
+    runner = FakeRunner()
+    with TestClient(create_app(settings, FakeWrapper(), runner)) as client:
+        url = "/api/audio/101?original_container=" + str(original_container).lower()
+        first = client.get(url, headers=ACCOUNT_HEADERS)
+        assert first.status_code == 200
+        tag = first.headers["etag"]
+        for method in ("GET", "HEAD"):
+            response = client.request(method, url, headers={**ACCOUNT_HEADERS, "Range": "bytes=0-3", "If-Range": tag})
+            assert response.status_code == 206
+            assert response.headers["etag"] == tag
+            if method == "GET":
+                assert response.content == first.content[:4]

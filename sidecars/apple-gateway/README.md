@@ -69,7 +69,7 @@ Allstarr diagnostics retain valid bounded values as overlapping preparation/proc
 the sidecar response arrives; those positions approximate the sidecar work rather than distributed clock time.
 
 GET and HEAD return `Content-Length`, `Content-Type`, and `Accept-Ranges: bytes`. Byte ranges receive 206;
-unsatisfiable ranges receive 416 through the file response handler. HEAD prepares an uncached song before
+unsatisfiable ranges receive 416 through the file response handler. Cache hits refresh access time without changing the modification time or strong ETag, so If-Range reopens retain the same representation. HEAD prepares an uncached song before
 returning headers. Requests for the same account, storefront, song, and quality share both source preparation
 and conversion. Finished files are published with an atomic rename and share the prepared cache's six-hour
 idle expiry and 32-track limit with their source files. Cache hits avoid downloading and converting again.
