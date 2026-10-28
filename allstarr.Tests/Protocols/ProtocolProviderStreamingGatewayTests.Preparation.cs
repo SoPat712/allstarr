@@ -35,11 +35,11 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var library = new Mock<ILocalLibraryService>(MockBehavior.Strict);
         await using var cache = new ManagedTrackCacheService(config,
             Options.Create(new SubsonicSettings { StorageMode = StorageMode.Cache }),
-            library.Object, NullLogger<ManagedTrackCacheService>.Instance);
+            library.Object, NullLogger<ManagedTrackCacheService>.Instance, audioVerifier: FixtureAudioVerifier.Instance);
         using var activity = new PlaybackDeliveryActivityStore();
         var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
         var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), config,
-            managedTrackCache: cache, playbackActivity: activity, identities: identities.Object);
+            managedTrackCache: cache, playbackActivity: activity, identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
         var context = Context() with
         {
             IsOriginalDownload = true,
@@ -84,11 +84,11 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var library = new Mock<ILocalLibraryService>(MockBehavior.Strict);
         await using var cache = new ManagedTrackCacheService(config,
             Options.Create(new SubsonicSettings { StorageMode = StorageMode.Cache }),
-            library.Object, NullLogger<ManagedTrackCacheService>.Instance);
+            library.Object, NullLogger<ManagedTrackCacheService>.Instance, audioVerifier: FixtureAudioVerifier.Instance);
         using var activity = new PlaybackDeliveryActivityStore();
         var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
         var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), config,
-            managedTrackCache: cache, playbackActivity: activity, identities: identities.Object);
+            managedTrackCache: cache, playbackActivity: activity, identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
         var context = Context() with { IsReadOnly = true, RequestedItemId = "ext-apple-musickit-song-next" };
 
         var result = await gateway.OpenStreamAsync(context, "apple-musickit", "next", ProviderAudioQuality.Any, null, headOnly);
@@ -105,7 +105,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task AudioDeliveryRejectsIncompatibleAppleSourceBeforeCachingOrRecordingPlayback(bool preparing)
+    public async Task AudioDeliveryRejectsIncompatibleAppleSourceWhenConversionIsDisabled(bool preparing)
     {
         await using var fixture = new PreparationStreamFixture();
         fixture.OpenResponse.TrySetResult();
@@ -113,7 +113,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         {
             IsPreparation = preparing,
             PreparationQuality = ProviderAudioQuality.Lossy,
-            AudioDelivery = new ProviderAudioDeliveryRequest { Formats = [new(["mp3"], ["mp3"], ["http"])] }
+            AudioDelivery = new ProviderAudioDeliveryRequest { Formats = [new(["mp3"], ["mp3"], ["http"])], EnableTranscoding = false }
         };
 
         await Assert.ThrowsAsync<ProviderAudioProfileException>(() => fixture.Gateway.OpenStreamAsync(
@@ -265,8 +265,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             { ["Library:DownloadPath"] = root }).Build();
             Cache = new(config, Options.Create(new SubsonicSettings { StorageMode = StorageMode.Cache }),
-                Mock.Of<ILocalLibraryService>(), NullLogger<ManagedTrackCacheService>.Instance);
-            Gateway = new(router.Object, registry, new HttpClientFactory(), config, managedTrackCache: Cache);
+                Mock.Of<ILocalLibraryService>(), NullLogger<ManagedTrackCacheService>.Instance, audioVerifier: FixtureAudioVerifier.Instance);
+            Gateway = new(router.Object, registry, new HttpClientFactory(), config, managedTrackCache: Cache, audioVerifier: FixtureAudioVerifier.Instance);
         }
 
         public async ValueTask DisposeAsync()
@@ -332,11 +332,11 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         library.Setup(item => item.GetLocalPathForExternalSongAsync(It.IsAny<allstarr.Core.Downloads.DownloadedSongMappingScope>(),
             "apple-musickit", "apple-musickit-track")).ReturnsAsync(cached ? path : null);
         await using var cache = new ManagedTrackCacheService(config, Options.Create(new SubsonicSettings { StorageMode = StorageMode.Cache }),
-            library.Object, NullLogger<ManagedTrackCacheService>.Instance);
+            library.Object, NullLogger<ManagedTrackCacheService>.Instance, audioVerifier: FixtureAudioVerifier.Instance);
         using var activity = new PlaybackDeliveryActivityStore();
         var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
         var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), config,
-            managedTrackCache: cache, playbackActivity: activity, identities: identities.Object);
+            managedTrackCache: cache, playbackActivity: activity, identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
         var context = Context() with { IsPreparation = true };
         using var current = AudioResponse();
         activity.StreamOpened(context with { IsPreparation = false }, "current", ProviderAudioQuality.Lossless,
@@ -360,7 +360,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     public async Task PreparationDataSaverDoesNotPlanOrOpenARoute()
     {
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
-        var gateway = new ProtocolProviderGateway(router.Object, new ProviderRegistry([]), new HttpClientFactory());
+        var gateway = new ProtocolProviderGateway(router.Object, new ProviderRegistry([]), new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
         Assert.Null(await gateway.OpenStreamAsync(Context() with { IsPreparation = true }, "apple-download", "next",
             ProviderAudioQuality.DataSaver, null));
         router.VerifyNoOtherCalls();

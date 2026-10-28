@@ -106,7 +106,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             var sandbox = new ExtensionSandbox(root, normalized, script, new HttpClientFactory(handler), NullLogger.Instance,
                 new ExtensionRuntimePermissionSet(new HashSet<string>(["https://api.example.test/"]), new HashSet<string>(), new HashSet<string>()), root);
             var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(),
-                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 4096 });
+                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 4096 }, audioVerifier: FixtureAudioVerifier.Instance);
             var job = Guid.CreateVersion7();
             var workspace = await resolver.CreateWorkspaceAsync(new(Guid.CreateVersion7(), job, manifest.Id, null, "download"));
             using var scope = ExtensionArtifactInvocationScope.Open(resolver, workspace.Reference, job, manifest.Id, 4096, CancellationToken.None);

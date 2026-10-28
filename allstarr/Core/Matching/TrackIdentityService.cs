@@ -143,6 +143,9 @@ public interface ITrackIdentityService
     Task<Guid> RememberSourceAsync(ProviderExecutionContext context, ProviderExternalResourceId externalId,
         string publicId, ProviderIdentityScope scope, string? isrc = null, CancellationToken cancellationToken = default);
 
+    Task RememberPlaybackMetadataAsync(ProviderExecutionContext context, ProviderExternalResourceId track,
+        allstarr.Models.Domain.Song song, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
     Task<CanonicalRecordingIdentity> EnrichRecordingAsync(ProviderActorContext actor, Guid recordingId,
         string expectedIsrc, string musicBrainzId, IReadOnlyCollection<string> isrcs, string correlationId,
         CancellationToken cancellationToken = default);

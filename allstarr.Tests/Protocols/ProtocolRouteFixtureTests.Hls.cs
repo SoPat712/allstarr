@@ -18,6 +18,85 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolRouteFixtureTests
 {
+    [MediaToolsFact]
+    public async Task HlsStreamsLargerOriginalsIntoTheBoundedDeliveredSession()
+    {
+        var bytes = ProviderStreamOpenerTests.SeekWave(200, sampleRate: 96000);
+        Assert.True(bytes.Length > 32 * 1024 * 1024);
+        var gateway = HlsGateway(bytes, new("audio/wav", "wav", "pcm_s16le", 1536000, 96000, 16, 1));
+        using var sessions = new ProviderHlsSessions(gateway.Object, TimeProvider.System);
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "principal", null, "large-hls", DateTimeOffset.UtcNow.AddMinutes(3), default);
+        var delivery = ProviderAudioDeliveryRequests.Jellyfin(new QueryCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>
+        { ["Container"] = "mp4", ["AudioCodec"] = "aac", ["MaxStreamingBitrate"] = "128000", ["AudioSampleRate"] = "44100" }));
+
+        var session = await sessions.CreateAsync(context, "ext-deezer-song-42", "deezer", "42", delivery);
+
+        Assert.InRange(session.Bytes.Length, 1, 32 * 1024 * 1024);
+        Assert.InRange(session.Duration, 199.5, 200.5);
+        Assert.Equal("aac", session.Media!.Codec);
+        Assert.Equal(128000, session.Media.Bitrate);
+        Assert.Same(session, sessions.Find(session.Id));
+    }
+
+    [MediaToolsTheory]
+    [InlineData("flac")]
+    [InlineData("wav")]
+    public async Task HlsConvertsOrdinaryOriginalsToAcceptedAacFragments(string codec)
+    {
+        var bytes = codec == "wav" ? PlaybackAudioFixtures.Wave() : DeliveryBytes(codec);
+        var media = codec == "wav" ? PlaybackAudioFixtures.WaveMedia : DeliveryMedia(codec, codec);
+        var gateway = HlsGateway(bytes, media);
+        using var factory = HlsFactory(gateway);
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync("/Audio/ext-deezer-song-42/main.m3u8?" + FinampHlsQuery);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var (init, segment) = HlsLinks(await response.Content.ReadAsStringAsync());
+        var combined = (await client.GetByteArrayAsync("/Audio/ext-deezer-song-42/" + init))
+            .Concat(await client.GetByteArrayAsync("/Audio/ext-deezer-song-42/" + segment)).ToArray();
+        var layout = FragmentedAudioLayout.Read(combined);
+        Assert.Equal(44100, layout.SampleRate);
+        Assert.InRange(layout.Channels!.Value, 1, 2);
+        Assert.NotEqual(bytes, combined);
+        gateway.Verify(service => service.OpenStreamAsync(It.Is<ProtocolExecutionContext>(context => !context.IsReadOnly),
+            "deezer", "42", It.IsAny<ProviderAudioQuality>(), null, false), Times.Once);
+    }
+
+    [MediaToolsFact]
+    public async Task HlsOnlyPlaybackInfoAdvertisesAndServesTheAcceptedFragmentedConversion()
+    {
+        using var factory = DeliveryFactory("Jellyfin", DeliveryGateway("flac", "flac"));
+        using var client = factory.CreateClient();
+        using var info = await client.PostAsync("/Items/ext-deezer-song-42/PlaybackInfo?ApiKey=fixture-key",
+            new StringContent("""{"MaxStreamingBitrate":128000,"DeviceProfile":{"DirectPlayProfiles":[],"TranscodingProfiles":[{"Type":"Audio","Container":"mp4","AudioCodec":"aac","Protocol":"hls"}]}}""",
+                System.Text.Encoding.UTF8, "application/json"));
+        using var document = JsonDocument.Parse(await info.Content.ReadAsStringAsync());
+        var source = Assert.Single(document.RootElement.GetProperty("MediaSources").EnumerateArray());
+        Assert.True(source.GetProperty("SupportsTranscoding").GetBoolean());
+        Assert.False(source.GetProperty("SupportsDirectPlay").GetBoolean());
+        var url = source.GetProperty("TranscodingUrl").GetString()!;
+        Assert.Contains("main.m3u8", url);
+        Assert.Contains("MaxStreamingBitrate=128000", url);
+        using var manifest = await client.GetAsync(url + "&ApiKey=fixture-key");
+        Assert.Equal(HttpStatusCode.OK, manifest.StatusCode);
+        Assert.StartsWith("#EXTM3U", await manifest.Content.ReadAsStringAsync());
+    }
+
+    [Fact]
+    public async Task HlsConversionKeepsTheExistingSourceAndProcessCapacityBounds()
+    {
+        var gate = new MediaConversionGate(new(new ConfigurationManager { [MediaCapacityLimits.ConversionsKey] = "1" }));
+        using var busy = await gate.EnterAsync(default);
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "principal", null, "hls-capacity", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var delivery = ProviderAudioDeliveryRequests.Jellyfin(new QueryCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>
+        { ["Container"] = "mp4", ["AudioCodec"] = "aac", ["MaxStreamingBitrate"] = "128000" }));
+        using var originals = new ProviderHlsSessions(HlsGateway().Object, TimeProvider.System, conversions: gate);
+        Assert.Equal(HlsBytes, (await originals.CreateAsync(context, "ext-deezer-song-42", "deezer", "42", delivery)).Bytes);
+        using var sessions = new ProviderHlsSessions(HlsGateway(PlaybackAudioFixtures.Wave(), PlaybackAudioFixtures.WaveMedia).Object, TimeProvider.System, conversions: gate);
+        await Assert.ThrowsAsync<LocalCapacityException>(() => sessions.CreateAsync(context, "ext-deezer-song-42", "deezer", "42", delivery));
+        using var oversized = new ProviderHlsSessions(HlsGateway(new byte[32 * 1024 * 1024 + 1], DeliveryMedia("mp4", "aac")).Object, TimeProvider.System, conversions: gate);
+        await Assert.ThrowsAsync<ProviderAudioProfileException>(() => oversized.CreateAsync(context, "ext-deezer-song-42", "deezer", "42", delivery));
+    }
+
     private static readonly JsonElement HlsFixture = ReadHlsFixture();
     private static string FinampHlsQuery => HlsFixture.GetProperty("query").GetString()!;
     private static byte[] HlsBytes => Convert.FromBase64String(HlsFixture.GetProperty("bytes").GetString()!);
@@ -122,7 +201,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var mediaBytes = await media.Content.ReadAsByteArrayAsync();
         Assert.Equal(HlsFixture.GetProperty("initLength").GetInt32(), initBytes.Length);
         Assert.Equal(HlsBytes, initBytes.Concat(mediaBytes).ToArray());
-        gateway.Verify(service => service.OpenStreamAsync(It.Is<ProtocolExecutionContext>(context => context.IsReadOnly), "deezer", "42",
+        gateway.Verify(service => service.OpenStreamAsync(It.Is<ProtocolExecutionContext>(context => !context.IsReadOnly), "deezer", "42",
             ProviderAudioQuality.DataSaver, null, false), Times.Once);
         gateway.Verify(service => service.OpenStreamAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>(),
             It.IsAny<ProviderAudioQuality>(), It.IsAny<string?>(), true), Times.Never);
@@ -131,11 +210,7 @@ public sealed partial class ProtocolRouteFixtureTests
 
     [Theory]
     [InlineData("audioCodec=opus")]
-    [InlineData("audioBitRate=32000")]
-    [InlineData("audioSampleRate=48000")]
-    [InlineData("maxAudioChannels=1")]
     [InlineData("segmentContainer=ts")]
-    [InlineData("EnableDirectPlay=false&EnableDirectStream=false")]
     [InlineData("startTimeTicks=-1")]
     [InlineData("startTimeTicks=100000000")]
     public async Task FinampHls_UnavailableTransformsFailClearly(string constraint)
@@ -151,16 +226,16 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.False(string.IsNullOrWhiteSpace(error.RootElement.GetProperty("error").GetString()));
     }
 
-    [Theory]
+    [MediaToolsTheory]
     [InlineData("m4a", "aac")]
     [InlineData("flac", "flac")]
-    public async Task FinampHls_UnfragmentedSourcesAreNotAdvertisedAsSegments(string container, string codec)
+    public async Task FinampHls_UnfragmentedSourcesAreConvertedToSegments(string container, string codec)
     {
         using var factory = HlsFactory(HlsGateway(DeliveryBytes(codec), DeliveryMedia(container, codec)));
         using var client = factory.CreateClient();
         using var response = await client.GetAsync("/Audio/ext-deezer-song-42/main.m3u8?" + FinampHlsQuery);
-        Assert.Equal(HttpStatusCode.NotAcceptable, response.StatusCode);
-        Assert.DoesNotContain("#EXTM3U", await response.Content.ReadAsStringAsync());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("#EXTM3U", await response.Content.ReadAsStringAsync());
     }
 
     [Theory]
@@ -194,8 +269,8 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.NotAcceptable, response.StatusCode);
     }
 
-    [Fact]
-    public async Task FinampHls_UnknownNumericFactsRemainCompatibleAndDurationComesFromFragments()
+    [MediaToolsFact]
+    public async Task FinampHls_CappedUnknownBitrateIsConvertedAndDurationComesFromDeliveredFragments()
     {
         using var factory = HlsFactory(HlsGateway(media: new("audio/mp4", "mp4", "aac")));
         using var client = factory.CreateClient();
@@ -203,11 +278,11 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var manifest = await response.Content.ReadAsStringAsync();
         var duration = double.Parse(Regex.Match(manifest, "#EXTINF:([0-9.]+),").Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
-        Assert.Equal(HlsFixture.GetProperty("duration").GetDouble(), duration, 5);
+        Assert.InRange(duration, HlsFixture.GetProperty("duration").GetDouble(), HlsFixture.GetProperty("duration").GetDouble() + 0.1);
         Assert.DoesNotContain("BANDWIDTH", manifest);
     }
 
-    [Theory]
+    [MediaToolsTheory]
     [InlineData("audioSampleRate", "48000")]
     [InlineData("maxAudioChannels", "1")]
     public async Task FinampHls_ActualAudioConfigurationEnforcesLimitsWhenProviderFactsAreUnknown(string parameter, string value)
@@ -217,7 +292,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var query = FinampHlsQuery.Replace(parameter == "audioSampleRate" ? "audioSampleRate=44100" : "maxAudioChannels=2",
             $"{parameter}={value}", StringComparison.Ordinal);
         using var response = await client.GetAsync("/Audio/ext-deezer-song-42/main.m3u8?" + query);
-        Assert.Equal(HttpStatusCode.NotAcceptable, response.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
     }
 
     [Fact]

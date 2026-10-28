@@ -152,6 +152,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         router.Setup(item => item.EvaluateFallback(It.IsAny<ProviderRoutePlan<IProviderStreamingCapability>>(),
                 It.IsAny<int>(), It.IsAny<ProviderError>())).Returns(new ProviderFallbackDecision<IProviderStreamingCapability>(
                     ProviderFallbackDisposition.StopFailure, "stream-range-unavailable", null));
-        return new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), timeProvider: clock);
+        return new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), timeProvider: clock, audioVerifier: FixtureAudioVerifier.Instance);
     }
 }

@@ -180,6 +180,9 @@ internal sealed class PlaybackFileFacts
 {
     internal Func<TrackMediaFacts, CancellationToken, Task>? RecordAsync { get; set; }
     internal TrackMediaFacts? Measured { get; set; }
+    internal double? ExpectedDurationSeconds { get; set; }
+    internal bool DurationIsDerived { get; set; }
+    internal Action? SourceFailed { get; set; }
     private long size = -1;
     public long? Size
     {
@@ -203,9 +206,11 @@ public sealed partial class ProtocolProviderGateway(
     IProviderOutcomeObserver? outcomes = null,
     RecordingKeptFiles? keptFiles = null,
     TimeProvider? timeProvider = null,
-    IOptions<CacheSettings>? searchSettings = null) : IProtocolProviderGateway
+    IOptions<CacheSettings>? searchSettings = null,
+    IProviderAudioVerifier? audioVerifier = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
+    private readonly IProviderAudioVerifier streamVerifier = audioVerifier ?? new ProviderAudioVerifier();
     private ITrackMediaFactsStore? MediaFacts => identities as ITrackMediaFactsStore;
     private const int ProviderSearchConcurrency = 4;
     private const int RelationshipSearchLimit = 10;
@@ -1099,6 +1104,9 @@ public sealed partial class ProtocolProviderGateway(
         var parsedRange = headOnly ? null : StreamByteRanges.Parse(rangeHeader);
         var rangeStart = parsedRange?.Ranges.Single().From;
         var resuming = parsedRange != null && rangeStart != 0;
+        var cacheReplay = managedTrackCache != null && !headOnly && !protocol.IsReadOnly &&
+            !protocol.IsPreparation && !protocol.IsOriginalDownload &&
+            (parsedRange != null || protocol.AudioDelivery?.StartTimeTicks is > 0);
         var protocolDeadline = protocol.Deadline;
         if (resuming && streamOpeningStartedAt.Add(ProgressiveCachingStream.SeekWaitTimeout) < protocolDeadline)
             protocolDeadline = streamOpeningStartedAt.Add(ProgressiveCachingStream.SeekWaitTimeout);
@@ -1154,7 +1162,7 @@ public sealed partial class ProtocolProviderGateway(
             providerId,
             externalId,
             quality.ToString());
-        if ((identities == null || registry.FindByCapability(ProviderCapabilityKind.Streaming).Count == 0) &&
+        if (!cacheReplay && (identities == null || registry.FindByCapability(ProviderCapabilityKind.Streaming).Count == 0) &&
             applicationCache?.IsEnabled == true && await applicationCache.ExistsAsync(exactRouteMissKey))
         {
             logger?.LogDebug(
@@ -1196,7 +1204,61 @@ public sealed partial class ProtocolProviderGateway(
                 providerOrder, trackId, quality, allowFallback: true, allowManagedDownloads: true);
             plan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
         }
+        if (cacheReplay)
+        {
+            var checkedCacheRoutes = new HashSet<(string Provider, Guid? Account, long? Revision, string Track)>();
+            async Task<ProtocolProviderStream?> OpenCompleteCacheAsync(ProviderRoutePlan<IProviderStreamingCapability> cachePlan)
+            {
+                foreach (var candidate in cachePlan.Candidates)
+                {
+                    if (candidate.Provider.Id != providerId &&
+                        (!IsAutomaticProvider(candidate.Provider.Id, effectivePolicy) ||
+                         providerId != "allstarr" && !IsAutomaticProvider(providerId, effectivePolicy))) continue;
+                    var cachedTrack = candidate.TrackId ?? trackId;
+                    if (!checkedCacheRoutes.Add((cachedTrack.ProviderId, candidate.Context.Account?.AccountId,
+                        candidate.Context.Account?.Revision, cachedTrack.Value))) continue;
+                    var cached = await OpenAvailableCacheAsync(protocol, candidate.Context, cachedTrack, quality,
+                        rangeStart, true, true, protocol.CancellationToken);
+                    if (cached != null)
+                        return await OpenedAsync(cached with { SelectionReason = "replay:managed-cache" }, candidate.Context, cachedTrack);
+                }
+                return null;
+            }
+
+            // Keep operational health out of complete-file recovery without widening any upstream route.
+            if (await OpenCompleteCacheAsync(plan) is { } normalCached) return normalCached;
+            if (plan.Decision.Candidates.Any(candidate => candidate.Status == ProviderRouteDecisionStatus.Rejected))
+            {
+                var cacheOnlyPlan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest with { CacheOnly = true });
+                if (await OpenCompleteCacheAsync(cacheOnlyPlan) is { } recoveredCached) return recoveredCached;
+            }
+        }
         var availabilityAttempted = false;
+        if (plan.Candidates.Count == 1 && !resuming && !headOnly && !protocol.IsOriginalDownload &&
+            !protocol.IsReadOnly && !protocol.IsPreparation && hasPlaybackIdentity && identities != null && applicationCache?.IsEnabled == true &&
+            (providerId == "allstarr" || IsAutomaticProvider(providerId, effectivePolicy)))
+        {
+            var candidate = plan.Candidates[0];
+            var source = candidate.TrackId ?? trackId;
+            var cachedMedia = await AvailableCachedMediaAsync(protocol, candidate.Context, source, quality, protocol.CancellationToken);
+            if (cachedMedia == null)
+            {
+                try
+                {
+                    var song = await ReadPlaybackMetadataAsync(candidate.Context, source);
+                    if (song != null)
+                    {
+                        await RememberPlayedTrackAsync(candidate.Context, source, itemId);
+                        await identities.RememberPlaybackMetadataAsync(candidate.Context, source, song, protocol.CancellationToken);
+                        if (await TryResolvePlaybackAvailabilityAsync(plan, availabilityOrder, trackId,
+                            exactRouteMissKey, effectivePolicy, quality, TimeSpan.FromSeconds(1)))
+                            plan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
+                    }
+                }
+                catch (Exception error) when (error is not OperationCanceledException || !protocol.CancellationToken.IsCancellationRequested)
+                { logger?.LogDebug("Playback alternatives are unavailable ({ErrorType})", error.GetType().Name); }
+            }
+        }
         async Task<bool> ResolveAvailabilityAsync()
         {
             if (protocol.IsOriginalDownload || protocol.IsReadOnly || availabilityAttempted || !hasPlaybackIdentity && providerId != "allstarr" ||
@@ -1229,26 +1291,6 @@ public sealed partial class ProtocolProviderGateway(
                     ExactRouteMissTtl);
             }
             return null;
-        }
-
-        if (parsedRange != null && !protocol.IsReadOnly && managedTrackCache != null)
-        {
-            // Recover complete originals before opening any upstream source, including after a process restart.
-            foreach (var candidate in plan.Candidates)
-            {
-                if (candidate.Provider.Id != providerId &&
-                    (!IsAutomaticProvider(candidate.Provider.Id, effectivePolicy) ||
-                     providerId != "allstarr" && !IsAutomaticProvider(providerId, effectivePolicy))) continue;
-                var cachedTrack = candidate.TrackId ?? trackId;
-                var scope = managedTrackCache.ScopeFor(protocol, candidate.Context.Account?.AccountId,
-                    quality, candidate.Context.Account?.Revision);
-                var cached = await managedTrackCache.TryOpenAsync(cachedTrack, scope, protocol.CancellationToken,
-                    candidate.Context.Account?.Revision, requestedOffset: rangeStart,
-                    originalDownload: protocol.IsOriginalDownload, retainOriginalMedia: protocol.RetainOriginalMedia,
-                    completeOnly: true);
-                if (cached != null)
-                    return await OpenedAsync(cached with { SelectionReason = "replay:managed-cache" }, candidate.Context, cachedTrack);
-            }
         }
 
         if (effectivePolicy != null && hasPlaybackIdentity && !resuming && !headOnly && !protocol.IsReadOnly &&
@@ -1286,22 +1328,30 @@ public sealed partial class ProtocolProviderGateway(
                 continue;
             if (protocol.IsPreparation && !ProviderStreamOpener.PreparationProviders.Contains(candidate.Provider.Id)) return null;
             var servingTrack = candidate.TrackId ?? trackId;
+            var sourceQuality = resuming && previous != null && previous.ProviderId == candidate.Provider.Id &&
+                previous.ExternalId == servingTrack.Value && previous.AccountId == candidate.Context.Account?.AccountId &&
+                previous.AccountRevision == candidate.Context.Account?.Revision ? previous.SourceQuality : quality;
             if (!attemptedRoutes.Add((candidate.Provider.Id, candidate.Context.Account?.AccountId, servingTrack.Value))) continue;
             var routeReason = string.Join(':',
                 fallbackReason ?? "provider-priority",
                 candidate.Context.Account?.ResolutionReason ?? "account-free");
             var cacheScope = managedTrackCache?.ScopeFor(protocol, candidate.Context.Account?.AccountId,
-                quality, candidate.Context.Account?.Revision) ?? new DownloadedSongMappingScope(candidate.Context.Account?.AccountId, quality);
+                sourceQuality, candidate.Context.Account?.Revision) ?? new DownloadedSongMappingScope(candidate.Context.Account?.AccountId, sourceQuality);
             var coordinate = !protocol.IsReadOnly && !headOnly && managedTrackCache != null;
             using var cacheOpening = coordinate ? await managedTrackCache!.BeginOpenAsync(
                 servingTrack, cacheScope, candidate.Context.Account?.Revision, protocol.IsPreparation, protocol.CancellationToken,
                 originalDownload: protocol.IsOriginalDownload) : null;
             if (coordinate && cacheOpening == null) return null;
-            var cached = protocol.IsReadOnly || managedTrackCache == null ? null : await managedTrackCache.TryOpenAsync(
-                servingTrack, cacheScope, protocol.CancellationToken, candidate.Context.Account?.Revision, protocol.IsPreparation,
-                rangeStart, originalDownload: protocol.IsOriginalDownload, retainOriginalMedia: protocol.RetainOriginalMedia);
+            var cached = protocol.IsReadOnly ? null : await OpenAvailableCacheAsync(protocol, candidate.Context,
+                servingTrack, sourceQuality, rangeStart, false, parsedRange != null, protocol.CancellationToken);
             if (cached != null)
             {
+                if (!CanDeliverCached(protocol, cached))
+                {
+                    cached.Response.Dispose();
+                    lastFailure = ProviderError.AudioProfileUnavailable();
+                    continue;
+                }
                 if (protocol.IsPreparation) { cached.Response.Dispose(); return null; }
                 return await OpenedAsync(cached with { SelectionReason = $"{routeReason}:managed-cache" }, candidate.Context, servingTrack);
             }
@@ -1340,8 +1390,18 @@ public sealed partial class ProtocolProviderGateway(
             { IsReadOnly = protocol.IsReadOnly };
             var leaseRequest = new ProviderStreamLeaseRequest(
                 servingTrack,
-                quality,
+                sourceQuality,
                 rangeStart);
+
+            if (protocol.IsReadOnly && protocol.AudioDelivery != null &&
+                await AvailableCachedMediaAsync(protocol, candidate.Context, servingTrack, quality, protocol.CancellationToken) is { } cachedMedia)
+            {
+                var known = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([]) };
+                known.Content.Headers.ContentType = new(cachedMedia.MimeType);
+                return new ProtocolProviderStream(known, new("inspection", new Uri("https://inspection.invalid/audio"),
+                    protocol.Deadline, false, false, cachedMedia, ProviderStreamRetryBehavior.DoNotRetry),
+                    candidate.Provider.Id, servingTrack.Value, IsCached: true);
+            }
 
             if (protocol.IsReadOnly && candidate.Implementation is IProviderDownloadStreamingCapability)
             {
@@ -1397,7 +1457,15 @@ public sealed partial class ProtocolProviderGateway(
             try
             {
                 outcome = await OpenCandidateAsync(ResolveLeaseAsync, OpenLeaseAsync,
-                    headOnly, parsedRange, sourceStart.Token);
+                    headOnly, parsedRange, sourceStart.Token,
+                    await ExpectedPlaybackDurationAsync(candidateExecution, servingTrack, headOnly || protocol.IsReadOnly || protocol.IsOriginalDownload || protocol.IsPreparation ? null : trackId), protocol.AudioDelivery,
+                    async (_, offset, end, token) =>
+                    {
+                        var refreshed = await candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(candidateExecution, token),
+                            new(servingTrack, sourceQuality, offset));
+                        if (!refreshed.IsSuccess) ThrowRouteFailure(refreshed.Error!);
+                        return await OpenLeaseAtAsync(refreshed.RequireValue(), new(offset, end), null, token);
+                    });
             }
             catch (OperationCanceledException) when (!protocol.CancellationToken.IsCancellationRequested)
             {
@@ -1405,37 +1473,52 @@ public sealed partial class ProtocolProviderGateway(
             }
             protocol.CancellationToken.ThrowIfCancellationRequested();
             if (outcome.Error?.Code == LocalCapacityException.Code) throw new LocalCapacityException();
-            if (!protocol.IsReadOnly && !headOnly)
+            if (!protocol.IsReadOnly && !headOnly && outcome.Error?.Code != "audio-profile-unavailable")
                 outcomes?.ObservePlayback(candidateExecution, servingTrack, quality, outcome.Error, Stopwatch.GetElapsedTime(started),
                     outcome.IsSuccess ? outcome.RequireValue().Lease.Media : null);
-            if (!protocol.IsReadOnly && !leaseFailed && (!headOnly || !outcome.IsSuccess))
+            if (!protocol.IsReadOnly && !leaseFailed && outcome.Error?.Code != "audio-profile-unavailable" && (!headOnly || !outcome.IsSuccess))
                 outcomes?.Observe(candidate.Context, ProviderCapabilityKind.Streaming,
                     outcome.Error, Stopwatch.GetElapsedTime(started));
             if (outcome.IsSuccess)
             {
                 var (response, lease) = outcome.RequireValue();
+                var failureReported = 0;
+                var sourceFacts = new PlaybackFileFacts
+                {
+                    ExpectedDurationSeconds = await ExpectedPlaybackDurationAsync(candidateExecution, servingTrack, headOnly || protocol.IsReadOnly || protocol.IsOriginalDownload || protocol.IsPreparation ? null : trackId)
+                };
                 void SourceFailed()
                 {
+                    if (Interlocked.Exchange(ref failureReported, 1) != 0) return;
                     var error = new ProviderError(ProviderErrorKind.TransientFailure);
                     outcomes?.ObservePlayback(candidateExecution, servingTrack, quality, error, Stopwatch.GetElapsedTime(started));
                     outcomes?.Observe(candidateExecution, ProviderCapabilityKind.Streaming, error, Stopwatch.GetElapsedTime(started));
                     logger?.LogInformation("Playback source {Provider} stopped after opening ({FailureCode})", candidate.Provider.Id, error.Code);
                 }
+                sourceFacts.SourceFailed = SourceFailed;
+                async Task<HttpResponseMessage> ResumeAsync(long offset, long? end, EntityTagHeaderValue tag, CancellationToken token)
+                {
+                    var refreshed = await candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(candidateExecution, token),
+                        new(servingTrack, sourceQuality, offset));
+                    if (!refreshed.IsSuccess) ThrowRouteFailure(refreshed.Error!);
+                    return await OpenLeaseAtAsync(refreshed.RequireValue(), new(offset, end), tag, token);
+                }
                 if (!headOnly && !protocol.IsReadOnly)
-                    await ProviderPlaybackStream.AttachAsync(response, lease.SupportsByteRanges,
-                        (offset, end, tag, token) => OpenLeaseAtAsync(lease, new RangeHeaderValue(offset, end), tag, token),
+                    await ProviderPlaybackStream.AttachAsync(response, lease.SupportsByteRanges, ResumeAsync,
                         SourceFailed, clock, streamCancellation);
                 async Task<HttpResponseMessage> OpenOriginalResponseAsync(CancellationToken token)
                 {
                     var complete = await OpenCandidateAsync(
-                        () => Task.FromResult(ProviderOutcome<ProviderStreamLease>.Success(lease)),
-                        selected => OpenLeaseAtAsync(selected, null, null, token), false, null, token);
+                        () => candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(candidateExecution, token), new(servingTrack, sourceQuality)),
+                        selected => OpenLeaseAtAsync(selected, null, null, token), false, null, token,
+                        sourceFacts.ExpectedDurationSeconds);
                     if (!complete.IsSuccess) ThrowRouteFailure(complete.Error!);
                     var full = complete.RequireValue().Response;
+                    sourceFacts.Measured = PrefetchedStream.Facts(full.Content);
+                    sourceFacts.Media = sourceFacts.Measured?.Media ?? complete.RequireValue().Lease.Media;
                     try
                     {
-                        await ProviderPlaybackStream.AttachAsync(full, lease.SupportsByteRanges,
-                            (offset, end, tag, reading) => OpenLeaseAtAsync(lease, new RangeHeaderValue(offset, end), tag, reading),
+                        await ProviderPlaybackStream.AttachAsync(full, complete.RequireValue().Lease.SupportsByteRanges, ResumeAsync,
                             SourceFailed, clock, token);
                         return full;
                     }
@@ -1443,11 +1526,12 @@ public sealed partial class ProtocolProviderGateway(
                 }
                 return await OpenedAsync(new ProtocolProviderStream(response, lease, candidate.Provider.Id,
                     servingTrack.Value, candidate.Context.Account?.AccountId,
-                    EffectiveQuality: quality,
+                    EffectiveQuality: sourceQuality,
                     SelectionReason: $"{routeReason}:remote",
                     ServingAccountRevision: candidate.Context.Account?.Revision)
                 {
-                    OpenOriginalResponseAsync = managedTrackCache?.CanRetainOriginal(protocol) == true ? OpenOriginalResponseAsync : null
+                    FileFacts = sourceFacts,
+                    OpenOriginalResponseAsync = headOnly || protocol.IsReadOnly ? null : OpenOriginalResponseAsync
                 }, candidateExecution, servingTrack);
             }
             lastFailure = outcome.Error;
@@ -1536,7 +1620,8 @@ public sealed partial class ProtocolProviderGateway(
                 }
             }
             if (!protocol.IsOriginalDownload && !protocol.IsReadOnly && protocol.AudioDelivery is { } delivery &&
-                delivery.Evaluate(stream.Lease.Media) is { Supported: false } rejected)
+                delivery.Evaluate(stream.Lease.Media) is { Supported: false } rejected &&
+                ProviderAudioTranscoder.Plan(delivery, stream.Lease.Media) == null)
             {
                 stream.Response.Dispose();
                 throw new ProviderAudioProfileException(rejected.Error!);
@@ -1587,6 +1672,42 @@ public sealed partial class ProtocolProviderGateway(
         }
     }
 
+    private static bool CanDeliverCached(ProtocolExecutionContext protocol, ProtocolProviderStream stream) =>
+        protocol.AudioDelivery is not { } delivery || delivery.Evaluate(stream.Lease.Media).Supported ||
+        ProviderAudioTranscoder.Plan(delivery, stream.Lease.Media) != null;
+
+    private async Task<double?> ExpectedPlaybackDurationAsync(ProviderExecutionContext execution, ProviderExternalResourceId track,
+        ProviderExternalResourceId? requestedRecording = null)
+    {
+        if (applicationCache?.IsEnabled == true)
+        {
+            var song = await ReadPlaybackMetadataAsync(execution, track);
+            var seconds = song?.PreciseDuration?.TotalSeconds ?? song?.Duration;
+            if (seconds is > 0) return seconds;
+        }
+        if (identities != null && requestedRecording != null)
+        {
+            try
+            {
+                var recording = await identities.GetRecordingAvailabilityAsync(execution, ProtocolItemId(requestedRecording), execution.CancellationToken);
+                if (recording?.DurationMilliseconds is > 0) return recording.DurationMilliseconds.Value / 1000d;
+            }
+            catch (Exception error) when (error is not OperationCanceledException || !execution.CancellationToken.IsCancellationRequested)
+            { logger?.LogDebug("The recording timeline is unavailable ({ErrorType})", error.GetType().Name); }
+        }
+        return null;
+    }
+
+    private async Task<Song?> ReadPlaybackMetadataAsync(ProviderExecutionContext execution, ProviderExternalResourceId track) =>
+        await ReadCachedSongAsync(execution.Actor, track.ProviderId, track.Value, execution.Account) ??
+        (execution.Account != null && IsPublicMetadataProvider(track.ProviderId)
+            ? await ReadCachedSongAsync(execution.Actor, track.ProviderId, track.Value) : null);
+
+    private ProviderExecutionContext ResumeExecution(ProviderExecutionContext original, CancellationToken token) =>
+        new(original.Actor, original.ProviderId, original.Account, original.Policy, original.OperationId,
+            original.CorrelationId, (timeProvider ?? TimeProvider.System).GetUtcNow().Add(ProgressiveCachingStream.SeekWaitTimeout),
+            token, original.IdempotencyKey);
+
     private TimeSpan GetDownloadStreamTimeout()
     {
         var options = new ProtocolExecutionOptions();
@@ -1601,12 +1722,15 @@ public sealed partial class ProtocolProviderGateway(
         return options.GetSourceStartTimeout();
     }
 
-    private static async Task<ProviderOutcome<(HttpResponseMessage Response, ProviderStreamLease Lease)>> OpenCandidateAsync(
+    private async Task<ProviderOutcome<(HttpResponseMessage Response, ProviderStreamLease Lease)>> OpenCandidateAsync(
         Func<Task<ProviderOutcome<ProviderStreamLease>>> resolve,
         Func<ProviderStreamLease, Task<HttpResponseMessage>> open,
         bool headOnly,
         RangeHeaderValue? requestedRange,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        double? expectedDuration = null,
+        ProviderAudioDeliveryRequest? delivery = null,
+        Func<ProviderStreamLease, long, long?, CancellationToken, Task<HttpResponseMessage>>? openVerificationRange = null)
     {
         ProviderStreamLease? lease = null;
         ProviderError error = new(ProviderErrorKind.TransientFailure);
@@ -1637,12 +1761,22 @@ public sealed partial class ProtocolProviderGateway(
                         response.Content.Headers.ContentRange = null;
                     }
                     response.Content.Headers.ContentType ??= new MediaTypeHeaderValue(lease.Media.MimeType);
+                    var expectedMedia = lease.Media;
                     var mediaType = response.Content.Headers.ContentType?.MediaType;
                     if ((mediaType == null || mediaType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) ||
                         mediaType is "application/octet-stream" or "video/mp4") &&
                         (headOnly || await PrefetchedStream.PrepareAsync(response, cancellationToken).WaitAsync(cancellationToken)))
                     {
-                        if (PrefetchedStream.Facts(response.Content) is { } measured)
+                        var measured = PrefetchedStream.Facts(response.Content);
+                        if (!headOnly)
+                        {
+                            var verified = await streamVerifier.VerifyPrefixAsync(response, expectedMedia, expectedDuration,
+                                cancellationToken, openVerificationRange == null ? null :
+                                    (offset, end, token) => openVerificationRange(lease, offset, end, token));
+                            if (!verified.IsSuccess) { error = verified.Error!; break; }
+                            measured = verified.RequireValue();
+                        }
+                        if (measured != null)
                         {
                             var media = measured.Media;
                             if (media.Codec == "unknown" && ProviderAudioDeliveryRequest.Container(media.Container) == ProviderAudioDeliveryRequest.Container(lease.Media.Container))
@@ -1650,6 +1784,12 @@ public sealed partial class ProtocolProviderGateway(
                                     lease.Media.SampleRate, lease.Media.BitDepth, lease.Media.Channels);
                             lease = new(lease.LeaseId, lease.ProtectedSourceUri, lease.ExpiresAt, lease.SupportsByteRanges,
                                 lease.SupportsSeeking, media, lease.RetryBehavior, lease.ProtectedResponseFactory, lease.QualityDowngradeReason);
+                        }
+                        if (!headOnly && delivery?.Evaluate(lease.Media) is { Supported: false } &&
+                            ProviderAudioTranscoder.Plan(delivery, lease.Media) == null)
+                        {
+                            error = ProviderError.AudioProfileUnavailable();
+                            break;
                         }
                         transferred = true;
                         return ProviderOutcome<(HttpResponseMessage, ProviderStreamLease)>.Success((response, lease));
@@ -1972,6 +2112,7 @@ public sealed partial class ProtocolProviderGateway(
         { Code: LocalCapacityException.Code } => new LocalCapacityException(),
         { Code: "stream-range-unavailable" } => new HttpRequestException(error.SafeMessage, null,
             HttpStatusCode.RequestedRangeNotSatisfiable),
+        { Code: "audio-profile-unavailable" } => new ProviderAudioProfileException(error.SafeMessage),
         { Code: "apple-download-sign-in-required" } => new ProtocolProviderUnavailableException(error),
         _ => error.Kind switch
         {

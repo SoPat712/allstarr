@@ -152,7 +152,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         {
             ["Providers:StreamingOrder"] = $"{adapter.ProviderId},{fallback.ProviderId}"
         }).Build();
-        return (new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration, timeProvider: clock), router);
+        return (new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration, timeProvider: clock, audioVerifier: FixtureAudioVerifier.Instance), router);
     }
 
     private sealed class AudioFileDiscovery : IAppleDownloadEndpointDiscovery

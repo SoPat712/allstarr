@@ -124,7 +124,7 @@ public sealed partial class RecordingKeptFilesTests
     private RecordingKeptFiles PlaylistService() => new(factory, artifacts,
         services.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>(),
         placement, identities, new allstarr.Core.Operations.SystemPlatformClock(),
-        libraryAccess: new TestBackendLibraryAccess(factory, "music"));
+        libraryAccess: new TestBackendLibraryAccess(factory, "music"), audioVerifier: FixtureAudioVerifier.Instance);
 
     private KeptRecordingPublication PlaylistRequest(PlaylistTrackRetentionJobPayload payload) => Request() with
     { ReferenceKey = $"playlist:{payload.PlaylistLinkId:N}:{payload.RetentionKey}" };

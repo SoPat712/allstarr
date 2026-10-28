@@ -6,6 +6,40 @@ namespace allstarr.Tests;
 public sealed class ProviderAudioDeliveryTests
 {
     [Theory]
+    [InlineData("opus", "ogg", "vorbis")]
+    [InlineData("aac", "mp4", "alac")]
+    public void SubsonicDecisionParametersPreserveThePromisedCodec(string codec, string container, string originalCodec)
+    {
+        var delivery = new ProviderAudioDeliveryDecision(new("audio/" + container, container, codec, 128000), false, false, null)
+        { SupportsTranscoding = true };
+        var response = Assert.IsType<Microsoft.AspNetCore.Mvc.JsonResult>(
+            new allstarr.Services.Subsonic.SubsonicResponseBuilder().CreateTranscodeDecisionResponse("json", delivery));
+        using var document = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(response.Value));
+        var parameters = document.RootElement.GetProperty("subsonic-response").GetProperty("transcodeDecision").GetProperty("transcodeParams").GetString()!;
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery("?" + parameters);
+        Assert.Equal(codec, query["audioCodec"].ToString());
+        var request = ProviderAudioDeliveryRequests.Subsonic(new allstarr.Services.Subsonic.SubsonicRequestParameters("GET", null, null,
+            query.Select(pair => new allstarr.Services.Subsonic.SubsonicParameter(pair.Key, pair.Value.ToString(), allstarr.Services.Subsonic.SubsonicParameterSource.Query)).ToArray()));
+        Assert.False(request.Evaluate(new("audio/" + container, container, originalCodec, 64000, 44100, channels: 2)).Supported);
+        Assert.Equal(codec, ProviderAudioTranscoder.Plan(request, new("audio/" + container, container, originalCodec, 64000, 44100, channels: 2))!.Media.Codec);
+    }
+
+    [Fact]
+    public void UnknownSourceFormatDoesNotBecomeARequiredPlaybackCodecOrContainer()
+    {
+        var source = new Dictionary<string, object?>
+        { ["MediaStreams"] = new Dictionary<string, object?>[] { new() { ["Type"] = "Audio" } } };
+        allstarr.Services.Jellyfin.JellyfinAudioDeliveryShape.Apply(source, "ext-apple-download-song-42",
+            new ProviderAudioDeliveryRequest().Decide(new("application/octet-stream", "unknown", "unknown")));
+        var url = Assert.IsType<string>(source["DirectStreamUrl"]);
+        Assert.StartsWith("/Audio/ext-apple-download-song-42/stream?", url);
+        Assert.DoesNotContain("unknown", url);
+        Assert.DoesNotContain("AudioCodec", url);
+        Assert.False(source.ContainsKey("Container"));
+        Assert.False(Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(source["MediaStreams"])).ContainsKey("Codec"));
+    }
+
+    [Theory]
     [InlineData("bitrate")]
     [InlineData("sampleRate")]
     [InlineData("bitDepth")]
@@ -13,7 +47,7 @@ public sealed class ProviderAudioDeliveryTests
     [InlineData("exactSampleRate")]
     [InlineData("exactChannels")]
     [InlineData("profileChannels")]
-    public void AudioLimits_RejectOnlyKnownViolations(string fact)
+    public void AudioLimitsKeepUnknownFactsPlayableAndRejectKnownDirectViolations(string fact)
     {
         ProviderAudioDeliveryRequest request = fact switch
         {
@@ -26,7 +60,8 @@ public sealed class ProviderAudioDeliveryTests
             _ => new() { Profiles = [new(["flac"], [], ["http"], 2)] }
         };
 
-        Assert.True(request.Evaluate(new("audio/flac", "flac", "flac")).Supported);
+        Assert.Equal(fact != "bitrate", request.Evaluate(new("audio/flac", "flac", "flac")).Supported);
+        Assert.True(request.Decide(new("audio/flac", "flac", "flac")).Supported);
         Assert.True(request.Evaluate(new("audio/flac", "flac", "flac", 128000, 44100, 16, 2)).Supported);
         Assert.False(request.Evaluate(new("audio/flac", "flac", "flac", 256000, 96000, 24, 6)).Supported);
     }

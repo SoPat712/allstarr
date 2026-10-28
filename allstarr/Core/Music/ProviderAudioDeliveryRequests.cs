@@ -26,7 +26,14 @@ public static class ProviderAudioDeliveryRequests
         if (profile.HasValue) direct = [];
         if (profiles is { ValueKind: JsonValueKind.Array } entries)
             direct = entries.EnumerateArray().Where(entry => Text(entry, "Type").Equals("Audio", StringComparison.OrdinalIgnoreCase))
-                .Select(entry => new ProviderAudioProfile(Split(Text(entry, "Container")), Split(Text(entry, "AudioCodec")), ["http"])).ToArray();
+                .Select(entry => new ProviderAudioProfile(Split(Text(entry, "Container")), Split(Text(entry, "AudioCodec")), ["http"],
+                    (int?)Positive(Text(entry, "MaxAudioChannels")))).ToArray();
+        IReadOnlyList<ProviderAudioProfile>? transcoding = null;
+        if (Property(profile, "TranscodingProfiles") is { ValueKind: JsonValueKind.Array } targets)
+            transcoding = targets.EnumerateArray().Where(entry => Text(entry, "Type").Equals("Audio", StringComparison.OrdinalIgnoreCase))
+                .Select(entry => new ProviderAudioProfile(Split(Text(entry, "Container")), Split(Text(entry, "AudioCodec")),
+                    string.IsNullOrWhiteSpace(Text(entry, "Protocol")) ? ["http"] : Split(Text(entry, "Protocol")),
+                    (int?)Positive(Text(entry, "MaxAudioChannels")))).ToArray();
         IReadOnlyList<ProviderAudioProfile>? formats = null;
         var directContainer = universal && !string.IsNullOrWhiteSpace(Value(values, "Container"));
         var expression = container ?? Value(values, "Container");
@@ -54,6 +61,8 @@ public static class ProviderAudioDeliveryRequests
         return new()
         {
             Profiles = direct,
+            TranscodingProfiles = transcoding,
+            AllowHls = true,
             Formats = formats,
             Conditions = conditions,
             MaxBitrate = Minimum(Number(values, "MaxStreamingBitrate"), Number(values, "AudioBitRate"), Positive(Text(profile, "MaxStreamingBitrate")), Positive(Text(profile, "MaxStaticBitrate"))),
@@ -67,6 +76,8 @@ public static class ProviderAudioDeliveryRequests
                 (!long.TryParse(start, NumberStyles.Integer, CultureInfo.InvariantCulture, out var ticks) || ticks < 0),
             EnableDirectPlay = !Value(values, "EnableDirectPlay").Equals("false", StringComparison.OrdinalIgnoreCase),
             EnableDirectStream = !Value(values, "EnableDirectStream").Equals("false", StringComparison.OrdinalIgnoreCase),
+            EnableTranscoding = !Value(values, "EnableTranscoding").Equals("false", StringComparison.OrdinalIgnoreCase) &&
+                !Value(values, "EnableAudioTranscoding").Equals("false", StringComparison.OrdinalIgnoreCase),
             Error = error
         };
     }
@@ -85,9 +96,17 @@ public static class ProviderAudioDeliveryRequests
             direct = profiles.EnumerateArray().Select(entry => new ProviderAudioProfile(
                 Strings(entry, "containers"), Strings(entry, "audioCodecs"), Strings(entry, "protocols"),
                 (int?)Positive(Text(entry, "maxAudioChannels")))).ToArray();
+        IReadOnlyList<ProviderAudioProfile>? transcoding = null;
+        if (Property(body, "transcodingProfiles") is { ValueKind: JsonValueKind.Array } targets)
+            transcoding = targets.EnumerateArray().Select(entry => new ProviderAudioProfile(
+                Split(Text(entry, "container")), Split(Text(entry, "audioCodec")),
+                string.IsNullOrWhiteSpace(Text(entry, "protocol")) ? ["http"] : Split(Text(entry, "protocol")))).ToArray();
         var format = parameters.GetValueOrDefault("format");
+        var audioCodec = parameters.GetValueOrDefault("audioCodec");
         if (!decision && format.Length > 0 && !format.Equals("raw", StringComparison.OrdinalIgnoreCase))
-            direct = [new([format], [], ["http"])];
+            direct = [new([format], Split(audioCodec), ["http"])];
+        else if (!decision && audioCodec.Length > 0 && !format.Equals("raw", StringComparison.OrdinalIgnoreCase))
+            direct = [new([], Split(audioCodec), ["http"])];
         var conditions = new List<ProviderAudioCondition>();
         if (Property(body, "codecProfiles") is { ValueKind: JsonValueKind.Array } codecs)
             foreach (var codec in codecs.EnumerateArray().Where(entry => Text(entry, "type").Equals("AudioCodec", StringComparison.OrdinalIgnoreCase)))
@@ -105,6 +124,9 @@ public static class ProviderAudioDeliveryRequests
         return new()
         {
             Profiles = direct,
+            TranscodingProfiles = transcoding,
+            PreferredCodec = "mp3",
+            EnableTranscoding = !format.Equals("raw", StringComparison.OrdinalIgnoreCase),
             Conditions = conditions,
             MaxBitrate = Minimum(Number(values, "maxBitRate") is { } kbps && kbps <= long.MaxValue / 1000 ? kbps * 1000 : null,
                 Number(values, "maxAudioBitrate")),

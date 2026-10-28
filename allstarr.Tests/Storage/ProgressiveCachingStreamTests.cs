@@ -5,6 +5,56 @@ namespace allstarr.Tests;
 public sealed class ProgressiveCachingStreamTests
 {
     [Fact]
+    public async Task RestoredVerifiedEofWaitsForFinalVerification()
+    {
+        await using var file = FixtureFile([]);
+        var completion = Signal();
+        await using var reader = new ProgressiveCachingStream(file,
+            () => new(0, 0, true, false, Task.CompletedTask, completion.Task), static () => { },
+            TimeSpan.FromSeconds(1), downloadState: () => new(0, 0, true, false, Task.CompletedTask, Task.CompletedTask));
+        reader.UseDownloadCompletion();
+        Assert.Equal(0, await reader.ReadAsync(new byte[1]));
+        reader.UseDownloadCompletion(false);
+        var pending = reader.ReadAsync(new byte[1]).AsTask();
+        Assert.False(pending.IsCompleted);
+        completion.SetResult();
+        Assert.Equal(0, await pending);
+    }
+
+    [Fact]
+    public async Task RestoredVerifiedEofHonorsCallerCancellation()
+    {
+        await using var file = FixtureFile([]);
+        await using var reader = new ProgressiveCachingStream(file,
+            () => new(0, 0, true, false, Task.CompletedTask, NeverCompletingTask()), static () => { },
+            TimeSpan.FromSeconds(1), downloadState: () => new(0, 0, true, false, Task.CompletedTask, Task.CompletedTask));
+        reader.UseDownloadCompletion();
+        reader.UseDownloadCompletion(false);
+        using var cancellation = new CancellationTokenSource();
+        var pending = reader.ReadAsync(new byte[1], cancellation.Token).AsTask();
+        Assert.False(pending.IsCompleted);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RestoredVerifiedEofPreservesVerificationFailure(bool capacityFailure)
+    {
+        await using var file = FixtureFile([]);
+        Exception failure = capacityFailure ? new LocalCapacityException() : new IOException("Invalid audio.");
+        await using var reader = new ProgressiveCachingStream(file,
+            () => new(0, 0, true, true, Task.CompletedTask, Task.CompletedTask, failure), static () => { },
+            TimeSpan.FromSeconds(1), downloadState: () => new(0, 0, true, false, Task.CompletedTask, Task.CompletedTask));
+        reader.UseDownloadCompletion();
+        Assert.Equal(0, await reader.ReadAsync(new byte[1]));
+        reader.UseDownloadCompletion(false);
+        if (capacityFailure) await Assert.ThrowsAsync<LocalCapacityException>(() => reader.ReadAsync(new byte[1]).AsTask());
+        else await Assert.ThrowsAsync<IOException>(() => reader.ReadAsync(new byte[1]).AsTask());
+    }
+
+    [Fact]
     public async Task InitialPreparationWindowIsSeparateFromTheSeekWaitBudget()
     {
         var clock = new ManualTimeProvider();

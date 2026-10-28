@@ -176,7 +176,7 @@ public sealed partial class TrackIdentityServiceTests
             .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Healthy, false));
         var router = new ProviderRouter(registry, Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict), health.Object,
             Mock.Of<IProviderRouteSidecarSource>(MockBehavior.Strict), restarted);
-        var gateway = new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict), identities: restarted);
+        var gateway = new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict), identities: restarted, audioVerifier: FixtureAudioVerifier.Instance);
         var protocol = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", _userA.ToString("N"),
             new AllstarrPrincipal(_userA, "jellyfin", "fixture", _userA.ToString("N"), "User", false), "merged-play",
             DateTimeOffset.UtcNow.AddMinutes(1), default, new ProtocolClientDescriptor("client", "device"));

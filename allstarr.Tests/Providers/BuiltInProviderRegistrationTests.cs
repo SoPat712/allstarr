@@ -134,7 +134,7 @@ public sealed class BuiltInProviderRegistrationTests
             new Mock<IAppleDownloadEndpointDiscovery>(MockBehavior.Strict).Object,
             new ProviderDownloadArtifactResolver(
                 new Mock<IProviderDownloadArtifactStore>(MockBehavior.Strict).Object,
-                new ProviderDownloadWorkspaceOptions { RootPath = Path.GetTempPath() }),
+                new ProviderDownloadWorkspaceOptions { RootPath = Path.GetTempPath() }, audioVerifier: FixtureAudioVerifier.Instance),
             1024, AppleProviderTestFactory.Client());
         var appleDownloadStreaming = new AppleDownloadStreamingCapabilityAdapter(
             new HttpClient(new Mock<HttpMessageHandler>().Object),

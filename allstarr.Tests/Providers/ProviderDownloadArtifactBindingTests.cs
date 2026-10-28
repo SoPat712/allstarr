@@ -208,7 +208,7 @@ public sealed class ProviderDownloadArtifactBindingTests
             var root = Path.Combine(Path.GetTempPath(), "allstarr-provider-binding", Guid.NewGuid().ToString("N"));
             var resolver = new ProviderDownloadArtifactResolver(
                 new EfProviderDownloadArtifactStore(factory),
-                new ProviderDownloadWorkspaceOptions { RootPath = root });
+                new ProviderDownloadWorkspaceOptions { RootPath = root }, audioVerifier: FixtureAudioVerifier.Instance);
             return new(database, factory, resolver, root, userId, jobId, accountId);
         }
 
@@ -234,7 +234,7 @@ public sealed class ProviderDownloadArtifactBindingTests
 
         public ProviderDownloadArtifactResolver FreshResolver() => new(
             new EfProviderDownloadArtifactStore(Factory),
-            new ProviderDownloadWorkspaceOptions { RootPath = Root });
+            new ProviderDownloadWorkspaceOptions { RootPath = Root }, audioVerifier: FixtureAudioVerifier.Instance);
 
         public async ValueTask DisposeAsync()
         {

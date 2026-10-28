@@ -44,7 +44,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         identities.Setup(item => item.GetStoredMetadataAsync(It.IsAny<ProviderActorContext>(),
             It.IsAny<ProviderExternalResourceId>(), It.IsAny<CancellationToken>())).ReturnsAsync((string?)null);
         var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(),
-            applicationCache: cache.Object, identities: identities.Object);
+            applicationCache: cache.Object, identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
 
         Mock.Get(capability).Setup(item => item.GetAlbumAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderAlbumLookupRequest>()))
             .ReturnsAsync(ProviderOutcome<ProviderAlbumMetadata>.Success(new(new("deezer", ProviderResourceKind.Album, "release"),
@@ -102,7 +102,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             .ReturnsAsync(new Song[] { new() { Id = publicId, CanonicalRecordingId = recordingId, Title = "Song", Artist = "Artist",
                 ExternalProvider = "apple-musickit", ExternalId = "preferred", Album = "Preferred album", AlbumId = "ext-apple-download-album-release",
                 AlternateTitles = displayAliases ? ["Preferred alias"] : [] } });
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), identities: identities.Object);
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
 
         var song = Assert.Single((await gateway.GetAlbumAsync(DisplayPolicyContext(protocol, "apple-musickit", mode), "deezer", "album"))!.Songs);
 
@@ -210,7 +210,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 };
             });
         using var cache = new MemoryApplicationCache(new allstarr.Core.Operations.SystemPlatformClock());
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), applicationCache: cache);
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), applicationCache: cache, audioVerifier: FixtureAudioVerifier.Instance);
         var context = SearchRankingContext(ProtocolKind.Jellyfin);
         for (var scope = 0; scope < 3; scope++)
         {
@@ -251,7 +251,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 (TrackIdentityResolution?)new TrackIdentityResolution(id, Guid.CreateVersion7(), lookup.ExternalId,
                     ProviderIdentityScope.Catalog, null, ProviderIdentityVerification.Verified, "odesli-link", 1)
                 { PublicId = publicId }).ToArray());
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), identities: identities.Object);
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
 
         var context = manual ? DisplayPolicyContext(protocol, "soundcloud", ProviderUseMode.ManualOnly) : SearchRankingContext(protocol);
         var result = await gateway.SearchAsync(context, "Song", 10, 0, 0);
@@ -406,6 +406,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             ["Providers:MetadataOrder"] = metadataOrder,
             ["Providers:StreamingOrder"] = streamingOrder
         }).Build();
-        return (new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration), router);
+        return (new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration, audioVerifier: FixtureAudioVerifier.Instance), router);
     }
 }

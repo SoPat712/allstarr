@@ -66,13 +66,14 @@ public sealed partial class ManagedTrackCacheService
             ? transfer.Work : Task.CompletedTask;
 
     private sealed record AudioCacheIdentity(string Device, string File, long Length, string Sha256, DateTimeOffset LastUsed,
-        string Representation = "Playback", long? SourceAccountRevision = null);
+        string Representation = "Playback", long? SourceAccountRevision = null, double? DurationSeconds = null);
     private sealed class AudioAllocation(string path, FileStream? producer, long reserved, long admissionLimit)
     {
         public string Path = path;
         public FileStream? Producer = producer;
         public FileStream? Anchor;
         public string? ContentHash;
+        public double? VerifiedDuration;
         public ManagedFileSystemIdentity? Identity;
         public long Reserved = reserved;
         public long AdmissionLimit = admissionLimit;
@@ -195,7 +196,7 @@ public sealed partial class ManagedTrackCacheService
         var hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, token));
         if (hash != entry.ContentHash || !Same(identity, Identity(entry.Path)) || !Same(identity, Identity(entry.Anchor))) return;
         var stamp = new AudioCacheIdentity(identity.DeviceId, identity.FileId, stream.Length, hash, clock.GetUtcNow(),
-            scope.Representation.ToString(), scope.SourceAccountRevision);
+            scope.Representation.ToString(), scope.SourceAccountRevision, entry.VerifiedDuration);
         if (cacheMappings != null && await cacheMappings.MarkCacheOwnedAsync(scope, provider, track, entry.Path,
                 JsonSerializer.Serialize(stamp), token) == null) return;
         lock (audioAllocationGate) publishedIdentities[entry.Path] = stamp;

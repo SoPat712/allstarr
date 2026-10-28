@@ -192,7 +192,7 @@ public sealed partial class RecordingKeptFilesTests
         var options = new DurableJobOptions();
         var jobs = new DurableJobQueue(factory, options, new JobPayloadPolicy(options), clock);
         var kept = new RecordingKeptFiles(factory, artifacts,
-            services.GetRequiredService<IServiceScopeFactory>(), placement, identities, clock, jobs: jobs);
+            services.GetRequiredService<IServiceScopeFactory>(), placement, identities, clock, jobs: jobs, audioVerifier: FixtureAudioVerifier.Instance);
         return (clock, jobs, kept, new FavoriteActionPipeline(factory, jobs, clock, kept));
     }
 

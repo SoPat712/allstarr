@@ -80,7 +80,7 @@ public sealed partial class ProtocolRouteFixtureTests
                 services.RemoveAll<IProtocolProviderGateway>();
                 services.AddSingleton<IProtocolProviderGateway>(new ProtocolProviderGateway(router.Object, registry,
                     new StubHttpClientFactory(new StubHttpMessageHandler(_ => throw new InvalidOperationException("Unexpected request"))),
-                    identities: identities.Object, playbackActivity: activity, effectivePolicies: policies.Object));
+                    identities: identities.Object, playbackActivity: activity, effectivePolicies: policies.Object, audioVerifier: FixtureAudioVerifier.Instance));
             });
         using var client = factory.CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Get, path);

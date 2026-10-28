@@ -104,7 +104,7 @@ public sealed partial class ProtocolRouteFixtureTests
                     ["Providers:StreamingOrder"] = "qobuz,deezer"
                 }).Build();
                 var gateway = new ProtocolProviderGateway(router, registry,
-                    Mock.Of<IHttpClientFactory>(MockBehavior.Strict), configuration, identities: restarted);
+                    Mock.Of<IHttpClientFactory>(MockBehavior.Strict), configuration, identities: restarted, audioVerifier: FixtureAudioVerifier.Instance);
                 var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
                 policies.Setup(item => item.ResolveForUserAsync(user, It.IsAny<CancellationToken>()))
                     .ReturnsAsync(new EffectiveProviderPolicySnapshot(

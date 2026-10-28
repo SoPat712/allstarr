@@ -6,6 +6,7 @@ using System.Xml.Linq;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
+using allstarr.Services.Common;
 using Moq;
 
 namespace allstarr.Tests;
@@ -22,7 +23,7 @@ public sealed partial class ProtocolRouteFixtureTests
                     yield return [profile, codec, knownFacts];
     }
 
-    [Theory]
+    [MediaToolsTheory]
     [MemberData(nameof(PlaybackInfoClientProfiles))]
     public async Task JellyfinPlaybackInfo_RealClientRequestsAllowSupportedOriginalAudio(string profileName, string codec, bool knownFacts)
     {
@@ -42,10 +43,11 @@ public sealed partial class ProtocolRouteFixtureTests
         var root = document.RootElement;
         Assert.Equal(JsonValueKind.Null, root.GetProperty("ErrorCode").ValueKind);
         var source = Assert.Single(root.GetProperty("MediaSources").EnumerateArray());
-        Assert.True(source.GetProperty("SupportsDirectPlay").GetBoolean());
-        Assert.True(source.GetProperty("SupportsDirectStream").GetBoolean());
-        Assert.False(source.GetProperty("SupportsTranscoding").GetBoolean());
-        Assert.False(source.TryGetProperty("TranscodingUrl", out _));
+        var converts = codec == "flac" && !knownFacts && profileName != "finamp";
+        Assert.Equal(!converts, source.GetProperty("SupportsDirectPlay").GetBoolean());
+        Assert.Equal(!converts, source.GetProperty("SupportsDirectStream").GetBoolean());
+        Assert.Equal(converts, source.GetProperty("SupportsTranscoding").GetBoolean());
+        Assert.Equal(converts, source.TryGetProperty("TranscodingUrl", out _));
         Assert.Equal(container, source.GetProperty("Container").GetString());
         var audio = Assert.Single(source.GetProperty("MediaStreams").EnumerateArray(),
             stream => stream.GetProperty("Type").GetString() == "Audio");
@@ -55,11 +57,14 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.False(source.TryGetProperty("Bitrate", out _));
             Assert.False(audio.TryGetProperty("SampleRate", out _));
             Assert.False(audio.TryGetProperty("BitDepth", out _));
-            Assert.False(audio.TryGetProperty("Channels", out _));
+            Assert.Equal(converts && profileName == "web", audio.TryGetProperty("Channels", out _));
+            if (converts && profileName == "web") Assert.Equal(2, audio.GetProperty("Channels").GetInt32());
         }
-        using var stream = await client.GetAsync(source.GetProperty("DirectStreamUrl").GetString() + "&ApiKey=fixture-key");
+        using var stream = await client.GetAsync(source.GetProperty(converts ? "TranscodingUrl" : "DirectStreamUrl").GetString() + "&ApiKey=fixture-key");
         Assert.Equal(HttpStatusCode.OK, stream.StatusCode);
-        Assert.Equal(DeliveryBytes(codec), await stream.Content.ReadAsByteArrayAsync());
+        var delivered = await stream.Content.ReadAsByteArrayAsync();
+        if (converts) Assert.Equal("flac", AudioMediaFacts.ReadPrefix(delivered, delivered.Length)!.Media.Codec);
+        else Assert.Equal(DeliveryBytes(codec), delivered);
     }
 
     [Theory]
@@ -67,7 +72,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData(false, false)]
     [InlineData(true, true)]
     [InlineData(false, true)]
-    public async Task JellyfinPlaybackInfo_CommaSeparatedContainersAllowFlacWithUnknownBitrate(bool explicitFlags, bool emptyCodec)
+    public async Task JellyfinPlaybackInfo_CommaSeparatedContainersKeepUnknownBitrateFlacLossless(bool explicitFlags, bool emptyCodec)
     {
         using var factory = DeliveryFactory("Jellyfin", ClientProfileGateway("flac", "flac", false));
         using var client = factory.CreateClient();
@@ -85,12 +90,13 @@ public sealed partial class ProtocolRouteFixtureTests
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("ErrorCode").ValueKind);
         var source = Assert.Single(document.RootElement.GetProperty("MediaSources").EnumerateArray());
-        Assert.True(source.GetProperty("SupportsDirectPlay").GetBoolean());
-        Assert.True(source.GetProperty("SupportsDirectStream").GetBoolean());
-        Assert.False(source.GetProperty("SupportsTranscoding").GetBoolean());
+        Assert.False(source.GetProperty("SupportsDirectPlay").GetBoolean());
+        Assert.False(source.GetProperty("SupportsDirectStream").GetBoolean());
+        Assert.True(source.GetProperty("SupportsTranscoding").GetBoolean());
+        Assert.Equal("flac", source.GetProperty("Container").GetString());
     }
 
-    [Theory]
+    [MediaToolsTheory]
     [InlineData("flac", false, true)]
     [InlineData("flac", true, true)]
     [InlineData("mp3", false, true)]
@@ -105,8 +111,15 @@ public sealed partial class ProtocolRouteFixtureTests
             .Replace("{codec}", codec, StringComparison.Ordinal).Replace("{id}", "ext-applemusic-song-42", StringComparison.Ordinal);
         using var response = await client.GetAsync($"/Audio/ext-applemusic-song-42/universal?{query}&apiKey=fixture-key");
 
-        Assert.Equal(compatible ? HttpStatusCode.OK : HttpStatusCode.NotAcceptable, response.StatusCode);
-        if (compatible) Assert.Equal(DeliveryBytes(codec), await response.Content.ReadAsByteArrayAsync());
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        if (compatible && (codec != "flac" || knownFacts)) Assert.Equal(DeliveryBytes(codec), await response.Content.ReadAsByteArrayAsync());
+        else if (compatible) Assert.Equal("flac", AudioMediaFacts.ReadPrefix(await response.Content.ReadAsByteArrayAsync(), null)!.Media.Codec);
+        else
+        {
+            var converted = await response.Content.ReadAsByteArrayAsync();
+            Assert.Equal("aac", AudioMediaFacts.ReadPrefix(converted, converted.Length)!.Media.Codec);
+            Assert.Equal("audio/aac", response.Content.Headers.ContentType?.MediaType);
+        }
     }
 
     [Theory]
@@ -172,7 +185,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("xml", false)]
     [InlineData("json", true)]
     [InlineData("xml", true)]
-    public async Task FeishinSubsonic_ClientInfoLimitsRejectOnlyKnownViolations(string format, bool knownFacts)
+    public async Task FeishinSubsonic_ClientInfoLimitsConvertUnknownBitratesAndKnownViolations(string format, bool knownFacts)
     {
         using var factory = DeliveryFactory("Subsonic", ClientProfileGateway("flac", "flac", knownFacts));
         using var client = factory.CreateClient();
@@ -188,16 +201,16 @@ public sealed partial class ProtocolRouteFixtureTests
         {
             using var document = JsonDocument.Parse(body);
             var decision = document.RootElement.GetProperty("subsonic-response").GetProperty("transcodeDecision");
-            Assert.Equal(!knownFacts, decision.GetProperty("canDirectPlay").GetBoolean());
-            Assert.False(decision.GetProperty("canTranscode").GetBoolean());
-            Assert.False(decision.TryGetProperty("transcodeParams", out _));
+            Assert.False(decision.GetProperty("canDirectPlay").GetBoolean());
+            Assert.True(decision.GetProperty("canTranscode").GetBoolean());
+            Assert.True(decision.TryGetProperty("transcodeParams", out _));
         }
         else
         {
             var decision = XDocument.Parse(body).Descendants().Single(element => element.Name.LocalName == "transcodeDecision");
-            Assert.Equal(knownFacts ? "false" : "true", decision.Attribute("canDirectPlay")?.Value);
-            Assert.Equal("false", decision.Attribute("canTranscode")?.Value);
-            Assert.Null(decision.Attribute("transcodeParams"));
+            Assert.Equal("false", decision.Attribute("canDirectPlay")?.Value);
+            Assert.Equal("true", decision.Attribute("canTranscode")?.Value);
+            Assert.NotNull(decision.Attribute("transcodeParams"));
         }
     }
 

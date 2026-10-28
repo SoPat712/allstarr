@@ -333,7 +333,7 @@ public sealed partial class RecordingKeptFilesTests
         DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
 
     private RecordingKeptFiles ExplicitKeepService() => new(factory, artifacts, services.GetRequiredService<IServiceScopeFactory>(),
-        placement, identities, new SystemPlatformClock(), jobs: queue);
+        placement, identities, new SystemPlatformClock(), jobs: queue, audioVerifier: FixtureAudioVerifier.Instance);
 
     private async Task<DurableJobClaim> AcceptKeepAsync()
     {

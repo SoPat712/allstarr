@@ -10,7 +10,7 @@ internal sealed class ProviderPlaybackStream(Stream source, HttpContent owner, l
     Action failed, TimeProvider clock) : Stream
 {
     private long delivered;
-    private bool retried;
+    private int resumeAttempts;
     private bool reported;
     private HttpResponseMessage? replacement;
     private Stream current = source;
@@ -61,34 +61,49 @@ internal sealed class ProviderPlaybackStream(Stream source, HttpContent owner, l
             catch (Exception error) when (!cancellationToken.IsCancellationRequested &&
                 error is IOException or HttpRequestException or OperationCanceledException)
             {
-                if (!reported) { reported = true; failed(); }
                 current.Dispose();
-                if (retried || reopen == null || totalLength == null || entityTag == null)
-                    throw new IOException("The provider media stopped. Restart playback to use another source.");
-                retried = true;
-                // Only a strong entity validator permits transferring a byte offset to a new response.
-                using var reconnectTimeout = new CancellationTokenSource(ProgressiveCachingStream.SeekWaitTimeout, clock);
-                using var reconnect = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, reconnectTimeout.Token);
-                HttpResponseMessage? response = null;
-                try
+                if (reopen == null || totalLength == null || entityTag == null)
+                    throw Stopped();
+                var resumed = false;
+                while (resumeAttempts < 3)
                 {
-                    var offset = checked(start + delivered);
-                    response = await reopen(offset, rangeEnd, entityTag, reconnect.Token);
-                    var range = response.Content.Headers.ContentRange;
-                    if (response.StatusCode != HttpStatusCode.PartialContent || !entityTag.Equals(response.Headers.ETag) ||
-                        range == null || range.From != offset || range.To != (rangeEnd ?? totalLength - 1) || range.Length != totalLength ||
-                        !StreamByteRanges.HasValidContentRange(range, response.Content.Headers.ContentLength))
-                        throw new IOException("The provider cannot resume the original media bytes.");
-                    current = await response.Content.ReadAsStreamAsync(reconnect.Token);
-                    replacement = response;
-                    response = null;
+                    var attempt = resumeAttempts++;
+                    if (attempt > 0) await Task.Delay(TimeSpan.FromMilliseconds(100 * attempt), clock, cancellationToken);
+                    using var reconnectTimeout = new CancellationTokenSource(ProgressiveCachingStream.SeekWaitTimeout, clock);
+                    using var reconnect = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, reconnectTimeout.Token);
+                    HttpResponseMessage? response = null;
+                    try
+                    {
+                        var offset = checked(start + delivered);
+                        response = await reopen(offset, rangeEnd, entityTag, reconnect.Token);
+                        if (response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.RequestTimeout ||
+                            (int)response.StatusCode >= 500) continue;
+                        var range = response.Content.Headers.ContentRange;
+                        if (response.StatusCode != HttpStatusCode.PartialContent || !entityTag.Equals(response.Headers.ETag) ||
+                            range == null || range.From != offset || range.To != (rangeEnd ?? totalLength - 1) || range.Length != totalLength ||
+                            !StreamByteRanges.HasValidContentRange(range, response.Content.Headers.ContentLength)) break;
+                        var next = await response.Content.ReadAsStreamAsync(reconnect.Token);
+                        replacement?.Dispose();
+                        replacement = response;
+                        current = next;
+                        response = null;
+                        resumed = true;
+                        break;
+                    }
+                    catch (Exception reconnectError) when (!cancellationToken.IsCancellationRequested &&
+                        reconnectError is IOException or HttpRequestException or OperationCanceledException)
+                    { }
+                    finally { response?.Dispose(); }
                 }
-                catch (Exception reconnectError) when (!cancellationToken.IsCancellationRequested &&
-                    reconnectError is IOException or HttpRequestException or OperationCanceledException)
-                { throw new IOException("The provider media could not resume. Restart playback to use another source."); }
-                finally { response?.Dispose(); }
+                if (!resumed) throw Stopped();
             }
         }
+    }
+
+    private IOException Stopped()
+    {
+        if (!reported) { reported = true; failed(); }
+        return new IOException("The selected playback source could not provide more identical audio bytes.");
     }
 
     private static async Task<int> ReadBoundedAsync(Stream source, Memory<byte> destination, CancellationToken cancellationToken)

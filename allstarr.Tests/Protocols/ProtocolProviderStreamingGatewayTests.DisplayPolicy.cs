@@ -33,7 +33,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     CoverArtUrl = "https://images.example.test/deezer" }
             });
         var gateway = new ProtocolProviderGateway(Mock.Of<IProviderRouter>(MockBehavior.Strict), new ProviderRegistry([]),
-            new HttpClientFactory(), identities: identities.Object, effectivePolicies: policies.Object);
+            new HttpClientFactory(), identities: identities.Object, effectivePolicies: policies.Object, audioVerifier: FixtureAudioVerifier.Instance);
 
         var song = await gateway.GetPublicSongAsync("allstarr", Guid.NewGuid().ToString("D"));
         var artwork = await gateway.GetPublicArtworkUriAsync("allstarr", ProviderResourceKind.Track, Guid.NewGuid().ToString("D"));
@@ -65,7 +65,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     ExternalId = "song", Album = "Allowed album", AlbumId = "ext-deezer-album-release" }
             });
         var gateway = new ProtocolProviderGateway(Mock.Of<IProviderRouter>(MockBehavior.Strict), new ProviderRegistry([]),
-            new HttpClientFactory(), identities: identities.Object);
+            new HttpClientFactory(), identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
 
         var stored = await gateway.GetStoredSongAsync(context, "deezer", "song");
         var detail = await gateway.GetSongAsync(context, "deezer", "song");
@@ -92,7 +92,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
         var cache = new Mock<IApplicationCache>(MockBehavior.Strict);
         var gateway = new ProtocolProviderGateway(router.Object, new ProviderRegistry([]), new HttpClientFactory(),
-            applicationCache: cache.Object, identities: identities.Object);
+            applicationCache: cache.Object, identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
 
         Assert.Null(await gateway.GetStoredSongAsync(context, "deezer", "song"));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => gateway.GetSongAsync(context, "deezer", "song"));
@@ -120,7 +120,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
         using var cache = new MemoryApplicationCache(new allstarr.Core.Operations.SystemPlatformClock());
         var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(),
-            applicationCache: cache, identities: identities.Object);
+            applicationCache: cache, identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
 
         for (var attempt = 0; attempt < 2; attempt++)
         {
@@ -158,7 +158,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
         using var cache = new MemoryApplicationCache(new allstarr.Core.Operations.SystemPlatformClock());
         var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(),
-            applicationCache: cache, identities: identities.Object);
+            applicationCache: cache, identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
 
         for (var attempt = 0; attempt < 2; attempt++)
         {

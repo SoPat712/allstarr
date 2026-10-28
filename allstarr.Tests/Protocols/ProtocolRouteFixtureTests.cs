@@ -4878,6 +4878,8 @@ public sealed partial class ProtocolRouteFixtureTests
             builder.ConfigureServices(services =>
             {
                 services.AddSingleton<IStartupFilter, TestRateLimiterCleanup>();
+                services.RemoveAll<allstarr.Core.Music.IProviderAudioVerifier>();
+                services.AddSingleton<allstarr.Core.Music.IProviderAudioVerifier>(FixtureAudioVerifier.Instance);
                 services.RemoveAll<IHostedService>();
                 // Relay fixtures keep their unlinked storage state; linked cases supply explicit principals.
                 services.RemoveAll<DurableStorageState>();

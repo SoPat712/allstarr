@@ -63,7 +63,7 @@ public sealed partial class ExtensionProgressivePlaybackTests
             });
         using var activity = new PlaybackDeliveryActivityStore();
         var gateway = new ProtocolProviderGateway(router.Object, registry,
-            Mock.Of<IHttpClientFactory>(MockBehavior.Strict), playbackActivity: activity);
+            Mock.Of<IHttpClientFactory>(MockBehavior.Strict), playbackActivity: activity, audioVerifier: FixtureAudioVerifier.Instance);
         var opening = gateway.OpenStreamAsync(protocol, "allstarr", protocol.RequestedItemId[17..], ProviderAudioQuality.Any, null);
         source.Release(prefix);
         using var first = (await opening.WaitAsync(TimeSpan.FromSeconds(10)))!.Response;

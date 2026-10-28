@@ -5,6 +5,7 @@ using System.Xml.Linq;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
+using allstarr.Services.Common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Moq;
@@ -13,18 +14,18 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolRouteFixtureTests
 {
-    [Theory]
-    [InlineData("Feishin", "stream.mp3?audioCodec=mp3&static=false&playSessionId=feishin-ext-deezer-song-42-mp3-44100-0&audioBitRate=128000&audioSampleRate=44100", "flac", "flac", 406)]
-    [InlineData("Jellyfin Web", "universal?UserId=user&DeviceId=fixture&MaxStreamingBitrate=120000000&Container=mp3,mp4|aac,aac,ogg|opus,webm|opus&TranscodingContainer=ts&TranscodingProtocol=hls&AudioCodec=aac&MaxAudioSampleRate=48000&MaxAudioBitDepth=16&PlaySessionId=play&StartTimeTicks=0&EnableRedirection=true&EnableRemoteMedia=false&EnableAudioVbrEncoding=true", "flac", "flac", 406)]
-    [InlineData("Finamp", "universal?transcodingContainer=mp3&audioCodec=mp3&audioBitRate=128000&maxAudioChannels=2", "flac", "flac", 406)]
-    [InlineData("Finamp", "universal?transcodingContainer=mp3&audioCodec=mp3&audioBitRate=128000&maxAudioChannels=1", "mp3", "mp3", 406)]
-    [InlineData("Feishin", "stream.mp3?audioCodec=mp3&audioBitRate=64000", "mp3", "mp3", 406)]
-    [InlineData("Feishin", "stream.mp3?audioCodec=mp3&audioSampleRate=22050", "mp3", "mp3", 406)]
-    [InlineData("Feishin", "stream.mp3?audioCodec=mp3&static=false&playSessionId=feishin-ext-deezer-song-42-mp3-44100-0&audioBitRate=128000&audioSampleRate=44100", "mp3", "mp3", 200)]
-    [InlineData("Finamp", "universal?transcodingContainer=m4a&audioCodec=aac&audioBitRate=128000&maxAudioChannels=2", "m4a", "aac", 200)]
-    [InlineData("Jellyfin Web", "universal?Container=mp3,mp4|aac,aac,ogg|opus,webm|opus&AudioCodec=aac&MaxStreamingBitrate=128000&MaxAudioSampleRate=48000", "ogg", "opus", 200)]
-    public async Task JellyfinAudioClients_ReceiveOnlyCompatibleSourceBytes(
-        string clientName, string route, string container, string codec, int status)
+    [MediaToolsTheory]
+    [InlineData("Feishin", "stream.mp3?audioCodec=mp3&static=false&playSessionId=feishin-ext-deezer-song-42-mp3-44100-0&audioBitRate=128000&audioSampleRate=44100", "flac", "flac", false)]
+    [InlineData("Jellyfin Web", "universal?UserId=user&DeviceId=fixture&MaxStreamingBitrate=120000000&Container=mp3,mp4|aac,aac,ogg|opus,webm|opus&TranscodingContainer=ts&TranscodingProtocol=hls&AudioCodec=aac&MaxAudioSampleRate=48000&MaxAudioBitDepth=16&PlaySessionId=play&StartTimeTicks=0&EnableRedirection=true&EnableRemoteMedia=false&EnableAudioVbrEncoding=true", "flac", "flac", false)]
+    [InlineData("Finamp", "universal?transcodingContainer=mp3&audioCodec=mp3&audioBitRate=128000&maxAudioChannels=2", "flac", "flac", false)]
+    [InlineData("Finamp", "universal?transcodingContainer=mp3&audioCodec=mp3&audioBitRate=128000&maxAudioChannels=1", "mp3", "mp3", false)]
+    [InlineData("Feishin", "stream.mp3?audioCodec=mp3&audioBitRate=64000", "mp3", "mp3", false)]
+    [InlineData("Feishin", "stream.mp3?audioCodec=mp3&audioSampleRate=22050", "mp3", "mp3", false)]
+    [InlineData("Feishin", "stream.mp3?audioCodec=mp3&static=false&playSessionId=feishin-ext-deezer-song-42-mp3-44100-0&audioBitRate=128000&audioSampleRate=44100", "mp3", "mp3", true)]
+    [InlineData("Finamp", "universal?transcodingContainer=m4a&audioCodec=aac&audioBitRate=128000&maxAudioChannels=2", "m4a", "aac", true)]
+    [InlineData("Jellyfin Web", "universal?Container=mp3,mp4|aac,aac,ogg|opus,webm|opus&AudioCodec=aac&MaxStreamingBitrate=128000&MaxAudioSampleRate=48000", "ogg", "opus", true)]
+    public async Task JellyfinAudioClients_ReceiveCompatibleOriginalOrConvertedAudio(
+        string clientName, string route, string container, string codec, bool fitsOriginal)
     {
         var gateway = DeliveryGateway(container, codec);
         using var factory = DeliveryFactory("Jellyfin", gateway);
@@ -37,13 +38,22 @@ public sealed partial class ProtocolRouteFixtureTests
         using var request = new HttpRequestMessage(HttpMethod.Get, path);
         request.Headers.Add("X-Emby-Authorization", $"MediaBrowser Client=\"{clientName}\", Device=\"Fixture\", DeviceId=\"fixture\", Version=\"1\"");
         using var response = await client.SendAsync(request);
-        Assert.Equal(status, (int)response.StatusCode);
-        if (status == 200)
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var bytes = await response.Content.ReadAsByteArrayAsync();
+        if (fitsOriginal)
         {
-            Assert.Equal(DeliveryBytes(codec), await response.Content.ReadAsByteArrayAsync());
+            Assert.Equal(DeliveryBytes(codec), bytes);
             Assert.Equal(DeliveryMime(container), response.Content.Headers.ContentType?.MediaType);
         }
-        else Assert.DoesNotContain(Convert.ToHexString(DeliveryBytes(codec)), Convert.ToHexString(await response.Content.ReadAsByteArrayAsync()));
+        else
+        {
+            Assert.NotEqual(DeliveryBytes(codec), bytes);
+            var expected = clientName == "Jellyfin Web" ? "aac" : "mp3";
+            Assert.Equal(expected, AudioMediaFacts.ReadPrefix(bytes, bytes.Length)!.Media.Codec);
+            Assert.Equal(expected, response.Headers.GetValues("X-Allstarr-Audio-Codec").Single());
+            Assert.Null(response.Content.Headers.ContentRange);
+            Assert.Empty(response.Headers.AcceptRanges);
+        }
     }
 
     [Theory]
@@ -68,15 +78,16 @@ public sealed partial class ProtocolRouteFixtureTests
             using var document = JsonDocument.Parse(body);
             var decision = document.RootElement.GetProperty("subsonic-response").GetProperty("transcodeDecision");
             Assert.Equal(compatible, decision.GetProperty("canDirectPlay").GetBoolean());
-            Assert.False(decision.GetProperty("canTranscode").GetBoolean());
-            Assert.False(decision.TryGetProperty("transcodeParams", out _));
+            Assert.Equal(!compatible, decision.GetProperty("canTranscode").GetBoolean());
+            Assert.Equal(!compatible, decision.TryGetProperty("transcodeParams", out _));
+            if (!compatible) Assert.Equal("mp3", decision.GetProperty("sourceStream").GetProperty("codec").GetString());
         }
         else
         {
             var decision = XDocument.Parse(body).Descendants().Single(element => element.Name.LocalName == "transcodeDecision");
             Assert.Equal(compatible ? "true" : "false", decision.Attribute("canDirectPlay")?.Value);
-            Assert.Equal("false", decision.Attribute("canTranscode")?.Value);
-            Assert.Null(decision.Attribute("transcodeParams"));
+            Assert.Equal(compatible ? "false" : "true", decision.Attribute("canTranscode")?.Value);
+            Assert.Equal(!compatible, decision.Attribute("transcodeParams") != null);
         }
     }
 
@@ -104,7 +115,7 @@ public sealed partial class ProtocolRouteFixtureTests
                 .Single(element => element.Name.LocalName == "transcodeDecision").Attribute("canDirectPlay")?.Value);
     }
 
-    [Theory]
+    [MediaToolsTheory]
     [InlineData("json", "format=mp3&maxBitRate=128&estimateContentLength=true", "flac", false)]
     [InlineData("xml", "format=mp3&maxBitRate=128&estimateContentLength=true", "flac", false)]
     [InlineData("json", "format=mp3&maxBitRate=64", "mp3", false)]
@@ -122,30 +133,21 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal(DeliveryBytes(codec), await response.Content.ReadAsByteArrayAsync());
             return;
         }
-        var body = await response.Content.ReadAsStringAsync();
-        if (format == "json")
-        {
-            using var document = JsonDocument.Parse(body);
-            var root = document.RootElement.GetProperty("subsonic-response");
-            Assert.Equal("failed", root.GetProperty("status").GetString());
-            Assert.Equal(0, root.GetProperty("error").GetProperty("code").GetInt32());
-        }
-        else
-        {
-            var root = XDocument.Parse(body).Root!;
-            Assert.Equal("failed", root.Attribute("status")?.Value);
-            Assert.Equal("0", root.Elements().Single().Attribute("code")?.Value);
-        }
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var converted = await response.Content.ReadAsByteArrayAsync();
+        Assert.Equal("mp3", AudioMediaFacts.ReadPrefix(converted, converted.Length)!.Media.Codec);
+        Assert.Equal("mp3", response.Headers.GetValues("X-Allstarr-Audio-Codec").Single());
+        Assert.NotEqual(DeliveryBytes(codec), converted);
     }
 
-    [Theory]
+    [MediaToolsTheory]
     [InlineData("mp3", 0, true, true, true)]
     [InlineData("flac", 0, false, true, true)]
     [InlineData("mp3", 300000000, true, true, true)]
     [InlineData("mp3", 0, true, false, true)]
     [InlineData("mp3", 0, true, true, false)]
     [InlineData("mp3", 0, false, false, false)]
-    public async Task JellyfinPlaybackInfo_MatchesDeviceProfileAndDoesNotAdvertiseTransforms(string codec, long offset, bool compatible, bool directPlay, bool directStream)
+    public async Task JellyfinPlaybackInfo_AdvertisesTheDeliveredOriginalOrConversion(string codec, long offset, bool compatible, bool directPlay, bool directStream)
     {
         using var factory = DeliveryFactory("Jellyfin", DeliveryGateway(codec, codec));
         using var client = factory.CreateClient();
@@ -154,27 +156,29 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var root = document.RootElement;
-        Assert.Equal(compatible ? JsonValueKind.Null : JsonValueKind.String, root.GetProperty("ErrorCode").ValueKind);
-        if (!compatible) Assert.Equal("NoCompatibleStream", root.GetProperty("ErrorCode").GetString());
+        Assert.Equal(JsonValueKind.Null, root.GetProperty("ErrorCode").ValueKind);
         var source = Assert.Single(root.GetProperty("MediaSources").EnumerateArray());
         Assert.Equal(compatible && directPlay, source.GetProperty("SupportsDirectPlay").GetBoolean());
         Assert.Equal(compatible && directStream, source.GetProperty("SupportsDirectStream").GetBoolean());
-        Assert.False(source.GetProperty("SupportsTranscoding").GetBoolean());
-        Assert.False(source.TryGetProperty("TranscodingUrl", out _));
-        Assert.Equal(codec, source.GetProperty("Container").GetString());
-        if (compatible)
+        Assert.Equal(!compatible, source.GetProperty("SupportsTranscoding").GetBoolean());
+        Assert.Equal(!compatible, source.TryGetProperty("TranscodingUrl", out _));
+        Assert.Equal(compatible ? codec : "mp3", source.GetProperty("Container").GetString());
+        var url = source.GetProperty(compatible ? "DirectStreamUrl" : "TranscodingUrl").GetString()!;
+        if (offset > 0)
         {
-            var url = source.GetProperty("DirectStreamUrl").GetString()!;
-            if (offset > 0)
-            {
-                Assert.Contains($"StartTimeTicks={offset}", url);
-                return;
-            }
-            using var stream = await client.GetAsync(url + "&ApiKey=fixture-key");
-            Assert.Equal(HttpStatusCode.OK, stream.StatusCode);
-            Assert.Equal(DeliveryBytes(codec), await stream.Content.ReadAsByteArrayAsync());
+            Assert.Contains($"StartTimeTicks={offset}", url);
+            return;
         }
-        else Assert.False(source.TryGetProperty("DirectStreamUrl", out _));
+        using var stream = await client.GetAsync(url + "&ApiKey=fixture-key");
+        Assert.Equal(HttpStatusCode.OK, stream.StatusCode);
+        var bytes = await stream.Content.ReadAsByteArrayAsync();
+        if (compatible) Assert.Equal(DeliveryBytes(codec), bytes);
+        else
+        {
+            Assert.False(source.TryGetProperty("DirectStreamUrl", out _));
+            Assert.Equal("mp3", AudioMediaFacts.ReadPrefix(bytes, bytes.Length)!.Media.Codec);
+            Assert.Equal("mp3", stream.Headers.GetValues("X-Allstarr-Audio-Codec").Single());
+        }
     }
 
     [Fact]

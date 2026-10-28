@@ -141,7 +141,7 @@ public sealed partial class TrackIdentityServiceTests
                 new(request.CorrelationId, ProviderCapabilityKind.Metadata, "artistgrid", null, [])));
         using var cache = new MemoryApplicationCache(_clock);
         var gateway = new ProtocolProviderGateway(router.Object, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict),
-            identities: _service, applicationCache: cache);
+            identities: _service, applicationCache: cache, audioVerifier: FixtureAudioVerifier.Instance);
         var protocol = DisplayProtocol(ProtocolKind.Jellyfin);
         Assert.Null((await gateway.GetSongAsync(protocol, "artistgrid", "wave"))!.SampleRate);
         var stream = await gateway.OpenStreamAsync(protocol, "artistgrid", "wave", ProviderAudioQuality.Any, null);

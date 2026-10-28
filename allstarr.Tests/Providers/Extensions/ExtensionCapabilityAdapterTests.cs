@@ -55,7 +55,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             var sandbox = new ExtensionSandbox(root, manifest, script, new HttpClientFactory(), NullLogger.Instance,
                 ExtensionRuntimePermissionSet.None, Path.Combine(root, "runtime"));
             var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(),
-                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 32768 });
+                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 32768 }, audioVerifier: FixtureAudioVerifier.Instance);
             var job = Guid.CreateVersion7();
             var workspace = await resolver.CreateWorkspaceAsync(new(Guid.CreateVersion7(), job, "transform-demo", null, "download"));
             using var scope = ExtensionArtifactInvocationScope.Open(resolver, workspace.Reference, job, "transform-demo", 32768, CancellationToken.None);
@@ -137,7 +137,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             var sandbox = new ExtensionSandbox(root, manifest, script, new HttpClientFactory(handler), NullLogger.Instance,
                 new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/", "https://cdn.example.test/"]), new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
             var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(),
-                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 });
+                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 }, audioVerifier: FixtureAudioVerifier.Instance);
             var job = Guid.CreateVersion7();
             var workspace = await resolver.CreateWorkspaceAsync(new(Guid.CreateVersion7(), job, "segments-demo", null, "download"));
             using var scope = ExtensionArtifactInvocationScope.Open(resolver, workspace.Reference, job, "segments-demo", maximumBytes, CancellationToken.None);
@@ -265,7 +265,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             var sandbox = new ExtensionSandbox(root, manifest, script, new HttpClientFactory(), NullLogger.Instance,
                 ExtensionRuntimePermissionSet.None, Path.Combine(root, "runtime"));
             var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(),
-                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 32768 });
+                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 32768 }, audioVerifier: FixtureAudioVerifier.Instance);
             var job = Guid.CreateVersion7();
             var workspace = await resolver.CreateWorkspaceAsync(new(Guid.CreateVersion7(), job, "remux-demo", null, "download"));
             using var scope = ExtensionArtifactInvocationScope.Open(resolver, workspace.Reference, job, "remux-demo", 32768, CancellationToken.None);
@@ -895,7 +895,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
         var sandbox = new ExtensionSandbox(Path.GetTempPath(), normalized, script, new HttpClientFactory(), NullLogger.Instance,
             ExtensionRuntimePermissionSet.None);
         var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.GetTempPath(), MaximumArtifactBytes = 1024 };
-        var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+        var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance);
         var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
         Assert.False(adapter.SupportsRecordingAvailability);
     }
@@ -936,7 +936,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
                     new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
-            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance);
             IProviderDownloadStreamingCapability adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
             adapter = (IProviderDownloadStreamingCapability)ObservedProviderCapabilities.Wrap<IProviderStreamingCapability>(adapter,
                 Mock.Of<allstarr.Core.Health.IProviderOutcomeObserver>());
@@ -1299,7 +1299,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 new HttpClientFactory(new BytesHandler([1, 2, 3, 4])), NullLogger.Instance, permissions, Path.Combine(root, "runtime"));
             var store = new MemoryArtifactStore();
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
-            var resolver = new ProviderDownloadArtifactResolver(store, options);
+            var resolver = new ProviderDownloadArtifactResolver(store, options, audioVerifier: FixtureAudioVerifier.Instance);
             var adapter = new ExtensionDownloadCapabilityAdapter(sandbox, manifest, artifacts: resolver, options: options);
             var context = Context("spotiflac-demo");
             var job = Guid.CreateVersion7();
@@ -1569,7 +1569,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 new HttpClientFactory(new QualityBudgetHandler(clock, elapsedSeconds)), NullLogger.Instance, permissions, Path.Combine(root, "runtime"),
                 downloadTimeout: TimeSpan.FromSeconds(150), timeProvider: clock);
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
-            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance);
             var context = Context(manifest.Id);
             var trackId = new ProviderExternalResourceId(manifest.Id, ProviderResourceKind.Track, "track");
             ProviderOutcome<QualityDownloadResult> outcome;
@@ -1662,7 +1662,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
                     new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
             var streaming = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null,
-                new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options), options);
+                new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance), options);
             var metadata = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
             var registry = new ProviderRegistry([new ProviderRegistration(new ProviderDescriptor(manifest.Id, "Fixture", "Test provider",
                 ProviderOrigin.Extension, "1", "1", [new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported,
@@ -1772,7 +1772,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             var sandbox = new ExtensionSandbox(root, normalized, script,
                 new HttpClientFactory(new BytesHandler([])), logger.Object, runtimeStateDirectory: Path.Combine(root, "runtime"));
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
-            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance);
             var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
 
             var result = await adapter.GetStreamLeaseAsync(Context(manifest.Id), new(new(manifest.Id, ProviderResourceKind.Track, "track")));
@@ -1846,7 +1846,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
                         new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
                 var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
                 var store = new MemoryArtifactStore();
-                var resolver = new ProviderDownloadArtifactResolver(store, options);
+                var resolver = new ProviderDownloadArtifactResolver(store, options, audioVerifier: FixtureAudioVerifier.Instance);
                 var context = Context(manifest.Id);
                 var track = new ProviderExternalResourceId(manifest.Id, ProviderResourceKind.Track, "TiDaL:125155092");
                 if (preparedAgeMs >= 0)
@@ -1972,7 +1972,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
                     new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
-            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance);
             var context = Context("spotiflac-prepared");
 
             Assert.Contains("\"Available\"", sandbox.InvokeJson("checkAvailability",
@@ -2042,7 +2042,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 new ExtensionRuntimePermissionSet(new HashSet<string>(["https://api-v2.soundcloud.com/"]),
                     new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"), timeProvider: clock);
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
-            var artifacts = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var artifacts = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance);
             await using var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, artifacts, options);
             var descriptor = new ProviderDescriptor(manifest.Id, manifest.DisplayName, "Fixture", ProviderOrigin.Extension, "1", "1",
                 [new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported,
@@ -2113,7 +2113,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
                     new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"), timeProvider: clock);
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
-            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance);
             var context = Context(manifest.Id);
             var track = new ProviderExternalResourceId(manifest.Id, ProviderResourceKind.Track, "track-1");
             var download = new ExtensionDownloadCapabilityAdapter(sandbox, manifest, artifacts: resolver, options: options);
@@ -2187,7 +2187,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
                     new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"), timeProvider: clock);
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
             var store = new MemoryArtifactStore();
-            var resolver = new ProviderDownloadArtifactResolver(store, options);
+            var resolver = new ProviderDownloadArtifactResolver(store, options, audioVerifier: FixtureAudioVerifier.Instance);
             await using var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
 
             var result = await adapter.GetStreamLeaseAsync(Context(), new(Id(ProviderResourceKind.Track, "track-1")));
@@ -2251,7 +2251,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 RootPath = Path.Combine(root, "workspaces"),
                 MaximumArtifactBytes = 1024
             };
-            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance);
             await using var adapter = new ExtensionDownloadStreamingCapabilityAdapter(
                 sandbox, manifest, null, resolver, options);
             var outcome = await adapter.GetStreamLeaseAsync(
@@ -2772,7 +2772,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
         {
             var store = new MemoryArtifactStore();
             var options = new ProviderDownloadWorkspaceOptions { RootPath = root, MaximumArtifactBytes = 1024 };
-            var resolver = new ProviderDownloadArtifactResolver(store, options);
+            var resolver = new ProviderDownloadArtifactResolver(store, options, audioVerifier: FixtureAudioVerifier.Instance);
             var manifest = DownloadManifest();
             var sandbox = Sandbox(manifest, """
                 registerExtension({ download: function() { return {
@@ -2820,7 +2820,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
         var root = Path.Combine(Path.GetTempPath(), "allstarr-extension-download", Guid.NewGuid().ToString("N"));
         var store = new MemoryArtifactStore();
         var options = new ProviderDownloadWorkspaceOptions { RootPath = root, MaximumArtifactBytes = maximumBytes };
-        var resolver = new ProviderDownloadArtifactResolver(store, options);
+        var resolver = new ProviderDownloadArtifactResolver(store, options, audioVerifier: FixtureAudioVerifier.Instance);
         var manifest = DownloadManifest();
         var permissions = new ExtensionRuntimePermissionSet(
             new HashSet<string>(["https://media.example.test/"], StringComparer.Ordinal),

@@ -75,7 +75,7 @@ public sealed partial class ProviderStreamOpenerTests
         var http = new DefaultHttpContext();
         var request = ProviderAudioDeliveryRequests.Jellyfin(new QueryCollection(new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>
         {
-            ["AudioCodec"] = "mp3"
+            ["AudioCodec"] = "unsupported-fixture-codec"
         }));
 
         await Assert.ThrowsAsync<ProviderAudioProfileException>(() => new ProviderStreamOpener(gateway.Object, new ProtocolStreamingResponseAdapter())

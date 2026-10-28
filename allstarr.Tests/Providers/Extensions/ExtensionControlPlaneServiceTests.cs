@@ -368,7 +368,7 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
         var coordinator = new ExtensionRuntimeCoordinator(_factory, _service, registrationGate, registry, clients.Object,
             Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
             new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(),
-                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") }),
+                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") }, audioVerifier: FixtureAudioVerifier.Instance),
             new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") },
             _configuration,
             NullLogger<ExtensionRuntimeCoordinator>.Instance);
@@ -620,7 +620,7 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
         var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "other-downloads") };
         var restored = new ExtensionRuntimeCoordinator(_factory, _service, descriptorRegistry, descriptorRegistry,
             Mock.Of<IHttpClientFactory>(), Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
-            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options), options,
+            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options, audioVerifier: FixtureAudioVerifier.Instance), options,
             _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance, protection);
         await restored.StartAsync(default);
         var restoredView = await restored.SignedSessionStatusAsync(package.Id);
@@ -676,7 +676,7 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
         var coordinator = new ExtensionRuntimeCoordinator(_factory, _service, new PausedProviderRegistration(registry),
             registry, clients.Object, Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
             new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(),
-                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") }),
+                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") }, audioVerifier: FixtureAudioVerifier.Instance),
             new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") },
             _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance);
         var runtimeState = Path.Combine(_root, "extensions", ".runtime", package.ExtensionId);
@@ -767,7 +767,7 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
         var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "downloads") };
         var coordinator = new ExtensionRuntimeCoordinator(_factory, _service, registry, registry, clients.Object,
             Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
-            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options), options,
+            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options, audioVerifier: FixtureAudioVerifier.Instance), options,
             _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance);
         package = await coordinator.ActivateAsync(package.Id, package.Revision);
         await coordinator.RefreshSignedSessionsAsync(); // Signed out: never verify.
@@ -1001,7 +1001,7 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
         var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "downloads") };
         return new ExtensionRuntimeCoordinator(_factory, _service, registry, registry, clients.Object,
             Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
-            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options), options,
+            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options, audioVerifier: FixtureAudioVerifier.Instance), options,
             _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance, protection);
     }
 

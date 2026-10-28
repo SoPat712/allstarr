@@ -267,7 +267,7 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
         Assert.Equal(expected, QobuzDownloadCapabilityAdapter.Quality(requested, configured));
 
     private ProviderDownloadArtifactResolver Resolver(MemoryStore store) =>
-        new(store, new() { RootPath = root, MaximumArtifactBytes = 1024 * 1024 });
+        new(store, new() { RootPath = root, MaximumArtifactBytes = 1024 * 1024 }, audioVerifier: FixtureAudioVerifier.Instance);
 
     private async Task<(ProviderExecutionContext Context, ProviderDownloadWorkspace Workspace, Guid Job)>
         SetupAsync(ProviderDownloadArtifactResolver resolver, string providerId)

@@ -58,7 +58,7 @@ internal sealed class RetainedOriginalCacheFixture : IAsyncDisposable
 
     private ManagedTrackCacheService CreateCache() => new(Configuration, Options.Create(Settings), Library,
         NullLogger<ManagedTrackCacheService>.Instance, timeProvider: Clock, mappings: Mappings,
-        audioMaximumBytes: () => MaximumBytes);
+        audioMaximumBytes: () => MaximumBytes, audioVerifier: FixtureAudioVerifier.Instance);
 
     public async Task RestartCacheAsync()
     {
@@ -125,7 +125,7 @@ internal sealed class RetainedOriginalCacheFixture : IAsyncDisposable
                         request.Deadline, request.CancellationToken), Track)],
                 new(request.CorrelationId, ProviderCapabilityKind.Streaming, Track.ProviderId, Account, [])));
         return new(router.Object, registry, new NoNetworkFactory(), Configuration, managedTrackCache: Cache,
-            playbackActivity: Activity, timeProvider: Clock);
+            playbackActivity: Activity, timeProvider: Clock, audioVerifier: FixtureAudioVerifier.Instance);
     }
 
     public async ValueTask DisposeAsync()

@@ -232,7 +232,7 @@ public sealed partial class RecordingKeptFilesTests
         var jobs = new DurableJobQueue(factory, options, new JobPayloadPolicy(options), clock);
         var access = new TestBackendLibraryAccess(factory, "music");
         var kept = new RecordingKeptFiles(factory, artifacts, services.GetRequiredService<IServiceScopeFactory>(),
-            placement, identities, clock, jobs: jobs, libraryAccess: access);
+            placement, identities, clock, jobs: jobs, libraryAccess: access, audioVerifier: FixtureAudioVerifier.Instance);
         var accounts = new ProviderAccountResolver(factory);
         var matches = new TrackMatchCommandService(factory, new TrackMatchDecisionEngine(), accounts, clock, access);
         var persistence = new PlaylistPersistenceService(factory, accounts, clock, matches, access, kept: kept);

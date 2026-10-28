@@ -322,7 +322,8 @@ public sealed class ManagedAudioCapacityTests
         }
         public static async Task<AudioFixture> CreateAsync(long limit) => new(await SqliteTestDatabase.CreateAsync(), limit);
         public void Restart(IManagedFileOperations? operations = null, StorageMode mode = StorageMode.Cache) => Service = new(configuration, Options.Create(new SubsonicSettings { StorageMode = mode }), Local,
-            NullLogger<ManagedTrackCacheService>.Instance, timeProvider: Clock, mappings: Store, files: operations, audioMaximumBytes: () => Limit);
+            NullLogger<ManagedTrackCacheService>.Instance, timeProvider: Clock, mappings: Store, files: operations, audioMaximumBytes: () => Limit,
+            audioVerifier: FixtureAudioVerifier.Instance);
         public async Task<HttpResponseMessage> OpenProducerAsync(string track, int bytes, bool original = false, HttpContent? content = null, Func<Task<Song?>>? metadata = null)
         {
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = content ?? new ByteArrayContent(Enumerable.Range(0, bytes).Select(value => (byte)value).ToArray()) };

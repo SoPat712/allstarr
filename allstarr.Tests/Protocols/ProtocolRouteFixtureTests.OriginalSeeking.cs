@@ -48,7 +48,7 @@ public sealed partial class ProtocolRouteFixtureTests
                         request.Deadline, request.CancellationToken), new("qobuz", ProviderResourceKind.Track, "42"))],
                 new(request.CorrelationId, ProviderCapabilityKind.Streaming, "qobuz", null, [])));
         using var activity = new PlaybackDeliveryActivityStore();
-        var gateway = new ProtocolProviderGateway(router.Object, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict), playbackActivity: activity);
+        var gateway = new ProtocolProviderGateway(router.Object, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict), playbackActivity: activity, audioVerifier: FixtureAudioVerifier.Instance);
         using var factory = new ProtocolFactory("Jellyfin", _ => DownloadAuthentication("Jellyfin"), services =>
         {
             services.AddSingleton<IStartupFilter, SonicPrincipalStartupFilter>();

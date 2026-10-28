@@ -14,6 +14,27 @@ namespace allstarr.Tests;
 public sealed partial class TrackIdentityServiceTests
 {
     [Fact]
+    public async Task PlayedCatalogMetadataMakesTheExistingRecordingAvailableWithoutChangingItsIdentity()
+    {
+        var actor = Actor(_userA);
+        var execution = Context(actor, "qobuz");
+        var track = Track("qobuz", "played-track");
+        var id = await _service.RememberSourceAsync(execution, track, "ext-qobuz-song-played-track", ProviderIdentityScope.Catalog);
+        await _service.RememberPlaybackMetadataAsync(execution, track, new()
+        { Title = "Played title", Artist = "Played artist", Duration = 180, Isrc = "USRC17607839" });
+        await _service.RememberPlaybackMetadataAsync(execution, track, new()
+        { Title = "Played title", Artist = "Played artist", Duration = 180, Isrc = "USRC17607839" });
+        var evidence = await _service.GetRecordingAvailabilityAsync(Context(actor, "pandora"), "ext-qobuz-song-played-track");
+        Assert.NotNull(evidence);
+        Assert.Equal(id.ToString("D"), evidence.SampleId);
+        Assert.Equal("Played title", evidence.Title);
+        Assert.Equal("USRC17607839", evidence.Isrc);
+        Assert.Equal(180000, evidence.DurationMilliseconds);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Single(await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "playback-metadata").ToArrayAsync());
+    }
+
+    [Fact]
     public async Task RecordingAvailabilityEvidence_ExcludesSuggestionsAndPrivateSnapshots()
     {
         var actor = Actor(_userA);
@@ -188,7 +209,7 @@ public sealed partial class TrackIdentityServiceTests
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         { ["Providers:StreamingOrder"] = "pandora" }).Build();
         var gateway = new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict),
-            configuration, identities: _service);
+            configuration, identities: _service, audioVerifier: FixtureAudioVerifier.Instance);
         var protocol = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", _userA.ToString("N"),
             new AllstarrPrincipal(_userA, "jellyfin", "fixture", _userA.ToString("N"), "User", false), "retained-playback",
             DateTimeOffset.UtcNow.AddMinutes(1), default, new("client", "device"));

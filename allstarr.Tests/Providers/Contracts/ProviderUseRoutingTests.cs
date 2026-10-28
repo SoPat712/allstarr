@@ -94,7 +94,7 @@ public sealed class ProviderUseRoutingTests
             Mock.Of<IProviderRouteSidecarSource>(), new Mock<ITrackIdentityService>(MockBehavior.Strict).Object,
             effectivePolicies: policies.Object);
         var gateway = new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>(MockBehavior.Strict),
-            new ConfigurationBuilder().Build(), effectivePolicies: policies.Object);
+            new ConfigurationBuilder().Build(), effectivePolicies: policies.Object, audioVerifier: FixtureAudioVerifier.Instance);
         var protocol = new ProtocolExecutionContext(protocolKind, "fixture", "listener",
             new AllstarrPrincipal(userId, protocolKind.ToString().ToLowerInvariant(), "fixture", "listener", "Listener", false),
             "manual-stream", DateTimeOffset.UtcNow.AddMinutes(1), default, new("client", "device"));

@@ -48,7 +48,7 @@ public sealed class FreshInstallContractTests
                 .ReturnsAsync(() => published);
             await using var cache = new ManagedTrackCacheService(configuration,
                 Options.Create(new SubsonicSettings { StorageMode = settings.StorageMode, CacheDurationHours = settings.CacheDurationHours }),
-                local.Object, NullLogger<ManagedTrackCacheService>.Instance);
+                local.Object, NullLogger<ManagedTrackCacheService>.Instance, audioVerifier: FixtureAudioVerifier.Instance);
             var audio = "fLaCfixture-audio"u8.ToArray();
             using var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(audio) };
             var stream = new ProtocolProviderStream(response,

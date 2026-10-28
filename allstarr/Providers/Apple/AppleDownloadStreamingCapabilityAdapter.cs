@@ -67,7 +67,7 @@ public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderDownloadS
                 DateTimeOffset.UtcNow.AddMinutes(2),
                 supportsByteRanges: audioFile,
                 supportsSeeking: audioFile,
-                Media,
+                audioFile ? OriginalMedia : Media,
                 ProviderStreamRetryBehavior.RetrySameLeaseOnce,
                 (outbound, token) => OpenAsync(context, source, audioFile, outbound, token)));
         }
@@ -96,7 +96,7 @@ public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderDownloadS
             var snapshot = await discovery.DiscoverAsync(context.CancellationToken);
             var available = Available(snapshot);
             return ProviderOutcome<ProviderStreamProbeResult>.Success(new(
-                available, DateTimeOffset.UtcNow, available ? Media : null));
+                available, DateTimeOffset.UtcNow, available ? HasAudioFile(snapshot) ? OriginalMedia : Media : null));
         }
         catch (OperationCanceledException)
         {
@@ -213,6 +213,7 @@ public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderDownloadS
     }
 
     private static ProviderMediaFormat Media { get; } = new("audio/flac", "flac", "flac");
+    private static ProviderMediaFormat OriginalMedia { get; } = new("application/octet-stream", "unknown", "unknown");
 
     private static string LeaseId(string trackId, string quality)
     {

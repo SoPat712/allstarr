@@ -33,7 +33,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [Theory]
     [InlineData(0, 1)]
     [InlineData(10, 15)]
-    public async Task RetainedOriginalGateway_ColdRangeUsesTheSelectedLeaseForOneNonblockingFullFill(int start, int end)
+    public async Task RetainedOriginalGateway_ColdRangeRenewsTheSelectedSourceForOneNonblockingFullFill(int start, int end)
     {
         await using var fixture = await RetainedOriginalCacheFixture.CreateAsync();
         var fullOpening = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -69,7 +69,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             Assert.Equal(fixture.Bytes[(start + 2)..(end + 3)], await second.Content.ReadAsByteArrayAsync().WaitAsync(TimeSpan.FromSeconds(5)));
             Assert.Equal(2, partialOpens);
             Assert.Equal(1, fullOpens);
-            Assert.Equal(2, fixture.LeaseCalls);
+            Assert.Equal(3, fixture.LeaseCalls);
             Assert.Empty(await fixture.Mappings.ListCacheMappingsAsync());
             first.Dispose();
             second.Dispose();

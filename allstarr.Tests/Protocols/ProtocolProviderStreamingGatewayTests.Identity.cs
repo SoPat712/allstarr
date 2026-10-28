@@ -46,7 +46,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
             .ReturnsAsync((ProviderRouteRequest request) => MetadataPlan(request, registry, metadata.Object));
         var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), identities: identities.Object);
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
 
         var song = await gateway.GetSongAsync(context, "deezer", "chosen");
 
@@ -94,7 +94,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             if (identityUnavailable) remember.ThrowsAsync(new InvalidOperationException("Identity storage unavailable"));
             else remember.ReturnsAsync(recording.Id);
         }
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), identities: identities.Object);
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
         var stream = await gateway.OpenStreamAsync(context, "qobuz", "legacy-track", ProviderAudioQuality.Any, null, headOnly);
         Assert.NotNull(stream);
         Assert.Equal(HttpStatusCode.OK, stream.Response.StatusCode);

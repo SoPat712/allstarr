@@ -40,6 +40,8 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Core/ManagedFiles/FilePlacementService.Recovery.cs"] = "owned data-folder identity marker",
             ["Core/ManagedFiles/PhysicalManagedFileOperations.cs"] = "managed audio and artwork",
             ["Core/Music/ProviderAudioTimeSeek.cs"] = "request-scoped temporary audio",
+            ["Core/Music/ProviderAudioTranscoder.cs"] = "request-scoped temporary conversion input",
+            ["Core/Music/ProviderAudioVerifier.cs"] = "bounded temporary audio verification",
             ["Core/Operations/PlatformReadinessService.cs"] = "temporary readiness probe",
             ["Core/Storage/DurableBackupService.cs"] = "backup archive",
             ["Core/Storage/DurableBackupService.Restore.cs"] = "staged restore and previous database/key ring",

@@ -148,7 +148,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     lookup.ExternalId.ProviderId == "qobuz" ? older : newer, Guid.CreateVersion7(), lookup.ExternalId,
                     ProviderIdentityScope.Catalog, null, ProviderIdentityVerification.Verified, "played", 1)
                 { PublicId = lookup.ExternalId.ProviderId == "qobuz" ? "ext-qobuz-song-saved" : "ext-deezer-song-newer" }).ToArray());
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), identities: identities.Object);
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
 
         var songs = (await gateway.SearchAsync(SearchRankingContext(protocol), "Starving Artist ADELA", 20, 0, 0)).Songs;
 

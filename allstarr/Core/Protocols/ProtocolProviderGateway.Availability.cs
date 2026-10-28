@@ -27,7 +27,7 @@ public sealed partial class ProtocolProviderGateway
 
     private async Task<bool> TryResolvePlaybackAvailabilityAsync(ProviderRoutePlan<IProviderStreamingCapability> plan,
         IReadOnlyList<string> storedOrder, ProviderExternalResourceId source, string exactMissKey,
-        EffectiveProviderPolicySnapshot? effectivePolicy, ProviderAudioQuality quality)
+        EffectiveProviderPolicySnapshot? effectivePolicy, ProviderAudioQuality quality, TimeSpan? lookupBudget = null)
     {
         if (identities == null || !plan.Request.Policy.AllowFallback || !plan.Request.Policy.AllowManagedDownloads) return false;
         var resolvingProviders = storedOrder.Concat(plan.Request.ProviderPriority.Where(id => id == "monochrome")).Distinct(StringComparer.Ordinal).Where(id => plan.Request.ProviderPriority.Contains(id, StringComparer.Ordinal) &&
@@ -37,7 +37,7 @@ public sealed partial class ProtocolProviderGateway
         var request = plan.Request;
         var policy = request.Policy;
         var clock = timeProvider ?? TimeProvider.System;
-        var deadline = clock.GetUtcNow().AddSeconds(10);
+        var deadline = clock.GetUtcNow().Add(lookupBudget ?? TimeSpan.FromSeconds(10));
         if (request.Deadline < deadline) deadline = request.Deadline;
         foreach (var provider in resolvingProviders)
         {
@@ -93,13 +93,13 @@ public sealed partial class ProtocolProviderGateway
             using var bounded = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, timeout.Token);
             var execution = new ProviderExecutionContext(context.Actor, context.ProviderId, context.Account, context.Policy,
                 context.OperationId, context.CorrelationId, deadline, bounded.Token, context.IdempotencyKey);
-            var cacheMiss = provider != "monochrome";
+            var cacheMiss = lookupBudget == null && provider != "monochrome";
             try
             {
                 var outcome = await ((IProviderRecordingStreamingCapability)authorized.Implementation)
                     .ResolveRecordingAsync(execution, recording, quality).WaitAsync(bounded.Token);
                 bounded.Token.ThrowIfCancellationRequested();
-                if (provider == "monochrome") cacheMiss = outcome.IsSuccess || outcome.Error!.Kind == ProviderErrorKind.NotFound;
+                if (provider == "monochrome" && lookupBudget == null) cacheMiss = outcome.IsSuccess || outcome.Error!.Kind == ProviderErrorKind.NotFound;
                 if (outcome.IsSuccess && outcome.RequireValue().TrackId is { } track &&
                     track.ProviderId == provider && track.ResourceKind == ProviderResourceKind.Track && track.Catalog == target.Catalog)
                 {

@@ -27,7 +27,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 request, [], new(request.CorrelationId, request.Capability, null, null,
                     [new("apple-musickit", null, ProviderRouteDecisionStatus.Rejected,
                         reason, 0)])));
-        var gateway = new ProtocolProviderGateway(router.Object, MetadataRegistry(), new HttpClientFactory());
+        var gateway = new ProtocolProviderGateway(router.Object, MetadataRegistry(), new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
 
         var error = await Assert.ThrowsAsync<ProtocolProviderUnavailableException>(() => gateway.OpenStreamAsync(
             Context(), "apple-download", "1881685399", ProviderAudioQuality.Any, null));
@@ -46,7 +46,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             .ReturnsAsync((ProviderRouteRequest request) => new ProviderRoutePlan<IProviderStreamingCapability>(
                 request, [], new(request.CorrelationId, request.Capability, null, null,
                     [new("apple-musickit", null, ProviderRouteDecisionStatus.Rejected, reason, 0)])));
-        var gateway = new ProtocolProviderGateway(router.Object, MetadataRegistry(), new HttpClientFactory());
+        var gateway = new ProtocolProviderGateway(router.Object, MetadataRegistry(), new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
         var error = await Assert.ThrowsAsync<ProtocolProviderAccountAccessException>(() => gateway.OpenStreamAsync(
             Context(), "apple-download", "1881685399", ProviderAudioQuality.Any, null));
         Assert.Equal("This song plays from another listener's Apple Music account. Ask an administrator to share it.", error.Message);
@@ -64,7 +64,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             Mock.Of<IProviderRouter>(MockBehavior.Strict),
             new ProviderRegistry([]),
-            new HttpClientFactory());
+            new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
         var context = new ProtocolExecutionContext(
             ProtocolKind.Jellyfin,
             "backend",
@@ -127,7 +127,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            new HttpClientFactory());
+            new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
 
         var songs = await gateway.SearchPlayableSongsAsync(Context(), "Track Artist", 10);
 
@@ -176,7 +176,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             Mock.Of<IProviderRouter>(MockBehavior.Strict),
             registry,
-            new HttpClientFactory());
+            new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
 
         Assert.Empty(await gateway.SearchPlayableSongsAsync(
             Context(), "Track Artist", 10));
@@ -205,7 +205,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            new HttpClientFactory());
+            new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
 
         var result = await gateway.SearchAsync(
             Context(), "Track Artist", 10, 0, 0, "deezer");
@@ -259,7 +259,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            new HttpClientFactory());
+            new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
 
         var context = unlinkedPrincipal
             ? new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "unlinked", null,
@@ -305,7 +305,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()))
             .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry,
                 registry.GetRequiredCapability<IProviderStreamingCapability>("deezer", ProviderCapabilityKind.Streaming)));
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory());
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
         var search = gateway.SearchAsync(Context(), "Track Artist", songs, albums, artists);
         try
         {
@@ -382,7 +382,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             .ReturnsAsync((ProviderRouteRequest request) =>
                 MetadataPlan(request, registry, failed.Object, healthy.Object));
         var gateway = new ProtocolProviderGateway(
-            router.Object, registry, new HttpClientFactory());
+            router.Object, registry, new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
 
         var song = Assert.Single((await gateway.SearchAsync(Context(), "Track", 10, 10, 10)).Songs);
 
@@ -462,7 +462,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             new Dictionary<string, string?> { ["Providers:StreamingOrder"] = streamingOrder }).Build();
         var gateway = new ProtocolProviderGateway(
             router.Object, registry, new HttpClientFactory(), configuration,
-            identities: identities.Object);
+            identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
 
         var context = Context();
         if (explicitFilter != null)
@@ -558,7 +558,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["Providers:StreamingOrder"] = "qobuz,deezer,apple-musickit" }).Build();
         // No identity service: grouping must come only from the ISRCs already in the search payloads.
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration);
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration, audioVerifier: FixtureAudioVerifier.Instance);
 
         var context = Context();
         if (manual)
@@ -625,7 +625,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["Providers:StreamingOrder"] = "qobuz,deezer,apple-musickit" }).Build();
         // No identity service: grouping must come only from the ISRCs already in the search payloads.
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration);
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration, audioVerifier: FixtureAudioVerifier.Instance);
 
         var songs = await gateway.SearchPlayableSongsAsync(Context(), "Song", 10);
 
@@ -658,7 +658,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, [streamingCapability.Object]));
         router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
             .ReturnsAsync((ProviderRouteRequest request) => MetadataPlan(request, registry, metadata));
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), new ConfigurationBuilder().Build());
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), new ConfigurationBuilder().Build(), audioVerifier: FixtureAudioVerifier.Instance);
 
         var songs = (await gateway.SearchAsync(Context(), "Song", 10, 0, 0)).Songs;
 
@@ -737,7 +737,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            new HttpClientFactory());
+            new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
 
         var searchSong = Assert.Single((await gateway.SearchAsync(Context(), "Track", 10, 10, 10)).Songs);
         var detailSong = await gateway.GetSongAsync(Context(), providerId, "track-1");
@@ -810,7 +810,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router,
             registry,
-            new HttpClientFactory());
+            new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
 
         var songs = await gateway.SearchPlayableSongsAsync(
             Context(), "Track Artist", 10);
@@ -866,7 +866,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            new HttpClientFactory());
+            new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
 
         var stream = await gateway.OpenStreamAsync(
             Context(), "deezer", "source-track", ProviderAudioQuality.Lossless, null);
@@ -905,7 +905,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             router.Object,
             registry,
             new HttpClientFactory(),
-            applicationCache: new TestMemoryApplicationCache());
+            applicationCache: new TestMemoryApplicationCache(), audioVerifier: FixtureAudioVerifier.Instance);
         var context = Context();
 
         Assert.Null(await gateway.OpenStreamAsync(
@@ -941,7 +941,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             router.Object,
             registry,
             new HttpClientFactory(),
-            applicationCache: new TestMemoryApplicationCache());
+            applicationCache: new TestMemoryApplicationCache(), audioVerifier: FixtureAudioVerifier.Instance);
         var context = Context();
 
         var first = gateway.OpenStreamAsync(
@@ -1010,7 +1010,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            new HttpClientFactory());
+            new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
 
         var stream = await gateway.OpenStreamAsync(
             Context(), "apple-download", "source-track", ProviderAudioQuality.DataSaver, null, headOnly: true);
@@ -1057,7 +1057,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             router.Object,
             registry,
             new HttpClientFactory(),
-            outcomes: observer.Object);
+            outcomes: observer.Object, audioVerifier: FixtureAudioVerifier.Instance);
 
         Task<ProtocolProviderStream?> Open() => gateway.OpenStreamAsync(
             Context(), "qobuz", "source-track", ProviderAudioQuality.Lossless, null, headOnly: headOnly);
@@ -1119,7 +1119,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = new ProtocolProviderGateway(
             router.Object,
             registry,
-            new HttpClientFactory());
+            new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
 
         var stream = await gateway.OpenStreamAsync(
             Context(), "qobuz", "source-track", ProviderAudioQuality.Lossless, null);

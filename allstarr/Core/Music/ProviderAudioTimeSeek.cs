@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Net;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Protocols;
 using allstarr.Services.Common;
 
 namespace allstarr.Core.Music;
@@ -11,9 +13,54 @@ internal static class ProviderAudioTimeSeek
     private static readonly MediaConversionGate DefaultGate = new();
 
     internal static async Task ApplyAsync(HttpResponseMessage response, HttpResponse outgoing, long ticks,
-        MediaConversionGate? conversions, CancellationToken cancellationToken)
+        MediaConversionGate? conversions, CancellationToken cancellationToken, ProviderMediaFormat? sourceMedia = null,
+        double? durationSeconds = null)
     {
-        if (ticks <= 0) throw new ProviderAudioOffsetException("Invalid audio time offset.", HttpStatusCode.BadRequest);
+        if (ticks == 0) return;
+        if (ticks < 0) throw new ProviderAudioOffsetException("Invalid audio time offset.", HttpStatusCode.BadRequest);
+        var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+        var input = ManagedTrackCacheService.CompletedFilePath(source);
+        await using var materialized = input == null && source.CanSeek && ManagedTrackCacheService.SeekRung(response.Content) == null
+            ? new FileStream(Path.GetTempFileName(), FileMode.Truncate, FileAccess.ReadWrite, FileShare.Read | FileShare.Delete,
+                81920, FileOptions.Asynchronous | FileOptions.DeleteOnClose) : null;
+        if (materialized != null)
+        {
+            var buffer = new byte[81920];
+            int count;
+            long copied = 0;
+            while ((count = await source.ReadAsync(buffer, cancellationToken)) > 0)
+            {
+                copied += count;
+                if (copied > MaximumBytes) throw new IOException("The time-seek source exceeds the supported size.");
+                await materialized.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
+            }
+            await materialized.FlushAsync(cancellationToken);
+            input = materialized.Name;
+        }
+        if (input == null)
+        {
+            ManagedTrackCacheService.PrepareForConversion(response.Content);
+            var known = PrefetchedStream.Facts(response.Content);
+            if (sourceMedia == null || sourceMedia.SampleRate == null || sourceMedia.Channels == null)
+            {
+                if (!await PrefetchedStream.PrepareAsync(response, cancellationToken))
+                    throw new IOException("The audio source could not be opened for time seeking.");
+                known = PrefetchedStream.Facts(response.Content) ?? known;
+            }
+            sourceMedia = known?.Media ?? sourceMedia;
+            durationSeconds ??= known?.DurationSeconds;
+            if (sourceMedia == null) throw new IOException("The audio format could not be verified for time seeking.");
+            var request = new ProviderAudioDeliveryRequest
+            {
+                Formats = [new([sourceMedia.Container], [sourceMedia.Codec], ["http"])],
+                EnableDirectPlay = false,
+                EnableDirectStream = false
+            };
+            var conversion = ProviderAudioTranscoder.Plan(request, sourceMedia)
+                ?? throw new ProviderAudioProfileException("The source format does not support streaming time seeking.");
+            await ProviderAudioTranscoder.ApplyAsync(response, outgoing, conversion, conversions, cancellationToken, ticks, durationSeconds);
+            return;
+        }
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(150));
         var token = deadline.Token;
@@ -22,28 +69,11 @@ internal static class ProviderAudioTimeSeek
         var retained = false;
         try
         {
-            var source = await response.Content.ReadAsStreamAsync(token);
-            var input = ManagedTrackCacheService.CompletedFilePath(source);
-            if (input == null)
-            {
-                input = Path.Combine(directory, "input");
-                await using var file = new FileStream(input, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous);
-                var buffer = new byte[81920];
-                long copied = 0;
-                int count;
-                while ((count = await source.ReadAsync(buffer, token)) != 0)
-                {
-                    copied = checked(copied + count);
-                    if (copied > MaximumBytes) throw new IOException("The time-seek source exceeds the supported size.");
-                    await file.WriteAsync(buffer.AsMemory(0, count), token);
-                }
-                if (copied == 0 || (StreamDurationGuidance.DeclaredLength(response.Content) ?? response.Content.Headers.ContentLength) is { } expected && copied != expected)
-                    throw new IOException("The time-seek source ended before its declared length.");
-            }
-            else if (response.Content.Headers.ContentLength is { } length && new FileInfo(input).Length != length)
+            if (response.Content.Headers.ContentLength is { } length && new FileInfo(input).Length != length)
                 throw new IOException("The time-seek source does not match its declared length.");
             token.ThrowIfCancellationRequested();
             var facts = await AudioMediaFacts.ReadFileAsync(input, token);
+            if (facts != null && durationSeconds is > 0) facts = facts with { DurationSeconds = durationSeconds };
             if (facts?.DurationSeconds is not > 0)
                 throw new IOException("The audio timeline could not be verified for time seeking.");
             if (facts.Media.Container == "aac")

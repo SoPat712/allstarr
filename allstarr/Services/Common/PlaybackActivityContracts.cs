@@ -73,6 +73,7 @@ public sealed record PlaybackStreamSource(
     public ProviderMediaFormat? Media { get => FileFacts != null ? FileFacts.Media : media; init => media = value; }
     public long? AccountRevision { get; init; }
     public ProviderAudioQuality EffectiveQuality { get; init; } = ProviderAudioQuality.Any;
+    public ProviderAudioQuality SourceQuality { get; init; } = ProviderAudioQuality.Any;
     public Guid? ManagedFileId { get; init; }
     public string SeekRung { get; init; } = "sequential";
     public string? RejectionReason { get; init; }
@@ -138,6 +139,7 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
             FileFacts = stream.FileFacts,
             AccountRevision = stream.ServingAccountRevision,
             EffectiveQuality = quality,
+            SourceQuality = stream.EffectiveQuality,
             ManagedFileId = stream.ServingManagedFileId,
             ObservationToken = stream.ObservationToken,
             SeekRung = stream.IsCached

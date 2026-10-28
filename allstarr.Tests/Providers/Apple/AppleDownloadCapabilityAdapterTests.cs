@@ -51,7 +51,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var discovery = new AppleDownloadEndpointDiscovery(
             new StaticClientFactory(client), Options.Create(settings));
         var store = new MemoryStore();
-        var resolver = new ProviderDownloadArtifactResolver(store, new() { RootPath = root });
+        var resolver = new ProviderDownloadArtifactResolver(store, new() { RootPath = root }, audioVerifier: FixtureAudioVerifier.Instance);
         var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024 * 1024, AppleProviderTestFactory.Client());
         var user = Guid.CreateVersion7();
         var job = Guid.CreateVersion7();
@@ -107,7 +107,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var discovery = new AppleDownloadEndpointDiscovery(
             new StaticClientFactory(client), Options.Create(settings));
         var store = new MemoryStore();
-        var resolver = new ProviderDownloadArtifactResolver(store, new() { RootPath = root });
+        var resolver = new ProviderDownloadArtifactResolver(store, new() { RootPath = root }, audioVerifier: FixtureAudioVerifier.Instance);
         var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024, AppleProviderTestFactory.Client());
         var streaming = new AppleDownloadStreamingCapabilityAdapter(client, settings, discovery, AppleProviderTestFactory.Client());
         var user = Guid.CreateVersion7();
@@ -139,7 +139,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var client = new HttpClient(gateway);
         var discovery = new AppleDownloadEndpointDiscovery(
             new StaticClientFactory(client), Options.Create(settings));
-        var resolver = new ProviderDownloadArtifactResolver(new MemoryStore(), new() { RootPath = root });
+        var resolver = new ProviderDownloadArtifactResolver(new MemoryStore(), new() { RootPath = root }, audioVerifier: FixtureAudioVerifier.Instance);
         var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024, AppleProviderTestFactory.Client());
         var user = Guid.CreateVersion7();
         var track = new ProviderExternalResourceId(
@@ -237,6 +237,8 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         using var response = await lease.ProtectedResponseFactory!(request, CancellationToken.None);
 
         Assert.Equal("/api/audio/101", lease.ProtectedSourceUri.AbsolutePath);
+        Assert.Equal("unknown", lease.Media.Codec);
+        Assert.Equal("unknown", lease.Media.Container);
         Assert.Equal(contentType, response.Content.Headers.ContentType!.MediaType);
     }
 

@@ -385,9 +385,9 @@ public sealed partial class LegacyEnvMigrationServiceTests
         var identities = new TrackIdentityService(_factory, state, clock);
         var inventory = new LegacyMediaInventory(configuration, services.GetRequiredService<IServiceScopeFactory>());
         var import = new LegacyMediaImport(_factory, services.GetRequiredService<IServiceScopeFactory>(), queue, identities, clock, inventory);
-        var artifacts = new ProviderDownloadArtifactResolver(new EfProviderDownloadArtifactStore(_factory), new() { RootPath = Path.Combine(root, "workspaces") });
+        var artifacts = new ProviderDownloadArtifactResolver(new EfProviderDownloadArtifactStore(_factory), new() { RootPath = Path.Combine(root, "workspaces") }, audioVerifier: FixtureAudioVerifier.Instance);
         RecordingKeptFiles Reader() => new(_factory, artifacts, services.GetRequiredService<IServiceScopeFactory>(),
-            new() { RootId = Guid.CreateVersion7(), RootPath = Path.Combine(root, "owned") }, identities, clock, jobs: queue);
+            new() { RootId = Guid.CreateVersion7(), RootPath = Path.Combine(root, "owned") }, identities, clock, jobs: queue, audioVerifier: FixtureAudioVerifier.Instance);
         return new(root, services, inventory, import, queue, identities, Reader);
     }
 

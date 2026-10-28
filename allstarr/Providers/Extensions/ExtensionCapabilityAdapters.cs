@@ -466,7 +466,8 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter :
             }
 
             var output = outcome.RequireValue();
-            var artifact = await artifacts.ResolveTransientAsync(workspace, output, context.CancellationToken);
+            var artifact = await artifacts.ResolveTransientAsync(workspace, output, context.CancellationToken,
+                progressivePlayback: session.Transfer.Published);
             var media = output.Media;
             Task<HttpResponseMessage> OpenAsync(HttpRequestMessage message, CancellationToken cancellationToken)
             {

@@ -20,7 +20,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var configuration = new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["Providers:LyricsOrder"] = "kept,backend", ["Providers:Disabled"] = disabled }).Build();
         var gateway = new ProtocolProviderGateway(Mock.Of<IProviderRouter>(MockBehavior.Strict),
-            new ProviderRegistry([]), new HttpClientFactory(), configuration);
+            new ProviderRegistry([]), new HttpClientFactory(), configuration, audioVerifier: FixtureAudioVerifier.Instance);
         Assert.Equal(expected.Split(','), gateway.GetProviderOrder(ProviderCapabilityKind.Lyrics));
         Assert.Empty(gateway.GetProviderOrder(ProviderCapabilityKind.Metadata));
     }
@@ -33,7 +33,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { [key] = "lrclib,kept" }).Build();
         var gateway = new ProtocolProviderGateway(Mock.Of<IProviderRouter>(MockBehavior.Strict),
-            new ProviderRegistry([]), new HttpClientFactory(), configuration);
+            new ProviderRegistry([]), new HttpClientFactory(), configuration, audioVerifier: FixtureAudioVerifier.Instance);
 
         Assert.Equal(new[] { "backend", "kept" }, gateway.GetProviderOrder(ProviderCapabilityKind.Lyrics));
     }
@@ -85,7 +85,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 PreferenceRevision = user == userA ? modeA : "unchanged"
             });
         var gateway = new ProtocolProviderGateway(router.Object, registry,
-            new HttpClientFactory(), effectivePolicies: policies.Object);
+            new HttpClientFactory(), effectivePolicies: policies.Object, audioVerifier: FixtureAudioVerifier.Instance);
 
         foreach (var user in new[] { userA, userB, userA })
         {
