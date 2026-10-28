@@ -12,6 +12,41 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [Theory]
     [InlineData(ProtocolKind.Jellyfin)]
     [InlineData(ProtocolKind.Subsonic)]
+    public async Task DifferentCatalogUpcsUseCompleteRecordingEvidenceBeforeKeepingDuplicateAlbums(ProtocolKind protocol)
+    {
+        var capabilities = new[] { SearchRankingCapability("deezer"), SearchRankingCapability("qobuz") };
+        foreach (var capability in capabilities)
+        {
+            var provider = capability.ProviderId;
+            var upc = provider == "deezer" ? "881061182917" : "00881061182924";
+            Mock.Get(capability).Setup(item => item.SearchAlbumsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+                .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Success(new(provider,
+                    [new(new(provider, ProviderResourceKind.Album, "release"), "PRIMA", [new("ADÉLA")], trackCount: 1,
+                        isExplicit: true, upc: upc)])));
+            Mock.Get(capability).Setup(item => item.GetAlbumAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderAlbumLookupRequest>()))
+                .ReturnsAsync(ProviderOutcome<ProviderAlbumMetadata>.Success(new(
+                    new(provider, ProviderResourceKind.Album, "release"), "PRIMA", [new("ADÉLA")], trackCount: 1,
+                    tracks: [new(new(provider, ProviderResourceKind.Track, "track"), "KGB", [new("ADÉLA")], isrc: "USUM72601922")],
+                    isExplicit: true, upc: upc)));
+        }
+        var registry = MetadataRegistry(capabilities);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => MetadataPlan(request, registry, capabilities));
+        using var cache = new MemoryApplicationCache(new SystemPlatformClock());
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), applicationCache: cache,
+            audioVerifier: FixtureAudioVerifier.Instance);
+
+        var context = SearchRankingContext(protocol);
+        for (var attempt = 0; attempt < 2; attempt++)
+            Assert.Single((await gateway.SearchAsync(context, "PRIMA", 0, 20, 0)).Albums);
+        foreach (var capability in capabilities)
+            Mock.Get(capability).Verify(item => item.GetAlbumAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderAlbumLookupRequest>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
     public async Task AlbumEditionLabelsKeepExactTitleSearchRankingBeforeLimiting(ProtocolKind protocol)
     {
         var capability = SearchRankingCapability("deezer");

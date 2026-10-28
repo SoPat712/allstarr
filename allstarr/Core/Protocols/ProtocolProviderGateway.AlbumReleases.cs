@@ -12,7 +12,10 @@ public sealed partial class ProtocolProviderGateway
     {
         albums = MusicAlbumReleases.Collapse(albums);
         var incomplete = albums.GroupBy(MusicAlbumReleases.FamilyKey).Where(group => group.Count() > 1)
-            .SelectMany(group => group.Where(album => !MusicAlbumReleases.HasReleaseEvidence(album)))
+            .SelectMany(group => group.Where(album => !MusicAlbumReleases.HasReleaseEvidence(album) ||
+                !MusicAlbumReleases.HasTrackEvidence(album) && group.Any(other =>
+                    !ReferenceEquals(album, other) && album.IsExplicit == other.IsExplicit &&
+                    MusicAlbumReleases.NormalizeUpc(album.Upc) != MusicAlbumReleases.NormalizeUpc(other.Upc))))
             .Where(album => !string.IsNullOrWhiteSpace(album.ExternalProvider) && !string.IsNullOrWhiteSpace(album.ExternalId))
             .DistinctBy(album => (album.ExternalProvider, album.ExternalId)).Take(16).ToArray();
         if (incomplete.Length == 0) return albums;
@@ -30,7 +33,10 @@ public sealed partial class ProtocolProviderGateway
             {
                 var cached = await ReadCachedMetadataAsync<Album>(candidate.Context.Actor, candidate.Provider.Id,
                     ProviderResourceKind.Album, album.ExternalId!, true, candidate.Context.Account).WaitAsync(cancellation.Token);
-                if (cached != null) return (Original: album, Full: cached);
+                if (cached != null && MusicAlbumReleases.HasTrackEvidence(cached))
+                    return (Original: album, Full: cached);
+                if (cached != null && !MusicAlbumReleases.HasReleaseEvidence(album) && MusicAlbumReleases.HasReleaseEvidence(cached))
+                    return (Original: album, Full: cached);
                 var context = new ProviderExecutionContext(candidate.Context.Actor, candidate.Provider.Id, candidate.Context.Account,
                     candidate.Context.Policy, "album-release-evidence", candidate.Context.CorrelationId, deadline, cancellation.Token);
                 var id = new ProviderExternalResourceId(candidate.Provider.Id, ProviderResourceKind.Album, album.ExternalId!);
