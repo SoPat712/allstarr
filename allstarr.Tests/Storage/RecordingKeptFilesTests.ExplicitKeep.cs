@@ -133,7 +133,7 @@ public sealed partial class RecordingKeptFilesTests
         return path;
     }
 
-    private DownloadsController KeepController(bool linked)
+    private DownloadsController KeepController(bool linked, string backendType = "jellyfin")
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         { ["Library:DownloadPath"] = root }).Build();
@@ -144,7 +144,7 @@ public sealed partial class RecordingKeptFilesTests
             UserId = owner.ToString("N"),
             UserName = "Keeper",
             IsAdministrator = true,
-            BackendType = "jellyfin",
+            BackendType = backendType,
             BackendInstanceId = "fixture",
             AllstarrUserId = owner,
             JellyfinAccessToken = string.Empty,
