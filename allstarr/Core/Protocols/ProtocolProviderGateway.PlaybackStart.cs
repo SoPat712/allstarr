@@ -14,7 +14,8 @@ public sealed partial class ProtocolProviderGateway
     private async Task<ProtocolProviderStream?> OpenWithStartPreferenceAsync(ProtocolExecutionContext protocol,
         ProviderRoutePlan<IProviderStreamingCapability> plan, ProviderExternalResourceId requestedTrack,
         ProviderAudioQuality quality, EffectiveProviderPolicySnapshot policy,
-        DateTimeOffset openingStarted, DateTimeOffset protocolDeadline, CancellationToken streamCancellation,
+        DateTimeOffset startDeadline, DateTimeOffset transferDeadline, RangeHeaderValue? requestedRange, CancellationToken startDeadlineCancellation,
+        CancellationToken streamCancellation,
         Func<ProtocolProviderStream, ProviderExecutionContext?, ProviderExternalResourceId?, Task<ProtocolProviderStream>> opened,
         Func<Task<ProviderRoutePlan<IProviderStreamingCapability>?>> resolveAvailability,
         HashSet<(string Provider, Guid? Account, string Track)>? attempted = null)
@@ -92,7 +93,7 @@ public sealed partial class ProtocolProviderGateway
             if (fallback.Disposition == ProviderFallbackDisposition.Exhausted && attempted.Count < 4 &&
                 await resolveAvailability() is { } refreshed)
                 return await OpenWithStartPreferenceAsync(protocol, refreshed, requestedTrack, quality, policy,
-                    openingStarted, protocolDeadline, streamCancellation, opened, resolveAvailability, attempted);
+                    startDeadline, transferDeadline, requestedRange, startDeadlineCancellation, streamCancellation, opened, resolveAvailability, attempted);
             if (fallback.Disposition != ProviderFallbackDisposition.Advance) ThrowRouteFailure(lastFailure);
             fallbackReason = $"fallback-{lastFailure.Code}";
             if (hedged) index++;
@@ -105,7 +106,8 @@ public sealed partial class ProtocolProviderGateway
             var candidate = plan.Candidates[index];
             var track = candidate.TrackId ?? requestedTrack;
             attempted.Add((candidate.Provider.Id, candidate.Context.Account?.AccountId, track.Value));
-            var scope = new DownloadedSongMappingScope(candidate.Context.Account?.AccountId, quality);
+            var scope = managedTrackCache?.ScopeFor(protocol, candidate.Context.Account?.AccountId, quality,
+                candidate.Context.Account?.Revision) ?? new DownloadedSongMappingScope(candidate.Context.Account?.AccountId, quality);
             IDisposable? gate = null;
             CancellationTokenSource? abandoning = null;
             HttpResponseMessage? response = null;
@@ -115,8 +117,10 @@ public sealed partial class ProtocolProviderGateway
             {
                 if (managedTrackCache != null)
                 {
-                    gate = await managedTrackCache.BeginOpenAsync(track, scope, candidate.Context.Account?.Revision, false, cancellation);
-                    var cached = await OpenAvailableCacheAsync(protocol, candidate.Context, track, quality, null, false, false, cancellation);
+                    gate = await managedTrackCache.BeginOpenAsync(track, scope, candidate.Context.Account?.Revision, false, cancellation,
+                        originalDownload: protocol.IsOriginalDownload);
+                    var cached = await OpenAvailableCacheAsync(protocol, candidate.Context, track, quality,
+                        requestedRange?.Ranges.Single().From, false, requestedRange != null, cancellation);
                     if (cached != null)
                     {
                         if (!CanDeliverCached(protocol, cached))
@@ -131,22 +135,24 @@ public sealed partial class ProtocolProviderGateway
                 }
                 if (outcomes?.IsPlaybackCoolingDown(candidate.Context, track, quality) == true)
                     return new(index, null, candidate.Context, track, new(ProviderErrorKind.TransientFailure), null);
-                var deadline = candidate.Implementation is IProviderDownloadStreamingCapability
-                    ? openingStarted.Add(GetDownloadStreamTimeout()) : protocolDeadline;
+                var deadline = startDeadline;
                 var remaining = deadline - clock.GetUtcNow();
                 if (remaining <= TimeSpan.Zero) throw new OperationCanceledException(cancellation);
                 var budget = index + 1 < count && remaining > GetSourceStartTimeout() ? GetSourceStartTimeout() : remaining;
                 using var timeout = new CancellationTokenSource(budget, clock);
                 using var sourceCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellation, timeout.Token);
-                abandoning = CancellationTokenSource.CreateLinkedTokenSource(abandonment, timeout.Token);
+                abandoning = CancellationTokenSource.CreateLinkedTokenSource(abandonment, timeout.Token, startDeadlineCancellation);
                 var execution = new ProviderExecutionContext(candidate.Context.Actor, candidate.Context.ProviderId,
                     candidate.Context.Account, candidate.Context.Policy, candidate.Context.OperationId,
-                    candidate.Context.CorrelationId, deadline, sourceCancellation.Token, candidate.Context.IdempotencyKey)
-                { PlaybackAbandonment = abandoning.Token };
+                    candidate.Context.CorrelationId, clock.GetUtcNow().Add(budget), sourceCancellation.Token, candidate.Context.IdempotencyKey)
+                {
+                    PlaybackAbandonment = abandoning.Token,
+                    PlaybackTransferDeadline = candidate.Implementation is IProviderDownloadStreamingCapability ? transferDeadline : null
+                };
                 var leaseFailed = false;
                 async Task<ProviderOutcome<ProviderStreamLease>> ResolveAsync()
                 {
-                    var resolved = await candidate.Implementation.GetStreamLeaseAsync(execution, new(track, quality));
+                    var resolved = await candidate.Implementation.GetStreamLeaseAsync(execution, new(track, quality, requestedRange?.Ranges.Single().From));
                     leaseFailed = !resolved.IsSuccess;
                     return resolved;
                 }
@@ -173,11 +179,11 @@ public sealed partial class ProtocolProviderGateway
                 try
                 {
                     outcome = await OpenCandidateAsync(ResolveAsync,
-                        lease => OpenAtAsync(lease, null, null, sourceCancellation.Token), false, null, sourceCancellation.Token,
+                        lease => OpenAtAsync(lease, requestedRange, null, sourceCancellation.Token), false, requestedRange, sourceCancellation.Token,
                         await ExpectedPlaybackDurationAsync(execution, track, requestedTrack), protocol.AudioDelivery,
                         async (_, offset, end, token) =>
                         {
-                            var refreshed = await candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(execution, token), new(track, quality, offset));
+                            var refreshed = await candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(execution, token, opening: true), new(track, quality, offset));
                             if (!refreshed.IsSuccess) ThrowRouteFailure(refreshed.Error!);
                             return await OpenAtAsync(refreshed.RequireValue(), new(offset, end), null, token);
                         });
@@ -251,7 +257,14 @@ public sealed partial class ProtocolProviderGateway
             }
             finally
             {
-                if (!transferred) { response?.Dispose(); gate?.Dispose(); abandoning?.Dispose(); }
+                if (!transferred)
+                {
+                    if (clock.GetUtcNow() >= startDeadline && !streamCancellation.IsCancellationRequested)
+                        abandoning?.Cancel();
+                    response?.Dispose();
+                    gate?.Dispose();
+                    abandoning?.Dispose();
+                }
             }
         }
     }

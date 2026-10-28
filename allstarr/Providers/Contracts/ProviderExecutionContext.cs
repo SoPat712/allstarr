@@ -340,6 +340,8 @@ public sealed record ProviderExecutionContext
 
     public CancellationToken PlaybackAbandonment { get; init; }
 
+    public DateTimeOffset? PlaybackTransferDeadline { get; init; }
+
     public string? IdempotencyKey { get; }
 
     public bool IsReadOnly { get; init; }

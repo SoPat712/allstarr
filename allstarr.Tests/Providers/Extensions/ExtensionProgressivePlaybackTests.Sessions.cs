@@ -10,6 +10,81 @@ namespace allstarr.Tests;
 public sealed partial class ExtensionProgressivePlaybackTests
 {
     [Theory]
+    [InlineData(15)]
+    [InlineData(30)]
+    public async Task Playback_ReadinessDeadlineDoesNotTruncateAPublishedTransfer(int readinessSeconds)
+    {
+        var (adapter, original, track) = Setup(true);
+        var context = new ProviderExecutionContext(original.Actor, original.ProviderId, original.Account, original.Policy,
+            original.OperationId, original.CorrelationId, clock.GetUtcNow().AddSeconds(readinessSeconds),
+            default, original.IdempotencyKey)
+        { PlaybackTransferDeadline = clock.GetUtcNow().AddSeconds(150) };
+        var pending = adapter.GetStreamLeaseAsync(context, new(track));
+        source.Release(prefix);
+        var lease = (await pending.WaitAsync(TimeSpan.FromSeconds(10))).RequireValue();
+        using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+        using var response = await lease.ProtectedResponseFactory!(request, default);
+        using var body = await response.Content.ReadAsStreamAsync();
+        await body.ReadExactlyAsync(new byte[prefix.Length]);
+        clock.Advance(TimeSpan.FromSeconds(readinessSeconds + 1));
+        Assert.False(source.Canceled.Task.IsCompleted);
+        source.Release([1, 2, 3, 4]);
+        source.Complete();
+        var tail = new byte[4];
+        await body.ReadExactlyAsync(tail).AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, tail);
+        Assert.Equal(0, await body.ReadAsync(new byte[1]));
+        Assert.False(source.Canceled.Task.IsCompleted);
+        Assert.Single(Directory.GetFiles(options.RootPath, "*", SearchOption.AllDirectories));
+    }
+
+    [Theory]
+    [InlineData(15)]
+    [InlineData(30)]
+    public async Task Playback_UnpublishedTransferCannotUseTheFullTransferBudget(int readinessSeconds)
+    {
+        var (adapter, original, track) = Setup(true, "file.delete('unused');");
+        var context = new ProviderExecutionContext(original.Actor, original.ProviderId, original.Account, original.Policy,
+            original.OperationId, original.CorrelationId, clock.GetUtcNow().AddSeconds(readinessSeconds),
+            default, original.IdempotencyKey)
+        { PlaybackTransferDeadline = clock.GetUtcNow().AddSeconds(150) };
+        var pending = adapter.GetStreamLeaseAsync(context, new(track));
+        source.Release(prefix);
+        await source.PrefixConsumed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False(pending.IsCompleted);
+        clock.Advance(TimeSpan.FromSeconds(readinessSeconds));
+        await source.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.False((await pending.WaitAsync(TimeSpan.FromSeconds(10))).IsSuccess);
+        Assert.Empty(Directory.GetFiles(options.RootPath, "*", SearchOption.AllDirectories));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Playback_PublishedTransferStillStopsAtAbandonmentOrTheFullDeadline(bool abandon)
+    {
+        var (adapter, original, track) = Setup(true);
+        using var abandonment = new CancellationTokenSource();
+        var context = new ProviderExecutionContext(original.Actor, original.ProviderId, original.Account, original.Policy,
+            original.OperationId, original.CorrelationId, clock.GetUtcNow().AddSeconds(15), default, original.IdempotencyKey)
+        {
+            PlaybackTransferDeadline = clock.GetUtcNow().AddSeconds(150),
+            PlaybackAbandonment = abandonment.Token
+        };
+        var pending = adapter.GetStreamLeaseAsync(context, new(track));
+        source.Release(prefix);
+        var lease = (await pending.WaitAsync(TimeSpan.FromSeconds(10))).RequireValue();
+        using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+        using var response = await lease.ProtectedResponseFactory!(request, default);
+        var completion = StreamProducerCompletion(adapter);
+        if (abandon) abandonment.Cancel();
+        else clock.Advance(TimeSpan.FromSeconds(150));
+        await source.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await completion.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Empty(Directory.GetFiles(options.RootPath, "*", SearchOption.AllDirectories));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Playback_DiscardedCandidateStopsOnlyItsUnsharedDownloadImmediately(bool shared)
