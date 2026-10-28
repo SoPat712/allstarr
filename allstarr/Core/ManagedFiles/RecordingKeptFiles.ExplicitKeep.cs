@@ -93,7 +93,8 @@ public sealed partial class RecordingKeptFiles
         var metadata = proof.Payload.Metadata;
         return await PublishAsync(new(proof.RecordingId, proof.OwnerUserId, claim.JobId, artifact.Id, artifact.ProviderId,
             ExplicitKeepKey(proof.OwnerUserId, proof.Payload.RecordingId),
-            new(metadata.Title, metadata.Artists.FirstOrDefault() ?? "Unknown artist", metadata.Album))
+            new(metadata.Title, metadata.Artists.FirstOrDefault() ?? "Unknown artist", metadata.Album,
+                metadata.AlbumArtist, Track: metadata.Track))
         { AttemptNumber = claim.AttemptNumber, Metadata = metadata }, cancellationToken);
     }
 

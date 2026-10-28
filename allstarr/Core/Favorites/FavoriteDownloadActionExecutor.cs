@@ -93,9 +93,10 @@ public sealed class FavoriteDownloadActionExecutor(
             var duration = song.PreciseDuration?.TotalMilliseconds ?? song.Duration * 1000d;
             var metadata = new KeptRecordingMetadata(title, artists, song.Album,
                 duration is { } milliseconds ? checked((long)Math.Round(milliseconds)) : null,
-                song.ExplicitContentLyrics);
+                song.ExplicitContentLyrics, Track: song.Track is > 0 ? song.Track : null, AlbumArtist: song.AlbumArtist);
             await keptFiles.PublishAsync(new(recording.Id, favoriteEvent.OwnerUserId, favoriteEvent.JobId,
-                artifact.Id, artifact.ProviderId, $"heart:{state.Id:N}", new(title, artists[0], song.Album))
+                artifact.Id, artifact.ProviderId, $"heart:{state.Id:N}", new(title, artists[0], song.Album,
+                    song.AlbumArtist, Track: metadata.Track))
             { AttemptNumber = executionAttempt, Metadata = metadata }, cancellationToken);
             return FavoriteActionExecutionResult.Success();
         }

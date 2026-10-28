@@ -64,13 +64,20 @@ public sealed partial class RecordingKeptFiles(
             string.IsNullOrWhiteSpace(publication.ReferenceKey) || publication.ReferenceKey.Length > 1000 ||
             publication.ReferenceKey.StartsWith("pending:kept:", StringComparison.Ordinal))
             throw Denied();
-        var metadata = SerializeMetadata(publication.Metadata ?? new(publication.Track.Title,
-            [publication.Track.Artist], publication.Track.Album));
+        var display = publication.Metadata ?? new(publication.Track.Title,
+            [publication.Track.Artist], publication.Track.Album);
+        display = display with
+        {
+            Track = display.Track ?? publication.Track.Track,
+            AlbumArtist = display.AlbumArtist ?? publication.Track.AlbumArtist
+        };
+        var track = publication.Track with { Track = display.Track, AlbumArtist = display.AlbumArtist };
         var proof = await AuthorizeAsync(publication, cancellationToken);
         var source = await artifacts.FindByJobAsync(publication.DurableJobId, publication.SourceProviderId, cancellationToken);
         if (source == null || source.Id != publication.SourceArtifactId || source.State != ProviderDownloadArtifactState.Verified ||
             source.OwnerUserId != publication.InitiatingUserId || source.SourceExternalTrackId == null)
             throw Denied();
+        var metadata = SerializeMetadata(display with { Artwork = new(source.ProviderId, source.SourceExternalTrackId) });
         var actor = new ProviderActorContext(ProviderActorKind.SystemJob, null,
             durableJobId: publication.DurableJobId, actingForUserId: publication.InitiatingUserId);
         var execution = new ProviderExecutionContext(actor, source.ProviderId, proof.Account,
@@ -113,7 +120,7 @@ public sealed partial class RecordingKeptFiles(
                 var extension = Path.GetExtension(source.SourcePath);
                 var placementRequest = new ManagedFilePlacementRequest(
                     new(placement.RootId, Path.GetFullPath(placement.RootPath), null), source.SourcePath,
-                    placement.PathTemplate, publication.Track with { Extension = string.IsNullOrWhiteSpace(extension) ? ".bin" : extension },
+                    KeptPathTemplate(placement.PathTemplate, track.Track), track with { Extension = string.IsNullOrWhiteSpace(extension) ? ".bin" : extension },
                     null, ManagedFileScopeKey.Create(null, placement.RootId), true, true, source.ContentSha256, source.Length)
                 {
                     ReferenceKey = pendingKey,
