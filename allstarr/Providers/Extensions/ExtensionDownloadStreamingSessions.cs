@@ -37,7 +37,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
             if (!sessions.TryGetValue(key, out session!))
             {
                 session = new DownloadSession(new ExtensionProgressiveTransfer(clock, allowsProgressive, deezerSpeculation, allowsImmutableFlac),
-                    context.Remaining(clock.GetUtcNow()), context.PlaybackTransferDeadline, clock);
+                    context.Deadline, context.PlaybackTransferDeadline, clock, resolutionTimeout);
                 var created = session;
                 session.IdleTimer = clock.CreateTimer(_ => Abandon(key, created), null,
                     Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
@@ -206,10 +206,14 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
 
     private sealed class DownloadSession
     {
-        public DownloadSession(ExtensionProgressiveTransfer transfer, TimeSpan remaining,
-            DateTimeOffset? transferDeadline, TimeProvider clock)
+        public DownloadSession(ExtensionProgressiveTransfer transfer, DateTimeOffset originalDeadline,
+            DateTimeOffset? transferDeadline, TimeProvider clock, TimeSpan resolutionTimeout)
         {
             Transfer = transfer;
+            var now = clock.GetUtcNow();
+            var remaining = originalDeadline > now ? originalDeadline - now : TimeSpan.Zero;
+            var cappedDeadline = now.Add(resolutionTimeout);
+            ResolutionDeadline = originalDeadline < cappedDeadline ? originalDeadline : cappedDeadline;
             if (transferDeadline is { } fullDeadline && fullDeadline - clock.GetUtcNow() > remaining)
             {
                 Deadline = fullDeadline;
@@ -227,6 +231,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
         }
 
         public ExtensionProgressiveTransfer Transfer { get; }
+        public DateTimeOffset ResolutionDeadline { get; }
         public DateTimeOffset? Deadline { get; }
         public CancellationTokenSource Cancellation { get; }
         public ITimer? ReadinessTimer { get; }

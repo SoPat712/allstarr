@@ -26,11 +26,14 @@ public sealed class ExtensionStreamingDeadlineTests : IAsyncLifetime
     private ExtensionDownloadStreamingCapabilityAdapter? downloadAdapter;
 
     [Theory]
-    [InlineData(31, null)]
-    [InlineData(119, null)]
-    [InlineData(80, "90")]
-    public async Task ObservedDownloadStream_OpensAfterTheOperationDeadline(int seconds, string? configuredSeconds)
+    [InlineData(31, null, false)]
+    [InlineData(119, null, false)]
+    [InlineData(80, "90", false)]
+    [InlineData(31, null, true)]
+    public async Task ObservedDownloadStream_OpensAfterTheOperationDeadline(int seconds, string? configuredSeconds, bool segments)
     {
+        handler.WaitForAudioBody = true;
+        handler.DownloadSegments = segments;
         var (gateway, protocol, provider, options) = await GatewayAsync(configuredSeconds);
         var pending = gateway.OpenStreamAsync(protocol, provider, "track", ProviderAudioQuality.Any, null);
         await Task.WhenAny(handler.Entered.Task, pending).WaitAsync(TimeSpan.FromSeconds(10));
@@ -57,6 +60,7 @@ public sealed class ExtensionStreamingDeadlineTests : IAsyncLifetime
     [InlineData(true)]
     public async Task ObservedDownloadStream_HonorsItsDeadlineAndCallerCancellation(bool cancelCaller)
     {
+        handler.WaitForAudioBody = true;
         var (gateway, protocol, provider, options) = await GatewayAsync("60");
         using var caller = new CancellationTokenSource();
         protocol = new(protocol.Protocol, protocol.BackendInstanceId, protocol.VerifiedBackendPrincipalId,
@@ -82,6 +86,73 @@ public sealed class ExtensionStreamingDeadlineTests : IAsyncLifetime
         await handler.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await downloadAdapter!.DisposeAsync();
         Assert.Empty(Directory.GetDirectories(options.RootPath));
+    }
+
+    [Theory]
+    [InlineData(1, false)]
+    [InlineData(15, false)]
+    [InlineData(1, true)]
+    public async Task ObservedDownloadStream_BoundsDescriptorResolutionBeforeMediaHeaders(int seconds, bool artwork)
+    {
+        handler.WaitForArtworkBody = artwork;
+        var (gateway, protocol, provider, options) = await GatewayAsync(resolutionSeconds: seconds);
+        var pending = gateway.OpenStreamAsync(protocol, provider, "track", ProviderAudioQuality.Any, null);
+        await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromSeconds(seconds));
+        await handler.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var error = await Record.ExceptionAsync(() => pending.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.NotNull(error);
+        Assert.IsNotType<TimeoutException>(error);
+        await downloadAdapter!.DisposeAsync();
+        Assert.Empty(Directory.GetDirectories(options.RootPath));
+    }
+
+    [Theory]
+    [InlineData("image/jpeg", "cover.jpg", false)]
+    [InlineData("application/json", "track.flac", false)]
+    [InlineData("audio/flac", "track.audio", true)]
+    [InlineData("application/octet-stream", "track.flac", true)]
+    public void ResolutionBudget_OnlyAudioHeadersReleaseThePhaseCap(string mime, string target, bool audio)
+    {
+        using var budget = new ExtensionInvocationBudget(TimeSpan.FromSeconds(150), default, clock, isDownload: true,
+            resolutionDeadline: clock.GetUtcNow().AddSeconds(1));
+        using var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([1]) };
+        response.Content.Headers.ContentType = new(mime);
+        var token = budget.Token;
+        budget.AcceptMediaResponse(response, target);
+        Assert.Equal(token, budget.Token);
+        clock.Advance(TimeSpan.FromSeconds(2));
+        Assert.Equal(!audio, token.IsCancellationRequested);
+        Assert.Equal(0, budget.ResolutionRemainingMilliseconds);
+        if (audio)
+        {
+            budget.Check();
+            clock.Advance(TimeSpan.FromSeconds(148));
+            Assert.True(token.IsCancellationRequested);
+        }
+    }
+
+    [Fact]
+    public void ExpiredResolutionCannotBeRearmedByLateAudioHeaders()
+    {
+        using var budget = new ExtensionInvocationBudget(TimeSpan.FromSeconds(150), default, clock, isDownload: true,
+            resolutionDeadline: clock.GetUtcNow().AddSeconds(1));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        using var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([1]) };
+        response.Content.Headers.ContentType = new("audio/flac");
+        Assert.ThrowsAny<OperationCanceledException>(() => budget.AcceptMediaResponse(response, "track.flac"));
+    }
+
+    [Fact]
+    public void FailedAudioHeadersDoNotReleaseResolutionBudget()
+    {
+        using var budget = new ExtensionInvocationBudget(TimeSpan.FromSeconds(150), default, clock, isDownload: true,
+            resolutionDeadline: clock.GetUtcNow().AddSeconds(1));
+        using var response = new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new ByteArrayContent([1]) };
+        response.Content.Headers.ContentType = new("audio/flac");
+        budget.AcceptMediaResponse(response, "track.flac");
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.True(budget.Token.IsCancellationRequested);
     }
 
     [Theory]
@@ -126,9 +197,9 @@ public sealed class ExtensionStreamingDeadlineTests : IAsyncLifetime
     }
 
     private async Task<(ProtocolProviderGateway Gateway, ProtocolExecutionContext Protocol, string Provider,
-        ProviderDownloadWorkspaceOptions Options)> GatewayAsync(string? configuredSeconds = null, bool direct = false)
+        ProviderDownloadWorkspaceOptions Options)> GatewayAsync(string? configuredSeconds = null, bool direct = false, int resolutionSeconds = 15)
     {
-        const string script = """
+        var script = """
             function catalog() {
               var response = session.signedFetch('GET','/catalog',null,{});
               if (response.ok === false) throw new Error('Catalog request failed');
@@ -144,6 +215,11 @@ public sealed class ExtensionStreamingDeadlineTests : IAsyncLifetime
               }
             });
             """;
+        if (handler.WaitForArtworkBody)
+            script = script.Replace("return file.download", "file.download('https://api.zarz.moe/artwork','cover.jpg',{}); return file.download", StringComparison.Ordinal);
+        if (handler.DownloadSegments)
+            script = script.Replace("return file.download('https://api.zarz.moe/audio',path,{});",
+                "return file.downloadSegments(['https://api.zarz.moe/audio'],path);", StringComparison.Ordinal);
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory != null && !File.Exists(Path.Combine(directory.FullName, "allstarr.sln"))) directory = directory.Parent;
         var original = await File.ReadAllTextAsync(Path.Combine(directory!.FullName,
@@ -156,7 +232,8 @@ public sealed class ExtensionStreamingDeadlineTests : IAsyncLifetime
         var sandbox = new ExtensionSandbox(root, normalized, script, clients, NullLogger.Instance,
             new ExtensionRuntimePermissionSet(new HashSet<string>(["https://api.zarz.moe/"]),
                 new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"),
-            new EphemeralDataProtectionProvider().CreateProtector("test"), hookTimeout: TimeSpan.FromMinutes(1), timeProvider: clock);
+            new EphemeralDataProtectionProvider().CreateProtector("test"), hookTimeout: TimeSpan.FromMinutes(1), timeProvider: clock,
+            executionOptions: new ExtensionExecutionOptions { StreamResolutionSeconds = resolutionSeconds });
         var account = new ProviderAccountContext(Guid.CreateVersion7(), manifest.Id, ProviderAccountScope.Shared, 1);
         sandbox.BindSignedSessionAccounts(account.AccountId, (_, _) => Task.FromResult(true));
         using (sandbox.OpenSignedSessionAccount(account.AccountId))
@@ -226,6 +303,9 @@ public sealed class ExtensionStreamingDeadlineTests : IAsyncLifetime
 
     private sealed class WaitingHandler : HttpMessageHandler
     {
+        public bool WaitForAudioBody { get; set; }
+        public bool WaitForArtworkBody { get; set; }
+        public bool DownloadSegments { get; set; }
         public bool WaitForCatalog { get; set; }
         public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -246,15 +326,31 @@ public sealed class ExtensionStreamingDeadlineTests : IAsyncLifetime
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri!.AbsolutePath;
-            if (path.EndsWith(WaitForCatalog ? "/catalog" : "/prepare", StringComparison.Ordinal))
+            if (!WaitForAudioBody && !WaitForArtworkBody && path.EndsWith(WaitForCatalog ? "/catalog" : "/prepare", StringComparison.Ordinal))
                 await WaitAsync(cancellationToken);
-            if (path == "/audio") return new(HttpStatusCode.OK)
-            { Content = new ByteArrayContent([1, 2, 3, 4]), RequestMessage = request };
+            if (path is "/audio" or "/artwork")
+            {
+                HttpContent content = WaitForAudioBody || WaitForArtworkBody
+                    ? new WaitingAudio(this, ExtensionInvocationBudget.Current?.Token ?? cancellationToken)
+                    : new ByteArrayContent([1, 2, 3, 4]);
+                content.Headers.ContentType = new(path == "/audio" ? "audio/flac" : "image/jpeg");
+                return new(HttpStatusCode.OK) { Content = content, RequestMessage = request };
+            }
             var body = path.EndsWith("/bootstrap", StringComparison.Ordinal) ? """{"challenge_id":"fixture-challenge"}"""
                 : path.EndsWith("/exchange", StringComparison.Ordinal)
                     ? """{"session_id":"fixture-session","session_secret":"fixture-secret","expires_at":"2099-01-01T00:00:00Z"}""" : "{}";
             return new(HttpStatusCode.OK)
             { Content = new StringContent(body, Encoding.UTF8, "application/json"), RequestMessage = request };
+        }
+    }
+
+    private sealed class WaitingAudio(WaitingHandler handler, CancellationToken token) : HttpContent
+    {
+        protected override bool TryComputeLength(out long length) { length = 4; return true; }
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            await handler.WaitAsync(token);
+            await stream.WriteAsync(new byte[] { 1, 2, 3, 4 }, token);
         }
     }
 }

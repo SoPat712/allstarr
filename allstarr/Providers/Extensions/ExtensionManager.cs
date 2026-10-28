@@ -656,6 +656,7 @@ public class ExtensionSandbox
     private readonly TimeSpan _downloadTimeout;
     private readonly TimeProvider _timeProvider;
     internal TimeProvider Clock => _timeProvider;
+    internal TimeSpan StreamResolutionTimeout { get; }
     internal bool AllowsProgressiveDownload { get; }
     internal bool AllowsImmutableFlacDownload { get; }
     internal ExtensionDeezerSpeculation? DeezerSpeculation { get; }
@@ -680,6 +681,7 @@ public class ExtensionSandbox
         _hookTimeout = hookTimeout ?? TimeSpan.FromSeconds(12);
         _downloadTimeout = downloadTimeout ?? TimeSpan.FromMinutes(5);
         _timeProvider = timeProvider ?? TimeProvider.System;
+        StreamResolutionTimeout = (executionOptions ?? new()).GetStreamResolutionTimeout();
         AllowsProgressiveDownload = ExtensionProgressiveTransfer.IsEligible(indexJs);
         AllowsImmutableFlacDownload = ExtensionProgressiveTransfer.IsImmutableFlacEligible(indexJs);
 
@@ -904,16 +906,19 @@ public class ExtensionSandbox
     }
 
     /// <summary>Invokes an SDK v1 hook through a JSON-only boundary.</summary>
-    public string? InvokeJson(string hook, string requestJson, CancellationToken cancellationToken = default, string? cacheContext = null)
+    public string? InvokeJson(string hook, string requestJson, CancellationToken cancellationToken = default, string? cacheContext = null,
+        DateTimeOffset? resolutionDeadline = null)
     {
         if (string.IsNullOrWhiteSpace(hook)) throw new ArgumentException("A hook name is required.", nameof(hook));
         if (requestJson.Length > 1024 * 1024) throw new InvalidOperationException("Extension request is too large.");
         lock (_engineLock)
         {
             var callerToken = ExtensionArtifactInvocationScope.Current?.CancellationToken ?? cancellationToken;
-            using var budget = new ExtensionInvocationBudget(hook == "download" ? _downloadTimeout : _hookTimeout, callerToken, _timeProvider, hook == "download");
+            using var budget = new ExtensionInvocationBudget(hook == "download" ? _downloadTimeout : _hookTimeout, callerToken, _timeProvider,
+                hook == "download", resolutionDeadline);
             try
             {
+                budget.Check();
                 var function = _extensionObj.Get(hook);
                 if (!function.IsCallable()) return null;
 
@@ -1646,6 +1651,7 @@ public partial class ExtensionHostBridge
     {
         var scope = ExtensionArtifactInvocationScope.Current ??
                     throw new UnauthorizedAccessException("The artifact broker is available only during a download invocation.");
+        var target = scope.ResolveTemporaryPath(artifactId);
         if (!OutboundRequestGuard.TryCreateSafeHttpUri(url, out var safeUri, out _) ||
             safeUri!.Scheme != Uri.UriSchemeHttps ||
             !IsNetworkAllowed(safeUri))
@@ -1659,6 +1665,9 @@ public partial class ExtensionHostBridge
             throw new UnauthorizedAccessException("Extension artifact redirect left its approved origin.");
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException("Extension artifact request failed.", null, response.StatusCode);
+        if (response.Content.Headers.ContentLength > scope.MaximumBytes)
+            throw new InvalidDataException("Extension download exceeds the managed artifact size limit.");
+        ExtensionInvocationBudget.Current?.AcceptMediaResponse(response, target);
         AttachDownloadResumeAsync(response, client, safeUri, headersObj, scope.CancellationToken).GetAwaiter().GetResult();
         using var content = response.Content.ReadAsStream();
         var written = scope.Write(artifactId, content, response.Content.Headers.ContentLength);
@@ -1689,6 +1698,7 @@ public partial class ExtensionHostBridge
             response.EnsureSuccessStatusCode();
             if (response.Content.Headers.ContentLength > scope.MaximumBytes)
                 throw new InvalidDataException("Extension download exceeds the managed artifact size limit.");
+            ExtensionInvocationBudget.Current?.AcceptMediaResponse(response, target);
             AttachDownloadResumeAsync(response, client, safeUri, HeaderObject(options), scope.CancellationToken).GetAwaiter().GetResult();
             using var source = response.Content.ReadAsStream(scope.CancellationToken);
             using var decrypted = scope.Progressive?.StartDeezerDownload(safeUri, finalUri, target, response.Content.Headers.ContentLength);

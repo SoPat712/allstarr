@@ -10,7 +10,7 @@ namespace allstarr.Services.Common;
 
 public partial class ExtensionHostBridge
 {
-    public long ResolutionRemainingMs() => ExtensionInvocationBudget.Current?.RemainingMilliseconds ?? 12_000;
+    public long ResolutionRemainingMs() => ExtensionInvocationBudget.Current?.ResolutionRemainingMilliseconds ?? 12_000;
 
     public bool IsRequestCancelled() => ExtensionInvocationBudget.Current?.Token.IsCancellationRequested == true ||
         ExtensionArtifactInvocationScope.Current?.CancellationToken.IsCancellationRequested == true;

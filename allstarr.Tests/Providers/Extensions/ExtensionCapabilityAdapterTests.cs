@@ -1491,6 +1491,20 @@ public sealed partial class ExtensionCapabilityAdapterTests
     }
 
     [Theory]
+    [InlineData(13, true)]
+    [InlineData(14, true)]
+    [InlineData(15, false)]
+    public async Task DownloadStreaming_QualityFallbackFitsTheRemainingResolutionPhase(int elapsedSeconds, bool succeeds)
+    {
+        var (outcome, observed) = await RunDeclaredQualityDownload(MixedQualityOptions, ProviderAudioQuality.HighResolution,
+            "if (calls.length === 1) { http.get('https://media.example.test/failure', {}); return {success:false,error_type:'api_error'}; }",
+            streaming: true, elapsedSeconds: elapsedSeconds);
+        Assert.Equal(succeeds, outcome.IsSuccess);
+        Assert.Equal(succeeds ? ["LOSSLESS", "HI_RES_LOSSLESS"] : new[] { "LOSSLESS" },
+            observed.GetProperty("calls").EnumerateArray().Select(item => item.GetString()));
+    }
+
+    [Theory]
     [InlineData(ProviderAudioQuality.HighResolution)]
     [InlineData(ProviderAudioQuality.Any)]
     public async Task StreamingDiagnostic_UsesPlaybackQuality(ProviderAudioQuality requested)
