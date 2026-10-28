@@ -54,6 +54,20 @@ A metadata pass with `metaflac` adds seek points every ten seconds; the finished
 count. If lossless preparation fails with a missing artifact or download failure, the gateway tries `aac-web`.
 AAC sources stay in their original `.m4a` container and are served as `audio/mp4`.
 
+Original-download playback requests opt into `original_container=true` on `/api/audio`. Completed ALAC and AAC
+sources then keep their M4A bytes, avoiding an extra lossless conversion. Default playback and `/api/download`
+retain their FLAC contracts. Original and converted outputs have separate cache and in-flight identities while
+sharing the completed, account-scoped GAMDL source. Full source completion and the normal Allstarr cache
+verification remain required before cache publication; encrypted or incomplete output is never exposed.
+GAMDL 3.9.1 downloads the encrypted input before its native decrypt/mux call produces the completed file, so
+this option removes conversion time but does not provide progressive decryption.
+
+Successful `/api/audio` responses report integer-only `X-Allstarr-Prepare-Download-Ms` and
+`X-Allstarr-Prepare-Process-Ms` durations. The first includes GAMDL preparation; the second includes codec
+inspection and conversion or original-file copying. Cache hits and coalesced followers report zero. Current
+Allstarr diagnostics retain valid bounded values as overlapping preparation/process phases, positioned before
+the sidecar response arrives; those positions approximate the sidecar work rather than distributed clock time.
+
 GET and HEAD return `Content-Length`, `Content-Type`, and `Accept-Ranges: bytes`. Byte ranges receive 206;
 unsatisfiable ranges receive 416 through the file response handler. HEAD prepares an uncached song before
 returning headers. Requests for the same account, storefront, song, and quality share both source preparation

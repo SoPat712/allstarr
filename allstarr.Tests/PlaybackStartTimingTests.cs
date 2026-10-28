@@ -66,6 +66,34 @@ public sealed class PlaybackStartTimingTests
         Assert.Equal(15000, Assert.Single(sample.Phases).ElapsedMs);
     }
 
+    [Theory]
+    [InlineData("6000", "700", true)]
+    [InlineData("0", "0", false)]
+    [InlineData("-1", "700", false)]
+    [InlineData("6000,7000", "700", false)]
+    [InlineData("private-payload", "700", false)]
+    [InlineData("9000", "700", false)]
+    [InlineData("999999999999999", "700", false)]
+    public void RetainsOnlyBoundedNumericSidecarPreparation(string prepare, string process, bool retained)
+    {
+        var clock = new ManualTimeProvider();
+        using var timing = new PlaybackStartTimings(clock);
+        timing.Enable();
+        clock.Advance(TimeSpan.FromSeconds(8));
+        using var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK);
+        response.Headers.TryAddWithoutValidation("X-Allstarr-Prepare-Download-Ms", prepare);
+        response.Headers.TryAddWithoutValidation("X-Allstarr-Prepare-Process-Ms", process);
+        timing.Prepared(response, "apple-musickit");
+        var phases = timing.Snapshot("started").Phases;
+        if (retained)
+        {
+            Assert.Contains(phases, phase => phase.Phase == PlaybackStartPhase.Preparation && phase.ElapsedMs == 6000 && phase.StartedMs == 1300);
+            Assert.Contains(phases, phase => phase.Phase == PlaybackStartPhase.Process && phase.ElapsedMs == 700 && phase.StartedMs == 7300);
+        }
+        else Assert.Empty(phases);
+        Assert.DoesNotContain("private-", JsonSerializer.Serialize(phases), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task RetainsFirstByteBeforeCompletionAndSurvivesAStoreRestartWithoutRequestSecrets()
     {

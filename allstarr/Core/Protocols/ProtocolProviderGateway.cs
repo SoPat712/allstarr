@@ -1435,7 +1435,8 @@ public sealed partial class ProtocolProviderGateway(
             var leaseRequest = new ProviderStreamLeaseRequest(
                 servingTrack,
                 sourceQuality,
-                rangeStart);
+                rangeStart)
+            { PreferOriginalContainer = protocol.IsOriginalDownload };
 
             if (protocol.IsReadOnly && protocol.AudioDelivery != null &&
                 await AvailableCachedMediaAsync(protocol, candidate.Context, servingTrack, quality, protocol.CancellationToken) is { } cachedMedia)
@@ -1506,7 +1507,7 @@ public sealed partial class ProtocolProviderGateway(
                     async (_, offset, end, token) =>
                     {
                         var refreshed = await candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(candidateExecution, token, opening: true),
-                            new(servingTrack, sourceQuality, offset));
+                            new(servingTrack, sourceQuality, offset) { PreferOriginalContainer = protocol.IsOriginalDownload });
                         if (!refreshed.IsSuccess) ThrowRouteFailure(refreshed.Error!);
                         return await OpenLeaseAtAsync(refreshed.RequireValue(), new(offset, end), null, token);
                     }, candidate.Provider.Id);
@@ -1543,7 +1544,7 @@ public sealed partial class ProtocolProviderGateway(
                 async Task<HttpResponseMessage> ResumeAsync(long offset, long? end, EntityTagHeaderValue tag, CancellationToken token)
                 {
                     var refreshed = await candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(candidateExecution, token),
-                        new(servingTrack, sourceQuality, offset));
+                        new(servingTrack, sourceQuality, offset) { PreferOriginalContainer = protocol.IsOriginalDownload });
                     if (!refreshed.IsSuccess) ThrowRouteFailure(refreshed.Error!);
                     return await OpenLeaseAtAsync(refreshed.RequireValue(), new(offset, end), tag, token);
                 }
@@ -1553,7 +1554,7 @@ public sealed partial class ProtocolProviderGateway(
                 async Task<HttpResponseMessage> OpenOriginalResponseAsync(CancellationToken token)
                 {
                     var complete = await OpenCandidateAsync(
-                        () => candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(candidateExecution, token), new(servingTrack, sourceQuality)),
+                        () => candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(candidateExecution, token), new(servingTrack, sourceQuality) { PreferOriginalContainer = protocol.IsOriginalDownload }),
                         selected => OpenLeaseAtAsync(selected, null, null, token), false, null, token,
                         sourceFacts.ExpectedDurationSeconds);
                     if (!complete.IsSuccess) ThrowRouteFailure(complete.Error!);

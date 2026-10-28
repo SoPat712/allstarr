@@ -252,7 +252,7 @@ def create_app(
             shutil.rmtree(root, ignore_errors=True)
             raise HTTPException(status_code=502, detail="download_failed") from None
 
-    def cached_source(key: str, *, audio_file: bool = False) -> Path | None:
+    def cached_source(key: str, *, audio_file: bool = False, original_container: bool = False) -> Path | None:
         cache_root = config.data_root / "prepared"
         now = time.time()
         tracks: dict[str, list[Path]] = {}
@@ -268,7 +268,9 @@ def create_app(
             elif paths[0].name.split(".")[0] == key:
                 for path in paths:
                     path.touch()
-                    if (".audio." in path.name) == audio_file:
+                    if (".audio." in path.name) == audio_file and (
+                        not audio_file or (".audio.original." in path.name) == original_container
+                    ):
                         found = path
         return found
 
@@ -303,13 +305,18 @@ def create_app(
 
     @application.api_route("/api/audio/{song_id}", methods=["GET", "HEAD"])
     async def audio_song(
-        song_id: str, quality: str = "alac-16-44", account: MediaAccount = Depends(_account)
+        song_id: str, quality: str = "alac-16-44", account: MediaAccount = Depends(_account),
+        original_container: bool = False,
     ) -> FileResponse:
         _song_request(account, song_id, quality)
         key = _cache_key(account, song_id, quality)
+        preparation_headers = {
+            "X-Allstarr-Prepare-Download-Ms": "0",
+            "X-Allstarr-Prepare-Process-Ms": "0",
+        }
 
         async def prepare_audio() -> Path:
-            if cached := cached_source(key, audio_file=True):
+            if cached := cached_source(key, audio_file=True, original_container=original_container):
                 return cached
             gamdl_seconds = conversion_seconds = 0.0
             used_quality = quality
@@ -321,16 +328,25 @@ def create_app(
                 started = time.monotonic()
                 used_quality = source.name.split(".")[1] if source.name.count(".") == 2 else quality
                 codec = await process_runner.audio_codec(source)
-                suffix = ".m4a" if codec == "aac" else ".flac"
-                target = source.parent / f"{key}.audio{suffix}"
+                if codec not in {"aac", "alac", "flac"}:
+                    raise ProcessFailure("audio_artifact_missing")
+                copy_original = codec == "aac" or original_container and codec == "alac"
+                if copy_original and source.suffix.lower() != ".m4a":
+                    raise ProcessFailure("audio_artifact_missing")
+                suffix = ".m4a" if copy_original else ".flac"
+                variant = ".original" if original_container else ""
+                target = source.parent / f"{key}.audio{variant}{suffix}"
                 partial = target.with_name(f"{target.name}.{uuid.uuid4().hex}.partial")
-                if codec == "aac":
+                if copy_original:
                     shutil.copyfile(source, partial)
+                    await asyncio.sleep(0)
                 else:
                     await process_runner.seekable_flac(source, partial)
                 partial.replace(target)
-                cached_source(key, audio_file=True)
+                cached_source(key, audio_file=True, original_container=original_container)
                 conversion_seconds = time.monotonic() - started
+                preparation_headers["X-Allstarr-Prepare-Download-Ms"] = str(round(gamdl_seconds * 1000))
+                preparation_headers["X-Allstarr-Prepare-Process-Ms"] = str(round(conversion_seconds * 1000))
                 logger.info("Audio prepare song=%s quality=%s gamdl_seconds=%.3f conversion_seconds=%.3f bytes=%d",
                     song_id, used_quality, gamdl_seconds, conversion_seconds, target.stat().st_size)
                 return target
@@ -360,10 +376,13 @@ def create_app(
                 if partial is not None:
                     partial.unlink(missing_ok=True)
 
-        artifact = cached_source(key, audio_file=True) or await coalesce("file:" + key, prepare_audio)
-        is_aac = artifact.suffix == ".m4a"
-        return FileResponse(artifact, media_type="audio/mp4" if is_aac else "audio/flac",
-            filename=f"{song_id}{artifact.suffix}", content_disposition_type="inline")
+        variant = "original:" if original_container else ""
+        artifact = cached_source(key, audio_file=True, original_container=original_container) or await coalesce(
+            "file:" + variant + key, prepare_audio
+        )
+        is_mp4 = artifact.suffix == ".m4a"
+        return FileResponse(artifact, media_type="audio/mp4" if is_mp4 else "audio/flac",
+            filename=f"{song_id}{artifact.suffix}", content_disposition_type="inline", headers=preparation_headers)
 
     @application.get("/api/download/{song_id}")
     async def download_song(
