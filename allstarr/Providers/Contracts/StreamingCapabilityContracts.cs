@@ -40,6 +40,8 @@ public sealed record ProviderStreamLeaseRequest
     public ProviderAudioQuality RequestedQuality { get; }
 
     public long? RangeStart { get; }
+
+    public bool PreferOriginalContainer { get; init; }
 }
 
 /// <summary>

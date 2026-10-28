@@ -171,7 +171,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
             "101");
 
         var lease = (await adapter.GetStreamLeaseAsync(
-            Context(user), new(track, ProviderAudioQuality.HighResolution))).RequireValue();
+            Context(user), new(track, ProviderAudioQuality.HighResolution) { PreferOriginalContainer = true })).RequireValue();
         using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
         using var response = await lease.ProtectedResponseFactory!(request, CancellationToken.None);
 
@@ -188,8 +188,10 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
             uri.PathAndQuery == "/api/stream/101?quality=alac-24-96");
     }
 
-    [Fact]
-    public async Task Stream_UsesAudioFileAndPreservesByteRanges()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Stream_UsesAudioFileAndPreservesByteRanges(bool preferOriginalContainer)
     {
         var audio = Encoding.UTF8.GetBytes("apple audio file");
         var gateway = new GatewayHandler(audio, "audio/flac")
@@ -204,7 +206,8 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var context = Context(Guid.CreateVersion7());
         var track = new ProviderExternalResourceId(AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "101");
 
-        var lease = (await adapter.GetStreamLeaseAsync(context, new(track, ProviderAudioQuality.HighResolution, 4))).RequireValue();
+        var lease = (await adapter.GetStreamLeaseAsync(context,
+            new(track, ProviderAudioQuality.HighResolution, 4) { PreferOriginalContainer = preferOriginalContainer })).RequireValue();
         using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
         request.Headers.Range = new(4, 9);
         using var response = await lease.ProtectedResponseFactory!(request, CancellationToken.None);
@@ -215,7 +218,8 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
         Assert.Equal("bytes 4-9/16", response.Content.Headers.ContentRange!.ToString());
         Assert.Equal("bytes=4-9", gateway.AudioRange);
-        Assert.Contains(gateway.Requests, uri => uri.PathAndQuery == "/api/audio/101?quality=alac-24-96");
+        Assert.Contains(gateway.Requests, uri => uri.PathAndQuery ==
+            "/api/audio/101?quality=alac-24-96" + (preferOriginalContainer ? "&original_container=true" : string.Empty));
         Assert.DoesNotContain(gateway.Requests, uri => uri.AbsolutePath.StartsWith("/api/stream/", StringComparison.Ordinal));
         Assert.True((await adapter.ProbeStreamAsync(context, new(track))).RequireValue().Available);
     }

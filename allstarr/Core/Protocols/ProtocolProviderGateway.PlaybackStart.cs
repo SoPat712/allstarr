@@ -153,7 +153,7 @@ public sealed partial class ProtocolProviderGateway
                 var leaseFailed = false;
                 async Task<ProviderOutcome<ProviderStreamLease>> ResolveAsync()
                 {
-                    var resolved = await candidate.Implementation.GetStreamLeaseAsync(execution, new(track, quality, requestedRange?.Ranges.Single().From));
+                    var resolved = await candidate.Implementation.GetStreamLeaseAsync(execution, new(track, quality, requestedRange?.Ranges.Single().From) { PreferOriginalContainer = protocol.IsOriginalDownload });
                     leaseFailed = !resolved.IsSuccess;
                     return resolved;
                 }
@@ -184,7 +184,7 @@ public sealed partial class ProtocolProviderGateway
                         await ExpectedPlaybackDurationAsync(execution, track, requestedTrack), protocol.AudioDelivery,
                         async (_, offset, end, token) =>
                         {
-                            var refreshed = await candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(execution, token, opening: true), new(track, quality, offset));
+                            var refreshed = await candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(execution, token, opening: true), new(track, quality, offset) { PreferOriginalContainer = protocol.IsOriginalDownload });
                             if (!refreshed.IsSuccess) ThrowRouteFailure(refreshed.Error!);
                             return await OpenAtAsync(refreshed.RequireValue(), new(offset, end), null, token);
                         }, candidate.Provider.Id);
@@ -225,7 +225,7 @@ public sealed partial class ProtocolProviderGateway
                 }
                 async Task<HttpResponseMessage> ResumeAsync(long offset, long? end, EntityTagHeaderValue tag, CancellationToken token)
                 {
-                    var renewed = await candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(execution, token), new(track, quality, offset));
+                    var renewed = await candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(execution, token), new(track, quality, offset) { PreferOriginalContainer = protocol.IsOriginalDownload });
                     if (!renewed.IsSuccess) ThrowRouteFailure(renewed.Error!);
                     return await OpenAtAsync(renewed.RequireValue(), new(offset, end), tag, token);
                 }
@@ -238,7 +238,7 @@ public sealed partial class ProtocolProviderGateway
                 async Task<HttpResponseMessage> FullAsync(CancellationToken token)
                 {
                     var full = await OpenCandidateAsync(
-                        () => candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(execution, token), new(track, quality)),
+                        () => candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(execution, token), new(track, quality) { PreferOriginalContainer = protocol.IsOriginalDownload }),
                         selected => OpenAtAsync(selected, null, null, token), false, null, token, sourceFacts.ExpectedDurationSeconds);
                     if (!full.IsSuccess) ThrowRouteFailure(full.Error!);
                     var complete = full.RequireValue();

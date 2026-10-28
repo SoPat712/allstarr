@@ -1,3 +1,4 @@
+using allstarr.Core.Playback;
 using allstarr.Core.Providers.AppleMusicKit;
 using System.Globalization;
 using System.Net;
@@ -59,8 +60,9 @@ public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderDownloadS
             var quality = AppleDownloadCapabilityAdapter.Quality(request.RequestedQuality, settings.Quality);
             var audioFile = HasAudioFile(snapshot);
             var route = audioFile ? "audio" : "stream";
+            var originalContainer = audioFile && request.PreferOriginalContainer ? "&original_container=true" : string.Empty;
             var source = new Uri(baseUri!,
-                $"api/{route}/{Uri.EscapeDataString(resolved.RequireValue())}?quality={Uri.EscapeDataString(quality)}");
+                $"api/{route}/{Uri.EscapeDataString(resolved.RequireValue())}?quality={Uri.EscapeDataString(quality)}{originalContainer}");
             return ProviderOutcome<ProviderStreamLease>.Success(new(
                 LeaseId(request.TrackId.Value, quality),
                 source,
@@ -187,6 +189,7 @@ public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderDownloadS
             response.Dispose();
             throw new InvalidDataException("The Apple stream transport is incompatible.");
         }
+        PlaybackStartTimings.Current?.Prepared(response, context.ProviderId);
         return response;
     }
 

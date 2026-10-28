@@ -476,8 +476,10 @@ def test_media_requires_valid_selected_account_before_any_work(settings, method,
     assert runner.transcodes == []
 
 
-@pytest.mark.parametrize("kind", ["download", "stream", "lyrics"])
-def test_media_cache_separates_account_revision_storefront_and_quality(settings, kind):
+@pytest.mark.parametrize("kind,original_container", [
+    ("download", False), ("stream", False), ("lyrics", False), ("audio", False), ("audio", True),
+])
+def test_media_cache_separates_account_revision_storefront_and_quality(settings, kind, original_container):
     runner = FakeRunner()
     variants = [
         (ACCOUNT_HEADERS, "aac"),
@@ -488,11 +490,15 @@ def test_media_cache_separates_account_revision_storefront_and_quality(settings,
     ]
     with TestClient(create_app(settings, FakeWrapper(), runner)) as test_client:
         for headers, quality in variants:
-            response = test_client.get(f"/api/{kind}/101", headers=headers, params={"quality": quality})
+            response = test_client.get(f"/api/{kind}/101", headers=headers, params={
+                "quality": quality, "original_container": str(original_container).lower(),
+            })
             assert response.status_code == 200
         assert len(runner.calls) == 5
         for headers, quality in variants:
-            assert test_client.get(f"/api/{kind}/101", headers=headers, params={"quality": quality}).status_code == 200
+            assert test_client.get(f"/api/{kind}/101", headers=headers, params={
+                "quality": quality, "original_container": str(original_container).lower(),
+            }).status_code == 200
     assert len(runner.calls) == 5
     assert runner.tokens == [
         "fixture-account-token", "second-account-token", "fixture-account-token",
@@ -817,9 +823,37 @@ async def test_audio_conversion_coalesces_and_publishes_atomically(settings):
         release.set()
         responses = await asyncio.gather(first, second)
     assert all(response.content == b"fLaCfixture" for response in responses)
+    assert int(responses[0].headers["x-allstarr-prepare-process-ms"]) >= 1
+    assert responses[1].headers["x-allstarr-prepare-download-ms"] == "0"
+    assert responses[1].headers["x-allstarr-prepare-process-ms"] == "0"
     assert len(runner.calls) == 1
     assert runner.transcodes == ["file"]
     assert not list(settings.data_root.rglob("*.partial"))
+
+
+@pytest.mark.asyncio
+async def test_audio_preparation_timing_headers_are_numeric_and_zero_on_cache_hits(settings):
+    class TimedRunner(FakeRunner):
+        async def download(self, *args, **kwargs):
+            await asyncio.sleep(0.01)
+            return await super().download(*args, **kwargs)
+
+        async def seekable_flac(self, source, target):
+            await asyncio.sleep(0.01)
+            return await super().seekable_flac(source, target)
+
+    runner = TimedRunner()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(create_app(settings, FakeWrapper(), runner)),
+                               base_url="http://test", headers=ACCOUNT_HEADERS) as client:
+        fresh = await client.get("/api/audio/101")
+        for name in ["x-allstarr-prepare-download-ms", "x-allstarr-prepare-process-ms"]:
+            assert fresh.headers[name].isdigit()
+            assert int(fresh.headers[name]) >= 1
+        for cached in [await client.get("/api/audio/101"), await client.head("/api/audio/101")]:
+            assert cached.status_code == 200
+            assert cached.headers["x-allstarr-prepare-download-ms"] == "0"
+            assert cached.headers["x-allstarr-prepare-process-ms"] == "0"
+    assert len(runner.calls) == 1
 
 
 def test_audio_aac_fallback_keeps_original_mp4(settings):
@@ -911,6 +945,167 @@ async def test_regular_flac_has_sample_count_and_seek_table(settings, tmp_path):
             break
     assert len(blocks[3]) >= 18
     assert int.from_bytes(blocks[3][:8], "big") == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("codec", ["alac", "aac"])
+@pytest.mark.parametrize("original_first", [True, False])
+async def test_original_audio_preserves_complete_m4a_and_separates_converted_cache(settings, tmp_path, codec, original_first):
+    import shutil
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg or not shutil.which("metaflac"):
+        pytest.skip("ffmpeg and metaflac are required")
+    media_runner = BoundedProcessRunner(replace(settings, ffmpeg_path=ffmpeg))
+    fixture = tmp_path / "complete.m4a"
+    result = await media_runner.execute([
+        ffmpeg, "-v", "error", "-f", "lavfi", "-i",
+        "sine=frequency=440:sample_rate=44100:duration=0.1", "-c:a", codec, str(fixture),
+    ], tmp_path)
+    assert result.return_code == 0
+    original = fixture.read_bytes()
+
+    class MediaRunner(FakeRunner):
+        async def download(self, *args, **kwargs):
+            artifacts = await super().download(*args, **kwargs)
+            artifacts[0].write_bytes(original)
+            return artifacts
+
+        async def audio_codec(self, source):
+            return await media_runner.audio_codec(source)
+
+        async def seekable_flac(self, source, target):
+            self.transcodes.append("file")
+            return await media_runner.seekable_flac(source, target)
+
+    runner = MediaRunner()
+    app = create_app(settings, FakeWrapper(), runner)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test", headers=ACCOUNT_HEADERS) as client:
+        for prefer_original in [original_first, not original_first]:
+            response = await client.get("/api/audio/101", params={"original_container": str(prefer_original).lower()})
+            assert response.status_code == 200
+            if prefer_original or codec == "aac":
+                assert response.content == original
+                assert response.headers["content-type"] == "audio/mp4"
+            else:
+                assert response.content.startswith(b"fLaC")
+                assert response.headers["content-type"] == "audio/flac"
+            if prefer_original and original_first:
+                assert runner.transcodes == []
+        for byte_range, expected in [("bytes=0-31", original[:32]), ("bytes=-32", original[-32:])]:
+            response = await client.get("/api/audio/101?original_container=true", headers={"Range": byte_range})
+            assert response.status_code == 206
+            assert response.content == expected
+            assert response.headers["content-range"].endswith(f"/{len(original)}")
+        head = await client.head("/api/audio/101?original_container=true")
+        assert head.headers["content-length"] == str(len(original))
+        assert head.content == b""
+        assert head.headers["x-allstarr-prepare-download-ms"] == "0"
+        assert head.headers["x-allstarr-prepare-process-ms"] == "0"
+    assert len(runner.calls) == 1
+    assert runner.transcodes == (["file"] if codec == "alac" else [])
+    assert not list(settings.data_root.rglob("*.partial"))
+    with TestClient(create_app(settings, FakeWrapper(), runner), headers=ACCOUNT_HEADERS) as client:
+        assert client.get("/api/audio/101?original_container=true").content == original
+        assert client.get("/api/audio/101").headers["content-type"] == ("audio/flac" if codec == "alac" else "audio/mp4")
+    assert len(runner.calls) == 1
+
+
+@pytest.mark.parametrize("codec", ["unknown", "mp3"])
+def test_original_audio_rejects_unexpected_codec(settings, codec):
+    class InvalidRunner(FakeRunner):
+        async def audio_codec(self, source):
+            return codec
+
+    runner = InvalidRunner()
+    with TestClient(create_app(settings, FakeWrapper(), runner), headers=ACCOUNT_HEADERS) as client:
+        response = client.get("/api/audio/101?original_container=true")
+    assert response.status_code == 502
+    assert response.json() == {"detail": "audio_artifact_missing"}
+    assert runner.transcodes == []
+    assert not list(settings.data_root.rglob("*.audio.*"))
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+@pytest.mark.asyncio
+async def test_original_audio_copy_failure_cleans_partial_and_preserves_source(settings, monkeypatch, cancel):
+    import shutil
+    copyfile = shutil.copyfile
+
+    def interrupted_copy(source, target, *args, **kwargs):
+        if ".audio.original." in target.name:
+            target.write_bytes(b"incomplete")
+            if cancel:
+                asyncio.current_task().cancel()
+                return target
+            raise OSError("copy interrupted")
+        return copyfile(source, target, *args, **kwargs)
+
+    runner = FakeRunner()
+    app = create_app(settings, FakeWrapper(), runner)
+    monkeypatch.setattr(shutil, "copyfile", interrupted_copy)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test", headers=ACCOUNT_HEADERS) as client:
+        if cancel:
+            with pytest.raises(asyncio.CancelledError):
+                await client.get("/api/audio/101?original_container=true")
+        else:
+            assert (await client.get("/api/audio/101?original_container=true")).status_code == 502
+        assert not list(settings.data_root.rglob("*.partial"))
+        assert not list(settings.data_root.rglob("*.audio.*"))
+        monkeypatch.setattr(shutil, "copyfile", copyfile)
+        assert (await client.get("/api/audio/101?original_container=true")).content == b"source"
+    assert len(runner.calls) == 1
+    assert runner.transcodes == []
+
+
+@pytest.mark.asyncio
+async def test_original_and_converted_audio_share_source_but_not_inflight_output(settings):
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class BlockingRunner(FakeRunner):
+        async def seekable_flac(self, source, target):
+            started.set()
+            await release.wait()
+            return await self.to_flac(source, target)
+
+    runner = BlockingRunner()
+    app = create_app(settings, FakeWrapper(), runner)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test", headers=ACCOUNT_HEADERS) as client:
+        converted = asyncio.create_task(client.get("/api/audio/101"))
+        try:
+            await asyncio.wait_for(started.wait(), 1)
+            original = await asyncio.wait_for(client.get("/api/audio/101?original_container=true"), 1)
+            assert original.content == b"source"
+            assert not converted.done()
+            assert not list(settings.data_root.rglob("*.audio.flac"))
+        finally:
+            release.set()
+            response = await converted
+        assert response.content == b"fLaCfixture"
+    assert len(runner.calls) == 1
+    assert runner.transcodes == ["file"]
+
+
+@pytest.mark.asyncio
+async def test_original_audio_rejects_invalid_m4a_before_publication(settings):
+    import shutil
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("ffmpeg is required")
+    media_runner = BoundedProcessRunner(replace(settings, ffmpeg_path=ffmpeg))
+
+    class InvalidRunner(FakeRunner):
+        async def audio_codec(self, source):
+            return await media_runner.audio_codec(source)
+
+    runner = InvalidRunner()
+    app = create_app(settings, FakeWrapper(), runner)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test", headers=ACCOUNT_HEADERS) as client:
+        response = await client.get("/api/audio/101?original_container=true")
+    assert response.status_code == 502
+    assert response.json() == {"detail": "audio_artifact_missing"}
+    assert runner.transcodes == []
+    assert not list(settings.data_root.rglob("*.audio.*"))
+    assert not list(settings.data_root.rglob("*.partial"))
 
 
 def test_audio_cache_survives_restart_and_expires_as_one_track(settings, monkeypatch):

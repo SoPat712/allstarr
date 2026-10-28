@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using allstarr.Core.Storage;
@@ -7,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace allstarr.Core.Playback;
 
 [JsonConverter(typeof(JsonStringEnumConverter<PlaybackStartPhase>))]
-public enum PlaybackStartPhase { Route, Account, Lease, Source, Verify, Retry, Segments, Process, Headers, FirstByte }
+public enum PlaybackStartPhase { Route, Account, Lease, Source, Verify, Retry, Segments, Process, Headers, FirstByte, Preparation }
 
 public sealed record PlaybackStartPhaseTiming(PlaybackStartPhase Phase, string? Provider, double StartedMs, double ElapsedMs);
 public sealed record PlaybackStartSample(Guid Id, DateTimeOffset StartedAt, string Outcome, string? Provider,
@@ -56,6 +57,33 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
     }
     private static string? Label(string? value) => string.IsNullOrWhiteSpace(value) ? null :
         new string(value.Where(character => !char.IsControl(character)).Take(200).ToArray());
+    public void Prepared(HttpResponseMessage response, string source)
+    {
+        if (!Enabled || !response.IsSuccessStatusCode) return;
+        static long? Read(HttpResponseMessage message, string name)
+        {
+            if (!message.Headers.TryGetValues(name, out var values)) return null;
+            var entries = values.Take(2).ToArray();
+            return entries.Length == 1 && long.TryParse(entries[0], NumberStyles.None, CultureInfo.InvariantCulture, out var value) &&
+                value is >= 0 and <= 300_000 ? value : null;
+        }
+        var preparation = Read(response, "X-Allstarr-Prepare-Download-Ms");
+        var process = Read(response, "X-Allstarr-Prepare-Process-Ms");
+        lock (sync)
+        {
+            if (closed || preparation == null || process == null || preparation + process > Elapsed + 2) return;
+            var from = Math.Max(0, Elapsed - preparation.Value - process.Value);
+            foreach (var phase in new[]
+            {
+                new PlaybackStartPhaseTiming(PlaybackStartPhase.Preparation, source, from, preparation.Value),
+                new PlaybackStartPhaseTiming(PlaybackStartPhase.Process, source, from + preparation.Value, process.Value)
+            })
+            {
+                if (phase.ElapsedMs <= 0) continue;
+                if (phases.Count < MaximumPhases) phases.Add(phase); else omitted++;
+            }
+        }
+    }
     public void Headers() { lock (sync) { if (!closed) headers ??= Elapsed; } }
     public bool FirstByte()
     {

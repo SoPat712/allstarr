@@ -63,7 +63,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Equal(new[] { "bytes=0-", "bytes=2-", "bytes=0-" }, ranges);
         first.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Once);
         second.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
-            It.Is<ProviderStreamLeaseRequest>(request => request.RequestedQuality == ProviderAudioQuality.Any)), Times.Exactly(3));
+            It.Is<ProviderStreamLeaseRequest>(request => request.RequestedQuality == ProviderAudioQuality.Any && request.PreferOriginalContainer)), Times.Exactly(3));
         router.Verify(item => item.PlanAsync<IProviderStreamingCapability>(It.Is<ProviderRouteRequest>(request =>
             request.SourceTrackId != null && request.SourceTrackId.ProviderId == "qobuz" && request.SourceTrackId.Value == "qobuz-track")), Times.Exactly(2));
     }
@@ -102,6 +102,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             {
                 selected = execution;
                 Assert.Equal(ProviderAudioQuality.Any, request.RequestedQuality);
+                Assert.True(request.PreferOriginalContainer);
             })
             .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(new("lease", new Uri("https://media.example.test/audio"),
                 clock.GetUtcNow().AddMinutes(5), true, true, new("audio/flac", "flac", "flac"), ProviderStreamRetryBehavior.DoNotRetry,
