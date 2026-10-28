@@ -139,6 +139,17 @@ export type JobAttempt = { attemptNumber: number; startedAt: string; completedAt
 export type JobDetail = { job: Job; attempts: JobAttempt[]; hasMore: boolean; nextCursor?: string | null; nextCursorId?: string | null };
 export type ActivityTask = { id: string; name: string; kind: string; state: string; enabled: boolean; ownerName?: string | null; cadence: string; detail?: string; lastRunAt?: string | null; nextRunAt?: string | null; runPlaylistLinkId?: string | null; actionHref?: string | null; actionLabel?: string | null };
 
+export type PlayTrace = {
+  id: string;
+  listenerId?: string | null;
+  startedAt: string;
+  outcome: string;
+  request: { presented: { title?: string | null; artist?: string | null; artwork?: string | null } };
+  resolution: { provider?: string | null; cached?: boolean | null };
+  timing: { elapsedMs: number; firstByteMs?: number | null; headersMs?: number | null; omittedPhases: number;
+    phases: { phase: string; provider?: string | null; startedMs: number; elapsedMs: number }[] };
+};
+
 export type ActivityItem = {
   jobId?: string | null;
   recovery?: string | null;
@@ -685,8 +696,11 @@ export type PlaylistLinkMetrics = {
   snapshotVersion?: number | null;
 };
 
+export type PlaylistCopy = { id: string; name: string; originalPlaylistId: string; originalTargetPlaylistId?: string | null; backendInstanceId: string; createdAt: string };
+
 export type PlaylistLink = {
   id: string;
+  virtualPlaylistId?: string;
   enabled: boolean;
   name: string;
   description?: string | null;
@@ -1715,6 +1729,27 @@ export const scrobbling = {
     }),
 };
 
+export type SpotifyLikesImportState = "Pending" | "Running" | "RetryScheduled" | "Deferred" | "Succeeded" | "Failed" | "Cancelled";
+export type SpotifyLikesImportStatus = {
+  jobId: string;
+  state: SpotifyLikesImportState;
+  processed: number;
+  total: number | null;
+  imported: number;
+  alreadyHearted: number;
+  needsReview: number;
+  notFound: number;
+  errorCode: string | null;
+};
+export const spotifyLikes = {
+  start: (providerAccountId: string, requestId: string) =>
+    json<{ jobId: string }>("/api/admin/spotify-likes/import", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ providerAccountId, requestId }),
+    }),
+  status: (jobId: string) => json<SpotifyLikesImportStatus>(`/api/admin/spotify-likes/${encodeURIComponent(jobId)}`),
+};
+
 export const sources = {
   accounts: () =>
     json<{
@@ -2207,6 +2242,7 @@ export const downloads = {
 
 export const playlistLinks = {
   list: () => json<{ playlistLinks: PlaylistLink[] }>("/api/admin/playlist-links"),
+  copies: (listenerId: string) => json<PlaylistCopy[]>(`/api/admin/listeners/${encodeURIComponent(listenerId)}/playlist-forks`),
   details: (id: string, projectionMode?: "resolved" | "source" | "target") =>
     json<PlaylistDetails>(`/api/admin/playlist-links/${encodeURIComponent(id)}${projectionMode ? `?projectionMode=${projectionMode}` : ""}`),
   refresh: (id: string) =>
@@ -2443,6 +2479,12 @@ export const appleDownload = {
     }),
 };
 
+
+export const playTraces = {
+  list: (before = "") => json<PlayTrace[]>(`/api/admin/play-traces?limit=50${before ? `&before=${encodeURIComponent(before)}` : ""}`),
+  detail: (id: string) => json<PlayTrace>(`/api/admin/play-traces/${encodeURIComponent(id)}`),
+  diagnostics: async (id: string) => (await request(`/api/admin/play-traces/${encodeURIComponent(id)}/diagnostics`)).text(),
+};
 
 export const activityWork = {
   jobs: (view: "queue" | "history", state = "", type = "", before = "", beforeId = "", scope: "mine" | "everyone" = "mine") => {

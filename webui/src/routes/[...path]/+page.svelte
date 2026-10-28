@@ -124,7 +124,7 @@
     route === "/"
       ? { administrator }
       : route === "/library/playlists"
-        ? { initialId: routeQuery.get("playlist") ?? "" }
+        ? { initialId: routeQuery.get("playlist") ?? "", currentUserId: session?.user?.allstarrUserId ?? "" }
         : route === "/library/mappings"
           ? {
               initialSearch: routeQuery.get("search") ?? "",
@@ -161,7 +161,7 @@
                         onSetupChanged: (value: OnboardingState) => { onboardingState = value; },
                       }
                     : route === "/activity"
-                      ? { administrator, initialView: routeQuery.get("view") ?? "history", initialReportId: routeQuery.get("report") ?? "", initialJobId: routeQuery.get("job") ?? "" }
+                      ? { administrator, currentUserId: session?.user?.allstarrUserId ?? "", initialView: routeQuery.get("view") ?? "history", initialReportId: routeQuery.get("report") ?? "", initialJobId: routeQuery.get("job") ?? "" }
                     : route === "/getting-started"
                       ? { administrator }
                     : route === "/report"
