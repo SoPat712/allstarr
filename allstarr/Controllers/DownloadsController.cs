@@ -587,8 +587,9 @@ public partial class DownloadsController : ControllerBase
                                  }).ToArrayAsync(cancellationToken);
         var owner = (HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] as AdminAuthSession)?.AllstarrUserId;
         var session = HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] as AdminAuthSession;
+        var backendType = session?.BackendType.Trim().ToLowerInvariant();
         var administrator = session is { IsAdministrator: true } && owner != null && await db.Users.AsNoTracking().AnyAsync(item =>
-            item.Id == owner && item.Enabled && item.IsAdmin && item.BackendType == session.BackendType &&
+            item.Id == owner && item.Enabled && item.IsAdmin && item.BackendType == backendType &&
             item.BackendInstanceId == session.BackendInstanceId && item.BackendPrincipalId == session.UserId, cancellationToken);
         var importedFiles = await db.Set<Core.ManagedFiles.LegacyMediaAdoptionRecord>().AsNoTracking()
             .Where(item => fileIds.Contains(item.ManagedFileId)).Select(item => item.ManagedFileId).ToArrayAsync(cancellationToken);

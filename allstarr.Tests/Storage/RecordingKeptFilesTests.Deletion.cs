@@ -82,14 +82,19 @@ public sealed partial class RecordingKeptFilesTests
         Assert.False(File.Exists(published.Path));
     }
 
-    [Fact]
-    public async Task DeletionEndpointsRequireAdministratorAndRejectAStalePreview()
+    [Theory]
+    [InlineData("jellyfin")]
+    [InlineData("Jellyfin")]
+    [InlineData("subsonic")]
+    [InlineData("Subsonic")]
+    public async Task DeletionEndpointsRequireAdministratorAndRejectAStalePreview(string backendType)
     {
         var published = await PublishInitialFavoriteAsync();
-        await DeletionAdministratorAsync();
+        await DeletionAdministratorAsync(backendType.Equals("jellyfin", StringComparison.OrdinalIgnoreCase)
+            ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic);
         var path = Path.GetRelativePath(placement.RootPath, published.Path);
         Assert.IsType<UnauthorizedObjectResult>(await KeepController(linked: false).PreviewKeptDeletion(new(path)));
-        var controller = KeepController(linked: true);
+        var controller = KeepController(linked: true, backendType);
         var listing = Assert.IsType<OkObjectResult>(await controller.GetDownloads());
         var rows = System.Text.Json.JsonSerializer.SerializeToElement(listing.Value,
             new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web)).GetProperty("files");
