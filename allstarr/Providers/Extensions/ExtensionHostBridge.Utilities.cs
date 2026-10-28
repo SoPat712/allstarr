@@ -98,7 +98,13 @@ public partial class ExtensionHostBridge
             var start = new ProcessStartInfo("ffmpeg") { UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true };
             foreach (var argument in new[] { "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
                          "-protocol_whitelist", "file,pipe", "-format_whitelist", "aac,flac,mp3,mpegts,mov,ogg,wav,matroska,webm",
-                         "-i", source, "-map", "0:a", "-c", "copy", staged }) start.ArgumentList.Add(argument);
+                         "-i", source, "-map", "0:a", "-c", "copy" }) start.ArgumentList.Add(argument);
+            if (Path.GetExtension(target).ToLowerInvariant() is ".m4a" or ".mp4")
+            {
+                start.ArgumentList.Add("-movflags");
+                start.ArgumentList.Add("+faststart");
+            }
+            start.ArgumentList.Add(staged);
             using var process = new Process { StartInfo = start };
             process.Start();
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(scope.CancellationToken);

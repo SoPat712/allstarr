@@ -11,14 +11,20 @@ namespace allstarr.Tests;
 public sealed partial class ExtensionProgressivePlaybackTests
 {
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task PlaylistPlayback_SeekKeepsPublishedSourceOrRecoversWithAFreshSource(bool changeEncoding)
+    [InlineData(false, ProtocolKind.Jellyfin)]
+    [InlineData(true, ProtocolKind.Jellyfin)]
+    [InlineData(false, ProtocolKind.Subsonic)]
+    [InlineData(true, ProtocolKind.Subsonic)]
+    public async Task PlaylistPlayback_SeekKeepsPublishedSourceOrRecoversWithAFreshSource(bool changeEncoding, ProtocolKind protocolKind)
     {
-        var (adapter, context, _) = Setup(true);
+        "fLaC"u8.CopyTo(prefix);
+        prefix[4] = 128;
+        prefix[5] = prefix[6] = 0;
+        prefix[7] = 34;
+        var (adapter, context, _) = Setup(true, "file.delete('unused');", extension: ".flac");
         var track = new ProviderExternalResourceId(adapter.ProviderId, ProviderResourceKind.Track, "tidal:123");
-        var protocol = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "test", "user",
-            new AllstarrPrincipal(context.Actor.EffectiveUserId!.Value, "jellyfin", "test", "user", "Listener", false),
+        var protocol = new ProtocolExecutionContext(protocolKind, "test", "user",
+            new AllstarrPrincipal(context.Actor.EffectiveUserId!.Value, protocolKind.ToString().ToLowerInvariant(), "test", "user", "Listener", false),
             "playlist-seek", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None,
             new ProtocolClientDescriptor("client", "device"))
         { RequestedItemId = $"ext-allstarr-song-{Guid.NewGuid():D}" };

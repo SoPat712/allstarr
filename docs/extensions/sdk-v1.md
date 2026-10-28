@@ -120,10 +120,17 @@ preserves segment order, and reports progress on the script thread. Common heade
 overridden per segment. Downloads and transforms use invocation-owned temporary files,
 enforce the managed artifact size limit, and publish completed output atomically.
 Persistent segment checkpoints are accepted but are not retained between invocations.
+Direct FLAC downloads may stream from a private host-owned capture when the script
+can only download, read or delete files. The capture must contain a valid FLAC header;
+the normal playback verifier checks its first audio chunk. Deleting the selected file
+after playback starts fails the transfer. Only an identical, complete final artifact
+can enter the cache. Scripts with writable or processing capabilities still finish first.
 
 `ffmpeg.convert` supports audio remuxing with `codec: "copy"` using the FFmpeg included in
 the container. Local installations need FFmpeg on their executable path. Input and output
 remain inside the invocation workspace; raw FFmpeg commands are disabled.
+MP4 and M4A output places the movie metadata before the audio, so clients can decode
+the first chunk without fetching the file tail. Audio packets are copied unchanged.
 The `matching` helpers expose string similarity, duration comparison and string normalization.
 The legacy `gobackend` global is `null`.
 

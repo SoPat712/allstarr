@@ -7,6 +7,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
 {
     private readonly TimeProvider clock;
     private readonly bool allowsProgressive;
+    private readonly bool allowsImmutableFlac;
     private readonly ExtensionDeezerSpeculation? deezerSpeculation;
     private readonly object sessionsGate = new();
     private readonly Dictionary<SessionKey, DownloadSession> sessions = [];
@@ -35,7 +36,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
             ObjectDisposedException.ThrowIf(disposed, this);
             if (!sessions.TryGetValue(key, out session!))
             {
-                session = new DownloadSession(new ExtensionProgressiveTransfer(clock, allowsProgressive, deezerSpeculation),
+                session = new DownloadSession(new ExtensionProgressiveTransfer(clock, allowsProgressive, deezerSpeculation, allowsImmutableFlac),
                     context.Remaining(clock.GetUtcNow()), context.PlaybackTransferDeadline, clock);
                 var created = session;
                 session.IdleTimer = clock.CreateTimer(_ => Abandon(key, created), null,

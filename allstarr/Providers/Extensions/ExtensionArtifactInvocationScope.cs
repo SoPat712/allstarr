@@ -44,6 +44,12 @@ public sealed class ExtensionArtifactInvocationScope : IDisposable
 
     internal void SetProgressive(ExtensionProgressiveTransfer? progressive) => Progressive = progressive;
 
+    internal string CreateProgressiveCapturePath()
+    {
+        ObjectDisposedException.ThrowIf(disposed, this);
+        return Path.Combine(temporaryRoot, $"{Guid.NewGuid():N}.capture");
+    }
+
     public static ExtensionArtifactInvocationScope? Current => Ambient.Value;
     public ProviderDownloadArtifactWriteResult? Result { get; private set; }
     public CancellationToken CancellationToken => ExtensionInvocationBudget.Current?.Token ?? cancellationToken;
