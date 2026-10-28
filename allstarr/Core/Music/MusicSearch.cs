@@ -245,7 +245,7 @@ public sealed class MusicSearchService(
                 .Concat(songs.Select(song => new MusicSearchEntry<TPayload> { Song = song }))),
             Rank(query, nativeAlbums, mergedAlbums.Select(album => (
                     new MusicSearchEntry<TPayload> { Album = album },
-                    SearchRelevanceRanker.Score(query, album.Title, album.Artist)))
+                    SearchRelevanceRanker.ScoreAlbum(query, album)))
                 .Concat(playlists.Select(playlist => (
                     new MusicSearchEntry<TPayload> { Playlist = playlist },
                     SearchRelevanceRanker.Score(query, playlist.Name, playlist.CuratorName))))),
@@ -266,7 +266,7 @@ public sealed class MusicSearchService(
             {
                 { Native.Kind: MusicItemKind.Song } or { Song: not null } => SongScore(query, entry, knownDurationTitles),
                 { Native: { } native } => SearchRelevanceRanker.Score(query, native.Name, native.ArtistText),
-                { Album: { } album } => SearchRelevanceRanker.Score(query, album.Title, album.Artist),
+                { Album: { } album } => SearchRelevanceRanker.ScoreAlbum(query, album),
                 { Artist: { } artist } => SearchRelevanceRanker.Score(query, artist.Name),
                 { Playlist: { } playlist } => SearchRelevanceRanker.Score(query, playlist.Name, playlist.CuratorName),
                 _ => 0

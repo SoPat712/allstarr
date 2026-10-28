@@ -80,6 +80,19 @@ public sealed class MusicAlbumReleaseTests
     }
 
     [Fact]
+    public void ContentEditionLabelsKeepExactTitleAndCombinedSearchRanking()
+    {
+        var explicitAlbum = Album("explicit", "apple-download", "012345678905", true);
+        var clean = Album("clean", "apple-download", "012345678912", false);
+        var other = Album("other", "deezer", null, null);
+        other.Artist = "Another artist";
+        var result = MusicSearchService.Merge<object>("PRIMA", [], [], [explicitAlbum, clean, other], [], [], false);
+
+        Assert.Equal(["explicit", "clean", "other"], result.Albums.Select(item => item.Album!.Id));
+        Assert.Equal(["explicit", "clean", "other"], MusicSearchService.RankTogether("PRIMA", result).Select(item => item.Album!.Id));
+    }
+
+    [Fact]
     public void JellyfinNativeAlbumWinsWithoutChangingItsCompletePayload()
     {
         var payload = JsonSerializer.Deserialize<Dictionary<string, object?>>("""

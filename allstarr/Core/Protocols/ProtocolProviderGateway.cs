@@ -444,7 +444,7 @@ public sealed partial class ProtocolProviderGateway(
                 item => item.ExternalProvider, item => SearchRelevanceRanker.ScoreSong(query, item,
                     knownDurationTitles.Contains(SearchRelevanceRanker.RecordingTitle(item.Title, item.Artist, item.AlbumArtist))), providerOrder),
             Albums = MergeSearch(MusicAlbumReleases.Collapse(routed.Albums), albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
-                item => item.ExternalProvider, item => SearchRelevanceRanker.Score(query, item.Title, item.Artist), providerOrder),
+                item => item.ExternalProvider, item => SearchRelevanceRanker.ScoreAlbum(query, item), providerOrder),
             Artists = MergeSearch(routed.Artists, artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
                 item => item.ExternalProvider, item => SearchRelevanceRanker.Score(query, item.Name), providerOrder)
         };
