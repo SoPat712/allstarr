@@ -317,11 +317,21 @@ public sealed partial class ExtensionProgressivePlaybackTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Playback_RejectsTruncationAndByteLimitOverflow(bool truncated)
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task Playback_RejectsTruncationAndByteLimitOverflow(bool truncated, bool capture)
     {
-        var (adapter, context, track) = Setup(truncated, maximumBytes: truncated ? 1024 * 1024 : prefix.Length);
+        if (capture)
+        {
+            "fLaC"u8.CopyTo(prefix);
+            prefix[4] = 128;
+            prefix[5] = prefix[6] = 0;
+            prefix[7] = 34;
+        }
+        var (adapter, context, track) = Setup(truncated, capture ? "file.delete('unused');" : "",
+            maximumBytes: truncated ? 1024 * 1024 : prefix.Length, extension: capture ? ".flac" : "");
         var pending = adapter.GetStreamLeaseAsync(context, new(track));
         source.Release(prefix);
         var lease = (await pending.WaitAsync(TimeSpan.FromSeconds(10))).RequireValue();

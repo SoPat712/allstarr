@@ -8,7 +8,8 @@ using allstarr.Services.Common;
 
 namespace allstarr.Core.Extensions;
 
-internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, bool eligible, ExtensionDeezerSpeculation? speculation = null)
+internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, bool eligible, ExtensionDeezerSpeculation? speculation = null,
+    bool immutableFlacEligible = false)
 {
     private readonly TimeProvider timeProvider = clock;
     private readonly object gate = new();
@@ -23,6 +24,8 @@ internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, b
     private bool failed;
     private int transfers;
     private Action? cleanup;
+    private FileStream? immutableCopy;
+    public bool CanCaptureImmutableFlac => immutableFlacEligible && !eligible;
     public TaskCompletionSource<bool> Ready { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public string MimeType { get; private set; } = "application/octet-stream";
     public string Container { get; private set; } = "unknown";
@@ -30,7 +33,11 @@ internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, b
     public bool Published => Ready.Task.IsCompletedSuccessfully && Ready.Task.Result;
 
     // A source that can acquire a writable file capability must finish before playback.
-    internal static bool IsEligible(string script)
+    internal static bool IsEligible(string script) => IsEligible(script, false);
+
+    internal static bool IsImmutableFlacEligible(string script) => IsEligible(script, true);
+
+    private static bool IsEligible(string script, bool immutableFlac)
     {
         try
         {
@@ -41,9 +48,11 @@ internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, b
                 if (node is Identifier identifier)
                 {
                     if (identifier.Name is "host" or "ffmpeg" or "eval" or "Function" or "globalThis" or "window" or "global") return false;
-                    if (identifier.Name == "file" &&
+                    if (identifier.Name == "file" && !(immutableFlac && parent is UnaryExpression) &&
                         (parent is not MemberExpression member || member.Object != node || member.Computed ||
-                         member.Property is not Identifier { Name: "download" or "downloadSegments" or "exists" or "getSize" or "readBytes" })) return false;
+                         member.Property is not Identifier property ||
+                         property.Name is not ("download" or "downloadSegments" or "exists" or "getSize" or "readBytes") &&
+                         !(immutableFlac && property.Name == "delete"))) return false;
                 }
                 if (node is StringLiteral { Value: "file" or "host" or "ffmpeg" or "decryption" or "decryption_key" or "encrypted" or "needs_decryption" or "encryption_scheme" or "requires_container_conversion" }) return false;
                 if (node is Identifier { Name: "decryption" or "decryption_key" or "encrypted" or "needs_decryption" or "encryption_scheme" or "requires_container_conversion" }) return false;
@@ -56,13 +65,19 @@ internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, b
         catch { return false; }
     }
 
-    public void Begin(string sourcePath, string finalPath, long? total, string? mimeType, bool decrypted = false)
+    public void Begin(string sourcePath, string finalPath, long? total, string? mimeType, bool decrypted = false) =>
+        Begin(sourcePath, finalPath, total, mimeType, decrypted, null);
+
+    public void BeginImmutableFlac(FileStream capture, string finalPath, long? total) =>
+        Begin(capture.Name, finalPath, total, "audio/flac", false, capture);
+
+    private void Begin(string sourcePath, string finalPath, long? total, string? mimeType, bool decrypted, FileStream? capture)
     {
         lock (gate)
         {
             if (++transfers > 1 && Published)
                 throw new IOException("A published download cannot be replaced by another transfer.");
-            if ((!eligible && !decrypted) || transfers != 1)
+            if ((!eligible && !decrypted && !(capture != null && CanCaptureImmutableFlac)) || transfers != 1)
             {
                 path = null;
                 Ready.TrySetResult(false);
@@ -87,6 +102,7 @@ internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, b
             };
             path = sourcePath;
             committedPath = finalPath;
+            immutableCopy = capture;
             Total = total is > 0 ? total : null;
             (MimeType, Container) = media;
         }
@@ -106,6 +122,11 @@ internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, b
         lock (gate)
         {
             if (path == null) return;
+            if (immutableCopy != null)
+            {
+                immutableCopy.Write(bytes);
+                immutableCopy.Flush();
+            }
             hash.AppendData(bytes);
             written += bytes.Length;
             if (header.Length < 256 * 1024) header.Write(bytes[..(int)Math.Min(bytes.Length, 256 * 1024 - header.Length)]);
@@ -118,7 +139,7 @@ internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, b
                     prefix.Length >= 8 && prefix.Slice(4, 4).SequenceEqual("ftyp"u8) ? ("audio/mp4", "mp4") :
                     (MimeType, Container);
             }
-            var validFlac = encryptedPath == null ||
+            var validFlac = encryptedPath == null && immutableCopy == null ||
                 (prefix.Length >= 42 && prefix.StartsWith("fLaC"u8) && (prefix[4] & 0x7f) == 0 &&
                  prefix[5] == 0 && prefix[6] == 0 && prefix[7] == 34);
             if (written >= 256 * 1024 && validFlac && Container != "unknown" && (Container != "mp4" || HasMp4Metadata(prefix)))
@@ -174,6 +195,17 @@ internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, b
         lock (gate) { failed = true; Pulse(); }
     }
 
+    public void BeforeDelete(string target)
+    {
+        lock (gate)
+        {
+            if (!Published || immutableCopy == null || target != committedPath) return;
+            failed = true;
+            Pulse();
+            throw new InvalidDataException("The published download cannot be deleted before verification.");
+        }
+    }
+
     public void Finish(bool success)
     {
         lock (gate)
@@ -194,6 +226,7 @@ internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, b
     {
         Action? remove;
         lock (gate) { remove = cleanup; cleanup = null; }
+        immutableCopy?.Dispose();
         remove?.Invoke();
         hash.Dispose();
         header.Dispose();

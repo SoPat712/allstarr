@@ -391,6 +391,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter :
         clock = sandbox.Clock;
         deezerSpeculation = sandbox.DeezerSpeculation;
         allowsProgressive = sandbox.AllowsProgressiveDownload && manifest.Compatibility == SpotiFlacExtensionCompatibility.Marker;
+        allowsImmutableFlac = sandbox.AllowsImmutableFlacDownload && manifest.Compatibility == SpotiFlacExtensionCompatibility.Marker;
         // The compatibility shim prepares and resolves the track within its download hook.
         requiresPreparedContext = manifest.Compatibility != SpotiFlacExtensionCompatibility.Marker &&
             manifest.RequiredRuntimeFeatures?.Contains("preparedContext@1", StringComparer.Ordinal) == true;

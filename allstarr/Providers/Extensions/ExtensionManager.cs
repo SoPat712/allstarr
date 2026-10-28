@@ -656,6 +656,7 @@ public class ExtensionSandbox
     private readonly TimeProvider _timeProvider;
     internal TimeProvider Clock => _timeProvider;
     internal bool AllowsProgressiveDownload { get; }
+    internal bool AllowsImmutableFlacDownload { get; }
     internal ExtensionDeezerSpeculation? DeezerSpeculation { get; }
 
     public ExtensionSandbox(
@@ -679,6 +680,7 @@ public class ExtensionSandbox
         _downloadTimeout = downloadTimeout ?? TimeSpan.FromMinutes(5);
         _timeProvider = timeProvider ?? TimeProvider.System;
         AllowsProgressiveDownload = ExtensionProgressiveTransfer.IsEligible(indexJs);
+        AllowsImmutableFlacDownload = ExtensionProgressiveTransfer.IsImmutableFlacEligible(indexJs);
 
         using var doc = JsonDocument.Parse(manifestJson);
         var root = doc.RootElement;
@@ -1689,8 +1691,17 @@ public partial class ExtensionHostBridge
             AttachDownloadResumeAsync(response, client, safeUri, HeaderObject(options), scope.CancellationToken).GetAwaiter().GetResult();
             using var source = response.Content.ReadAsStream(scope.CancellationToken);
             using var decrypted = scope.Progressive?.StartDeezerDownload(safeUri, finalUri, target, response.Content.Headers.ContentLength);
+            var mimeType = response.Content.Headers.ContentType?.MediaType;
+            using var capture = decrypted == null && scope.Progressive?.CanCaptureImmutableFlac == true &&
+                Path.GetExtension(target).Equals(".flac", StringComparison.OrdinalIgnoreCase) &&
+                (mimeType?.ToLowerInvariant() is null or "audio/flac" or "audio/x-flac" or "application/octet-stream")
+                ? new FileStream(scope.CreateProgressiveCapturePath(), FileMode.CreateNew, FileAccess.Write, FileShare.Read)
+                : null;
             if (decrypted == null)
-                scope.Progressive?.Begin(target, target, response.Content.Headers.ContentLength, response.Content.Headers.ContentType?.MediaType);
+            {
+                if (capture != null) scope.Progressive!.BeginImmutableFlac(capture, target, response.Content.Headers.ContentLength);
+                else scope.Progressive?.Begin(target, target, response.Content.Headers.ContentLength, mimeType);
+            }
             using var destination = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.Read);
             var buffer = new byte[128 * 1024];
             long written = 0;
@@ -1744,7 +1755,9 @@ public partial class ExtensionHostBridge
 
     public bool FileDelete(string path)
     {
-        var resolved = RequireFileScope().ResolveTemporaryPath(path);
+        var scope = RequireFileScope();
+        var resolved = scope.ResolveTemporaryPath(path);
+        scope.Progressive?.BeforeDelete(resolved);
         if (File.Exists(resolved)) File.Delete(resolved);
         return true;
     }
