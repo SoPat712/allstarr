@@ -1,7 +1,6 @@
 using System.Net;
 using System.Text.Json;
 using System.Xml.Linq;
-using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
@@ -211,16 +210,10 @@ public sealed partial class ProtocolRouteFixtureTests
             .ReturnsAsync([ProviderSong("ext-deezer-song-43", "Genesis"), ProviderSong("ext-deezer-song-44", "Realiti")]);
         gateway.Setup(item => item.GetArtistAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "7"))
             .ReturnsAsync(new Artist { Id = "ext-deezer-artist-7", Name = "Grimes", ExternalProvider = "deezer", ExternalId = "7" });
-        gateway.Setup(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "7"))
-            .ReturnsAsync([CatalogAlbum("a1", "Visions")]);
-        gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "a1"))
-            .ReturnsAsync(new Album
-            {
-                Id = "ext-deezer-album-a1",
-                Title = "Visions",
-                Artist = "Grimes",
-                Songs = [ProviderSong("ext-deezer-song-43", "Genesis"), ProviderSong("ext-deezer-song-44", "Realiti")]
-            });
+        gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "7"))
+            .ReturnsAsync([ProviderSong("ext-deezer-song-43", "Genesis"), ProviderSong("ext-deezer-song-44", "Realiti")]);
+        gateway.Setup(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>()))
+            .ReturnsAsync(true);
         var observed = new List<ObservedRequest>();
         using var factory = CatalogFactory(observed, gateway.Object,
             request => throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"));
@@ -231,8 +224,9 @@ public sealed partial class ProtocolRouteFixtureTests
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync();
-        var expected = new[] { "ext-deezer-song-43", "ext-deezer-song-44" }
-            .OrderBy(songId => MusicMixService.StableOrder(id, songId), StringComparer.Ordinal);
+        var expected = id == "ext-deezer-song-42"
+            ? new[] { "ext-deezer-song-42", "ext-deezer-song-43" }
+            : new[] { "ext-deezer-song-43", "ext-deezer-song-44" };
         if (format == "json")
         {
             using var document = JsonDocument.Parse(body);

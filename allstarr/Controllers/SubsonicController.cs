@@ -395,19 +395,20 @@ public partial class SubsonicController : ControllerBase
         var count = int.TryParse(parameters.GetValueOrDefault("count"), out var requested) && requested > 0
             ? Math.Min(requested, 500)
             : 50;
-        IReadOnlyList<Song> songs;
+        IReadOnlyList<MusicSearchEntry<object>> entries;
+        var native = new SubsonicNativeMusicSearch(_proxyService, _modelMapper, _responseBuilder, parameters, format);
         try
         {
-            songs = await _musicMix.InstantMixAsync(CurrentProtocolContext, provider!, type!, externalId!, id, count);
+            entries = type is "song" or "artist"
+                ? await _musicMix.RadioAsync(CurrentProtocolContext, provider!, type!, externalId!, id, count, native, HttpContext.RequestAborted)
+                : await _musicSearch.ProjectSongsAsync(CurrentProtocolContext,
+                    await _musicMix.InstantMixAsync(CurrentProtocolContext, provider!, type!, externalId!, id, count), native, HttpContext.RequestAborted);
         }
         catch (Exception error) when (error is not OperationCanceledException || !HttpContext.RequestAborted.IsCancellationRequested)
         {
             _logger.LogWarning("Provider mix for {Provider} was unavailable ({ExceptionType})", provider, error.GetType().Name);
-            songs = [];
+            entries = [];
         }
-        var entries = await _musicSearch.ProjectSongsAsync(CurrentProtocolContext, songs,
-            new SubsonicNativeMusicSearch(_proxyService, _modelMapper, _responseBuilder, parameters, format),
-            HttpContext.RequestAborted);
         var rendered = _modelMapper.RenderSearchResult(new MusicSearchResult<object>(entries, [], []), format == "json");
         return CreateSongListResponse(format, element, rendered.Songs);
     }
