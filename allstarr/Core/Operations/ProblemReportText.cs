@@ -23,6 +23,7 @@ internal static partial class ProblemReportText
     {
         "provider-priority", "playback-start-fast", "playback-start-balanced", "playback-start-quality",
         "household-kept", "native-local-library", "personal_account", "shared_account", "explicit_account",
+        "personal-account", "shared-account", "explicit-account",
         "account-free", "managed-cache", "remote", "manual-match", "manual-pin", "replay", "progressive-cache"
     };
     private static readonly HashSet<string> SeekRungs = new(StringComparer.Ordinal)

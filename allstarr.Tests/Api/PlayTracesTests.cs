@@ -411,6 +411,52 @@ public sealed class PlayTracesTests
         Assert.Equal(snapshot, timing.Snapshot("completed").Trace!.Resolution.ExternalSnapshotId);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task MissingRouteContextDoesNotEraseTheSelectedReason(bool refreshMatchContext)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await fixture.SnapshotAsync(fixture.Listener);
+        using var timing = fixture.Timing(fixture.Listener);
+        const string reason = "provider-priority:account-free:remote";
+        timing.Route("deezer", false, reason, "Lossless", "Shared", "123");
+
+        if (refreshMatchContext)
+            await fixture.Service().CaptureAsync(timing, fixture.Context(fixture.Listener), "deezer", "123", resolutionOnly: true);
+        else
+            timing.Route("deezer", false, null, "Lossless", "Shared", "123");
+
+        await fixture.Store.RecordAsync(timing.Snapshot("completed"));
+        var trace = await fixture.Service().DetailAsync(fixture.Listener, timing.Id, default);
+        Assert.Equal(reason, trace.Resolution.Route);
+    }
+
+    [Theory]
+    [InlineData("personal-account")]
+    [InlineData("shared-account")]
+    [InlineData("explicit-account")]
+    [InlineData("personal_account")]
+    [InlineData("shared_account")]
+    [InlineData("explicit_account")]
+    public async Task KnownAccountScopeNamesRemainAvailableInSavedRoutes(string scope)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        using var timing = fixture.Timing(fixture.Listener);
+        var reason = $"provider-priority:{scope}:remote";
+        timing.Route("deezer", false, reason, "Lossless", "Shared", "123");
+        Assert.Equal(reason, timing.Snapshot("completed").Trace!.Resolution.Route);
+    }
+
+    [Fact]
+    public async Task ArbitraryAccountTextIsNotAcceptedAsARouteScope()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        using var timing = fixture.Timing(fixture.Listener);
+        timing.Route("deezer", false, "provider-priority:shared-account-private-reference:remote", "Lossless", "Shared", "123");
+        Assert.Null(timing.Snapshot("completed").Trace!.Resolution.Route);
+    }
+
     [Fact]
     public async Task RetainedPlaybackMetadataCanSupplyAReviewableSource()
     {

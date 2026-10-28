@@ -122,7 +122,7 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
                 CanonicalRecordingId = resolution.CanonicalRecordingId ?? play.Resolution.CanonicalRecordingId,
                 State = PlayTraceText.Reference(resolution.State),
                 Provider = PlayTraceText.Reference(resolution.Provider),
-                Route = ProblemRoute(resolution.Route),
+                Route = ProblemRoute(resolution.Route) ?? play.Resolution.Route,
                 AccountLabel = PlayTraceText.Clean(resolution.AccountLabel),
                 Score = resolution.Score is { } score && double.IsFinite(score) ? Math.Clamp(score, 0, 1) : null
             };
@@ -139,7 +139,7 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
                 ExternalId = PlayTraceText.Reference(servingExternalId),
                 Provider = PlayTraceText.Reference(source),
                 Cached = fromCache,
-                Route = ProblemRoute(reason),
+                Route = ProblemRoute(reason) ?? play.Resolution.Route,
                 Quality = PlayTraceText.Reference(quality),
                 AccountLabel = scope == null ? "Account-free" : scope == "Personal" ? "Personal account" : scope == "Shared" ? "Shared account" : "Selected account"
             };
