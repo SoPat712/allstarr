@@ -59,7 +59,15 @@ public sealed partial class FavoriteActionPipeline(
     public const string VirtualLikedAction = "virtual-liked";
     public async Task<FavoriteEventReceipt> RecordAsync(
         FavoriteMutationRequest request,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        (await RecordCoreAsync(request, false, cancellationToken)).Receipt!;
+
+    internal async Task<bool> ImportSpotifyLikeAsync(ProtocolExecutionContext execution, string itemId,
+        string sourceRevision, CancellationToken cancellationToken = default) =>
+        (await RecordCoreAsync(new(execution, itemId, FavoriteOperation.Favorite, sourceRevision), true, cancellationToken)).Imported;
+
+    private async Task<(FavoriteEventReceipt? Receipt, bool Imported)> RecordCoreAsync(
+        FavoriteMutationRequest request, bool spotifyImport, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         var execution = request.ExecutionContext;
@@ -70,13 +78,13 @@ public sealed partial class FavoriteActionPipeline(
         var display = await CaptureDisplayAsync(request, itemId, userId, cancellationToken);
         for (var attempt = 0; ; attempt++)
         {
-            try { return await RecordOnceAsync(request, itemId, sourceRevision, display, cancellationToken); }
+            try { return await RecordOnceAsync(request, itemId, sourceRevision, display, spotifyImport, cancellationToken); }
             catch (Exception error) when (FavoriteLinkService.Retryable(error) && attempt < 3) { }
         }
     }
 
-    private async Task<FavoriteEventReceipt> RecordOnceAsync(FavoriteMutationRequest request, string itemId,
-        string sourceRevision, string? display, CancellationToken cancellationToken)
+    private async Task<(FavoriteEventReceipt? Receipt, bool Imported)> RecordOnceAsync(FavoriteMutationRequest request, string itemId,
+        string sourceRevision, string? display, bool spotifyImport, CancellationToken cancellationToken)
     {
         var execution = request.ExecutionContext;
         var userId = execution.RequireActor().EffectiveUserId!.Value;
@@ -98,6 +106,30 @@ public sealed partial class FavoriteActionPipeline(
         var key = FavoriteLinkScope.Key(itemId);
         var real = key != null && !synthetic;
         var member = real ? await FavoriteLinkScope.MemberAsync(context, user, cancellationToken) : null;
+        if (spotifyImport)
+        {
+            var prior = await context.FavoriteEvents.AsNoTracking().FirstOrDefaultAsync(item =>
+                item.OwnerUserId == userId && item.Protocol == protocol && item.BackendInstanceId == backend &&
+                item.BackendPrincipalId == execution.VerifiedBackendPrincipalId && item.SourceRevision == sourceRevision,
+                cancellationToken);
+            if (prior != null)
+                return (new(prior.Id, prior.JobId, false, prior.State), prior.CorrelationId == execution.CorrelationId);
+
+            var own = await (from state in context.FavoriteStates
+                             join accepted in context.FavoriteEvents on state.LastEventId equals accepted.Id
+                             where state.OwnerUserId == userId && state.Protocol == protocol &&
+                                 state.BackendInstanceId == backend && state.ItemId == itemId && state.IsFavorite &&
+                                 accepted.BackendPrincipalId == execution.VerifiedBackendPrincipalId
+                             select state.Id).AnyAsync(cancellationToken);
+            if (member == null && own) return (null, false);
+            if (member != null)
+            {
+                var linked = await FavoriteLinkScope.StateQuery(context, member.LinkId, key!).AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+                if (linked?.IsFavorite == true || linked == null &&
+                    (await FavoriteLinkScope.BaselineAsync(context, member.LinkId, cancellationToken)).Any(item => FavoriteLinkScope.Key(item.ItemId) == key))
+                    return (null, false);
+            }
+        }
         LinkedProviderFavoriteStateRecord? shared = null;
         var changed = false;
         if (member != null)
@@ -132,7 +164,7 @@ public sealed partial class FavoriteActionPipeline(
         {
             await context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return new FavoriteEventReceipt(latest.Id, latest.JobId, false, latest.State);
+            return (new(latest.Id, latest.JobId, false, latest.State), false);
         }
         // A changed intent or provider scope starts a new own-profile lifecycle even
         // when the backend revision is unchanged. The current pointer also fences
@@ -149,7 +181,7 @@ public sealed partial class FavoriteActionPipeline(
         {
             await context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return new FavoriteEventReceipt(existing.Id, existing.JobId, false, existing.State);
+            return (new(existing.Id, existing.JobId, false, existing.State), false);
         }
 
         var eventId = Guid.CreateVersion7();
@@ -160,7 +192,7 @@ public sealed partial class FavoriteActionPipeline(
             await CancelLinkedWorkAsync(context, member.LinkId, linkedTargets, now, cancellationToken);
         }
         await CancelSupersededWorkAsync(context, userId, protocol, backend, itemId, now, cancellationToken, synthetic);
-        IReadOnlyList<string> actionTypes = synthetic ? [VirtualLikedAction] : BuildActions(request.Operation, itemId);
+        IReadOnlyList<string> actionTypes = synthetic || spotifyImport ? [VirtualLikedAction] : BuildActions(request.Operation, itemId);
         var job = await jobs.EnqueueInExistingTransactionAsync(
             context,
             new DurableJobEnqueueRequest<FavoriteJobPayload>(
@@ -188,7 +220,7 @@ public sealed partial class FavoriteActionPipeline(
             PolicySnapshotJson = JsonSerializer.Serialize(new
             {
                 actions = actionTypes,
-                policySource = "download-only"
+                policySource = spotifyImport ? "spotify-likes-import" : "download-only"
             }),
             JobId = job.JobId,
             State = FavoriteEventState.Pending,
@@ -231,7 +263,7 @@ public sealed partial class FavoriteActionPipeline(
         }
         try
         {
-            if (keptFiles != null && !synthetic)
+            if (keptFiles != null && !synthetic && !spotifyImport)
             {
                 if (member != null && request.Operation == FavoriteOperation.Unfavorite)
                     await keptFiles.StageLinkedFavoriteReleaseAsync(context, linkedTargets, record, cancellationToken);
@@ -239,7 +271,7 @@ public sealed partial class FavoriteActionPipeline(
             }
             await context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return new FavoriteEventReceipt(eventId, job.JobId, true, FavoriteEventState.Pending);
+            return (new(eventId, job.JobId, true, FavoriteEventState.Pending), spotifyImport);
         }
         catch { await transaction.RollbackAsync(cancellationToken); throw; }
     }

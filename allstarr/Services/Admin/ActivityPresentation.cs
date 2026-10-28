@@ -30,6 +30,7 @@ internal static class ActivityPresentation
         "playlist" => "Playlists",
         "playback" => "Listening",
         "favorite" => "Favorites",
+        "spotify-likes" => "Spotify",
         "recording" => "Recordings",
         "track-match" => "Matching",
         "recommendation" => "Recommendations",

@@ -142,6 +142,15 @@ internal static class ActivityJobPresentation
     private static string Summary(DurableJobRecord job, FavoriteContext? favorite,
         HealthContext? health, string? playlistName)
     {
+        if (job.Type == SpotifyLikesImport.Type)
+        {
+            try
+            {
+                if (JsonSerializer.Deserialize<SpotifyLikesImportPayload>(job.PayloadJson) is { } likes)
+                    return $"Spotify likes: {likes.Imported} imported, {likes.AlreadyHearted} already hearted, {likes.NeedsReview} need review, {likes.NotFound} not found.";
+            }
+            catch (JsonException) { }
+        }
         if (health is { } healthContext && TryHealthSummary(healthContext.Run.CompletedJson, out var healthSummary))
         {
             var mode = HumanMode(healthSummary.Mode);
@@ -290,6 +299,7 @@ internal static class ActivityJobPresentation
         "health.alert" => "Health alert",
         "storage.backup" => "Backup",
         "favorite.process" => "Favorite update",
+        SpotifyLikesImport.Type => "Import Spotify likes",
         "favorite.display-backfill" => "Favorite metadata update",
         "playlist.materialize" => "Playlist sync",
         "playlist.retain-track" => "Keep playlist song",
