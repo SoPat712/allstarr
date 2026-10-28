@@ -6,16 +6,17 @@
   import EventHistoryFeed from "$lib/components/EventHistoryFeed.svelte";
   import ActivityJobs from "$lib/components/ActivityJobs.svelte";
   import ActivityTasks from "$lib/components/ActivityTasks.svelte";
+  import ActivityPlays from "$lib/components/ActivityPlays.svelte";
   import ProblemReportsInbox from "$lib/components/ProblemReportsInbox.svelte";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
-  let { administrator = false, initialView = "history", initialReportId = "", initialJobId = "" }: { administrator?: boolean; initialView?: string; initialReportId?: string; initialJobId?: string } = $props();
+  let { administrator = false, currentUserId = "", initialView = "history", initialReportId = "", initialJobId = "" }: { administrator?: boolean; currentUserId?: string; initialView?: string; initialReportId?: string; initialJobId?: string } = $props();
   let view = $state("history");
   let scope = $state<ActivityScope>("mine");
   let ready = $state(false);
   let attention = $state(false);
   let everyoneButton = $state<HTMLButtonElement>();
-  $effect(() => { view = ["history", "jobs", "tasks", ...(administrator ? ["reports"] : [])].includes(initialView) ? initialView : "history"; });
+  $effect(() => { view = ["history", "plays", "jobs", "tasks", ...(administrator ? ["reports"] : [])].includes(initialView) ? initialView : "history"; });
   onMount(() => {
     scope = readActivityScope(administrator);
     ready = true;
@@ -33,7 +34,7 @@
 
 <div class="activity-content">
 <SegmentedNav label="Activity views" items={[
-  { id: "history", label: "History" }, { id: "jobs", label: "Jobs" }, { id: "tasks", label: "Tasks" },
+  { id: "history", label: "History" }, { id: "plays", label: "Plays" }, { id: "jobs", label: "Jobs" }, { id: "tasks", label: "Tasks" },
   ...(administrator ? [{ id: "reports", label: "Reports" }] : []),
 ]} active={view} onchange={(next) => view = next} />
 {#if view !== "reports"}
@@ -59,6 +60,8 @@
       <ProblemReportsInbox {administrator} {initialReportId} />
     {:else if view === "tasks"}
       <ActivityTasks {administrator} {scope} />
+    {:else if view === "plays"}
+      <ActivityPlays {administrator} {scope} {currentUserId} />
     {:else}
       {#if view === "jobs"}<ActivityJobs {administrator} {scope} {initialJobId} />{:else}<EventHistoryFeed {administrator} {scope} />{/if}
     {/if}

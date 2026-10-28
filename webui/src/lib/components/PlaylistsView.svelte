@@ -27,6 +27,7 @@
     matchReview,
     playlistLinks,
     type MatchReviewItem,
+    type PlaylistCopy,
     type PlaylistDetails,
     type PlaylistLink,
     type PlaylistTrack,
@@ -53,9 +54,11 @@
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { findProviderDefinition, providerDisplayName } from "$lib/sources";
 
-  let { initialId = "" }: { initialId?: string } = $props();
+  let { initialId = "", currentUserId = "" }: { initialId?: string; currentUserId?: string } = $props();
 
   let playlists = $state<PlaylistLink[]>([]);
+  let copies = $state<PlaylistCopy[]>([]);
+  let copiesError = $state("");
   let providers = $state<ProviderDefinition[]>([]);
   let details = $state<PlaylistDetails | null>(null);
   let detailOpen = $state(false);
@@ -312,10 +315,13 @@
     error = "";
     degraded = "";
     try {
-      const [linksResult, schemaResult] = await Promise.allSettled([
+      const [linksResult, schemaResult, copiesResult] = await Promise.allSettled([
         playlistLinks.list(),
         home.schema(),
+        currentUserId ? playlistLinks.copies(currentUserId) : Promise.resolve([]),
       ]);
+      if (copiesResult.status === "fulfilled") { copies = copiesResult.value; copiesError = ""; }
+      else copiesError = "Your playlist copies could not be checked. Refresh to try again.";
       if (linksResult.status === "rejected") {
         error =
           linksResult.reason instanceof Error
@@ -346,6 +352,13 @@
 
   const refreshScheduler = createRefreshScheduler(() => refresh(true));
   const scheduleRefresh = refreshScheduler.schedule;
+
+  function hasCopy(playlist: PlaylistLink) {
+    const same = (left?: string | null, right?: string | null) => Boolean(left && right && left.replaceAll("-", "").toLowerCase() === right.replaceAll("-", "").toLowerCase());
+    return copies.some(copy => copy.backendInstanceId === playlist.targetBackendInstanceId &&
+      (same(copy.originalPlaylistId, playlist.virtualPlaylistId) || same(copy.id, playlist.virtualPlaylistId) ||
+        same(copy.originalTargetPlaylistId, playlist.targetPlaylistId)));
+  }
 
   async function run(name: "sync" | "toggle") {
     if (!selected || action) return;
@@ -506,6 +519,7 @@
   {/if}
 
   <section class="playlist-layout" aria-busy={refreshing || passiveRefreshing}>
+    {#if copiesError}<p class="notice-error" role="status">{copiesError}</p>{/if}
     <article class="panel playlist-list">
       <header class="panel-heading playlist-toolbar">
         <div>
@@ -563,6 +577,7 @@
             <span class="playlist-copy">
               <span class="playlist-title-line">
                 <strong>{playlist.name}</strong>
+                {#if hasCopy(playlist)}<Badge tone="neutral">Your copy</Badge>{/if}
                 {#if playlist.importMode === "oneTime"}<Badge tone="neutral">Once</Badge>{/if}
                 {#if playlist.trackRetention === "keepAll"}<Badge state="healthy">Kept</Badge>{/if}
                 <small class="route-pair">
@@ -637,6 +652,7 @@
           <MediaArtwork class="hero-art" url={details.artworkUrl} fallback="♫" loading="eager" />
           <div class="playlist-hero-copy">
             <Dialog.Title>{details.name}</Dialog.Title>
+            {#if hasCopy(selected)}<Badge tone="neutral">Your copy</Badge><p class="playlist-hero-summary">You edited this playlist, so you have your own copy. The original keeps syncing for everyone else.</p>{/if}
             <p class="playlist-hero-summary">
               {details.trackCount} {details.trackCount === 1 ? "song" : "songs"}, {listeningTime(details.durationMs)}
               {#if details.unknownDurationCount}<span>({details.unknownDurationCount} without a length)</span>{/if}

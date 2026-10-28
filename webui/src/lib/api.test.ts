@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, intelligence, normalizeResponse, settings, sources } from "./api";
+import { ApiError, intelligence, normalizeResponse, playTraces, settings, sources } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("API response normalization", () => {
+  it("copies the redacted diagnostics response without rewriting its text", async () => {
+    const text = '{\n  "schemaVersion": 1, "request": { "presented": { "title": "Evening song" } }\n}';
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(text)));
+    expect(await playTraces.diagnostics("play-reference")).toBe(text);
+  });
   it("normalizes nested ASP.NET property names without changing values", () => {
     expect(normalizeResponse({
       Accounts: [{ Id: "account", Secret: { Configured: true } }],
