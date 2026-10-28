@@ -39,6 +39,18 @@ public sealed class FavoriteDownloadActionExecutor(
             favoriteEvent.ItemId, cancellationToken);
         if (await HasLocalMatchAsync(factory, libraryAccess, favoriteEvent, cancellationToken, knownRecording?.Id))
             return FavoriteActionExecutionResult.Success();
+        if (keptFiles != null)
+        {
+            await using var db = await factory.CreateDbContextAsync(cancellationToken);
+            var stateId = await db.Set<FavoriteStateRecord>().AsNoTracking().Where(item =>
+                item.OwnerUserId == favoriteEvent.OwnerUserId && item.Protocol == favoriteEvent.Protocol &&
+                item.BackendInstanceId == favoriteEvent.BackendInstanceId && item.ItemId == favoriteEvent.ItemId &&
+                item.LastEventId == favoriteEvent.Id && item.IsFavorite).Select(item => (Guid?)item.Id)
+                .SingleOrDefaultAsync(cancellationToken);
+            if (stateId is { } current && await RecordingKeptFiles.AutomaticRetentionSuppressedAsync(db,
+                $"heart:{current:N}", favoriteEvent.Id, cancellationToken))
+                return FavoriteActionExecutionResult.Success();
+        }
         if (keptFiles != null && await keptFiles.RetainFavoriteAsync(
                 new(favoriteEvent.OwnerUserId, favoriteEvent.JobId, executionAttempt), cancellationToken) != null)
             return FavoriteActionExecutionResult.Success();

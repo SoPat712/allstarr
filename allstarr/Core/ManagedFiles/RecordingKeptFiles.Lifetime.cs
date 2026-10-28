@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 namespace allstarr.Core.ManagedFiles;
 
 public sealed record KeptRecordingCleanupPayload(Guid RecordingId, Guid ManagedFileId,
-    Guid? ReservationJobId = null);
+    Guid? ReservationJobId = null, KeptRecordingDeletion? Deletion = null);
 
 public sealed partial class RecordingKeptFiles
 {
@@ -17,6 +17,15 @@ public sealed partial class RecordingKeptFiles
     public async Task<DurableJobCompletion> CleanupAsync(DurableJobClaim claim,
         CancellationToken cancellationToken = default)
     {
+        if (claim.Type == KeptCleanupJobType)
+        {
+            try
+            {
+                if (claim.Payload.Deserialize<KeptRecordingCleanupPayload>()?.Deletion != null)
+                    return await DeleteConfirmedAsync(claim, cancellationToken);
+            }
+            catch (JsonException) { return DurableJobCompletion.Failure("kept_cleanup_payload_invalid", "The saved cleanup target is invalid."); }
+        }
         if (jobs == null || claim.Type != KeptCleanupJobType ||
             !(await jobs.ReauthorizeAsync(claim, cancellationToken)).Authorized)
             return DurableJobCompletion.Cancelled();
@@ -91,6 +100,7 @@ public sealed partial class RecordingKeptFiles
         var key = HeartKey(state.Id);
         if (state.IsFavorite)
         {
+            if (await AutomaticRetentionSuppressedAsync(db, key, favoriteEvent.Id, cancellationToken)) return;
             var actor = new ProviderActorContext(ProviderActorKind.User, state.OwnerUserId,
                 new(favoriteEvent.Protocol, favoriteEvent.BackendInstanceId, favoriteEvent.BackendPrincipalId));
             var recordingId = await ResolveKeptRecordingIdAsync(actor, state.ItemId, cancellationToken);
@@ -164,6 +174,7 @@ public sealed partial class RecordingKeptFiles
             try { payload = JsonSerializer.Deserialize<KeptRecordingCleanupPayload>(job.PayloadJson); }
             catch (JsonException) { continue; }
             if (payload == null || !targets.Contains(payload.ManagedFileId)) continue;
+            if (payload.Deletion != null) continue;
             job.CancellationRequestedAt = now;
             if (job.State != DurableJobState.Running)
             {

@@ -1,4 +1,5 @@
 using allstarr.Core.Jobs;
+using allstarr.Core.ManagedFiles;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -10,6 +11,10 @@ public sealed partial class PlaylistTrackRetentionQueue
         AllstarrDbContext db, IReadOnlyList<DurableJobEnqueueRequest<PlaylistTrackRetentionJobPayload>> requests,
         CancellationToken cancellationToken)
     {
+        if (requests.Count == 0) return requests;
+        var suppressed = await RecordingKeptFiles.SuppressedRetentionKeysAsync(db, cancellationToken);
+        requests = requests.Where(item => !suppressed.Contains(
+            $"playlist:{item.Payload.PlaylistLinkId:N}:{item.Payload.RetentionKey}")).ToArray();
         if (requests.Count == 0) return requests;
         var owner = requests[0].OwnerUserId ?? throw new InvalidOperationException("Playlist retention requires an owner.");
         var scope = DurableJobQueue.CreateUserScopeKey(owner);

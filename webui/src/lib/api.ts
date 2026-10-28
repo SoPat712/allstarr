@@ -1110,6 +1110,21 @@ export type ManagedDownload = {
   referenceCount?: number | null;
   explicitlyKept: boolean;
   removable: boolean;
+  canDeleteKeptCopy?: boolean;
+};
+
+export type KeptCopyDeletionPreview = {
+  managedFileId: string;
+  revision: number;
+  referenceFingerprint: string;
+  title: string;
+  artist: string;
+  album: string | null;
+  referenceCount: number;
+  favoriteReferences: number;
+  playlistReferences: number;
+  keepReferences: number;
+  otherReferences: number;
 };
 
 export type DownloadsResponse = {
@@ -2153,6 +2168,15 @@ export const eventLog = {
 };
 
 export const downloads = {
+  previewKeptDeletion: (path: string) => json<KeptCopyDeletionPreview>("/api/admin/downloads/kept/delete-preview", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }),
+  }),
+  deleteKeptCopy: (preview: KeptCopyDeletionPreview, requestId: string) =>
+    json<{ jobId: string; queued: boolean }>("/api/admin/downloads/kept/delete", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ managedFileId: preview.managedFileId, revision: preview.revision,
+        referenceFingerprint: preview.referenceFingerprint, confirmation: "Delete kept copy", requestId }),
+    }),
   list: (storage: "cache" | "kept") =>
     json<DownloadsResponse>(`/api/admin/downloads?storage=${storage}`),
   keep: (path: string) =>

@@ -545,7 +545,8 @@ public partial class DownloadsController : ControllerBase
             ownership?.ReferenceCount > 0 ? "Referenced" : ownership?.Mapping != null || ownership?.ManagedFileId != null ? "Indexed" : "Diagnostic",
             ownership?.ReferenceCount,
             ownership?.ExplicitlyKept == true || ownership?.Mapping != null && ownership.ReferenceCount.GetValueOrDefault() == 0,
-            ownership?.ExplicitlyKept == true, ownership?.QualityCheck, ownership?.QualityCheckArtifactId);
+            ownership?.ExplicitlyKept == true, ownership?.QualityCheck, ownership?.QualityCheckArtifactId,
+            root.Key is "legacy" or "permanent" && ownership?.CanDeleteKeptCopy == true);
     }
 
     private DateTime? Expiry(string root, DateTime lastModified, DateTime? cacheLastUsed) => root switch
@@ -585,6 +586,12 @@ public partial class DownloadsController : ControllerBase
                                      artifact.State
                                  }).ToArrayAsync(cancellationToken);
         var owner = (HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] as AdminAuthSession)?.AllstarrUserId;
+        var session = HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] as AdminAuthSession;
+        var administrator = session is { IsAdministrator: true } && owner != null && await db.Users.AsNoTracking().AnyAsync(item =>
+            item.Id == owner && item.Enabled && item.IsAdmin && item.BackendType == session.BackendType &&
+            item.BackendInstanceId == session.BackendInstanceId && item.BackendPrincipalId == session.UserId, cancellationToken);
+        var importedFiles = await db.Set<Core.ManagedFiles.LegacyMediaAdoptionRecord>().AsNoTracking()
+            .Where(item => fileIds.Contains(item.ManagedFileId)).Select(item => item.ManagedFileId).ToArrayAsync(cancellationToken);
         var prefix = $"keep:user:{owner:N}:";
         var keptFiles = owner == null ? [] : await db.ManagedFileReferences.AsNoTracking()
             .Where(item => item.ReleasedAt == null && item.ReferenceKey.StartsWith(prefix))
@@ -601,7 +608,10 @@ public partial class DownloadsController : ControllerBase
                 AudioQualityCheckJobHandler.ReadCheck(qualityRows.FirstOrDefault(item => item.ManagedFileId == file?.Id)?.QualityCheckJson),
                 qualityRows.FirstOrDefault(item => item.ManagedFileId == file?.Id)?.Id,
                 route == null ? null : new(ReadKeptMetadata(route.DisplayMetadataJson),
-                    sourceKnown ? route.ProviderId : null, sourceKnown ? route.SourceExternalTrackId : null));
+                    sourceKnown ? route.ProviderId : null, sourceKnown ? route.SourceExternalTrackId : null),
+                administrator && _placement != null && route != null && file is { IsManaged: true, OwnerUserId: null, SourceJobId: null } &&
+                    file.RootId == _placement.RootId && file.ScopeKey == Core.ManagedFiles.ManagedFileScopeKey.Create(null, _placement.RootId) &&
+                    file.TargetRootPath == Path.GetFullPath(_placement.RootPath) && !importedFiles.Contains(file.Id));
         }, PathComparer);
     }
 
@@ -802,7 +812,8 @@ public partial class DownloadsController : ControllerBase
         bool ExplicitlyKept,
         AudioQualityCheck? QualityCheck = null,
         Guid? QualityCheckArtifactId = null,
-        KeptDownloadMetadata? Kept = null);
+        KeptDownloadMetadata? Kept = null,
+        bool CanDeleteKeptCopy = false);
 
     private sealed record KeptDownloadMetadata(Core.ManagedFiles.KeptRecordingMetadata? Metadata,
         string? Provider, string? ExternalId);
@@ -834,5 +845,6 @@ public partial class DownloadsController : ControllerBase
         bool Removable,
         bool ExplicitlyKept,
         AudioQualityCheck? QualityCheck = null,
-        Guid? QualityCheckArtifactId = null);
+        Guid? QualityCheckArtifactId = null,
+        bool CanDeleteKeptCopy = false);
 }
