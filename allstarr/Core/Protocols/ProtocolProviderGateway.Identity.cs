@@ -204,6 +204,10 @@ public sealed partial class ProtocolProviderGateway
                 context.Account != null && !IsPublicMetadataProvider(context.ProviderId)
                     ? ProviderIdentityScope.Account : ProviderIdentityScope.Catalog,
                 cancellationToken: context.CancellationToken);
+            var retained = await ReadPlaybackMetadataAsync(context, track);
+            if (retained != null && !retained.IsLocal && NormalizeProvider(retained.ExternalProvider) == track.ProviderId &&
+                retained.ExternalId == track.Value)
+                await identities.RememberPlaybackMetadataAsync(context, track, retained, context.CancellationToken);
         }
         catch (Exception error)
         {
@@ -256,10 +260,10 @@ public sealed partial class ProtocolProviderGateway
                     ThrowRouteFailure(outcome.Error);
                 }
                 song = await EnrichRelationshipsAsync(candidate, outcome.RequireValue());
-                await CacheSongsAsync(candidate.Context, [song], true);
             }
             song.Id = recording.PublicId;
             song.CanonicalRecordingId = recording.Id;
+            await CacheSongsAsync(candidate.Context, [song], true);
             return policy?.Includes(song) == false ? null : song;
         }
         return null;

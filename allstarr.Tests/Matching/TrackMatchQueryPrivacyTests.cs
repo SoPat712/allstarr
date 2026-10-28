@@ -105,13 +105,13 @@ public sealed class TrackMatchQueryPrivacyTests
 
         var detail = await fixture.Service.GetDetailAsync(new(fixture.Owner, false), "spotify", fixture.SharedExternalId);
         var review = await fixture.Service.GetReviewDataAsync(new(fixture.Owner, false));
-        foreach (var identities in new[] { detail.ProviderIdentities, review.ProviderIdentities })
-        {
-            Assert.DoesNotContain(identities, item => item.ProviderAccountId == fixture.OwnerAccountId);
-            Assert.DoesNotContain(identities, item => item.ProviderAccountId == fixture.ForeignAccountId);
-            Assert.Contains(identities, item => item.ExternalId == fixture.PublicAlias);
-            Assert.Contains(identities, item => item.ProviderAccountId == fixture.SharedAccountId);
-        }
+        Assert.DoesNotContain(detail.ProviderIdentities, item => item.ProviderAccountId == fixture.OwnerAccountId);
+        Assert.DoesNotContain(detail.ProviderIdentities, item => item.ProviderAccountId == fixture.ForeignAccountId);
+        Assert.Contains(detail.ProviderIdentities, item => item.ExternalId == fixture.PublicAlias);
+        Assert.Contains(detail.ProviderIdentities, item => item.ProviderAccountId == fixture.SharedAccountId);
+        Assert.Empty(review.Snapshots);
+        Assert.Empty(review.ProviderIdentities);
+        Assert.Empty(review.LibraryTracks);
     }
 
     [Fact]

@@ -48,7 +48,8 @@ public sealed partial class TrackMatchCommandService
         foreach (var snapshot in snapshots.Values)
         {
             PersistenceGuard.RequireOwner(actor, snapshot.OwnerUserId);
-
+            if (snapshot.ResourceKind != "track" || snapshot.ProviderId == "allstarr")
+                throw new ArgumentException("A track snapshot is required.", nameof(inputs));
         }
 
         var libraryTrackIds = requested

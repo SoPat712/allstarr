@@ -59,7 +59,7 @@ public sealed partial class TrackIdentityService
         var providers = links.Select(item => item.ProviderId).Distinct().ToArray();
         var hashes = links.Select(item => item.ExternalIdHash).Distinct().ToArray();
         var snapshots = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item =>
-            providers.Contains(item.ProviderId) && hashes.Contains(item.ExternalIdHash) && item.ResourceKind == "track" &&
+            providers.Contains(item.ProviderId) && hashes.Contains(item.ExternalIdHash) && (item.ResourceKind == "track" || item.ResourceKind == "playback-metadata") &&
             (item.OwnerUserId == userId || userId == null && item.ProviderAccountId == null) &&
             (item.ProviderAccountId == null || db.ProviderAccounts.Any(account =>
                 account.Id == item.ProviderAccountId && account.Enabled &&
@@ -81,17 +81,18 @@ public sealed partial class TrackIdentityService
         var songs = new List<Song>();
         foreach (var link in links)
         {
-            var snapshot = snapshots.Where(item => item.ProviderId == link.ProviderId &&
+            var sourceSnapshots = snapshots.Where(item => item.ProviderId == link.ProviderId &&
                     item.ExternalIdHash == link.ExternalIdHash &&
                     (item.ProviderTrackIdentityId == null || item.ProviderTrackIdentityId == link.Id) &&
                     (link.Scope == ProviderIdentityScope.Catalog || item.ProviderAccountId == link.ProviderAccountId))
                 .OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
-                .ThenBy(item => item.Id).FirstOrDefault();
+                .ThenBy(item => item.Id).ToArray();
             Song? song = null;
-            if (snapshot != null)
+            foreach (var retained in sourceSnapshots)
             {
-                try { song = ReadDisplaySong(snapshot.PayloadJson, link.ProviderId, link.ExternalId); }
+                try { song = ReadDisplaySong(retained.PayloadJson, link.ProviderId, link.ExternalId); }
                 catch (JsonException) { }
+                if (song != null) break;
             }
             if (song == null)
                 foreach (var payload in evidence)
@@ -106,7 +107,7 @@ public sealed partial class TrackIdentityService
                     }
                     catch (JsonException) { }
                 }
-            song ??= new Song { ExternalProvider = link.ProviderId, ExternalId = link.ExternalId };
+            if (song == null) continue;
             song.Id = recording.PublicId;
             song.CanonicalRecordingId = recording.Id;
             song.Isrc = Identifier(recording, RecordingIdentifierKinds.Isrc) ?? song.Isrc;

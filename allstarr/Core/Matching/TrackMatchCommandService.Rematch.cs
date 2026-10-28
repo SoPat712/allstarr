@@ -99,6 +99,9 @@ public sealed partial class TrackMatchCommandService
             return new(false, TrackMatchCommandFailure.NotFound, "Track snapshot was not found");
         if (!actor.IsAdministrator && snapshot.OwnerUserId != actor.UserId)
             return new(false, TrackMatchCommandFailure.Forbidden, "Track snapshot is outside your account");
+        if (snapshot.ResourceKind != "track" || snapshot.ProviderId == "allstarr")
+            return new(false, TrackMatchCommandFailure.Invalid, "A track snapshot is required");
+
         var catalogActor = CatalogActor(actor, snapshot);
 
         var source = snapshot.ProviderTrackIdentityId.HasValue

@@ -14,6 +14,30 @@ public sealed partial class TrackIdentityService
         ProviderExternalResourceId externalId, string publicId, ProviderIdentityScope scope, string? isrc = null,
         CancellationToken cancellationToken = default)
     {
+        var recordingId = await RememberSourceCoreAsync(execution, externalId, publicId, scope, isrc, cancellationToken);
+        var songs = await GetStoredSongsAsync(execution.Actor, recordingId.ToString("D"), cancellationToken);
+        var retained = songs.FirstOrDefault(song => song.CanonicalRecordingId == recordingId &&
+            song.ExternalProvider == externalId.ProviderId && song.ExternalId == externalId.Value);
+        if (retained == null && songs.Count > 0 && songs.All(song => song.CanonicalRecordingId == recordingId) &&
+            songs.Select(song => (song.Title.Trim().ToUpperInvariant(), song.Artist.Trim().ToUpperInvariant())).Distinct().Count() == 1)
+            retained = new allstarr.Models.Domain.Song
+            {
+                ExternalProvider = externalId.ProviderId,
+                ExternalId = externalId.Value,
+                Title = songs[0].Title,
+                Artist = songs[0].Artist,
+                Duration = songs[0].Duration,
+                PreciseDuration = songs[0].PreciseDuration
+            };
+        if (retained != null)
+            await RememberPlaybackMetadataAsync(execution, externalId, retained, cancellationToken);
+        return recordingId;
+    }
+
+    private async Task<Guid> RememberSourceCoreAsync(ProviderExecutionContext execution,
+        ProviderExternalResourceId externalId, string publicId, ProviderIdentityScope scope, string? isrc,
+        CancellationToken cancellationToken)
+    {
         EnsureStorageReady();
         ThrowIfUnavailable(execution, cancellationToken);
         var automatic = await CanAutomaticallyLinkAsync(execution.Actor, externalId.ProviderId, cancellationToken);

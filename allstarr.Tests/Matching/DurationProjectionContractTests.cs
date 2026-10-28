@@ -34,6 +34,7 @@ public sealed class DurationProjectionContractTests
             new HashSet<string>(),
             Guid.CreateVersion7(),
             false,
+            null,
             null
         ])!);
         Assert.Equal("spotify", source.GetProperty("providerId").GetString());
@@ -65,6 +66,7 @@ public sealed class DurationProjectionContractTests
             new HashSet<string>(),
             Guid.CreateVersion7(),
             false,
+            null,
             null
         ])!);
         Assert.Equal(200_000, target.GetProperty("durationMilliseconds").GetInt64());
@@ -111,6 +113,7 @@ public sealed class DurationProjectionContractTests
             new HashSet<string>(),
             Guid.CreateVersion7(),
             false,
+            null,
             null
         ])!;
 

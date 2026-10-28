@@ -116,6 +116,45 @@ async function mockMatching(page: Page, options: AuthorityOptions) {
   });
 }
 
+test("match review hides unlabeled and internal rows while keeping saved manual targets", async ({ page }) => {
+  await mockMatching(page, { administrator: false });
+  const source = { ...matchFixture(false), candidates: [], providerIdentities: [
+    { providerId: "allstarr", externalId: "recording", scope: "catalog", verification: "verified" },
+  ] };
+  await page.route("**/api/admin/track-matches?*", route => json(route, {
+    matches: [
+      { ...source, externalSnapshotId: "saved-provider", title: "Saved external source", state: "accepted",
+        target: { providerId: "qobuz", externalId: "saved-target", title: "Saved provider recording", artist: "Saved artist" } },
+      { ...source, externalSnapshotId: "saved-local", title: "Saved local source", state: "accepted",
+        localTrack: { id: "local-recording", backendItemId: "local-recording", title: "Saved library recording" } },
+      { ...source, externalSnapshotId: "saved-without-metadata", title: "Source with unavailable target details", state: "accepted",
+        target: { providerId: "qobuz", externalId: "saved-without-metadata", title: null } },
+      { ...source, externalSnapshotId: "unresolved-source", title: "Unmatched source song", state: "unresolved", manualAuthorities: [] },
+      { ...source, externalSnapshotId: "untitled-source", title: null },
+      { ...source, externalSnapshotId: "missing-artist", artist: null },
+      { ...source, externalSnapshotId: "blank-source", title: " \t " },
+      { ...source, externalSnapshotId: "internal-source", providerId: "allstarr", title: "Internal recording" },
+      { ...source, externalSnapshotId: "missing-provider", providerId: "", title: "Missing provider" },
+    ],
+    stats: { total: 4, matched: 3, accepted: 3, unresolved: 1, suggested: 0, review: 0,
+      ambiguous: 0, rejected: 0, attention: 1, manualMatches: 3, manualRejections: 0 },
+    pagination: { page: 1, pageSize: 50, total: 4, totalPages: 1 },
+  }));
+  await page.goto("#/library/mappings");
+  const rows = page.locator(".mapping-row");
+  await expect(rows).toHaveCount(4);
+  await expect(page.getByText("Unknown song", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/Unknown source/)).toHaveCount(0);
+  await expect(page.getByText("Internal recording", { exact: true })).toHaveCount(0);
+  await expect(rows.filter({ hasText: "Saved external source" })).toContainText("Saved provider recording");
+  await expect(rows.filter({ hasText: "Saved local source" })).toContainText("Saved library recording");
+  await expect(rows.filter({ hasText: "Source with unavailable target details" })).toContainText("Metadata unavailable");
+  await expect(rows.filter({ hasText: "Unmatched source song" })).toContainText("No match yet");
+  await expect(page.getByRole("navigation", { name: "Match review pages" })).toContainText("4 songs");
+  await page.getByRole("checkbox", { name: "Select all songs on this page" }).check();
+  await expect(page.getByRole("toolbar", { name: "Actions for selected songs" })).toContainText("4 selected");
+});
+
 test("match dialog shows field scores at 320px in dark mode", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await page.setViewportSize({ width: 320, height: 844 });

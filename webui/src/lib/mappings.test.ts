@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
+import type { MatchReviewItem } from "./api";
 import {
   candidateResolution,
   currentTarget,
   differenceHash,
   hashSimilarity,
   isAttention,
+  isReviewableMatch,
   matchScore,
   percent,
   playableProviderIds,
@@ -18,6 +20,42 @@ import {
 } from "./mappings";
 
 describe("mapping review presentation", () => {
+  it("shows only labeled source songs with usable review identities", () => {
+    const match: MatchReviewItem = {
+      externalSnapshotId: "source-snapshot", providerId: "spotify", title: "Source song", artist: "Source performer",
+      state: "unresolved", decisionSource: "automatic", providerIdentities: [],
+      candidates: [], reasons: [], warnings: [],
+    };
+    expect(isReviewableMatch(match)).toBe(true);
+    for (const title of [undefined, null, "", " \t\n "])
+      expect(isReviewableMatch({ ...match, title })).toBe(false);
+    for (const artist of [undefined, null, "", " "])
+      expect(isReviewableMatch({ ...match, artist })).toBe(false);
+    for (const providerId of ["", " ", "allstarr", " AllStarr "])
+      expect(isReviewableMatch({ ...match, providerId })).toBe(false);
+    expect(isReviewableMatch({ ...match, externalSnapshotId: " " })).toBe(false);
+    expect(isReviewableMatch({ ...match, state: "accepted", decisionSource: "manual",
+      target: { providerId: "qobuz", externalId: "saved-target", title: null },
+    })).toBe(true);
+    expect(isReviewableMatch({ ...match, state: "accepted", decisionSource: "manual",
+      localTrack: { id: "saved-local", backendItemId: "saved-local", title: "Saved local song" },
+    })).toBe(true);
+  });
+
+  it("ignores internal recording identities when finding a saved playback target", () => {
+    const match: MatchReviewItem = {
+      externalSnapshotId: "source-snapshot", providerId: "spotify", title: "Source song", artist: "Source performer",
+      state: "unresolved", decisionSource: "automatic", providerIdentities: [
+        { providerId: "allstarr", externalId: "recording", scope: "catalog", verification: "verified" },
+      ], candidates: [], reasons: [], warnings: [],
+    };
+    expect(currentTarget(match)).toBeNull();
+    expect(currentTarget({ ...match, providerIdentities: [
+      ...match.providerIdentities,
+      { providerId: "qobuz", externalId: "saved-target", scope: "catalog", verification: "verified" },
+    ] })).toMatchObject({ providerId: "qobuz", identity: "saved-target", title: "Metadata unavailable" });
+  });
+
   it("separates routing priority from confidence evidence", () => {
     const components = { title: 1, priorityWindow: 0.07, routingPriority: 0, acceptanceQualified: 1 };
     expect(scoreComponents({ components })).toEqual([["title", 1]]);

@@ -1,4 +1,5 @@
 using allstarr.Core.Music;
+using allstarr.Core.Matching;
 using allstarr.Models.Domain;
 using Microsoft.EntityFrameworkCore;
 using allstarr.Core.Capabilities;
@@ -163,6 +164,13 @@ public sealed partial class TrackIdentityServiceTests
         Assert.Equal(1, opened);
         metadata.Verify(item => item.GetTrackAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderTrackLookupRequest>()), Times.Once);
         Assert.Equal(snapshots, await db.ExternalMetadataSnapshots.CountAsync());
+        var restarted = new ProtocolProviderGateway(Mock.Of<IProviderRouter>(MockBehavior.Strict), registry,
+            Mock.Of<IHttpClientFactory>(MockBehavior.Strict), identities: new TrackIdentityService(_factory, _storageState, _clock),
+            audioVerifier: FixtureAudioVerifier.Instance);
+        var retained = await restarted.GetStoredSongAsync(protocol, "artistgrid", "wave");
+        Assert.Equal("Wave", retained!.Title);
+        Assert.Equal("Artist", retained.Artist);
+        Assert.Equal(44100, retained.SampleRate);
         var inspected = await gateway.OpenStreamAsync(protocol with { IsReadOnly = true }, "artistgrid", "wave", ProviderAudioQuality.Any, null, true);
         Assert.NotNull(inspected);
         using (inspected.Response)

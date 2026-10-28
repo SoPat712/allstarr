@@ -1,6 +1,20 @@
 import type { MatchCandidate, MatchReviewItem, MatchTarget, ProviderDefinition } from "./api";
 import { canonicalProviderId } from "./sources";
 
+function isReviewProvider(providerId: string) {
+  const normalized = providerId.trim().toLowerCase();
+  return normalized !== "" && normalized !== "allstarr";
+}
+
+export function isReviewableMatch(match: MatchReviewItem) {
+  return Boolean(match.externalSnapshotId.trim() && isReviewProvider(match.providerId) && match.title?.trim() && match.artist?.trim());
+}
+
+export function reviewProviderIdentities(match: MatchReviewItem) {
+  return match.providerIdentities.filter((identity) =>
+    isReviewProvider(identity.providerId) && identity.externalId.trim());
+}
+
 export function isAttention(state: string) {
   return ["unresolved", "suggested", "ambiguous", "rejected"].includes(state.toLowerCase());
 }
@@ -157,7 +171,7 @@ export function currentTarget(match: MatchReviewItem) {
       providerId: "local",
       artworkUrl: match.localTrack.artworkUrl,
     };
-  const route = match.providerIdentities.find(
+  const route = reviewProviderIdentities(match).find(
     (identity) => identity.providerId.toLowerCase() !== match.providerId.toLowerCase(),
   );
   const candidate = route && match.candidates.find(

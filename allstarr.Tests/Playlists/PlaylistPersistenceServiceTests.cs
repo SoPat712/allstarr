@@ -687,7 +687,7 @@ public sealed partial class PlaylistPersistenceServiceTests : IAsyncLifetime
         Assert.Equal(PlaylistTrackRetention.OnDemand, changed.TrackRetention);
     }
 
-    private ExternalSnapshotInput Snapshot(int version, string id) => new(_accountA, "fixture", "track", Hash(id), version, $"rev-{id}", $"{{\"title\":\"{id}\"}}", Hash($"payload-{id}"));
+    private ExternalSnapshotInput Snapshot(int version, string id) => new(_accountA, "fixture", "track", Hash(id), version, $"rev-{id}", $"{{\"title\":\"{id}\",\"artist\":\"Fixture artist\"}}", Hash($"payload-{id}"));
     private PlaylistLinkInput Link() => new(_accountA, "fixture", "playlist-1", Hash("playlist-1"), "jellyfin", "backend", PlaylistLinkMode.Materialized, PlaylistMaterializationMode.Reconcile, "rules-v1", "policy-v1");
     private ProtocolExecutionContext Context(Guid user, string principal, bool admin = false) => new(ProtocolKind.Jellyfin, "backend", principal, new AllstarrPrincipal(user, "jellyfin", "backend", principal, principal, admin), "correlation", _now.AddMinutes(1), CancellationToken.None);
     private UserRecord User(Guid id, string name) => new() { Id = id, DisplayName = name, Enabled = true, BackendType = "jellyfin", BackendInstanceId = "backend", BackendPrincipalId = "principal-" + name.ToLowerInvariant(), CreatedAt = _now, UpdatedAt = _now };

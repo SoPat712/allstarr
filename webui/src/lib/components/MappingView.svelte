@@ -51,9 +51,11 @@
     candidateResolution,
     currentTarget,
     isAttention,
+    isReviewableMatch,
     playableProviderIds,
     percent,
     reviewStateLabel,
+    reviewProviderIdentities,
     scoreComponents,
   } from "$lib/mappings";
   import { formatDuration } from "$lib/playlists";
@@ -104,6 +106,7 @@
   let error = $state("");
   let degraded = $state("");
   const playbackProviders = $derived(playableProviderIds(providers));
+  const visibleMatches = $derived(data?.matches.filter(isReviewableMatch) ?? []);
   let action = $state("");
   let loadVersion = 0;
   let rowsElement = $state<HTMLElement>();
@@ -155,8 +158,11 @@
       if (version !== loadVersion) return;
       data = response;
       remember(key, response);
-      for (const match of response.matches)
-        if (chosen.has(match.externalSnapshotId)) chosen.set(match.externalSnapshotId, match);
+      for (const match of response.matches) {
+        if (!chosen.has(match.externalSnapshotId)) continue;
+        if (isReviewableMatch(match)) chosen.set(match.externalSnapshotId, match);
+        else chosen.delete(match.externalSnapshotId);
+      }
       void prefetch(page + 1);
     } catch (cause) {
       if (version !== loadVersion) return;
@@ -185,7 +191,7 @@
     try {
       const requested = data?.matches.find((item) => item.externalSnapshotId === initialReview) ??
         await matchReview.get(initialReview);
-      if (!requested) return;
+      if (!requested || !isReviewableMatch(requested)) return;
       initialReviewOpened = true;
       openMatch(requested);
     } catch {
@@ -359,7 +365,7 @@
   }
 
   const chosenItems = $derived([...chosen.values()]);
-  const pageIds = $derived(data?.matches.map((match) => match.externalSnapshotId) ?? []);
+  const pageIds = $derived(visibleMatches.map((match) => match.externalSnapshotId));
   const pageChosen = $derived(pageIds.filter((id) => chosen.has(id)).length);
   const bestResolution = (match: MatchReviewItem) => candidateResolution(match.candidates.find((item) =>
     candidateResolution(item, match.providerId, playbackProviders)), match.providerId, playbackProviders);
@@ -384,7 +390,7 @@
     if (!data) return;
     const next = new Map(chosen);
     const all = pageChosen === pageIds.length;
-    for (const match of data.matches) {
+    for (const match of visibleMatches) {
       if (all) next.delete(match.externalSnapshotId);
       else next.set(match.externalSnapshotId, match);
     }
@@ -590,7 +596,7 @@
 
 
 
-      {#if data.matches.length}
+      {#if visibleMatches.length}
         <div class="mapping-select-bar">
           <label class="mapping-check">
             <input type="checkbox" checked={pageChosen > 0 && pageChosen === pageIds.length}
@@ -603,7 +609,7 @@
       {/if}
 
       <div class="mapping-rows" bind:this={rowsElement}>
-        {#each data.matches as match (match.externalSnapshotId)}
+        {#each visibleMatches as match (match.externalSnapshotId)}
           {@const target = currentTarget(match)}
           {@const candidate = match.candidates.find((item) =>
             candidateResolution(item, match.providerId, playbackProviders))}
@@ -778,7 +784,7 @@
                 {#if match.libraryTrackId}<div><dt>Library track</dt><dd>{match.libraryTrackId}</dd></div>{/if}
                 {#if match.isrc}<div><dt>ISRC</dt><dd>{match.isrc}</dd></div>{/if}
                 {#if match.algorithmVersion}<div><dt>Algorithm</dt><dd>{match.algorithmVersion}</dd></div>{/if}
-                {#each match.providerIdentities as identity}
+                {#each reviewProviderIdentities(match) as identity}
                   <div><dt>{providerName(identity.providerId)}</dt><dd>{identity.externalId} · {identity.verification}</dd></div>
                 {/each}
               </dl>

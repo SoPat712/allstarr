@@ -114,28 +114,25 @@ public sealed partial class TrackMatchCommandService
             ? null
             : await VisibleProviderAccountIdsAsync(db, actor.UserId, cancellationToken);
         var snapshotsQuery = db.ExternalMetadataSnapshots.AsNoTracking()
-            ;
+            .Where(item => item.ResourceKind == "track" && item.ProviderId != "allstarr");
         if (!actor.IsAdministrator)
-            snapshotsQuery = snapshotsQuery.Where(item => item.OwnerUserId == actor.UserId);
+            snapshotsQuery = snapshotsQuery.Where(item => item.OwnerUserId == actor.UserId &&
+                (item.ProviderAccountId == null || visibleAccountIds!.Contains(item.ProviderAccountId.Value) &&
+                    db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId && account.ProviderId == item.ProviderId)));
         if (externalSnapshotId.HasValue)
             snapshotsQuery = snapshotsQuery.Where(item => item.Id == externalSnapshotId.Value);
-        var orderedSnapshots = snapshotsQuery.OrderByDescending(item => item.RetrievedAt);
+        var orderedSnapshots = snapshotsQuery.OrderByDescending(item => item.RetrievedAt)
+            .ThenByDescending(item => item.SnapshotVersion).ThenByDescending(item => item.Id);
         var limit = Math.Clamp(scanLimit, 1, 10000);
-        List<ExternalMetadataSnapshotRecord> snapshots;
-        if (string.IsNullOrWhiteSpace(search))
-            snapshots = await orderedSnapshots.Take(limit).ToListAsync(cancellationToken);
-        else
+        var normalizedSearch = string.IsNullOrWhiteSpace(search) ? null : TrackMatchReviewSearch.Normalize(search);
+        List<ExternalMetadataSnapshotRecord> snapshots = [];
+        await foreach (var snapshot in orderedSnapshots.AsAsyncEnumerable().WithCancellation(cancellationToken))
         {
-            var normalizedSearch = TrackMatchReviewSearch.Normalize(search);
-            snapshots = [];
-            if (normalizedSearch.Length > 0)
-                await foreach (var snapshot in orderedSnapshots.AsAsyncEnumerable().WithCancellation(cancellationToken))
-                {
-                    if (!TrackMatchReviewSearch.Matches(snapshot.ProviderId, snapshot.PayloadJson, normalizedSearch))
-                        continue;
-                    snapshots.Add(snapshot);
-                    if (snapshots.Count == limit) break;
-                }
+            if (!TrackSnapshotMetadata.HasDisplayLabels(snapshot.PayloadJson)) continue;
+            if (normalizedSearch != null && (normalizedSearch.Length == 0 ||
+                !TrackMatchReviewSearch.Matches(snapshot.ProviderId, snapshot.PayloadJson, normalizedSearch))) continue;
+            snapshots.Add(snapshot);
+            if (snapshots.Count == limit) break;
         }
         var snapshotIds = snapshots.Select(item => item.Id).ToArray();
         var decisionQuery = db.TrackMatches.AsNoTracking()
@@ -200,7 +197,26 @@ public sealed partial class TrackMatchCommandService
                 .ThenBy(item => item.ExternalId),
             visibleAccountIds,
             cancellationToken);
-        return new(snapshots, decisions, overrides, library, identities);
+        var hashes = snapshots.Select(item => item.ExternalIdHash).Distinct().ToArray();
+        var owners = snapshots.Select(item => item.OwnerUserId).Distinct().ToArray();
+        var mediaSnapshots = await db.ExternalMetadataSnapshots.AsNoTracking()
+            .Where(item => item.ResourceKind == "track-media" && hashes.Contains(item.ExternalIdHash) &&
+                owners.Contains(item.OwnerUserId) &&
+                (item.ProviderAccountId == null || db.ProviderAccounts.Any(account =>
+                    account.Id == item.ProviderAccountId && account.ProviderId == item.ProviderId && account.Enabled &&
+                    (account.OwnerUserId == null || account.OwnerUserId == item.OwnerUserId) &&
+                    item.ProviderRevision == "media:" + account.Revision)))
+            .OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
+            .ToArrayAsync(cancellationToken);
+        var mediaBySnapshot = new Dictionary<Guid, ExternalMetadataSnapshotRecord>();
+        foreach (var snapshot in snapshots)
+        {
+            var media = mediaSnapshots.FirstOrDefault(item => item.OwnerUserId == snapshot.OwnerUserId &&
+                item.ProviderId == snapshot.ProviderId && item.ProviderAccountId == snapshot.ProviderAccountId &&
+                item.ExternalIdHash == snapshot.ExternalIdHash);
+            if (media != null) mediaBySnapshot[snapshot.Id] = media;
+        }
+        return new(snapshots, decisions, overrides, library, identities) { MediaSnapshots = mediaBySnapshot };
     }
 
     private async Task<IReadOnlyList<ProviderTrackIdentityRecord>> VisibleProviderIdentitiesAsync(
