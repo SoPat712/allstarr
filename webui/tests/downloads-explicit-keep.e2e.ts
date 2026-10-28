@@ -227,9 +227,10 @@ for (const width of [390, 1280]) {
 
 for (const width of [390, 1280]) {
   for (const colorScheme of ["light", "dark"] as const) {
-    test(`referenced kept copy deletion requires clear confirmation at ${width}px in ${colorScheme} mode`, async ({ page }) => {
+    test(`referenced kept copy deletion without the secure UUID API requires clear confirmation at ${width}px in ${colorScheme} mode`, async ({ page }) => {
       await page.setViewportSize({ width, height: 844 });
       await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+      await page.addInitScript(() => Object.defineProperty(crypto, "randomUUID", { value: undefined }));
       await mockDownloadsApp(page);
       let previewRequests = 0;
       const deletionRequests: unknown[] = [];
@@ -275,6 +276,8 @@ for (const width of [390, 1280]) {
       await expect.poll(() => deletionRequests.length).toBe(1);
       expect(deletionRequests[0]).toMatchObject({ managedFileId: preview.managedFileId, revision: 5,
         referenceFingerprint: "reference-proof", confirmation: "Delete kept copy" });
+      expect((deletionRequests[0] as { requestId: string }).requestId)
+        .toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
       expect(previewRequests).toBe(2);
       await expect(page.getByText("Kept copy deletion queued.", { exact: true })).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
