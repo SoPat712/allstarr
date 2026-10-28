@@ -4,6 +4,7 @@ import { adminUrl } from "./admin-url";
 export type LiveState = "connecting" | "live" | "reconnecting" | "stale";
 
 export type UpdateEvent = {
+  reason?: "poll" | "resume";
   requiresAdministrator?: boolean;
   eventId?: string;
   revision?: number;
@@ -75,6 +76,19 @@ export function createRefreshScheduler(
   };
 }
 
+export function createManualRefresh() {
+  let pending = $state(false);
+  return {
+    get pending() { return pending; },
+    async run(refresh: () => void | Promise<unknown>) {
+      if (pending) return;
+      pending = true;
+      try { await refresh(); }
+      finally { pending = false; }
+    },
+  };
+}
+
 function scheduleStale() {
   if (staleTimer) clearTimeout(staleTimer);
   staleTimer = setTimeout(() => {
@@ -94,11 +108,12 @@ export const liveUpdates = {
     source = stream;
     stream.addEventListener("stream-status", () => {
       if (source !== stream) return;
-      const reconnecting = state.status === "reconnecting" || state.status === "stale";
       if (staleTimer) clearTimeout(staleTimer);
+      revisions.clear();
+      seenEventIds.clear();
       state.status = "live";
       state.lastEventAt = new Date();
-      if (reconnecting) for (const listener of listeners) listener({});
+      for (const listener of listeners) listener({});
     });
     stream.addEventListener("update", (message) => {
       if (source !== stream) return;
@@ -127,14 +142,21 @@ export const liveUpdates = {
     this.close();
     this.connect(administrator, scope);
   },
-  subscribe(listener: (event: UpdateEvent) => void, pollInterval = 15_000) {
+  subscribe(listener: (event: UpdateEvent) => void, pollInterval = 5_000) {
     listeners.add(listener);
-    const fallback = setInterval(() => {
-      if (state.status !== "live") listener({});
-    }, pollInterval);
+    // Some changes have no outbox event. Reconcile visible pages even on a healthy stream.
+    const reconcile = (reason: "poll" | "resume") => {
+      if (typeof document === "undefined" || document.visibilityState !== "hidden") listener({ reason });
+    };
+    const resume = () => reconcile("resume");
+    const fallback = setInterval(() => reconcile("poll"), pollInterval);
+    if (typeof window !== "undefined") window.addEventListener("focus", resume);
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", resume);
     return () => {
       listeners.delete(listener);
       clearInterval(fallback);
+      if (typeof window !== "undefined") window.removeEventListener("focus", resume);
+      if (typeof document !== "undefined") document.removeEventListener("visibilitychange", resume);
     };
   },
   close() {

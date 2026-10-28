@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { health, healthError, healthReason, type HealthRun, type HealthSnapshot, type HealthStep } from "$lib/health";
   import SelectField from "$lib/components/SelectField.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Skeleton } from "$lib/components/ui/skeleton";
 
@@ -81,7 +83,13 @@
     fetching = true;
     try {
       const value = await health.get(abort.signal);
+      const previous = snapshot?.configuration;
+      const pristine = previous && enabled === previous.enabled &&
+        listenerUserId === (previous.listenerUserId ?? "") && intervalMinutes === previous.intervalMinutes &&
+        searchQuery === previous.searchQuery && firstByteBudgetSeconds === previous.firstByteBudgetSeconds &&
+        !username && !password && !webhookUrl && !clearWebhook;
       snapshot = value; error = "";
+      if (pristine && !reset) applyConfiguration(value);
       if (reset) { applyConfiguration(value); polls = 0; pollLimitReached = false; }
     } catch (cause) {
       if (!abort.signal.aborted) error = healthError(cause);
@@ -119,9 +127,11 @@
     finally { action = ""; }
   }
 
+  const scheduler = createRefreshScheduler(() => load());
   onMount(() => {
     void load(true);
-    return () => { clearTimeout(timer); abort.abort(); };
+    const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
+    return () => { unsubscribe(); scheduler.cancel(); clearTimeout(timer); abort.abort(); };
   });
 </script>
 
@@ -155,7 +165,7 @@
     {#if error}<p role="alert" class="notice-error">{error}</p>{/if}
     <footer>
       {#if error}<Button variant="secondary" disabled={Boolean(action)} onclick={() => void load(true)}>Reload health settings</Button>{/if}
-      <Button variant="secondary" disabled={Boolean(action)} onclick={() => { polls = 0; pollLimitReached = false; void load(); }}>Refresh results</Button>
+      <RefreshButton variant="secondary" disabled={Boolean(action)} onrefresh={() => { polls = 0; pollLimitReached = false; return load(); }} label="Refresh results" />
     </footer>
   </article>
 

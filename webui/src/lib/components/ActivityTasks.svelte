@@ -5,6 +5,7 @@
   import { liveUpdates, createRefreshScheduler } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button } from "$lib/components/ui/button";
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import ActivityOutcome from "$lib/components/ActivityOutcome.svelte";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import RouteError from "$lib/components/RouteError.svelte";
@@ -58,7 +59,7 @@
 </script>
 
 <section class="panel activity-tasks" aria-label="Background tasks" aria-busy={busy}>
-  <header class="tasks-heading"><div><h2>Tasks</h2><p>{scope === "everyone" ? "Scheduled work and automatic household maintenance." : "Your scheduled work."}</p></div><Button variant="secondary" disabled={busy} onclick={() => void load()}>Refresh tasks</Button></header>
+  <header class="tasks-heading"><div><h2>Tasks</h2><p>{scope === "everyone" ? "Scheduled work and automatic household maintenance." : "Your scheduled work."}</p></div><RefreshButton variant="secondary" onrefresh={load} label="Refresh tasks" /></header>
   {#if loading}<Skeleton class="skeleton-panel" aria-label="Loading tasks" aria-busy="true" />
   {:else if error && !items.length}<RouteError eyebrow="Tasks unavailable" title="Scheduled tasks are unavailable." message={error} onRetry={load} />
   {:else}

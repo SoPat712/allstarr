@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { home, matchReview, type MatchReviewItem, type ProviderDefinition } from "$lib/api";
   import { Button } from "$lib/components/ui/button";
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import SelectField from "$lib/components/SelectField.svelte";
@@ -144,7 +145,7 @@
 
 {#if administrator}
   <section class="settings-content" aria-label="Problem report inbox">
-    <header class="panel-heading"><div><h2>Problem reports</h2><p>Notes and captured diagnostics from your listeners.</p></div><div class="panel-heading-actions"><Button variant="secondary" disabled={busy} onclick={() => void load()}>Refresh reports</Button></div></header>
+    <header class="panel-heading"><div><h2>Problem reports</h2><p>Notes and captured diagnostics from your listeners.</p></div><div class="panel-heading-actions"><RefreshButton variant="secondary" onrefresh={() => load()} label="Refresh reports" /></div></header>
     <SegmentedNav label="Report status" active={filter} onchange={(next) => void choose(next)} items={[
       { id: "new", label: "New" }, { id: "seen", label: "Seen" }, { id: "fixed", label: "Fixed" }, { id: "all", label: "All" },
     ]} />

@@ -5,6 +5,7 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import {
     ArrowRight,
     Ban,
@@ -544,7 +545,7 @@
         </div>
         <div class="panel-heading-actions playlist-toolbar-actions mapping-heading-actions">
           <Button variant="secondary" disabled={Boolean(action) || refreshing} onclick={() => rematchAllOpen = true}>Rematch all</Button>
-          <Button variant="secondary" disabled={Boolean(action) || refreshing} onclick={() => void reload()}>Refresh</Button>
+          <RefreshButton variant="secondary" disabled={Boolean(action)} onrefresh={reload} />
         </div>
       </header>
 

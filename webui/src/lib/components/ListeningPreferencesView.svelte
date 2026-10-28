@@ -1,6 +1,7 @@
 <script lang="ts">
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
+  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { ArrowDown, ArrowUp } from "@lucide/svelte";
   import {
     ApiError,
@@ -93,7 +94,8 @@
     return cause instanceof Error ? cause.message : action;
   }
 
-  async function load() {
+  async function load(passive = false) {
+    if (passive && (busy || dirty)) return;
     loading = !snapshot;
     busy = Boolean(snapshot);
     error = "";
@@ -148,7 +150,12 @@
     }
   }
 
-  onMount(() => { void load(); });
+  const scheduler = createRefreshScheduler(() => load(true));
+  onMount(() => {
+    void load();
+    const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
+    return () => { unsubscribe(); scheduler.cancel(); };
+  });
 </script>
 
 {#if loading}

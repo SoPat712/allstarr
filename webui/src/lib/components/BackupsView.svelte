@@ -7,6 +7,7 @@
   import FilePicker from "$lib/components/FilePicker.svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Skeleton } from "$lib/components/ui/skeleton";
 
@@ -161,7 +162,7 @@
         <Button disabled={Boolean(action) || !ready || pending || active || directoryUnavailable} onclick={() => void start()}>{action === "backup" ? "Queuing…" : "Back up now"}</Button></div>
       {#if active && polls >= 60}<p class="notice-info" role="status">The backup is still running. Refresh its status to check again.</p>{/if}
       {#if status}<div class="settings-row"><div><strong>Check progress</strong><small>Active work updates automatically.</small></div>
-        <Button variant="secondary" disabled={refreshing} onclick={() => { polls = 0; void refresh(); }}>Refresh status</Button></div>{/if}
+        <RefreshButton variant="secondary" onrefresh={() => { polls = 0; return refresh(); }} label="Refresh status" /></div>{/if}
     </article>
 
     {#if draft && saved}

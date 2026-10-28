@@ -140,7 +140,7 @@
       const label = requests[index][0];
       if (label === "schema") schema = result.value as UiSchema;
       if (label === "config") {
-        if (dirtyOwners.length) serverChanged = true;
+        if (dirtyOwners.length) serverChanged = JSON.stringify(config) !== JSON.stringify(result.value);
         else config = result.value as Record<string, unknown>;
       }
       if (label === "cache")

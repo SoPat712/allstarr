@@ -7,6 +7,7 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import {
     downloads,
     home,
@@ -248,7 +249,7 @@
         <span><small>Size</small><strong>{data.totalSizeFormatted}</strong></span>
       </div>
       <div class="panel-heading-actions downloads-heading-actions">
-        <Button variant="secondary" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Refreshing…" : "Refresh"}</Button>
+        <RefreshButton variant="secondary" onrefresh={refresh} />
         {#if bulkActionCount}
           <Button variant="destructive" onclick={() => confirm({ kind: "all" })}>Remove all</Button>
         {/if}

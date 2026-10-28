@@ -287,7 +287,7 @@
       routeFilter = "all";
     }
     detailOpen = true;
-    detailLoading = true;
+    detailLoading = changingPlaylist || !details;
     detailError = "";
     const request = ++detailRequest;
     try {
