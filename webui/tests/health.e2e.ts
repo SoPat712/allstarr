@@ -169,8 +169,10 @@ test("Health runs while schedule is off, polls pending work and shows failure an
   await expect(page.getByRole("region", { name: "Check history", exact: true })).toContainText("Failed");
   await expect.poll(() => polls).toBe(2);
   const completedReads = reads;
-  await page.waitForTimeout(2500);
-  expect(reads).toBe(completedReads);
+  // Completed checks stop their fast polling; visible settings still reconcile every five seconds.
+  await page.waitForTimeout(5500);
+  expect(reads).toBeGreaterThan(completedReads);
+  expect(reads).toBeLessThanOrEqual(completedReads + 2);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: testInfo.outputPath("health-recovery-390-dark.png") });

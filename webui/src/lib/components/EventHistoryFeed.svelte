@@ -102,12 +102,13 @@
     if (refreshing || loadingEarlier) return;
     if (mode === "older") loadingEarlier = true;
     else refreshing = true;
-    error = "";
+    if (items.length) error = "";
     try {
       const response = await eventLog.list(mode === "older"
         ? { limit: 50, before: cursor, beforeId: cursorId, scope }
         : { limit: 50, scope });
       if (disposed) return;
+      error = "";
       if (mode === "initial") items = response.items;
       else if (mode === "older") items = mergeActivity(items, response.items);
       else {

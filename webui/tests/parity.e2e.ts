@@ -5750,7 +5750,7 @@ test("Sources keeps never-connected built-ins in the available catalog", async (
     await expect(services.locator(".source-name").getByText(name, { exact: true })).toBeVisible();
 });
 
-test("Sources ignores playback updates and coalesces source checks", async ({ page }) => {
+test("Sources ignores unrelated stream events and coalesces source checks", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-01-01T00:00:01Z"));
   await page.addInitScript(() => {
@@ -5760,7 +5760,6 @@ test("Sources ignores playback updates and coalesces source checks", async ({ pa
       constructor() { FixtureStream.instance = this; }
       addEventListener(type: string, listener: EventListener) {
         this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]);
-        if (type === "stream-status") queueMicrotask(() => listener(new MessageEvent(type, { data: "{}" })));
       }
       close() {}
     }
@@ -5786,10 +5785,10 @@ test("Sources ignores playback updates and coalesces source checks", async ({ pa
   await expect(refresh).toBeEnabled();
   expect(reads).toBe(1);
   await page.evaluate(() => window.__emitAllstarrUpdate?.());
-  await page.clock.runFor(5_100);
+  await page.clock.runFor(250);
   expect(reads).toBe(1);
   await page.evaluate(() => window.__emitAllstarrUpdate?.());
-  await page.clock.runFor(4_999);
+  await page.clock.runFor(249);
   expect(reads).toBe(1);
   await page.clock.runFor(1);
   await expect.poll(() => reads).toBe(2);
@@ -5901,7 +5900,7 @@ test("retry and refresh controls expose pending work", async ({ page }) => {
   const retry = routeRelease();
   delayedRequest = retry.promise;
   await page.getByRole("alert", { name: "Event log unavailable" }).getByRole("button", { name: "Try again" }).click();
-  await expect(page.getByRole("button", { name: "Refreshing…" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Trying again…" })).toBeDisabled();
   retry.release();
   delayedRequest = null;
   await expect(page.getByRole("region", { name: "Event log" })).toBeVisible();
