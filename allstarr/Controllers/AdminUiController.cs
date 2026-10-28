@@ -309,10 +309,9 @@ public class AdminUiController : ControllerBase
         if (session.IsAdministrator)
         {
             var downloadRoot = Path.GetFullPath(_configuration["Library:DownloadPath"] ?? "./downloads");
-            var paths = await context.DownloadedSongMappings.AsNoTracking()
-                .Select(item => item.LocalPath)
-                .ToArrayAsync(cancellationToken);
-            (cacheTracks, keptTracks) = CountExistingStorageMappings(paths, downloadRoot);
+            var keptRoot = services.GetService<allstarr.Core.Downloads.ManagedTrackPlacementOptions>()?.RootPath ??
+                _configuration["Library:KeptPath"] ?? Path.Combine(downloadRoot, "kept");
+            (cacheTracks, keptTracks) = await ReadExistingStorageCountsAsync(context, downloadRoot, keptRoot, cancellationToken);
         }
         var storage = services.GetService<DurableStorageState>()?.GetSnapshot();
         var providerHealth = session.IsAdministrator
@@ -354,6 +353,15 @@ public class AdminUiController : ControllerBase
         });
     }
 
+    internal static async Task<(int CacheTracks, int KeptTracks)> ReadExistingStorageCountsAsync(
+        AllstarrDbContext context, string downloadRoot, string keptRoot, CancellationToken cancellationToken = default)
+    {
+        var paths = await context.DownloadedSongMappings.AsNoTracking().Select(item => item.LocalPath).ToArrayAsync(cancellationToken);
+        var managed = await context.ManagedFiles.AsNoTracking().Where(item => item.RemovedAt == null)
+            .Select(item => item.CanonicalPath).ToArrayAsync(cancellationToken);
+        return CountExistingStorageMappings(paths.Concat(managed), downloadRoot, keptRoot);
+    }
+
     private static bool IsStoredUnder(string path, string root)
     {
         try
@@ -370,20 +378,23 @@ public class AdminUiController : ControllerBase
 
     internal static (int CacheTracks, int KeptTracks) CountExistingStorageMappings(
         IEnumerable<string> paths,
-        string downloadRoot)
+        string downloadRoot,
+        string? keptRoot = null)
     {
+        var seen = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         var cacheTracks = 0;
         var keptTracks = 0;
         foreach (var path in paths)
         {
-            if (!System.IO.File.Exists(path)) continue;
+            if (!System.IO.File.Exists(path) || !seen.Add(Path.GetFullPath(path))) continue;
             if (IsStoredUnder(path, Path.Combine(downloadRoot, "cache")) ||
                 IsStoredUnder(path, Path.Combine(downloadRoot, "transcoded")))
             {
                 cacheTracks++;
             }
             else if (IsStoredUnder(path, Path.Combine(downloadRoot, "permanent")) ||
-                     IsStoredUnder(path, Path.Combine(downloadRoot, "kept")))
+                     IsStoredUnder(path, Path.Combine(downloadRoot, "kept")) ||
+                     keptRoot != null && IsStoredUnder(path, keptRoot))
             {
                 keptTracks++;
             }
