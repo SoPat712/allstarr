@@ -172,6 +172,9 @@ public class AdminAuthenticationMiddleware
         }
 
         var routeSegments = path.TrimEnd('/').Split('/');
+        if (routeSegments.Length == 5 && routeSegments[3].Equals("spotify-likes", StringComparison.OrdinalIgnoreCase))
+            return HttpMethods.IsPost(method) && routeSegments[4] == "import" ||
+                   HttpMethods.IsGet(method) && Guid.TryParse(routeSegments[4], out _);
         if (routeSegments.Length >= 4 && routeSegments[3].Equals("jobs", StringComparison.OrdinalIgnoreCase))
             return HttpMethods.IsGet(method) && (routeSegments.Length == 4 ||
                        routeSegments.Length == 5 && Guid.TryParse(routeSegments[4], out _)) ||

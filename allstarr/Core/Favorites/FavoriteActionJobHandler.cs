@@ -482,6 +482,8 @@ public static class FavoriteActionRegistration
         services.AddSingleton<IDurableJobHandler>(provider => provider.GetRequiredService<FavoriteDisplayBackfillJobHandler>());
         services.AddHostedService<FavoriteDisplayBackfillService>();
         services.AddSingleton<FavoriteActionPipeline>();
+        services.AddSingleton<SpotifyLikesImport>();
+        services.AddSingleton<IDurableJobHandler>(provider => provider.GetRequiredService<SpotifyLikesImport>());
         services.AddSingleton<IFavoriteActionPipeline>(provider => provider.GetRequiredService<FavoriteActionPipeline>());
         services.AddSingleton<FavoriteDownloadActionExecutor>();
         services.AddSingleton<IFavoriteActionExecutor>(provider =>

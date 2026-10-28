@@ -3,6 +3,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Favorites;
 using allstarr.Core.Jobs;
 using allstarr.Core.ManagedFiles;
+using allstarr.Core.Operations;
 using allstarr.Core.Matching;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
@@ -12,6 +13,23 @@ namespace allstarr.Tests;
 
 public sealed partial class RecordingKeptFilesTests
 {
+    [Fact]
+    public async Task ImportedSpotifyHeartDoesNotAcquireInterestInExistingKeptFile()
+    {
+        await Service().PublishAsync(Request());
+        var pipeline = new FavoriteActionPipeline(factory, queue, new SystemPlatformClock(), Service());
+        var context = PlaybackContext(allstarr.Core.Protocols.ProtocolKind.Jellyfin, owner, CanonicalItemId());
+        await using (var before = factory.CreateDbContext())
+            Assert.Single(await before.ManagedFileReferences.Where(item => item.ReleasedAt == null).ToArrayAsync());
+
+        Assert.True(await pipeline.ImportSpotifyLikeAsync(context, CanonicalItemId(), "spotify-like:kept"));
+
+        await using var db = factory.CreateDbContext();
+        Assert.Single(await db.ManagedFileReferences.Where(item => item.ReleasedAt == null).ToArrayAsync());
+        Assert.DoesNotContain(await db.ManagedFileReferences.ToArrayAsync(), item => item.ReferenceKey.StartsWith("heart:", StringComparison.Ordinal));
+        Assert.All(await db.FavoriteActions.ToArrayAsync(), item => Assert.Equal("virtual-liked", item.ActionType));
+    }
+
     [Fact]
     public async Task FavoriteRetentionUsesTheAcceptedEventAndIsIdempotent()
     {
