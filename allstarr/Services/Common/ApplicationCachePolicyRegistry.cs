@@ -85,7 +85,7 @@ public static class ApplicationCachePolicyRegistry
                 "musicbrainz:mbid:v2:",
                 "playback:metadata:v1:"))
             category = ApplicationCacheCategory.CanonicalMetadata;
-        if (StartsWithAny(key, "search:v2:", "search:v3:"))
+        if (StartsWithAny(key, "search:v2:", "search:v3:", "search:v4:"))
             category = ApplicationCacheCategory.SearchResults;
         if (key.StartsWith("playlist:discovery:v3:", StringComparison.Ordinal))
             category = ApplicationCacheCategory.PlaylistDiscovery;
@@ -96,13 +96,14 @@ public static class ApplicationCachePolicyRegistry
                 "odesli:translate:v2:",
                 "cross-links:v1:",
                 "protocol:metadata:v1:",
+                "protocol:metadata:v2:",
                 "jellyfin:item-type:v1:",
                 "jellyfin:item-type:v2:",
                 "backend:libraries:v1:"))
             category = ApplicationCacheCategory.ProviderResponse;
 
         return category != default ||
-               StartsWithAny(key, "search:v2:", "search:v3:");
+               StartsWithAny(key, "search:v2:", "search:v3:", "search:v4:");
     }
 
     public static ApplicationCacheCategoryPolicy Resolve(string key, CacheSettings? settings = null) =>

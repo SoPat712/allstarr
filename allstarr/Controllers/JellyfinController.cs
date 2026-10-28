@@ -167,11 +167,11 @@ public partial class JellyfinController : ControllerBase
         CancellationToken cancellationToken = default) =>
         _providerGateway.GetArtistAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId);
 
-    private Task<List<Album>> GetProviderArtistAlbumsAsync(
+    private async Task<List<Album>> GetProviderArtistAlbumsAsync(
         string provider,
         string externalId,
         CancellationToken cancellationToken = default) =>
-        _providerGateway.GetArtistAlbumsAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId);
+        MusicAlbumReleases.Collapse(await _providerGateway.GetArtistAlbumsAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId));
 
     private Task<List<Song>> GetProviderArtistTracksAsync(
         string provider,

@@ -37,7 +37,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         cache.SetupGet(item => item.IsEnabled).Returns(true);
         var entries = new Dictionary<string, string>();
         cache.Setup(item => item.GetStringAsync(It.IsAny<string>()))
-            .ReturnsAsync((string key) => key.StartsWith("search:v3:", StringComparison.Ordinal) ? snapshot : entries.GetValueOrDefault(key));
+            .ReturnsAsync((string key) => key.StartsWith("search:v4:", StringComparison.Ordinal) ? snapshot : entries.GetValueOrDefault(key));
         cache.Setup(item => item.SetStringAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan?>()))
             .ReturnsAsync((string key, string value, TimeSpan? expiry) => { entries[key] = value; return true; });
         var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);

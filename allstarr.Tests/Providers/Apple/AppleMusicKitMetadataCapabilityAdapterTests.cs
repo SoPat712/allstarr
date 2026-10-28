@@ -49,6 +49,50 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
         Assert.Equal("https://is1-ssl.mzstatic.com/cover/3000x2000bb.jpg", track.Artwork!.PublicUri!.AbsoluteUri);
     }
 
+    [Theory]
+    [InlineData("\"contentRating\":\"explicit\",", true)]
+    [InlineData("\"contentRating\":\"clean\",", false)]
+    [InlineData("\"contentRating\":null,", null)]
+    [InlineData("", null)]
+    public async Task Album_search_and_full_lookup_preserve_source_release_evidence(string rating, bool? expectedExplicit)
+    {
+        var handler = new AlbumEvidenceHandler(rating);
+        var adapter = AppleProviderTestFactory.Metadata(
+            new HttpClient(handler), new SecretAccessor(new("music-user-token", "us")));
+
+        var search = await adapter.SearchAlbumsAsync(Context(), Search());
+        var lookup = await adapter.GetAlbumAsync(Context(), new(Id(ProviderResourceKind.Album, "album-1")));
+
+        var searched = Assert.Single(search.RequireValue().Items);
+        var full = lookup.RequireValue();
+        foreach (var album in new[] { searched, full })
+        {
+            Assert.Equal(expectedExplicit, album.IsExplicit);
+            Assert.Equal("0123456789012", album.Upc);
+            Assert.Equal("Deluxe", album.Edition);
+            Assert.Equal("Record label", album.Label);
+        }
+        Assert.Single(full.Tracks);
+        Assert.True(full.Tracks[0].IsExplicit);
+    }
+
+    private sealed class AlbumEvidenceHandler(string rating) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var album = $$$"""
+                {"id":"album-1","attributes":{"name":"Album","artistName":"Artist",{{{rating}}}
+                  "upc":"0123456789012","edition":"Deluxe","trackCount":1,"recordLabel":"Record label"}}
+                """;
+            var body = request.RequestUri!.AbsolutePath.EndsWith("/search", StringComparison.Ordinal)
+                ? "{\"results\":{\"albums\":{\"data\":[" + album + "]}}}"
+                : request.RequestUri.AbsolutePath.EndsWith("/tracks", StringComparison.Ordinal)
+                    ? """{"data":[{"id":"song-1","attributes":{"name":"Song","artistName":"Artist","contentRating":"explicit"}}]}"""
+                    : $$"""{"data":[{{album}}]}""";
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
+        }
+    }
+
     [Fact]
     public async Task Isrc_lookup_uses_authenticated_catalog_song_filter_and_maps_the_recording()
     {

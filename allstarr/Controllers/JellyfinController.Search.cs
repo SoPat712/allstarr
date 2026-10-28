@@ -351,9 +351,40 @@ public partial class JellyfinController
             {
                 AlbumText = GetItemStringValue(item, "Album"),
                 AlbumArtistText = GetItemStringValue(item, "AlbumArtist"),
+                AlbumMetadata = kind == MusicItemKind.Album ? NativeAlbumMetadata(item) : null,
                 DurationSeconds = long.TryParse(GetItemStringValue(item, "RunTimeTicks"), out var ticks)
                     ? (double)ticks / TimeSpan.TicksPerSecond : null
             };
+    }
+
+    private static Album NativeAlbumMetadata(Dictionary<string, object?> item)
+    {
+        var ids = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (item.TryGetValue("ProviderIds", out var raw))
+        {
+            if (raw is JsonElement { ValueKind: JsonValueKind.Object } json)
+            {
+                foreach (var property in json.EnumerateObject())
+                    if (property.Value.ValueKind == JsonValueKind.String) ids[property.Name] = property.Value.GetString()!;
+            }
+            else if (raw is IDictionary<string, string> values)
+            {
+                foreach (var pair in values) ids[pair.Key] = pair.Value;
+            }
+        }
+        return new()
+        {
+            Id = GetItemStringValue(item, "Id"),
+            Title = GetItemName(item),
+            Artist = SearchArtistText(item) ?? string.Empty,
+            IsLocal = true,
+            ProviderIds = ids,
+            Upc = ids.GetValueOrDefault("UPC") ?? GetItemStringValue(item, "UPC"),
+            IsExplicit = GetItemStringValue(item, "OfficialRating").ToLowerInvariant() switch
+            { "explicit" => true, "clean" or "cleaned" => false, _ => null },
+            SongCount = int.TryParse(GetItemStringValue(item, "ChildCount"), out var count) && count > 0 ? count : null,
+            Edition = GetItemStringValue(item, "Edition")
+        };
     }
 
     /// <summary>The backend half of a Jellyfin integrated search.</summary>

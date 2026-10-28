@@ -129,8 +129,15 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
             .SelectMany(pair => pair.Value).GroupBy(item => item.ItemId, StringComparer.Ordinal))
         {
             var best = group.OrderByDescending(item => item.Title != FavoriteDisplaySnapshot.Placeholder(item.ItemId,
-                FavoriteDisplaySnapshot.Resource(item.ItemId)!.ResourceKind).Title).ThenByDescending(item => item.ArtistIds.Length).First();
-            displays[group.Key] = best with { Genres = group.SelectMany(item => item.Genres).Distinct(StringComparer.OrdinalIgnoreCase).ToArray() };
+                FavoriteDisplaySnapshot.Resource(item.ItemId)!.ResourceKind).Title)
+                .ThenByDescending(item => item.Upc != null).ThenByDescending(item => item.IsExplicit.HasValue)
+                .ThenByDescending(item => item.ArtistIds.Length).First();
+            var ratings = group.Where(item => item.IsExplicit.HasValue).Select(item => item.IsExplicit).Distinct().ToArray();
+            displays[group.Key] = best with
+            {
+                IsExplicit = ratings.Length == 1 ? ratings[0] : null,
+                Genres = group.SelectMany(item => item.Genres).Distinct(StringComparer.OrdinalIgnoreCase).ToArray()
+            };
         }
         var itemComparer = FavoriteViewReader.ItemComparer(sharedScope);
         if (sharedScope)
@@ -158,6 +165,21 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
                     AlbumArtistIds = display.AlbumArtistIds.Select(Visible).ToArray()
                 };
             }
+        }
+        var rememberedAlbums = states.Select(item => FavoriteDisplaySnapshot.Read(item.ItemId, item.DisplayMetadataJson))
+            .Where(item => item?.Kind == "album").OfType<FavoriteDisplaySnapshot>()
+            .ToDictionary(item => item.ItemId, StringComparer.Ordinal);
+        foreach (var id in dates.Keys)
+        {
+            if (displays[id].Kind != "album" || !rememberedAlbums.TryGetValue(id, out var remembered)) continue;
+            var current = displays[id];
+            displays[id] = current with
+            {
+                Upc = current.Upc ?? remembered.Upc,
+                IsExplicit = current.IsExplicit ?? remembered.IsExplicit,
+                Edition = current.Edition ?? remembered.Edition,
+                ProviderIds = current.ProviderIds.Count > 0 ? current.ProviderIds : remembered.ProviderIds
+            };
         }
         var currentDisplays = dates.Keys.Select(id => displays[id]).ToArray();
         var songCounts = currentDisplays.Where(item => item.Kind == "song" && item.AlbumId != null)
@@ -206,25 +228,58 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
             };
             foreach (var item in members.Where(item => item.ItemId != chosen.ItemId)) hidden.Add(item.ItemId);
         }
+        var albumViews = saved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Album)
+            .ToDictionary(item => item.Album(), item => item);
+        foreach (var album in albumViews.Keys) album.SongCount = null;
+        var albumParents = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var group in MusicAlbumReleases.Partition(albumViews.Keys).Where(group => group.Count > 1))
+        {
+            var members = group.Select(album => albumViews[album]).ToArray();
+            var chosen = members.OrderByDescending(item => hearted.Contains(item.ItemId)).ThenBy(item => item.FavoritedAt)
+                .ThenBy(item => item.ItemId, StringComparer.Ordinal).First();
+            foreach (var item in members.Where(item => item.ItemId != chosen.ItemId))
+            {
+                hidden.Add(item.ItemId);
+                albumParents[item.ItemId] = chosen.ItemId;
+            }
+        }
+        foreach (var item in saved.Where(item => item.Display.AlbumId != null && albumParents.ContainsKey(item.Display.AlbumId)))
+        {
+            var current = replacements.GetValueOrDefault(item.ItemId, item);
+            replacements[item.ItemId] = current with
+            { Display = current.Display with { AlbumId = albumParents[item.Display.AlbumId!] } };
+        }
         var visibleSaved = saved.Where(item => !hidden.Contains(item.ItemId))
             .Select(item => replacements.GetValueOrDefault(item.ItemId, item)).ToArray();
         var visibleSongCounts = visibleSaved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Track && item.Display.AlbumId != null)
             .GroupBy(item => item.Display.AlbumId!, itemComparer).ToDictionary(group => group.Key, group => group.Count(), itemComparer);
+        var albumLabels = MusicAlbumReleases.Collapse(visibleSaved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Album)
+            .Select(item => item.Album())).ToDictionary(album => album.Id, album => album.Title, StringComparer.Ordinal);
+        var visibleAlbumCounts = visibleSaved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Album)
+            .SelectMany(item => item.Display.ArtistIds.Concat(item.Display.AlbumArtistIds).Distinct(itemComparer))
+            .GroupBy(id => id, itemComparer).ToDictionary(group => group.Key, group => group.Count(), itemComparer);
         return visibleSaved.Select(item => item.Resource.ResourceKind == ProviderResourceKind.Album
-            ? item with { Display = item.Display with { Count = visibleSongCounts.GetValueOrDefault(item.ItemId) } }
-            : item).ToArray();
+            ? item with { Display = item.Display with { Count = visibleSongCounts.GetValueOrDefault(item.ItemId), Title = albumLabels[item.ItemId] } }
+            : item.Resource.ResourceKind == ProviderResourceKind.Artist
+                ? item with { Display = item.Display with { Count = visibleAlbumCounts.GetValueOrDefault(item.ItemId) } }
+                : item).ToArray();
     }
 
-    internal async Task PreferSavedSongIdsAsync(ProtocolExecutionContext execution, IReadOnlyList<Song> songs,
-        CancellationToken cancellationToken)
+    internal Task PreferSavedSongIdsAsync(ProtocolExecutionContext execution, IReadOnlyList<Song> songs,
+        CancellationToken cancellationToken) => PreferSavedIdsAsync(execution, songs, [], cancellationToken);
+
+    internal async Task PreferSavedIdsAsync(ProtocolExecutionContext execution, IReadOnlyList<Song> songs,
+        IReadOnlyList<Album> albums, CancellationToken cancellationToken)
     {
-        if (songs.Count == 0 || execution.Actor?.EffectiveUserId is not { } owner) return;
+        if (songs.Count == 0 && albums.Count == 0 || execution.Actor?.EffectiveUserId is not { } owner) return;
         var saved = await ReadAsync(execution, cancellationToken);
         var policy = effectivePolicies == null ? null : await effectivePolicies.ResolveForUserAsync(owner, cancellationToken);
         foreach (var song in songs.Where(song => policy?.IsAutomatic(ProviderKey(song.ExternalProvider ?? "")) != false))
         {
             var match = saved.FirstOrDefault(item => item.Resource.ResourceKind == ProviderResourceKind.Track &&
                 (item.Resource.ProviderId == "allstarr" || policy?.IsAutomatic(ProviderKey(item.Resource.ProviderId)) != false) &&
+                (song.ExplicitContentLyrics is not (0 or 1 or 3) || item.Display.IsExplicit != null || item.ItemId == song.Id ||
+                 ProviderKey(item.Resource.ProviderId) == ProviderKey(song.ExternalProvider ?? "") && item.Resource.Value == song.ExternalId) &&
                 (item.ItemId == song.Id ||
                  (ProviderKey(item.Resource.ProviderId) != ProviderKey(song.ExternalProvider ?? "") || item.Resource.Value == song.ExternalId) &&
                  (item.Display.DurationMilliseconds is > 0 || song.PreciseDuration?.TotalSeconds is > 0 || song.Duration is > 0) &&
@@ -240,6 +295,20 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
                 song.Duration = (int)(match.Display.DurationMilliseconds.Value / 1000);
             }
             if (string.IsNullOrWhiteSpace(song.Album)) song.Album = match.Display.Album ?? string.Empty;
+        }
+        foreach (var album in albums.Where(album => policy?.IsAutomatic(ProviderKey(album.ExternalProvider ?? "")) != false))
+        {
+            var match = saved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Album).FirstOrDefault(item =>
+            {
+                if (policy?.IsAutomatic(ProviderKey(item.Resource.ProviderId)) == false) return false;
+                var known = item.Album();
+                known.SongCount = null;
+                return MusicAlbumReleases.SameRelease(known, album) &&
+                    (known.IsExplicit != null || album.IsExplicit == null || MusicAlbumReleases.SameCatalog(known, album) ||
+                     !albums.Any(other => other.IsExplicit != null && other.IsExplicit != album.IsExplicit &&
+                         MusicAlbumReleases.NormalizeUpc(album.Upc) is { } upc && MusicAlbumReleases.NormalizeUpc(other.Upc) == upc));
+            });
+            if (match != null) album.Id = match.ItemId;
         }
     }
 
@@ -331,6 +400,9 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
                     using var payload = JsonDocument.Parse(row.PayloadJson);
                     if (payload.RootElement.TryGetProperty("DurationMilliseconds", out var duration) && duration.TryGetInt64(out var milliseconds))
                         display = display with { DurationMilliseconds = milliseconds };
+                    if (payload.RootElement.TryGetProperty("IsExplicit", out var explicitValue) &&
+                        explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                        display = display with { IsExplicit = explicitValue.GetBoolean() };
                     members.Add(display);
                 }
                 catch (JsonException) { }
@@ -377,7 +449,9 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
         AlbumArtistIds = song.AlbumArtists is { Count: > 0 } ? song.AlbumArtists.Select(artist => artist.Id).ToArray()
             : song.ArtistId == null ? [] : [song.ArtistId],
         AlbumId = song.AlbumId,
-        Genres = song.Genre == null ? [] : [song.Genre]
+        Genres = song.Genre == null ? [] : [song.Genre],
+        IsExplicit = song.ExplicitContentLyrics switch { 1 => true, 0 or 3 => false, _ => null },
+        Upc = song.Upc
     };
 
     private static IEnumerable<FavoriteDisplaySnapshot> Expand(IEnumerable<FavoriteDisplaySnapshot> items)
@@ -389,7 +463,13 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
             if (resource.ResourceKind != ProviderResourceKind.Track) continue;
             if (item.AlbumId is { } album && FavoriteDisplaySnapshot.Resource(album)?.ResourceKind == ProviderResourceKind.Album)
                 yield return new(1, album, "album", item.Album ?? "Saved album", item.AlbumArtists.Length > 0 ? item.AlbumArtists : item.Artists, Year: item.Year)
-                { ArtistIds = item.ArtistIds, AlbumArtistIds = item.AlbumArtistIds, AlbumArtists = item.AlbumArtists, Genres = item.Genres };
+                {
+                    ArtistIds = item.ArtistIds,
+                    AlbumArtistIds = item.AlbumArtistIds,
+                    AlbumArtists = item.AlbumArtists,
+                    Genres = item.Genres,
+                    Upc = item.Upc
+                };
             foreach (var id in item.ArtistIds.Concat(item.AlbumArtistIds).Distinct(StringComparer.Ordinal))
                 if (FavoriteDisplaySnapshot.Resource(id)?.ResourceKind == ProviderResourceKind.Artist)
                 {

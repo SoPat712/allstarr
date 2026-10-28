@@ -16,6 +16,10 @@ public sealed record FavoriteDisplaySnapshot(int Version, string ItemId, string 
     public string[] AlbumArtists { get; init; } = [];
     public string? AlbumId { get; init; }
     public string[] Genres { get; init; } = [];
+    public bool? IsExplicit { get; init; }
+    public string? Upc { get; init; }
+    public string? Edition { get; init; }
+    public Dictionary<string, string> ProviderIds { get; init; } = [];
 
     public static ProviderExternalResourceId? Resource(string itemId)
     {
@@ -62,6 +66,8 @@ public sealed record FavoriteDisplaySnapshot(int Version, string ItemId, string 
         AlbumArtistIds is { Length: <= 20 } && AlbumArtistIds.All(Text) &&
         AlbumArtists is { Length: <= 20 } && AlbumArtists.All(Text) &&
         (AlbumId == null || Text(AlbumId)) && Genres is { Length: <= 20 } && Genres.All(Text) &&
+        (Upc == null || Text(Upc)) && (Edition == null || Text(Edition)) &&
+        ProviderIds is { Count: <= 20 } && ProviderIds.All(item => Text(item.Key) && Text(item.Value)) &&
         Resource(ItemId) is { } resource && Kind == KindName(resource.ResourceKind);
 
     internal static bool Text(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 500 &&
@@ -103,7 +109,10 @@ public sealed record FavoriteViewItem(string ItemId, ProviderExternalResourceId 
         Genre = Display.Genres.FirstOrDefault(),
         Year = Display.Year,
         Duration = Display.DurationMilliseconds is { } milliseconds ? (int)(milliseconds / 1000) : null,
-        PreciseDuration = Display.DurationMilliseconds is { } precise ? TimeSpan.FromMilliseconds(precise) : null
+        PreciseDuration = Display.DurationMilliseconds is { } precise ? TimeSpan.FromMilliseconds(precise) : null,
+        ExplicitContentLyrics = Display.IsExplicit is { } explicitSong ? explicitSong ? 1 : 0 : null,
+        Upc = Display.Upc,
+        ProviderIds = new(Display.ProviderIds, StringComparer.Ordinal)
     };
 
     public Album Album() => new()
@@ -116,7 +125,11 @@ public sealed record FavoriteViewItem(string ItemId, ProviderExternalResourceId 
         ArtistId = Display.AlbumArtistIds.FirstOrDefault() ?? Display.ArtistIds.FirstOrDefault(),
         Genre = Display.Genres.FirstOrDefault(),
         Year = Display.Year,
-        SongCount = Display.Count
+        SongCount = Display.Count,
+        IsExplicit = Display.IsExplicit,
+        Upc = Display.Upc,
+        Edition = Display.Edition,
+        ProviderIds = new(Display.ProviderIds, StringComparer.Ordinal)
     };
 
     public Artist Artist() => new()

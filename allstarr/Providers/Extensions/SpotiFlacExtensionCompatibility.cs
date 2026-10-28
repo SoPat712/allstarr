@@ -1096,12 +1096,36 @@ public static class SpotiFlacExtensionCompatibility
         }
         function _sfAlbum(value) {
           value = value && (value.album || value) || {};
+          var explicit = null;
+          var explicitNames = ['isExplicit','is_explicit','explicit_lyrics','explicit'];
+          for (var i = 0; i < explicitNames.length; i++) {
+            if (typeof value[explicitNames[i]] === 'boolean') { explicit = value[explicitNames[i]]; break; }
+          }
+          if (explicit === null) {
+            var rating = _sfFirst(value, ['contentRating','content_rating']);
+            if (typeof rating === 'string') {
+              rating = rating.toLowerCase();
+              if (rating === 'explicit') explicit = true;
+              else if (rating === 'clean' || rating === 'cleaned') explicit = false;
+            }
+          }
+          var ids = _sfProviderIds(value);
+          var source = String(value.provider_id || '').toLowerCase();
+          var catalog = {'apple-music':'apple-musickit','apple-musickit':'apple-musickit',
+            'deezer':'deezer','spotify':'spotify','spotify-web':'spotify','tidal':'tidal','tidal-web':'tidal','qobuz':'qobuz'}[source];
+          if (catalog && value.id) {
+            var nativeId = String(value.id), prefix = catalog + ':';
+            if (nativeId.indexOf(prefix) === 0) nativeId = nativeId.substring(prefix.length);
+            ids[catalog] = nativeId;
+          }
           return { id: String(value.id || ''), title: String(value.name || value.title || ''), artists: _sfArtists(value),
             trackCount: _sfPositive(_sfFirst(value, ['trackCount','total_tracks','tracks_count']) || (value.tracks && value.tracks.length)),
             artworkUrl: _sfArtwork(value), snapshotVersion: _sfFirst(value, ['snapshotVersion','snapshot_version']),
             year: _sfPositive(value.year), releaseDate: _sfFirst(value, ['releaseDate','release_date']),
             genre: value.genre || _sfGenres(value)[0] || null, label: value.label || null, notes: value.notes || value.description || null,
-            providerIds: _sfProviderIds(value), lastFmUrl: _sfFirst(value, ['lastFmUrl','last_fm_url']),
+            providerIds: ids, lastFmUrl: _sfFirst(value, ['lastFmUrl','last_fm_url']),
+            isExplicit: explicit, upc: _sfFirst(value, ['upc']) || _sfFirst(value.external_ids, ['upc']),
+            edition: _sfFirst(value, ['edition','album_version']),
             tracks: _sfArray(value.tracks).map(_sfTrack) };
         }
         function _sfArtist(value) {

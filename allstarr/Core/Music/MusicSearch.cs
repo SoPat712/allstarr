@@ -27,6 +27,7 @@ public sealed record NativeMusicItem<TPayload>(
     public string? AlbumText { get; init; }
     public string? AlbumArtistText { get; init; }
     public double? DurationSeconds { get; init; }
+    public Album? AlbumMetadata { get; init; }
 }
 
 /// <summary>One merged search row: a native backend payload or a typed provider item.</summary>
@@ -194,16 +195,20 @@ public sealed class MusicSearchService(
         var nativeArtists = nativeRows.Where(item => item.Kind == MusicItemKind.Artist).ToList();
         var provided = await providerTask;
         var songs = request.Songs.Apply(provided.Songs).ToList();
-        var albums = request.Albums.Apply(provided.Albums).ToList();
+        var albums = provided.Albums.ToList();
         var artists = request.Artists.Apply(provided.Artists).ToList();
         var playlists = request.Playlists.Apply(await playlistTask).ToList();
 
         if (savedLibrary != null)
         {
-            try { await savedLibrary.PreferSavedSongIdsAsync(context, songs, cancellationToken); }
+            try
+            {
+                await savedLibrary.PreferSavedIdsAsync(context, songs, albums, cancellationToken);
+            }
             catch (Exception) when (!cancellationToken.IsCancellationRequested && !context.CancellationToken.IsCancellationRequested) { }
             songs = songs.DistinctBy(song => song.Id, StringComparer.Ordinal).ToList();
         }
+        albums = request.Albums.Apply(MusicAlbumReleases.Collapse(albums)).ToList();
         await PreferOwnedSongsAsync(context, songs, nativeSongs, native, cancellationToken);
         return Merge(
             request.Query,
@@ -227,6 +232,10 @@ public sealed class MusicSearchService(
     {
         var native = nativeRows.ToList();
         var nativeArtists = native.Where(item => item.Kind == MusicItemKind.Artist).ToList();
+        var nativeAlbums = native.Where(item => item.Kind == MusicItemKind.Album).ToList();
+        var nativeAlbumIds = nativeAlbums.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        var mergedAlbums = MusicAlbumReleases.Collapse(albums.Concat(nativeAlbums.Select(item => item.AlbumMetadata).OfType<Album>()))
+            .Where(album => !album.IsLocal || !nativeAlbumIds.Contains(album.Id));
         var nativeArtistNames = hideProviderArtistsNamedLikeNative
             ? nativeArtists.Select(item => item.Name).ToHashSet(StringComparer.OrdinalIgnoreCase)
             : [];
@@ -234,7 +243,7 @@ public sealed class MusicSearchService(
             RankSongs(query, native.Where(item => item.Kind == MusicItemKind.Song)
                 .Select(item => new MusicSearchEntry<TPayload> { Native = item })
                 .Concat(songs.Select(song => new MusicSearchEntry<TPayload> { Song = song }))),
-            Rank(query, native.Where(item => item.Kind == MusicItemKind.Album), albums.Select(album => (
+            Rank(query, nativeAlbums, mergedAlbums.Select(album => (
                     new MusicSearchEntry<TPayload> { Album = album },
                     SearchRelevanceRanker.Score(query, album.Title, album.Artist)))
                 .Concat(playlists.Select(playlist => (

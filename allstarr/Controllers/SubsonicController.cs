@@ -165,8 +165,8 @@ public partial class SubsonicController : ControllerBase
     private Task<Artist?> GetProviderArtistAsync(string provider, string externalId) =>
         _providerGateway.GetArtistAsync(CurrentProtocolContext, provider, externalId);
 
-    private Task<List<Album>> GetProviderArtistAlbumsAsync(string provider, string externalId) =>
-        _providerGateway.GetArtistAlbumsAsync(CurrentProtocolContext, provider, externalId);
+    private async Task<List<Album>> GetProviderArtistAlbumsAsync(string provider, string externalId) =>
+        MusicAlbumReleases.Collapse(await _providerGateway.GetArtistAlbumsAsync(CurrentProtocolContext, provider, externalId));
 
     [HttpGet, HttpPost]
     [Route("rest/search2")]
@@ -682,8 +682,8 @@ public partial class SubsonicController : ControllerBase
             relayEndpoint,
             parameters,
             HttpContext.RequestAborted);
-        return await MergeProviderChildrenAsync(nativeResult, format, "artist", "album", async (name, _, titles) =>
-            (await _catalogMerge.MissingArtistAlbumsAsync(CurrentProtocolContext, name, titles))
+        return await MergeProviderChildrenAsync(nativeResult, format, "artist", "album", async (name, _, titles, nativeAlbums) =>
+            (await _catalogMerge.MissingArtistAlbumsAsync(CurrentProtocolContext, name, nativeAlbums))
             .Select(album =>
             {
                 if (string.IsNullOrEmpty(album.Artist)) album.Artist = name;
@@ -764,7 +764,7 @@ public partial class SubsonicController : ControllerBase
             relayEndpoint,
             parameters,
             HttpContext.RequestAborted);
-        return await MergeProviderChildrenAsync(nativeResult, format, "album", "song", async (name, artist, titles) =>
+        return await MergeProviderChildrenAsync(nativeResult, format, "album", "song", async (name, artist, titles, _) =>
             (await _catalogMerge.MissingAlbumSongsAsync(CurrentProtocolContext, name, artist ?? "", titles))
             .Select(song => format == "json"
                 ? (object)_responseBuilder.ConvertSongToJson(song)
@@ -781,7 +781,7 @@ public partial class SubsonicController : ControllerBase
         string format,
         string parentElement,
         string childElement,
-        Func<string, string?, IReadOnlyCollection<string>, Task<List<object>>> findMissing)
+        Func<string, string?, IReadOnlyCollection<string>, IReadOnlyList<Album>, Task<List<object>>> findMissing)
     {
         var passthrough = _relayProtocolAdapter.CreateResult(native, $"application/{format}");
         if (!native.IsSuccessStatusCode || native.Body.Length == 0) return passthrough;
@@ -804,7 +804,9 @@ public partial class SubsonicController : ControllerBase
                     _ => []
                 };
                 var titles = children.Select(child => child?[childTitle]?.GetValue<string>() ?? "").ToList();
-                var missing = await FindMissingSafelyAsync(findMissing, name, artist, titles);
+                var nativeAlbums = childElement == "album" ? DescribeNativeAlbums(children.OfType<System.Text.Json.Nodes.JsonObject>()
+                    .Select(child => (object)(System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(child) ?? [])), name) : [];
+                var missing = await FindMissingSafelyAsync(findMissing, name, artist, titles, nativeAlbums);
                 if (missing.Count == 0) return passthrough;
                 foreach (var item in missing)
                     children.Add(System.Text.Json.Nodes.JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(item)));
@@ -820,7 +822,8 @@ public partial class SubsonicController : ControllerBase
             if (document.Root?.Attribute("status")?.Value != "ok" || parentXml == null) return passthrough;
             var xmlTitles = parentXml.Elements(ns + childElement).Select(child => child.Attribute(childTitle)?.Value ?? "").ToList();
             var xmlMissing = await FindMissingSafelyAsync(findMissing, parentXml.Attribute("name")?.Value ?? "",
-                parentXml.Attribute("artist")?.Value, xmlTitles);
+                parentXml.Attribute("artist")?.Value, xmlTitles, childElement == "album"
+                    ? DescribeNativeAlbums(parentXml.Elements(ns + childElement).Cast<object>(), parentXml.Attribute("name")?.Value ?? "") : []);
             if (xmlMissing.Count == 0) return passthrough;
             foreach (var element in xmlMissing.OfType<XElement>())
             {
@@ -845,15 +848,16 @@ public partial class SubsonicController : ControllerBase
     }
 
     private async Task<List<object>> FindMissingSafelyAsync(
-        Func<string, string?, IReadOnlyCollection<string>, Task<List<object>>> findMissing,
+        Func<string, string?, IReadOnlyCollection<string>, IReadOnlyList<Album>, Task<List<object>>> findMissing,
         string name,
         string? artist,
-        IReadOnlyCollection<string> titles)
+        IReadOnlyCollection<string> titles,
+        IReadOnlyList<Album> nativeAlbums)
     {
         if (string.IsNullOrWhiteSpace(name)) return [];
         try
         {
-            return await findMissing(name, artist, titles);
+            return await findMissing(name, artist, titles, nativeAlbums);
         }
         catch (Exception error) when (error is not OperationCanceledException || !HttpContext.RequestAborted.IsCancellationRequested)
         {
@@ -861,6 +865,13 @@ public partial class SubsonicController : ControllerBase
             return [];
         }
     }
+
+    private static Album[] DescribeNativeAlbums(IEnumerable<object> rows, string artist) => rows.Select(row =>
+    {
+        var album = SubsonicModelMapper.ToNativeItem(row, MusicItemKind.Album).AlbumMetadata!;
+        if (string.IsNullOrWhiteSpace(album.Artist)) album.Artist = artist;
+        return album;
+    }).ToArray();
 
     // Virtual playlists are read-only projections; native IDs remain transparent relays.
     [HttpGet, HttpPost]

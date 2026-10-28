@@ -430,6 +430,39 @@ public class DeezerProviderTests
         "catalog-test", "catalog-fixture", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
 
 
+    [Theory]
+    [InlineData("\"explicit_lyrics\":true,", true)]
+    [InlineData("\"explicit_lyrics\":false,", false)]
+    [InlineData("\"explicit_lyrics\":null,", null)]
+    [InlineData("", null)]
+    public async Task Album_metadata_preserves_source_release_evidence(string rating, bool? expectedExplicit)
+    {
+        var albumJson = $$$"""
+            {"id":456789,"title":"Album","artist":{"id":123,"name":"Artist"},{{{rating}}}
+              "upc":"0123456789012","edition":"Deluxe","nb_tracks":1,"release_date":"2026-09-04",
+              "tracks":{"data":[{"id":111,"title":"Song","duration":180,"explicit_lyrics":true,"explicit_content_lyrics":1,
+                "artist":{"id":123,"name":"Artist"},"album":{"id":456789,"title":"Album"}}]}}
+            """;
+        SetupHttpResponse(request => CreateJsonResponse(request.RequestUri!.AbsolutePath.Contains("/search/album", StringComparison.Ordinal)
+            ? $$"""{"data":[{{albumJson}}]}""" : albumJson));
+
+        var legacy = await _service.GetAlbumAsync("deezer", "456789");
+        var searched = Assert.Single((await _service.SearchAlbumsAsync(PublicContext(), new("album", new(1)))).RequireValue().Items);
+        var full = (await _service.GetAlbumAsync(PublicContext(), new(new("deezer", ProviderResourceKind.Album, "456789")))).RequireValue();
+
+        Assert.NotNull(legacy);
+        Assert.Equal(expectedExplicit, legacy.IsExplicit);
+        Assert.Equal("0123456789012", legacy.Upc);
+        Assert.Equal("Deluxe", legacy.Edition);
+        foreach (var album in new[] { searched, full })
+        {
+            Assert.Equal(expectedExplicit, album.IsExplicit);
+            Assert.Equal("0123456789012", album.Upc);
+            Assert.Equal("Deluxe", album.Edition);
+        }
+        Assert.True(Assert.Single(full.Tracks).IsExplicit);
+    }
+
     [Fact]
     public async Task GetAlbumAsync_WithDeezerProvider_ReturnsAlbumWithTracks()
     {

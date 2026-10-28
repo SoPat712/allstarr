@@ -23,7 +23,7 @@ public sealed class MusicCatalogMergeTests
                 ["real"] = [ProviderAlbum("r1", "Visions"), ProviderAlbum("r2", "Art Angels")]
             });
 
-        var albums = await new MusicCatalogMerge(gateway.Object).MissingArtistAlbumsAsync(_context, "Grimes", ["Visions"]);
+        var albums = await new MusicCatalogMerge(gateway.Object).MissingArtistAlbumsAsync(_context, "Grimes", [NativeAlbum("Visions")]);
 
         Assert.Equal(["ext-deezer-album-r2"], albums.Select(album => album.Id));
         gateway.Verify(item => item.SearchAsync(_context, "Grimes", 0, 0, 20, null), Times.Once);
@@ -33,6 +33,8 @@ public sealed class MusicCatalogMergeTests
     [Fact]
     public async Task ArtistAlbums_ReturnOnlyMissingAlbumsWithDuplicatesCollapsed()
     {
+        var copies = new[] { ProviderAlbum("r2", "Art Angels"), ProviderAlbum("r3", "art angels") };
+        foreach (var album in copies) album.Upc = "012345678905";
         var gateway = ArtistGateway(
             [ProviderArtist("real", "Grimes", 8)],
             new Dictionary<string, List<Album>>
@@ -40,17 +42,36 @@ public sealed class MusicCatalogMergeTests
                 ["real"] =
                 [
                     ProviderAlbum("r1", "Visions"),
-                    ProviderAlbum("r2", "Art Angels"),
-                    ProviderAlbum("r3", "art angels"),
+                    copies[0],
+                    copies[1],
                     ProviderAlbum("r4", "Miss Anthropocene"),
                     ProviderAlbum("r5", "Halfaxa")
                 ]
             });
 
         var albums = await new MusicCatalogMerge(gateway.Object).MissingArtistAlbumsAsync(
-            _context, "Grimes", ["Visions", "HALFAXA"]);
+            _context, "Grimes", [NativeAlbum("Visions"), NativeAlbum("HALFAXA")]);
 
         Assert.Equal(["ext-deezer-album-r2", "ext-deezer-album-r4"], albums.Select(album => album.Id));
+    }
+
+    [Fact]
+    public async Task ArtistAlbums_PreservesDifferentEditionsBesideTheNativeRelease()
+    {
+        var owned = NativeAlbum("Visions");
+        owned.IsExplicit = true;
+        var copy = ProviderAlbum("copy", "Visions");
+        copy.IsExplicit = true;
+        var clean = ProviderAlbum("clean", "Visions");
+        clean.IsExplicit = false;
+        var gateway = ArtistGateway([ProviderArtist("real", "Grimes", 8)],
+            new Dictionary<string, List<Album>> { ["real"] = [copy, clean] });
+
+        var albums = await new MusicCatalogMerge(gateway.Object).MissingArtistAlbumsAsync(_context, "Grimes", [owned]);
+
+        Assert.Equal("ext-deezer-album-clean", Assert.Single(albums).Id);
+        Assert.Equal("Visions (Clean)", albums[0].Title);
+        Assert.Equal("Visions", owned.Title);
     }
 
     [Fact]
@@ -64,7 +85,7 @@ public sealed class MusicCatalogMergeTests
             ],
             new Dictionary<string, List<Album>> { ["real"] = [ProviderAlbum("r1", "Visions"), ProviderAlbum("r2", "Art Angels")] });
 
-        var albums = await new MusicCatalogMerge(gateway.Object).MissingArtistAlbumsAsync(_context, "Grimes", ["Visions"]);
+        var albums = await new MusicCatalogMerge(gateway.Object).MissingArtistAlbumsAsync(_context, "Grimes", [NativeAlbum("Visions")]);
 
         Assert.Equal(["ext-deezer-album-r2"], albums.Select(album => album.Id));
         gateway.Verify(item => item.GetArtistAlbumsAsync(_context, It.IsAny<string>(), It.IsAny<string>()), Times.Once);
@@ -92,7 +113,7 @@ public sealed class MusicCatalogMergeTests
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
 
-        Assert.Empty(await new MusicCatalogMerge(gateway.Object).MissingArtistAlbumsAsync(_context, "  ", ["Visions"]));
+        Assert.Empty(await new MusicCatalogMerge(gateway.Object).MissingArtistAlbumsAsync(_context, "  ", [NativeAlbum("Visions")]));
         gateway.VerifyNoOtherCalls();
     }
 
@@ -217,8 +238,24 @@ public sealed class MusicCatalogMergeTests
         Title = title,
         Artist = "Grimes",
         ExternalProvider = "deezer",
-        ExternalId = id
+        ExternalId = id,
+        Upc = title.ToLowerInvariant() switch
+        {
+            "visions" => "012345678912",
+            "halfaxa" => "012345678929",
+            "art angels" => "012345678905",
+            _ => null
+        }
     };
+
+    private static Album NativeAlbum(string title)
+    {
+        var album = ProviderAlbum("native-" + title, title);
+        album.IsLocal = true;
+        album.ExternalProvider = null;
+        album.ExternalId = null;
+        return album;
+    }
 
     private static Song ProviderSong(string id, string title) => new()
     {

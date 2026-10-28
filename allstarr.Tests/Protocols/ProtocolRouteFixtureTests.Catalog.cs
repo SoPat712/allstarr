@@ -14,9 +14,9 @@ namespace allstarr.Tests;
 public sealed partial class ProtocolRouteFixtureTests
 {
     private const string NativeArtistJson =
-        """{"subsonic-response":{"status":"ok","version":"1.16.1","artist":{"id":"native-artist","name":"Grimes","albumCount":1,"futureField":"kept","album":[{"id":"native-album-1","name":"Visions","futureField":"kept"}]}}}""";
+        """{"subsonic-response":{"status":"ok","version":"1.16.1","artist":{"id":"native-artist","name":"Grimes","albumCount":1,"futureField":"kept","album":[{"id":"native-album-1","name":"Visions","upc":"012345678905","futureField":"kept"}]}}}""";
     private const string NativeArtistXml =
-        """<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1"><artist id="native-artist" name="Grimes" albumCount="1" futureField="kept"><album id="native-album-1" name="Visions" futureField="kept"/></artist></subsonic-response>""";
+        """<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1"><artist id="native-artist" name="Grimes" albumCount="1" futureField="kept"><album id="native-album-1" name="Visions" upc="012345678905" futureField="kept"/></artist></subsonic-response>""";
     private const string NativeAlbumJson =
         """{"subsonic-response":{"status":"ok","version":"1.16.1","album":{"id":"native-album-1","name":"Visions","artist":"Grimes","songCount":1,"futureField":"kept","song":[{"id":"native-song-1","title":"Oblivion","futureField":"kept"}]}}}""";
     private const string NativeAlbumXml =
@@ -363,6 +363,7 @@ public sealed partial class ProtocolRouteFixtureTests
     {
         Id = $"ext-deezer-album-{id}",
         Title = title,
+        Upc = title == "Visions" ? "012345678905" : null,
         Artist = "Grimes",
         ExternalProvider = "deezer",
         ExternalId = id

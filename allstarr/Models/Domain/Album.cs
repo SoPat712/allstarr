@@ -10,6 +10,9 @@ public class Album
     public string Artist { get; set; } = string.Empty;
     public string? ArtistId { get; set; }
     public List<Artist> Artists { get; set; } = [];
+    public bool? IsExplicit { get; set; }
+    public string? Upc { get; set; }
+    public string? Edition { get; set; }
     public string? Label { get; set; }
     public string? Notes { get; set; }
     public Dictionary<string, string> ProviderIds { get; set; } = [];

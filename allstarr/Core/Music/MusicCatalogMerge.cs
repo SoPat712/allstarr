@@ -17,11 +17,11 @@ public sealed class MusicCatalogMerge(IProtocolProviderGateway providers)
     public async Task<IReadOnlyList<Album>> MissingArtistAlbumsAsync(
         ProtocolExecutionContext context,
         string artistName,
-        IReadOnlyCollection<string> libraryAlbumTitles)
+        IReadOnlyCollection<Album> libraryAlbums)
     {
         var artistKey = FuzzyMatcher.NormalizeForMatching(artistName);
         if (artistKey.Length == 0) return [];
-        var owned = libraryAlbumTitles.Select(FuzzyMatcher.NormalizeForMatching).ToHashSet(StringComparer.Ordinal);
+        var owned = libraryAlbums.Select(album => FuzzyMatcher.NormalizeForMatching(album.Title)).ToHashSet(StringComparer.Ordinal);
         var candidates = (await providers.SearchAsync(context, artistName, 0, 0, 20)).Artists
             .Where(artist => !string.IsNullOrEmpty(artist.ExternalId) && !string.IsNullOrEmpty(artist.ExternalProvider) &&
                              FuzzyMatcher.NormalizeForMatching(artist.Name) == artistKey)
@@ -32,11 +32,9 @@ public sealed class MusicCatalogMerge(IProtocolProviderGateway providers)
             var albums = await providers.GetArtistAlbumsAsync(context, candidate.ExternalProvider!, candidate.ExternalId!);
             var titles = albums.Select(album => FuzzyMatcher.NormalizeForMatching(album.Title)).ToList();
             if (owned.Count > 0 && !titles.Any(owned.Contains)) continue;
-            return albums
-                .Where(album => !owned.Contains(FuzzyMatcher.NormalizeForMatching(album.Title)))
-                .GroupBy(album => FuzzyMatcher.NormalizeForMatching(album.Title))
-                .Select(group => group.First())
-                .ToList();
+            var nativeIds = libraryAlbums.Select(album => album.Id).ToHashSet(StringComparer.Ordinal);
+            return MusicAlbumReleases.Collapse(libraryAlbums.Concat(albums))
+                .Where(album => !album.IsLocal || !nativeIds.Contains(album.Id)).ToList();
         }
         return [];
     }

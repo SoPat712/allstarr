@@ -133,7 +133,18 @@ public class SubsonicModelMapper
     {
         AlbumText = GetSearchField(item, "album"),
         AlbumArtistText = GetSearchField(item, "albumArtist"),
-        DurationSeconds = int.TryParse(GetSearchField(item, "duration"), out var seconds) ? seconds : null
+        DurationSeconds = int.TryParse(GetSearchField(item, "duration"), out var seconds) ? seconds : null,
+        AlbumMetadata = kind == MusicItemKind.Album ? new()
+        {
+            Id = GetSearchField(item, "id"),
+            Title = NameOrTitle(item),
+            Artist = GetSearchField(item, "artist"),
+            IsLocal = true,
+            Upc = GetSearchField(item, "upc"),
+            Edition = GetSearchField(item, "edition"),
+            IsExplicit = GetSearchField(item, "explicitStatus") switch { "explicit" => true, "clean" => false, _ => null },
+            SongCount = int.TryParse(GetSearchField(item, "songCount"), out var count) && count > 0 ? count : null
+        } : null
     };
 
     /// <summary>Renders merged search rows: native rows keep every field, provider rows are converted.</summary>
