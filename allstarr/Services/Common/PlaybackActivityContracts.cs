@@ -213,7 +213,8 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
             : null;
 
     private static string? StreamDeviceId(ProtocolExecutionContext context) =>
-        context.Client.DeviceId ?? (context.Protocol == ProtocolKind.Subsonic ? context.Client.ClientId : null);
+        context.Client.DeviceId ?? (context.Protocol == ProtocolKind.Subsonic ? context.Client.ClientId : null) ??
+        (context.IsOriginalDownload ? "original-download" : null);
 
     private static string StreamItemKey(string itemId)
     {

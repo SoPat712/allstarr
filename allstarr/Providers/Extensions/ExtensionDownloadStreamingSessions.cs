@@ -36,7 +36,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
             if (!sessions.TryGetValue(key, out session!))
             {
                 session = new DownloadSession(new ExtensionProgressiveTransfer(clock, allowsProgressive, deezerSpeculation),
-                    context.Remaining(clock.GetUtcNow()), clock);
+                    context.Remaining(clock.GetUtcNow()), context.PlaybackTransferDeadline, clock);
                 var created = session;
                 session.IdleTimer = clock.CreateTimer(_ => Abandon(key, created), null,
                     Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
@@ -49,7 +49,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
             if (session.Completion == null)
             {
                 var downloadContext = new ProviderExecutionContext(context.Actor, context.ProviderId, context.Account, context.Policy,
-                    context.OperationId, context.CorrelationId, context.Deadline, session.Cancellation.Token, context.IdempotencyKey);
+                    context.OperationId, context.CorrelationId, session.Deadline ?? context.Deadline, session.Cancellation.Token, context.IdempotencyKey);
                 session.Completion = RunSessionAsync(downloadContext, request, key, session);
             }
         }
@@ -172,6 +172,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
         session.Transfer.Cleanup();
         session.CleanupWorkspace?.Invoke();
         session.IdleTimer?.Dispose();
+        session.ReadinessTimer?.Dispose();
         session.Cancellation.Dispose();
     }
 
@@ -186,6 +187,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
                 foreach (var session in active)
                 {
                     session.IdleTimer?.Dispose();
+                    session.ReadinessTimer?.Dispose();
                     session.Cancellation.Cancel();
                 }
                 disposal = FinishDisposalAsync(active);
@@ -201,15 +203,37 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
             foreach (var (key, session) in sessions.ToArray()) CleanupSession(key, session);
     }
 
-    private sealed class DownloadSession(ExtensionProgressiveTransfer transfer, TimeSpan remaining, TimeProvider clock)
+    private sealed class DownloadSession
     {
-        public ExtensionProgressiveTransfer Transfer { get; } = transfer;
-        public CancellationTokenSource Cancellation { get; } = new(remaining, clock);
+        public DownloadSession(ExtensionProgressiveTransfer transfer, TimeSpan remaining,
+            DateTimeOffset? transferDeadline, TimeProvider clock)
+        {
+            Transfer = transfer;
+            if (transferDeadline is { } fullDeadline && fullDeadline - clock.GetUtcNow() > remaining)
+            {
+                Deadline = fullDeadline;
+                Cancellation = new(fullDeadline - clock.GetUtcNow(), clock);
+                ReadinessTimer = clock.CreateTimer(_ =>
+                {
+                    if (!Transfer.Published && !Volatile.Read(ref Finished))
+                    {
+                        try { Cancellation.Cancel(); }
+                        catch (ObjectDisposedException) { }
+                    }
+                }, null, remaining, Timeout.InfiniteTimeSpan);
+            }
+            else Cancellation = new(remaining, clock);
+        }
+
+        public ExtensionProgressiveTransfer Transfer { get; }
+        public DateTimeOffset? Deadline { get; }
+        public CancellationTokenSource Cancellation { get; }
+        public ITimer? ReadinessTimer { get; }
         public Task<ProviderOutcome<ProviderStreamLease>>? Completion { get; set; }
         public Action? CleanupWorkspace { get; set; }
         public ITimer? IdleTimer { get; set; }
         public int Listeners { get; set; }
-        public bool Finished { get; set; }
+        public bool Finished;
         public bool Succeeded { get; set; }
         public bool IdleScheduled { get; set; }
     }

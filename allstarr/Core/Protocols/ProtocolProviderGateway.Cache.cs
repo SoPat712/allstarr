@@ -54,6 +54,12 @@ public sealed partial class ProtocolProviderGateway
         ProviderExecutionContext execution, ProviderExternalResourceId track, ProviderAudioQuality quality, CancellationToken token)
     {
         if (managedTrackCache == null) return null;
+        if (protocol.IsOriginalDownload)
+            return managedTrackCache.CanRetainOriginal(protocol)
+                ? await managedTrackCache.ReadCachedMediaAsync(track,
+                    managedTrackCache.ScopeFor(protocol, execution.Account?.AccountId, quality, execution.Account?.Revision),
+                    token, execution.Account?.Revision)
+                : null;
         foreach (var variant in CachedQualities(protocol, quality, false))
         {
             var media = await managedTrackCache.ReadCachedMediaAsync(track,

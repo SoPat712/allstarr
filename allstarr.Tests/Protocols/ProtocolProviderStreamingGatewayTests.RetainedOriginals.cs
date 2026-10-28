@@ -109,8 +109,12 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Empty(await fixture.Mappings.ListCacheMappingsAsync());
     }
 
-    [Fact]
-    public async Task RetainedOriginalIntent_DoesNotPublishAnUnselectedPlaybackHedge()
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin, false)]
+    [InlineData(ProtocolKind.Jellyfin, true)]
+    [InlineData(ProtocolKind.Subsonic, false)]
+    [InlineData(ProtocolKind.Subsonic, true)]
+    public async Task RetainedOriginalIntent_DoesNotPublishAnUnselectedPlaybackHedge(ProtocolKind dialect, bool originalDownload)
     {
         await using var fixture = await RetainedOriginalCacheFixture.CreateAsync();
         var waiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -125,10 +129,11 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         });
         var second = Streaming("qobuz", (_, _) => Task.FromResult(fixture.Response()));
         var (gateway, _) = FailoverGateway(first, second, managedTrackCache: fixture.Cache, clock: fixture.Clock);
-        var context = StartPreferenceContext("Balanced", fixture.Clock) with { RetainOriginalMedia = true };
+        var context = StartPreferenceContext("Balanced", fixture.Clock, protocol: dialect) with
+        { RetainOriginalMedia = true, IsOriginalDownload = originalDownload };
         try
         {
-            var pending = gateway.OpenStreamAsync(context, "deezer", "original-track", ProviderAudioQuality.Any, null);
+            var pending = gateway.OpenStreamAsync(context, originalDownload ? "allstarr" : "deezer", "original-track", ProviderAudioQuality.Any, null);
             await waiting.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await fixture.Clock.WaitForTimersAsync(TimeSpan.FromSeconds(2));
             fixture.Clock.Advance(TimeSpan.FromSeconds(2));

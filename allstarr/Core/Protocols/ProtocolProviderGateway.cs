@@ -1144,15 +1144,24 @@ public sealed partial class ProtocolProviderGateway(
         var itemId = protocol.RequestedItemId ?? ProtocolItemId(trackId);
         if (protocol.IsPreparation && playbackActivity?.WasStreamOpened(itemId) == true) return null;
         var previous = playbackActivity?.StreamFor(protocol, itemId, quality);
-        var hasPlaybackIdentity = !protocol.IsOriginalDownload && (!string.IsNullOrWhiteSpace(protocol.Client.DeviceId) ||
-            protocol.Protocol == ProtocolKind.Subsonic && !string.IsNullOrWhiteSpace(protocol.Client.ClientId));
+        var canonicalDownload = protocol.IsOriginalDownload && providerId == "allstarr";
+        var pinnedDownload = canonicalDownload && parsedRange != null ? previous : null;
+        var hasPlaybackIdentity = canonicalDownload || !protocol.IsOriginalDownload &&
+            (!string.IsNullOrWhiteSpace(protocol.Client.DeviceId) ||
+             protocol.Protocol == ProtocolKind.Subsonic && !string.IsNullOrWhiteSpace(protocol.Client.ClientId));
         // Legacy provider requests without a device retain their direct provider route across ranges.
         if ((hasPlaybackIdentity || providerId == "allstarr") &&
+            (pinnedDownload == null || pinnedDownload.ManagedFileId != null) &&
             (providerId == "allstarr" || IsAutomaticProvider(providerId, effectivePolicy)))
         {
             var kept = await OpenHouseholdKeptAsync(protocol, trackId, quality, headOnly);
             if (kept != null)
             {
+                if (pinnedDownload != null && kept.ServingManagedFileId != pinnedDownload.ManagedFileId)
+                {
+                    kept.Response.Dispose();
+                    throw new ProtocolProviderUnavailableException(new(ProviderErrorKind.TransientFailure));
+                }
                 if (protocol.IsPreparation) { kept.Response.Dispose(); return null; }
                 return await OpenedAsync(kept, null, null);
             }
@@ -1182,8 +1191,10 @@ public sealed partial class ProtocolProviderGateway(
             if (!providerOrder.Contains(providerId, StringComparer.Ordinal)) return null;
             providerOrder = [providerId];
         }
+        if (pinnedDownload?.ManagedFileId != null)
+            throw new ProtocolProviderUnavailableException(new(ProviderErrorKind.TransientFailure));
         // Prefer the prior encoding when it still exists, but a lost session must not block playback.
-        if (resuming && previous != null && providerOrder.Contains(previous.ProviderId, StringComparer.Ordinal))
+        if ((resuming || pinnedDownload != null) && previous != null && providerOrder.Contains(previous.ProviderId, StringComparer.Ordinal))
             providerOrder = new[] { previous.ProviderId }.Concat(providerOrder).Distinct(StringComparer.Ordinal).ToArray();
         var streamRequest = Request(
             protocol,
@@ -1191,13 +1202,25 @@ public sealed partial class ProtocolProviderGateway(
             ProviderCapabilityKind.Streaming,
             "protocol-stream-open",
             providerOrder,
-            resuming && previous != null && previous.ManagedFileId == null
+            (resuming || pinnedDownload != null) && previous != null && previous.ManagedFileId == null
                 ? new ProviderExternalResourceId(previous.ProviderId, ProviderResourceKind.Track, previous.ExternalId)
                 : trackId,
             quality,
             allowFallback: true,
             allowManagedDownloads: true);
         var plan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
+        if (pinnedDownload != null)
+        {
+            plan = plan with
+            {
+                Candidates = plan.Candidates.Where(candidate => candidate.Provider.Id == pinnedDownload.ProviderId &&
+                    (candidate.TrackId ?? trackId).Value == pinnedDownload.ExternalId &&
+                    candidate.Context.Account?.AccountId == pinnedDownload.AccountId &&
+                    candidate.Context.Account?.Revision == pinnedDownload.AccountRevision).ToArray()
+            };
+            if (plan.Candidates.Count == 0)
+                throw new ProtocolProviderUnavailableException(new(ProviderErrorKind.TransientFailure));
+        }
         if (plan.Candidates.Count == 0 && streamRequest.SourceTrackId != trackId)
         {
             streamRequest = Request(protocol, actor, ProviderCapabilityKind.Streaming, "protocol-stream-open",
@@ -1293,26 +1316,32 @@ public sealed partial class ProtocolProviderGateway(
             return null;
         }
 
-        if (effectivePolicy != null && hasPlaybackIdentity && !resuming && !headOnly && !protocol.IsReadOnly &&
-            !protocol.IsOriginalDownload && !protocol.IsPreparation &&
+        var boundedDownloadStart = protocol.IsOriginalDownload && !resuming &&
+            !headOnly && !protocol.IsReadOnly && !protocol.IsPreparation;
+        var startDeadline = protocolDeadline;
+        if (boundedDownloadStart)
+        {
+            var startBudget = canonicalDownload ? GetSourceStartTimeout() : GetOriginalDownloadStartTimeout();
+            if (streamOpeningStartedAt.Add(startBudget) < startDeadline)
+                startDeadline = streamOpeningStartedAt.Add(startBudget);
+        }
+
+        if (effectivePolicy != null && hasPlaybackIdentity && !resuming && pinnedDownload == null && !headOnly && !protocol.IsReadOnly &&
+            (!protocol.IsOriginalDownload || canonicalDownload) && !protocol.IsPreparation &&
             (providerId == "allstarr" || IsAutomaticProvider(providerId, effectivePolicy)))
         {
-            void ExtendDownloadOpeningTime()
-            {
-                if (!plan.Candidates.Any(candidate => candidate.Implementation is IProviderDownloadStreamingCapability)) return;
-                var remaining = streamOpeningStartedAt.Add(GetDownloadStreamTimeout()) - clock.GetUtcNow();
-                if (remaining > TimeSpan.Zero) openingTimeout.CancelAfter(remaining);
-                else openingTimeout.Cancel();
-            }
-            ExtendDownloadOpeningTime();
+            var boundedStart = boundedDownloadStart || plan.Candidates.Count(candidate => IsAutomaticProvider(candidate.Provider.Id, effectivePolicy)) > 1;
+            if (boundedStart && streamOpeningStartedAt.Add(GetSourceStartTimeout()) < startDeadline)
+                startDeadline = streamOpeningStartedAt.Add(GetSourceStartTimeout());
+            if (!boundedStart && plan.Candidates.Any(candidate => candidate.Implementation is IProviderDownloadStreamingCapability))
+                startDeadline = streamOpeningStartedAt.Add(GetDownloadStreamTimeout());
+            var remaining = startDeadline - clock.GetUtcNow();
+            if (remaining <= TimeSpan.Zero) throw new OperationCanceledException(protocol.CancellationToken);
+            openingTimeout.CancelAfter(remaining);
             return await OpenWithStartPreferenceAsync(protocol, plan, trackId, quality,
-                effectivePolicy, streamOpeningStartedAt, protocolDeadline, streamCancellation, OpenedAsync,
-                async () =>
-                {
-                    if (!await ResolveAvailabilityAsync()) return null;
-                    ExtendDownloadOpeningTime();
-                    return plan;
-                });
+                effectivePolicy, startDeadline, DownloadTransferDeadline(streamOpeningStartedAt, protocolDeadline),
+                parsedRange, openingTimeout.Token, streamCancellation, OpenedAsync,
+                async () => await ResolveAvailabilityAsync() ? plan : null);
         }
 
         string? fallbackReason = null;
@@ -1362,7 +1391,9 @@ public sealed partial class ProtocolProviderGateway(
             }
             if (sourceAttempts++ >= 4) break;
             var candidateDeadline = protocolDeadline;
-            if (!resuming && candidate.Implementation is IProviderDownloadStreamingCapability)
+            if (boundedDownloadStart)
+                candidateDeadline = startDeadline;
+            else if (!resuming && candidate.Implementation is IProviderDownloadStreamingCapability)
             {
                 opening.Token.ThrowIfCancellationRequested();
                 candidateDeadline = streamOpeningStartedAt.Add(GetDownloadStreamTimeout());
@@ -1376,6 +1407,7 @@ public sealed partial class ProtocolProviderGateway(
             using var sourceStartTimeout = new CancellationTokenSource(!resuming && candidateIndex + 1 < plan.Candidates.Count &&
                 !protocol.IsOriginalDownload && !protocol.IsReadOnly
                 ? GetSourceStartTimeout() : Timeout.InfiniteTimeSpan, clock);
+            using var sourceAbandonment = CancellationTokenSource.CreateLinkedTokenSource(sourceStartTimeout.Token, openingTimeout.Token);
             using var sourceStart = CancellationTokenSource.CreateLinkedTokenSource(protocol.CancellationToken, sourceStartTimeout.Token);
             var candidateExecution = new ProviderExecutionContext(
                 candidate.Context.Actor,
@@ -1387,7 +1419,13 @@ public sealed partial class ProtocolProviderGateway(
                 candidateDeadline,
                 sourceStart.Token,
                 candidate.Context.IdempotencyKey)
-            { IsReadOnly = protocol.IsReadOnly };
+            {
+                IsReadOnly = protocol.IsReadOnly,
+                PlaybackAbandonment = sourceAbandonment.Token,
+                PlaybackTransferDeadline = !protocol.IsReadOnly && !protocol.IsPreparation &&
+                    candidate.Implementation is IProviderDownloadStreamingCapability
+                        ? DownloadTransferDeadline(streamOpeningStartedAt, protocolDeadline) : null
+            };
             var leaseRequest = new ProviderStreamLeaseRequest(
                 servingTrack,
                 sourceQuality,
@@ -1461,7 +1499,7 @@ public sealed partial class ProtocolProviderGateway(
                     await ExpectedPlaybackDurationAsync(candidateExecution, servingTrack, headOnly || protocol.IsReadOnly || protocol.IsOriginalDownload || protocol.IsPreparation ? null : trackId), protocol.AudioDelivery,
                     async (_, offset, end, token) =>
                     {
-                        var refreshed = await candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(candidateExecution, token),
+                        var refreshed = await candidate.Implementation.GetStreamLeaseAsync(ResumeExecution(candidateExecution, token, opening: true),
                             new(servingTrack, sourceQuality, offset));
                         if (!refreshed.IsSuccess) ThrowRouteFailure(refreshed.Error!);
                         return await OpenLeaseAtAsync(refreshed.RequireValue(), new(offset, end), null, token);
@@ -1535,6 +1573,7 @@ public sealed partial class ProtocolProviderGateway(
                 }, candidateExecution, servingTrack);
             }
             lastFailure = outcome.Error;
+            if (pinnedDownload != null) ThrowRouteFailure(outcome.Error!);
             if (outcome.Error?.Code == "stream-range-unavailable") ThrowRouteFailure(outcome.Error);
             var fallback = router.EvaluateFallback(plan, candidateIndex, outcome.Error!);
             if (fallback?.Disposition == ProviderFallbackDisposition.Advance)
@@ -1703,16 +1742,36 @@ public sealed partial class ProtocolProviderGateway(
         (execution.Account != null && IsPublicMetadataProvider(track.ProviderId)
             ? await ReadCachedSongAsync(execution.Actor, track.ProviderId, track.Value) : null);
 
-    private ProviderExecutionContext ResumeExecution(ProviderExecutionContext original, CancellationToken token) =>
-        new(original.Actor, original.ProviderId, original.Account, original.Policy, original.OperationId,
-            original.CorrelationId, (timeProvider ?? TimeProvider.System).GetUtcNow().Add(ProgressiveCachingStream.SeekWaitTimeout),
-            token, original.IdempotencyKey);
+    private ProviderExecutionContext ResumeExecution(ProviderExecutionContext original, CancellationToken token, bool opening = false)
+    {
+        var deadline = (timeProvider ?? TimeProvider.System).GetUtcNow().Add(ProgressiveCachingStream.SeekWaitTimeout);
+        if (opening && original.Deadline < deadline) deadline = original.Deadline;
+        return new(original.Actor, original.ProviderId, original.Account, original.Policy, original.OperationId,
+            original.CorrelationId, deadline, token, original.IdempotencyKey)
+        {
+            PlaybackAbandonment = opening ? original.PlaybackAbandonment : CancellationToken.None,
+            PlaybackTransferDeadline = original.PlaybackTransferDeadline
+        };
+    }
 
     private TimeSpan GetDownloadStreamTimeout()
     {
         var options = new ProtocolExecutionOptions();
         configuration?.GetSection(ProtocolExecutionOptions.SectionName).Bind(options);
         return options.GetDownloadStreamTimeout();
+    }
+
+    private DateTimeOffset DownloadTransferDeadline(DateTimeOffset started, DateTimeOffset protocolDeadline)
+    {
+        var deadline = started.Add(GetDownloadStreamTimeout());
+        return deadline > protocolDeadline ? deadline : protocolDeadline;
+    }
+
+    private TimeSpan GetOriginalDownloadStartTimeout()
+    {
+        var options = new ProtocolExecutionOptions();
+        configuration?.GetSection(ProtocolExecutionOptions.SectionName).Bind(options);
+        return options.GetOperationTimeout();
     }
 
     private TimeSpan GetSourceStartTimeout()

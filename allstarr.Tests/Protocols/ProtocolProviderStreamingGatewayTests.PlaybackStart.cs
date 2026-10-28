@@ -122,7 +122,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     }
 
     [Fact]
-    public async Task PlaybackStartTimeoutStopsTheDownloadAndTreatsItsCanceledResultAsAFallbackFailure()
+    public async Task PlaybackStartSharedTimeoutStopsTheDownloadAndPendingFallback()
     {
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         var abandoned = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -154,9 +154,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             await secondStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
             clock.Advance(TimeSpan.FromSeconds(9));
             await abandoned.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            finishSecond.TrySetResult();
-            using var response = (await opening.WaitAsync(TimeSpan.FromSeconds(5)))!.Response;
-            Assert.Equal("qobuz", Assert.Single(response.Headers.GetValues("X-Allstarr-Provider")));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => opening.WaitAsync(TimeSpan.FromSeconds(5)));
         }
         finally { finishSecond.TrySetResult(); }
     }
