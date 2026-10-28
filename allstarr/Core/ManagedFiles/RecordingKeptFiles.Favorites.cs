@@ -10,8 +10,11 @@ namespace allstarr.Core.ManagedFiles;
 
 public sealed record KeptFavoriteInterest(Guid OwnerUserId, Guid JobId, int AttemptNumber);
 
+public sealed record KeptRecordingArtwork(string ProviderId, string ExternalId);
+
 public sealed record KeptRecordingMetadata(string Title, string[] Artists, string? Album = null,
-    long? DurationMilliseconds = null, int? ExplicitContentLyrics = null, allstarr.Services.Common.AudioQualityCheck? QualityCheck = null);
+    long? DurationMilliseconds = null, int? ExplicitContentLyrics = null, allstarr.Services.Common.AudioQualityCheck? QualityCheck = null,
+    int? Track = null, string? AlbumArtist = null, KeptRecordingArtwork? Artwork = null);
 
 public sealed partial class RecordingKeptFiles
 {
@@ -96,6 +99,8 @@ public sealed partial class RecordingKeptFiles
                 Artist = metadata.Artists.FirstOrDefault() ?? "Unknown artist",
                 Artists = metadata.Artists.ToList(),
                 Album = metadata.Album ?? string.Empty,
+                Track = metadata.Track,
+                AlbumArtist = metadata.AlbumArtist,
                 Duration = metadata.DurationMilliseconds is { } duration ? (int)Math.Min(duration / 1000, int.MaxValue) : null,
                 PreciseDuration = metadata.DurationMilliseconds is { } precise ? TimeSpan.FromMilliseconds(precise) : null,
                 ExplicitContentLyrics = metadata.ExplicitContentLyrics,
@@ -188,6 +193,10 @@ public sealed partial class RecordingKeptFiles
         metadata.Album is not { Length: > 500 } && metadata.Artists is { Length: <= 20 } &&
         metadata.Artists.All(item => !string.IsNullOrWhiteSpace(item) && item.Length <= 500) &&
         metadata.DurationMilliseconds is null or >= 0 and <= 922337203685 &&
+        metadata.Track is null or > 0 && metadata.AlbumArtist is not { Length: > 500 } &&
+        (metadata.Artwork == null || !string.IsNullOrWhiteSpace(metadata.Artwork.ProviderId) &&
+            metadata.Artwork.ProviderId.Length <= 100 && !string.IsNullOrWhiteSpace(metadata.Artwork.ExternalId) &&
+            metadata.Artwork.ExternalId.Length <= 500) &&
         metadata.ExplicitContentLyrics is null or 0 or 1 or 2 or 3 or 6 or 7;
 
     private static string SerializeMetadata(KeptRecordingMetadata metadata)

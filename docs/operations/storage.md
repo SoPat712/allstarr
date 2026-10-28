@@ -137,6 +137,8 @@ Run one Allstarr process per database. After storage becomes ready, the worker i
 
 ## Kept publication ownership
 
+Storage rows use the retained recording metadata and actual download source before falling back to file tags or filenames. New kept copies retain available track numbers and album artists; a missing number leaves out the numeric filename prefix. Existing copies show their saved title, artist, album and source without renaming or retagging the audio. Artwork uses the downloaded source, with the provider mark as fallback when artwork is unavailable.
+
 Managed kept files and their recording associations are stored separately from personal provider download artifacts. Publication retains the source user, job, track and account revision without changing the source artifact's owner. An existing personal download from before track binding was introduced stays personal; it is never guessed into a household kept route.
 
 Playlist retention uses the same household recording association and managed references as favorites. A published snapshot or KeepAll change saves its reference updates, obsolete-work cancellation and new retention jobs in one SQLite transaction. Workers verify the current published entry and effective external route again after preparing audio. Retention workers read the requested source entry and current route inputs directly. An old snapshot or a disabled retention option cannot publish a lasting copy. Source updates and manual rematch publication release obsolete file associations even when a provider track keeps the same reference key.

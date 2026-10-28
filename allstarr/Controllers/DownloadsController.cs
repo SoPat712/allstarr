@@ -489,6 +489,19 @@ public partial class DownloadsController : ControllerBase
             // Partially written or legacy files remain manageable with path-derived metadata.
         }
 
+        var kept = ownership?.Kept;
+        var mapping = ownership?.Mapping;
+        title = DisplayValue(kept?.Metadata?.Title, DisplayValue(mapping?.Title, title));
+        artist = DisplayValue(kept?.Metadata?.Artists?.FirstOrDefault(item => !string.IsNullOrWhiteSpace(item)),
+            DisplayValue(mapping?.Artist, artist));
+        album = DisplayValue(kept?.Metadata?.Album, DisplayValue(mapping?.Album, album));
+        if (kept?.Metadata?.DurationMilliseconds is >= 0 and <= 922337203685)
+            durationMilliseconds = kept.Metadata.DurationMilliseconds;
+        if (kept != null)
+            identity = (kept.Provider, kept.ExternalId);
+        else if (!string.IsNullOrWhiteSpace(mapping?.ProviderId) && !string.IsNullOrWhiteSpace(mapping.ExternalId))
+            identity = (mapping.ProviderId, mapping.ExternalId);
+
         var codec = Path.GetExtension(filePath).TrimStart('.').ToUpperInvariant() switch
         {
             "M4A" or "AAC" => "AAC",
@@ -560,7 +573,17 @@ public partial class DownloadsController : ControllerBase
         var qualityRows = await (from route in db.Set<Core.ManagedFiles.RecordingKeptRouteEntity>().AsNoTracking()
                                  join artifact in db.Set<ProviderDownloadArtifactEntity>().AsNoTracking() on route.SourceArtifactId equals artifact.Id
                                  where fileIds.Contains(route.ManagedFileId)
-                                 select new { route.ManagedFileId, artifact.Id, artifact.QualityCheckJson }).ToArrayAsync(cancellationToken);
+                                 orderby route.CreatedAt, route.CanonicalRecordingId
+                                 select new
+                                 {
+                                     route.ManagedFileId,
+                                     route.DisplayMetadataJson,
+                                     artifact.Id,
+                                     artifact.QualityCheckJson,
+                                     artifact.ProviderId,
+                                     artifact.SourceExternalTrackId,
+                                     artifact.State
+                                 }).ToArrayAsync(cancellationToken);
         var owner = (HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] as AdminAuthSession)?.AllstarrUserId;
         var prefix = $"keep:user:{owner:N}:";
         var keptFiles = owner == null ? [] : await db.ManagedFileReferences.AsNoTracking()
@@ -569,13 +592,28 @@ public partial class DownloadsController : ControllerBase
         return paths.ToDictionary(path => path, path =>
         {
             var file = managed.FirstOrDefault(item => PathComparer.Equals(Path.GetFullPath(item.CanonicalPath), path));
+            var route = file?.IsManaged == true ? qualityRows.FirstOrDefault(item => item.ManagedFileId == file.Id) : null;
+            var sourceKnown = route is { State: ProviderDownloadArtifactState.Verified or ProviderDownloadArtifactState.Placed } &&
+                !string.IsNullOrWhiteSpace(route.ProviderId) && !string.IsNullOrWhiteSpace(route.SourceExternalTrackId);
             return new DownloadOwnership(
                 mappings.FirstOrDefault(item => PathComparer.Equals(Path.GetFullPath(item.LocalPath), path)),
                 file?.ReferenceCount, file?.Id, file != null && keptFiles.Contains(file.Id),
                 AudioQualityCheckJobHandler.ReadCheck(qualityRows.FirstOrDefault(item => item.ManagedFileId == file?.Id)?.QualityCheckJson),
-                qualityRows.FirstOrDefault(item => item.ManagedFileId == file?.Id)?.Id);
+                qualityRows.FirstOrDefault(item => item.ManagedFileId == file?.Id)?.Id,
+                route == null ? null : new(ReadKeptMetadata(route.DisplayMetadataJson),
+                    sourceKnown ? route.ProviderId : null, sourceKnown ? route.SourceExternalTrackId : null));
         }, PathComparer);
     }
+
+    private static Core.ManagedFiles.KeptRecordingMetadata? ReadKeptMetadata(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return System.Text.Json.JsonSerializer.Deserialize<Core.ManagedFiles.KeptRecordingMetadata>(json); }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
+
+    private static string DisplayValue(string? preferred, string fallback) =>
+        string.IsNullOrWhiteSpace(preferred) ? fallback : preferred;
 
     private async Task<DownloadOwnership?> FindOwnershipAsync(
         string path,
@@ -763,7 +801,11 @@ public partial class DownloadsController : ControllerBase
         Guid? ManagedFileId,
         bool ExplicitlyKept,
         AudioQualityCheck? QualityCheck = null,
-        Guid? QualityCheckArtifactId = null);
+        Guid? QualityCheckArtifactId = null,
+        KeptDownloadMetadata? Kept = null);
+
+    private sealed record KeptDownloadMetadata(Core.ManagedFiles.KeptRecordingMetadata? Metadata,
+        string? Provider, string? ExternalId);
 
     private sealed record ManagedDownloadFile(
         string Path,

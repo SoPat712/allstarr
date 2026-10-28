@@ -70,6 +70,8 @@ public sealed partial class RecordingKeptFilesTests
                 Artist = "First",
                 Artists = ["First", "Second"],
                 Album = "Kept album",
+                AlbumArtist = "Album artist",
+                Track = 4,
                 Duration = 123,
                 PreciseDuration = TimeSpan.FromMilliseconds(123_457),
                 ExplicitContentLyrics = 1,
@@ -101,13 +103,18 @@ public sealed partial class RecordingKeptFilesTests
         Assert.Equal("Kept title", song.Title);
         Assert.Equal(new[] { "First", "Second" }, song.Artists);
         Assert.Equal("Kept album", song.Album);
+        Assert.Equal("Album artist", song.AlbumArtist);
+        Assert.Equal(4, song.Track);
         Assert.Equal(TimeSpan.FromMilliseconds(123_457), song.PreciseDuration);
         Assert.Null(song.CoverArtUrl);
         Assert.Null(song.LocalPath);
         Assert.Null(song.JellyfinMetadata);
         Assert.Equal(ProviderDownloadArtifactState.Verified,
             (await artifacts.FindByJobAsync(jobId, "deezer"))!.State);
-        Assert.Single(await db.Set<RecordingKeptRouteEntity>().AsNoTracking().ToArrayAsync());
+        var route = Assert.Single(await db.Set<RecordingKeptRouteEntity>().AsNoTracking().ToArrayAsync());
+        var metadata = System.Text.Json.JsonSerializer.Deserialize<KeptRecordingMetadata>(route.DisplayMetadataJson!)!;
+        Assert.Equal(new KeptRecordingArtwork("deezer", "source-track"), metadata.Artwork);
+        Assert.DoesNotContain("private-artwork-fixture", route.DisplayMetadataJson);
         router.VerifyAll();
         providers.VerifyAll();
         gateway.VerifyAll();
