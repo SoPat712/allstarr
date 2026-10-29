@@ -30,11 +30,32 @@ public sealed class ListeningHistoryResolution(
     public const string JobTypeName = "listening-history.resolve";
     private const string ResourceKind = "history-resolution";
     private const int ProviderLimit = 100;
+    private const int LocalBatchSize = 100;
     public string JobType => JobTypeName;
+
+    private sealed record Resolution(IGrouping<string, ListeningEventRecord> Group, Guid? Canonical,
+        LibraryTrackRecord? Library, Song? Song = null, ProviderTrackIdentityRecord? Identity = null);
 
     private static IQueryable<ListeningEventRecord> Unresolved(AllstarrDbContext db, IntelligenceScope scope) =>
         db.ListeningEvents.Where(item => item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
             item.BackendInstanceId == scope.BackendInstanceId && item.SourceKind == "import" && item.CanonicalRecordingId == null);
+
+    private static IQueryable<ListeningEventRecord> MatchingEvents(AllstarrDbContext db, IntelligenceScope scope) =>
+        Unresolved(db, scope).AsNoTracking().Select(item => new ListeningEventRecord
+        {
+            Id = item.Id,
+            State = item.State,
+            ProviderId = item.ProviderId,
+            ProviderTrackReference = item.ProviderTrackReference,
+            Title = item.Title,
+            Artist = item.Artist,
+            Album = item.Album,
+            AlbumArtist = item.AlbumArtist,
+            DurationMilliseconds = item.DurationMilliseconds,
+            Isrc = item.Isrc,
+            RecordingMusicBrainzId = item.RecordingMusicBrainzId,
+            ImportProvenance = item.ImportProvenance
+        });
 
     private static IQueryable<ExternalMetadataSnapshotRecord> Receipts(AllstarrDbContext db, IntelligenceScope scope) =>
         db.ExternalMetadataSnapshots.Where(item => item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
@@ -53,7 +74,7 @@ public sealed class ListeningHistoryResolution(
     {
         await using var db = await factory.CreateDbContextAsync(token);
         if (!await IntelligencePolicyService.OwnsBackendAsync(db, scope, token)) return;
-        var plays = await Unresolved(db, scope).AsNoTracking().ToArrayAsync(token);
+        var plays = await MatchingEvents(db, scope).ToArrayAsync(token);
         var recent = await Receipts(db, scope).Where(item => item.RetrievedAt > now.AddDays(-7))
             .Select(item => item.ExternalIdHash).ToHashSetAsync(token);
         if (!plays.Any(play => !recent.Contains(SongKey(play)))) return;
@@ -102,30 +123,38 @@ public sealed class ListeningHistoryResolution(
         var local = tracks.GroupBy(track => MetadataKey(track.Title, track.Artist)).ToDictionary(group => group.Key, group => group.ToArray());
         var recent = await Receipts(db, saved.Scope).Where(item => item.RetrievedAt > clock.UtcNow.AddDays(-7))
             .Select(item => item.ExternalIdHash).ToHashSetAsync(token);
-        var groups = (await Unresolved(db, saved.Scope).ToArrayAsync(token)).GroupBy(SongKey)
+        var groups = (await MatchingEvents(db, saved.Scope).ToArrayAsync(token)).GroupBy(SongKey)
             .Where(group => !recent.Contains(group.Key)).OrderByDescending(group => group.Count(item => item.State == ListeningEventState.Completed))
             .ThenBy(group => group.Key, StringComparer.Ordinal).ToArray();
         var scope = new TrackMatchScope(user.Id, user.BackendInstanceId, null, 2, 1, access.LibraryIds.ToHashSet());
         var remaining = new List<IGrouping<string, ListeningEventRecord>>();
-        foreach (var group in groups)
+        for (var offset = 0; offset < groups.Length; offset += LocalBatchSize)
         {
-            var play = group.First();
-            var source = Source(group.Key, play);
-            var candidates = local.GetValueOrDefault(MetadataKey(play.Title, play.Artist)) ?? [];
-            if (candidates.Length == 0) { remaining.Add(group); continue; }
-            var decision = matcher.Decide(scope, source, candidates.Select(track => new LocalTrackMatchCandidate(
-                track.Id, track.OwnerUserId, track.BackendInstanceId, track.BackendLibraryId, track.BackendItemId,
-                track.CanonicalRecordingId, track.Title, track.Artist, track.Album, track.AlbumArtist, track.DurationMilliseconds,
-                track.Isrc, track.MusicBrainzRecordingId, null)).ToArray(), null);
-            var selected = candidates.FirstOrDefault(track => track.Id == decision.SelectedLibraryTrackId);
-            if (selected == null || !Accepted(decision) || !SameEdition(play.Title, selected.Title)) { remaining.Add(group); continue; }
-            var canonical = selected.CanonicalRecordingId ?? await db.ListeningEvents.AsNoTracking().Where(item =>
-                item.OwnerUserId == user.Id && item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId &&
-                item.LibraryTrackId == selected.Id && item.CanonicalRecordingId != null).Select(item => item.CanonicalRecordingId).FirstOrDefaultAsync(token)
-                ?? (await identities.CreateRecordingAsync(context.RequireActor(), context.CorrelationId,
-                    selected.Isrc, selected.MusicBrainzRecordingId, token)).Recording.Id;
-            selected.CanonicalRecordingId = canonical;
-            await SaveAsync(group, canonical, selected, null, null);
+            var batch = new List<Resolution>();
+            foreach (var group in groups.Skip(offset).Take(LocalBatchSize))
+            {
+                token.ThrowIfCancellationRequested();
+                var play = group.First();
+                var source = Source(group.Key, play);
+                var candidates = local.GetValueOrDefault(MetadataKey(play.Title, play.Artist)) ?? [];
+                if (candidates.Length == 0) { remaining.Add(group); continue; }
+                var decision = matcher.Decide(scope, source, candidates.Select(track => new LocalTrackMatchCandidate(
+                    track.Id, track.OwnerUserId, track.BackendInstanceId, track.BackendLibraryId, track.BackendItemId,
+                    track.CanonicalRecordingId, track.Title, track.Artist, track.Album, track.AlbumArtist, track.DurationMilliseconds,
+                    track.Isrc, track.MusicBrainzRecordingId, null)).ToArray(), null);
+                var selected = candidates.FirstOrDefault(track => track.Id == decision.SelectedLibraryTrackId);
+                if (selected == null || !Accepted(decision) || !SameEdition(play.Title, selected.Title)) { remaining.Add(group); continue; }
+                var canonical = selected.CanonicalRecordingId ?? await db.ListeningEvents.AsNoTracking().Where(item =>
+                    item.OwnerUserId == user.Id && item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId &&
+                    item.LibraryTrackId == selected.Id && item.CanonicalRecordingId != null).Select(item => item.CanonicalRecordingId).FirstOrDefaultAsync(token)
+                    ?? (await identities.CreateRecordingAsync(context.RequireActor(), context.CorrelationId,
+                        selected.Isrc, selected.MusicBrainzRecordingId, token)).Recording.Id;
+                selected.CanonicalRecordingId = canonical;
+                batch.Add(new(group, canonical, selected));
+            }
+            if (batch.Count > 0) await SaveAsync(batch);
+            if (batch.Count > 0 && offset + LocalBatchSize < groups.Length)
+                await Task.Delay(TimeSpan.FromMilliseconds(250), timeProvider ?? TimeProvider.System, token);
         }
 
         var attempted = 0;
@@ -155,7 +184,7 @@ public sealed class ListeningHistoryResolution(
                     .OrderBy(item => item.Id).ToArrayAsync(token)).FirstOrDefault(CatalogIdentityPolicy.IsPlaybackEligible) : null;
             var library = song?.CanonicalRecordingId is { } id
                 ? tracks.FirstOrDefault(track => track.CanonicalRecordingId == id && SameEdition(play.Title, track.Title)) : null;
-            await SaveAsync(group, identity == null ? null : song?.CanonicalRecordingId, library, selected, identity);
+            await SaveAsync([new(group, identity == null ? null : song?.CanonicalRecordingId, library, selected, identity)]);
             await execution.ReportProgressAsync(new("history-resolution", "Matching imported listening history.", saved.Cursor,
                 saved.Cursor + Math.Max(0, remaining.Count - attempted)), token);
         }
@@ -164,71 +193,89 @@ public sealed class ListeningHistoryResolution(
         await mixes.RefreshAfterHistoryResolutionAsync(user.Id, execution.Claim.JobId, jobs, token);
         return DurableJobCompletion.Success();
 
-        async Task SaveAsync(IGrouping<string, ListeningEventRecord> group, Guid? canonical, LibraryTrackRecord? library,
-            Song? song, ProviderTrackIdentityRecord? identity)
+        async Task SaveAsync(IReadOnlyCollection<Resolution> batch)
         {
-            await using var transaction = await db.Database.BeginTransactionAsync(token);
-            var next = saved with { Cursor = saved.Cursor + 1 };
+            var next = saved with { Cursor = saved.Cursor + batch.Count };
             var json = payloadPolicy.SerializeAndValidate(next);
-            if (await db.Jobs.Where(item => item.Id == execution.Claim.JobId && item.State == DurableJobState.Running &&
-                item.AttemptCount == execution.Claim.AttemptNumber && item.CancellationRequestedAt == null)
-                .ExecuteUpdateAsync(update => update.SetProperty(item => item.PayloadJson, json)
-                    .SetProperty(item => item.UpdatedAt, clock.UtcNow).SetProperty(item => item.Revision, item => item.Revision + 1), token) != 1)
-                throw new DurableJobExecutionChangedException();
-            if (canonical != null)
+            for (var retry = 0; ; retry++)
             {
-                foreach (var play in group)
+                try
                 {
-                    play.CanonicalRecordingId = canonical;
-                    play.LibraryTrackId = library?.Id;
-                    play.TrackReference = library?.BackendItemId ?? $"ext-{song!.ExternalProvider}-song-{song.ExternalId}";
-                    if (identity != null)
+                    await using var write = await factory.CreateDbContextAsync(token);
+                    await using var transaction = await write.Database.BeginTransactionAsync(token);
+                    if (await write.Jobs.Where(item => item.Id == execution.Claim.JobId && item.State == DurableJobState.Running &&
+                        item.AttemptCount == execution.Claim.AttemptNumber && item.CancellationRequestedAt == null)
+                        .ExecuteUpdateAsync(update => update.SetProperty(item => item.PayloadJson, json)
+                            .SetProperty(item => item.UpdatedAt, clock.UtcNow)
+                            .SetProperty(item => item.Revision, item => item.Revision + batch.Count), token) != 1)
+                        throw new DurableJobExecutionChangedException();
+                    foreach (var resolution in batch)
                     {
-                        play.ProviderTrackIdentityId = identity.Id;
-                        play.ProviderId = identity.ProviderId;
-                        play.ProviderAccountId = identity.ProviderAccountId;
-                        play.ProviderTrackReference = identity.ExternalId;
+                        var (group, canonical, library, song, identity) = resolution;
+                        if (canonical != null)
+                        {
+                            var libraryId = library?.Id;
+                            var reference = library?.BackendItemId ?? $"ext-{song!.ExternalProvider}-song-{song.ExternalId}";
+                            var isrc = library?.Isrc ?? song?.Isrc;
+                            foreach (var importGroup in group.GroupBy(play => play.ImportProvenance?.Split(':').ElementAtOrDefault(1)))
+                            {
+                                var count = 0;
+                                foreach (var ids in importGroup.Select(play => play.Id).Chunk(500))
+                                {
+                                    var events = Unresolved(write, saved.Scope).Where(item => ids.Contains(item.Id));
+                                    count += await events.ExecuteUpdateAsync(update => update
+                                        .SetProperty(item => item.CanonicalRecordingId, canonical)
+                                        .SetProperty(item => item.LibraryTrackId, libraryId)
+                                        .SetProperty(item => item.TrackReference, reference)
+                                        .SetProperty(item => item.Isrc, item => item.Isrc ?? isrc)
+                                        .SetProperty(item => item.Revision, item => item.Revision + 1)
+                                        .SetProperty(item => item.ProviderTrackIdentityId, item => identity != null ? identity.Id : item.ProviderTrackIdentityId)
+                                        .SetProperty(item => item.ProviderId, item => identity != null ? identity.ProviderId : item.ProviderId)
+                                        .SetProperty(item => item.ProviderAccountId, item => identity != null ? identity.ProviderAccountId : item.ProviderAccountId)
+                                        .SetProperty(item => item.ProviderTrackReference, item => identity != null ? identity.ExternalId : item.ProviderTrackReference), token);
+                                }
+                                if (!Guid.TryParse(importGroup.Key, out var importId)) continue;
+                                await write.ListeningHistoryImports.Where(item => item.Id == importId &&
+                                    item.OwnerUserId == user.Id && item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId)
+                                    .ExecuteUpdateAsync(update => update
+                                        .SetProperty(item => item.ResolvedRows, item => item.ResolvedRows + count)
+                                        .SetProperty(item => item.UnresolvedRows, item => Math.Max(0, item.UnresolvedRows - count))
+                                        .SetProperty(item => item.UpdatedAt, clock.UtcNow)
+                                        .SetProperty(item => item.Revision, item => item.Revision + 1), token);
+                            }
+                        }
+                        else
+                        {
+                            var version = await Receipts(write, saved.Scope).Where(item => item.ExternalIdHash == group.Key)
+                                .Select(item => (int?)item.SnapshotVersion).MaxAsync(token) ?? 0;
+                            write.ExternalMetadataSnapshots.Add(new()
+                            {
+                                Id = Guid.CreateVersion7(),
+                                OwnerUserId = user.Id,
+                                Protocol = user.BackendType,
+                                BackendInstanceId = user.BackendInstanceId,
+                                BackendPrincipalId = user.BackendPrincipalId,
+                                ProviderId = "allstarr",
+                                ResourceKind = ResourceKind,
+                                ExternalIdHash = group.Key,
+                                SnapshotVersion = version + 1,
+                                SourceJobId = execution.Claim.JobId,
+                                RetrievedAt = clock.UtcNow,
+                                PayloadJson = "{}",
+                                PayloadSha256 = ListeningHistoryImportService.Hash("{}"),
+                                CorrelationId = context.CorrelationId
+                            });
+                        }
                     }
-                    play.Isrc ??= library?.Isrc ?? song?.Isrc;
-                    play.Revision++;
+                    await write.SaveChangesAsync(token);
+                    await transaction.CommitAsync(token);
+                    saved = next;
+                    return;
                 }
-                foreach (var importGroup in group.GroupBy(play => play.ImportProvenance?.Split(':').ElementAtOrDefault(1)))
+                catch (Exception exception) when (retry < 2 && DbErrors.IsTransientConflict(exception))
                 {
-                    if (!Guid.TryParse(importGroup.Key, out var importId)) continue;
-                    var import = await db.ListeningHistoryImports.SingleOrDefaultAsync(item => item.Id == importId &&
-                        item.OwnerUserId == user.Id && item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId, token);
-                    if (import == null) continue;
-                    import.ResolvedRows += importGroup.Count();
-                    import.UnresolvedRows = Math.Max(0, import.UnresolvedRows - importGroup.Count());
-                    import.UpdatedAt = clock.UtcNow;
-                    import.Revision++;
                 }
             }
-            else
-            {
-                var version = await Receipts(db, saved.Scope).Where(item => item.ExternalIdHash == group.Key)
-                    .Select(item => (int?)item.SnapshotVersion).MaxAsync(token) ?? 0;
-                db.ExternalMetadataSnapshots.Add(new()
-                {
-                    Id = Guid.CreateVersion7(),
-                    OwnerUserId = user.Id,
-                    Protocol = user.BackendType,
-                    BackendInstanceId = user.BackendInstanceId,
-                    BackendPrincipalId = user.BackendPrincipalId,
-                    ProviderId = "allstarr",
-                    ResourceKind = ResourceKind,
-                    ExternalIdHash = group.Key,
-                    SnapshotVersion = version + 1,
-                    SourceJobId = execution.Claim.JobId,
-                    RetrievedAt = clock.UtcNow,
-                    PayloadJson = "{}",
-                    PayloadSha256 = ListeningHistoryImportService.Hash("{}"),
-                    CorrelationId = context.CorrelationId
-                });
-            }
-            await db.SaveChangesAsync(token);
-            await transaction.CommitAsync(token);
-            saved = next;
         }
     }
 
