@@ -158,7 +158,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         }
         if (input.ProviderAccountId.HasValue)
             _ = await _accounts.ResolveAsync(new ProviderAccountResolutionRequest(principal, providerId, "playlist", input.ProviderAccountId,
-                AllowSharedAccount: providerId != "listenbrainz"), cancellationToken)
+                AllowSharedAccount: providerId is not ("listenbrainz" or "lastfm")), cancellationToken)
                 ?? throw new UnauthorizedAccessException("The provider account is unavailable.");
         else
         {

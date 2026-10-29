@@ -28,6 +28,7 @@ using allstarr.Core.Operations;
 using allstarr.Core.Providers.Deezer;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Providers.AppleMusicKit;
+using allstarr.Core.Providers.LastFm;
 using allstarr.Core.Providers.AppleDownload;
 using allstarr.Core.Providers.AudioMuse;
 using allstarr.Core.Providers;
@@ -461,6 +462,7 @@ builder.Services.AddMonochromeProvider();
 builder.Services.AddSpotifyPlaylistCapability();
 allstarr.Core.Providers.ListenBrainz.ListenBrainzPlaylistCapabilityRegistration.AddListenBrainzPlaylistCapability(builder.Services);
 builder.Services.AddAppleMusicProvider();
+builder.Services.AddLastFmPlaylistCapability();
 builder.Services.AddBuiltInLyricsCapabilities();
 
 

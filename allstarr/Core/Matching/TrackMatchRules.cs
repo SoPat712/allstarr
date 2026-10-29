@@ -179,7 +179,7 @@ internal sealed class MusicBrainzExactRule : ITrackMatchRule
         ExternalTrackMatchSnapshot source,
         LocalTrackMatchCandidate candidate,
         TrackMatchPolicy policy) =>
-        FuzzyMatcher.IdentifiersEqual(source.MusicBrainzRecordingId, TrackMatchSignals.RecordingIdentity(candidate))
+        FuzzyMatcher.IdentifiersEqual(TrackMatchSignals.RecordingIdentity(source), TrackMatchSignals.RecordingIdentity(candidate))
             ? TrackMatchRuleSet.Accept("musicbrainz_recording_id_exact", "MusicBrainz recording IDs match.",
                 "musicbrainzRecordingId")
             : null;
@@ -349,6 +349,10 @@ internal sealed class FieldScoreRule : ITrackMatchRule
 
 internal static class TrackMatchSignals
 {
+    // Last.fm recording IDs remain supporting metadata.
+    public static string? RecordingIdentity(ExternalTrackMatchSnapshot source) =>
+        source.ProviderId.Equals("lastfm", StringComparison.OrdinalIgnoreCase) ? null : source.MusicBrainzRecordingId;
+
     public static string? RecordingIdentity(LocalTrackMatchCandidate candidate) =>
         TryGetProviderTrackId(candidate.ProviderTrackIds, "musicbrainzrecording", out var recordingId)
             ? recordingId

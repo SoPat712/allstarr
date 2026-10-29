@@ -227,7 +227,8 @@ public sealed class ProviderPlaylistSnapshotCollector
             }).ToArray() ?? [],
             Year = metadata?.Year,
             Genre = metadata?.Genre,
-            MusicBrainzRecordingId = metadata != null && metadata.ProviderIds.TryGetValue("musicbrainzrecording", out var mbid) &&
+            MusicBrainzRecordingId = metadata != null && (metadata.ProviderIds.TryGetValue("musicbrainzrecording", out var mbid) ||
+                metadata.ProviderIds.TryGetValue("musicbrainz", out mbid)) &&
                 Guid.TryParse(mbid, out var recording) && recording != Guid.Empty ? recording.ToString("D") : null
         };
     }

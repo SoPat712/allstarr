@@ -7,6 +7,7 @@ public static class ProviderAccountAudiences
 {
     public static ProviderAccountScope[] Supported(IProviderRegistry? registry, string providerId)
     {
+        if (providerId == "lastfm") return [ProviderAccountScope.Shared, ProviderAccountScope.Personal];
         var capabilities = registry != null && registry.TryGet(providerId, out var provider)
             ? provider!.Capabilities.Where(item => item.AccountRequirement != ProviderAccountRequirement.None).ToArray()
             : [];

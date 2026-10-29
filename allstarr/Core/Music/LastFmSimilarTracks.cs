@@ -22,6 +22,18 @@ public sealed class LastFmSimilarTracks(
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
     private readonly PlaybackSettings _playback = playback?.Value ?? new();
 
+    internal static IEnumerable<JsonElement> TrackElements(JsonElement container)
+    {
+        if (!container.TryGetProperty("track", out var tracks)) return [];
+        return tracks.ValueKind switch
+        {
+            JsonValueKind.Array => tracks.EnumerateArray().ToArray(),
+            JsonValueKind.Object => [tracks],
+            JsonValueKind.Null => [],
+            _ => throw new JsonException("Last.fm track list is malformed.")
+        };
+    }
+
     public async Task<IReadOnlyList<SimilarTrackSuggestion>> FindAsync(
         ProtocolExecutionContext context,
         string artist,
@@ -49,9 +61,8 @@ public sealed class LastFmSimilarTracks(
                 using var response = await httpClients.CreateClient(nameof(LastFmSimilarTracks)).GetAsync(url, token);
                 if (!response.IsSuccessStatusCode) return [];
                 using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
-                if (!document.RootElement.TryGetProperty("similartracks", out var similar) ||
-                    !similar.TryGetProperty("track", out var tracks) || tracks.ValueKind != JsonValueKind.Array) return [];
-                return tracks.EnumerateArray()
+                if (!document.RootElement.TryGetProperty("similartracks", out var similar)) return [];
+                return TrackElements(similar)
                     .Select(track => new SimilarTrackSuggestion(
                         track.TryGetProperty("artist", out var credit) && credit.TryGetProperty("name", out var name)
                             ? name.GetString() ?? ""

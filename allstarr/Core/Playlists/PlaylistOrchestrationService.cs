@@ -72,15 +72,20 @@ public sealed class ProviderPlaylistSourceGateway(
     {
         var actor = context.RequireActor();
         RequireLinkExecutionContext(context, actor, link);
-        var providerContext = await SourceContextAsync(context, actor, link, "playlist-snapshot", cancellationToken)
-            ?? throw new UnauthorizedAccessException("The selected playlist account is unavailable.");
+        var providerContext = await SourceContextAsync(context, actor, link, "playlist-snapshot", cancellationToken);
+        if (providerContext == null)
+        {
+            if (link.SourceProviderId == "lastfm")
+                throw new PlaylistSourceUnavailableException("source_unavailable", ProviderError.LastFmNotConnected(), link.SourceProviderId);
+            throw new UnauthorizedAccessException("The selected playlist account is unavailable.");
+        }
         var capability = registry.GetRequiredCapability<IProviderPlaylistCapability>(link.SourceProviderId, ProviderCapabilityKind.Playlist);
         var result = await collector.CollectAsync(
             capability, providerContext,
             new ProviderPlaylistSnapshotRequest(new ProviderExternalResourceId(
                 link.SourceProviderId, ProviderResourceKind.Playlist, link.SourcePlaylistId)));
         if (!result.IsSuccess || result.Snapshot == null)
-            throw new PlaylistSourceUnavailableException(result.Error?.Kind.ToString() ?? "source_unavailable", result.Error);
+            throw new PlaylistSourceUnavailableException("source_unavailable", result.Error, link.SourceProviderId);
         if (identities == null) return result.Snapshot;
         var identityContext = link.ProviderAccountId.HasValue ? providerContext : new ProviderExecutionContext(
             actor, providerContext.ProviderId, null, providerContext.Policy, "playlist-source-identity",
@@ -172,10 +177,12 @@ public sealed class ProviderPlaylistSourceGateway(
     }
 }
 
-public sealed class PlaylistSourceUnavailableException(string code, ProviderError? error = null) : Exception("The playlist source is unavailable.")
+public sealed class PlaylistSourceUnavailableException(string code, ProviderError? error = null, string? providerId = null)
+    : Exception(error?.SafeMessage ?? "The playlist source is unavailable.")
 {
-    public string Code { get; } = code;
+    public string Code { get; } = error?.Code ?? code;
     public ProviderError? Error { get; } = error;
+    public string? ProviderId { get; } = providerId;
 }
 
 public interface IBackendPlaylistTargetResolver
@@ -278,7 +285,13 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         {
             var account = await initial.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
                 item.Id == link.ProviderAccountId && item.ProviderId == link.SourceProviderId && (item.Enabled || reusingOneTimeImport),
-                cancellationToken) ?? throw new UnauthorizedAccessException("The selected playlist account is unavailable.");
+                cancellationToken);
+            if (account == null)
+            {
+                if (link.SourceProviderId == "lastfm")
+                    throw new PlaylistSourceUnavailableException("source_unavailable", ProviderError.LastFmNotConnected(), link.SourceProviderId);
+                throw new UnauthorizedAccessException("The selected playlist account is unavailable.");
+            }
             if (account.Scope == ProviderAccountScope.Personal &&
                 (account.OwnerUserId != link.OwnerUserId || account.OwnerUserId != actor.EffectiveUserId))
                 throw new UnauthorizedAccessException("The playlist account is outside the execution owner.");
@@ -1733,7 +1746,7 @@ public sealed class PlaylistMaterializationJobHandler(
                 return error.Kind is ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.AccountNeedsConfiguration or ProviderErrorKind.Forbidden
                     ? DurableJobCompletion.Failure(error.Code, error.SafeMessage)
                     : DurableJobCompletion.Retry(error.Code, error.SafeMessage, error.RetryAfter);
-            return DurableJobCompletion.Retry(exception.Code, "The playlist source is temporarily unavailable.");
+            return DurableJobCompletion.Retry(exception.Code, exception.Message, exception.Error?.RetryAfter);
         }
     }
 }

@@ -15,11 +15,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
     [InlineData(ProviderErrorKind.AccountNeedsReauthentication)]
     public async Task ListenBrainzSyncHonorsRateLimitDelayAndStopsRetryingExpiredTokens(ProviderErrorKind kind)
     {
-        await using (var setup = await _factory.CreateDbContextAsync())
-        {
-            (await setup.PlaylistLinks.SingleAsync()).SourceProviderId = "listenbrainz";
-            await setup.SaveChangesAsync();
-        }
+        var account = await SetPlaylistSourceAccountAsync("listenbrainz");
         var error = new ProviderError(kind, kind == ProviderErrorKind.RateLimited ? TimeSpan.FromSeconds(45) : null);
         var orchestration = new Mock<IPlaylistOrchestrationService>();
         orchestration.Setup(item => item.RunAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<PlaylistOrchestrationRequest>(), It.IsAny<CancellationToken>()))
@@ -27,7 +23,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         var options = new DurableJobOptions();
         var queue = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), new Clock(_now));
         await queue.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMaterializationJobPayload>(
-            "playlist.materialize", "source-failure", new(_link, 1022), _user, ProviderAccountId: _account));
+            "playlist.materialize", "source-failure", new(_link, 1022), _user, ProviderAccountId: account, Capability: "playlist"));
         var claim = Assert.IsType<DurableJobClaim>(await queue.ClaimNextAsync("playlist-worker"));
         var completion = await new PlaylistMaterializationJobHandler(_factory, orchestration.Object, new Clock(_now))
             .ExecuteAsync(new DurableJobExecutionContext(claim, EmptyServices.Instance), default);

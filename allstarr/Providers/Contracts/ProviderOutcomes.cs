@@ -55,6 +55,15 @@ public sealed record ProviderError
 
     public TimeSpan? RetryAfter { get; }
 
+    public static ProviderError LastFmNotConnected() => new(ProviderErrorKind.AccountNeedsConfiguration,
+        "lastfm-not-connected", "Connect your own Last.fm account to read these tracks.");
+
+    public static ProviderError LastFmApiKeyRequired() => new(ProviderErrorKind.AccountNeedsConfiguration,
+        "lastfm-api-key-required", "Needs Last.fm API key.");
+
+    public static ProviderError LastFmPrivateProfile() => new(ProviderErrorKind.Forbidden,
+        "lastfm-private-profile", "Your Last.fm profile does not allow these tracks to be read.");
+
     public static ProviderError AppleDownloadGatewayUpdateRequired() => new(
         ProviderErrorKind.CapabilityUnavailable,
         "apple-download-gateway-update-required",
