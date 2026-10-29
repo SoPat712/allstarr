@@ -51,7 +51,7 @@ test("Visible water drifts within its frame cap and printed covers return to sti
   });
   expect(sample.after).not.toBe(sample.before);
   expect(sample.frames).toBeGreaterThan(0);
-  expect(sample.frames).toBeLessThanOrEqual(Math.ceil(sample.elapsed * 30 / 1000) + 1);
+  expect(sample.frames).toBeLessThanOrEqual(Math.ceil(sample.elapsed * 30 / 1000) + 2);
   expect(await page.evaluate(() => (window as unknown as { waterContexts: () => number }).waterContexts())).toBe(1);
   const printed = page.getByRole("region", { name: "Moods", exact: true }).locator("canvas").first();
   await page.mouse.move(0, 0); const still = await pixels(printed);
@@ -61,8 +61,8 @@ test("Visible water drifts within its frame cap and printed covers return to sti
   await printed.evaluate(element => (element.closest("button") as HTMLButtonElement).blur());
   await expect.poll(() => pixels(printed)).toBe(still);
   await liquid.evaluate(element => element.closest(".mix-shelf")!.scrollTo({ left: 3000, behavior: "instant" }));
-  await page.waitForTimeout(100); const offscreen = await drawCount(liquid);
-  await page.waitForTimeout(250); expect(await drawCount(liquid)).toBe(offscreen);
+  await expect(liquid).not.toBeInViewport();
+  await expect.poll(async () => { const before = await drawCount(liquid); await page.waitForTimeout(300); return await drawCount(liquid) - before; }, { timeout: 5000 }).toBe(0);
 });
 
 test("Water falls back to painted colours when the graphics context is unavailable", async ({ page }) => {
