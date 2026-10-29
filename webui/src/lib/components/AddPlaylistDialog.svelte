@@ -16,6 +16,7 @@
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
+  import { lastFmPeriods } from "$lib/intelligence";
   import {
     orderPlaylistSources,
     playlistBehaviorSummary,
@@ -33,15 +34,24 @@
     artworkUrl: string | null;
   };
   type TargetMode = "new" | "existing";
+  type LastfmPeriod = "7day" | "1month" | "3month" | "12month" | "overall";
+  type InitialSource = {
+    accountId: string;
+    playlistId: string;
+    title: string;
+    followNewestKind?: string;
+  };
 
   let {
     open = $bindable(false),
     providers,
     onSaved,
+    initialSource = null,
   }: {
     open: boolean;
     providers: ProviderDefinition[];
     onSaved: (message: string) => void | Promise<void>;
+    initialSource?: InitialSource | null;
   } = $props();
 
   let pastedUrl = $state("");
@@ -71,6 +81,9 @@
   let sourcePlaylists = $state<PlaylistDiscoveryItem[]>([]);
   let sourceCursor = $state("");
   let importMode = $state<ImportMode>("oneTime");
+  let lastfmPeriod = $state<LastfmPeriod>("overall");
+  let followNewestKind = $state("");
+  let followNewest = $state(false);
   let schedule = $state<"hourly" | "daily" | "weekly">("daily");
   let targetMode = $state<TargetMode>("new");
   let trackRetention = $state<"onDemand" | "keepAll">("onDemand");
@@ -82,10 +95,13 @@
 
   const orderedAccounts = $derived(orderPlaylistSources(accounts, providerOrder));
   const selectedAccount = $derived(accounts.find((item) => item.id === accountId));
+  const isLastfmAccount = $derived(selectedAccount?.providerId.toLowerCase() === "lastfm");
+  const hasLastfmAccount = $derived(accounts.some((item) => item.providerId.toLowerCase() === "lastfm"));
   const selectedTarget = $derived(targets.find((item) => item.id === targetId));
   const sourceName = $derived(linkPreview?.source.displayName ?? selectedAccount?.displayName ?? providerNames[publicProviderId] ?? "the source service");
   const sourcePlaylistName = $derived(
-    linkPreview?.title ?? sourcePlaylists.find((item) => item.id === sourcePlaylistId)?.name ?? "this playlist",
+    linkPreview?.title ?? sourcePlaylists.find((item) => item.id === sourcePlaylistId)?.name ??
+      (isLastfmAccount ? lastfmSourceName(sourcePlaylistId) : "this playlist"),
   );
   const targetName = $derived(
     selectedTarget?.protocol === "jellyfin"
@@ -142,6 +158,20 @@
       .filter(Boolean).join(" · ");
   }
 
+  function lastfmSourceName(id: string) {
+    return id === "loved" ? "Loved tracks" : id === "similar" ? "Similar tracks" : "Top tracks";
+  }
+
+  function changeLastfmPeriod(value: string) {
+    lastfmPeriod = value as LastfmPeriod;
+    if (sourcePlaylistId.startsWith("top:")) sourcePlaylistId = `top:${lastfmPeriod}:50`;
+  }
+
+  function clearFollowNewest() {
+    followNewestKind = "";
+    followNewest = false;
+  }
+
   $effect(() => {
     if (!open) {
       browseRequest++;
@@ -182,6 +212,8 @@
     sourcePlaylists = [];
     sourceCursor = "";
     importMode = "oneTime";
+    lastfmPeriod = "overall";
+    clearFollowNewest();
     schedule = "daily";
     targetMode = "new";
     trackRetention = "onDemand";
@@ -197,6 +229,20 @@
       blocked = sourceResponse.blockedAccounts.length;
       targets = targetResponse.targets;
       targetId = targets[0]?.id ?? "";
+      if (initialSource) {
+        const account = accounts.find((item) => item.id === initialSource.accountId);
+        if (account) {
+          accountId = account.id;
+          sourcePlaylistId = initialSource.playlistId;
+          sourcePlaylists = [{ id: initialSource.playlistId, providerId: account.providerId, name: initialSource.title }];
+          followNewestKind = initialSource.followNewestKind ?? "";
+          followNewest = Boolean(followNewestKind);
+          if (followNewest) importMode = "linked";
+          step = 2;
+        } else {
+          error = "Connect the source account again to import this playlist.";
+        }
+      }
     } catch (cause) {
       if (request !== browseRequest || !open) return;
       error = cause instanceof Error ? cause.message : "Playlist setup is unavailable.";
@@ -246,7 +292,10 @@
   }
 
   async function chooseAccount(id: string) {
+    browseRequest++;
+    loading = false;
     clearLink();
+    clearFollowNewest();
     publicProviderId = "";
     sourceReference = "";
     publicUserReference = "";
@@ -262,11 +311,12 @@
       targetPlaylistId = "";
       targetPlaylists = [];
     }
-    await browseSources();
+    if (selectedAccount?.providerId.toLowerCase() !== "lastfm") await browseSources();
   }
 
   function choosePublicProvider(id: string) {
     clearLink();
+    clearFollowNewest();
     browseRequest++;
     loading = false;
     accountId = "";
@@ -290,6 +340,7 @@
 
   async function resolveLink() {
     clearLink();
+    clearFollowNewest();
     accountId = "";
     publicProviderId = "";
     sourcePlaylists = [];
@@ -324,6 +375,7 @@
   function useReference() {
     browseRequest++;
     loading = false;
+    clearFollowNewest();
     sourcePlaylistId = sourceReference.trim();
     error = "";
   }
@@ -346,6 +398,7 @@
     if (!requestedAccount && (!requestedProvider || !requestedUser)) return;
     const request = ++browseRequest;
     if (!cursor) {
+      clearFollowNewest();
       sourcePlaylistId = "";
       sourcePlaylists = [];
     }
@@ -379,6 +432,7 @@
   async function save() {
     if ((!linkPreview && !selectedAccount && !publicProviderId) || !selectedTarget || !sourcePlaylistId ||
         (targetMode === "existing" && !targetPlaylistId) || saving) return;
+    if (followNewest) importMode = "linked";
     saving = true;
     error = "";
     try {
@@ -394,6 +448,7 @@
         projectionMode: "resolved",
         materializationMode: "reconcile",
         importMode,
+        ...(followNewest && followNewestKind ? { followNewest: true } : {}),
         trackRetention,
         mirrorStaleEntries: true,
         preserveManualEntries: true,
@@ -479,6 +534,7 @@
                 </span>
               </label>
             </form>
+            <p class="pl-help">ListenBrainz playlist links and bare playlist MBIDs are supported.</p>
             {#if resolvingLink}<p class="pl-help" role="status">Reading link…</p>{/if}
             {#if linkPreview}
               <div class="url-import-preview" role="status">
@@ -548,7 +604,28 @@
                 </form>
               </section>
             {/if}
-            {#if accountId || listedPublicUser}
+            {#if isLastfmAccount}
+              <section class="pl-section">
+                <div><h3 id="playlist-add-lastfm">Choose your Last.fm tracks</h3><p class="pl-help">Use music from your connected personal account.</p></div>
+                <div class="pl-options" role="radiogroup" aria-labelledby="playlist-add-lastfm">
+                  <label class="pl-option" class:active={sourcePlaylistId === "loved"}>
+                    <input bind:group={sourcePlaylistId} type="radio" name="playlist-source" value="loved" />
+                    <span class="pl-option-text"><strong>Loved tracks</strong><small>Songs you have loved on Last.fm.</small></span>
+                  </label>
+                  <label class="pl-option" class:active={sourcePlaylistId.startsWith("top:")}>
+                    <input type="radio" name="playlist-source" value={`top:${lastfmPeriod}:50`} checked={sourcePlaylistId.startsWith("top:")} onchange={() => sourcePlaylistId = `top:${lastfmPeriod}:50`} />
+                    <span class="pl-option-text"><strong>Top tracks</strong><small>Your 50 most played songs for the selected period.</small></span>
+                  </label>
+                  <label class="pl-option" class:active={sourcePlaylistId === "similar"}>
+                    <input bind:group={sourcePlaylistId} type="radio" name="playlist-source" value="similar" />
+                    <span class="pl-option-text"><strong>Similar tracks</strong><small>Recommendations based on your listening.</small></span>
+                  </label>
+                </div>
+                {#if sourcePlaylistId.startsWith("top:")}
+                  <SelectField value={lastfmPeriod} onchange={changeLastfmPeriod} label="Top tracks period" options={lastFmPeriods} />
+                {/if}
+              </section>
+            {:else if accountId || listedPublicUser}
               <section class="pl-section">
                 <div><h3 id="playlist-add-source">Choose a playlist</h3><p class="pl-help">{listedPublicUser ? "Showing public playlists from this Spotify profile." : `Showing playlists from ${accountTitle(selectedAccount!)}.`}</p></div>
                 {#if accountId}<form class="pl-search" onsubmit={(event) => { event.preventDefault(); void browseSources(); }}>
@@ -575,12 +652,16 @@
               </section>
             {/if}
           {/if}
+          {#if !hasLastfmAccount}
+            <section class="pl-section"><p class="pl-help">Import your loved, top, or similar tracks from Last.fm.</p><Button variant="secondary" href="#/integrations/accounts?source=lastfm&connect=1">Connect Last.fm</Button></section>
+          {/if}
         {:else if step === 2}
           <section class="pl-section">
             <div><h3 id="playlist-add-import">Import behavior</h3><p class="pl-help">Allstarr keeps the original playlist unchanged and can show every song through its resolved view.</p></div>
+            {#if initialSource}<p class="pl-help">Importing {sourcePlaylistName} from {sourceName}.</p>{/if}
             <div class="pl-options" role="radiogroup" aria-labelledby="playlist-add-import">
               <label class="pl-option" class:active={importMode === "oneTime"}>
-                <input bind:group={importMode} type="radio" name="playlist-import-mode" value="oneTime" />
+                <input bind:group={importMode} type="radio" name="playlist-import-mode" value="oneTime" disabled={followNewest} />
                 <span class="pl-option-text"><strong>Import once</strong><small>Take a snapshot now and ignore later changes from {sourceName}.</small></span>
               </label>
               <label class="pl-option" class:active={importMode === "linked"}>
@@ -588,6 +669,12 @@
                 <span class="pl-option-text"><strong>Keep in sync</strong><small>Check {sourceName} for changes on the schedule you choose.</small></span>
               </label>
             </div>
+            {#if followNewestKind}
+              <label class="pl-retention-toggle">
+                <Checkbox checked={followNewest} onCheckedChange={(checked) => { followNewest = checked; if (checked) importMode = "linked"; }} />
+                <span><strong>Follow newest edition</strong><small>Keep this linked playlist up to date with new editions from {sourceName}.</small></span>
+              </label>
+            {/if}
           </section>
         {:else if step === 3}
           <section class="pl-section">

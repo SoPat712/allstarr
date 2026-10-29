@@ -18,6 +18,7 @@
     onchange?: (id: string) => void;
   } = $props();
   let tablist = $state<HTMLElement>();
+  const focusId = $derived(items.some(item => item.id === active) ? active : items[0]?.id);
 
   $effect(() => {
     const selectedId = active;
@@ -88,14 +89,14 @@
           href={item.href}
           role="tab"
           aria-selected={active === item.id}
-          tabindex={active === item.id ? 0 : -1}
+          tabindex={focusId === item.id ? 0 : -1}
         >{@render tabContent(item)}</a>
       {:else}
         <button
           type="button"
           role="tab"
           aria-selected={active === item.id}
-          tabindex={active === item.id ? 0 : -1}
+          tabindex={focusId === item.id ? 0 : -1}
           onclick={() => onchange?.(item.id)}
         >{@render tabContent(item)}</button>
       {/if}
