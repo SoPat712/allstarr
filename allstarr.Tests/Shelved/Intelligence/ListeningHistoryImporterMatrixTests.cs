@@ -96,7 +96,7 @@ public sealed class ListeningHistoryImporterMatrixTests
         _ => throw new ArgumentOutOfRangeException(nameof(format))
     };
 
-    private static byte[] Fixture(string format, int copies, bool includeMalformed)
+    internal static byte[] Fixture(string format, int copies, bool includeMalformed)
     {
         var valid = ValidRow(format);
         var rows = Enumerable.Repeat(valid, copies).Cast<object>().ToList();

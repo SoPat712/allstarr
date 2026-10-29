@@ -146,6 +146,7 @@ public sealed class HostCompositionTests
         Assert.Contains("api/admin/media-probe", routes);
         Assert.Contains("api/admin/playlist-readiness", routes);
         Assert.Contains("api/admin/ui/now-playing", routes);
+        Assert.Contains("api/admin/history/imports", routes);
         Assert.Contains("api/admin/downloads/artwork/{itemId}", routes);
         Assert.DoesNotContain(routes, route => route is
             "api/admin/status" or "api/admin/sessions" or "api/admin/scrobbling-sessions" or
@@ -165,7 +166,7 @@ public sealed class HostCompositionTests
         var handlers = factory.Services.GetServices<IDurableJobHandler>().Select(item => item.GetType()).ToArray();
         Assert.DoesNotContain(typeof(RecommendationRunJobHandler), handlers);
         Assert.DoesNotContain(typeof(GeneratedSetMaterializationJobHandler), handlers);
-        Assert.DoesNotContain(typeof(ListeningHistoryImportJobHandler), handlers);
+        Assert.Contains(typeof(ListeningHistoryImportJobHandler), handlers);
         Assert.DoesNotContain(typeof(MusicBrainzListeningEnrichmentJobHandler), handlers);
         Assert.Contains(typeof(PlaybackSignalJobHandler), handlers);
         Assert.Empty(factory.Services.GetServices<IRecommendationProvider>());

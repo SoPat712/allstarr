@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Intelligence;
@@ -88,6 +90,159 @@ public sealed class SpotifyListeningHistoryImporterTests
         Assert.Equal("history_import_row_limit", limited.Code);
     }
 
+    [Fact]
+    public async Task Scan_ZipImportsOnlyAudioHistoryAndSeparatesMusicOutcomes()
+    {
+        var completed = Track("2026-07-01T12:00:00Z", "Completed", "Artist", null, 180_000, "trackdone");
+        var skipped = Track("2026-07-02T12:00:00Z", "Skipped", "Artist", null, 10_000, "forwardbtn", skipped: true);
+        var shortPlay = Track("2026-07-03T12:00:00Z", "Short", "Artist", null, 20_000, "endplay");
+        var episode = new Dictionary<string, object?>
+        {
+            ["ts"] = "2026-07-04T12:00:00Z",
+            ["ms_played"] = 50_000,
+            ["episode_name"] = "Podcast"
+        };
+        var audiobook = Track("2026-07-05T12:00:00Z", "Chapter", "Author", null, 300_000, "trackdone");
+        audiobook["audiobook_title"] = "Book";
+        audiobook["audiobook_chapter_uri"] = "spotify:chapter:3333333333333333333333";
+        using var archive = Archive(
+            ("Spotify Extended Streaming History/Streaming_History_Audio_2026_0.json", new[] { completed, skipped, shortPlay, episode, audiobook }),
+            ("Streaming_History_Video_2026_0.json", new[] { completed }),
+            ("other.json", new[] { completed }));
+        var accepted = new List<ListeningHistoryImportRow>();
+
+        var scan = await new SpotifyListeningHistoryImporter().ScanAsync(
+            archive, new(new(2026, 8, 1, 0, 0, 0, TimeSpan.Zero)),
+            (row, _) => { accepted.Add(row); return ValueTask.CompletedTask; });
+
+        Assert.NotNull(scan);
+        Assert.Equal(5, scan.Rows);
+        Assert.Equal(3, scan.MusicRows);
+        Assert.Equal(1, scan.Completed);
+        Assert.Equal(1, scan.Partial);
+        Assert.Equal(1, scan.Skipped);
+        Assert.Equal(1, scan.Episodes);
+        Assert.Equal(1, scan.NonTrack);
+        Assert.Equal(1, scan.ReasonCounts["audiobook"]);
+        Assert.Equal(new[] { "Completed", "Skipped", "Short" }, accepted.Select(row => row.Title));
+        Assert.Equal(new[] { 1L, 2L, 3L }, accepted.Select(row => row.Sequence));
+        Assert.True(archive.CanRead);
+    }
+
+    [Fact]
+    public async Task Scan_ZipUsesDeterministicGlobalSequencesAndDeduplicatesAcrossEntries()
+    {
+        var first = Track("2026-07-01T12:00:00Z", "First", "Artist", null, 180_000, "trackdone");
+        var second = Track("2026-07-02T12:00:00Z", "Second", "Artist", null, 180_000, "trackdone");
+        var third = Track("2026-07-03T12:00:00Z", "Third", "Artist", null, 180_000, "trackdone");
+        using var archive = Archive(
+            ("Streaming_History_Audio_2026_1.json", new[] { first, third }),
+            ("Streaming_History_Audio_2026_0.json", new[] { first, second }));
+        var accepted = new List<ListeningHistoryImportRow>();
+
+        var scan = await new SpotifyListeningHistoryImporter().ScanAsync(
+            archive, new(new(2026, 8, 1, 0, 0, 0, TimeSpan.Zero)),
+            (row, _) => { accepted.Add(row); return ValueTask.CompletedTask; });
+
+        Assert.NotNull(scan);
+        Assert.Equal(4, scan.Rows);
+        Assert.Equal(3, scan.MusicRows);
+        Assert.Equal(1, scan.Duplicate);
+        Assert.Equal(new[] { "First", "Second", "Third" }, accepted.Select(row => row.Title));
+        Assert.Equal(new[] { 1L, 2L, 4L }, accepted.Select(row => row.Sequence));
+    }
+
+    [Fact]
+    public async Task Scan_ZipEnforcesOneRowLimitAcrossEntries()
+    {
+        var first = Track("2026-07-01T12:00:00Z", "First", "Artist", null, 180_000, "trackdone");
+        var second = Track("2026-07-02T12:00:00Z", "Second", "Artist", null, 180_000, "trackdone");
+        using var archive = Archive(
+            ("Streaming_History_Audio_2026_0.json", new[] { first }),
+            ("Streaming_History_Audio_2026_1.json", new[] { second }));
+        var accepted = new List<ListeningHistoryImportRow>();
+
+        var exception = await Assert.ThrowsAsync<ListeningHistoryImportException>(() =>
+            new SpotifyListeningHistoryImporter().ScanAsync(
+                archive, new(new(2026, 8, 1, 0, 0, 0, TimeSpan.Zero), MaximumRows: 1),
+                (row, _) => { accepted.Add(row); return ValueTask.CompletedTask; }));
+
+        Assert.Equal("history_import_row_limit", exception.Code);
+        Assert.Single(accepted);
+    }
+
+    [Fact]
+    public async Task Scan_ZipRejectsAggregateExpandedSizeBeforeEmittingRows()
+    {
+        using var archive = Archive(
+            ("Streaming_History_Audio_2026_0.json", Array.Empty<object>()),
+            ("Streaming_History_Audio_2026_1.json", Array.Empty<object>()));
+        var bytes = archive.ToArray();
+        var entries = 0;
+        for (var index = 0; index <= bytes.Length - 46; index++)
+        {
+            if (BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(index, 4)) != 0x02014b50) continue;
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(index + 24, 4), 600 * 1024 * 1024);
+            entries++;
+        }
+        Assert.Equal(2, entries);
+        using var oversized = new MemoryStream(bytes);
+        var emitted = 0;
+
+        var exception = await Assert.ThrowsAsync<ListeningHistoryImportException>(() =>
+            new SpotifyListeningHistoryImporter().ScanAsync(
+                oversized, new(DateTimeOffset.UtcNow),
+                (_, _) => { emitted++; return ValueTask.CompletedTask; }));
+
+        Assert.Equal("history_import_archive_limit", exception.Code);
+        Assert.Equal(0, emitted);
+    }
+
+    [Fact]
+    public async Task Scan_ZipRejectsInvalidArchiveAndInvalidAudioJson()
+    {
+        using var invalidArchive = new MemoryStream(new byte[] { 0x50, 0x4b, 0x03, 0x04, 0 });
+        var invalid = await Assert.ThrowsAsync<ListeningHistoryImportException>(() =>
+            new SpotifyListeningHistoryImporter().ScanAsync(invalidArchive, new(DateTimeOffset.UtcNow)));
+        Assert.Equal("history_import_archive_invalid", invalid.Code);
+
+        using var invalidJson = new MemoryStream();
+        using (var archive = new ZipArchive(invalidJson, ZipArchiveMode.Create, leaveOpen: true))
+        using (var writer = new StreamWriter(archive.CreateEntry("Streaming_History_Audio_2026_0.json").Open()))
+            writer.Write("[broken");
+        invalidJson.Position = 0;
+        var malformed = await Assert.ThrowsAsync<ListeningHistoryImportException>(() =>
+            new SpotifyListeningHistoryImporter().ScanAsync(invalidJson, new(DateTimeOffset.UtcNow)));
+        Assert.Equal("history_import_json_invalid", malformed.Code);
+    }
+
+    [Fact]
+    public async Task Scan_ZipRejectsTooManyEntries()
+    {
+        using var stream = new MemoryStream();
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            for (var index = 0; index < 1025; index++)
+                archive.CreateEntry($"other_{index}.json");
+        }
+        stream.Position = 0;
+
+        var exception = await Assert.ThrowsAsync<ListeningHistoryImportException>(() =>
+            new SpotifyListeningHistoryImporter().ScanAsync(stream, new(DateTimeOffset.UtcNow)));
+
+        Assert.Equal("history_import_archive_limit", exception.Code);
+    }
+
+    [Fact]
+    public async Task Scan_ZipWithoutAudioHistoryIsUnrecognized()
+    {
+        using var archive = Archive(("Streaming_History_Video_2026_0.json", Array.Empty<object>()));
+
+        var scan = await new SpotifyListeningHistoryImporter().ScanAsync(archive, new(DateTimeOffset.UtcNow));
+
+        Assert.Null(scan);
+    }
+
     private static Dictionary<string, object?> Track(
         string timestamp,
         string title,
@@ -117,4 +272,19 @@ public sealed class SpotifyListeningHistoryImporterTests
 
     private static Stream Stream(object value) =>
         new MemoryStream(JsonSerializer.SerializeToUtf8Bytes(value));
+
+    private static MemoryStream Archive(params (string Name, object Rows)[] files)
+    {
+        var stream = new MemoryStream();
+        using (var archive = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var file in files)
+            {
+                using var entry = archive.CreateEntry(file.Name).Open();
+                JsonSerializer.Serialize(entry, file.Rows);
+            }
+        }
+        stream.Position = 0;
+        return stream;
+    }
 }

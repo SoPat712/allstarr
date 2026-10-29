@@ -149,6 +149,7 @@ public class AdminAuthenticationMiddleware
             if (segments.Length < 3 || !segments[2].Equals("taste", StringComparison.OrdinalIgnoreCase)) return false;
             return segments.Length == 3 && HttpMethods.IsGet(method) ||
                 segments.Length == 4 && (segments[3] == "nudge" && (HttpMethods.IsPut(method) || HttpMethods.IsDelete(method)) ||
+                    segments[3] == "imported-history" && HttpMethods.IsPut(method) ||
                     segments[3] is "pause" or "resume" or "reset" && HttpMethods.IsPost(method)) ||
                 segments.Length == 5 && segments[3] == "explain" && Guid.TryParse(segments[4], out _) && HttpMethods.IsGet(method);
         }
@@ -217,6 +218,10 @@ public class AdminAuthenticationMiddleware
         }
 
         var routeSegments = path.TrimEnd('/').Split('/');
+        if (routeSegments.Length >= 5 && routeSegments[3] == "history" && routeSegments[4] == "imports")
+            return routeSegments.Length == 5 && (HttpMethods.IsGet(method) || HttpMethods.IsPost(method)) ||
+                routeSegments.Length == 6 && Guid.TryParse(routeSegments[5], out _) && (HttpMethods.IsGet(method) || HttpMethods.IsDelete(method)) ||
+                routeSegments.Length == 7 && Guid.TryParse(routeSegments[5], out _) && routeSegments[6] == "confirm" && HttpMethods.IsPost(method);
         if (routeSegments.Length == 5 && routeSegments[3].Equals("spotify-likes", StringComparison.OrdinalIgnoreCase))
             return HttpMethods.IsPost(method) && routeSegments[4] == "import" ||
                    HttpMethods.IsGet(method) && Guid.TryParse(routeSegments[4], out _);

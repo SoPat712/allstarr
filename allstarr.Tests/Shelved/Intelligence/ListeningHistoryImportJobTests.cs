@@ -53,13 +53,13 @@ public sealed class ListeningHistoryImportJobTests
         };
 
         var completed = ListeningHistoryImportJobHandler.CreateEvent(
-            payload, row, new string('d', 64), identity, canonical, libraryTrack, enrichWithMusicBrainz: true);
+            payload, row, new string('d', 64), identity, canonical, libraryTrack);
         var skipped = ListeningHistoryImportJobHandler.CreateEvent(
             payload,
             row with { Classification = ListeningHistoryImportClassification.Skipped, ReasonCode = "spotify_skipped" },
-            new string('e', 64), null, null, null, enrichWithMusicBrainz: true);
+            new string('e', 64), null, null, null);
         var unresolved = ListeningHistoryImportJobHandler.CreateEvent(
-            payload, row, new string('f', 64), null, null, null, enrichWithMusicBrainz: true);
+            payload, row, new string('f', 64), null, null, null);
         var lastFm = ListeningHistoryImportJobHandler.CreateEvent(
             payload,
             row with
@@ -69,7 +69,7 @@ public sealed class ListeningHistoryImportJobTests
                 RecordingMusicBrainzId = "11111111-1111-1111-1111-111111111111",
                 Client = "Last.fm"
             },
-            new string('1', 64), null, canonical, null, enrichWithMusicBrainz: true);
+            new string('1', 64), null, canonical, null);
         var listenBrainz = ListeningHistoryImportJobHandler.CreateEvent(
             payload,
             row with
@@ -80,7 +80,7 @@ public sealed class ListeningHistoryImportJobTests
                 DurationMilliseconds = 210_000,
                 Client = "Navidrome"
             },
-            new string('2', 64), null, null, null, enrichWithMusicBrainz: true);
+            new string('2', 64), null, null, null);
 
         Assert.Equal(ListeningEventState.Completed, completed.State);
         Assert.Equal(listenedAt, completed.ListenedAt);
@@ -90,7 +90,7 @@ public sealed class ListeningHistoryImportJobTests
         Assert.Equal(200_000, completed.DurationMilliseconds);
         Assert.Equal(ListeningEventState.Skipped, skipped.State);
         Assert.Null(skipped.ListenedAt);
-        Assert.Equal(MusicBrainzEnrichmentState.Pending, unresolved.MusicBrainzEnrichmentState);
+        Assert.Equal(MusicBrainzEnrichmentState.NotRequested, unresolved.MusicBrainzEnrichmentState);
         Assert.Equal("spotify:" + row.SourceItemKey, skipped.TrackReference);
         Assert.DoesNotContain("1111111111111111111111", skipped.TrackReference, StringComparison.Ordinal);
         Assert.Contains("private", completed.ImportProvenance, StringComparison.Ordinal);
@@ -102,7 +102,7 @@ public sealed class ListeningHistoryImportJobTests
         Assert.Contains(":lastfm:", lastFm.ImportProvenance, StringComparison.Ordinal);
         Assert.Equal("listenbrainz", listenBrainz.ProviderId);
         Assert.Equal(210_000, listenBrainz.DurationMilliseconds);
-        Assert.Equal(MusicBrainzEnrichmentState.Pending, listenBrainz.MusicBrainzEnrichmentState);
+        Assert.Equal(MusicBrainzEnrichmentState.NotRequested, listenBrainz.MusicBrainzEnrichmentState);
     }
 
     [Fact]

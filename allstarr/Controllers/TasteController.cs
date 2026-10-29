@@ -50,6 +50,13 @@ public sealed class TasteController(TasteService taste, IDbContextFactory<Allsta
         return await taste.GetAsync(user, token);
     });
 
+    [HttpPut("imported-history")]
+    public Task<IActionResult> SetImportedHistory([FromBody] TasteImportedHistoryRequest request, CancellationToken token) => ExecuteAsync(async user =>
+    {
+        await taste.SetUseImportedHistoryAsync(user, request.Enabled, token);
+        return await taste.GetAsync(user, token);
+    });
+
     [HttpGet("explain/{recordingId:guid}")]
     public Task<IActionResult> Explain(Guid recordingId, CancellationToken token) => ExecuteAsync(async user =>
     {
@@ -79,3 +86,4 @@ public sealed class TasteController(TasteService taste, IDbContextFactory<Allsta
 }
 
 public sealed record TasteResetRequest(bool ClearNudges = false);
+public sealed record TasteImportedHistoryRequest(bool Enabled);
