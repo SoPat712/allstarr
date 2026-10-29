@@ -685,7 +685,7 @@
       <section class="settings-card">
         <div class="settings-row">
           <div><strong>Set up in Intelligence</strong><small>AudioMuse-AI powers sound-based discovery, so its connection lives next to that feature.</small></div>
-          <Button href="#/intelligence?section=automation">Configure in Intelligence</Button>
+          <Button href="#/intelligence?section=sounds">Configure in Intelligence</Button>
         </div>
       </section>
     {:else}
