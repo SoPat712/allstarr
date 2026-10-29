@@ -37,7 +37,7 @@ One deployment serves one household. Backend administrators manage deployment se
 
 The dashboard binds to loopback by default. LAN or reverse-proxy access requires an explicit trusted-network policy; see [configuration](docs/operations/configuration.md). Keep Allstarr behind a private network, VPN, or authenticated proxy because it can access media-server and provider accounts.
 
-Read the [user guide](docs/user-guide.md) for the dashboard map, setup order, playlist modes, matching, cache, and the retained development-only Intelligence workspace.
+Read the [user guide](docs/user-guide.md) for the dashboard map, setup order, playlist modes, matching, cache, listening stats, history imports, and discovery.
 
 ## Upgrade or recover
 
@@ -61,10 +61,11 @@ Use `./tools/develop.sh update` for later source updates. It requires a clean tr
 - **Home** shows current playback, listeners, health, storage, work, and recent activity.
 - **Library** owns provider playlists, match review, cached audio, and kept audio.
 - **Integrations** owns Services, encrypted Accounts, extension packages, health, and provider Routing.
+- **Intelligence** owns personal discovery, new releases, taste controls, listening stats, and history imports.
 - **Activity** explains completed and failed work with correlation details.
 - **Settings** owns operator behavior, cache policy, maintenance, backup, and recovery. Routing, playback quality and matching policy live in Integrations.
 
-Intelligence is deferred from the first release and hidden from navigation. Its development workspace and existing deep links remain available for now; accounts, history, and opt-in background work are unchanged.
+Intelligence is available to signed-in listeners. Its optional AudioMuse connection uses an existing analyzed Jellyfin library and stays disabled until an administrator configures it.
 
 ## Capabilities
 

@@ -2,7 +2,9 @@
 
 AudioMuse is optional and disabled until an administrator sets its URL. Core startup and saved playlists do not contact it. Finish setup on an existing upstream v3.6.4 installation separately.
 
-There is no settings screen in this release. On Allstarr's admin port, use an authenticated administrator session with `GET /api/admin/audiomuse/connection`, then `PUT` the same route with JSON containing `baseUrl`, `apiKey`, and the returned `revision` (initially null). Example URL: `http://<host>:8600`. Enter the upstream `API_TOKEN` as `apiKey`; requests use Bearer authentication. The key is encrypted and never returned. Omit `apiKey` to retain it, send an empty string to clear it, and set `baseUrl` to an empty string to disable the connection. Changes apply immediately.
+Open **Intelligence → Sounds → Edit connection** as an administrator and enter the server address and API key. A blank key field preserves the saved key; clear the server address to disable the connection. Listeners can search analyzed seeds, preview similar songs or Calm/Workout mixes, and save private playlists from Sounds.
+
+For direct administration on Allstarr's admin port, use an authenticated administrator session with `GET /api/admin/audiomuse/connection`, then `PUT` the same route with JSON containing `baseUrl`, `apiKey`, and the returned `revision` (initially null). Example URL: `http://<host>:8600`. Enter the upstream `API_TOKEN` as `apiKey`; requests use Bearer authentication. The key is encrypted and never returned. Omit `apiKey` to retain it, send an empty string to clear it, and set `baseUrl` to an empty string to disable the connection. Changes apply immediately.
 
 The upstream registry must contain exactly one Jellyfin entry matching Allstarr's configured Jellyfin URL, including port and base path. Health alone does not establish readiness; authenticated version, registry and model coverage must qualify.
 

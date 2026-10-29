@@ -157,6 +157,14 @@ A database that has retained superseded download artifacts cannot be migrated ba
 
 Personal source use modes extend the existing runtime settings allowlist and preserve older settings during upgrade. An in-place downgrade is rejected while personal source modes are saved, so returning to an older version requires the matching pre-upgrade backup and image.
 
+## Library promotion API
+
+Promotion is available through authenticated admin-port APIs; there is no dashboard promotion flow yet. An administrator first configures `Promotion:AllowedBase` and registers existing writable subdirectories with `PUT /api/admin/library-promotions/roots` (`id`, `name`, `path`). Roots must stay inside that base and cannot traverse symbolic links. `GET` on the same route returns root IDs and names.
+
+Use `POST /api/admin/library-promotions/preview` with `recordingId`, `artifactId`, `rootId`, `backendLibraryId`, and `requestKey` to review the destination, size, and steps for a complete verified original. `POST /api/admin/library-promotions` starts the durable copy, metadata/cover application, quality screen, owned placement, and backend refresh request. The original source and existing backend library files remain unchanged. Reusing the same request key with the same request returns the existing run.
+
+Inspect `GET /api/admin/library-promotions/{id}`. A suspicious or inconclusive quality result pauses at **Needs review**; the owner or an administrator can give an explicit `reason` to `POST /{id}/approve`. `POST /{id}/cancel` requests cancellation. Library access and source ownership are checked again during work; an approval does not bypass those checks. Preserve the approved media root alongside database backups.
+
 ## Imported original media
 
 A version 2 upgrade can retain its original kept and permanent-download files in place. New managed files use an `Allstarr` subfolder within each existing persistent media mount, so a backend library already watching the kept mount continues to see newly kept songs. The original directories and files are not renamed. Import previews exclude exact files already owned by the new managed-file store rather than excluding a folder by name. SQLite records the exact root, path, filesystem identity, size and checksum, together with the administrator's import receipt. These originals have permanent protected references. Playback, lyrics and downloads read them; cleanup, Remove and Release Keep do not delete or retarget them. Existing lyrics sidecars are preserved, and Allstarr does not create sidecars beside an imported original.
