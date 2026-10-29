@@ -777,16 +777,27 @@ public sealed class AdminUiActivityTests
                 if (outcome != null) DurableJobHistory.Append(db, job, now);
                 db.AuditEvents.Add(new()
                 {
-                    Id = Guid.CreateVersion7(), ActorUserId = owner, Category = "job-progress", Action = "refresh",
-                    SubjectType = "job", SubjectId = job.Id.ToString("N"), Outcome = "running", CreatedAt = now,
+                    Id = Guid.CreateVersion7(),
+                    ActorUserId = owner,
+                    Category = "job-progress",
+                    Action = "refresh",
+                    SubjectType = "job",
+                    SubjectId = job.Id.ToString("N"),
+                    Outcome = "running",
+                    CreatedAt = now,
                     DetailsJson = JsonSerializer.Serialize(new { jobId = job.Id, completed = 1, total = 2 })
                 });
             }
             var completed = db.Jobs.Local.First(item => item.State == DurableJobState.Succeeded);
             db.AuditEvents.Add(new()
             {
-                Id = Guid.CreateVersion7(), ActorUserId = owner, Category = "job-attempt", Action = "attempt-completed",
-                Outcome = "success", CreatedAt = now, DetailsJson = JsonSerializer.Serialize(new { jobId = completed.Id })
+                Id = Guid.CreateVersion7(),
+                ActorUserId = owner,
+                Category = "job-attempt",
+                Action = "attempt-completed",
+                Outcome = "success",
+                CreatedAt = now,
+                DetailsJson = JsonSerializer.Serialize(new { jobId = completed.Id })
             });
             await db.SaveChangesAsync();
         }
@@ -882,8 +893,14 @@ public sealed class AdminUiActivityTests
                 DurableJobHistory.Append(db, job, job.UpdatedAt);
                 db.AuditEvents.Add(new()
                 {
-                    Id = Guid.CreateVersion7(), ActorUserId = owner, Category = "job-progress", Action = "refresh", Outcome = "running",
-                    SubjectType = "job", SubjectId = job.Id.ToString("N"), CreatedAt = job.UpdatedAt
+                    Id = Guid.CreateVersion7(),
+                    ActorUserId = owner,
+                    Category = "job-progress",
+                    Action = "refresh",
+                    Outcome = "running",
+                    SubjectType = "job",
+                    SubjectId = job.Id.ToString("N"),
+                    CreatedAt = job.UpdatedAt
                 });
             }
             var visible = HistoryJob(owner, "favorite.process", DurableJobState.Succeeded, "succeeded", now.AddMinutes(-1));
@@ -919,13 +936,26 @@ public sealed class AdminUiActivityTests
             db.Jobs.AddRange(routine, requested);
             var mismatched = new AuditEventRecord
             {
-                Id = Guid.CreateVersion7(), ActorUserId = owner, Category = "job-progress", Action = "copy", Outcome = "running",
-                SubjectType = "job", SubjectId = routine.Id.ToString("D"), CorrelationId = routine.CorrelationId, CreatedAt = now
+                Id = Guid.CreateVersion7(),
+                ActorUserId = owner,
+                Category = "job-progress",
+                Action = "copy",
+                Outcome = "running",
+                SubjectType = "job",
+                SubjectId = routine.Id.ToString("D"),
+                CorrelationId = routine.CorrelationId,
+                CreatedAt = now
             };
             var unbound = new AuditEventRecord
             {
-                Id = Guid.CreateVersion7(), ActorUserId = owner, Category = "job-attempt", Action = "attempt-completed", Outcome = "succeeded",
-                CorrelationId = routine.CorrelationId, DetailsJson = JsonSerializer.Serialize(new { jobType = routine.Type }), CreatedAt = now
+                Id = Guid.CreateVersion7(),
+                ActorUserId = owner,
+                Category = "job-attempt",
+                Action = "attempt-completed",
+                Outcome = "succeeded",
+                CorrelationId = routine.CorrelationId,
+                DetailsJson = JsonSerializer.Serialize(new { jobType = routine.Type }),
+                CreatedAt = now
             };
             mismatchedAuditId = mismatched.Id;
             unboundAuditId = unbound.Id;
@@ -946,10 +976,23 @@ public sealed class AdminUiActivityTests
         var id = Guid.CreateVersion7();
         return new()
         {
-            Id = id, OwnerUserId = owner, ScopeKey = owner.ToString("N"), IdempotencyKey = id.ToString("N"),
-            RequestFingerprint = new string('a', 64), Type = type, CorrelationId = id.ToString("N"), State = state,
-            AvailableAt = at, CreatedAt = at, UpdatedAt = at, MaxAttempts = 3, MaxDeferrals = 3, AttemptCount = 1,
-            LastAttemptOutcome = outcome, LastAttemptStartedAt = at.AddSeconds(-1), LastAttemptCompletedAt = at
+            Id = id,
+            OwnerUserId = owner,
+            ScopeKey = owner.ToString("N"),
+            IdempotencyKey = id.ToString("N"),
+            RequestFingerprint = new string('a', 64),
+            Type = type,
+            CorrelationId = id.ToString("N"),
+            State = state,
+            AvailableAt = at,
+            CreatedAt = at,
+            UpdatedAt = at,
+            MaxAttempts = 3,
+            MaxDeferrals = 3,
+            AttemptCount = 1,
+            LastAttemptOutcome = outcome,
+            LastAttemptStartedAt = at.AddSeconds(-1),
+            LastAttemptCompletedAt = at
         };
     }
 
