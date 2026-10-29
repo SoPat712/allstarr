@@ -20,7 +20,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class ListeningHistoryResolutionTests : IAsyncLifetime
+public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
 {
     private SqliteTestDatabase database = null!;
     private Factory factory = null!;
@@ -127,11 +127,12 @@ public sealed class ListeningHistoryResolutionTests : IAsyncLifetime
         return track;
     }
 
-    private async Task<DurableJobCompletion> Run()
+    private async Task<DurableJobCompletion> Run(TimeSpan? firstDelay = null)
     {
         var claim = await jobs.ClaimNextAsync("history-test", [ListeningHistoryResolution.JobTypeName]);
         Assert.NotNull(claim);
         var running = Handler().ExecuteAsync(new(claim, services), default);
+        if (firstDelay != null) Assert.Equal(firstDelay.Value, await time.NextTimerAsync());
         while (!running.IsCompleted) { time.Advance(TimeSpan.FromSeconds(2)); await Task.Delay(1); }
         var result = await running;
         await jobs.CompleteAsync(claim, result);
@@ -291,7 +292,7 @@ public sealed class ListeningHistoryResolutionTests : IAsyncLifetime
     {
         for (var index = 0; index < 101; index++) await Add("Missing " + index, index == 100 ? 3 : 1);
         await ListeningHistoryResolution.EnqueueAsync(factory, jobs, Scope, clock.UtcNow, default);
-        Assert.Equal(DurableJobCompletionKind.Deferred, (await Run()).Kind);
+        Assert.Equal(DurableJobCompletionKind.Deferred, (await Run(TimeSpan.FromSeconds(2))).Kind);
         await using (var db = factory.CreateDbContext())
         {
             var job = await db.Jobs.SingleAsync();
