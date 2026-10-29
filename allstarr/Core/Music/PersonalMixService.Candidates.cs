@@ -1,5 +1,4 @@
 using System.Globalization;
-using allstarr.Core.Identity;
 using allstarr.Core.Favorites;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Matching;
@@ -14,15 +13,14 @@ namespace allstarr.Core.Music;
 public sealed partial class PersonalMixService
 {
     private async Task<IReadOnlyList<MixCandidate>> CandidatesAsync(AllstarrDbContext db, UserRecord user,
-        ListeningEventRecord[] events, CancellationToken token)
+        ListeningEventRecord[] events, CancellationToken token, MixStartRequest? start = null)
     {
-        var context = new ProtocolExecutionContext(Enum.Parse<ProtocolKind>(user.BackendType, true), user.BackendInstanceId,
-            user.BackendPrincipalId, new AllstarrPrincipal(user.Id, user.BackendType, user.BackendInstanceId,
-                user.BackendPrincipalId, user.DisplayName, user.IsAdmin), "mixes", clock.UtcNow.AddMinutes(5), token)
-        { Policy = await policies.ResolveForUserAsync(user.Id, token), IsReadOnly = true };
+        var context = await ContextAsync(user, token);
         var access = await libraryAccess.ResolveAsync(context, token);
         var known = events.Select(item => item.LibraryTrackId).OfType<Guid>().Distinct().ToArray();
-        var library = await LibraryTrackAccess.Query(db, context, access).OrderByDescending(item => known.Contains(item.Id))
+        var query = LibraryTrackAccess.Query(db, context, access);
+        if (start != null) query = query.Where(item => item.BackendItemId == start.SeedId);
+        var library = await query.OrderByDescending(item => known.Contains(item.Id))
             .ThenBy(item => item.BackendItemId).Take(600).ToArrayAsync(token);
         var rows = new List<(Song Song, string Source, DateTimeOffset? Release)>();
         var hearts = (await new FavoriteViewReader(factory).ReadAsync(context, token)).Where(item => item.Display.Kind == "song").Take(300).ToArray();
@@ -38,6 +36,7 @@ public sealed partial class PersonalMixService
             Isrc = track.Isrc,
             IsLocal = true
         }, "library", null));
+        if (start != null) return await RankCandidatesAsync(await SeedRowsAsync(context, library, start, token), context, user, events, hearts, token);
         var lookups = 0;
         var history = events.Where(item => item.State == ListeningEventState.Completed)
             .GroupBy(item => item.CanonicalRecordingId?.ToString("D") ?? item.TrackReference).ToArray();
@@ -116,6 +115,12 @@ public sealed partial class PersonalMixService
             }
             catch (Exception) when (!token.IsCancellationRequested) { }
         }
+        return await RankCandidatesAsync(rows, context, user, events, hearts, token);
+    }
+
+    private async Task<IReadOnlyList<MixCandidate>> RankCandidatesAsync(List<(Song Song, string Source, DateTimeOffset? Release)> rows,
+        ProtocolExecutionContext context, UserRecord user, ListeningEventRecord[] events, FavoriteViewItem[] hearts, CancellationToken token)
+    {
         var unique = new List<(Song Song, string Source, DateTimeOffset? Release)>();
         foreach (var row in rows.OrderByDescending(item => item.Release).ThenByDescending(item => item.Song.IsLocal).ThenBy(item => item.Song.Id, StringComparer.Ordinal))
             if (unique.Count < 1000 && !unique.Any(other => MusicMixService.SameRadioRecording(row.Song, other.Song))) unique.Add(row);
@@ -136,7 +141,7 @@ public sealed partial class PersonalMixService
         foreach (var row in songs)
         {
             var score = scores[row.Song];
-            if (score.Blocked || context.Policy.Includes(row.Song) == false || string.IsNullOrWhiteSpace(row.Song.Id) ||
+            if (score.Blocked || context.Policy?.Includes(row.Song) == false || string.IsNullOrWhiteSpace(row.Song.Id) ||
                 string.IsNullOrWhiteSpace(row.Song.Title) || string.IsNullOrWhiteSpace(row.Song.Artist)) continue;
             try { if (!row.Song.IsLocal && !await providers.CanPlaySongAsync(context, row.Song)) continue; }
             catch (Exception) when (!token.IsCancellationRequested) { continue; }

@@ -186,6 +186,8 @@ public sealed class PlaylistVirtualizationService(
             return (await personalMixes.PublishedAsync(context, cancellationToken)).SingleOrDefault(item => item.LinkId == linkId);
         if (selected.Length != 1) return null;
         var link = selected[0];
+        if (allstarr.Core.Music.PersonalMixService.IsExternalLink(link) &&
+            (personalMixes == null || !await personalMixes.IsExternalVisibleAsync(context, link, cancellationToken))) return null;
         BackendPlaylistSnapshot? authorizedTarget = null;
         if (!string.IsNullOrWhiteSpace(link.TargetPlaylistId))
         {
@@ -267,7 +269,7 @@ public sealed class PlaylistVirtualizationService(
         var artwork = targetSnapshot == null
             ? projection.ArtworkReferenceKey
             : targetSnapshot.ArtworkReference;
-        return new VirtualPlaylistReadModel(CreateProtocolId(link.Id), link.Id, projection.SnapshotId,
+        var result = new VirtualPlaylistReadModel(CreateProtocolId(link.Id), link.Id, projection.SnapshotId,
             name, description, artwork, link.SourceProviderId,
             link.SourcePlaylistId, snapshot.ProviderRevision, link.Mode, tracks, selectedMode,
             link.TargetPlaylistId)
@@ -275,6 +277,8 @@ public sealed class PlaylistVirtualizationService(
             BackendOwner = link.Mode == PlaylistLinkMode.Virtual ? null : authorizedTarget?.Owner,
             BackendPublic = link.Mode == PlaylistLinkMode.Virtual ? null : authorizedTarget?.IsPublic
         };
+        return allstarr.Core.Music.PersonalMixService.IsExternalLink(link) && personalMixes != null
+            ? await personalMixes.FilterExternalTracksAsync(context, result, cancellationToken) : result;
     }
 
     public async Task<VirtualPlaylistReadModel?> ReadBySourceAsync(

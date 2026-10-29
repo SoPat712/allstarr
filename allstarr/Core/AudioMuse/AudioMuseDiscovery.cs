@@ -102,6 +102,41 @@ public sealed class AudioMuseDiscovery(IDbContextFactory<AllstarrDbContext> fact
             return await PublishAsync(context, Select(eligible, null, n), eligible.Length, mood + "-v1", token);
         }, cancellationToken);
 
+    internal async Task<IReadOnlyDictionary<string, AudioMuseScores>> MixFeaturesAsync(ProtocolExecutionContext context,
+        IEnumerable<string> ids, CancellationToken token)
+    {
+        var result = new Dictionary<string, AudioMuseScores>(StringComparer.Ordinal);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(20));
+        try
+        {
+            var (endpoint, server, _) = await BoundAsync(context, deadline.Token);
+            foreach (var row in await ResolveAsync(context, ids.Select(id => new AudioMuseTrack(id)).ToArray(), deadline.Token))
+            {
+                if (!await client.AnalyzedAsync(endpoint, server, row.BackendItemId, deadline.Token)) continue;
+                try { result[row.BackendItemId] = await client.ScoresAsync(endpoint, server, row.BackendItemId, deadline.Token); }
+                catch (AudioMuseUnavailable error) when (error.Reason == "song_not_analyzed") { }
+            }
+        }
+        catch (Exception error) when (Unavailable(error, token) != null) { }
+        return result;
+    }
+
+    internal async Task<LibraryTrackRecord[]> MixSimilarAsync(ProtocolExecutionContext context, string seedId, CancellationToken token)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(20));
+        try
+        {
+            var seed = (await ResolveAsync(context, [new(seedId)], deadline.Token)).SingleOrDefault();
+            if (seed == null) return [];
+            var (endpoint, server, _) = await BoundAsync(context, deadline.Token);
+            if (!await client.AnalyzedAsync(endpoint, server, seedId, deadline.Token)) return [];
+            return await ResolveAsync(context, await client.SimilarAsync(endpoint, server, seedId, null, deadline.Token), deadline.Token);
+        }
+        catch (Exception error) when (Unavailable(error, token) != null) { return []; }
+    }
+
     public async Task<AudioMuseSaved> SaveAsync(ProtocolExecutionContext context, Guid previewId, string name, CancellationToken token)
     {
         if (context.Protocol != ProtocolKind.Jellyfin || context.BackendInstanceId != (configuration["Identity:BackendInstanceId"] ?? "primary") ||

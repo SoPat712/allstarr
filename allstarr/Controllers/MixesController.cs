@@ -12,7 +12,7 @@ namespace allstarr.Controllers;
 [ApiController]
 [Route("api/admin/mixes")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public sealed class MixesController(PersonalMixService mixes, IDurableRuntimeSettings settings,
+public sealed partial class MixesController(PersonalMixService mixes, IDurableRuntimeSettings settings,
     IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock) : ControllerBase
 {
     [HttpGet]
@@ -40,6 +40,24 @@ public sealed class MixesController(PersonalMixService mixes, IDurableRuntimeSet
         return new { enabled = request.Enabled };
     }, token);
 
+    [HttpPost("start")]
+    public Task<IActionResult> Start(MixStartRequest request, CancellationToken token) => ExecuteAsync(async user =>
+    {
+        var preview = await mixes.StartAsync(user.Id, request, token);
+        return new { previewId = preview.Id, preview.Songs, preview.Readiness };
+    }, token);
+
+    [HttpPost("start/{previewId:guid}/save")]
+    public Task<IActionResult> Save(Guid previewId, MixSaveRequest request, CancellationToken token) => ExecuteAsync(async user =>
+        await mixes.SaveCustomAsync(user.Id, previewId, request.Name, token), token);
+
+    [HttpDelete("{id:guid}")]
+    public Task<IActionResult> Delete(Guid id, CancellationToken token) => ExecuteAsync(async user =>
+    {
+        await mixes.DeleteCustomAsync(user.Id, id, token);
+        return new { deleted = id };
+    }, token);
+
     [HttpPost("{id:guid}/feedback")]
     public Task<IActionResult> Feedback(Guid id, MixFeedback request, CancellationToken token) => ExecuteAsync(async user =>
     {
@@ -65,6 +83,10 @@ public sealed class MixesController(PersonalMixService mixes, IDurableRuntimeSet
         mix.Kind,
         mix.Name,
         mix.Description,
+        mix.Section,
+        mix.SortOrder,
+        mix.SourceLabel,
+        mix.RecipeVersion,
         mix.UpdatedAt,
         mix.Readiness,
         inApps = enabled && mix.Generation > 0 && mix.Readiness.Ready && mix.ShowInApps,
@@ -93,3 +115,5 @@ public sealed class MixesController(PersonalMixService mixes, IDurableRuntimeSet
 }
 
 public sealed record MixInApps(bool Enabled);
+
+public sealed record MixSaveRequest(string Name);
