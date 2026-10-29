@@ -143,6 +143,16 @@ public class AdminAuthenticationMiddleware
         if (path.TrimEnd('/').Equals("/api/admin/stats", StringComparison.OrdinalIgnoreCase))
             return HttpMethods.IsGet(method);
 
+        if (path.StartsWith("/api/admin/taste", StringComparison.OrdinalIgnoreCase))
+        {
+            var segments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length < 3 || !segments[2].Equals("taste", StringComparison.OrdinalIgnoreCase)) return false;
+            return segments.Length == 3 && HttpMethods.IsGet(method) ||
+                segments.Length == 4 && (segments[3] == "nudge" && (HttpMethods.IsPut(method) || HttpMethods.IsDelete(method)) ||
+                    segments[3] is "pause" or "resume" or "reset" && HttpMethods.IsPost(method)) ||
+                segments.Length == 5 && segments[3] == "explain" && Guid.TryParse(segments[4], out _) && HttpMethods.IsGet(method);
+        }
+
         var promotionSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (promotionSegments.Length >= 3 && promotionSegments[2].Equals("library-promotions", StringComparison.OrdinalIgnoreCase))
             return promotionSegments.Length == 3 && HttpMethods.IsPost(method) ||

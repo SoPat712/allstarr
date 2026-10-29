@@ -261,7 +261,7 @@ public partial class SubsonicController
             position * TimeSpan.TicksPerMillisecond, paused: stateName == "paused");
         if (!await _playbackObservations.RecordAsync(new PlaybackSignalRequest(CurrentProtocolContext, transition, itemId,
             CurrentProtocolContext.Client.DeviceId ?? CurrentProtocolContext.Client.ClientId, state.Occurrence,
-            position * TimeSpan.TicksPerMillisecond, observedAt, RelayExternally: !ignore), HttpContext.RequestAborted))
+            position * TimeSpan.TicksPerMillisecond, observedAt, RelayExternally: !ignore, Paused: stateName == "paused"), HttpContext.RequestAborted))
             return _responseBuilder.CreateOkResponse(format);
         _playbackSessions.Set(CurrentProtocolContext, state with
         {

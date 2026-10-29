@@ -91,6 +91,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         ConfigureMetadataEnrichment(modelBuilder);
         ConfigurePromotions(modelBuilder);
         ConfigureSharedTags(modelBuilder);
+        ConfigureTaste(modelBuilder);
         IntelligenceModelConfiguration.Configure(modelBuilder);
         modelBuilder.ConfigurePlaybackDeliveryCheckpoints();
         ConfigureOperations(modelBuilder);

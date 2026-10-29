@@ -16,7 +16,8 @@ public sealed class FavoriteActionJobHandler(
     IPlatformClock clock,
     IRecommendationSignalWriter? recommendationSignals = null,
     ILogger<FavoriteActionJobHandler>? logger = null,
-    IProtocolProviderGateway? providerGateway = null) : IDurableJobHandler
+    IProtocolProviderGateway? providerGateway = null, allstarr.Core.Music.TasteService? taste = null,
+    IPlaybackTrackResolver? tasteTracks = null) : IDurableJobHandler
 {
     private const string SupersededCode = "favorite_action_superseded";
 
@@ -215,6 +216,16 @@ public sealed class FavoriteActionJobHandler(
 
             if (!await IsCurrentAsync(context.Claim, favoriteEvent.Id, cancellationToken))
                 return DurableJobCompletion.Cancelled();
+            if (taste != null && tasteTracks != null && favoriteEvent.Operation == FavoriteOperation.Favorite &&
+                !favoriteEvent.PolicySnapshotJson.Contains("spotify-likes-import", StringComparison.Ordinal))
+            {
+                var track = await tasteTracks.ResolveAsync(new(new(favoriteEvent.OwnerUserId, favoriteEvent.Protocol, favoriteEvent.BackendInstanceId),
+                    PlaybackTransition.Submission, favoriteEvent.ItemId, null, null, null, favoriteEvent.CreatedAt, favoriteEvent.EventKey), cancellationToken);
+                if (track != null)
+                    await taste.ObserveHeartAsync(favoriteEvent.OwnerUserId, favoriteEvent.EventKey,
+                        new() { Id = favoriteEvent.ItemId, CanonicalRecordingId = track.CanonicalRecordingId, Artist = track.Artist },
+                        favoriteEvent.CreatedAt, cancellationToken);
+            }
             await RecordRecommendationSignalAsync(favoriteEvent, cancellationToken);
             if (!await IsCurrentAsync(context.Claim, favoriteEvent.Id, cancellationToken))
                 return DurableJobCompletion.Cancelled();
