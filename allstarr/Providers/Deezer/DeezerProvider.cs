@@ -6,6 +6,8 @@ using allstarr.Models.Subsonic;
 using allstarr.Services.Common;
 using System.Text.Json;
 using allstarr.Services;
+using allstarr.Core.Capabilities;
+using System.Globalization;
 
 namespace allstarr.Core.Providers.Deezer;
 
@@ -452,6 +454,53 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
         return ParseDeezerArtist(artist);
     }
 
+    public override async Task<ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>> GetArtistAlbumsAsync(
+        ProviderExecutionContext context, ProviderArtistItemsRequest request)
+    {
+        var failure = ValidateContext(context);
+        if (failure != null) return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(failure);
+        if (request.Id.ProviderId != ProviderId || request.Id.ResourceKind != ProviderResourceKind.Artist)
+            return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(new(ProviderErrorKind.Forbidden));
+        if (request.ExpectedSnapshotVersion != null ||
+            !int.TryParse(request.Page.Cursor ?? "0", NumberStyles.None, CultureInfo.InvariantCulture, out var offset) ||
+            offset > int.MaxValue - request.Page.Limit)
+            return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(new(ProviderErrorKind.NotSupported));
+        try
+        {
+            var limit = Math.Min(request.Page.Limit, MetadataPageSize);
+            using var response = await GetAsync(
+                $"{BaseUrl}/artist/{Uri.EscapeDataString(request.Id.Value)}/albums?index={offset}&limit={limit}", context.CancellationToken);
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(context.CancellationToken));
+            var root = document.RootElement;
+            if (root.TryGetProperty("error", out _) || !root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(new(ProviderErrorKind.TransientFailure));
+            var records = data.EnumerateArray().Take(limit).ToArray();
+            var albums = MapValid(records, ParseDeezerAlbum);
+            if (albums.Any(album => string.IsNullOrWhiteSpace(album.Artist)))
+            {
+                var name = CatalogDescriptiveMetadata.Text(root, "name") ??
+                    (root.TryGetProperty("artist", out var artist) ? CatalogDescriptiveMetadata.Text(artist, "name") : null);
+                name ??= (await GetArtistAsync(ProviderId, request.Id.Value, context.CancellationToken))?.Name;
+                foreach (var album in albums.Where(album => string.IsNullOrWhiteSpace(album.Artist)))
+                {
+                    album.Artist = name ?? string.Empty;
+                    album.ArtistId ??= BuildExternalArtistId(ProviderId, request.Id.Value);
+                }
+            }
+            context.CancellationToken.ThrowIfCancellationRequested();
+            var values = MapValid(albums, MapAlbum);
+            var nextOffset = offset + records.Length;
+            var hasNext = records.Length > 0 && (root.TryGetProperty("total", out var total) && total.TryGetInt32(out var count)
+                ? nextOffset < count : GetNextPageUrl(root) != null || records.Length == limit);
+            return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Success(new(ProviderId, values,
+                hasNext ? nextOffset.ToString(CultureInfo.InvariantCulture) : null, hasNext || values.Count < records.Length));
+        }
+        catch (OperationCanceledException) { return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(new(ProviderErrorKind.Canceled)); }
+        catch (HttpRequestException exception) { return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(HttpError(exception)); }
+        catch { return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(new(ProviderErrorKind.TransientFailure)); }
+    }
+
     public override async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (!string.Equals(externalProvider, "deezer", StringComparison.OrdinalIgnoreCase)) return new List<Album>();
@@ -746,13 +795,15 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
     private Album ParseDeezerAlbum(JsonElement album)
     {
         var externalId = album.GetProperty("id").GetInt64().ToString();
+        var releaseType = DeezerText(album, "record_type")?.ToLowerInvariant();
+        if (releaseType == "compile") releaseType = "compilation";
 
         return new Album
         {
             Id = BuildExternalAlbumId("deezer", externalId),
             Title = album.GetProperty("title").GetString() ?? "",
             Artist = album.TryGetProperty("artist", out var artist)
-                ? artist.GetProperty("name").GetString() ?? ""
+                ? DeezerText(artist, "name") ?? ""
                 : "",
             ArtistId = album.TryGetProperty("artist", out var artistForId)
                 ? BuildExternalArtistId("deezer", artistForId.GetProperty("id").GetInt64().ToString())
@@ -778,6 +829,8 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
                 ? explicitValue.GetBoolean() : null,
             Upc = DeezerText(album, "upc"),
             Edition = DeezerText(album, "edition"),
+            ReleaseType = releaseType,
+            ExclusionReason = releaseType == "compilation" ? "compilation" : null,
             IsLocal = false,
             ExternalProvider = "deezer",
             ExternalId = externalId

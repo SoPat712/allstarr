@@ -9,6 +9,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Services;
 using System.Net;
+using System.Globalization;
 
 namespace allstarr.Core.Providers.Qobuz;
 
@@ -204,6 +205,49 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
             _logger.LogWarning("Qobuz catalog response could not be read.");
             return null;
         }
+    }
+
+    public override async Task<ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>> GetArtistAlbumsAsync(
+        ProviderExecutionContext context, ProviderArtistItemsRequest request)
+    {
+        var failure = ValidateContext(context);
+        if (failure != null) return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(failure);
+        if (request.Id.ProviderId != ProviderId || request.Id.ResourceKind != ProviderResourceKind.Artist)
+            return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(new(ProviderErrorKind.Forbidden));
+        if (request.ExpectedSnapshotVersion != null ||
+            !int.TryParse(request.Page.Cursor ?? "0", NumberStyles.None, CultureInfo.InvariantCulture, out var offset) ||
+            offset > int.MaxValue - request.Page.Limit)
+            return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(new(ProviderErrorKind.NotSupported));
+        try
+        {
+            return await UseCatalogAsync(context, async catalog =>
+            {
+                var selected = (QobuzProvider)catalog;
+                var appId = await selected._bundleService.GetAppIdAsync(context.CancellationToken);
+                var url = $"{BaseUrl}artist/get?artist_id={Uri.EscapeDataString(request.Id.Value)}&app_id={appId}&limit={request.Page.Limit}&offset={offset}&extra=albums";
+                using var response = await selected.GetWithAuthAsync(url, appId, context.CancellationToken);
+                response.EnsureSuccessStatusCode();
+                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(context.CancellationToken));
+                var root = document.RootElement;
+                if (root.TryGetProperty("error", out _) || !root.TryGetProperty("albums", out var albums) ||
+                    !albums.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
+                    return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(new(ProviderErrorKind.TransientFailure));
+                ValidateOffset(albums, offset);
+                var records = items.EnumerateArray().Take(request.Page.Limit).ToArray();
+                var values = MapValid(records, item => selected.MapAlbum(selected.ParseQobuzAlbum(item)));
+                context.CancellationToken.ThrowIfCancellationRequested();
+                var nextOffset = offset + records.Length;
+                var hasNext = records.Length > 0 && (albums.TryGetProperty("total", out var total) && total.TryGetInt32(out var count)
+                    ? nextOffset < count : records.Length == request.Page.Limit);
+                return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Success(new(ProviderId, values,
+                    hasNext ? nextOffset.ToString(CultureInfo.InvariantCulture) : null, hasNext || values.Count < records.Length));
+            });
+        }
+        catch (OperationCanceledException) { return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(new(ProviderErrorKind.Canceled)); }
+        catch (HttpRequestException exception) { return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(HttpError(exception)); }
+        catch (KeyNotFoundException) { return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration)); }
+        catch (UnauthorizedAccessException) { return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(new(ProviderErrorKind.Forbidden)); }
+        catch { return ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Failure(new(ProviderErrorKind.TransientFailure)); }
     }
 
     public override async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
@@ -725,6 +769,12 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
             Artists = CatalogDescriptiveMetadata.AlbumArtists(album, "qobuz"),
             Label = CatalogDescriptiveMetadata.Label(album),
             Notes = CatalogDescriptiveMetadata.Text(album, "description"),
+            Edition = CatalogDescriptiveMetadata.Text(album, "version"),
+            Upc = album.TryGetProperty("upc", out var upc) &&
+                  upc.ValueKind is JsonValueKind.String or JsonValueKind.Number ? upc.ToString() : null,
+            IsExplicit = album.TryGetProperty("parental_warning", out var explicitValue) &&
+                         explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? explicitValue.GetBoolean() : null,
             IsLocal = false,
             ExternalProvider = "qobuz",
             ExternalId = externalId

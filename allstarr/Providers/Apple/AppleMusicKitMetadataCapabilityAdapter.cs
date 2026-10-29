@@ -103,7 +103,8 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
                     album.TrackCount, album.Artwork, album.SnapshotVersion, tracks: tracks,
                     year: album.Year, genre: album.Genre, releaseDate: album.ReleaseDate,
                     label: album.Label, notes: album.Notes, providerIds: album.ProviderIds, lastFmUrl: album.LastFmUrl,
-                    isExplicit: album.IsExplicit, upc: album.Upc, edition: album.Edition));
+                    isExplicit: album.IsExplicit, upc: album.Upc, edition: album.Edition,
+                    releaseType: album.ReleaseType, exclusionReason: album.ExclusionReason));
             if (entries.Length == 0) break;
         }
         return ProviderOutcome<ProviderAlbumMetadata>.Failure(ProviderError.CompatibilityContractChanged());
@@ -286,12 +287,18 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
             ? parsed
             : null;
         var releaseDate = String(attributes, "releaseDate");
-        return new(id, Required(attributes, "name"), ArtistCredits(item, Required(attributes, "artistName")),
+        var title = Required(attributes, "name");
+        var releaseType = title.EndsWith(" - EP", StringComparison.OrdinalIgnoreCase) ? "ep"
+            : title.EndsWith(" - Single", StringComparison.OrdinalIgnoreCase) ||
+              attributes.TryGetProperty("isSingle", out var single) && single.ValueKind == JsonValueKind.True ? "single" : "album";
+        return new(id, title, ArtistCredits(item, Required(attributes, "artistName")),
             trackCount is > 0 ? trackCount : null, Artwork(id, attributes, revision), revision,
             releaseDate: releaseDate, year: ReleaseYear(releaseDate), genre: Strings(attributes, "genreNames").FirstOrDefault(),
             label: String(attributes, "recordLabel"), notes: Notes(attributes),
             isExplicit: String(attributes, "contentRating") switch { "explicit" => true, "clean" => false, _ => null },
-            upc: String(attributes, "upc"), edition: String(attributes, "edition"));
+            upc: String(attributes, "upc"), edition: String(attributes, "edition"), releaseType: releaseType,
+            exclusionReason: attributes.TryGetProperty("isCompilation", out var compilation) &&
+                             compilation.ValueKind == JsonValueKind.True ? "compilation" : null);
     }
 
     private static ProviderArtistMetadata MapArtist(JsonElement item, string? revision)

@@ -12,6 +12,40 @@ namespace allstarr.Tests;
 
 public sealed class QobuzProviderSearchTests
 {
+    [Theory]
+    [InlineData("\"parental_warning\":true,\"upc\":\"0123456789012\",", true, "0123456789012")]
+    [InlineData("\"parental_warning\":false,\"upc\":123456789012,", false, "123456789012")]
+    [InlineData("\"parental_warning\":null,", null, null)]
+    [InlineData("\"parental_warning\":\"false\",", null, null)]
+    [InlineData("", null, null)]
+    public async Task Album_search_and_lookup_preserve_nullable_source_evidence(
+        string evidence, bool? expectedExplicit, string? expectedUpc)
+    {
+        var albumJson = $$$"""
+            {"id":"album-1","title":"Album","version":"Deluxe",{{{evidence}}}
+             "artist":{"id":1,"name":"Artist"},"tracks_count":0,"tracks":{"items":[]}}
+            """;
+        using var http = new HttpClient(new Handler(request => Json(
+            request.RequestUri!.AbsolutePath.EndsWith("/search", StringComparison.Ordinal)
+                ? "{\"albums\":{\"items\":[" + albumJson + "]}}" : albumJson)));
+        var factory = Mock.Of<IHttpClientFactory>(item => item.CreateClient(It.IsAny<string>()) == http);
+        var bundles = new Mock<QobuzBundleService>(factory, NullLogger<QobuzBundleService>.Instance);
+        bundles.Setup(item => item.GetAppIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync("fixture-app");
+        var catalog = new QobuzProvider(http, bundles.Object, new Secrets(), NullLogger<QobuzProvider>.Instance);
+
+        var searched = Assert.Single((await catalog.SearchAlbumsAsync(Context(true), new("album", new(1)))).RequireValue().Items);
+        var full = (await catalog.GetAlbumAsync(Context(true), new(new("qobuz", ProviderResourceKind.Album, "album-1")))).RequireValue();
+
+        foreach (var album in new[] { searched, full })
+        {
+            Assert.Equal(expectedExplicit, album.IsExplicit);
+            Assert.Equal(expectedUpc, album.Upc);
+            Assert.Equal("Deluxe", album.Edition);
+            Assert.Null(album.ReleaseType);
+            Assert.Null(album.ExclusionReason);
+        }
+    }
+
     [Fact]
     public async Task SearchTracks_UsesOnlyCatalogEndpointUntilPlaybackRequestsLease()
     {

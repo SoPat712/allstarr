@@ -13,6 +13,8 @@ public class Album
     public bool? IsExplicit { get; set; }
     public string? Upc { get; set; }
     public string? Edition { get; set; }
+    public string? ReleaseType { get; set; }
+    public string? ExclusionReason { get; set; }
     public string? Label { get; set; }
     public string? Notes { get; set; }
     public Dictionary<string, string> ProviderIds { get; set; } = [];

@@ -76,12 +76,47 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
         Assert.True(full.Tracks[0].IsExplicit);
     }
 
-    private sealed class AlbumEvidenceHandler(string rating) : HttpMessageHandler
+    [Theory]
+    [InlineData("Album", false, "album", null)]
+    [InlineData("Album - Single", false, "single", null)]
+    [InlineData("Album - eP", false, "ep", null)]
+    [InlineData("Album - Single (Live)", false, "album", null)]
+    [InlineData("Album", true, "album", "compilation")]
+    public async Task Album_search_and_lookup_preserve_release_type_and_compilation(
+        string title, bool compilation, string releaseType, string? exclusionReason)
+    {
+        var adapter = AppleProviderTestFactory.Metadata(
+            new HttpClient(new AlbumEvidenceHandler("", title, compilation)),
+            new SecretAccessor(new("music-user-token", "us")));
+
+        var searched = Assert.Single((await adapter.SearchAlbumsAsync(Context(), Search())).RequireValue().Items);
+        var full = (await adapter.GetAlbumAsync(Context(), new(Id(ProviderResourceKind.Album, "album-1")))).RequireValue();
+
+        foreach (var album in new[] { searched, full })
+        {
+            Assert.Equal(releaseType, album.ReleaseType);
+            Assert.Equal(exclusionReason, album.ExclusionReason);
+        }
+    }
+
+    [Fact]
+    public async Task Album_type_uses_the_source_single_marker_when_the_title_has_no_suffix()
+    {
+        var adapter = AppleProviderTestFactory.Metadata(new HttpClient(new AlbumEvidenceHandler("\"isSingle\":true,")),
+            new SecretAccessor(new("music-user-token", "us")));
+
+        var album = Assert.Single((await adapter.SearchAlbumsAsync(Context(), Search())).RequireValue().Items);
+
+        Assert.Equal("single", album.ReleaseType);
+    }
+
+    private sealed class AlbumEvidenceHandler(string rating, string title = "Album", bool compilation = false) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var album = $$$"""
-                {"id":"album-1","attributes":{"name":"Album","artistName":"Artist",{{{rating}}}
+                {"id":"album-1","attributes":{"name":{{{JsonSerializer.Serialize(title)}}},"artistName":"Artist",{{{rating}}}
+                  "isCompilation":{{{JsonSerializer.Serialize(compilation)}}},
                   "upc":"0123456789012","edition":"Deluxe","trackCount":1,"recordLabel":"Record label"}}
                 """;
             var body = request.RequestUri!.AbsolutePath.EndsWith("/search", StringComparison.Ordinal)

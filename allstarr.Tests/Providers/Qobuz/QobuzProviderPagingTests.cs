@@ -13,6 +13,71 @@ namespace allstarr.Tests;
 
 public sealed class QobuzProviderPagingTests
 {
+    [Fact]
+    public async Task TypedArtistAlbums_RequestsOnlyTheRequestedPageWithSelectedAccount()
+    {
+        var requests = new List<Uri>();
+        var context = Context(true);
+        var provider = Provider(request =>
+        {
+            requests.Add(request.RequestUri!);
+            Assert.Equal(context.Account!.AccountId.ToString(), request.Headers.GetValues("X-User-Auth-Token").Single());
+            return Json(new
+            {
+                albums = new { offset = 1, total = 3, items = new[] { new { id = "album-2", title = "Second", artist = new { id = 27, name = "Artist" } } } }
+            });
+        });
+
+        var page = (await provider.GetArtistAlbumsAsync(context,
+            new(new("qobuz", ProviderResourceKind.Artist, "27"), new(1, "1")))).RequireValue();
+
+        var uri = Assert.Single(requests);
+        Assert.Equal("/api.json/0.2/artist/get", uri.AbsolutePath);
+        var query = QueryHelpers.ParseQuery(uri.Query);
+        Assert.Equal("1", query["offset"].ToString());
+        Assert.Equal("1", query["limit"].ToString());
+        Assert.Equal("27", query["artist_id"].ToString());
+        Assert.Equal("albums", query["extra"].ToString());
+        Assert.Equal("album-2", Assert.Single(page.Items).Id.Value);
+        Assert.Equal("2", page.NextCursor);
+    }
+
+    [Fact]
+    public async Task TypedArtistAlbums_ClassifiesRateLimitWithoutReturningAnEmptyPage()
+    {
+        var calls = 0;
+        var provider = Provider(_ => { calls++; return new(HttpStatusCode.TooManyRequests); });
+
+        var result = await provider.GetArtistAlbumsAsync(Context(true),
+            new(new("qobuz", ProviderResourceKind.Artist, "27"), new(1)));
+
+        Assert.Equal(ProviderErrorKind.RateLimited, result.Error!.Kind);
+        Assert.Equal(TimeSpan.FromSeconds(30), result.Error.RetryAfter);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task TypedArtistAlbums_AdvancesPastInvalidRecordsWithoutLosingValidReleases()
+    {
+        var provider = Provider(_ => Json(new
+        {
+            albums = new
+            {
+                offset = 0,
+                total = 3,
+                items = new[] { new { id = "one", title = "Album", artist = new { id = 27, name = "Artist" } },
+                    new { id = "invalid", title = "", artist = new { id = 27, name = "Artist" } } }
+            }
+        }));
+
+        var page = (await provider.GetArtistAlbumsAsync(Context(true),
+            new(new("qobuz", ProviderResourceKind.Artist, "27"), new(2)))).RequireValue();
+
+        Assert.Equal("one", Assert.Single(page.Items).Id.Value);
+        Assert.Equal("2", page.NextCursor);
+        Assert.True(page.IsPartial);
+    }
+
     [Theory]
     [InlineData(503, 503)]
     [InlineData(1, 503)]
