@@ -126,6 +126,9 @@ public class AdminAuthenticationMiddleware
         if (path.TrimEnd('/').Equals("/api/admin/preferences", StringComparison.OrdinalIgnoreCase))
             return HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method);
 
+        if (path.TrimEnd('/').Equals("/api/admin/stats", StringComparison.OrdinalIgnoreCase))
+            return HttpMethods.IsGet(method);
+
         var promotionSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (promotionSegments.Length >= 3 && promotionSegments[2].Equals("library-promotions", StringComparison.OrdinalIgnoreCase))
             return promotionSegments.Length == 3 && HttpMethods.IsPost(method) ||

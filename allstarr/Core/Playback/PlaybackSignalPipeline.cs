@@ -215,8 +215,9 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
     private async Task<bool> RetainsHistoryAsync(IntelligenceScope scope, CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        return await IntelligencePolicyService.Query(db, scope).AsNoTracking()
-            .AnyAsync(item => item.Enabled, cancellationToken);
+        // Core history works without recommendations; preserve an explicit history opt-out.
+        return !await IntelligencePolicyService.Query(db, scope).AsNoTracking()
+            .AnyAsync(item => !item.Enabled, cancellationToken);
     }
 
     private static string? SignalType(PlaybackTransition transition, ListeningEventState state) => transition switch
