@@ -42,6 +42,7 @@ public sealed class ListeningHistoryImportCleanupService(
     {
         await historyRetention.SweepAsync(cancellationToken);
         var now = clock.UtcNow;
+        await ListeningHistoryResolution.EnqueuePendingAsync(factory, jobs, now, cancellationToken);
         await using var readDb = await factory.CreateDbContextAsync(cancellationToken);
         var expired = await readDb.ListeningHistoryImports.AsNoTracking().Where(item =>
                 item.ExpiresAt <= now && item.State != ListeningHistoryImportState.Completed &&

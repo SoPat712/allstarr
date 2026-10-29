@@ -18,7 +18,8 @@ public sealed class ListeningHistoryImportJobHandler(
     ListeningHistoryImporterRegistry importers,
     ListeningHistoryImportArtifactStore artifacts,
     ListeningHistoryImportOptions options,
-    IPlatformClock clock) : IDurableJobHandler
+    IPlatformClock clock,
+    DurableJobQueue jobs) : IDurableJobHandler
 {
     public const string JobTypeName = "listening-history.import";
     public string JobType => JobTypeName;
@@ -46,6 +47,7 @@ public sealed class ListeningHistoryImportJobHandler(
                          "The saved history import is unavailable.");
             if (record.State == ListeningHistoryImportState.Completed)
             {
+                await ListeningHistoryResolution.EnqueueAsync(factory, jobs, payload.Scope, clock.UtcNow, cancellationToken);
                 artifacts.Delete(record.Id);
                 return DurableJobCompletion.Success();
             }
@@ -104,6 +106,7 @@ public sealed class ListeningHistoryImportJobHandler(
                     "The history file no longer matches its preview.");
             }
             await CompleteAsync(payload, execution.Claim.JobId, cancellationToken);
+            await ListeningHistoryResolution.EnqueueAsync(factory, jobs, payload.Scope, clock.UtcNow, cancellationToken);
             artifacts.Delete(payload.ImportId);
             await execution.ReportProgressAsync(new(
                 "history-import.complete",

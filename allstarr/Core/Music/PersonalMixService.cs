@@ -62,19 +62,48 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         var row = await RowAsync(db, user, token);
         var document = row == null ? new() : JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!;
         var missing = PersonalMixRules.Kinds.Where(kind => !document.Mixes.ContainsKey(kind)).ToArray();
-        if (missing.Length == 0) return document;
-        var events = await Events(db, user).Where(item => item.State == ListeningEventState.Completed && item.ListenedAt <= clock.UtcNow).ToArrayAsync(token);
+        var stale = document.Mixes.Values.Where(mix => PersonalMixRules.Kinds.Contains(mix.Kind) && !PersonalMixMoods.Kinds.Contains(mix.Kind) && !mix.Readiness.Ready)
+            .Select(mix => mix.Kind).ToArray();
+        if (missing.Length == 0 && stale.Length == 0) return document;
+        var events = await Events(db, user).Where(item => item.State == ListeningEventState.Completed && item.ListenedAt <= clock.UtcNow)
+            .Select(item => new { item.Artist, item.TrackReference, item.ListenedAt }).ToArrayAsync(token);
         var follows = await releases.ListAsync(user.Id, token);
-        foreach (var kind in missing)
+        var loved = (await db.FavoriteStates.AsNoTracking().Where(item => item.OwnerUserId == user.Id &&
+            item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId && item.IsFavorite)
+            .Select(item => item.ItemId).ToArrayAsync(token)).ToHashSet(StringComparer.Ordinal);
+        var recent = events.Count(item => item.ListenedAt >= clock.UtcNow.AddDays(-30));
+        var artists = follows.Count > 0 || events.GroupBy(item => item.Artist).Any(group => group.Count() >= 5);
+        var old = events.GroupBy(item => item.TrackReference).Any(group => (group.Count() >= 5 || loved.Contains(group.Key)) &&
+            group.Max(item => item.ListenedAt) <= clock.UtcNow.AddMonths(-6));
+        foreach (var kind in missing.Concat(stale))
         {
-            var ready = PersonalMixRules.Readiness(kind, events.Length, events.Count(item => item.ListenedAt >= clock.UtcNow.AddDays(-30)), false,
-                follows.Count > 0 || events.GroupBy(item => item.Artist).Any(group => group.Count() >= 5),
-                events.GroupBy(item => item.TrackReference).Any(group => group.Count() >= 5 && group.Max(item => item.ListenedAt) <= clock.UtcNow.AddMonths(-6)));
+            var ready = PersonalMixRules.Readiness(kind, events.Length, recent, false, artists, old);
             if (PersonalMixMoods.Kinds.Contains(kind)) ready = PersonalMixMoods.Readiness(0);
-            document.Mixes[kind] = new(Id(user, kind), kind, PersonalMixRules.Name(kind),
-                PersonalMixMoods.Kinds.Contains(kind) ? "Updated Monday · Music for " + kind : "Made for you", 0, null, ready, true, []);
+            document.Mixes[kind] = document.Mixes.TryGetValue(kind, out var mix) ? mix with { Readiness = ready }
+                : new(Id(user, kind), kind, PersonalMixRules.Name(kind),
+                    PersonalMixMoods.Kinds.Contains(kind) ? "Updated Monday · Music for " + kind : "Made for you", 0, null, ready, true, []);
         }
         return document;
+    }
+
+    internal async Task RefreshAfterHistoryResolutionAsync(Guid owner, Guid resolutionId, DurableJobQueue queue, CancellationToken token = default)
+    {
+        await writes.WaitAsync(token);
+        try
+        {
+            await using var db = await factory.CreateDbContextAsync(token);
+            var user = await UserAsync(db, owner, token);
+            var saved = await RowAsync(db, user, token);
+            if (saved == null) return;
+            var before = JsonSerializer.Deserialize<PersonalMixDocument>(saved.PayloadJson)!;
+            var fresh = await LoadAsync(db, user, token);
+            var transitioned = before.Mixes.Any(item => PersonalMixRules.Kinds.Contains(item.Key) && !PersonalMixMoods.Kinds.Contains(item.Key) &&
+                (!item.Value.Readiness.Ready || item.Value.Songs.Count == 0) &&
+                fresh.Mixes.TryGetValue(item.Key, out var mix) && mix.Readiness.Ready);
+            if (transitioned)
+                await queue.EnqueueAsync(new DurableJobEnqueueRequest<Guid>(JobType, $"history-resolution:{resolutionId:N}", Guid.Empty, owner), token);
+        }
+        finally { writes.Release(); }
     }
 
     private async Task SaveAsync(AllstarrDbContext db, UserRecord user, PersonalMixDocument document, CancellationToken token, bool preview = false)
@@ -288,7 +317,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         var localIds = document.Mixes.Values.SelectMany(mix => mix.Songs).Where(item => item.Song.IsLocal).Select(item => item.Song.Id).ToArray();
         var allowed = localIds.Length == 0 ? [] : await LibraryTrackAccess.Query(db, context, await libraryAccess.ResolveAsync(context, token))
             .Where(item => localIds.Contains(item.BackendItemId)).Select(item => item.BackendItemId).ToArrayAsync(token);
-        return (await VisibleAsync(owner, document, token)).Where(mix => mix.Generation > 0 && mix.ShowInApps && mix.Readiness.Ready &&
+        return (await VisibleAsync(owner, document, token)).Where(mix => mix.Generation > 0 && mix.Songs.Count > 0 && mix.ShowInApps && mix.Readiness.Ready &&
             (!PersonalMixMoods.Kinds.Contains(mix.Kind) || mix.Songs.Count(item => !item.Song.IsLocal || allowed.Contains(item.Song.Id)) >= 25)).Select(mix =>
             new VirtualPlaylistReadModel(PlaylistVirtualizationService.CreateProtocolId(mix.Id), mix.Id, mix.Id, mix.Name, mix.Description,
                 null, "allstarr", mix.Kind, mix.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture), PlaylistLinkMode.Virtual,
@@ -335,7 +364,8 @@ public sealed class PersonalMixJobHandler(PersonalMixService mixes) : IDurableJo
     public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext context, CancellationToken cancellationToken)
     {
         if (context.Claim.OwnerUserId is not { } owner) return DurableJobCompletion.Failure("mix-owner-missing", "A linked listener is required.");
-        await mixes.GenerateAsync(owner, context.Claim.Payload.GetGuid(), token: cancellationToken, scheduled: true);
+        var mixId = context.Claim.Payload.GetGuid();
+        await mixes.GenerateAsync(owner, mixId == Guid.Empty ? null : mixId, token: cancellationToken, scheduled: true);
         return DurableJobCompletion.Success();
     }
 }

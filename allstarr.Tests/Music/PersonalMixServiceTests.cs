@@ -325,7 +325,11 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         await Seed(count: 10);
         await using (var db = factory.CreateDbContext())
         {
-            foreach (var play in await db.ListeningEvents.ToArrayAsync()) play.TrackReference = "history:" + play.Title;
+            foreach (var play in await db.ListeningEvents.ToArrayAsync())
+            {
+                play.TrackReference = "history:" + play.Title;
+                play.CanonicalRecordingId = null;
+            }
             await db.SaveChangesAsync();
         }
         gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 3))

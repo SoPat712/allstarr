@@ -111,7 +111,8 @@ public sealed partial class ListeningHistoryImportIntegrationTests
         Assert.Empty(await db.ListeningSignals.ToListAsync());
         Assert.Empty(await db.FavoriteActions.ToListAsync());
         Assert.Empty(await db.ProviderDownloadWorkspaces.ToListAsync());
-        Assert.All(await db.Jobs.ToListAsync(), job => Assert.Equal(ListeningHistoryImportJobHandler.JobTypeName, job.Type));
+        Assert.All(await db.Jobs.ToListAsync(), job => Assert.Contains(job.Type,
+            new[] { ListeningHistoryImportJobHandler.JobTypeName, ListeningHistoryResolution.JobTypeName }));
         Assert.All(await db.ListeningEvents.Where(item => item.SourceKind == "import").ToListAsync(), item => Assert.Equal(MusicBrainzEnrichmentState.NotRequested, item.MusicBrainzEnrichmentState));
     }
 
@@ -338,12 +339,12 @@ public sealed partial class ListeningHistoryImportIntegrationTests
         var services = new ServiceCollection();
         services.AddListeningHistoryImport(new ConfigurationBuilder().Build());
         Assert.Equal(5, services.Count(item => item.ServiceType == typeof(IListeningHistoryImporter)));
-        Assert.Single(services, item => item.ServiceType == typeof(IDurableJobHandler));
+        Assert.Equal(2, services.Count(item => item.ServiceType == typeof(IDurableJobHandler)));
         Assert.Contains(services, item => item.ImplementationType == typeof(ListeningHistoryImportCleanupService));
         Assert.Equal(500L * 1024 * 1024, new ListeningHistoryImportOptions().MaximumUploadBytes);
     }
 
-    private ListeningHistoryImportJobHandler Handler() => new(_factory, _importers, _artifacts, _importOptions, _clock);
+    private ListeningHistoryImportJobHandler Handler() => new(_factory, _importers, _artifacts, _importOptions, _clock, _jobs);
     private async Task RunImport()
     {
         var claim = (await _jobs.ClaimNextAsync("after-restart", [ListeningHistoryImportJobHandler.JobTypeName], default))!;
