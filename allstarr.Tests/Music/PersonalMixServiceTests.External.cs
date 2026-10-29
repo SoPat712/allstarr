@@ -1,7 +1,12 @@
+using System.Diagnostics;
 using System.Text.Json;
+using allstarr.Core.Routing;
+using Xunit.Abstractions;
 using allstarr.Controllers;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Jobs;
+using allstarr.Core.Matching;
+using allstarr.Core.Music;
 using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
@@ -14,6 +19,10 @@ namespace allstarr.Tests;
 
 public sealed partial class PersonalMixServiceTests
 {
+    private readonly ITestOutputHelper output;
+
+    public PersonalMixServiceTests(ITestOutputHelper output) => this.output = output;
+
     private async Task<PlaylistLinkRecord> ExternalLink(string source = "lastfm", string selection = "loved",
         Guid? listener = null, bool schedule = true)
     {
@@ -263,52 +272,117 @@ public sealed partial class PersonalMixServiceTests
         Assert.IsType<BadRequestObjectResult>(await Controller(owner, true).External(new(source, kind, period), default));
     }
 
-    [Fact]
-    public async Task ExternalCreation_ReusesLinkedPlaylistCreationWithVirtualDefaults()
+    [Theory]
+    [InlineData("lastfm", "top", "7day", "top:7day:50", false)]
+    [InlineData("lastfm", "top", "7day", "top:7day:50", true)]
+    [InlineData("listenbrainz", "weekly-jams", null, "createdfor:weekly-jams", false)]
+    [InlineData("listenbrainz", "weekly-jams", null, "createdfor:weekly-jams", true)]
+    public async Task ExternalCreation_ReturnsWithoutProviderReadsOrOtherProjectionsAndQueuesOnce(
+        string source, string kind, string? period, string selection, bool allowed)
     {
-        var accountLink = await ExternalLink();
-        var persistence = new Mock<IPlaylistPersistenceService>();
-        PlaylistLinkInput? captured = null;
-        persistence.Setup(item => item.CreateLinkAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<PlaylistLinkInput>(), It.IsAny<CancellationToken>()))
-            .Returns<ProtocolExecutionContext, PlaylistLinkInput, CancellationToken>(async (_, input, token) =>
+        publish = allowed;
+        var accountLink = await ExternalLink(source, source == "lastfm" ? "loved" : "createdfor:weekly-exploration");
+        await ExternalLink("lastfm", "similar");
+        await ExternalLink("lastfm", "top:1month:50");
+        await using (var db = factory.CreateDbContext())
+        {
+            (await db.ProviderAccounts.SingleAsync(item => item.Id == accountLink.ProviderAccountId)).CreatedAt = clock.UtcNow.AddDays(-1);
+            await db.SaveChangesAsync();
+        }
+        var projectionCalls = 0;
+        access.Setup(item => item.ResolveUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .Returns(async (Guid id, CancellationToken token) =>
             {
-                captured = input;
-                var row = new PlaylistLinkRecord
-                {
-                    Id = Guid.NewGuid(),
-                    OwnerUserId = owner,
-                    ProviderAccountId = input.ProviderAccountId,
-                    SourceProviderId = input.SourceProviderId,
-                    SourcePlaylistId = input.SourcePlaylistId,
-                    SourcePlaylistIdHash = input.SourcePlaylistIdHash,
-                    TargetProtocol = input.TargetProtocol,
-                    TargetBackendInstanceId = input.TargetBackendInstanceId,
-                    Mode = input.Mode,
-                    MaterializationMode = input.MaterializationMode,
-                    ImportMode = input.ImportMode,
-                    CreatedAt = clock.UtcNow,
-                    UpdatedAt = clock.UtcNow
-                };
-                await using var db = factory.CreateDbContext();
-                db.PlaylistLinks.Add(row);
-                await db.SaveChangesAsync(token);
-                return row;
+                projectionCalls++;
+                await Task.Delay(300, token);
+                return new BackendLibraryAccessContext(Context(id), new(true, []));
             });
+        var providerCalls = 0;
+        var provider = new Mock<IProviderPlaylistCapability>();
+        var registry = new Mock<IProviderRegistry>();
+        registry.Setup(item => item.GetRequiredCapability<IProviderPlaylistCapability>(source, ProviderCapabilityKind.Playlist))
+            .Returns(provider.Object);
+        var router = new Mock<IProviderRouter>();
+        router.Setup(item => item.PlanAsync<IProviderPlaylistCapability>(It.IsAny<ProviderRouteRequest>()))
+            .Returns(async (ProviderRouteRequest request) =>
+            {
+                providerCalls++;
+                await Task.Delay(700, request.CancellationToken);
+                return new ProviderRoutePlan<IProviderPlaylistCapability>(request, [],
+                    new(request.CorrelationId, ProviderCapabilityKind.Playlist, source, null, []));
+            });
+        var persistence = new PlaylistPersistenceService(factory, new(factory), clock,
+            Mock.Of<ITrackMatchRepository>(), access.Object, providerGateway: gateway.Object, registry: registry.Object);
         var options = new DurableJobOptions();
         var queue = new DurableJobQueue(factory, options, new(options), clock);
-        var linkController = new PlaylistLinksController(factory, persistence.Object, null!, null!, null!, queue,
-            null!, null!, null!, null!, null!, null!, clock, null!, new(factory, clock), null!, null!, null!, null!);
+        var linkController = new PlaylistLinksController(factory, persistence, new(factory, access.Object), null!, null!, queue,
+            null!, registry.Object, router.Object, null!, null!, null!, clock, null!, new(factory, clock), null!, null!, null!, null!);
         var controller = Controller(owner, true);
         controller.HttpContext.RequestServices = new ServiceCollection().AddSingleton(linkController).BuildServiceProvider();
-        var response = Assert.IsType<CreatedResult>(await controller.External(new("lastfm", "top", "7day"), default));
-        Assert.NotNull(response.Value);
-        Assert.Equal(PlaylistLinkMode.Virtual, captured!.Mode);
-        Assert.Equal(PlaylistImportMode.Linked, captured.ImportMode);
-        Assert.Equal("top:7day:50", captured.SourcePlaylistId);
-        Assert.Equal(accountLink.ProviderAccountId, captured.ProviderAccountId);
+        var timer = Stopwatch.StartNew();
+        var result = await controller.External(new(source, kind, period), default);
+        timer.Stop();
+        output.WriteLine($"External POST {source}: {timer.ElapsedMilliseconds} ms; provider plans {providerCalls}; other projections {projectionCalls} (300 ms per projection, 700 ms per provider plan).");
+        var response = Assert.IsType<CreatedResult>(result);
+        Assert.Equal(0, providerCalls);
+        Assert.Equal(0, projectionCalls);
+        provider.Verify(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistTracksRequest>()), Times.Never);
+        registry.VerifyNoOtherCalls();
+        policies.Verify(item => item.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        gateway.VerifyNoOtherCalls();
+        Assert.True(timer.Elapsed < TimeSpan.FromSeconds(1), $"POST took {timer.ElapsedMilliseconds} ms.");
+        var card = JsonSerializer.SerializeToElement(response.Value);
+        Assert.True(card.GetProperty("ShowInApps").GetBoolean());
+        Assert.Equal(allowed, card.GetProperty("appsAllowed").GetBoolean());
+        Assert.False(card.GetProperty("inApps").GetBoolean());
+        Assert.False(card.GetProperty("Readiness").GetProperty("Ready").GetBoolean());
+        Assert.Equal("Matching songs…", card.GetProperty("Readiness").GetProperty("Message").GetString());
+        Assert.Empty(card.GetProperty("coverArtwork").EnumerateArray());
         await using var read = factory.CreateDbContext();
-        var created = await read.PlaylistLinks.SingleAsync(item => item.SourcePlaylistId == "top:7day:50");
+        var created = await read.PlaylistLinks.SingleAsync(item => item.SourcePlaylistId == selection);
+        Assert.Equal(PlaylistLinkMode.Virtual, created.Mode);
+        Assert.Equal(PlaylistImportMode.Linked, created.ImportMode);
+        Assert.Equal(accountLink.ProviderAccountId, created.ProviderAccountId);
+        var document = await read.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "personal-mixes")
+            .OrderByDescending(item => item.SnapshotVersion).FirstAsync();
+        Assert.True(JsonSerializer.Deserialize<PersonalMixDocument>(document.PayloadJson)!.ExternalShowInApps[created.Id]);
         Assert.True((await read.JobSchedules.SingleAsync(item => item.Id == created.ScheduleId)).Enabled);
+        var job = Assert.Single(await read.Jobs.ToArrayAsync());
+        Assert.Equal("playlist.materialize", job.Type);
+        Assert.Equal(DurableJobState.Pending, job.State);
+        Assert.True(job.AvailableAt <= clock.UtcNow);
+        Assert.Equal(created.Id, JsonSerializer.Deserialize<PlaylistMaterializationJobPayload>(job.PayloadJson)!.PlaylistLinkId);
+        var repeated = Assert.IsType<CreatedResult>(await controller.External(new(source, kind, period), default));
+        Assert.Equal(response.Location, repeated.Location);
+        Assert.Equal(0, projectionCalls);
+        Assert.Equal(0, providerCalls);
+        Assert.Equal(job.Id, JsonSerializer.SerializeToElement(response.Value).GetProperty("initialJobId").GetGuid());
+        Assert.Equal(job.Id, JsonSerializer.SerializeToElement(repeated.Value).GetProperty("initialJobId").GetGuid());
+        var listed = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(await linkController.List(default)).Value)
+            .GetProperty("playlistLinks").EnumerateArray();
+        Assert.Contains(listed, item => item.GetProperty("id").GetGuid() == created.Id);
+        var status = new JobsController(factory, queue) { ControllerContext = controller.ControllerContext };
+        var pending = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(await status.Get(job.Id)).Value);
+        Assert.Equal("Pending", pending.GetProperty("job").GetProperty("state").GetString());
+        read.AuditEvents.Add(new()
+        {
+            Id = Guid.NewGuid(),
+            ActorUserId = owner,
+            Category = "job-progress",
+            Action = "playlist.match",
+            SubjectType = "job",
+            SubjectId = job.Id.ToString("D"),
+            CorrelationId = job.CorrelationId,
+            Outcome = "running",
+            DetailsJson = "{\"stage\":\"playlist.match\",\"completed\":2,\"total\":10}",
+            CreatedAt = clock.UtcNow
+        });
+        await read.SaveChangesAsync();
+        var progress = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(await status.Get(job.Id)).Value);
+        using var details = JsonDocument.Parse(Assert.Single(progress.GetProperty("progress").EnumerateArray()).GetProperty("DetailsJson").GetString()!);
+        Assert.Equal(2, details.RootElement.GetProperty("completed").GetInt32());
+        Assert.Equal(10, details.RootElement.GetProperty("total").GetInt32());
         Assert.Single(await read.Jobs.ToArrayAsync());
+        Assert.Single(await read.PlaylistLinks.Where(item => item.SourcePlaylistId == selection).ToArrayAsync());
     }
 }

@@ -42,6 +42,17 @@ export const toast = {
   error: (message: string, action?: ToastAction) => show(message, "error", action),
   /** Stays until dismissed; replace it with the outcome when the work ends. */
   progress: (message: string) => show(message, "info", undefined, true),
+  update: (id: number, changes: Partial<Omit<Toast, "id">>) => {
+    let updated: Toast | undefined;
+    store.update(items => items.map(item => item.id === id ? (updated = { ...item, ...changes }) : item));
+    if (!updated) return;
+    clearTimeout(lifetimes.get(id)?.timer);
+    lifetimes.delete(id);
+    if (!updated.busy && updated.kind !== "error") {
+      lifetimes.set(id, { remaining: 5000, started: Date.now(), pauses: new Set() });
+      start(id);
+    }
+  },
   dismiss,
   clear: () => {
     for (const life of lifetimes.values()) clearTimeout(life.timer);

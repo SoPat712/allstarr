@@ -146,7 +146,7 @@ export type JobProgress = {
 
 export type JobResponse = { jobs: Job[]; progress: JobProgress[]; hasMore?: boolean; nextCursor?: string | null; nextCursorId?: string | null };
 export type JobAttempt = { attemptNumber: number; startedAt: string; completedAt?: string | null; outcome?: string | null; errorCode?: string | null; errorMessage?: string | null };
-export type JobDetail = { job: Job; attempts: JobAttempt[]; hasMore: boolean; nextCursor?: string | null; nextCursorId?: string | null };
+export type JobDetail = { job: Job; progress: JobProgress[]; attempts: JobAttempt[]; hasMore: boolean; nextCursor?: string | null; nextCursorId?: string | null };
 export type ActivityTask = { id: string; name: string; kind: string; state: string; enabled: boolean; ownerName?: string | null; cadence: string; detail?: string; lastRunAt?: string | null; nextRunAt?: string | null; runPlaylistLinkId?: string | null; actionHref?: string | null; actionLabel?: string | null };
 
 export type PlayTrace = {
@@ -2340,7 +2340,7 @@ export const mixes = {
   start: (seed: MixSeed, length: number) => json<MixPreview>("/api/admin/mixes/start", intelligenceBody({ seedKind: seed.kind, seedId: seed.id, length })),
   save: (id: string, name: string) => json<{ id: string }>(`/api/admin/mixes/start/${encodeURIComponent(id)}/save`, intelligenceBody({ name })),
   remove: (id: string) => json<unknown>(`/api/admin/mixes/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  external: (source: string, kind: string) => json<MixCard>("/api/admin/mixes/external", intelligenceBody({ source, kind })),
+  external: (source: string, kind: string) => json<MixCard & { initialJobId: string }>("/api/admin/mixes/external", intelligenceBody({ source, kind })),
   publishSetting: () => json<{ enabled: boolean }>("/api/admin/mixes/publish-setting"),
   setPublishSetting: (enabled: boolean) => json<unknown>("/api/admin/mixes/publish-setting", intelligenceBody({ enabled }, "PUT")),
   seeds: async (query: string): Promise<MixSeed[]> => {
@@ -2412,8 +2412,8 @@ export const releaseInbox = {
 export const playlistLinks = {
   list: () => json<{ playlistLinks: PlaylistLink[] }>("/api/admin/playlist-links"),
   copies: (listenerId: string) => json<PlaylistCopy[]>(`/api/admin/listeners/${encodeURIComponent(listenerId)}/playlist-forks`),
-  details: (id: string, projectionMode?: "resolved" | "source" | "target") =>
-    json<PlaylistDetails>(`/api/admin/playlist-links/${encodeURIComponent(id)}${projectionMode ? `?projectionMode=${projectionMode}` : ""}`),
+  details: (id: string, projectionMode?: "resolved" | "source" | "target", signal?: AbortSignal) =>
+    json<PlaylistDetails>(`/api/admin/playlist-links/${encodeURIComponent(id)}${projectionMode ? `?projectionMode=${projectionMode}` : ""}`, { signal }),
   refresh: (id: string) =>
     json(`/api/admin/playlist-links/${encodeURIComponent(id)}/refresh`, { method: "POST" }),
   run: (id: string, snapshotId?: string) =>
@@ -2664,10 +2664,10 @@ export const activityWork = {
     if (before && beforeId) { query.set("before", before); query.set("beforeId", beforeId); }
     return json<JobResponse>(`/api/admin/jobs?${query}`);
   },
-  detail: (id: string, before = "", beforeId = "") => {
+  detail: (id: string, before = "", beforeId = "", signal?: AbortSignal) => {
     const query = new URLSearchParams({ limit: "25" });
     if (before && beforeId) { query.set("before", before); query.set("beforeId", beforeId); }
-    return json<JobDetail>(`/api/admin/jobs/${encodeURIComponent(id)}?${query}`);
+    return json<JobDetail>(`/api/admin/jobs/${encodeURIComponent(id)}?${query}`, { signal });
   },
   tasks: (scope: "mine" | "everyone" = "mine") => json<{ items: ActivityTask[]; hasMore?: boolean }>(scope === "mine" ? "/api/admin/activity/tasks" : `/api/admin/activity/tasks?scope=${scope}`),
 };
