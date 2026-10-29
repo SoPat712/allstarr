@@ -57,8 +57,17 @@ public sealed class LibraryPromotionTests : IAsyncLifetime
         var options = new DurableJobOptions();
         queue = new(factory, options, new JobPayloadPolicy(options), new SystemPlatformClock());
         await using var db = factory.CreateDbContext();
-        db.Users.Add(new UserRecord { Id = owner, Enabled = true, BackendType = "jellyfin", BackendInstanceId = "backend",
-            BackendPrincipalId = "principal", DisplayName = "Owner", CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
+        db.Users.Add(new UserRecord
+        {
+            Id = owner,
+            Enabled = true,
+            BackendType = "jellyfin",
+            BackendInstanceId = "backend",
+            BackendPrincipalId = "principal",
+            DisplayName = "Owner",
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
         db.CanonicalRecordings.Add(new() { Id = recordingId, CreatedByUserId = owner, PublicId = "song", Title = "Song" });
         await db.SaveChangesAsync();
         var sourceJob = (await queue.EnqueueAsync(new DurableJobEnqueueRequest<object>("recording.keep", "source", new { }, owner))).JobId;
@@ -66,17 +75,46 @@ public sealed class LibraryPromotionTests : IAsyncLifetime
         Directory.CreateDirectory(sourceDirectory);
         var sourcePath = Path.Combine(sourceDirectory, "song.flac");
         await File.WriteAllTextAsync(sourcePath, "complete original");
-        var workspace = new ProviderDownloadWorkspaceEntity { Id = Guid.CreateVersion7(), WorkspaceId = "source", OwnerUserId = owner,
-            DurableJobId = sourceJob, ProviderId = "deezer", IdempotencyKey = "source" };
+        var workspace = new ProviderDownloadWorkspaceEntity
+        {
+            Id = Guid.CreateVersion7(),
+            WorkspaceId = "source",
+            OwnerUserId = owner,
+            DurableJobId = sourceJob,
+            ProviderId = "deezer",
+            IdempotencyKey = "source"
+        };
         db.Set<ProviderDownloadWorkspaceEntity>().Add(workspace);
-        db.Set<ProviderDownloadArtifactEntity>().Add(new() { Id = artifactId, WorkspaceRecordId = workspace.Id, WorkspaceId = "source",
-            OwnerUserId = owner, DurableJobId = sourceJob, ProviderId = "deezer", SourceExternalTrackId = "track", ProviderArtifactId = "song.flac",
-            RelativePath = "song.flac", State = ProviderDownloadArtifactState.Verified, VerifiedAt = DateTimeOffset.UtcNow,
-            ContentSha256 = Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(sourcePath))), Length = 17,
-            QualityCheckJson = JsonSerializer.Serialize(new AudioQualityCheck(44100, 16, 21000, "standard", .9)) });
-        db.ProviderTrackIdentities.Add(new() { Id = Guid.CreateVersion7(), CanonicalRecordingId = recordingId, ProviderId = "deezer",
-            ExternalId = "track", ExternalIdHash = new string('a', 64), ResourceKind = ProviderResourceKind.Track,
-            Verification = ProviderIdentityVerification.Verified, VerificationMethod = "fixture", DecisionVersion = 1, Scope = ProviderIdentityScope.Catalog });
+        db.Set<ProviderDownloadArtifactEntity>().Add(new()
+        {
+            Id = artifactId,
+            WorkspaceRecordId = workspace.Id,
+            WorkspaceId = "source",
+            OwnerUserId = owner,
+            DurableJobId = sourceJob,
+            ProviderId = "deezer",
+            SourceExternalTrackId = "track",
+            ProviderArtifactId = "song.flac",
+            RelativePath = "song.flac",
+            State = ProviderDownloadArtifactState.Verified,
+            VerifiedAt = DateTimeOffset.UtcNow,
+            ContentSha256 = Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(sourcePath))),
+            Length = 17,
+            QualityCheckJson = JsonSerializer.Serialize(new AudioQualityCheck(44100, 16, 21000, "standard", .9))
+        });
+        db.ProviderTrackIdentities.Add(new()
+        {
+            Id = Guid.CreateVersion7(),
+            CanonicalRecordingId = recordingId,
+            ProviderId = "deezer",
+            ExternalId = "track",
+            ExternalIdHash = new string('a', 64),
+            ResourceKind = ProviderResourceKind.Track,
+            Verification = ProviderIdentityVerification.Verified,
+            VerificationMethod = "fixture",
+            DecisionVersion = 1,
+            Scope = ProviderIdentityScope.Catalog
+        });
         await db.SaveChangesAsync();
         var collection = new ServiceCollection();
         collection.AddDbContext<AllstarrDbContext>(builder => builder.UseSqlite(database.ConnectionString));
@@ -210,8 +248,15 @@ public sealed class LibraryPromotionTests : IAsyncLifetime
         await using (var db = factory.CreateDbContext())
         {
             (await db.Set<ProviderDownloadArtifactEntity>().SingleAsync()).QualityCheckJson = null;
-            db.Users.Add(new() { Id = Guid.NewGuid(), Enabled = true, BackendType = "jellyfin", BackendInstanceId = "backend",
-                BackendPrincipalId = "other", DisplayName = "Other" });
+            db.Users.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                Enabled = true,
+                BackendType = "jellyfin",
+                BackendInstanceId = "backend",
+                BackendPrincipalId = "other",
+                DisplayName = "Other"
+            });
             await db.SaveChangesAsync();
         }
         var run = await service.StartAsync(Context, Request());
@@ -295,8 +340,14 @@ public sealed class LibraryPromotionTests : IAsyncLifetime
         var recordingMbid = Guid.NewGuid().ToString("D");
         await using (var db = factory.CreateDbContext())
         {
-            db.Set<RecordingIdentifierRecord>().Add(new() { Id = Guid.NewGuid(), RecordingId = recordingId,
-                Kind = RecordingIdentifierKinds.MusicBrainz, Value = recordingMbid, Source = "verified" });
+            db.Set<RecordingIdentifierRecord>().Add(new()
+            {
+                Id = Guid.NewGuid(),
+                RecordingId = recordingId,
+                Kind = RecordingIdentifierKinds.MusicBrainz,
+                Value = recordingMbid,
+                Source = "verified"
+            });
             await db.SaveChangesAsync();
         }
         await service.StartAsync(Context, Request());

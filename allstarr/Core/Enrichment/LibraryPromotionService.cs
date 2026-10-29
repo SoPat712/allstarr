@@ -75,9 +75,19 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
             var id = Guid.CreateVersion7();
             var queued = await jobs.EnqueueInExistingTransactionAsync(db, new DurableJobEnqueueRequest<Guid>(
                 JobType, $"promotion:{id:N}", id, owner, MaxAttempts: 3), token);
-            var run = new PromotionRunRecord { Id = id, OwnerUserId = owner, JobId = queued.JobId,
-                RequestKey = request.RequestKey, RequestJson = json, RootPath = root.Path, PlanJson = JsonSerializer.Serialize(plan),
-                SourceSha256 = source.ContentSha256, SourceLength = source.Length, CreatedAt = DateTimeOffset.UtcNow };
+            var run = new PromotionRunRecord
+            {
+                Id = id,
+                OwnerUserId = owner,
+                JobId = queued.JobId,
+                RequestKey = request.RequestKey,
+                RequestJson = json,
+                RootPath = root.Path,
+                PlanJson = JsonSerializer.Serialize(plan),
+                SourceSha256 = source.ContentSha256,
+                SourceLength = source.Length,
+                CreatedAt = DateTimeOffset.UtcNow
+            };
             db.Set<PromotionRunRecord>().Add(run);
             await db.SaveChangesAsync(token);
             await transaction.CommitAsync(token);
@@ -173,8 +183,14 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
                 if (!await jobs.IsExecutionCurrentAsync(execution.Claim, token)) throw new OperationCanceledException();
                 run.Step = step;
                 run.Outcome = "Running";
-                run.Reason = step switch { "Copy" => "Copying the verified complete original.", "Tags" => "Writing supported tags and existing cover artwork.",
-                    "Quality" => "Screening for suspicious audio evidence.", "Placement" => "Placing the checked file in the approved root.", _ => "Requesting a backend library scan." };
+                run.Reason = step switch
+                {
+                    "Copy" => "Copying the verified complete original.",
+                    "Tags" => "Writing supported tags and existing cover artwork.",
+                    "Quality" => "Screening for suspicious audio evidence.",
+                    "Placement" => "Placing the checked file in the approved root.",
+                    _ => "Requesting a backend library scan."
+                };
                 run.Revision++;
                 await db.SaveChangesAsync(token);
                 await execution.ReportProgressAsync(new(step, run.Reason), token);
@@ -246,9 +262,14 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
             {
                 await Begin("Quality");
                 var check = AudioQualityCheckJobHandler.ReadCheck(plan.QualityJson) ?? await analyzer.AnalyzeAsync(path, token);
-                var reason = check.Verdict switch { "standard" or "true-hi-res" => "No suspicious evidence found.",
-                    "lossy-transcode-suspected" => "Suspected lossy transcode.", "upsampled" => "Suspected upsample.",
-                    "padded-bit-depth" => "Evidence of padded bit depth.", _ => "Inconclusive audio quality screen." };
+                var reason = check.Verdict switch
+                {
+                    "standard" or "true-hi-res" => "No suspicious evidence found.",
+                    "lossy-transcode-suspected" => "Suspected lossy transcode.",
+                    "upsampled" => "Suspected upsample.",
+                    "padded-bit-depth" => "Evidence of padded bit depth.",
+                    _ => "Inconclusive audio quality screen."
+                };
                 await Save("Quality", tagged.ContentSha256, tagged.Length, reason, JsonSerializer.Serialize(check));
             }
             var quality = completed["Quality"];
@@ -359,18 +380,24 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
         try
         {
             using var file = TagLib.File.Create(source.SourcePath);
-            track = track with { Title = song?.Title ?? file.Tag.Title ?? track.Title, Artist = song?.Artist ?? file.Tag.FirstPerformer ?? track.Artist,
-                Album = song?.Album ?? file.Tag.Album ?? track.Album, AlbumArtist = song?.AlbumArtist ?? file.Tag.FirstAlbumArtist,
-                Year = song?.Year ?? (file.Tag.Year > 0 ? (int)file.Tag.Year : null), Track = song?.Track ?? (int)file.Tag.Track };
+            track = track with
+            {
+                Title = song?.Title ?? file.Tag.Title ?? track.Title,
+                Artist = song?.Artist ?? file.Tag.FirstPerformer ?? track.Artist,
+                Album = song?.Album ?? file.Tag.Album ?? track.Album,
+                AlbumArtist = song?.AlbumArtist ?? file.Tag.FirstAlbumArtist,
+                Year = song?.Year ?? (file.Tag.Year > 0 ? (int)file.Tag.Year : null),
+                Track = song?.Track ?? (int)file.Tag.Track
+            };
         }
         catch (Exception error) when (error is TagLib.UnsupportedFormatException or TagLib.CorruptFileException) { }
         var mbids = recording.Identifiers.Where(item => item.Kind == RecordingIdentifierKinds.MusicBrainz)
             .Select(item => item.Value).Distinct().ToArray();
         string? recordingMbid = mbids.Length == 1 && Guid.TryParse(mbids[0], out var parsed) ? parsed.ToString("D") : null;
         var applied = source.ManagedFileId == null ? null : await (from application in db.MetadataEnrichmentApplications
-            join plan in db.MetadataEnrichmentPlans on application.PlanId equals plan.Id
-            where application.ManagedArtifactId == source.ManagedFileId && application.State == MetadataEnrichmentApplicationState.Applied
-            select plan).OrderByDescending(item => item.CreatedAt).FirstOrDefaultAsync(token);
+                                                                   join plan in db.MetadataEnrichmentPlans on application.PlanId equals plan.Id
+                                                                   where application.ManagedArtifactId == source.ManagedFileId && application.State == MetadataEnrichmentApplicationState.Applied
+                                                                   select plan).OrderByDescending(item => item.CreatedAt).FirstOrDefaultAsync(token);
         var supported = applied == null ? null : JsonSerializer.Deserialize<Dictionary<string, string>>(applied.TagsJson);
         var release = supported != null && supported.GetValueOrDefault("musicbrainz_recordingid") == recordingMbid &&
             Guid.TryParse(supported.GetValueOrDefault("musicbrainz_releaseid"), out var releaseMbid) ? releaseMbid.ToString("D") : null;

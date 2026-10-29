@@ -287,6 +287,15 @@ public sealed class ProviderHealthMigrationTests
         Assert.Equal(alertObjects.Order(StringComparer.Ordinal), after.Where(row => alertObjects.Contains(row.Name))
             .Select(row => row.Name).Order(StringComparer.Ordinal));
 
+        string[] promotionObjects =
+        [
+            "promotion_runs", "IX_promotion_runs_OwnerUserId_RequestKey", "IX_promotion_runs_JobId",
+            "IX_promotion_runs_ManagedFileId", "promotion_steps"
+        ];
+        Assert.DoesNotContain(before, row => promotionObjects.Contains(row.Name));
+        Assert.Equal(promotionObjects.Order(StringComparer.Ordinal), after.Where(row => promotionObjects.Contains(row.Name))
+            .Select(row => row.Name).Order(StringComparer.Ordinal));
+
         var oldSchema = before
             .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
             .Select(row => row.Name == "runtime_settings" ? row with
@@ -298,7 +307,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name) && !reportObjects.Contains(row.Name) && !sharedFavoriteObjects.Contains(row.Name) && !alertObjects.Contains(row.Name))
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name) && !reportObjects.Contains(row.Name) && !sharedFavoriteObjects.Contains(row.Name) && !alertObjects.Contains(row.Name) && !promotionObjects.Contains(row.Name))
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();
