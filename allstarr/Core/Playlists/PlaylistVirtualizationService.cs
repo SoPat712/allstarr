@@ -48,6 +48,7 @@ public sealed record VirtualPlaylistReadModel(
 {
     public string? BackendOwner { get; init; }
     public bool? BackendPublic { get; init; }
+    public allstarr.Core.Music.MixCoverInput? MixCover { get; init; }
 }
 
 public interface IPlaylistVirtualizationService
@@ -275,7 +276,10 @@ public sealed class PlaylistVirtualizationService(
             link.TargetPlaylistId)
         {
             BackendOwner = link.Mode == PlaylistLinkMode.Virtual ? null : authorizedTarget?.Owner,
-            BackendPublic = link.Mode == PlaylistLinkMode.Virtual ? null : authorizedTarget?.IsPublic
+            BackendPublic = link.Mode == PlaylistLinkMode.Virtual ? null : authorizedTarget?.IsPublic,
+            MixCover = allstarr.Core.Music.PersonalMixService.IsExternalLink(link)
+                ? new(link.Id.ToString(), snapshot.SnapshotVersion, "external", Source: link.SourceProviderId,
+                    SourcePlaylistId: link.SourcePlaylistId, Name: name, Count: tracks.Count) : null
         };
         return allstarr.Core.Music.PersonalMixService.IsExternalLink(link) && personalMixes != null
             ? await personalMixes.FilterExternalTracksAsync(context, result, cancellationToken) : result;

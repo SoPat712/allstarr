@@ -154,7 +154,11 @@ public sealed partial class PersonalMixServiceTests
         Assert.Null(await virtualization.ReadAsync(Context(owner), id));
         Assert.Empty(await virtualization.ListAsync(Context(owner)));
         publish = true;
-        Assert.NotNull(await virtualization.ReadAsync(Context(owner), id));
+        var visible = await virtualization.ReadAsync(Context(owner), id);
+        Assert.NotNull(visible);
+        Assert.Equal("lastfm", visible.MixCover!.Source);
+        Assert.Equal("loved", visible.MixCover.SourcePlaylistId);
+        Assert.Equal(1, visible.MixCover.Generation);
         Assert.Single(await virtualization.ListAsync(Context(owner)));
         Assert.Null(await virtualization.ReadAsync(Context(other), id));
         await service.SetInAppsAsync(owner, link.Id, false, default);

@@ -4,11 +4,13 @@ using System.Text.Json.Nodes;
 using System.Xml;
 using System.Xml.Linq;
 using allstarr.Core.Matching;
+using allstarr.Core.Music;
 using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Storage;
 using allstarr.Core.Settings;
 using allstarr.Services.Subsonic;
+using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -90,6 +92,30 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
     public bool IsVirtualPlaylistId(string? value) =>
         PlaylistVirtualizationService.TryParseProtocolId(value, out _);
 
+    public bool TryParseMixCoverId(string value, out string playlistId)
+    {
+        var separator = value.LastIndexOf("-cover-", StringComparison.Ordinal);
+        playlistId = separator < 0 ? value : value[..separator];
+        return separator >= 0 && IsVirtualPlaylistId(playlistId) &&
+               int.TryParse(value[(separator + 7)..], out var generation) && generation >= 0;
+    }
+
+    public async Task<MixCoverInput?> GetMixCoverAsync(
+        ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
+    {
+        VirtualPlaylistReadModel? playlist;
+        if (PlaylistIdHelper.IsExternalPlaylist(id))
+        {
+            var (provider, sourceId) = PlaylistIdHelper.ParsePlaylistId(id);
+            playlist = await playlists.ReadBySourceAsync(context, provider, sourceId, cancellationToken);
+        }
+        else playlist = await playlists.ReadAsync(context, id, cancellationToken);
+        return playlist?.MixCover;
+    }
+
+    private static string? CoverReference(VirtualPlaylistReadModel playlist) => playlist.MixCover is { } cover
+        ? $"{playlist.ProtocolId}-cover-{cover.Generation}" : playlist.ArtworkReferenceKey;
+
     public async Task<string?> GetTargetPlaylistIdAsync(ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
     {
         var playlist = await playlists.ReadAsync(context, id, cancellationToken);
@@ -143,7 +169,7 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
             };
             if (TryGetDurationSeconds(playlist, out var duration)) result["duration"] = duration;
             if (playlist.Description != null) result["comment"] = playlist.Description;
-            if (playlist.ArtworkReferenceKey != null) result["coverArt"] = playlist.ArtworkReferenceKey;
+            if (CoverReference(playlist) is { } cover) result["coverArt"] = cover;
             return new JsonResult(new Dictionary<string, object?>
             {
                 ["subsonic-response"] = new Dictionary<string, object?>
@@ -163,7 +189,7 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         if (TryGetDurationSeconds(playlist, out var xmlDuration))
             element.Add(new XAttribute("duration", xmlDuration));
         if (playlist.Description != null) element.Add(new XAttribute("comment", playlist.Description));
-        if (playlist.ArtworkReferenceKey != null) element.Add(new XAttribute("coverArt", playlist.ArtworkReferenceKey));
+        if (CoverReference(playlist) is { } xmlCover) element.Add(new XAttribute("coverArt", xmlCover));
         foreach (var track in tracks)
             element.Add(new XElement(ns + "entry", ToXmlAttributes(track, context.Policy?.Preferences)));
         var document = new XDocument(new XElement(ns + "subsonic-response",
@@ -424,8 +450,8 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
             result.Add(new XAttribute("comment", playlist.Description));
         if (TryGetDurationSeconds(playlist, out var duration))
             result.Add(new XAttribute("duration", duration));
-        if (playlist.ArtworkReferenceKey != null)
-            result.Add(new XAttribute("coverArt", playlist.ArtworkReferenceKey));
+        if (CoverReference(playlist) is { } cover)
+            result.Add(new XAttribute("coverArt", cover));
         return result;
     }
 
@@ -435,7 +461,7 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
     {
         if (playlist.Description != null) result["comment"] = playlist.Description;
         if (TryGetDurationSeconds(playlist, out var duration)) result["duration"] = duration;
-        if (playlist.ArtworkReferenceKey != null) result["coverArt"] = playlist.ArtworkReferenceKey;
+        if (CoverReference(playlist) is { } cover) result["coverArt"] = cover;
     }
 
     private static bool TryGetDurationSeconds(

@@ -59,6 +59,7 @@ public partial class SubsonicController : ControllerBase
     private readonly IIntelligencePolicyService? _intelligencePolicies;
     private readonly ILibraryIndexService? _libraryIndex;
     private readonly FavoriteViewReader? _favoriteViews;
+    private readonly MixCoverImageService _mixCoverImages;
 
     public SubsonicController(
         IOptions<SubsonicSettings> subsonicSettings,
@@ -89,9 +90,11 @@ public partial class SubsonicController : ControllerBase
         FavoriteViewReader? favoriteViews = null,
         SubsonicPlayQueueStore? playQueues = null,
         UpcomingSongPreparation? upcomingSongs = null,
-        SubsonicPlaybackSessions? playbackSessions = null)
+        SubsonicPlaybackSessions? playbackSessions = null,
+        MixCoverImageService? mixCoverImages = null)
     {
         _subsonicSettings = subsonicSettings.Value;
+        _mixCoverImages = mixCoverImages ?? new MixCoverImageService();
         _libraryIndex = libraryIndex;
         _favoriteViews = favoriteViews;
         _playQueues = playQueues;
@@ -945,6 +948,15 @@ public partial class SubsonicController : ControllerBase
             if (result is JsonResult json) json.StatusCode = StatusCodes.Status400BadRequest;
             if (result is ContentResult content) content.StatusCode = StatusCodes.Status400BadRequest;
             return result;
+        }
+
+        var mixCoverId = _virtualPlaylistProtocolAdapter.TryParseMixCoverId(id, out var mixPlaylistId);
+        if (mixCoverId || _virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(id) || PlaylistIdHelper.IsExternalPlaylist(id))
+        {
+            var cover = await _virtualPlaylistProtocolAdapter.GetMixCoverAsync(
+                CurrentProtocolContext, mixCoverId ? mixPlaylistId : id, HttpContext.RequestAborted);
+            if (cover != null) return _mixCoverImages.CreateResponse(cover, HttpContext);
+            if (mixCoverId) return NotFound();
         }
 
         if (PlaylistIdHelper.IsExternalPlaylist(id))

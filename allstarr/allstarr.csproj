@@ -42,4 +42,8 @@
         <PackageReference Include="TagLibSharp" Version="2.3.0" />
     </ItemGroup>
 
+    <ItemGroup>
+        <EmbeddedResource Include="Resources/MixCovers/*" />
+    </ItemGroup>
+
 </Project>

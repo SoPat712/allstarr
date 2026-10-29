@@ -76,6 +76,7 @@ public partial class JellyfinController : ControllerBase
     private readonly IBackendLibraryAccessResolver? _libraryAccess;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
     private readonly ILibraryIndexService? _libraryIndex;
+    private readonly MixCoverImageService _mixCoverImages;
 
     public JellyfinController(
         IOptions<JellyfinSettings> settings,
@@ -109,9 +110,11 @@ public partial class JellyfinController : ControllerBase
         IBackendLibraryAccessResolver? libraryAccess = null,
         ILibraryIndexService? libraryIndex = null,
         FavoriteViewReader? favoriteViews = null,
-        UpcomingSongPreparation? upcomingSongs = null)
+        UpcomingSongPreparation? upcomingSongs = null,
+        MixCoverImageService? mixCoverImages = null)
     {
         _settings = settings.Value;
+        _mixCoverImages = mixCoverImages ?? new MixCoverImageService();
         _libraryIndex = libraryIndex;
         _favoriteViews = favoriteViews;
         _upcomingSongs = upcomingSongs;
@@ -454,6 +457,15 @@ public partial class JellyfinController : ControllerBase
         if (string.IsNullOrWhiteSpace(itemId))
         {
             return NotFound();
+        }
+
+        if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(itemId) || PlaylistIdHelper.IsExternalPlaylist(itemId))
+        {
+            var cover = await _virtualPlaylistProtocolAdapter.GetMixCoverAsync(
+                HttpContext.GetProtocolExecutionContext(), itemId, HttpContext.RequestAborted);
+            if (cover != null)
+                return imageType.Equals("Primary", StringComparison.OrdinalIgnoreCase) && imageIndex == 0
+                    ? _mixCoverImages.CreateResponse(cover, HttpContext) : NotFound();
         }
 
         if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(itemId))
