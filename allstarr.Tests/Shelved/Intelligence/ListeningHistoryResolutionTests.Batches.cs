@@ -168,22 +168,41 @@ public sealed partial class ListeningHistoryResolutionTests
             var recording = new CanonicalRecordingRecord { Id = Guid.NewGuid(), CreatedByUserId = owner };
             var track = new LibraryTrackRecord
             {
-                Id = Guid.NewGuid(), OwnerUserId = owner, Protocol = Scope.Protocol, BackendInstanceId = Scope.BackendInstanceId,
-                BackendLibraryId = "music", BackendItemId = "library-" + group, CanonicalRecordingId = recording.Id,
-                Title = "Song " + group, Artist = "Artist", Album = "Album", DurationMilliseconds = 180000, Isrc = "library-isrc"
+                Id = Guid.NewGuid(),
+                OwnerUserId = owner,
+                Protocol = Scope.Protocol,
+                BackendInstanceId = Scope.BackendInstanceId,
+                BackendLibraryId = "music",
+                BackendItemId = "library-" + group,
+                CanonicalRecordingId = recording.Id,
+                Title = "Song " + group,
+                Artist = "Artist",
+                Album = "Album",
+                DurationMilliseconds = 180000,
+                Isrc = "library-isrc"
             };
             db.CanonicalRecordings.Add(recording);
             db.LibraryTracks.Add(track);
             tracks.Add(track.Title, track);
             for (var occurrence = 0; occurrence < occurrences; occurrence++) db.ListeningEvents.Add(new()
             {
-                Id = Guid.NewGuid(), OwnerUserId = owner, Protocol = Scope.Protocol, BackendInstanceId = Scope.BackendInstanceId,
-                SourceKind = "import", OccurrenceKey = Guid.NewGuid().ToString(), Title = track.Title, Artist = track.Artist,
-                Album = track.Album, DurationMilliseconds = track.DurationMilliseconds, TrackReference = "history:" + track.Title,
+                Id = Guid.NewGuid(),
+                OwnerUserId = owner,
+                Protocol = Scope.Protocol,
+                BackendInstanceId = Scope.BackendInstanceId,
+                SourceKind = "import",
+                OccurrenceKey = Guid.NewGuid().ToString(),
+                Title = track.Title,
+                Artist = track.Artist,
+                Album = track.Album,
+                DurationMilliseconds = track.DurationMilliseconds,
+                TrackReference = "history:" + track.Title,
                 State = occurrence == 0 ? ListeningEventState.Skipped : ListeningEventState.Completed,
-                Isrc = occurrence == 0 ? "original-isrc" : null, ProviderId = "spotify",
+                Isrc = occurrence == 0 ? "original-isrc" : null,
+                ProviderId = "spotify",
                 ImportProvenance = $"history-import:{importId:N}:spotify:{occurrence}",
-                ListenedAt = clock.UtcNow.AddDays(-1), UpdatedAt = clock.UtcNow.AddDays(-1)
+                ListenedAt = clock.UtcNow.AddDays(-1),
+                UpdatedAt = clock.UtcNow.AddDays(-1)
             });
         }
         var import = await db.ListeningHistoryImports.SingleAsync();
