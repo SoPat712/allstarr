@@ -164,6 +164,8 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         var virtualization = new PlaylistVirtualizationService(factory, new(factory, access.Object), access.Object, personalMixes: service);
         var firstModel = await virtualization.ReadAsync(Context(owner), PlaylistVirtualizationService.CreateProtocolId(first.Id));
         Assert.NotNull(firstModel);
+        Assert.Equal(first.Generation, firstModel.MixCover!.Generation);
+        Assert.Equal(first.Id.ToString(), firstModel.MixCover.Id);
         Assert.Equal(30, firstModel.Tracks.Count);
         await AssertProtocolCount(virtualization, firstModel.ProtocolId, 30);
         clock.UtcNow += TimeSpan.FromMinutes(16);
@@ -171,6 +173,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         await service.GenerateAsync(owner, first.Id);
         var second = await virtualization.ReadAsync(Context(owner), firstModel.ProtocolId);
         Assert.Equal(firstModel.ProtocolId, second!.ProtocolId);
+        Assert.NotEqual(MixCoverImageService.GetTag(firstModel.MixCover!), MixCoverImageService.GetTag(second.MixCover!));
         Assert.DoesNotContain(second.Tracks, item => item.BackendItemId == songs["0"].Id);
         await AssertProtocolCount(virtualization, second.ProtocolId, 30);
         Assert.Single(await virtualization.ListAsync(Context(owner)), item => item.LinkId == first.Id);

@@ -63,7 +63,11 @@ public sealed partial class PersonalMixServiceTests
         Assert.Equal("custom", saved.Section);
         Assert.Empty(await service.PublishedAsync(Context(owner), default));
         publish = true;
-        Assert.Contains(await service.PublishedAsync(Context(owner), default), item => item.LinkId == saved.Id);
+        var projected = Assert.Single(await service.PublishedAsync(Context(owner), default), item => item.LinkId == saved.Id);
+        Assert.Equal(preview.SeedName, projected.MixCover!.Seed);
+        Assert.False(string.IsNullOrWhiteSpace(projected.MixCover.Seed));
+        Assert.NotEqual("Saved", projected.MixCover.Seed);
+        Assert.Equal(saved.CoverTag ?? "", projected.MixCover.Tag);
         clock.UtcNow += TimeSpan.FromDays(8);
         var after = (await service.GenerateAsync(owner)).Single(item => item.Id == saved.Id);
         Assert.Equal(saved.Generation, after.Generation);

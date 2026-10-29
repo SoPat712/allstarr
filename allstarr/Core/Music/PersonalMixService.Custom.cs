@@ -30,13 +30,19 @@ public sealed partial class PersonalMixService
             var document = await LoadAsync(db, user, token);
             var events = await Events(db, user).Where(item => item.UpdatedAt <= clock.UtcNow &&
                 (item.ListenedAt == null || item.ListenedAt <= clock.UtcNow)).ToArrayAsync(token);
-            var candidates = await CandidatesAsync(db, user, events, token, request);
+            var (candidates, seedName) = await CandidatesAsync(db, user, events, token, request);
             var selected = PersonalMixRules.Select("custom", candidates, clock.UtcNow, [], request.Length);
             var id = Guid.CreateVersion7();
             var preview = new PersonalMix(id, "custom", "Your mix", "Songs like your seed", 0, clock.UtcNow,
                 new(selected.Count > 0, selected.Count > 0 ? "Ready" : "No eligible playable songs found."), false,
                 selected.Select(row => new PersonalMixItem(id, 0, SafeSong(row.Song), row.Source,
-                    row.Source == "audiomuse" ? "Similar sound" : row.Song.TasteReason ?? "Like your seed", row.Score)).ToArray());
+                    row.Source == "audiomuse" ? "Similar sound" : row.Song.TasteReason ?? "Like your seed", row.Score)).ToArray())
+            {
+                SeedName = seedName,
+                CoverTag = selected.SelectMany(row => row.Tags).GroupBy(tag => tag.Key)
+                    .OrderByDescending(group => group.Sum(tag => tag.Value)).ThenBy(group => group.Key, StringComparer.Ordinal)
+                    .Select(group => group.Key).FirstOrDefault()
+            };
             foreach (var key in document.Previews.Where(item => item.Value.UpdatedAt < clock.UtcNow.AddMinutes(-30))
                 .Select(item => item.Key).ToArray()) document.Previews.Remove(key);
             if (document.Previews.Count >= 10) document.Previews.Remove(document.Previews.MinBy(item => item.Value.UpdatedAt).Key);
@@ -47,7 +53,7 @@ public sealed partial class PersonalMixService
         finally { writes.Release(); }
     }
 
-    private async Task<List<(Song Song, string Source, DateTimeOffset? Release)>> SeedRowsAsync(ProtocolExecutionContext context,
+    private async Task<(List<(Song Song, string Source, DateTimeOffset? Release)> Rows, string Name)> SeedRowsAsync(ProtocolExecutionContext context,
         LibraryTrackRecord[] library, MixStartRequest request, CancellationToken token)
     {
         var parsed = LocalLibraryService.ParseExternalResource(request.SeedId);
@@ -70,7 +76,8 @@ public sealed partial class PersonalMixService
             rows.AddRange((await audioMuse.MixSimilarAsync(context, local.BackendItemId, token)).Select(track => (LibrarySong(track), "audiomuse", (DateTimeOffset?)null)));
         rows.AddRange((await radio.SeedCandidatesAsync(context, seed, artist, parsed.isExternal ? parsed.provider : null,
             parsed.isExternal ? parsed.externalId : null, token)).Select(song => (song, "radio", (DateTimeOffset?)null)));
-        return rows.Where(row => seed == null || !MusicMixService.SameRadioRecording(seed, row.Song)).ToList();
+        return (rows.Where(row => seed == null || !MusicMixService.SameRadioRecording(seed, row.Song)).ToList(),
+            seed?.Title ?? artist!.Name);
     }
 
     private static Song LibrarySong(LibraryTrackRecord track) => new()

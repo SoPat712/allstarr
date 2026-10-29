@@ -25,6 +25,8 @@ public sealed record PersonalMix(Guid Id, string Kind, string Name, string Descr
     public int SortOrder => Kind == "external" || Kind == "custom" ? 0 : Array.IndexOf(PersonalMixRules.Kinds, Kind);
     public string? SourceLabel { get; init; }
     public string? RecipeVersion { get; init; }
+    public string? SeedName { get; init; }
+    public string? CoverTag { get; init; }
 }
 public sealed record MixFeedback(string SongId, string Kind, bool TodayOnly = false);
 internal sealed class PersonalMixDocument
@@ -167,7 +169,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             var events = await Events(db, user).Where(item => item.UpdatedAt <= clock.UtcNow &&
                 (item.ListenedAt == null || item.ListenedAt <= clock.UtcNow)).ToArrayAsync(token);
             var completed = events.Where(item => item.State == ListeningEventState.Completed && item.ListenedAt <= clock.UtcNow).ToArray();
-            var candidates = await CandidatesAsync(db, user, events, token);
+            var (candidates, _) = await CandidatesAsync(db, user, events, token);
             var clusters = PersonalMixRules.Cluster(candidates);
             var features = audioMuse == null || requested != null && !PersonalMixMoods.Kinds.Contains(requested.Kind)
                 ? new Dictionary<string, AudioMuseScores>() : await audioMuse.MixFeaturesAsync(await ContextAsync(user, token),
@@ -326,7 +328,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                     item.Song.ExternalProvider, item.Song.ExternalId, item.Song.IsLocal ? TrackRouteKind.Local : TrackRouteKind.External,
                     item.Song.ExternalProvider, item.Song.ExternalId)
                 { PlaybackExplicitContentLyrics = item.Song.ExplicitContentLyrics }).ToArray())
-            { BackendPublic = false }).ToArray();
+            { BackendPublic = false, MixCover = MixCoverInput.From(mix) }).ToArray();
     }
 
     public async Task EnsureSchedulesAsync(CancellationToken token)

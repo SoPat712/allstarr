@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Matching;
+using allstarr.Core.Music;
 using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Storage;
@@ -228,6 +229,23 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         return null;
     }
 
+    public async Task<MixCoverInput?> GetMixCoverAsync(
+        ProtocolExecutionContext? context, string id, CancellationToken cancellationToken)
+    {
+        if (context == null) return null;
+        var playlist = PlaylistIdHelper.IsExternalPlaylist(id)
+            ? await ReadCoverBySourceAsync(context, id, cancellationToken)
+            : await ReadViewAsync(context, id, cancellationToken);
+        return playlist?.MixCover;
+    }
+
+    private Task<VirtualPlaylistReadModel?> ReadCoverBySourceAsync(
+        ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
+    {
+        var (provider, sourceId) = PlaylistIdHelper.ParsePlaylistId(id);
+        return playlists.ReadBySourceAsync(context, provider, sourceId, cancellationToken);
+    }
+
     internal Dictionary<string, object?> ToItem(
         VirtualPlaylistReadModel playlist,
         string? responsePlaylistId = null,
@@ -246,9 +264,10 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         }, httpContexts?.HttpContext?.Request.Query, includeAllFields);
         if (serverId != null) item["ServerId"] = serverId;
         item["RunTimeTicks"] = playlist.Tracks.Sum(track => track.DurationMilliseconds) * TimeSpan.TicksPerMillisecond;
-        item["ImageTags"] = playlist.ArtworkReferenceKey == null
+        var imageTag = playlist.MixCover is { } cover ? MixCoverImageService.GetTag(cover) : playlist.ArtworkReferenceKey;
+        item["ImageTags"] = imageTag == null
             ? new Dictionary<string, string>()
-            : new Dictionary<string, string> { ["Primary"] = playlist.ArtworkReferenceKey };
+            : new Dictionary<string, string> { ["Primary"] = imageTag };
         return item;
     }
 

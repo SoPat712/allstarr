@@ -12,7 +12,7 @@ namespace allstarr.Core.Music;
 
 public sealed partial class PersonalMixService
 {
-    private async Task<IReadOnlyList<MixCandidate>> CandidatesAsync(AllstarrDbContext db, UserRecord user,
+    private async Task<(IReadOnlyList<MixCandidate> Candidates, string? SeedName)> CandidatesAsync(AllstarrDbContext db, UserRecord user,
         ListeningEventRecord[] events, CancellationToken token, MixStartRequest? start = null)
     {
         var context = await ContextAsync(user, token);
@@ -37,7 +37,11 @@ public sealed partial class PersonalMixService
             Isrc = track.Isrc,
             IsLocal = true
         }, "library", null));
-        if (start != null) return await RankCandidatesAsync(await SeedRowsAsync(context, library, start, token), context, user, events, hearts, token);
+        if (start != null)
+        {
+            var seed = await SeedRowsAsync(context, library, start, token);
+            return (await RankCandidatesAsync(seed.Rows, context, user, events, hearts, token), seed.Name);
+        }
         var lookups = 0;
         var history = events.Where(item => item.State == ListeningEventState.Completed)
             .GroupBy(item => item.CanonicalRecordingId?.ToString("D") ?? item.TrackReference).ToArray();
@@ -119,7 +123,7 @@ public sealed partial class PersonalMixService
             }
             catch (Exception) when (!token.IsCancellationRequested) { }
         }
-        return await RankCandidatesAsync(rows, context, user, events, hearts, token);
+        return (await RankCandidatesAsync(rows, context, user, events, hearts, token), null);
     }
 
     private async Task<IReadOnlyList<MixCandidate>> RankCandidatesAsync(List<(Song Song, string Source, DateTimeOffset? Release)> rows,
