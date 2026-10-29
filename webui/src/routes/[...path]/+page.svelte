@@ -73,9 +73,8 @@
   $effect(() => { if (!session?.authenticated) toast.clear(); });
 
   const administrator = $derived(session?.user?.isAdministrator === true);
-  // Intelligence remains available only in the explicit development composition.
-  const navigationDestinations = $derived(destinations.filter((item) => item.href !== "#/intelligence")
-    .map(item => !administrator && item.href === "#/settings"
+  const developmentIntelligence = $derived(session?.features?.intelligence === true);
+  const navigationDestinations = $derived(destinations.filter(item => item.href !== "#/intelligence" || !developmentIntelligence).map(item => !administrator && item.href === "#/settings"
       ? { ...item, href: "#/settings/alerts", label: "Alerts", mobileLabel: "Alerts" } : item));
   const mobileDestinations = $derived(navigationDestinations.filter((item) => item.mobile));
   const moreDestinations = $derived([preferencesDestination, ...navigationDestinations.filter((item) => !item.mobile)]);
@@ -103,7 +102,7 @@
     route === "/integrations/routing" ||
     route === "/library/cached" ||
     route === "/library/kept" ||
-    route === "/intelligence"
+    (route === "/intelligence" && developmentIntelligence)
   ));
   const routeQuery = $derived(new URLSearchParams(page.url.hash.split("?", 2)[1] ?? ""));
   const activeDestination = $derived(
@@ -137,7 +136,7 @@
               ? { storage: "kept" }
               : route === "/intelligence"
                 ? {
-                    initialSection: routeQuery.get("section") ?? "overview",
+                    initialSection: routeQuery.get("section") ?? (developmentIntelligence ? "overview" : "for-you"),
                     administrator,
                   }
                 : route.startsWith("/integrations")
@@ -210,8 +209,10 @@
     if (path === "/preferences") return import("$lib/components/ListeningPreferencesView.svelte");
     if (path === "/getting-started") return import("$lib/components/GettingStartedView.svelte");
     if (path === "/report") return import("$lib/components/ProblemReportView.svelte");
-    if (path === "/intelligence" && session?.features?.intelligence === true) {
-      return import("$lib/shelved/IntelligenceView.svelte");
+    if (path === "/intelligence") {
+      return developmentIntelligence
+        ? import("$lib/shelved/IntelligenceView.svelte")
+        : import("$lib/components/IntelligenceView.svelte");
     }
     if (path.startsWith("/integrations")) return import("$lib/components/IntegrationsView.svelte");
     if (path.startsWith("/settings")) return import("$lib/components/SettingsView.svelte");
@@ -228,7 +229,7 @@
   $effect(() => {
     const path = route;
     administrator;
-    session?.features?.intelligence;
+    developmentIntelligence;
     if (forbiddenRoute) {
       viewRequest++;
       ActiveView = undefined;

@@ -717,6 +717,7 @@ export type PlaylistLink = {
   artworkUrl?: string | null;
   sourceProviderId: string;
   sourcePlaylistId: string;
+  followNewest?: boolean;
   sourceUpdateAvailable?: boolean;
   providerAccountId: string | null;
   targetProtocol: string;
@@ -911,6 +912,9 @@ export type PlaylistSourceAccount = {
   displayName: string;
   ownerDisplayName?: string | null;
   accessLabel: string;
+  scope?: string;
+  available?: boolean;
+  reasonCode?: string | null;
 };
 
 export type PlaylistDiscoveryItem = {
@@ -920,6 +924,8 @@ export type PlaylistDiscoveryItem = {
   owner?: string | null;
   trackCount?: number | null;
   artworkUrl?: string | null;
+  description?: string | null;
+  sourceRevision?: string;
 };
 
 export type MediaTarget = {
@@ -1302,6 +1308,24 @@ export type IntelligenceSchedule = {
   name: string;
   limit: number;
 };
+
+export type ListeningStats = {
+  period: { from: string | null; to: string; timeZoneId: string };
+  playCount: number;
+  activeDays: number;
+  importedCount: number;
+  observedSince: string | null;
+  estimatedTimeFromSongLengthsMilliseconds: number;
+  coverage: { unknownSongIdentityCount: number; unknownDurationCount: number };
+  topSongs: Array<{ title: string; artist: string; album: string | null; playCount: number }>;
+  topArtists: Array<{ artist: string; playCount: number }>;
+  topAlbums: Array<{ album: string; artist: string; playCount: number }>;
+};
+
+export type FollowedReleaseArtist = { providerId: string; artistId: string; displayName: string; musicBrainzArtistId?: string | null };
+export type ReleaseSource = { providerId: string; albumId: string; title: string; artist: string; releaseDate: string | null; datePrecision: string; type: string; isExplicit: boolean | null; edition: string; upc: string | null; isrcs: string[]; aliases: string[]; exclusionReason: string | null };
+export type ReleaseInboxEntry = { id: string; title: string; artist: string; releaseDate: string | null; datePrecision: string; type: string; isExplicit: boolean | null; edition: string; exclusionReason: string | null; sources: ReleaseSource[] };
+export type ReleaseInbox = { entries: ReleaseInboxEntry[]; excluded: ReleaseInboxEntry[]; coverage: Array<{ artist: FollowedReleaseArtist; status: string; checkedAt: string | null }> };
 
 export type ListeningHistoryStats = {
   completedListens: number;
@@ -2256,6 +2280,18 @@ export const downloads = {
     adminUrl(`/api/admin/downloads/file?path=${encodeURIComponent(path)}&storage=${storage}`),
 };
 
+export const listeningStats = {
+  get: (period = "30d", year = "") => json<ListeningStats>(`/api/admin/stats?${new URLSearchParams(year ? { year } : { period })}`),
+};
+
+export const releaseInbox = {
+  get: () => json<ReleaseInbox>("/api/admin/releases"),
+  artists: () => json<FollowedReleaseArtist[]>("/api/admin/releases/artists"),
+  followFromHearts: () => json<{ followed: number }>("/api/admin/releases/artists/from-hearts", { method: "POST" }),
+  unfollow: (providerId: string, artistId: string) => json<void>(`/api/admin/releases/artists/${encodeURIComponent(providerId)}/${encodeURIComponent(artistId)}`, { method: "DELETE" }),
+  dismiss: (id: string) => json<void>(`/api/admin/releases/${encodeURIComponent(id)}`, { method: "DELETE" }),
+};
+
 export const playlistLinks = {
   list: () => json<{ playlistLinks: PlaylistLink[] }>("/api/admin/playlist-links"),
   copies: (listenerId: string) => json<PlaylistCopy[]>(`/api/admin/listeners/${encodeURIComponent(listenerId)}/playlist-forks`),
@@ -2346,7 +2382,8 @@ export const playlistLinks = {
     providerAccountId: string | null;
     sourceProviderId: string;
     sourcePlaylistId: string;
-      targetProtocol: string;
+    followNewest?: boolean;
+    targetProtocol: string;
     targetBackendInstanceId: string;
     targetCredentialReferenceId?: string | null;
     targetPlaylistId?: string | null;

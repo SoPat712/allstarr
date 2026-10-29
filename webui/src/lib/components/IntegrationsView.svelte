@@ -1,5 +1,6 @@
 <script lang="ts">
-  import RoutingView from "$lib/components/RoutingView.svelte";
+  import { Skeleton } from "$lib/components/ui/skeleton";
+  import RouteError from "$lib/components/RouteError.svelte";
   import SourcesView from "$lib/components/SourcesView.svelte";
   import SharedProviderHearts from "$lib/components/SharedProviderHearts.svelte";
   import { Button } from "$lib/components/ui/button";
@@ -31,7 +32,13 @@
 <section class="settings-workspace integrations-workspace">
   {#if section === "routing" && administrator}
     <nav class="route-tabs flex flex-wrap gap-2" aria-label="Integration sections"><Button variant="secondary" href="#/integrations/services">Services</Button><Button variant="secondary" href="#/integrations/accounts">Accounts</Button><Button href="#/integrations/routing" aria-current="page">Routing</Button></nav>
-    <RoutingView />
+    {#await import("$lib/components/RoutingView.svelte")}
+      <Skeleton class="skeleton-panel" aria-label="Loading routing and quality" />
+    {:then { default: RoutingView }}
+      <RoutingView />
+    {:catch}
+      <RouteError eyebrow="Routing unavailable" title="Routing could not be loaded." message="Reload to try again." onRetry={() => window.location.reload()} />
+    {/await}
   {:else}
   <SourcesView
     mode={section === "accounts" ? "accounts" : "services"}
