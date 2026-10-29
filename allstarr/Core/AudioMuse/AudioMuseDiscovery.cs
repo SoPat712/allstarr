@@ -1,7 +1,9 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using allstarr.Core.Enrichment;
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
@@ -16,13 +18,17 @@ namespace allstarr.Core.AudioMuse;
 public sealed record AudioMuseSong(string Id, string Title, string Artist, string? Album);
 public sealed record AudioMusePreview(string? Reason, AudioMuseSong[] Tracks, int EligibleCount = 0,
     Guid? PreviewId = null, string? RecipeVersion = null);
-public sealed record AudioMuseStatus(string? Reason, int AccessibleLibrarySongs = 0, int AnalyzedSongs = 0, bool CoverageComplete = false);
+public sealed record AudioMuseStatus(string? Reason, int AccessibleLibrarySongs = 0, int AnalyzedSongs = 0, bool CoverageComplete = false)
+{
+    public string? CoverageMessage => Reason == null ? string.Create(CultureInfo.InvariantCulture,
+        $"{AnalyzedSongs:N0} of your {AccessibleLibrarySongs:N0} library songs are analyzed") : null;
+}
 public sealed record AudioMuseSaved(string? Reason, string? PlaylistId = null);
 
 public sealed class AudioMuseDiscovery(IDbContextFactory<AllstarrDbContext> factory, AudioMuseSettings settings,
     AudioMuseClient client, IBackendLibraryAccessResolver access, IEffectiveProviderPolicyResolver policies,
     IBackendLibraryPermissionSource permissions, IHttpClientFactory clients, IBackendPlaylistTargetResolver targets,
-    IConfiguration configuration)
+    IConfiguration configuration, SharedTagStore tags)
 {
     private const string PreviewKind = "audiomuse-preview";
     private readonly SemaphoreSlim _save = new(1, 1);
@@ -35,17 +41,12 @@ public sealed class AudioMuseDiscovery(IDbContextFactory<AllstarrDbContext> fact
         token = deadline.Token;
         try
         {
-            var (endpoint, server) = await BoundAsync(context, token);
+            var (_, _, coverage) = await BoundAsync(context, token);
             await using var db = await factory.CreateDbContextAsync(token);
             var allowed = await access.ResolveAsync(context, token);
             var query = LibraryTrackAccess.Query(db, context, allowed);
             var count = await query.CountAsync(token);
-            var sample = await query.OrderBy(r => r.BackendItemId).Take(150).Select(r => new AudioMuseTrack(r.BackendItemId)).ToArrayAsync(token);
-            var rows = await ResolveAsync(context, sample, token);
-            var analyzed = 0;
-            foreach (var row in rows)
-                if (await client.AnalyzedAsync(endpoint, server, row.BackendItemId, token)) analyzed++;
-            return new(analyzed == 0 && count <= 150 ? "too_little_analyzed_music" : null, count, analyzed, count <= 150);
+            return new(null, count, coverage.Analyzed!.Value, coverage.Complete);
         }
         catch (Exception error) when (Unavailable(error, cancellationToken) is not null) { return new(Unavailable(error, cancellationToken)); }
     }
@@ -54,7 +55,7 @@ public sealed class AudioMuseDiscovery(IDbContextFactory<AllstarrDbContext> fact
         PreviewAsync(async token =>
         {
             if (string.IsNullOrWhiteSpace(query) || query.Length > 200) throw new ArgumentException("Supply a song search of 1–200 characters.");
-            var (endpoint, server) = await BoundAsync(context, token);
+            var (endpoint, server, _) = await BoundAsync(context, token);
             var rows = await ResolveAsync(context, await client.SearchAsync(endpoint, server, query.Trim(), token), token);
             var analyzed = new List<LibraryTrackRecord>();
             foreach (var row in rows.Take(50))
@@ -69,7 +70,7 @@ public sealed class AudioMuseDiscovery(IDbContextFactory<AllstarrDbContext> fact
             if (await settings.EndpointAsync(token) == null) throw new AudioMuseUnavailable("not_enabled");
             var seed = (await ResolveAsync(context, [new(seedId)], token)).SingleOrDefault();
             if (seed == null) throw new AudioMuseUnavailable("song_not_analyzed");
-            var (endpoint, server) = await BoundAsync(context, token);
+            var (endpoint, server, _) = await BoundAsync(context, token);
             if (!await client.TrackAsync(endpoint, server, seedId, token)) throw new AudioMuseUnavailable("song_not_analyzed");
             var rows = await ResolveAsync(context, await client.SimilarAsync(endpoint, server, seedId, null, token), token);
             var eligible = Select(rows, seed, 150, artistCap: false);
@@ -81,7 +82,7 @@ public sealed class AudioMuseDiscovery(IDbContextFactory<AllstarrDbContext> fact
         {
             CheckLimit(n);
             if (mood is not ("calm" or "workout")) throw new ArgumentException("Choose calm or workout.");
-            var (endpoint, server) = await BoundAsync(context, token);
+            var (endpoint, server, _) = await BoundAsync(context, token);
             var anchor = mood == "calm" ? "relaxed" : "danceable";
             if (!await client.HasAnchorAsync(endpoint, anchor, token)) throw new AudioMuseUnavailable("not_set_up");
             var rows = await ResolveAsync(context, await client.SimilarAsync(endpoint, server, null, anchor, token), token);
@@ -154,7 +155,7 @@ public sealed class AudioMuseDiscovery(IDbContextFactory<AllstarrDbContext> fact
         finally { _save.Release(); }
     }
 
-    private async Task<(AudioMuseEndpoint Endpoint, string Server)> BoundAsync(ProtocolExecutionContext context, CancellationToken token)
+    private async Task<(AudioMuseEndpoint Endpoint, string Server, AudioMuseCoverage Coverage)> BoundAsync(ProtocolExecutionContext context, CancellationToken token)
     {
         var endpoint = await settings.EndpointAsync(token) ?? throw new AudioMuseUnavailable("not_enabled");
         if (context.Protocol != ProtocolKind.Jellyfin ||
@@ -162,13 +163,16 @@ public sealed class AudioMuseDiscovery(IDbContextFactory<AllstarrDbContext> fact
             throw new AudioMuseUnavailable("not_set_up");
         if (!await client.HealthAsync(endpoint, token)) throw new AudioMuseUnavailable("not_reachable");
         if ((await client.VersionAsync(endpoint, token))?.TrimStart('v') != "3.6.4") throw new AudioMuseUnavailable("not_set_up");
-        var servers = (await client.ServersAsync(endpoint, token)).Where(s => s.Type == "jellyfin" &&
-            AudioMuseSettings.TryBaseUri(s.Url, out var uri) && AudioMuseSettings.TryBaseUri(configuration["Jellyfin:Url"], out var backend) && uri == backend).ToArray();
+        var servers = (await client.ServersAsync(endpoint, token)).Where(s => s.Type.Equals("jellyfin", StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (servers.Length > 1)
+            servers = servers.Where(s => AudioMuseSettings.TryBaseUri(s.Url, out var uri) &&
+                AudioMuseSettings.TryBaseUri(configuration["Jellyfin:Url"], out var backend) && uri == backend).ToArray();
         if (servers.Length != 1 || string.IsNullOrWhiteSpace(servers[0].Id)) throw new AudioMuseUnavailable("not_set_up");
         var coverage = await client.CoverageAsync(endpoint, servers[0].Id, token);
-        if (coverage.ServerId != servers[0].Id || !coverage.Enabled || coverage.Analyzed == null) throw new AudioMuseUnavailable("not_set_up");
+        if (coverage.ServerId != servers[0].Id || !coverage.Enabled || coverage.Analyzed == null || coverage.Total == null ||
+            coverage.Analyzed > coverage.Total) throw new AudioMuseUnavailable("not_set_up");
         if (coverage.Analyzed == 0) throw new AudioMuseUnavailable("too_little_analyzed_music");
-        return (endpoint, servers[0].Id);
+        return (endpoint, servers[0].Id, coverage);
     }
 
     private async Task<LibraryTrackRecord[]> ResolveAsync(ProtocolExecutionContext context, AudioMuseTrack[] candidates, CancellationToken token)
@@ -197,6 +201,10 @@ public sealed class AudioMuseDiscovery(IDbContextFactory<AllstarrDbContext> fact
                 .Select(r => CleanOnlyProtocolContent.Text(r, "Id")).ToHashSet(StringComparer.Ordinal);
             byId = byId.Where(p => clean.Contains(p.Key)).ToDictionary();
         }
+        foreach (var candidate in candidates.DistinctBy(c => c.Id))
+            if (byId.TryGetValue(candidate.Id, out var row) && row.CanonicalRecordingId is { } recording &&
+                (candidate.MoodVector != null || candidate.OtherFeatures != null || candidate.TopGenre != null || candidate.TopMood != null))
+                await tags.CaptureAudioMuseAsync(recording, candidate.MoodVector, candidate.OtherFeatures, candidate.TopGenre, candidate.TopMood, token);
         return ids.Where(byId.ContainsKey).Select(id => byId[id]).ToArray();
     }
 

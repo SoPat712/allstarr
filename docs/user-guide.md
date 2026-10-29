@@ -76,7 +76,7 @@ Intelligence is private to your signed-in backend account. On a phone, open **In
 - **Your taste** shows recent **Lately** and longer-term **Usually** preferences, with the leading tags and artists. Add a temporary or lasting nudge, choose Never to exclude a tag or artist, remove a nudge, pause learning, or reset learned preferences. Other nudges softly reorder radio and Allstarr similar-song results. Resetting learned preferences does not delete imported history.
 - **Your stats** shows qualified retained plays, top songs and artists, active days, and a year recap. Listening time uses song lengths and is an estimate; unknown lengths are identified. Dates follow the server timezone. Imported history has separate totals and does not fill observed-play charts. Import and remove history here.
 
-Shared song tags combine available provider genres with bounded background MusicBrainz and Last.fm enrichment. Tags are household metadata; listening profiles and controls remain personal. AudioMuse mood, energy, and tempo are not yet collected into these tags.
+Shared song tags combine available provider genres with bounded background MusicBrainz and Last.fm enrichment. Tags are household metadata; listening profiles and controls remain personal. Available AudioMuse moods, features and top genre are retained from permitted discovery results; missing energy and tempo values remain unavailable.
 
 ### Integrations
 

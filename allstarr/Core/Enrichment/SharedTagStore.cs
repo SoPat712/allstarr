@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
@@ -16,11 +17,25 @@ public sealed class SharedTagStore(IDbContextFactory<AllstarrDbContext> factory,
     internal static SharedTagDocument Read(SharedTagProfileRecord? row) => row == null
         ? new([], []) : JsonSerializer.Deserialize<SharedTagDocument>(row.PayloadJson) ?? new([], []);
 
-    // TODO: Connect the library analysis reader when it supplies per-song moods, energy and tempo.
     public Task CaptureAudioMuseAsync(Guid recording, IReadOnlyList<SharedTagInput> moods, double? energy, double? tempo,
         CancellationToken token) => SaveAsync(RecordingKey(recording), [new("audiomuse",
             moods.OrderByDescending(item => item.Weight ?? 0).Take(5).Concat(new[] { new SharedTagInput("energy", energy), new SharedTagInput("tempo", tempo) }
                 .Where(item => item.Weight != null)).ToArray(), clock.UtcNow)], [], false, token);
+
+    public Task CaptureAudioMuseAsync(Guid recording, string? moodVector, string? otherFeatures, string? topGenre, string? topMood,
+        CancellationToken token)
+    {
+        var tags = new List<SharedTagInput>();
+        foreach (var part in ((moodVector ?? "") + "," + (otherFeatures ?? "")).Split(','))
+        {
+            var pair = part.Split(':');
+            if (pair.Length == 2 && double.TryParse(pair[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var weight) && double.IsFinite(weight))
+                tags.Add(new(pair[0].Trim(), weight));
+        }
+        if (!string.IsNullOrWhiteSpace(topGenre)) tags.Add(new(topGenre, IsGenre: true));
+        if (!string.IsNullOrWhiteSpace(topMood)) tags.Add(new(topMood));
+        return SaveAsync(RecordingKey(recording), [new("audiomuse", tags, clock.UtcNow)], [], false, token);
+    }
 
     public async Task SaveAsync(string key, IReadOnlyList<SharedTagBatch> batches, IReadOnlyList<string> artistKeys,
         bool refreshed, CancellationToken token, IReadOnlyList<string>? artistNames = null, DateTimeOffset? capturedAt = null)

@@ -83,6 +83,8 @@ public sealed class AudioMuseTests
             f.Settings.ApplyAsync(f.Actor, "", "", first.Revision + 1, default));
     }
 
+    internal static string Capture(string name) => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "AudioMuse", "am-" + name + ".json"));
+
     internal static LibraryTrackRecord Track(string id, string artist = "artist") => new()
     {
         Id = Guid.NewGuid(),
@@ -105,6 +107,7 @@ public sealed class AudioMuseTests
         internal Factory Factory { get; }
         internal AudioMuseSettings Settings { get; }
         internal AudioMuseDiscovery Discovery { get; }
+        internal AudioMuseClient Client { get; }
         internal ProtocolExecutionContext Context { get; }
         internal AdminAuthSession Actor { get; }
         internal List<string> Requests { get; } = [];
@@ -148,8 +151,9 @@ public sealed class AudioMuseTests
             var targets = new Mock<IBackendPlaylistTargetResolver>();
             targets.Setup(t => t.Resolve("jellyfin")).Returns(Target.Object);
             var policy = new EffectiveProviderPolicyResolver(durable);
-            Discovery = new(factory, Settings, new AudioMuseClient(clients.Object, secrets), Access.Object,
-                policy, permission.Object, clients.Object, targets.Object, Configuration);
+            Client = new(clients.Object, secrets);
+            Discovery = new(factory, Settings, Client, Access.Object,
+                policy, permission.Object, clients.Object, targets.Object, Configuration, new(factory, new SystemPlatformClock()));
         }
 
         internal static async Task<Fixture> CreateAsync()

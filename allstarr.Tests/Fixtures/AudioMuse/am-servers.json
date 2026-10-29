@@ -1,0 +1,1 @@
+{"default_id":"ffc0b4a2c079e850cf329cdbaa2d465b","multi_server_enabled":true,"servers":[{"creds":{"token":"__unchanged__","url":"http://captured-backend.example:8096","user_id":"REDACTED"},"is_default":true,"music_libraries":"","name":"Jellyfin","server_id":"ffc0b4a2c079e850cf329cdbaa2d465b","server_type":"jellyfin"}],"sweep_task":null}
