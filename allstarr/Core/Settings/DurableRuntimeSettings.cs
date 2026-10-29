@@ -135,6 +135,9 @@ public static class RuntimeSettingCatalog
         items.Add(new("Storage:BackupDailyRetentionCount", RuntimeSettingValueType.Integer, "Storage:BackupDailyRetentionCount", 1, 90, DefaultValue: "14"));
         items.Add(new("Storage:BackupWeeklyRetentionCount", RuntimeSettingValueType.Integer, "Storage:BackupWeeklyRetentionCount", 0, 52, DefaultValue: "8"));
         items.Add(new("Storage:BackupRetentionCount", RuntimeSettingValueType.Integer, "Storage:BackupRetentionCount", 1, 1000, DefaultValue: "10"));
+        foreach (var field in new[] { "BaseUrl", "KeyReference" })
+            items.Add(new("AudioMuse:" + field, RuntimeSettingValueType.String, "AudioMuse:" + field,
+                AllowEmpty: true, MaximumLength: field == "BaseUrl" ? 2048 : 36, DefaultValue: ""));
         items.Add(new("Odesli:ApiKeyReference", RuntimeSettingValueType.String, "Odesli:ApiKeyReference",
             AllowEmpty: true, MaximumLength: 36, DefaultValue: "", RequiresRestart: true));
         items.Add(new("Admin:Oidc:Enabled", RuntimeSettingValueType.Boolean, "Admin:Oidc:Enabled", DefaultValue: "false", RequiresRestart: true));

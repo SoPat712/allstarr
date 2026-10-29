@@ -56,6 +56,28 @@ public sealed class HostCompositionTests
     }
 
     [Fact]
+    public async Task AudioMuse_is_optional_in_core_and_uses_a_private_bounded_transport()
+    {
+        using var factory = new AllstarrFactory("Jellyfin", pendingBackend: true);
+        var settings = await factory.Services.GetRequiredService<allstarr.Core.AudioMuse.AudioMuseSettings>().GetAsync(default);
+        Assert.Equal("", settings.BaseUrl);
+        Assert.False(settings.KeyConfigured);
+        Assert.NotNull(factory.Services.GetRequiredService<allstarr.Core.AudioMuse.AudioMuseDiscovery>());
+        Assert.Equal(System.Net.HttpStatusCode.OK, (await factory.CreateClient().GetAsync("/health")).StatusCode);
+        using var client = factory.Services.GetRequiredService<IHttpClientFactory>().CreateClient("AudioMuse");
+        Assert.Equal(TimeSpan.FromSeconds(3), client.Timeout);
+        var handler = factory.Services.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler("AudioMuse");
+        while (handler is DelegatingHandler outer)
+        {
+            Assert.DoesNotContain("Logging", outer.GetType().Name, StringComparison.Ordinal);
+            handler = outer.InnerHandler!;
+        }
+        var transport = Assert.IsType<SocketsHttpHandler>(handler);
+        Assert.False(transport.AllowAutoRedirect);
+        Assert.False(transport.UseCookies);
+    }
+
+    [Fact]
     public void BackendSetupTransport_DoesNotFollowRedirectsOrShareCookies()
     {
         using var factory = new AllstarrFactory("Jellyfin");
@@ -369,14 +391,10 @@ public sealed class HostCompositionTests
         var general = Assert.Single(schema.ConfigSections, item => item.Id == "general");
         var prepare = Assert.Single(general.Fields, item => item.Key == "PLAYBACK_PREPARE_UPCOMING_SONGS");
         Assert.Equal("toggle", prepare.Type);
-        Assert.Equal("Prepare upcoming songs", prepare.Label);
-        Assert.Equal("Off by default. Turn on only if your player waits until a song ends before requesting the next one.", prepare.HelpText);
+        Assert.Equal("Prepare the next song early", prepare.Label);
+        Assert.Equal("Off by default. After 30 seconds of playback, prepare the next Apple song reported by your player. Uses audio cache space.", prepare.HelpText);
         Assert.Equal("playback.prepareUpcomingSongs", prepare.ValuePath);
-        var count = Assert.Single(general.Fields, item => item.Key == "PLAYBACK_PREPARE_UPCOMING_COUNT");
-        Assert.Equal("number", count.Type);
-        Assert.Equal("playback.prepareUpcomingCount", count.ValuePath);
-        Assert.Equal(1, count.Min);
-        Assert.Equal(2, count.Max);
+        Assert.DoesNotContain(general.Fields, item => item.Key == "PLAYBACK_PREPARE_UPCOMING_COUNT");
 
 
         Assert.Collection(

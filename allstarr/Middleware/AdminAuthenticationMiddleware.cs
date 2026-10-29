@@ -106,6 +106,10 @@ public class AdminAuthenticationMiddleware
         if (reportPath.Equals("/api/admin/ui/listener-context", StringComparison.OrdinalIgnoreCase))
             return HttpMethods.IsGet(method);
 
+        if (path.StartsWith("/api/admin/audiomuse/", StringComparison.OrdinalIgnoreCase))
+            return traceSegments.Length == 4 && (HttpMethods.IsGet(method) && traceSegments[3] is "status" or "seeds" ||
+                HttpMethods.IsPost(method) && traceSegments[3] is "similar" or "mood" or "save");
+
         if (path.StartsWith("/api/admin/track-matches", StringComparison.OrdinalIgnoreCase))
         {
             var matchSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
