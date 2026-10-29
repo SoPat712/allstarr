@@ -79,6 +79,23 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
   });
 }
 
+test("Cancel closes alert channel edits without sending a write", async ({ page }) => {
+  const { writes } = await mockAlerts(page);
+  await page.goto("/#/settings/alerts");
+  for (const action of ["Edit My phone", "Add your channel"]) {
+    await page.getByRole("button", { name: action, exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByLabel("Channel name", { exact: true }).fill("Unsaved channel");
+    await dialog.getByLabel("Destination URL", { exact: true }).fill("https://notify.example/cancelled");
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await page.waitForLoadState("networkidle");
+    expect(writes).toEqual([]);
+  }
+  await expect(page.getByRole("button", { name: "Edit My phone", exact: true })).toBeVisible();
+  await expect(page.getByText("Unsaved channel", { exact: true })).toHaveCount(0);
+});
+
 test("Channels save without reading destinations and tests queue only on explicit click", async ({ page }) => {
   const { state, writes } = await mockAlerts(page);
   await page.goto("/#/settings/alerts");
