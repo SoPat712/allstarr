@@ -1315,8 +1315,14 @@ export type AudioMuseSong = { id: string; title: string; artist: string; album: 
 export type AudioMusePreview = { reason: string | null; tracks: AudioMuseSong[]; eligibleCount: number; previewId: string | null; recipeVersion: string | null };
 export type TasteStrength = { name: string; strength: number; value: number };
 export type TasteLayer = { tags: TasteStrength[]; artists: TasteStrength[] };
-export type TasteNudge = { kind: "tag" | "artist"; name: string; mode: "more" | "less" | "never"; expiresAt: string | null };
+export type TasteNudge = { kind: "tag" | "artist" | "song"; name: string; mode: "more" | "less" | "never"; expiresAt: string | null };
 export type TasteProfile = { lately: TasteLayer; usually: TasteLayer; latelyWeight: number; nudges: TasteNudge[]; paused: boolean; useImportedHistory?: boolean };
+
+export type MixSong = { mixId: string; generation: number; source: string; reason: string; score: number; song: { id: string; canonicalRecordingId: string | null; title: string; artist: string; album: string } };
+export type MixCard = { id: string; kind: string; name: string; description: string; section: "madeForYou" | "moods" | "custom" | "yourServices"; sortOrder: number; sourceLabel: string | null; recipeVersion: string | null; updatedAt: string | null; readiness: { ready: boolean; message: string }; inApps: boolean; showInApps: boolean; coverArtwork: string[] };
+export type MixDetail = { mix: MixCard; songs: MixSong[] };
+export type MixPreview = { previewId: string; songs: MixSong[]; readiness: MixCard["readiness"] };
+export type MixSeed = { id: string; title: string; artist: string; artworkUrl: string | null; kind: "song" | "artist" };
 
 export type ListeningStats = {
   period: { from: string | null; to: string; timeZoneId: string };
@@ -2323,6 +2329,29 @@ export const audioMuse = {
   save: (previewId: string, name: string) => json<{ reason: string | null; playlistId: string | null }>("/api/admin/audiomuse/save", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ previewId, name }),
   }),
+};
+
+export const mixes = {
+  list: () => json<MixCard[]>(`/api/admin/mixes?${new URLSearchParams({ timeZoneId: Intl.DateTimeFormat().resolvedOptions().timeZone })}`),
+  get: (id: string) => json<MixDetail>(`/api/admin/mixes/${encodeURIComponent(id)}`),
+  refresh: (id: string) => json<unknown>(`/api/admin/mixes/${encodeURIComponent(id)}/refresh`, { method: "POST" }),
+  inApps: (id: string, enabled: boolean) => json<{ enabled: boolean }>(`/api/admin/mixes/${encodeURIComponent(id)}/in-apps`, intelligenceBody({ enabled }, "PUT")),
+  feedback: (id: string, songId: string, kind: "moreLikeThis" | "notForMe" | "neverArtist", todayOnly = false) => json<{ removed: string }>(`/api/admin/mixes/${encodeURIComponent(id)}/feedback`, intelligenceBody({ songId, kind, todayOnly })),
+  start: (seed: MixSeed, length: number) => json<MixPreview>("/api/admin/mixes/start", intelligenceBody({ seedKind: seed.kind, seedId: seed.id, length })),
+  save: (id: string, name: string) => json<{ id: string }>(`/api/admin/mixes/start/${encodeURIComponent(id)}/save`, intelligenceBody({ name })),
+  remove: (id: string) => json<unknown>(`/api/admin/mixes/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  external: (source: string, kind: string) => json<MixCard>("/api/admin/mixes/external", intelligenceBody({ source, kind })),
+  publishSetting: () => json<{ enabled: boolean }>("/api/admin/mixes/publish-setting"),
+  setPublishSetting: (enabled: boolean) => json<unknown>("/api/admin/mixes/publish-setting", intelligenceBody({ enabled }, "PUT")),
+  seeds: async (query: string): Promise<MixSeed[]> => {
+    const results = await Promise.allSettled([matchReview.searchLocal(query, ""), matchReview.searchProviders(query, "")]);
+    if (results.every(result => result.status === "rejected")) throw new Error("Search unavailable");
+    const rows = results.flatMap(result => result.status === "fulfilled" ? result.value.tracks : []);
+    return [...new Map(rows.map(row => {
+      const id = row.backendItemId || (row.externalProvider && row.externalId ? `ext-${row.externalProvider}-song-${row.externalId}` : "");
+      return [id, { id, title: row.title, artist: row.artist ?? "", artworkUrl: row.artworkUrl ?? null, kind: "song" as const }] as const;
+    })).values()].filter(row => row.id);
+  },
 };
 
 export const taste = {

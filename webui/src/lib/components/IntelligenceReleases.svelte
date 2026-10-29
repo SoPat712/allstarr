@@ -1,18 +1,22 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { X } from "@lucide/svelte";
-  import { releaseInbox, type FollowedReleaseArtist, type ReleaseInbox, type ReleaseInboxEntry } from "$lib/api";
+  import { releaseInbox, mixes, type FollowedReleaseArtist, type ReleaseInbox, type ReleaseInboxEntry } from "$lib/api";
   import { groupByWeek, releaseDate } from "$lib/intelligence";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { Dialog } from "$lib/components/ui/dialog";
+  import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
+  import UiIcon from "$lib/components/UiIcon.svelte";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
 
+  let { initialRelease = "" }: { initialRelease?: string } = $props();
+  let radar = $state("");
   let inbox = $state<ReleaseInbox | null>(null), artists = $state<FollowedReleaseArtist[]>([]);
   let loading = $state(true), error = $state(""), action = $state("");
   let artistsOpen = $state(false), followOpen = $state(false), followError = $state("");
@@ -76,9 +80,14 @@
     } catch { if (!disposed) toast.error("The release could not be dismissed. Try again."); }
     finally { if (!disposed) action = ""; }
   }
+  $effect(() => {
+    const release = initialRelease;
+    if (!loading && release) void tick().then(() => document.getElementById(`release-${release}`)?.scrollIntoView({ block: "center", behavior: "instant" }));
+  });
   const scheduler = createRefreshScheduler(async () => { if (!action) await load(); });
   onMount(() => {
     void load();
+    void mixes.list().then(cards => { if (!disposed) radar = cards.find(card => card.kind === "release-radar")?.id ?? ""; }).catch(() => {});
     const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
     return () => { disposed = true; unsubscribe(); scheduler.cancel(); };
   });
@@ -86,10 +95,10 @@
 
 <div class="releases-inbox">
   <div class="section-heading">
-    <p>New music from artists you follow.</p>
+    <p>{#if radar}<a href={`#/for-you?mix=${encodeURIComponent(radar)}`}>Release Radar collects these every Friday.</a>{:else}Release Radar collects these every Friday.{/if}</p>
     <div class="release-actions">
-      <Button variant="secondary" onclick={() => artistsOpen = true}>Followed artists ({artists.length})</Button>
-      <Button variant="secondary" disabled={Boolean(action)} onclick={() => { followError = ""; followOpen = true; }}>Follow artists from my hearts</Button>
+      <Button variant="secondary" onclick={() => artistsOpen = true}>Following ({artists.length})</Button>
+      <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label="Release actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu release-menu" align="end"><DropdownMenu.Item class="bits-menu-item" onSelect={() => { followError = ""; followOpen = true; }}>Follow artists you play a lot</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
       <RefreshButton variant="secondary" label="Refresh releases" disabled={Boolean(action)} onrefresh={load} />
     </div>
   </div>
@@ -111,7 +120,7 @@
           <h2>{group.label}</h2>
           <div class="release-cards">
             {#each group.items as entry (entry.id)}
-              <article class="settings-card release-card" aria-label={`${entry.title} by ${entry.artist}`}>
+              <article id={`release-${entry.id}`} class="settings-card release-card" aria-label={`${entry.title} by ${entry.artist}`}>
                 <MediaArtwork class="release-art" fallback="♫" />
                 <div class="release-info">
                   <h3>{entry.title}</h3><p>{entry.artist}</p>
@@ -153,9 +162,10 @@
     </Dialog.Content>
   </Dialog.Portal>
 </Dialog.Root>
-<ConfirmDialog bind:open={followOpen} title="Follow artists from my hearts" description="Follow up to 200 artists from songs you've hearted?" confirmLabel="Follow artists" confirmVariant="default" disabled={Boolean(action)} closeOnConfirm={false} error={followError} onConfirm={follow} />
+<ConfirmDialog bind:open={followOpen} title="Follow artists you play a lot" description="Follow up to 200 artists from songs you've hearted? Following from your play history isn't available yet." confirmLabel="Follow artists from my hearts" confirmVariant="default" disabled={Boolean(action)} closeOnConfirm={false} error={followError} onConfirm={follow} />
 
 <style>
+  :global(.release-menu .bits-menu-item) { min-height: 44px; }
   .releases-inbox { display: grid; gap: var(--space-6); min-width: 0; }
   .section-heading, .release-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
   .section-heading p, .release-info p, .release-disclosure p { color: var(--color-ink-muted); }

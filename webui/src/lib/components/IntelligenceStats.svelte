@@ -8,10 +8,12 @@
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import IntelligenceHistoryImports from "$lib/components/IntelligenceHistoryImports.svelte";
+  import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import { Skeleton } from "$lib/components/ui/skeleton";
 
-  let stats = $state<ListeningStats | null>(null);
+  let stats = $state<ListeningStats | null>(null), yearStats = $state<ListeningStats | null>(null);
   let period = $state("30d"), year = $state(""), loading = $state(true), refreshing = $state(false), error = $state("");
+  const recapYear = $derived(year || (new Date().getMonth() === 11 ? String(new Date().getFullYear()) : ""));
   let request = 0;
   let importedRefresh: ReturnType<typeof setTimeout> | undefined;
   let loadedSelection = $state("");
@@ -37,8 +39,11 @@
     const selected = selection;
     refreshing = true;
     try {
-      const value = await listeningStats.get(period, year);
-      if (current === request) { stats = value; loadedSelection = selected; error = ""; }
+      const [value, annual] = await Promise.all([
+        listeningStats.get(period, year),
+        recapYear && !year ? listeningStats.get("year", recapYear).catch(() => null) : Promise.resolve(null),
+      ]);
+      if (current === request) { stats = value; yearStats = year ? value : annual; loadedSelection = selected; error = ""; }
     } catch { if (current === request) error = "Your listening stats could not be loaded. Try again."; }
     finally { if (current === request) { loading = false; refreshing = false; } }
   }
@@ -58,6 +63,7 @@
 </script>
 
 <div class="your-stats" aria-busy={refreshing}>
+  <h2>Your listening</h2>
   <div class="stats-toolbar">
     <SegmentedNav label="Stats period" items={periods} active={year ? "" : period} onchange={selectPeriod} />
     <div class="stats-actions"><SelectField bind:value={year} label="Year in review" options={years} onchange={() => void load()} /><RefreshButton variant="secondary" label="Refresh stats" onrefresh={load} /></div>
@@ -86,7 +92,19 @@
       <p>Imported from other services: {formatCount(stats.importedCount)} plays (not in these charts)</p>
     </footer>
   {/if}
-  <IntelligenceHistoryImports onchanged={importsChanged} />
+  {#if recapYear && yearStats}
+    <section class="settings-card year-recap" aria-label="Year in music">
+      <h2>{recapYear} · Year in music</h2>
+      <div class="year-tiles">
+        <article><MediaArtwork /><small>Top artist</small><strong>{yearStats.topArtists[0]?.artist ?? "No artists yet"}</strong></article>
+        <article><small>Top song</small><strong>{yearStats.topSongs[0]?.title ?? "No songs yet"}</strong></article>
+        <article><small>Listening time</small><strong>{yearStats.coverage.unknownDurationCount >= yearStats.playCount && yearStats.playCount ? "Unavailable" : `about ${formatCount(Math.round(yearStats.estimatedTimeFromSongLengthsMilliseconds / 3600000))} hours`}</strong></article>
+        <article><small>Most-played month</small><span>Not available yet</span></article>
+        <article><small>New artists</small><span>Not available yet</span></article>
+      </div>
+    </section>
+  {/if}
+  <section aria-label="Your data"><h2>Bring in your history</h2><IntelligenceHistoryImports onchanged={importsChanged} /></section>
 </div>
 
 <style>
@@ -107,5 +125,11 @@
   .stats-name strong, .stats-name small { display: block; overflow-wrap: anywhere; }
   .plays-count { font-size: var(--text-sm); white-space: nowrap; }
   footer { display: grid; gap: var(--space-2); }
+  .year-recap { padding: var(--surface-gutter); }
+  .year-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-4); }
+  .year-tiles article { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; overflow-wrap: anywhere; }
+  .year-tiles small { color: var(--color-ink-muted); }
+  .year-tiles :global(.media-art) { width: 64px; height: 64px; }
+  @media (max-width: 760px) { .year-tiles { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 760px) { .stats-lists, .stats-numbers { grid-template-columns: 1fr; } }
 </style>

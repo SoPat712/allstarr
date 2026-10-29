@@ -1,167 +1,118 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { playlistLinks, type PlaylistDiscoveryItem, type PlaylistLink, type PlaylistSourceAccount } from "$lib/api";
+  import { audioMuse, mixes, playlistLinks, releaseInbox, type AudioMuseStatus, type MixCard, type PlaylistLink, type PlaylistSourceAccount } from "$lib/api";
+  import { greeting, mixOrder } from "$lib/for-you";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
-  import { formatCount, lastFmPeriods, playlistSourceKey, brainzDetails, brainzPlaylists } from "$lib/intelligence";
-  import { relativeTime } from "$lib/activity";
   import { toast } from "$lib/toasts";
-  import { Button } from "$lib/components/ui/button";
+  import { Button, buttonVariants } from "$lib/components/ui/button";
+  import { Dialog } from "$lib/components/ui/dialog";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
-  import SelectField from "$lib/components/SelectField.svelte";
-  import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
-
-  let accounts = $state<PlaylistSourceAccount[]>([]);
-  let links = $state<PlaylistLink[]>([]);
-  let brainz = $state<PlaylistDiscoveryItem[]>([]);
-  let brainzCursor = $state("");
-  let notices = $state<Record<string, string>>({});
-  let loading = $state(true), fetching = false, request = 0;
-  let loadedPages = 1, loadedAccount = "";
-  let error = $state(""), period = $state("1month"), open = $state(false);
-  let initialSource = $state<{ accountId: string; playlistId: string; title: string; followNewestKind?: string } | null>(null);
-  const brainzAccount = $derived(accounts.find(item => item.providerId === "listenbrainz" && item.scope === "personal"));
-  const lastFmAccount = $derived(accounts.find(item => item.providerId === "lastfm" && item.scope === "personal"));
-  const brainzCards = $derived(brainzPlaylists(brainz));
-  const lastFmCards = $derived([
-    { id: "loved", name: "Loved on Last.fm", subtitle: "Your loved songs, together." },
-    { id: `top:${period}:50`, name: "Your top tracks", subtitle: "The songs you return to." },
-    { id: "similar", name: "Similar to your top tracks", subtitle: "Suggestions from Last.fm" },
-  ]);
-
-  function linked(provider: string, id: string, kind = "") {
-    const account = provider === "listenbrainz" ? brainzAccount : lastFmAccount;
-    return links.find(item => item.sourceProviderId === provider && (playlistSourceKey(provider, item.sourcePlaylistId) === playlistSourceKey(provider, id) || kind && item.sourcePlaylistId === `createdfor:${kind}`) &&
-      (item.providerAccountId === account?.id || provider === "listenbrainz" && item.providerAccountId === null));
-  }
-
+  import MixShelf from "$lib/components/MixShelf.svelte";
+  import StartMix from "$lib/components/StartMix.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import IntelligenceHistoryImports from "$lib/components/IntelligenceHistoryImports.svelte";
+  let { administrator = false, listenerId = "", listenerName = "", initialImport = false }: { initialImport?: boolean; administrator?: boolean; listenerId?: string; listenerName?: string } = $props();
+  let cards = $state<MixCard[]>([]), releases = $state<MixCard[]>([]), accounts = $state<PlaylistSourceAccount[]>([]), links = $state<PlaylistLink[]>([]);
+  let status = $state<AudioMuseStatus | null>(null), published = $state<boolean | null>(null), loading = $state(true), error = $state("");
+  let hidden = $state(false), importOpen = $state(false), publishOpen = $state(false), external = $state<MixCard | null>(null), busy = $state(false), actionError = $state("");
+  let pending: Promise<void> | null = null, disposed = false;
+  const storageKey = $derived(`allstarr.mix-checklist.${listenerId}`);
+  const made = $derived(cards.filter(item => item.section === "madeForYou").sort((a, b) => Number(b.readiness.ready) - Number(a.readiness.ready) || mixOrder.indexOf(a.kind) - mixOrder.indexOf(b.kind)));
+  const moods = $derived(cards.filter(item => item.section === "moods").sort((a, b) => mixOrder.indexOf(a.kind) - mixOrder.indexOf(b.kind)));
+  const custom = $derived(cards.filter(item => item.section === "custom"));
+  const connected = $derived(accounts.some(item => item.scope === "personal" && ["lastfm", "listenbrainz"].includes(item.providerId)));
+  const daily = $derived(cards.filter(item => item.kind.startsWith("daily-")));
+  const dailyReady = $derived(daily.length > 0 && daily.every(item => item.readiness.ready));
+  const remaining = $derived(daily.find(item => !item.readiness.ready)?.readiness.message.match(/about (\d+) more/)?.[1]);
+  const soundReady = $derived(status?.reason === null && status.analyzedSongs > 0);
+  const checklist = $derived(!hidden && (!made.length || made.some(item => !item.readiness.ready) || !connected || administrator && (!soundReady || published === false)));
+  const recipes = [
+    { source: "listenbrainz", kind: "weekly-jams", name: "Weekly Jams", label: "ListenBrainz", cadence: "weekly" },
+    { source: "listenbrainz", kind: "weekly-exploration", name: "Weekly Exploration", label: "ListenBrainz", cadence: "weekly" },
+    { source: "lastfm", kind: "loved", name: "Loved on Last.fm", label: "Last.fm", cadence: "daily" },
+    { source: "lastfm", kind: "top", name: "Your top tracks", label: "Last.fm", cadence: "daily" },
+    { source: "lastfm", kind: "similar", name: "Similar to your top tracks", label: "Last.fm", cadence: "daily" },
+  ];
+  const suggestions = $derived(recipes.filter(recipe => accounts.some(account => account.scope === "personal" && account.providerId === recipe.source) && !links.some(link => link.sourceProviderId === recipe.source && link.sourcePlaylistId === (recipe.source === "listenbrainz" ? `createdfor:${recipe.kind}` : recipe.kind === "top" ? "top:1month:50" : recipe.kind))).map(recipe => ({ id: `add:${recipe.source}:${recipe.kind}`, kind: "external", name: recipe.name, description: `From ${recipe.label} · ${recipe.cadence}`, section: "yourServices", sortOrder: 0, sourceLabel: recipe.label, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, inApps: false, showInApps: false, coverArtwork: [] }) satisfies MixCard));
+  const services = $derived([...cards.filter(item => item.section === "yourServices").map(card => ({ ...card, description: card.sourceLabel ? `From ${card.sourceLabel} · kept in sync` : "From your connected service" })), ...suggestions]);
   async function load() {
-    if (fetching) return;
-    fetching = true;
-    const current = ++request;
-    try {
-      const [sources, saved] = await Promise.all([playlistLinks.sources(), playlistLinks.list()]);
-      if (current !== request) return;
-      accounts = sources.accounts;
-      links = saved.playlistLinks;
-      if ((brainzAccount?.id ?? "") !== loadedAccount) { loadedPages = 1; brainz = []; brainzCursor = ""; loadedAccount = brainzAccount?.id ?? ""; }
-      const results = await Promise.all(accounts.filter(item => item.id === brainzAccount?.id || item.id === lastFmAccount?.id).map(async account => {
-        try {
-          let value = await playlistLinks.sourcePlaylists(account.id);
-          for (let page = 1; account.providerId === "listenbrainz" && page < loadedPages && value.nextCursor; page++) {
-            const next = await playlistLinks.sourcePlaylists(account.id, "", value.nextCursor);
-            value = { ...next, items: [...value.items, ...next.items.filter(item => !value.items.some(existing => existing.id === item.id))] };
-          }
-          return { account, value, notice: "" };
-        }
-        catch (cause) {
-          const message = cause instanceof Error ? cause.message : "Playlists could not be loaded. Try again later.";
-          return { account, value: null, notice: message };
-        }
-      }));
-      if (current !== request) return;
-      const nextNotices: Record<string, string> = {};
-      for (const result of results) {
-        nextNotices[result.account.providerId] = result.notice;
-        if (result.account.id === brainzAccount?.id && result.value) {
-          brainz = result.value.items;
-          brainzCursor = result.value.nextCursor ?? "";
-        }
-      }
-      notices = nextNotices;
-      error = "";
-    } catch { if (current === request) error = "Your playlists could not be loaded. Try again."; }
-    finally { if (current === request) { loading = false; fetching = false; } }
+    if (pending) return pending;
+    pending = (async () => {
+      const results = await Promise.allSettled([mixes.list(), playlistLinks.sources(), playlistLinks.list(), releaseInbox.get(), administrator ? audioMuse.status() : Promise.resolve(null), administrator ? mixes.publishSetting() : Promise.resolve(null)] as const);
+      if (disposed) return;
+      const [mixResult, sourceResult, linkResult, releaseResult, soundResult, publishResult] = results;
+      if (mixResult.status === "fulfilled") { cards = mixResult.value; error = ""; } else error = "Couldn't load your mixes. Try again.";
+      if (sourceResult.status === "fulfilled") accounts = sourceResult.value.accounts ?? [];
+      if (linkResult.status === "fulfilled") links = linkResult.value.playlistLinks ?? [];
+      if (soundResult.status === "fulfilled") status = soundResult.value;
+      if (publishResult.status === "fulfilled") published = publishResult.value?.enabled ?? null;
+      if (releaseResult.status === "fulfilled") releases = releaseResult.value.entries.slice(0, 8).map(entry => ({ id: entry.id, kind: "release", name: entry.title, description: `${entry.artist} · ${entry.type === "album" ? "Album" : entry.type === "single" ? "Single" : "Release"}${/^\d{4}-\d{2}-\d{2}$/.test(entry.releaseDate ?? "") ? ` · ${new Date(`${entry.releaseDate}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" })}` : ""}`, section: "madeForYou", sortOrder: 0, sourceLabel: null, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, showInApps: false, inApps: false, coverArtwork: [] }));
+      loading = false;
+    })().finally(() => { pending = null; });
+    return pending;
   }
-
-  async function more() {
-    if (!brainzAccount || !brainzCursor || fetching) return;
-    fetching = true;
-    const current = request;
-    try {
-      const result = await playlistLinks.sourcePlaylists(brainzAccount.id, "", brainzCursor);
-      if (current !== request) return;
-      brainz = [...brainz, ...result.items.filter(item => !brainz.some(existing => existing.id === item.id))];
-      brainzCursor = result.nextCursor ?? "";
-      loadedPages++;
-    } catch { if (current === request) toast.error("More playlists could not be loaded."); }
-    finally { fetching = false; }
+  $effect(() => { if (initialImport) importOpen = true; });
+  function hide() { hidden = true; try { localStorage.setItem(storageKey, "hidden"); } catch { /* Browser storage is optional. */ } }
+  function openMix(card: MixCard) { if (card.id.startsWith("add:")) { actionError = ""; external = card; } else window.location.hash = `#/for-you?mix=${encodeURIComponent(card.id)}`; }
+  async function publish() {
+    if (busy) return;
+    busy = true; actionError = "";
+    try { await pending; await mixes.setPublishSetting(true); published = true; publishOpen = false; await load(); }
+    catch { actionError = "The setting could not be saved. Try again."; }
+    finally { busy = false; }
   }
-
-  function add(account: PlaylistSourceAccount, id: string, title: string, followNewestKind = "") {
-    initialSource = { accountId: account.id, playlistId: id, title, ...(followNewestKind ? { followNewestKind } : {}) };
-    open = true;
+  async function addExternal() {
+    if (busy || !external) return;
+    const [, source, kind] = external.id.split(":"); busy = true; actionError = "";
+    try { await pending; await mixes.external(source, kind); external = null; toast.success("Added to your mixes"); await load(); }
+    catch { actionError = "This mix could not be added. Try again later."; }
+    finally { busy = false; }
   }
-
-  const scheduler = createRefreshScheduler(load);
+  const scheduler = createRefreshScheduler(async () => { if (!busy) await load(); });
   onMount(() => {
-    void load();
-    const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
-    return () => { request++; unsubscribe(); scheduler.cancel(); };
+    try { hidden = localStorage.getItem(storageKey) === "hidden"; } catch { /* Browser storage is optional. */ }
+    void load(); const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
+    return () => { disposed = true; unsubscribe(); scheduler.cancel(); };
   });
 </script>
-
 <div class="for-you">
-  <div class="section-heading"><p>Playlists from your listening, ready to make your own.</p><RefreshButton variant="secondary" label="Refresh playlists" onrefresh={load} /></div>
-  {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
-  {#if loading}<Skeleton class="skeleton-panel" aria-label="Loading your playlists" />
+  <div class="section-heading"><div><h2>{greeting(new Date().getHours(), listenerName)}</h2><p>Mixes refresh every morning.</p></div><RefreshButton variant="secondary" label="Refresh page" onrefresh={load} /></div>
+  {#if loading}{#each ["Made for you", "Moods"] as title}<section aria-label={`Loading ${title}`}><h2>{title}</h2><div class="loading-shelf">{#each [1, 2, 3, 4, 5, 6] as i}<Skeleton class="mix-skeleton" />{/each}</div></section>{/each}
   {:else}
-    <section aria-labelledby="brainz-heading">
-      <h2 id="brainz-heading">From ListenBrainz</h2>
-      {#if brainzAccount && brainz.length && !brainzCursor && !notices.listenbrainz && !brainzCards.some(item => brainzDetails(item.description).kind)}<p>ListenBrainz hasn't made playlists for you yet. They appear after about a week of listening.</p>{/if}
-      <div class="playlist-cards">
-        {#if !brainzAccount}
-          <article class="settings-card"><h3>Connect ListenBrainz to see playlists made from your listening</h3><Button variant="secondary" href="#/integrations/accounts?source=listenbrainz&connect=1">Connect ListenBrainz</Button></article>
-        {:else if notices.listenbrainz}
-          <article class="settings-card"><p>{notices.listenbrainz}</p><Button variant="secondary" href="#/integrations/accounts?source=listenbrainz">Open Sources</Button></article>
-        {:else if !brainz.length}
-          <article class="settings-card"><p>ListenBrainz hasn't made playlists for you yet. They appear after about a week of listening.</p></article>
-        {:else}
-          {#each brainzCards as item (item.id)}
-            {@const details = brainzDetails(item.description)}
-            {@const saved = linked("listenbrainz", item.id, details.kind)}
-            <article class="settings-card" aria-label={item.name}>
-              <div><h3>{item.name}</h3><p>ListenBrainz · {details.created ? `created ${relativeTime(details.created)}` : "Date unavailable"}</p></div>
-              {#if item.trackCount != null}<p>{`${formatCount(item.trackCount)} ${item.trackCount === 1 ? "song" : "songs"}`}</p>{/if}
-              <div class="card-actions">{#if saved}<span>Added ✓</span><Button variant="secondary" href={`#/library/playlists?playlist=${encodeURIComponent(saved.id)}`}>Open</Button>
-              {:else}<Button variant="secondary" onclick={() => brainzAccount && add(brainzAccount, item.id, item.name, details.kind)}>Add to my playlists</Button>{/if}</div>
-            </article>
-          {/each}
-        {/if}
-      </div>
-      {#if brainzCursor}<Button variant="secondary" onclick={more}>More playlists</Button>{/if}
-    </section>
-    <section aria-labelledby="lastfm-heading">
-      <h2 id="lastfm-heading">From Last.fm</h2>
-      {#if !lastFmAccount}
-        <article class="settings-card"><h3>Connect Last.fm to bring your listening into playlists</h3><Button variant="secondary" href="#/integrations/accounts?source=lastfm&connect=1">Connect Last.fm</Button></article>
-      {:else if notices.lastfm}
-        <article class="settings-card"><p>{notices.lastfm}</p><Button variant="secondary" href="#/integrations/accounts?source=lastfm">Open Sources</Button></article>
-      {:else}
-        <div class="playlist-cards">
-          {#each lastFmCards as item (item.name)}
-            {@const saved = linked("lastfm", item.id)}
-            <article class="settings-card" aria-label={item.name}>
-              <div><h3>{item.name}</h3><p>{item.subtitle}</p></div>
-              {#if item.name === "Your top tracks"}<SelectField bind:value={period} label="Top tracks period" options={lastFmPeriods} />{/if}
-              <div class="card-actions">{#if saved}<span>Added ✓</span><Button variant="secondary" href={`#/library/playlists?playlist=${encodeURIComponent(saved.id)}`}>Open</Button>
-              {:else}<Button variant="secondary" onclick={() => lastFmAccount && add(lastFmAccount, item.id, item.name)}>Add to my playlists</Button>{/if}</div>
-            </article>
-          {/each}
-        </div>
-      {/if}
-    </section>
+    {#if checklist}<section class="settings-card checklist" aria-label="Make your mixes better">
+      <header><h2>Make your mixes better</h2><Button variant="ghost" onclick={hide}>Hide</Button></header>
+      <div class="check-row"><span aria-label={dailyReady ? "Done" : "To do"}>{dailyReady ? "✓" : "○"}</span><span>{dailyReady ? "Enough listening for daily mixes" : `Listen to ${remaining ? `about ${remaining} more` : "more"} songs — or import your history`}</span>{#if !dailyReady}<Button variant="secondary" onclick={() => importOpen = true}>Import history</Button>{/if}</div>
+      <div class="check-row"><span aria-label={connected ? "Done" : "To do"}>{connected ? "✓" : "○"}</span><span>Connect Last.fm or ListenBrainz for more discoveries</span>{#if !connected}<Button variant="secondary" href="#/sources">Connect</Button>{/if}</div>
+      {#if administrator}<div class="check-row"><span aria-label={soundReady ? "Done" : "To do"}>{soundReady ? "✓" : "○"}</span><span>Turn on sound analysis for mood mixes</span>{#if !soundReady}<Button variant="secondary" href="#/settings/sound-analysis">Set up</Button>{/if}</div>
+      {#if published === false}<div class="check-row"><span aria-label="To do">○</span><span>Mixes are only visible here for now</span><Button variant="secondary" onclick={() => { actionError = ""; publishOpen = true; }}>Show in apps</Button></div>{/if}{/if}
+    </section>{/if}
+    {#if error}<p class="muted" role="alert">{error} <Button variant="secondary" onclick={load}>Try again</Button></p>{/if}
+    {#if !error && !made.some(item => item.readiness.ready)}<div class="settings-card empty"><p>Your mixes will appear here. Play some music, or import your history to start right away.</p></div>{/if}
+    <MixShelf title="Made for you" cards={made} onopen={openMix} />
+    <MixShelf title="Moods" cards={moods} onopen={openMix} />
+    <StartMix onsaved={async () => { await pending; await load(); }} />
+    {#if custom.length}<MixShelf title="Your mixes" cards={custom} onopen={openMix} />{/if}
+    {#if releases.length}<MixShelf title="New releases" cards={releases} seeAll="#/for-you?section=releases" onopen={card => { window.location.hash = `#/for-you?section=releases&release=${encodeURIComponent(card.id)}`; }} />{/if}
+    {#if services.length}<MixShelf title="From your services" cards={services} additions={suggestions.map(item => item.id)} onopen={openMix} />{/if}
   {/if}
 </div>
-<AddPlaylistDialog bind:open providers={[]} {initialSource} onSaved={async message => { toast.success(message); await load(); }} />
-
+<Dialog.Root bind:open={importOpen}><Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog">
+  <header><div><Dialog.Title>Bring in your history</Dialog.Title><Dialog.Description>Start your mixes with the music you've already played.</Dialog.Description></div><Dialog.Close type="button" class="icon-button" aria-label="Close history">×</Dialog.Close></header>
+  <IntelligenceHistoryImports onchanged={() => void load()} /><footer class="dialog-actions"><Dialog.Close type="button" class={buttonVariants({ variant: "secondary" })}>Done</Dialog.Close></footer>
+</Dialog.Content></Dialog.Portal></Dialog.Root>
+<ConfirmDialog bind:open={publishOpen} title="Show mixes in everyone's apps?" description="Each listener gets their own mixes as playlists in their music apps. They refresh automatically. Anyone can hide a mix from their apps." confirmLabel="Show in apps" confirmVariant="default" closeOnConfirm={false} disabled={busy} error={actionError} onConfirm={publish} />
+<ConfirmDialog bind:open={() => Boolean(external), value => { if (!value) external = null; }} onConfirm={addExternal} title="Keep this in your apps?" description={`It updates when ${external?.sourceLabel ?? "your service"} makes a new one.`} confirmLabel="Keep in apps" confirmVariant="default" closeOnConfirm={false} disabled={busy} error={actionError} />
 <style>
   .for-you { display: grid; gap: var(--space-6); min-width: 0; }
-  .section-heading, .card-actions { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
-  .section-heading p, article p { color: var(--color-ink-muted); }
-  h2 { margin-bottom: var(--space-4); font-size: 1.125rem; font-weight: 600; }
-  h3 { font-weight: 600; overflow-wrap: anywhere; }
-  .playlist-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: var(--section-gap); margin-bottom: var(--space-3); }
-  .settings-card { display: flex; flex-direction: column; align-items: start; gap: var(--space-4); padding: var(--surface-gutter); min-width: 0; }
-  .card-actions { margin-top: auto; width: 100%; }
+  .section-heading, header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
+  h2 { font-size: 1.125rem; font-weight: 600; }
+  .section-heading p, .muted, .empty { color: var(--color-ink-muted); }
+  .checklist, .empty { padding: var(--surface-gutter); }
+  .check-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); min-height: 64px; padding-block: var(--space-2); }
+  .check-row + .check-row { border-top: 1px solid var(--color-edge); }
+  .loading-shelf { display: grid; grid-auto-flow: column; grid-auto-columns: 160px; overflow: hidden; gap: 12px; margin-top: var(--space-3); }
+  .loading-shelf :global(.mix-skeleton) { height: 263px; border-radius: var(--radius-md); }
+  @media (min-width: 900px) { .loading-shelf { grid-auto-columns: 184px; } .loading-shelf :global(.mix-skeleton) { height: 287px; } }
+  @media (max-width: 600px) { .check-row { grid-template-columns: 24px minmax(0, 1fr); } .check-row :global([data-slot="button"]) { grid-column: 2; justify-self: start; } }
 </style>

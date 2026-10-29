@@ -686,8 +686,8 @@
     {#if source.id === "audiomuse-ai"}
       <section class="settings-card">
         <div class="settings-row">
-          <div><strong>Set up in Intelligence</strong><small>AudioMuse-AI powers sound-based discovery, so its connection lives next to that feature.</small></div>
-          <Button href={`#/intelligence?section=${developmentIntelligence ? "automation" : "sounds"}`}>Configure in Intelligence</Button>
+          <div><strong>Sound analysis (AudioMuse)</strong><small>Manage the connection and household mix publishing in Settings.</small></div>
+          {#if administrator}<Button href="#/settings/sound-analysis">Configure</Button>{/if}
         </div>
       </section>
     {:else}

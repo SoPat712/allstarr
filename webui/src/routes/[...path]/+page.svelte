@@ -2,6 +2,7 @@
   import { Button } from "$lib/components/ui/button";
   import { onMount, type Component } from "svelte";
   import { page } from "$app/state";
+  import { goto } from "$app/navigation";
   import BackendAccessWarning from "$lib/components/BackendAccessWarning.svelte";
   import { auth, onboarding, type OnboardingState, type Session } from "$lib/api";
   import { adminUrl } from "$lib/admin-url";
@@ -18,7 +19,7 @@
   const destinations = [
     { href: "#/", label: "Home", mobileLabel: "Home", icon: "home", mobile: true },
     { href: "#/library/playlists", prefix: "/library/", label: "Library", mobileLabel: "Library", icon: "library", mobile: true },
-    { href: "#/intelligence", label: "Intelligence", mobileLabel: "Insights", icon: "headphones", mobile: true },
+    { href: "#/for-you", label: "For you", mobileLabel: "For you", icon: "headphones", mobile: true },
     { href: "#/integrations/services", prefix: "/integrations/", label: "Sources", mobileLabel: "Sources", icon: "sources", mobile: false },
     { href: "#/activity", label: "Activity", mobileLabel: "Activity", icon: "activity", mobile: true },
     { href: "#/getting-started", label: "Getting started", mobileLabel: "Getting started", icon: "guide", mobile: false },
@@ -74,7 +75,7 @@
 
   const administrator = $derived(session?.user?.isAdministrator === true);
   const developmentIntelligence = $derived(session?.features?.intelligence === true);
-  const navigationDestinations = $derived(destinations.filter(item => item.href !== "#/intelligence" || !developmentIntelligence).map(item => !administrator && item.href === "#/settings"
+  const navigationDestinations = $derived(destinations.filter(item => item.href !== "#/for-you" || !developmentIntelligence).map(item => !administrator && item.href === "#/settings"
       ? { ...item, href: "#/settings/alerts", label: "Alerts", mobileLabel: "Alerts" } : item));
   const mobileDestinations = $derived(navigationDestinations.filter((item) => item.mobile));
   const moreDestinations = $derived([preferencesDestination, ...navigationDestinations.filter((item) => !item.mobile)]);
@@ -83,6 +84,7 @@
     : allLibrarySections.filter((item) => item.id === "playlists" || item.id === "mappings"));
 
   function currentRoute(path: string) {
+    if (path === "/intelligence" && !developmentIntelligence) return "/for-you";
     if (path === "/home") return "/";
     if (["/library", "/library/link", "/library/injected", "/library/external"].includes(path)) {
       return "/library/playlists";
@@ -104,6 +106,15 @@
     route === "/library/kept" ||
     (route === "/intelligence" && developmentIntelligence)
   ));
+  $effect(() => {
+    if (session?.authenticated && page.params.path === "intelligence" && !developmentIntelligence) {
+      const query = new URLSearchParams(page.url.hash.split("?", 2)[1] ?? "");
+      const old = query.get("section");
+      if (old === "stats") query.set("section", "recap");
+      if (old === "sounds" || old === "for-you") query.delete("section");
+      void goto(`#/for-you${query.size ? `?${query}` : ""}`, { replaceState: true, keepFocus: true, noScroll: true });
+    }
+  });
   const routeQuery = $derived(new URLSearchParams(page.url.hash.split("?", 2)[1] ?? ""));
   const activeDestination = $derived(
     route === "/report" ? { href: "#/report", label: "Report a problem", mobileLabel: "Report", icon: "activity", mobile: false } : [...navigationDestinations, ...destinations, preferencesDestination].find((item) =>
@@ -134,10 +145,15 @@
             ? { storage: "cache" }
             : route === "/library/kept"
               ? { storage: "kept" }
-              : route === "/intelligence"
+              : route === "/intelligence" || route === "/for-you"
                 ? {
                     initialSection: routeQuery.get("section") ?? (developmentIntelligence ? "overview" : "for-you"),
                     administrator,
+                    initialMix: routeQuery.get("mix") ?? "",
+                    initialImport: routeQuery.get("import") === "1",
+                    initialRelease: routeQuery.get("release") ?? "",
+                    listenerId: session?.user?.allstarrUserId ?? session?.user?.id ?? "",
+                    listenerName: session?.user?.name ?? "",
                   }
                 : route.startsWith("/integrations")
                   ? {
@@ -210,6 +226,7 @@
     if (path === "/preferences") return import("$lib/components/ListeningPreferencesView.svelte");
     if (path === "/getting-started") return import("$lib/components/GettingStartedView.svelte");
     if (path === "/report") return import("$lib/components/ProblemReportView.svelte");
+    if (path === "/for-you") return import("$lib/components/IntelligenceView.svelte");
     if (path === "/intelligence") {
       return developmentIntelligence
         ? import("$lib/shelved/IntelligenceView.svelte")

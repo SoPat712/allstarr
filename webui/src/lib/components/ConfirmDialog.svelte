@@ -41,7 +41,7 @@
       {@render children?.()}
       {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
       <footer class="dialog-actions">
-        <AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} {disabled}>{cancelLabel}</AlertDialog.Cancel>
+        <AlertDialog.Cancel type="button" class={buttonVariants({ variant: "secondary" })} {disabled}>{cancelLabel}</AlertDialog.Cancel>
         {#if closeOnConfirm}
           <AlertDialog.Action class={buttonVariants({ variant: confirmVariant })} {disabled} onclick={() => void onConfirm()}>{confirmLabel}</AlertDialog.Action>
         {:else}
