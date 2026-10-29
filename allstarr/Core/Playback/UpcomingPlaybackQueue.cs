@@ -18,14 +18,13 @@ public static class UpcomingPlaybackQueue
             .Where(pair => Text(pair.entry, "Id") == current &&
                 (occurrence == null || Text(pair.entry, "PlaylistItemId") == occurrence)).ToArray();
         if (matches.Length != 1) return [];
-        return entries.Skip(matches[0].index + 1).Take(2).Select(entry => Text(entry, "Id"))
-            .Where(id => id is { Length: > 0 and <= 500 }).Select(id => id!).ToArray();
+        return entries.Skip(matches[0].index + 1).Select(entry => Text(entry, "Id") ?? "").ToArray();
     }
 
     public static IReadOnlyList<string> After(IReadOnlyList<string> entries, string current)
     {
         var matches = entries.Select((id, index) => (id, index)).Where(pair => pair.id == current).ToArray();
-        return matches.Length == 1 ? entries.Skip(matches[0].index + 1).Take(2).ToArray() : [];
+        return matches.Length == 1 ? entries.Skip(matches[0].index + 1).ToArray() : [];
     }
 
     public static bool IsSuccessfulSubsonicSave(SubsonicProxyResponse response)
@@ -49,10 +48,10 @@ public static class UpcomingPlaybackQueue
     public static (string? Current, IReadOnlyList<string> Next) ParseSubsonic(SubsonicRequestParameters parameters, bool byIndex)
     {
         var entries = parameters.GetAllValues("id");
-        var current = parameters.GetValueOrDefault("current");
+        var current = parameters.GetValueOrDefault(byIndex ? "currentIndex" : "current");
         if (!byIndex) return (current, current == null ? [] : After(entries, current));
         if (!int.TryParse(current, out var index) || index < 0 || index >= entries.Count) return (null, []);
-        return (entries[index], entries.Skip(index + 1).Take(2).ToArray());
+        return (entries[index], entries.Skip(index + 1).ToArray());
     }
 
     private static string? Text(JsonElement value, string name) => value.ValueKind == JsonValueKind.Object &&

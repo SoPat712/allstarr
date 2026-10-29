@@ -19,6 +19,67 @@ namespace allstarr.Tests;
 
 public sealed class ManagedAudioCapacityTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PreparedUnplayedFilesEvictBeforeOlderPlayedFilesAcrossRestart(bool played)
+    {
+        await using var fixture = await AudioFixture.CreateAsync(24);
+        var older = await fixture.PublishAsync("older", 8);
+        fixture.Clock.Advance(TimeSpan.FromSeconds(1));
+        var prepared = await fixture.PublishAsync("prepared", 8, preparation: true);
+        if (played)
+        {
+            using var opened = (await fixture.Service.TryOpenAsync(new("fixture", ProviderResourceKind.Track, "prepared"), fixture.Scope, default))!.Response;
+        }
+        await fixture.Service.DisposeAsync();
+        fixture.Restart();
+        await fixture.PublishAsync("new", 16);
+        Assert.Equal(!played, File.Exists(older.LocalPath));
+        Assert.Equal(played, File.Exists(prepared.LocalPath));
+    }
+
+    [Fact]
+    public async Task PreparationCacheProbePreservesPriorityAndExpiryStillFindsOlderPlayedFiles()
+    {
+        await using var fixture = await AudioFixture.CreateAsync(24);
+        var older = await fixture.PublishAsync("older", 8);
+        fixture.Clock.Advance(TimeSpan.FromHours(2));
+        var prepared = await fixture.PublishAsync("prepared", 8, preparation: true);
+        using (var probe = (await fixture.Service.TryOpenAsync(new("fixture", ProviderResourceKind.Track, "prepared"),
+                   fixture.Scope, default, preparation: true))!.Response) { }
+        await fixture.Service.CleanupExpiredAudioAsync(TimeSpan.FromHours(1));
+        Assert.False(File.Exists(older.LocalPath));
+        Assert.True(File.Exists(prepared.LocalPath));
+        await fixture.PublishAsync("played", 8);
+        await fixture.PublishAsync("new", 16);
+        Assert.False(File.Exists(prepared.LocalPath));
+    }
+
+    [Fact]
+    public async Task PlaybackTakingOverPreparationIsPublishedWithoutUnplayedPriority()
+    {
+        await using var fixture = await AudioFixture.CreateAsync(16);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var metadata = new TaskCompletionSource<Song?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var producer = await fixture.OpenProducerAsync("prepared", 8, preparation: true, metadata: () =>
+        {
+            entered.TrySetResult();
+            return metadata.Task;
+        });
+        var reading = producer.Content.ReadAsByteArrayAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        using var playback = (await fixture.Service.TryOpenAsync(new("fixture", ProviderResourceKind.Track, "prepared"),
+            fixture.Scope, default, 1))!.Response;
+        metadata.TrySetResult(new() { Title = "Prepared", Artist = "Fixture" });
+        await reading.WaitAsync(TimeSpan.FromSeconds(10));
+        await fixture.Service.TransferCompletionAsync(new("fixture", ProviderResourceKind.Track, "prepared"), fixture.Scope, 1)
+            .WaitAsync(TimeSpan.FromSeconds(10));
+        var row = (await fixture.Store.FindAsync(fixture.Scope, "fixture", "prepared"))!;
+        using var identity = System.Text.Json.JsonDocument.Parse(row.CacheIdentityJson!);
+        Assert.False(identity.RootElement.GetProperty("PreparedUnplayed").GetBoolean());
+    }
+
     [Fact]
     public async Task LruEvictionRemovesOnlyTheUnusedOwnedFileAndItsExactMapping()
     {
@@ -324,7 +385,7 @@ public sealed class ManagedAudioCapacityTests
         public void Restart(IManagedFileOperations? operations = null, StorageMode mode = StorageMode.Cache) => Service = new(configuration, Options.Create(new SubsonicSettings { StorageMode = mode }), Local,
             NullLogger<ManagedTrackCacheService>.Instance, timeProvider: Clock, mappings: Store, files: operations, audioMaximumBytes: () => Limit,
             audioVerifier: FixtureAudioVerifier.Instance);
-        public async Task<HttpResponseMessage> OpenProducerAsync(string track, int bytes, bool original = false, HttpContent? content = null, Func<Task<Song?>>? metadata = null)
+        public async Task<HttpResponseMessage> OpenProducerAsync(string track, int bytes, bool original = false, HttpContent? content = null, Func<Task<Song?>>? metadata = null, bool preparation = false)
         {
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = content ?? new ByteArrayContent(Enumerable.Range(0, bytes).Select(value => (byte)value).ToArray()) };
             var stream = new ProtocolProviderStream(response, new("fixture", new Uri("https://media.example.test/audio"), DateTimeOffset.UtcNow.AddMinutes(1),
@@ -333,7 +394,7 @@ public sealed class ManagedAudioCapacityTests
             var user = Guid.NewGuid();
             var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "primary", "listener",
                 new AllstarrPrincipal(user, "jellyfin", "primary", "listener", "Listener", false), "fixture", DateTimeOffset.UtcNow.AddMinutes(1), default)
-            { IsOriginalDownload = original };
+            { IsOriginalDownload = original, IsPreparation = preparation };
             try
             {
                 await Service.WrapAsync(stream, context, "fixture", track, false,
@@ -342,9 +403,9 @@ public sealed class ManagedAudioCapacityTests
             }
             catch { response.Dispose(); throw; }
         }
-        public async Task<DownloadedSongMappingEntity> PublishAsync(string track, int bytes)
+        public async Task<DownloadedSongMappingEntity> PublishAsync(string track, int bytes, bool preparation = false)
         {
-            using var response = await OpenProducerAsync(track, bytes);
+            using var response = await OpenProducerAsync(track, bytes, preparation: preparation);
             Assert.Equal(bytes, (await response.Content.ReadAsByteArrayAsync()).Length);
             return (await Store.FindAsync(Scope, "fixture", track))!;
         }

@@ -14,6 +14,30 @@ namespace allstarr.Tests;
 public sealed partial class ManagedTrackCacheServiceTests
 {
     [Fact]
+    public async Task FullCacheSkipsPreparationBeforeOpeningTheProvider()
+    {
+        var root = CreateRoot();
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(root, "cache"));
+            await File.WriteAllBytesAsync(Path.Combine(root, "cache", "protected.flac"), new byte[8]);
+            var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?> { ["Library:DownloadPath"] = root }).Build();
+            await using var cache = new allstarr.Services.Common.ManagedTrackCacheService(configuration,
+                Microsoft.Extensions.Options.Options.Create(new allstarr.Models.Settings.SubsonicSettings
+                { StorageMode = allstarr.Models.Settings.StorageMode.Cache }), Mock.Of<ILocalLibraryService>(MockBehavior.Strict),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.ManagedTrackCacheService>.Instance,
+                audioMaximumBytes: () => 8);
+            var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+            var opener = new ProviderStreamOpener(gateway.Object, new ProtocolStreamingResponseAdapter(), cache);
+            await opener.PrepareAsync(Context() with { IsPreparation = true }, "ext-apple-musickit-song-next");
+            gateway.VerifyNoOtherCalls();
+            Assert.Equal(8, new FileInfo(Path.Combine(root, "cache", "protected.flac")).Length);
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Fact]
     public async Task PreparationDeclinesResponsesLargerThanTheCacheBudget()
     {
         var root = CreateRoot();

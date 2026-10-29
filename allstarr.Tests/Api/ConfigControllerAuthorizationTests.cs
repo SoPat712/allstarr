@@ -152,6 +152,10 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         var playback = json.RootElement.GetProperty("playback");
         Assert.False(playback.GetProperty("prepareUpcomingSongs").GetBoolean());
         Assert.Equal(1, playback.GetProperty("prepareUpcomingCount").GetInt32());
+        Assert.IsType<OkObjectResult>(await controller.UpdateConfig(new()
+        { Updates = new() { ["PLAYBACK_PREPARE_UPCOMING_SONGS"] = "true" } }));
+        using var enabled = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await controller.GetConfig()).Value));
+        Assert.True(enabled.RootElement.GetProperty("playback").GetProperty("prepareUpcomingSongs").GetBoolean());
     }
 
     [Fact]
@@ -177,7 +181,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         var controller = CreateController(CreateHttpContextWithSession(isAdmin: false));
         var result = await controller.UpdateConfig(new ConfigUpdateRequest
         {
-            Updates = new Dictionary<string, string> { ["TEST_KEY"] = "value" }
+            Updates = new Dictionary<string, string> { ["PLAYBACK_PREPARE_UPCOMING_SONGS"] = "true" }
         });
 
         AssertForbidden(result);
