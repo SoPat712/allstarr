@@ -5436,6 +5436,48 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasKey("Id");
                     b.ToTable("problem_alert_configuration");
                 });
+
+            modelBuilder.Entity("allstarr.Core.Storage.PromotionRunRecord", b =>
+                {
+                    b.Property<Guid>("Id").ValueGeneratedNever().HasColumnType("TEXT");
+                    b.Property<Guid>("OwnerUserId").HasColumnType("TEXT");
+                    b.Property<Guid>("JobId").HasColumnType("TEXT");
+                    b.Property<string>("RequestKey").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("RequestJson").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("RootPath").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("PlanJson").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("SourceSha256").IsRequired().HasColumnType("TEXT");
+                    b.Property<long>("SourceLength").HasColumnType("INTEGER");
+                    b.Property<string>("Step").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("Outcome").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("Reason").IsRequired().HasColumnType("TEXT");
+                    b.Property<Guid?>("ManagedFileId").HasColumnType("TEXT");
+                    b.Property<Guid?>("ApprovedByUserId").HasColumnType("TEXT");
+                    b.Property<string>("ApprovalReason").HasColumnType("TEXT");
+                    b.Property<long>("CreatedAt").HasColumnType("INTEGER");
+                    b.Property<long>("Revision").IsConcurrencyToken().HasColumnType("INTEGER");
+                    b.HasKey("Id");
+                    b.HasIndex("OwnerUserId", "RequestKey").IsUnique();
+                    b.HasIndex("JobId").IsUnique();
+                    b.HasIndex("ManagedFileId");
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null).WithMany().HasForeignKey("OwnerUserId").OnDelete(DeleteBehavior.Restrict).IsRequired();
+                    b.HasOne("allstarr.Core.Storage.DurableJobRecord", null).WithMany().HasForeignKey("JobId").OnDelete(DeleteBehavior.Restrict).IsRequired();
+                    b.HasOne("allstarr.Core.ManagedFiles.ManagedFileOwnershipEntity", null).WithMany().HasForeignKey("ManagedFileId").OnDelete(DeleteBehavior.Restrict);
+                    b.ToTable("promotion_runs");
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.PromotionStepRecord", b =>
+                {
+                    b.Property<Guid>("RunId").HasColumnType("TEXT");
+                    b.Property<string>("Name").HasColumnType("TEXT");
+                    b.Property<string>("ContentSha256").IsRequired().HasColumnType("TEXT");
+                    b.Property<long>("Length").HasColumnType("INTEGER");
+                    b.Property<string>("Reason").IsRequired().HasColumnType("TEXT");
+                    b.Property<string>("ResultJson").HasColumnType("TEXT");
+                    b.HasKey("RunId", "Name");
+                    b.HasOne("allstarr.Core.Storage.PromotionRunRecord", null).WithMany().HasForeignKey("RunId").OnDelete(DeleteBehavior.Restrict).IsRequired();
+                    b.ToTable("promotion_steps");
+                });
 #pragma warning restore 612, 618
         }
     }

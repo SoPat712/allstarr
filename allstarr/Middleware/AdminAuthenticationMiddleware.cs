@@ -126,6 +126,14 @@ public class AdminAuthenticationMiddleware
         if (path.TrimEnd('/').Equals("/api/admin/preferences", StringComparison.OrdinalIgnoreCase))
             return HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method);
 
+        var promotionSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (promotionSegments.Length >= 3 && promotionSegments[2].Equals("library-promotions", StringComparison.OrdinalIgnoreCase))
+            return promotionSegments.Length == 3 && HttpMethods.IsPost(method) ||
+                promotionSegments.Length == 4 && (promotionSegments[3] == "roots" && HttpMethods.IsGet(method) ||
+                    promotionSegments[3] == "preview" && HttpMethods.IsPost(method) || Guid.TryParse(promotionSegments[3], out _) && HttpMethods.IsGet(method)) ||
+                promotionSegments.Length == 5 && Guid.TryParse(promotionSegments[3], out _) &&
+                    promotionSegments[4] is "approve" or "cancel" && HttpMethods.IsPost(method);
+
         if (HttpMethods.IsGet(method) &&
             path.Equals("/api/admin/jellyfin/playlists", StringComparison.OrdinalIgnoreCase))
         {
