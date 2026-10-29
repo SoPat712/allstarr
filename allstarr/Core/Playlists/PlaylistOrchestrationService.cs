@@ -80,7 +80,7 @@ public sealed class ProviderPlaylistSourceGateway(
             new ProviderPlaylistSnapshotRequest(new ProviderExternalResourceId(
                 link.SourceProviderId, ProviderResourceKind.Playlist, link.SourcePlaylistId)));
         if (!result.IsSuccess || result.Snapshot == null)
-            throw new PlaylistSourceUnavailableException(result.Error?.Kind.ToString() ?? "source_unavailable");
+            throw new PlaylistSourceUnavailableException(result.Error?.Kind.ToString() ?? "source_unavailable", result.Error);
         if (identities == null) return result.Snapshot;
         var identityContext = link.ProviderAccountId.HasValue ? providerContext : new ProviderExecutionContext(
             actor, providerContext.ProviderId, null, providerContext.Policy, "playlist-source-identity",
@@ -172,9 +172,10 @@ public sealed class ProviderPlaylistSourceGateway(
     }
 }
 
-public sealed class PlaylistSourceUnavailableException(string code) : Exception("The playlist source is unavailable.")
+public sealed class PlaylistSourceUnavailableException(string code, ProviderError? error = null) : Exception("The playlist source is unavailable.")
 {
     public string Code { get; } = code;
+    public ProviderError? Error { get; } = error;
 }
 
 public interface IBackendPlaylistTargetResolver
@@ -695,7 +696,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     entry.ArtistIds,
                     entry.AlbumArtists,
                     entry.Year,
-                    entry.Genre
+                    entry.Genre,
+                    entry.MusicBrainzRecordingId
                 });
                 return (Payload: payload, PayloadHash: Hash(payload));
             },
@@ -1049,7 +1051,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 artists.Length > 0 ? string.Join(", ", artists) : "Unknown",
                 root.TryGetProperty("Album", out var album) ? album.GetString() : null, null,
                 ReadDurationMilliseconds(root),
-                root.TryGetProperty("Isrc", out var isrc) ? isrc.GetString() : null, null,
+                root.TryGetProperty("Isrc", out var isrc) ? isrc.GetString() : null, TrackSnapshotMetadata.MusicBrainzRecordingId(root),
                 root.TryGetProperty("IsExplicit", out var explicitValue) && explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? explicitValue.GetBoolean() : null,
                 canonicalRecordingId);
 
@@ -1726,7 +1728,13 @@ public sealed class PlaylistMaterializationJobHandler(
                 : DurableJobCompletion.Success();
         }
         catch (PlaylistSourceUnavailableException exception)
-        { return DurableJobCompletion.Retry(exception.Code, "The playlist source is temporarily unavailable."); }
+        {
+            if (link.SourceProviderId == "listenbrainz" && exception.Error is { } error)
+                return error.Kind is ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.AccountNeedsConfiguration or ProviderErrorKind.Forbidden
+                    ? DurableJobCompletion.Failure(error.Code, error.SafeMessage)
+                    : DurableJobCompletion.Retry(error.Code, error.SafeMessage, error.RetryAfter);
+            return DurableJobCompletion.Retry(exception.Code, "The playlist source is temporarily unavailable.");
+        }
     }
 }
 

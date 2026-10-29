@@ -175,6 +175,7 @@ public sealed partial class TrackMatchCommandService
                 2,
                 snapshot.SnapshotVersion,
                 library.Libraries);
+            var metadata = ReadMetadata(snapshot.PayloadJson);
             var source = new ExternalTrackMatchSnapshot(
                 snapshot.Id.ToString("N"),
                 identity.ProviderId,
@@ -185,8 +186,8 @@ public sealed partial class TrackMatchCommandService
                 null,
                 seed.DurationMilliseconds is > 0 ? seed.DurationMilliseconds : null,
                 seed.Isrc,
-                null,
-                ReadMetadata(snapshot.PayloadJson).IsExplicit)
+                metadata.MusicBrainzRecordingId,
+                metadata.IsExplicit)
             {
                 ExactProviderAliases = FilterAutomaticCrossLinks(
                     aliases.GetValueOrDefault(identity.CanonicalRecordingId),

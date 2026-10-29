@@ -459,6 +459,7 @@ builder.Services.AddQobuzProvider();
 builder.Services.AddArtistGridProvider();
 builder.Services.AddMonochromeProvider();
 builder.Services.AddSpotifyPlaylistCapability();
+allstarr.Core.Providers.ListenBrainz.ListenBrainzPlaylistCapabilityRegistration.AddListenBrainzPlaylistCapability(builder.Services);
 builder.Services.AddAppleMusicProvider();
 builder.Services.AddBuiltInLyricsCapabilities();
 

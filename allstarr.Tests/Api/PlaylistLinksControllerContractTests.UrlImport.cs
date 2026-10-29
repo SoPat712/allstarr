@@ -4,11 +4,101 @@ using allstarr.Core.Capabilities;
 using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
+using allstarr.Core.Jobs;
+using allstarr.Core.Playlists;
+using allstarr.Core.Protocols;
+using allstarr.Core.Providers.ListenBrainz;
+using allstarr.Core.Providers.Spotify;
+using allstarr.Core.Routing;
+using allstarr.Core.Storage;
+using System.Net;
+using System.Text;
 
 namespace allstarr.Tests;
 
 public sealed partial class PlaylistLinksControllerContractTests
 {
+    [Fact]
+    public async Task FollowNewestCreationUsesTheScopedRouteAndPersistsAStableSubscription()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var user = Guid.NewGuid(); var account = Guid.NewGuid(); var now = DateTimeOffset.UtcNow;
+        var clock = Mock.Of<allstarr.Core.Operations.IPlatformClock>(item => item.UtcNow == now);
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new() { Id = user, BackendType = "jellyfin", BackendInstanceId = "backend", BackendPrincipalId = "owner",
+                DisplayName = "Owner", Enabled = true, CreatedAt = now, UpdatedAt = now, LastSeenAt = now });
+            db.ProviderAccounts.Add(new() { Id = account, ProviderId = "listenbrainz", OwnerUserId = user,
+                DisplayName = "ListenBrainz", Enabled = true, CreatedAt = now, UpdatedAt = now });
+            await db.SaveChangesAsync();
+        }
+        var adapter = new ListenBrainzPlaylistCapabilityAdapter(new HttpClient(new PlaylistImportHandler()), new PlaylistImportSecrets());
+        var registration = ListenBrainzPlaylistCapabilityAdapter.CreateRegistration(adapter);
+        var registry = new ProviderRegistry([registration]);
+        var wrapped = ObservedProviderCapabilities.Wrap<IProviderPlaylistCapability>(adapter, new allstarr.Core.Health.ProviderRuntimeHealth());
+        var router = new Mock<IProviderRouter>();
+        router.Setup(item => item.PlanAsync<IProviderPlaylistCapability>(It.IsAny<ProviderRouteRequest>()))
+            .Returns<ProviderRouteRequest>(request => Task.FromResult(new ProviderRoutePlan<IProviderPlaylistCapability>(request,
+                [new(0, registration.Descriptor, registration.Descriptor.Capabilities.Single(), wrapped,
+                    new(request.Actor, "listenbrainz", new(account, "listenbrainz", ProviderAccountScope.Personal, 0, ownerUserId: user),
+                        request.Policy, request.OperationId, request.CorrelationId, request.Deadline, request.CancellationToken), null)],
+                new(request.CorrelationId, request.Capability, "listenbrainz", account, []))));
+        PlaylistLinkInput? captured = null;
+        var persistence = new Mock<IPlaylistPersistenceService>();
+        persistence.Setup(item => item.CreateLinkAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<PlaylistLinkInput>(), It.IsAny<CancellationToken>()))
+            .Returns<ProtocolExecutionContext, PlaylistLinkInput, CancellationToken>((_, input, _) =>
+            {
+                captured = input;
+                return Task.FromResult(new PlaylistLinkRecord { Id = Guid.NewGuid(), OwnerUserId = user, ProviderAccountId = account,
+                    SourceProviderId = input.SourceProviderId, SourcePlaylistId = input.SourcePlaylistId, CreatedAt = now });
+            });
+        var options = new DurableJobOptions();
+        var queue = new DurableJobQueue(factory, options, new JobPayloadPolicy(options), clock);
+        var controller = Controller(factory, persistence.Object, clock, new(factory, clock), registry, router.Object, jobs: queue);
+        controller.HttpContext.TraceIdentifier = "playlist-import";
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            IsAdministrator = false, SessionId = "session", UserId = "owner", UserName = "Owner", BackendType = "jellyfin", BackendInstanceId = "backend",
+            JellyfinAccessToken = "fixture-token", AllstarrUserId = user, ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+        };
+        var response = Assert.IsType<CreatedAtActionResult>(await controller.Create(new(account, "listenbrainz",
+            "11111111-1111-4111-8111-111111111111", "jellyfin", "backend", "hybrid", "reconcile", FollowNewest: true), default));
+        Assert.Equal("createdfor:weekly-jams", captured!.SourcePlaylistId);
+        Assert.True(JsonSerializer.SerializeToElement(response.Value).GetProperty("followNewest").GetBoolean());
+        Assert.Equal(account, captured.ProviderAccountId);
+    }
+
+    private sealed class PlaylistImportSecrets : IProviderAccountSecretAccessor
+    {
+        public Task<T> UseAsync<T>(ProviderAccountContext account, Func<ReadOnlyMemory<byte>, Task<T>> operation, CancellationToken cancellationToken) =>
+            operation(Encoding.UTF8.GetBytes("{\"token\":\"fixture-token\"}"));
+    }
+    private sealed class PlaylistImportHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(request.RequestUri!.AbsolutePath.EndsWith("validate-token")
+                ? "{\"valid\":true,\"user_name\":\"listener\"}" : File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "ListenBrainz", "playlist.json"))) });
+    }
+
+    [Theory]
+    [InlineData("spotify", "linked", true)]
+    [InlineData("listenbrainz", "oneTime", true)]
+    [InlineData("listenbrainz", "linked", false)]
+    public async Task FollowNewestRequiresALinkedListenBrainzAccount(string provider, string importMode, bool account)
+    {
+        var controller = Controller();
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            IsAdministrator = false, SessionId = "session", UserId = "owner", UserName = "Owner", JellyfinAccessToken = "fixture-token",
+            AllstarrUserId = Guid.NewGuid(), ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+        };
+        var response = Assert.IsType<BadRequestObjectResult>(await controller.Create(new(
+            account ? Guid.NewGuid() : null, provider, "11111111-1111-4111-8111-111111111111", "jellyfin", "backend",
+            "hybrid", "reconcile", ImportMode: importMode, FollowNewest: true), default));
+        Assert.Contains("Follow newest", JsonSerializer.Serialize(response.Value));
+    }
+
     [Fact]
     public async Task ReadOnlyPlaylistSourcesRejectDiscoveryWithoutInvokingTheReader()
     {

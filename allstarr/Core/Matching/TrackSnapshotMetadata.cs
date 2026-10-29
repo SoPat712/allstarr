@@ -4,6 +4,10 @@ namespace allstarr.Core.Matching;
 
 public static class TrackSnapshotMetadata
 {
+    public static string? MusicBrainzRecordingId(JsonElement root) =>
+        Guid.TryParse(Text(root, "musicBrainzRecordingId", "MusicBrainzRecordingId"), out var id) && id != Guid.Empty
+            ? id.ToString("D") : null;
+
     public static bool HasDisplayLabels(string payload)
     {
         try

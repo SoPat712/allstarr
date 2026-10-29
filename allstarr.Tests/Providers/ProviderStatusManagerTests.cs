@@ -20,6 +20,19 @@ namespace allstarr.Tests;
 public sealed partial class ProviderStatusManagerTests
 {
     [Fact]
+    public void ListenBrainzPlaylistStatusAllowsPublicReadsAndUsesExistingTokenConfiguration()
+    {
+        var manager = CreateManager(new Dictionary<string, string?>());
+        var publicStatus = manager.GetAccountFreeStatus("listenbrainz", "playlist");
+        Assert.True(publicStatus.IsSupported);
+        Assert.True(publicStatus.CanAttempt);
+        var account = Guid.NewGuid();
+        Assert.False(manager.GetManagedStatus("listenbrainz", "playlist", account, new Dictionary<string, string>()).CanAttempt);
+        Assert.True(manager.GetManagedStatus("listenbrainz", "playlist", account,
+            new Dictionary<string, string> { ["token"] = "fixture-token" }).CanAttempt);
+    }
+
+    [Fact]
     public async Task SpicyUpstreamAccessRestrictionInvalidatesPriorRecentHealthyEvidence()
     {
         using var handler = new SpicyLyricsTestHandler(SpicyLyricsTestData.Payload("static"));

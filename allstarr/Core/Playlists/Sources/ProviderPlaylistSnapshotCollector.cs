@@ -35,6 +35,8 @@ public sealed record CollectedPlaylistSourceEntry(
     public IReadOnlyList<allstarr.Models.Domain.Artist> AlbumArtists { get; init; } = [];
     public int? Year { get; init; }
     public string? Genre { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? MusicBrainzRecordingId { get; init; }
 }
 
 public sealed record CollectedPlaylistSourceSnapshot(
@@ -224,7 +226,9 @@ public sealed class ProviderPlaylistSnapshotCollector
                 Name = artist.Name
             }).ToArray() ?? [],
             Year = metadata?.Year,
-            Genre = metadata?.Genre
+            Genre = metadata?.Genre,
+            MusicBrainzRecordingId = metadata != null && metadata.ProviderIds.TryGetValue("musicbrainzrecording", out var mbid) &&
+                Guid.TryParse(mbid, out var recording) && recording != Guid.Empty ? recording.ToString("D") : null
         };
     }
 

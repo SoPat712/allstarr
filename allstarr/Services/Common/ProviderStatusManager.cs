@@ -73,6 +73,7 @@ public class ProviderStatusManager
         ("spicylyrics", ProviderCapabilities.Lyrics, ProviderAccountRequirement.Required),
         ("lastfm", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
         ("listenbrainz", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
+        ("listenbrainz", ProviderCapabilities.Playlist, ProviderAccountRequirement.Optional),
         ("multi-scrobbler", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
         ("koito", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
         ("audiomuse-ai", ProviderCapabilities.Intelligence, ProviderAccountRequirement.Required)
@@ -672,6 +673,8 @@ public class ProviderStatusManager
 
         return (provider, capability) switch
         {
+            ("listenbrainz", ProviderCapabilities.Playlist) =>
+                (ProviderConfigurationState.NotRequired, null),
             ("apple-musickit", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) =>
                 (ProviderConfigurationState.NotRequired, null),
             ("apple-musickit", ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) =>
@@ -758,6 +761,8 @@ public class ProviderStatusManager
                 IsConfiguredValue(SecretValue(secrets, "apikey")) &&
                 IsConfiguredValue(SecretValue(secrets, "sharedsecret")) &&
                 IsConfiguredValue(SecretValue(secrets, "sessionkey")),
+            ("listenbrainz", ProviderCapabilities.Playlist) =>
+                IsConfiguredValue(SecretValue(secrets, "token")) && HasListeningEndpoint(baseline.Provider, secrets),
             ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) =>
                 IsConfiguredValue(SecretValue(secrets, "token", "usertoken")) && HasListeningEndpoint(baseline.Provider, secrets),
             ("audiomuse-ai", ProviderCapabilities.Intelligence) =>
@@ -849,6 +854,7 @@ public class ProviderStatusManager
             ("lrcred" or "unison" or "paxsenix" or "genius" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
             ("spicylyrics", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
+            ("listenbrainz", ProviderCapabilities.Playlist) => true,
             ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => true,
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => true,
             _ => false
