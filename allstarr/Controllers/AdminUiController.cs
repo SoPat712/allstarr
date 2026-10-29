@@ -1781,11 +1781,9 @@ public class AdminUiController : ControllerBase
             Field("PLAYBACK_START_PREFERENCE", "Playback start", "select", "playback.startPreference",
                 ["FastStart", "Balanced", "BestQuality"],
                 helpText: "Default for listeners. Fast start prefers the quickest lossless source; Balanced waits for better quality when it usually starts within three seconds; Best quality always prefers the highest quality."),
-            Field("PLAYBACK_PREPARE_UPCOMING_SONGS", "Prepare upcoming songs", "toggle",
+            Field("PLAYBACK_PREPARE_UPCOMING_SONGS", "Prepare the next song early", "toggle",
                 "playback.prepareUpcomingSongs",
-                helpText: "Off by default. Turn on only if your player waits until a song ends before requesting the next one."),
-            Field("PLAYBACK_PREPARE_UPCOMING_COUNT", "Upcoming songs to prepare", "number",
-                "playback.prepareUpcomingCount", helpText: "Number of songs to prepare when enabled. Default: 1.", min: 1, max: 2),
+                helpText: "Off by default. After 30 seconds of playback, prepare the next Apple song reported by your player. Uses audio cache space."),
             Field(
                 "PLAYBACK_LASTFM_SIMILAR_ENABLED",
                 "Last.fm similar-song fallback",

@@ -1,4 +1,5 @@
 using allstarr.Core.Protocols.Subsonic;
+using allstarr.Core.Playback;
 using allstarr.Services.Subsonic;
 using Microsoft.AspNetCore.Mvc;
 
@@ -96,9 +97,8 @@ public partial class SubsonicController
             request.Ids.Select(id => entries[id]).ToArray(), request.CurrentIndex, request.Position,
             context.VerifiedBackendPrincipalId, DateTimeOffset.UtcNow, context.Client.ClientId ?? "");
         await _playQueues.SaveAsync(context, saved, HttpContext.RequestAborted);
-        _upcomingSongs?.RememberQueue(context,
-            saved.CurrentIndex is { } index ? saved.Entries[index].Id : null,
-            saved.CurrentIndex is { } current ? saved.Entries.Skip(current + 1).Take(2).Select(entry => entry.Id).ToArray() : []);
+        var upcoming = UpcomingPlaybackQueue.ParseSubsonic(parameters, byIndex);
+        _upcomingSongs?.RememberQueue(context, upcoming.Current, upcoming.Next);
         return _responseBuilder.CreateOkResponse(format);
     }
 

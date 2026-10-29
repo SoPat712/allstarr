@@ -47,7 +47,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Empty(preparation.Invocations);
 
         var playbackUrl = SubsonicPlaybackUrl(report ? "reportPlayback" : "scrobble", format, "Feishin");
-        var parameters = report ? $"&mediaId={QueueSongA}&state=starting&positionMs=11000&ignoreScrobble=true"
+        var parameters = report ? $"&mediaId={QueueSongA}&state=starting&positionMs=0&ignoreScrobble=true"
             : $"&id={QueueSongA}&submission=false";
         AssertQueueOk(await client.GetStringAsync(playbackUrl + parameters), format);
         var signal = Assert.Single(recorded);
@@ -60,7 +60,12 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Contains("Song 42", nowPlaying, StringComparison.Ordinal);
         Assert.Contains(SubsonicNativeNowPlayingEntry(format), nowPlaying, StringComparison.Ordinal);
 
-        clock.Now = clock.Now.AddSeconds(11);
+        clock.Now = clock.Now.AddSeconds(29);
+        upcoming.ProcessPending();
+        Assert.Empty(preparation.Invocations);
+        clock.Now = clock.Now.AddSeconds(1);
+        if (report) AssertQueueOk(await client.GetStringAsync(playbackUrl +
+            $"&mediaId={QueueSongA}&state=playing&positionMs=30000&ignoreScrobble=true"), format);
         upcoming.ProcessPending();
         var context = await prepared.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.True(context.IsPreparation);

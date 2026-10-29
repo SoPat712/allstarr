@@ -66,7 +66,8 @@ public sealed partial class ManagedTrackCacheService
             ? transfer.Work : Task.CompletedTask;
 
     private sealed record AudioCacheIdentity(string Device, string File, long Length, string Sha256, DateTimeOffset LastUsed,
-        string Representation = "Playback", long? SourceAccountRevision = null, double? DurationSeconds = null);
+        string Representation = "Playback", long? SourceAccountRevision = null, double? DurationSeconds = null,
+        bool PreparedUnplayed = false);
     private sealed class AudioAllocation(string path, FileStream? producer, long reserved, long admissionLimit)
     {
         public string Path = path;
@@ -145,7 +146,7 @@ public sealed partial class ManagedTrackCacheService
         }
     }
 
-    private async Task<Stream> OpenPinnedAudioAsync(string path, CancellationToken token)
+    private async Task<Stream> OpenPinnedAudioAsync(string path, CancellationToken token, bool preparation)
     {
         if (!IsOwnedCachePath(path)) return File.OpenRead(path);
         await audioBudgetGate.WaitAsync(token);
@@ -162,7 +163,7 @@ public sealed partial class ManagedTrackCacheService
                 if (!audioAllocations.Contains(entry)) audioAllocations.Add(entry);
                 entry.Readers++;
             }
-            try { await TouchAudioAsync(path, identity, token); }
+            try { if (!preparation) await TouchAudioAsync(path, identity, token); }
             catch { AudioClosed(entry); throw; }
             var result = new PinnedAudioStream(file, () => AudioClosed(entry));
             file = null;
@@ -176,18 +177,18 @@ public sealed partial class ManagedTrackCacheService
         if (cacheMappings == null)
         {
             if (publishedIdentities.TryGetValue(path, out var known) && Matches(known, identity))
-                publishedIdentities[path] = known with { LastUsed = clock.GetUtcNow() };
+                publishedIdentities[path] = known with { LastUsed = clock.GetUtcNow(), PreparedUnplayed = false };
             return;
         }
         var rows = (await cacheMappings.ListCacheMappingsAsync(token)).Where(item => item.LocalPath == path).ToArray();
         if (rows.Length != 1 || ReadIdentity(rows[0].CacheIdentityJson) is not { } saved || !Matches(saved, identity)) return;
-        var updated = saved with { LastUsed = clock.GetUtcNow() };
+        var updated = saved with { LastUsed = clock.GetUtcNow(), PreparedUnplayed = false };
         if (await cacheMappings.TouchCacheAsync(rows[0], JsonSerializer.Serialize(updated), token))
             publishedIdentities[path] = updated;
     }
 
     private async Task MarkAudioPublishedAsync(AudioAllocation entry, DownloadedSongMappingScope scope,
-        string provider, string track, CancellationToken token)
+        string provider, string track, bool preparedUnplayed, CancellationToken token)
     {
         await using var stream = File.OpenRead(entry.Path);
         var identity = Identity(stream);
@@ -196,7 +197,7 @@ public sealed partial class ManagedTrackCacheService
         var hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, token));
         if (hash != entry.ContentHash || !Same(identity, Identity(entry.Path)) || !Same(identity, Identity(entry.Anchor))) return;
         var stamp = new AudioCacheIdentity(identity.DeviceId, identity.FileId, stream.Length, hash, clock.GetUtcNow(),
-            scope.Representation.ToString(), scope.SourceAccountRevision, entry.VerifiedDuration);
+            scope.Representation.ToString(), scope.SourceAccountRevision, entry.VerifiedDuration, preparedUnplayed);
         if (cacheMappings != null && await cacheMappings.MarkCacheOwnedAsync(scope, provider, track, entry.Path,
                 JsonSerializer.Serialize(stamp), token) == null) return;
         lock (audioAllocationGate) publishedIdentities[entry.Path] = stamp;
@@ -210,7 +211,20 @@ public sealed partial class ManagedTrackCacheService
         finally { audioBudgetGate.Release(); }
     }
 
-    private async Task MakeAudioSpaceAsync(long requested, long maximum, CancellationToken token, DateTimeOffset? expiredBefore = null)
+    internal async Task<bool> HasPreparationSpaceAsync(CancellationToken token)
+    {
+        await audioBudgetGate.WaitAsync(token);
+        try
+        {
+            await MakeAudioSpaceAsync(1, AudioMaximum, token, checkOnly: true);
+            return true;
+        }
+        catch (Exception error) when (error is LocalCapacityException or IOException or UnauthorizedAccessException) { return false; }
+        finally { audioBudgetGate.Release(); }
+    }
+
+    private async Task MakeAudioSpaceAsync(long requested, long maximum, CancellationToken token,
+        DateTimeOffset? expiredBefore = null, bool checkOnly = false)
     {
         if (requested > maximum) throw new LocalCapacityException("audio-cache");
         IReadOnlyList<DownloadedSongMappingEntity> rows = cacheMappings == null ? [] : await cacheMappings.ListCacheMappingsAsync(token);
@@ -241,9 +255,19 @@ public sealed partial class ManagedTrackCacheService
                 SafeCachePath(path) && !allocations.Any(item => item.Path == path))
                 candidates.Add((path, stamp, mappings.SingleOrDefault()));
         }
-        foreach (var candidate in candidates.OrderBy(item => item.Identity.LastUsed).ThenBy(item => item.Path, StringComparer.Ordinal))
+        if (checkOnly)
         {
-            if (expiredBefore is { } cutoff ? candidate.Identity.LastUsed >= cutoff : used <= maximum - requested) break;
+            if (used > maximum - requested) throw new LocalCapacityException("audio-cache");
+            return;
+        }
+        foreach (var candidate in candidates.OrderByDescending(item => item.Identity.PreparedUnplayed)
+                     .ThenBy(item => item.Identity.LastUsed).ThenBy(item => item.Path, StringComparer.Ordinal))
+        {
+            if (expiredBefore is { } cutoff)
+            {
+                if (candidate.Identity.LastUsed >= cutoff) continue;
+            }
+            else if (used <= maximum - requested) break;
             bool Remove()
             {
                 var current = Identity(candidate.Path);

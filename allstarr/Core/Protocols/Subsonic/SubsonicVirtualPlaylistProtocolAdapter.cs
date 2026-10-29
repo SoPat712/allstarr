@@ -4,7 +4,6 @@ using System.Text.Json.Nodes;
 using System.Xml;
 using System.Xml.Linq;
 using allstarr.Core.Matching;
-using allstarr.Core.Playback;
 using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Storage;
@@ -81,7 +80,6 @@ public sealed class SubsonicPlaylistMutationResolver(
 public sealed class SubsonicVirtualPlaylistProtocolAdapter(
     IPlaylistVirtualizationService playlists,
     ISubsonicPlaylistMutationResolver mutationResolver,
-    UpcomingSongPreparation? upcomingSongs = null,
     IProtocolProviderGateway? providerGateway = null,
     CleanOnlyProtocolContent? cleanContent = null,
     IHttpContextAccessor? httpContexts = null)
@@ -132,7 +130,6 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         if (playlist == null) return null;
         playlist = await ProjectAsync(playlist, context);
         var tracks = playlist.Tracks.ToArray();
-        upcomingSongs?.RememberPlaylist(context, tracks.Select(track => track.BackendItemId));
         if (format.Equals("json", StringComparison.OrdinalIgnoreCase))
         {
             var result = new Dictionary<string, object?>

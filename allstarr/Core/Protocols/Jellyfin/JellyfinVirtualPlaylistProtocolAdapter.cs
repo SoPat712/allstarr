@@ -1,7 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Matching;
-using allstarr.Core.Playback;
 using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Storage;
@@ -81,7 +80,6 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     ILogger<JellyfinVirtualPlaylistProtocolAdapter>? logger = null,
     IProtocolProviderGateway? providerGateway = null,
     IHttpContextAccessor? httpContexts = null,
-    UpcomingSongPreparation? upcomingSongs = null,
     WritablePlaylistMembership? writablePlaylists = null,
     CleanOnlyProtocolContent? cleanContent = null)
 {
@@ -302,7 +300,6 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         IHeaderDictionary? clientHeaders,
         IQueryCollection? clientQuery)
     {
-        upcomingSongs?.RememberPlaylist(context, playlist.Tracks.Select(track => track.BackendItemId));
         clientQuery ??= httpContexts?.HttpContext?.Request.Query;
         var startIndex = QueryInt(clientQuery, "StartIndex", 0);
         var limit = QueryInt(clientQuery, "Limit", int.MaxValue);

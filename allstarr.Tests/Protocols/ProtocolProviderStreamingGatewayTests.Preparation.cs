@@ -17,6 +17,30 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
+    [Fact]
+    public async Task PreparationRespectsAPausedAppleSourceWithoutOpeningItsLease()
+    {
+        var apple = Streaming("apple-musickit", (_, _) => Task.FromResult(AudioResponse()));
+        var registry = Registry(apple.Object);
+        var health = new Mock<IProviderRouteHealthSource>(MockBehavior.Strict);
+        health.Setup(source => source.Get("apple-musickit", null, ProviderCapabilityKind.Streaming))
+            .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Healthy, true));
+        var router = new ProviderRouter(registry, Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict), health.Object,
+            Mock.Of<IProviderRouteSidecarSource>(MockBehavior.Strict), Mock.Of<ITrackIdentityService>(MockBehavior.Strict));
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["Library:DownloadPath"] = root }).Build();
+        await using var cache = new ManagedTrackCacheService(config, Options.Create(new SubsonicSettings { StorageMode = StorageMode.Cache }),
+            Mock.Of<ILocalLibraryService>(), NullLogger<ManagedTrackCacheService>.Instance, audioVerifier: FixtureAudioVerifier.Instance);
+        var gateway = new ProtocolProviderGateway(router, registry, new HttpClientFactory(), config,
+            managedTrackCache: cache, audioVerifier: FixtureAudioVerifier.Instance);
+        await Assert.ThrowsAsync<ProtocolProviderUnavailableException>(() => gateway.OpenStreamAsync(
+            Context() with { IsPreparation = true }, "apple-musickit", "next", ProviderAudioQuality.Any, null));
+        apple.Verify(source => source.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
+        Assert.False(Directory.Exists(root));
+        health.VerifyAll();
+    }
+
     [Theory]
     [InlineData("apple-musickit")]
     [InlineData("apple-download")]
