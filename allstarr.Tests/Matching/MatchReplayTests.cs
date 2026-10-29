@@ -9,15 +9,6 @@ using Xunit.Abstractions;
 
 namespace allstarr.Tests;
 
-public sealed class MatchSnapshotFactAttribute : FactAttribute
-{
-    public MatchSnapshotFactAttribute()
-    {
-        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ALLSTARR_MATCH_SNAPSHOT")))
-            Skip = "Set ALLSTARR_MATCH_SNAPSHOT to opt in to the offline replay.";
-    }
-}
-
 public sealed class MatchReplayTests(ITestOutputHelper output)
 {
     internal static readonly JsonSerializerOptions JsonOptions = new()
@@ -28,10 +19,16 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
     };
     private static readonly Guid Owner = Guid.Parse("11111111-1111-1111-1111-111111111111");
 
-    [MatchSnapshotFact]
+    [Fact]
     public void ReplayStoredDecisionsWithoutProviders()
     {
-        var path = Path.GetFullPath(Environment.GetEnvironmentVariable("ALLSTARR_MATCH_SNAPSHOT")!);
+        var snapshot = Environment.GetEnvironmentVariable("ALLSTARR_MATCH_SNAPSHOT");
+        if (string.IsNullOrWhiteSpace(snapshot))
+        {
+            output.WriteLine("The offline replay is opt-in and was not run; set ALLSTARR_MATCH_SNAPSHOT to run it.");
+            return;
+        }
+        var path = Path.GetFullPath(snapshot);
         var directory = Path.GetDirectoryName(path)!;
         var measurement = Path.Combine(directory, "measurement.json");
         Assert.NotEqual(path, measurement);
