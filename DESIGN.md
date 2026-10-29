@@ -35,7 +35,7 @@ Use Google Material 3 as the interaction and visual grammar, adapted to Allstarr
 - Peer dashboard cards use equal columns unless the task hierarchy documents a deliberate primary surface. A single grid item expands to the available track instead of retaining an empty half-column.
 - Regular controls use the 44px `--control-md` baseline. Labels, controls, helper text, and footer actions align within a shared field grid.
 - The compact bottom navigation reserves `--mobile-nav-height` on the scrolling workspace so terminal content and actions remain fully visible above it.
-- The compact bottom navigation keeps Home, Library, Activity, and **More** in equal-width tracks derived from its contents. Integrations, Settings, appearance, and session controls live in the More sheet instead of crowding the primary bar.
+- The compact bottom navigation keeps Home, Library, Insights, Activity, and **More** in equal-width tracks derived from its contents. Integrations, Settings, appearance, and session controls live in the More sheet instead of crowding the primary bar.
 - Only one primary navigation is visible at a time: the sidebar above 760px, or bottom navigation at 760px and below. Desktop sidebar styles must not target the mobile navigation. The More sheet closes when leaving the compact layout and restores focus to a visible navigation control.
 - The desktop sidebar stays fixed to the viewport while the page scrolls. In short windows, its destination list scrolls independently so the logo, collapse control and profile remain reachable.
 - Data surfaces grow with sparse content and cap their height only when a real list needs internal scrolling. Empty viewport-filling panels are not used as decoration.
@@ -44,7 +44,7 @@ Use Google Material 3 as the interaction and visual grammar, adapted to Allstarr
 
 - **Home:** current playback and listeners first; source route, scrobble delivery, health, and work follow.
 - **Library:** playlists, mappings, cached files, and kept files share one task vocabulary and aligned tables.
-- **Intelligence (deferred):** excluded from first-release navigation. Existing deep links remain usable during development; hiding navigation does not disable backend work or remove data. Its retained workspace owns Overview, History, Import, Discover, Playlists, and Automation.
+- **Intelligence:** owns For you, Sounds, New releases, Your taste, and Your stats. Listening-history import belongs under Your stats; the optional AudioMuse connection belongs under Sounds. The former workspace remains restricted to the explicit development composition.
 - **Integrations:** Services owns provider configuration and diagnostics. Extensions owns package lifecycle. Accounts and Routing explain their scope in plain language.
 - **Activity:** outcome, actor, target, duration, and time are primary; technical payloads are progressive detail.
 - **Settings:** deployment and operator controls only. User-scoped controls stay near the data they affect.

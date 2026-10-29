@@ -56,7 +56,7 @@ Storage initialization removes retired source settings, lyric selections, diagno
 | --- | --- |
 | `MusicSearchService` | Integrated search: backend and provider rows are fetched together, provider songs the listener already owns are replaced by the native copy, and each kind is ranked by relevance with native rows winning ties. Jellyfin search hints rank all kinds together before applying their combined limit, with native rows winning relevance ties. Each protocol supplies its backend half through an `INativeMusicSearch` adapter under `Core/Protocols`, which returns native rows exactly as the backend sent them. A failed backend search contributes no rows instead of failing the search. |
 | `ProviderStreamOpener` | Opens a provider song once through the routed source, wraps the managed cache, and returns a range- and HEAD-aware response. |
-| `MusicMixService` | Similar songs and instant mixes seeded from provider songs, albums, or artists. Song seeds use a provider's similar-tracks capability first when it offers one (Deezer uses the seed artist's radio), then optional Last.fm and ListenBrainz suggestions, then the seed artist's albums and songs. Order is stable for the same seed. |
+| `MusicMixService` | Similar songs and instant mixes seeded from provider songs, albums, or artists. Song seeds use a provider's similar-tracks capability first when it offers one (Deezer uses the seed artist's radio), then optional Last.fm and ListenBrainz suggestions, then the seed artist's albums and songs. Personal taste can softly reorder eligible results; Never exclusions remove them. Native backend mixes retain the backend response. |
 | `MusicCatalogMerge`, `MusicTopSongs` | Provider albums missing from a library artist, provider songs missing from a library album, and provider songs that extend an artist's top songs. |
 
 Each protocol dialect keeps what is specific to it: authentication, request parsing, paging and per-type result windows, native backend transport and relays, response rendering, and how failures are described to its clients. Native playback and mix seeds keep the backend's own answer. Provider mixes reuse search's known-recording lookup to prefer accessible native songs with their complete payloads; unreadable native copies retain the provider row. Verified aliases collapse. Ordinary release copies also share one row when title, artist, version, known duration and explicitness agree; different ISRCs additionally require the same album. Provider alternatives with missing album or duration attach only to a compatible known recording and cannot connect distinct known versions. Saved copies keep the listener’s existing item ID, preferring a favorite. Live, remix, special editions and ArtistGrid versions remain distinct, and browsing does not merge stored recording identities. Unfiltered library artist and album pages use the shared catalog merger to append missing provider children after owned rows; Jellyfin album-parent interception uses a short-lived type hint from prior authenticated reads, scoped to the backend and principal, so ordinary folder and playlist browses do not cause metadata probes; native fields remain intact, and an empty or failed provider lookup preserves the original response bytes.
@@ -80,7 +80,13 @@ Source alternate titles remain bounded search evidence on typed metadata and ser
 | Provider accounts and encrypted secrets | `allstarr/Core/Identity`, `allstarr/Core/Secrets` |
 | Extension control plane and SDK | `allstarr/Providers/Extensions` |
 | Playback and listening signals | `allstarr/Core/Playback` |
-| Intelligence and generated sets | `allstarr/Shelved/Intelligence` |
+| Private listening-history imports | `allstarr/Core/ListeningHistory` |
+| Listening stats | `allstarr/Core/Playback` |
+| Private taste and ranking | `allstarr/Core/Music` |
+| Followed artists and release inbox | `allstarr/Core/NewReleases` |
+| Optional AudioMuse connection and previews | `allstarr/Core/AudioMuse` |
+| Shared recording and artist tags | `allstarr/Core/Enrichment` |
+| Development-only generated sets and automation | `allstarr/Shelved/Intelligence` |
 | Managed media lifecycle | `allstarr/Core/ManagedFiles`, `allstarr/Core/Downloads` |
 | Admin and protocol HTTP surfaces | `allstarr/Controllers` |
 | WebUI source and static assets | `webui/`, `allstarr/wwwroot` |

@@ -17,7 +17,7 @@ The dashboard controls how Allstarr connects sources, matches music, projects pl
 6. Open **Integrations → Routing** to choose the fallback order for each capability.
 7. Test ordinary local playback in a music client before adding provider playlists or external playback.
 
-Administrators see deployment and shared-account controls. Listeners can open Home, Playlists, Mappings, Services, their Accounts, Activity, Getting started, and Listening preferences. Settings, Extensions, Routing, Cached, and Kept require administrator access, including when opened through a direct link.
+Administrators see deployment and shared-account controls. Listeners can open Home, Playlists, Mappings, Services, their Accounts, Intelligence, Activity, Getting started, Listening preferences, and personal Alerts. Deployment settings, Extensions, Routing, Cached, and Kept require administrator access, including when opened through a direct link.
 
 For an existing installation, **Settings → Setup → Review previous settings** can preview the mounted v2 environment or an uploaded copy. Nothing is imported until you confirm the preview. Existing saved settings win. Accounts are checked before enablement; unavailable accounts need attention in Sources. Original kept and download files are verified in place by a durable job. Valkey-only favorites and manual fixes are not imported. SquidWTF has no automatic replacement.
 
@@ -66,20 +66,17 @@ Progress moves between fresh music-app reports and shows **Paused** when the app
 - **Cached** shows disposable provider audio that may be evicted by cache policy.
 - **Kept** shows explicitly retained audio and related sidecars. Kept media is not deleted by cache cleanup.
 
-### Intelligence (deferred)
+### Intelligence
 
-Intelligence is not in the desktop navigation, mobile bar, or More sheet while the first release is being prepared. Administrators can open `#/intelligence` only in the explicit development composition. This navigation change does not delete history, disable existing opt-in jobs, or disconnect accounts. The following describes the retained workspace, not a first-release promise.
+Intelligence is private to your signed-in backend account. On a phone, open **Insights** in the bottom navigation.
 
-- **Overview** shows live playback, listening totals, and an interactive daily or monthly activity map for the selected library. Long and all-time ranges add an activity-year selector, default to the busiest imported year, and separate imported history from direct playback in each bucket.
-- **History** searches, filters, corrects, exports, or removes retained listening events.
-- **Import** previews listening-history exports before adding anything.
-- **Discover** explains each recommendation and accepts direct like or dismissal feedback.
-- **Playlists** keeps recommendation sets temporary until a permitted user injects one into Jellyfin or Subsonic. Pending materialization updates live.
-- **Automation** controls automatic history, retention, recommendation signals, schedules, listening-app keys, and the built-in AudioMuse-AI connection.
+- **For you** connects personal Last.fm and ListenBrainz recommendations to the existing playlist import flow. Preview the source before choosing a destination or keeping it linked.
+- **Sounds** uses an optional existing AudioMuse installation to find analyzed library songs similar to a selected song, or preview Calm and Workout mixes. Save a preview as an ordinary private Jellyfin playlist. An administrator connects AudioMuse here; Sounds appears for other listeners when the connection is ready. Missing analysis is not filled with external songs. See [AudioMuse setup and limits](operations/audiomuse.md).
+- **New releases** follows artists and shows a personal release inbox. You can dismiss a release, review hidden releases, or unfollow an artist. Coverage explains which providers have checked the artist; an unavailable source does not prove there are no releases. A generated release playlist is not available.
+- **Your taste** shows recent **Lately** and longer-term **Usually** preferences, with the leading tags and artists. Add a temporary or lasting nudge, choose Never to exclude a tag or artist, remove a nudge, pause learning, or reset learned preferences. Other nudges softly reorder radio and Allstarr similar-song results. Resetting learned preferences does not delete imported history.
+- **Your stats** shows qualified retained plays, top songs and artists, active days, and a year recap. Listening time uses song lengths and is an estimate; unknown lengths are identified. Dates follow the server timezone. Imported history has separate totals and does not fill observed-play charts. Import and remove history here.
 
-AudioMuse-AI is not an extension. Connect a self-hosted AudioMuse-AI server directly in **Intelligence → Automation**. Integrations still reports its health because it participates in the shared capability system.
-
-When the development Intelligence workspace requests background access, Subsonic listeners reauthenticate as themselves using the same playlist-management consent described below. This also starts library indexing.
+Shared song tags combine available provider genres with bounded background MusicBrainz and Last.fm enrichment. Tags are household metadata; listening profiles and controls remain personal. AudioMuse mood, energy, and tempo are not yet collected into these tags.
 
 ### Integrations
 
@@ -210,19 +207,13 @@ ArtistGrid uses the tracker's file date for the song date and keeps leak dates, 
 
 ## Import listening history
 
-Open **Intelligence → Import** and choose or drop one or more supported files. Allstarr accepts:
+Open **Intelligence → Your stats → Listening history from other services → Import history** and choose one export file. Allstarr accepts Spotify Extended Streaming History audio JSON or ZIP exports, and Last.fm, ListenBrainz, Koito, and Maloja JSON, JSONL, or ZIP exports. CSV is not supported. Request Spotify's extended history from its privacy page; ordinary account data may omit the audio history needed here.
 
-- Spotify Extended Streaming History audio JSON files;
-- Last.fm, ListenBrainz, Koito, and Maloja JSON, JSONL, or ZIP exports.
+The default file limit is 500 MiB, or a lower administrator-configured limit. Spotify ZIP processing reads the audio history files in order and ignores podcasts and audiobooks. Expanded ZIP content is limited to 1 GiB and 1,024 entries. Review the source, dates, plays, skips, unknown rows, duplicates, and retention exclusions before confirming. The import then runs as durable work with visible progress. Deleting an import cancels active work and removes its retained events and owned upload.
 
-Each file is limited to 64 MB and is previewed before import. Video-only Spotify history is rejected. Review completed, skipped, duplicate, and outside-retention counts before applying the preview.
+Imports never scrobble, download music, or create hearts. **Your taste → Use imported history for my taste** is on by default and lets retained imported listens contribute only to **Usually**. They do not affect Lately or recent-play thresholds. Turning it off, pausing taste, deleting the import, or removing events through retention removes their influence on the next taste calculation.
 
-Retention and reporting range are separate:
-
-- **Retention** controls how long saved listening events remain. `Unlimited` keeps them until you remove them.
-- **Overview/History range** controls what the dashboard reports and defaults to all time.
-
-Imports stay private inside Allstarr unless a separate listening-app or scrobbling action is enabled. A completed receipt records what happened at import time; it cannot recreate events that were later removed. Re-upload the original export if the receipt says zero listens are currently retained.
+Retention controls how long events remain; a reporting period only changes what you see. A completed import receipt cannot recreate events later removed. Re-upload the original export if you need to import those events again.
 
 ## Add and review a provider playlist
 
@@ -231,6 +222,8 @@ Imports stay private inside Allstarr unless a separate listening-app or scrobbli
 3. Choose **New playlist** to create a destination once, or **Existing playlist** to select an exact backend playlist. Future updates use that destination; Allstarr does not adopt a playlist just because its name matches. Changing destinations leaves the old playlist's songs in place and starts ownership tracking separately for the new destination.
 4. Turn on **Keep downloaded copies** to queue permanent downloads of resolved external songs using your authorized accounts. It defaults to off; local songs are already permanent. An unavailable or unresolved song is reported in Activity without rolling back the import.
 5. Open **Mappings** for ambiguous or unresolved tracks. Accept only a candidate that represents the same recording; use interactive search when automatic candidates are wrong.
+
+ListenBrainz public playlists also accept a playlist link or ID without an account. A personal ListenBrainz account can supply generated playlists; **Follow newest** keeps a linked generated playlist on its newest edition. Last.fm imports require your Personal account and support Loved tracks, Top tracks for the offered periods, and similar tracks. Shared Last.fm accounts cannot supply a personal library. These sources use the same destination, retention, and sync controls described above.
 
 In playlist details, **Actions → Export missing songs as CSV/JSON** downloads the current source songs with no playable local or external route. Source order and duplicate songs are preserved, with positions starting at 1. Exports include title, artists, album, ISRC, duration, match state, and the source track ID when known. Account and backend identifiers are excluded.
 
@@ -308,9 +301,7 @@ Connect Last.fm, ListenBrainz, multi-scrobbler or Koito under **Integrations →
 
 Scrobbling works independently of optional listening-history retention. **Integrations → Accounts → Scrobble delivery** keeps retries, expired credentials and uncertain sends visible after playback stops. Reconnect the saved account before retrying. If the destination may already have accepted a listen, check its history and choose **Already in history** or explicitly retry the missing listen.
 
-Automatic history is opt-in in the development-only Intelligence workspace. Enable it under **Intelligence → Automation** for your backend account. Completed protocol plays then appear in **Overview** without a manual refresh. Listening apps can receive a private key there and may optionally forward completed listens to connected Last.fm or ListenBrainz accounts.
-
-Recommendation learning stays within your user and backend account. Local recommendations include only music libraries you can access. Plays, skips, favorites, playlist membership, and direct Discover feedback can influence later runs only when their signal types are enabled. A favorite raises the track's preference signal; removing the favorite cancels that contribution. Generated sets remain ephemeral in Intelligence until **Create in Jellyfin** or **Create in Subsonic** is used, while Automation can refresh and publish rotating personal sets on a schedule.
+Qualified completed plays are retained for personal stats and taste by default unless your listening-history policy explicitly disables retention. Scrobbling remains independent. Taste uses retained qualified listening and eligible personal heart signals; pausing learning preserves the profile without adding observed signals. Local-library permissions and clean-only preferences still apply to discovery results. See [Intelligence](#intelligence) and [history imports](#import-listening-history) for the separate imported-history controls.
 
 Scrobbling saves the destination account and revision with accepted playback, then keeps one delivery receipt per completed listen and target. Retries preserve the original metadata and time. A changed or revoked account needs explicit repair; queued listens never move to a replacement account automatically. If a send may have been accepted but its result was lost, Allstarr holds it for review unless the destination safely deduplicates retries. See [scrobble delivery and recovery](operations/scrobbling.md) for status and repair.
 
