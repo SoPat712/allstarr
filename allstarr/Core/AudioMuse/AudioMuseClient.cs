@@ -6,9 +6,15 @@ using allstarr.Core.Secrets;
 
 namespace allstarr.Core.AudioMuse;
 
-internal sealed record AudioMuseServer(string Id, string Type, string Url);
-internal sealed record AudioMuseCoverage(string ServerId, bool Enabled, int? Analyzed);
-internal sealed record AudioMuseTrack(string Id);
+internal sealed record AudioMuseServer(string Id, string Type, string Name, string Url, bool IsDefault);
+internal sealed record AudioMuseCoverage(string ServerId, bool Enabled, int? Analyzed, int? Total)
+{
+    internal bool Complete => Analyzed.HasValue && Analyzed == Total;
+}
+internal sealed record AudioMuseTrack(string Id, string? Title = null, string? Author = null, string? Album = null,
+    string? AlbumArtist = null, double? Distance = null, string? MoodVector = null, string? OtherFeatures = null,
+    string? TopGenre = null, string? TopMood = null);
+internal sealed record AudioMuseCentroid(int? ClusterId, int? Index, double? MoodScore, int? SongCount, string[] TopTags);
 internal sealed record AudioMuseScores(double? Energy, double? Relaxed, double? Danceable, double? Party);
 
 public sealed class AudioMuseClient(IHttpClientFactory clients, EncryptedSecretStore secrets)
@@ -25,16 +31,17 @@ public sealed class AudioMuseClient(IHttpClientFactory clients, EncryptedSecretS
     {
         var root = await GetAsync(endpoint, "api/servers", token);
         return Property(root, "servers").EnumerateArray().Select(s => new AudioMuseServer(
-            Text(s, "server_id") ?? "", Text(s, "server_type") ?? "", Text(Property(s, "creds"), "url") ?? "")).ToArray();
+            Text(s, "server_id") ?? "", Text(s, "server_type") ?? "", Text(s, "name") ?? "",
+            Text(Property(s, "creds"), "url") ?? "", Text(s, "server_id") == Text(root, "default_id"))).ToArray();
     }
 
     internal async Task<AudioMuseCoverage> CoverageAsync(AudioMuseEndpoint endpoint, string server, CancellationToken token)
     {
         var root = await GetAsync(endpoint, "api/models?server=" + Escape(server), token);
         var model = Property(Property(root, "models"), "musicnn");
-        var count = Number(Property(model, "local"), "count");
+        var local = Property(model, "local");
         return new(Text(root, "server_id") ?? "", Property(model, "enabled").ValueKind == JsonValueKind.True,
-            count is >= 0 and <= int.MaxValue ? (int)count.Value : null);
+            Count(local, "count"), Count(local, "total"));
     }
 
     internal async Task<AudioMuseTrack[]> SearchAsync(AudioMuseEndpoint endpoint, string server, string query, CancellationToken token) =>
@@ -64,12 +71,18 @@ public sealed class AudioMuseClient(IHttpClientFactory clients, EncryptedSecretS
         catch (AudioMuseUnavailable error) when (error.Reason == "song_not_analyzed") { return []; }
     }
 
-    internal async Task<bool> HasAnchorAsync(AudioMuseEndpoint endpoint, string mood, CancellationToken token)
+    internal async Task<Dictionary<string, AudioMuseCentroid[]>> CentroidsAsync(AudioMuseEndpoint endpoint, CancellationToken token)
     {
         var root = await GetAsync(endpoint, "api/mood_centroids", token);
-        return Property(root, mood) is { ValueKind: JsonValueKind.Array } anchors &&
-            anchors.EnumerateArray().Any(a => Number(a, "index") == 0);
+        return root.EnumerateObject().ToDictionary(mood => mood.Name, mood => mood.Value.EnumerateArray()
+            .Select(c => new AudioMuseCentroid(Count(c, "cluster_id"), Count(c, "index"), Number(c, "mood_score"), Count(c, "n_songs"),
+                Property(c, "top_tags") is { ValueKind: JsonValueKind.Array } tags
+                    ? tags.EnumerateArray().Where(t => t.ValueKind == JsonValueKind.String).Select(t => t.GetString()!).ToArray() : []))
+            .ToArray(), StringComparer.Ordinal);
     }
+
+    internal async Task<bool> HasAnchorAsync(AudioMuseEndpoint endpoint, string mood, CancellationToken token) =>
+        (await CentroidsAsync(endpoint, token)).TryGetValue(mood, out var anchors) && anchors.Any(a => a.Index == 0);
 
     internal async Task<AudioMuseScores> ScoresAsync(AudioMuseEndpoint endpoint, string server, string id, CancellationToken token)
     {
@@ -122,12 +135,16 @@ public sealed class AudioMuseClient(IHttpClientFactory clients, EncryptedSecretS
     }
 
     private static AudioMuseTrack[] Tracks(JsonElement root) => root.EnumerateArray().Take(150)
-        .Select(t => new AudioMuseTrack(Text(t, "item_id") ?? "")).Where(t => t.Id.Length > 0).ToArray();
+        .Select(t => new AudioMuseTrack(Text(t, "item_id") ?? "", Text(t, "title"), Text(t, "author"), Text(t, "album"),
+            Text(t, "album_artist"), Number(t, "distance"), Text(t, "mood_vector"), Text(t, "other_features"),
+            Text(t, "top_genre"), Text(t, "top_mood"))).Where(t => t.Id.Length > 0).ToArray();
     internal static JsonElement Property(JsonElement root, string name) =>
         root.ValueKind == JsonValueKind.Object && root.TryGetProperty(name, out var value) ? value : default;
     internal static string? Text(JsonElement root, string name) =>
         Property(root, name) is { ValueKind: JsonValueKind.String } value ? value.GetString() : null;
     private static double? Number(JsonElement root, string name) =>
         Property(root, name) is { ValueKind: JsonValueKind.Number } value && value.TryGetDouble(out var number) && double.IsFinite(number) ? number : null;
+    private static int? Count(JsonElement root, string name) =>
+        Property(root, name) is { ValueKind: JsonValueKind.Number } value && value.TryGetInt32(out var count) && count >= 0 ? count : null;
     private static string Escape(string value) => Uri.EscapeDataString(value);
 }

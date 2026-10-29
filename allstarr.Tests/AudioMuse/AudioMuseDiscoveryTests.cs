@@ -12,7 +12,7 @@ namespace allstarr.Tests;
 public sealed class AudioMuseDiscoveryTests
 {
     private const string Servers = "{\"servers\":[{\"server_id\":\"home\",\"server_type\":\"jellyfin\",\"creds\":{\"url\":\"http://backend.example:8096\"}}]}";
-    private const string Models = "{\"server_id\":\"home\",\"models\":{\"musicnn\":{\"enabled\":true,\"local\":{\"count\":20}}}}";
+    private const string Models = "{\"server_id\":\"home\",\"models\":{\"musicnn\":{\"enabled\":true,\"local\":{\"count\":20,\"total\":20}}}}";
 
     [Fact]
     public async Task Search_and_neighbors_drop_foreign_ids_and_use_library_metadata()
@@ -62,7 +62,7 @@ public sealed class AudioMuseDiscoveryTests
             ("missing_api", "/api/version") => Fixture.Json("{}", HttpStatusCode.NotFound),
             ("malformed", "/api/version") => Fixture.Json("not json"),
             ("auth", "/api/version") => Fixture.Json("private-fixture-key", HttpStatusCode.Unauthorized),
-            ("binding", "/api/servers") => Fixture.Json(Servers.Replace("backend.example", "other.example", StringComparison.Ordinal)),
+            ("binding", "/api/servers") => Fixture.Json(Servers.Replace("jellyfin", "navidrome", StringComparison.Ordinal)),
             ("ambiguous", "/api/servers") => Fixture.Json(Servers.Replace("}]}", "},{\"server_id\":\"second\",\"server_type\":\"jellyfin\",\"creds\":{\"url\":\"http://backend.example:8096\"}}]}")),
             ("models", "/api/models") => Fixture.Json("{\"models\":[]}"),
             ("empty", "/api/models") => Fixture.Json(Models.Replace("20", "0", StringComparison.Ordinal)),
@@ -223,20 +223,46 @@ public sealed class AudioMuseDiscoveryTests
     }
 
     [Fact]
-    public async Task Status_counts_only_accessible_analyzed_songs()
+    public async Task Status_uses_local_model_coverage_and_counts_accessible_library_separately()
     {
         await using var f = await ReadyAsync();
-        await AddAsync(f, Track("indexed"), Track("metadata"));
+        var hidden = Track("hidden");
+        hidden.BackendLibraryId = "restricted";
+        await AddAsync(f, Enumerable.Range(0, 2942).Select(i => Track(i.ToString())).Append(hidden).ToArray());
         var original = f.Respond;
-        f.Respond = r => r.RequestUri!.AbsolutePath == "/external/get_embedding" && r.RequestUri.Query.Contains("metadata", StringComparison.Ordinal)
-            ? Fixture.Json("{\"item_id\":\"metadata\",\"embedding\":null}") : original(r);
+        f.Respond = r => r.RequestUri!.AbsolutePath switch
+        {
+            "/api/servers" => Fixture.Json(Capture("servers")),
+            "/api/models" => Fixture.Json(Capture("models")),
+            "/external/get_embedding" => Fixture.Json("{}", HttpStatusCode.NotFound),
+            _ => original(r)
+        };
         var status = await f.Discovery.StatusAsync(f.Context, default);
         Assert.Null(status.Reason);
-        Assert.Equal(2, status.AccessibleLibrarySongs);
-        Assert.Equal(1, status.AnalyzedSongs);
+        Assert.Equal(2942, status.AccessibleLibrarySongs);
+        Assert.Equal(1466, status.AnalyzedSongs);
         Assert.True(status.CoverageComplete);
-        f.Respond = r => r.RequestUri!.AbsolutePath == "/external/get_embedding" ? Fixture.Json("{}", HttpStatusCode.NotFound) : original(r);
-        Assert.Equal("too_little_analyzed_music", (await f.Discovery.StatusAsync(f.Context, default)).Reason);
+        Assert.Equal("1,466 of your 2,942 library songs are analyzed", status.CoverageMessage);
+        Assert.DoesNotContain(f.Requests, r => r.StartsWith("/external/get_embedding", StringComparison.Ordinal));
+        Assert.Single(f.Requests, r => r.StartsWith("/api/models", StringComparison.Ordinal));
+        Assert.Contains(f.Requests, r => r.Contains("server=ffc0b4a2c079e850cf329cdbaa2d465b", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_single_jellyfin_server_binds_without_credentials_in_the_payload()
+    {
+        await using var f = await ReadyAsync();
+        await AddAsync(f, Track("indexed"));
+        var original = f.Respond;
+        var servers = System.Text.Json.Nodes.JsonNode.Parse(Capture("servers"))!;
+        servers["servers"]![0]!.AsObject().Remove("creds");
+        f.Respond = r => r.RequestUri!.AbsolutePath switch
+        {
+            "/api/servers" => Fixture.Json(servers.ToJsonString()),
+            "/api/models" => Fixture.Json(Capture("models")),
+            _ => original(r)
+        };
+        Assert.Null((await f.Discovery.StatusAsync(f.Context, default)).Reason);
     }
 
     [Fact]
