@@ -1309,6 +1309,15 @@ export type IntelligenceSchedule = {
   limit: number;
 };
 
+export type AudioMuseConnection = { baseUrl: string; keyConfigured: boolean; revision: number | null };
+export type AudioMuseStatus = { reason: string | null; accessibleLibrarySongs: number; analyzedSongs: number; coverageComplete: boolean };
+export type AudioMuseSong = { id: string; title: string; artist: string; album: string | null };
+export type AudioMusePreview = { reason: string | null; tracks: AudioMuseSong[]; eligibleCount: number; previewId: string | null; recipeVersion: string | null };
+export type TasteStrength = { name: string; strength: number; value: number };
+export type TasteLayer = { tags: TasteStrength[]; artists: TasteStrength[] };
+export type TasteNudge = { kind: "tag" | "artist"; name: string; mode: "more" | "less" | "never"; expiresAt: string | null };
+export type TasteProfile = { lately: TasteLayer; usually: TasteLayer; latelyWeight: number; nudges: TasteNudge[]; paused: boolean };
+
 export type ListeningStats = {
   period: { from: string | null; to: string; timeZoneId: string };
   playCount: number;
@@ -2278,6 +2287,36 @@ export const downloads = {
     ),
   fileUrl: (path: string, storage: "cache" | "kept") =>
     adminUrl(`/api/admin/downloads/file?path=${encodeURIComponent(path)}&storage=${storage}`),
+};
+
+export const audioMuse = {
+  status: () => json<AudioMuseStatus>("/api/admin/audiomuse/status"),
+  connection: () => json<AudioMuseConnection>("/api/admin/audiomuse/connection"),
+  configure: (baseUrl: string, apiKey: string, revision: number | null) => json<AudioMuseConnection>("/api/admin/audiomuse/connection", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ baseUrl, ...(apiKey ? { apiKey } : {}), revision }),
+  }),
+  seeds: (query: string) => json<AudioMusePreview>(`/api/admin/audiomuse/seeds?${new URLSearchParams({ query })}`),
+  similar: (seedId: string) => json<AudioMusePreview>("/api/admin/audiomuse/similar", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seedId, n: 25 }),
+  }),
+  mood: (mood: "calm" | "workout") => json<AudioMusePreview>("/api/admin/audiomuse/mood", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mood, n: 25 }),
+  }),
+  save: (previewId: string, name: string) => json<{ reason: string | null; playlistId: string | null }>("/api/admin/audiomuse/save", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ previewId, name }),
+  }),
+};
+
+export const taste = {
+  get: () => json<TasteProfile>("/api/admin/taste"),
+  nudge: (kind: TasteNudge["kind"], name: string, mode: TasteNudge["mode"], todayOnly: boolean, timeZoneId: string) => json<TasteProfile>("/api/admin/taste/nudge", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind, name, mode, todayOnly, timeZoneId }),
+  }),
+  remove: (kind: TasteNudge["kind"], name: string) => json<TasteProfile>(`/api/admin/taste/nudge?${new URLSearchParams({ kind, name })}`, { method: "DELETE" }),
+  pause: (paused: boolean) => json<TasteProfile>(`/api/admin/taste/${paused ? "pause" : "resume"}`, { method: "POST" }),
+  reset: (clearNudges: boolean) => json<TasteProfile>("/api/admin/taste/reset", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clearNudges }),
+  }),
 };
 
 export const listeningStats = {

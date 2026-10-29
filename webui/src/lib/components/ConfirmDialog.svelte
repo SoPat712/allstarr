@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import { AlertDialog } from "$lib/components/ui/alert-dialog";
   import { buttonVariants, type ButtonVariant } from "$lib/components/ui/button";
 
@@ -13,6 +14,7 @@
     preventScroll = true,
     closeOnConfirm = true,
     error = "",
+    children,
     onConfirm,
   }: {
     open: boolean;
@@ -25,6 +27,7 @@
     preventScroll?: boolean;
     closeOnConfirm?: boolean;
     error?: string;
+    children?: Snippet;
     onConfirm: () => void | Promise<void>;
   } = $props();
 </script>
@@ -35,6 +38,7 @@
     <AlertDialog.Content class="confirm-dialog" {preventScroll}>
       <AlertDialog.Title>{title}</AlertDialog.Title>
       <AlertDialog.Description>{description}</AlertDialog.Description>
+      {@render children?.()}
       {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
       <footer class="dialog-actions">
         <AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} {disabled}>{cancelLabel}</AlertDialog.Cancel>
