@@ -76,7 +76,9 @@ public partial class JellyfinController
         var accepted = !string.IsNullOrWhiteSpace(deviceId) &&
             _sessionManager.UpdateExternalReport(PlaybackSessionKey(deviceId), report, receipt, stopped);
         await QueuePlaybackSignalAsync(transition, JellyfinExternalPlaybackReport.Text(report, "ItemId"), deviceId,
-            JellyfinExternalPlaybackReport.SignalSession(report), report["PositionTicks"]?.GetValue<long>());
+            JellyfinExternalPlaybackReport.SignalSession(report), report["PositionTicks"]?.GetValue<long>(),
+            paused: report["IsPaused"]?.ToString().Equals("true", StringComparison.OrdinalIgnoreCase) == true,
+            failed: report["Failed"]?.ToString().Equals("true", StringComparison.OrdinalIgnoreCase) == true);
         return accepted;
     }
 

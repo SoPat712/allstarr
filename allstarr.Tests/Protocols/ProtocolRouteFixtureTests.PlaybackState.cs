@@ -255,6 +255,9 @@ public sealed partial class ProtocolRouteFixtureTests
             var report = PlaybackBody(forwarded.Last());
             Assert.Equal(paused, report.GetProperty("IsPaused").GetBoolean());
             Assert.Equal(eventName, report.GetProperty("EventName").GetString());
+            signals.Verify(service => service.RecordAsync(It.Is<PlaybackSignalRequest>(signal =>
+                signal.Transition == PlaybackTransition.Progress && signal.PositionTicks == position && signal.Paused == paused),
+                It.IsAny<CancellationToken>()), Times.Once);
             Assert.Equal(position, report.GetProperty("PositionTicks").GetInt64());
             Assert.Equal(3, report.GetProperty("NowPlayingQueue").GetArrayLength());
             if (clientName != "Feishin")
@@ -315,6 +318,23 @@ public sealed partial class ProtocolRouteFixtureTests
         signals.Verify(service => service.RecordAsync(It.Is<PlaybackSignalRequest>(signal =>
             signal.Transition == PlaybackTransition.Stop && signal.ItemId == id &&
             (clientName == "Feishin" || signal.PlaySessionId!.Contains("play-1"))), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task JellyfinExternalReports_KeepFailureAndPauseFlagsForLearning()
+    {
+        var forwarded = new List<(string Path, string Body)>();
+        var signals = new Mock<IPlaybackSignalPipeline>();
+        using var factory = PlaybackStateFactory(PlaybackStateGateway(), forwarded, signals, () => false);
+        await PreparePlaybackSessionAsync(factory, "fixture-user", "playback-device");
+        using var client = factory.CreateClient();
+        using var start = await client.SendAsync(PlaybackRequest("/Sessions/Playing",
+            """{"ItemId":"ext-deezer-song-42","PlaySessionId":"failed","PositionTicks":0}""", "playback-device"));
+        using var stop = await client.SendAsync(PlaybackRequest("/Sessions/Playing/Stopped",
+            """{"ItemId":"ext-deezer-song-42","PlaySessionId":"failed","PositionTicks":100000000,"IsPaused":true,"Failed":true}""", "playback-device"));
+        Assert.Equal(HttpStatusCode.NoContent, stop.StatusCode);
+        signals.Verify(service => service.RecordAsync(It.Is<PlaybackSignalRequest>(signal =>
+            signal.Transition == PlaybackTransition.Stop && signal.Failed && signal.Paused), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

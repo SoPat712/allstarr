@@ -5487,6 +5487,15 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasKey("Key");
                     b.ToTable("shared_tag_profiles");
                 });
+            modelBuilder.Entity("allstarr.Core.Storage.TasteProfileRecord", b =>
+                {
+                    b.Property<Guid>("OwnerUserId").ValueGeneratedNever().HasColumnType("TEXT");
+                    b.Property<string>("PayloadJson").IsRequired().HasColumnType("TEXT");
+                    b.Property<long>("Revision").IsConcurrencyToken().HasColumnType("INTEGER");
+                    b.HasKey("OwnerUserId");
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null).WithMany().HasForeignKey("OwnerUserId").OnDelete(DeleteBehavior.Cascade).IsRequired();
+                    b.ToTable("taste_profiles");
+                });
 #pragma warning restore 612, 618
         }
     }

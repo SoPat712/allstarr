@@ -13,7 +13,7 @@ namespace allstarr.Core.Music;
 /// </summary>
 public sealed partial class MusicMixService(IProtocolProviderGateway providers, LastFmSimilarTracks? lastFm = null,
     ListenBrainzSimilarTracks? listenBrainz = null, MusicSearchService? musicSearch = null,
-    IEffectiveProviderPolicyResolver? effectivePolicies = null, TimeProvider? timeProvider = null)
+    IEffectiveProviderPolicyResolver? effectivePolicies = null, TimeProvider? timeProvider = null, TasteService? taste = null)
 {
     private const int SuggestionLookups = 10;
 
@@ -28,14 +28,12 @@ public sealed partial class MusicMixService(IProtocolProviderGateway providers, 
         var song = await providers.GetSongAsync(context, providerId, externalId);
         if (song == null) return [];
         var recommended = await RecommendedAsync(context, providerId, song, limit);
-        if (recommended.Count > 0)
-            return recommended.Where(candidate => !IsSeed(candidate, externalId, publicId)).Take(limit).ToList();
-        if (string.IsNullOrWhiteSpace(song.Artist)) return [];
-        var candidates = await SearchSongsAsync(context, providerId, song.Artist, limit);
-        return candidates
-            .Where(candidate => !IsSeed(candidate, externalId, publicId))
-            .Take(limit)
-            .ToList();
+        var candidates = recommended.Count > 0 ? recommended : string.IsNullOrWhiteSpace(song.Artist) ? [] :
+            await SearchSongsAsync(context, providerId, song.Artist, limit);
+        candidates = candidates.Where(candidate => !IsSeed(candidate, externalId, publicId)).ToArray();
+        if (taste != null && context.Actor?.EffectiveUserId is { } user)
+            candidates = await taste.RankAsync(user, candidates, song.Artist, context.CancellationToken);
+        return candidates.Take(limit).ToArray();
     }
 
     /// <summary>

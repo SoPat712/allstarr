@@ -33,6 +33,7 @@ public sealed partial class MusicMixService : IDisposable
         var projection = musicSearch ?? new MusicSearchService(providers);
         string? cacheKey = null;
         var cached = false;
+        string? seedArtist = null;
         try
         {
             if (effectivePolicies != null)
@@ -57,12 +58,14 @@ public sealed partial class MusicMixService : IDisposable
             if (radioCache.TryGetValue<CachedRadio>(cacheKey, out var previous) && previous!.ExpiresAt > clock.GetUtcNow())
             {
                 cached = true;
+                seedArtist = previous.SeedArtist;
                 foreach (var batch in previous.Songs.Chunk(50)) await AddAsync(batch);
             }
             else if (resourceType == "song")
             {
                 var seed = await providers.GetSongAsync(context, providerId, externalId).WaitAsync(token);
                 if (seed == null) return [];
+                seedArtist = seed.Artist;
                 await AddAsync([seed]);
                 if (result.Count < limit)
                     await AddAsync(await ReadRadioSourceAsync(providers.GetSimilarSongsAsync(context, providerId, externalId, limit), token) ?? []);
@@ -103,13 +106,24 @@ public sealed partial class MusicMixService : IDisposable
         catch (Exception) when (!token.IsCancellationRequested) { }
         caller.Token.ThrowIfCancellationRequested();
         if (!cached && cacheKey != null && candidates.Count > 0)
-            radioCache.Set(cacheKey, new CachedRadio(clock.GetUtcNow().AddMinutes(1), candidates.ToArray()),
+            radioCache.Set(cacheKey, new CachedRadio(clock.GetUtcNow().AddMinutes(1), candidates.ToArray(), seedArtist),
                 new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(1) });
+        if (taste != null && context.Actor?.EffectiveUserId is { } listener)
+        {
+            var ranked = await taste.RankAsync(listener, accepted, seedArtist, caller.Token);
+            return ranked.Select(song =>
+            {
+                var row = result[accepted.FindIndex(item => item.Id == song.Id)];
+                return row with { TasteReason = song.TasteReason, Song = row.Song?.WithTasteReason(song.TasteReason) };
+            }).ToArray();
+        }
         return result;
 
         async Task AddAsync(IReadOnlyList<Song> songs)
         {
             candidates.AddRange(songs.Take(50));
+            if (taste != null && context.Actor?.EffectiveUserId is { } user)
+                songs = await taste.RankAsync(user, songs, seedArtist, token);
             foreach (var song in songs.Take(50))
             {
                 token.ThrowIfCancellationRequested();
@@ -150,5 +164,5 @@ public sealed partial class MusicMixService : IDisposable
 
     public void Dispose() => radioCache.Dispose();
 
-    private sealed record CachedRadio(DateTimeOffset ExpiresAt, IReadOnlyList<Song> Songs);
+    private sealed record CachedRadio(DateTimeOffset ExpiresAt, IReadOnlyList<Song> Songs, string? SeedArtist);
 }

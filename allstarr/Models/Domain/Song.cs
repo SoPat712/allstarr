@@ -5,6 +5,14 @@ public sealed class Song
     public string Id { get; set; } = string.Empty;
     public Guid? CanonicalRecordingId { get; set; }
     public string? OriginalItemId { get; set; }
+    public string? TasteReason { get; set; }
+
+    internal Song WithTasteReason(string? reason)
+    {
+        var copy = (Song)MemberwiseClone();
+        copy.TasteReason = reason;
+        return copy;
+    }
 
     [System.Text.Json.Serialization.JsonIgnore]
     public List<allstarr.Core.Capabilities.ProviderExternalResourceId> SearchRoutes { get; set; } = [];

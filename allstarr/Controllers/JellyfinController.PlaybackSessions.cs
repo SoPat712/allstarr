@@ -637,7 +637,8 @@ public partial class JellyfinController
 
             if (statusCode == 200 || statusCode == 204)
             {
-                await QueuePlaybackSignalAsync(PlaybackTransition.Progress, itemId, deviceId, playSessionId, positionTicks);
+                await QueuePlaybackSignalAsync(PlaybackTransition.Progress, itemId, deviceId, playSessionId, positionTicks,
+                    paused: doc.RootElement.TryGetProperty("IsPaused", out var paused) && paused.ValueKind == JsonValueKind.True);
             }
 
             if (statusCode != 204 && statusCode != 200)
@@ -1138,7 +1139,9 @@ public partial class JellyfinController
 
             if (statusCode == 204 || statusCode == 200)
             {
-                await QueuePlaybackSignalAsync(PlaybackTransition.Stop, itemId, deviceId, playSessionId, positionTicks);
+                await QueuePlaybackSignalAsync(PlaybackTransition.Stop, itemId, deviceId, playSessionId, positionTicks,
+                    paused: stopDoc.RootElement.TryGetProperty("IsPaused", out var paused) && paused.ValueKind == JsonValueKind.True,
+                    failed: stopDoc.RootElement.TryGetProperty("Failed", out var failed) && failed.ValueKind == JsonValueKind.True);
                 _logger.LogDebug("✓ Playback stop forwarded to Jellyfin ({StatusCode})", statusCode);
                 if (!string.IsNullOrWhiteSpace(deviceId))
                 {
@@ -1342,11 +1345,11 @@ public partial class JellyfinController
     }
 
     private async Task QueuePlaybackSignalAsync(PlaybackTransition transition, string? itemId,
-        string? deviceId, string? playSessionId, long? positionTicks)
+        string? deviceId, string? playSessionId, long? positionTicks, bool paused = false, bool failed = false)
     {
         if (itemId == null || !CanRunOptionalUserScopedWork()) return;
         await _playbackObservations.RecordAsync(new(HttpContext.RequireProtocolExecutionContext(), transition,
-            itemId, deviceId, playSessionId, positionTicks, DateTimeOffset.UtcNow), HttpContext.RequestAborted);
+            itemId, deviceId, playSessionId, positionTicks, DateTimeOffset.UtcNow, Paused: paused, Failed: failed), HttpContext.RequestAborted);
     }
 
     private async Task<bool> SuppressSyntheticProviderPlaybackAsync(string? itemId, string? deviceId)

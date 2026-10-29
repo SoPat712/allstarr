@@ -14,12 +14,12 @@ namespace allstarr.Core.Playback;
 public enum PlaybackTransition { Start, Progress, Stop, InferredStart, InferredStop, Submission }
 public sealed record PlaybackSignalRequest(ProtocolExecutionContext ExecutionContext, PlaybackTransition Transition,
     string ItemId, string? DeviceId, string? PlaySessionId, long? PositionTicks, DateTimeOffset ObservedAt,
-    PlaybackTrackSnapshot? SubmittedTrack = null, bool RelayExternally = true, string SourceKind = "protocol");
+    PlaybackTrackSnapshot? SubmittedTrack = null, bool RelayExternally = true, string SourceKind = "protocol", bool Paused = false, bool Failed = false);
 public sealed record PlaybackSignalPayload(IntelligenceScope Scope, PlaybackTransition Transition, string ItemId,
     string? DeviceId, string? PlaySessionId, long? PositionTicks, DateTimeOffset ObservedAt, string SignalKey,
     string? OccurrenceKey = null, string? ClientClass = null, string? DeviceClass = null,
     PlaybackTrackSnapshot? SubmittedTrack = null, bool RelayExternally = true, string SourceKind = "protocol",
-    PlaybackStreamSource? StreamSource = null, IReadOnlyList<string>? DestinationTargets = null, long? ReportedPositionTicks = null);
+    PlaybackStreamSource? StreamSource = null, IReadOnlyList<string>? DestinationTargets = null, long? ReportedPositionTicks = null, bool Paused = false, bool Failed = false);
 public interface IPlaybackSignalPipeline { Task<bool> RecordAsync(PlaybackSignalRequest request, CancellationToken cancellationToken = default); }
 public interface IScopedPlaybackScrobbleDelivery
 {
@@ -62,7 +62,7 @@ public sealed class PlaybackSignalPipeline(
         var payload = new PlaybackSignalPayload(scope, request.Transition, request.ItemId, deviceId,
             request.PlaySessionId, normalizedTicks, request.ObservedAt, string.Empty, occurrenceKey,
             execution.Client.ClientId, execution.Client.DeviceName, request.SubmittedTrack,
-            request.RelayExternally, request.SourceKind, streamSource, ReportedPositionTicks: request.PositionTicks);
+            request.RelayExternally, request.SourceKind, streamSource, ReportedPositionTicks: request.PositionTicks, Paused: request.Paused, Failed: request.Failed);
         // A paused or repeated position can still be a new observation. Only identical
         // observations share a job; listening effects deduplicate by occurrence separately.
         var key = Hash(JsonSerializer.Serialize(payload));
@@ -96,7 +96,7 @@ public sealed class PlaybackSignalPipeline(
 public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals,
     IScopedPlaybackScrobbleDelivery scrobbles, IPlaybackLyricsPrefetch lyrics,
     IDbContextFactory<AllstarrDbContext> factory, IPlaybackTrackResolver? tracks = null,
-    MusicBrainzListeningEnrichmentQueue? musicBrainz = null, DurableJobQueue? recoveryJobs = null) : IDurableJobHandler, IDurableJobRecoveryHandler
+    MusicBrainzListeningEnrichmentQueue? musicBrainz = null, DurableJobQueue? recoveryJobs = null, allstarr.Core.Music.TasteService? taste = null) : IDurableJobHandler, IDurableJobRecoveryHandler
 {
     public string JobType => PlaybackSignalPipeline.JobType;
     public async Task RecoverAsync(CancellationToken cancellationToken)
@@ -152,10 +152,11 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         try
         {
             var retainHistory = await RetainsHistoryAsync(payload.Scope, cancellationToken);
+            var track = payload.SubmittedTrack ??
+                (tracks == null || !retainHistory && taste == null ? null : await tracks.ResolveAsync(payload, cancellationToken));
+            if (taste != null) await taste.ObservePlaybackAsync(payload, track, cancellationToken);
             if (retainHistory)
             {
-                var track = payload.SubmittedTrack ??
-                    (tracks == null ? null : await tracks.ResolveAsync(payload, cancellationToken));
                 var state = await RecordOccurrenceAsync(
                     payload, track, musicBrainz != null && await musicBrainz.IsEnabledForAsync(
                         payload.Scope, cancellationToken), cancellationToken);

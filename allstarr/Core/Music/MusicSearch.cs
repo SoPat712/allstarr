@@ -34,6 +34,7 @@ public sealed record NativeMusicItem<TPayload>(
 /// <summary>One merged search row: a native backend payload or a typed provider item.</summary>
 public sealed record MusicSearchEntry<TPayload>
 {
+    public string? TasteReason { get; init; }
     public NativeMusicItem<TPayload>? Native { get; init; }
     public Song? Song { get; init; }
     public Album? Album { get; init; }
