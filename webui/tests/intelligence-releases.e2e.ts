@@ -75,7 +75,12 @@ async function mockReleases(page: Page, initialInbox = populatedInbox(), initial
 
 async function openReleases(page: Page) {
   await page.goto("/#/intelligence?section=releases");
-  await expect(page.getByRole("button", { name: /^Followed artists \(/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Following \(/ })).toBeVisible();
+}
+
+async function openFollowConfirmation(page: Page) {
+  await page.getByRole("button", { name: "Release actions", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Follow artists you play a lot", exact: true }).click();
 }
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
@@ -102,7 +107,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(hidden).toContainText("Undated release · North · Date unavailable");
     await expect(hidden.getByText("Guest collection", { exact: true })).toBeVisible();
     await capture(page, "new-releases", width, theme);
-    await page.getByRole("button", { name: "Followed artists (4)", exact: true }).click();
+    await page.getByRole("button", { name: "Following (4)", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Followed artists (4)", exact: true });
     await expect(dialog.getByRole("button", { name: "Unfollow North", exact: true })).toBeVisible();
     await expect(dialog.getByRole("searchbox")).toHaveCount(0);
@@ -119,18 +124,19 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await openReleases(page);
     await expect(page.getByText("Follow artists to see their new music here.", { exact: true })).toBeVisible();
     await capture(page, "new-releases-empty", width, theme);
-    const followButton = page.getByRole("button", { name: "Follow artists from my hearts", exact: true });
-    await followButton.click();
-    const confirm = page.getByRole("alertdialog", { name: "Follow artists from my hearts", exact: true });
+    await openFollowConfirmation(page);
+    const confirm = page.getByRole("alertdialog", { name: "Follow artists you play a lot", exact: true });
     await expect(confirm).toContainText("Follow up to 200 artists from songs you've hearted?");
+    await expect(confirm).toContainText("Following from your play history isn't available yet.");
+    await expect(confirm.getByRole("button", { name: "Cancel", exact: true })).toHaveAttribute("type", "button");
     await capture(page, "new-releases-follow", width, theme);
     await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
     expect(state.mutations).toEqual([]);
-    await followButton.click();
-    await confirm.getByRole("button", { name: "Follow artists", exact: true }).click();
+    await openFollowConfirmation(page);
+    await confirm.getByRole("button", { name: "Follow artists from my hearts", exact: true }).click();
     await expect(confirm).toBeHidden();
     await expect(page.getByText("Following 37 new artists", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Followed artists (37)", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Following (37)", exact: true })).toBeVisible();
     expect(state.mutations).toEqual([{ method: "POST", path: "/api/admin/releases/artists/from-hearts" }]);
   });
 }
@@ -147,13 +153,13 @@ test("Dismissing a release updates the inbox and keeps other releases", async ({
 test("Unfollowing an artist updates the followed count and release inbox", async ({ page }) => {
   const state = await mockReleases(page);
   await openReleases(page);
-  await page.getByRole("button", { name: "Followed artists (4)", exact: true }).click();
+  await page.getByRole("button", { name: "Following (4)", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Followed artists (4)", exact: true });
   await dialog.getByRole("button", { name: "Unfollow North", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Followed artists (3)", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Unfollow North", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Done", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Followed artists (3)", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Following (3)", exact: true })).toBeVisible();
   await expect(page.getByRole("article", { name: "Aurora by North", exact: true })).toHaveCount(0);
   expect(state.mutations).toEqual([{ method: "DELETE", path: "/api/admin/releases/artists/qobuz/north" }]);
 });
@@ -162,7 +168,7 @@ test("Live refresh keeps the inbox visible and preserves an open artist dialog",
   const state = await mockReleases(page);
   await openReleases(page);
   await expect(page.getByRole("article", { name: "Aurora by North", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Followed artists (4)", exact: true }).click();
+  await page.getByRole("button", { name: "Following (4)", exact: true }).click();
   const reads = state.reads;
   state.inbox.entries = [...state.inbox.entries, release("fresh", { title: "Fresh arrival", artist: "Willow" })];
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));

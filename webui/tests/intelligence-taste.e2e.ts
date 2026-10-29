@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { TasteProfile, TasteStrength } from "../src/lib/api";
-import { appearance, capture, mockIntelligence } from "./intelligence-fixtures";
+import { appearance, capture, mockForYou } from "./for-you-fixtures";
 
 function rows(first: string, prefix: string): TasteStrength[] {
   return Array.from({ length: 10 }, (_, index) => ({ name: index ? `${prefix} ${index + 1}` : first, strength: 100 - index * 9, value: 10 - index }));
@@ -22,7 +22,7 @@ function populatedTaste(): TasteProfile {
 
 async function mockTaste(page: Page, initial = populatedTaste()) {
   const state = { profile: structuredClone(initial), reads: 0, mutations: [] as Array<{ method: string; path: string; query: string; body: Record<string, unknown> | null }> };
-  await mockIntelligence(page);
+  await mockForYou(page);
   await page.route("**/api/admin/taste**", async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname;
     if (!["127.0.0.1", "localhost"].includes(url.hostname)) return route.abort();
@@ -46,41 +46,45 @@ async function mockTaste(page: Page, initial = populatedTaste()) {
 }
 
 async function openTaste(page: Page) {
-  await page.goto("/#/intelligence?section=taste");
+  await page.goto("/#/for-you?section=taste");
   await expect(page.getByRole("button", { name: "Reset taste", exact: true })).toBeVisible();
 }
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
-  test(`Taste lists and reset dialog at ${width}px ${theme}`, async ({ page }) => {
+  test(`Taste details and reset dialog at ${width}px ${theme}`, async ({ page }) => {
     await appearance(page, width, theme);
     const state = await mockTaste(page);
     await openTaste(page);
-    await expect(page.getByText("Allstarr learns from songs you finish and skip. Use More and Less to steer radio and suggestions. Never hides something from suggestions.", { exact: true })).toBeVisible();
-    await expect(page.getByText("Right now, what you've played today counts most.", { exact: true })).toBeVisible();
-    const lately = page.getByRole("region", { name: "Lately", exact: true });
-    const usually = page.getByRole("region", { name: "Usually", exact: true });
+    await expect(page.getByText("Lately you've been into R&B and Recent tag 2. Usually it's EDM, Usual tag 2 and Usual tag 3.", { exact: true })).toBeVisible();
+    await expect(page.getByText("Today's listening counts most right now.", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Steer R&B", exact: true })).toBeVisible();
+    const details = page.locator("details").filter({ hasText: "See the details" });
+    await expect(details.getByRole("progressbar").first()).not.toBeVisible();
+    await page.getByText("See the details", { exact: true }).click();
+    const lately = details.locator(".taste-layers > section").filter({ has: page.getByRole("heading", { name: "Lately", exact: true }) });
+    const usually = details.locator(".taste-layers > section").filter({ has: page.getByRole("heading", { name: "Usually", exact: true }) });
     for (const layer of [lately, usually]) {
-      await expect(layer.getByRole("heading", { name: "Top tags", exact: true })).toBeVisible();
-      await expect(layer.getByRole("heading", { name: "Top artists", exact: true })).toBeVisible();
+      await expect(layer.getByRole("heading", { name: "Styles", exact: true })).toBeVisible();
+      await expect(layer.getByRole("heading", { name: "Artists", exact: true })).toBeVisible();
       await expect(layer.getByRole("progressbar")).toHaveCount(10);
     }
     await expect(lately.getByText("Recent tag 5", { exact: true })).toBeVisible();
     await expect(lately.getByText("Recent tag 6", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("Recent tag 9", { exact: true })).toHaveCount(0);
-    await expect(page.getByText("Usual artist 9", { exact: true })).toHaveCount(0);
+    await expect(details.getByText("Recent tag 9", { exact: true })).toHaveCount(0);
+    await expect(details.getByText("Usual artist 9", { exact: true })).toHaveCount(0);
     await expect(lately.getByRole("progressbar", { name: "R&B strength", exact: true })).toHaveAttribute("aria-valuenow", "100");
     const recentBox = await lately.boundingBox(), usualBox = await usually.boundingBox();
     expect(recentBox).not.toBeNull(); expect(usualBox).not.toBeNull();
     if (width === 390) expect(usualBox!.y).toBeGreaterThanOrEqual(recentBox!.y + recentBox!.height);
     else expect(Math.abs(usualBox!.y - recentBox!.y)).toBeLessThan(2);
-    await expect(page.getByText("More Jazz · today only", { exact: true })).toBeVisible();
-    await expect(page.getByText("Less Rock", { exact: true })).toBeVisible();
-    await expect(page.getByText("Never: Hidden artist", { exact: true })).toBeVisible();
-    await capture(page, "your-taste", width, theme);
+    await expect(page.getByText("More Jazz · today", { exact: true })).toBeVisible();
+    await expect(page.getByText("Less Rock · until I change it", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Hidden", exact: true }).getByText("Hidden artist", { exact: true })).toBeVisible();
+    await capture(page, "taste-details", width, theme);
     await page.getByRole("button", { name: "Reset taste", exact: true }).click();
     const dialog = page.getByRole("alertdialog", { name: "Reset taste", exact: true });
     await expect(dialog.getByRole("checkbox", { name: "Also remove my nudges", exact: true })).not.toBeChecked();
-    await capture(page, "your-taste-reset", width, theme);
+    await capture(page, "taste-reset", width, theme);
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     expect(state.mutations).toEqual([]);
   });
@@ -91,22 +95,25 @@ for (const mode of ["more", "less"] as const) for (const todayOnly of [true, fal
     const state = await mockTaste(page);
     await openTaste(page);
     const label = mode === "more" ? "More" : "Less";
-    await page.getByRole("button", { name: `${label} R&B`, exact: true }).click();
-    await page.getByRole("menuitem", { name: todayOnly ? "Today only" : "Until I change it", exact: true }).click();
-    await expect(page.getByText(`${label} R&B${todayOnly ? " · today only" : ""}`, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Steer R&B", exact: true }).click();
+    await page.getByRole("navigation", { name: "Duration for R&B", exact: true }).getByRole("tab", { name: todayOnly ? "Today only" : "Until I change it", exact: true }).click();
+    await page.getByRole("button", { name: label, exact: true }).click();
+    await expect(page.getByRole("region", { name: "Active nudges", exact: true }).getByText(`${label} R&B · ${todayOnly ? "today" : "until I change it"}`, { exact: true })).toBeVisible();
     const timeZoneId = await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
     expect(state.mutations).toEqual([{ method: "PUT", path: "/api/admin/taste/nudge", query: "", body: { kind: "tag", name: "R&B", mode, todayOnly, timeZoneId } }]);
   });
 }
 
-test("Never suggest and removal update the nudge list", async ({ page }) => {
+test("Never hides an artist persistently and Undo removes the preference", async ({ page }) => {
   const state = await mockTaste(page);
   await openTaste(page);
-  await page.getByRole("button", { name: "Actions for Artist X", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Never suggest", exact: true }).click();
-  await expect(page.getByText("Never: Artist X", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Remove Never: Artist X", exact: true }).click();
-  await expect(page.getByText("Never: Artist X", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Steer Artist X", exact: true }).click();
+  await expect(page.getByRole("navigation", { name: "Duration for Artist X", exact: true }).getByRole("tab", { name: "Today only", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("button", { name: "Never", exact: true }).click();
+  const hidden = page.getByRole("region", { name: "Hidden", exact: true });
+  await expect(hidden.getByText("Artist X", { exact: true })).toBeVisible();
+  await hidden.getByRole("button", { name: "Undo Artist X", exact: true }).click();
+  await expect(hidden.getByText("Artist X", { exact: true })).toHaveCount(0);
   expect(state.mutations[0].body).toEqual({ kind: "artist", name: "Artist X", mode: "never", todayOnly: false, timeZoneId: await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone) });
   expect(state.mutations[1]).toEqual({ method: "DELETE", path: "/api/admin/taste/nudge", query: "?kind=artist&name=Artist+X", body: null });
 });
@@ -114,8 +121,7 @@ test("Never suggest and removal update the nudge list", async ({ page }) => {
 test("Pause learning can be resumed", async ({ page }) => {
   const state = await mockTaste(page);
   await openTaste(page);
-  const toggle = page.getByRole("checkbox", { name: "Pause learning", exact: true });
-  await expect(page.getByText("While paused, plays and skips don't change your taste.", { exact: true })).toBeVisible();
+  const toggle = page.getByRole("checkbox", { name: "Private listening (pause learning)", exact: true });
   await toggle.check();
   await expect(toggle).toBeChecked();
   await toggle.uncheck();
@@ -134,7 +140,9 @@ for (const clearNudges of [false, true]) test(`Reset taste ${clearNudges ? "clea
   await dialog.getByRole("button", { name: "Reset taste", exact: true }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByText("Play some music and your taste will show up here.", { exact: true })).toBeVisible();
-  await expect(page.getByText(clearNudges ? "No nudges yet." : "More Jazz · today only", { exact: true })).toBeVisible();
+  await expect(page.getByText(clearNudges ? "No active nudges." : "More Jazz · today", { exact: true })).toBeVisible();
+  const hidden = page.getByRole("region", { name: "Hidden", exact: true });
+  await expect(hidden.getByText(clearNudges ? "Nothing hidden." : "Hidden artist", { exact: true })).toBeVisible();
   expect(state.mutations).toEqual([{ method: "POST", path: "/api/admin/taste/reset", query: "", body: { clearNudges } }]);
 });
 
@@ -142,8 +150,9 @@ test("Empty taste uses the usual listening explanation", async ({ page }) => {
   await mockTaste(page, { lately: { tags: [], artists: [] }, usually: { tags: [], artists: [] }, latelyWeight: 0.49, nudges: [], paused: false });
   await openTaste(page);
   await expect(page.getByText("Play some music and your taste will show up here.", { exact: true })).toBeVisible();
-  await expect(page.getByText("Not much recent listening, so your usual taste counts most.", { exact: true })).toBeVisible();
-  await expect(page.getByText("No nudges yet.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Your usual taste counts most right now.", { exact: true })).toBeVisible();
+  await expect(page.getByText("No active nudges.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Nothing hidden.", { exact: true })).toBeVisible();
 });
 
 test("Live refresh preserves an open reset dialog and visible lists", async ({ page }) => {
@@ -157,5 +166,5 @@ test("Live refresh preserves an open reset dialog and visible lists", async ({ p
   await expect(page.getByRole("alertdialog", { name: "Reset taste", exact: true })).toBeVisible();
   await expect(page.locator(".skeleton-panel")).toHaveCount(0);
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(page.getByText("Fresh tag", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Steer Fresh tag", exact: true })).toBeVisible();
 });

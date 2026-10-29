@@ -1,8 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { TasteProfile } from "../src/lib/api";
-import { appearance, capture, mockIntelligence } from "./intelligence-fixtures";
+import { appearance, capture, mockForYou } from "./for-you-fixtures";
 
-const toggleLabel = "Use imported history for my taste";
+const toggleLabel = "Use imported history";
 
 function initialTaste(useImportedHistory = false): TasteProfile {
   return {
@@ -22,7 +22,7 @@ async function mockImportedTaste(page: Page, profile = initialTaste()) {
     failNext: false,
     mutations: [] as { method: string; path: string; body: Record<string, unknown> }[],
   };
-  await mockIntelligence(page);
+  await mockForYou(page);
   await page.route("**/api/admin/taste", async route => {
     expect(route.request().method()).toBe("GET");
     state.reads++;
@@ -44,7 +44,7 @@ async function mockImportedTaste(page: Page, profile = initialTaste()) {
 }
 
 async function openTaste(page: Page) {
-  await page.goto("/#/intelligence?section=taste");
+  await page.goto("/#/for-you?section=taste");
   await expect(page.getByRole("checkbox", { name: toggleLabel, exact: true })).toBeVisible();
 }
 
@@ -54,8 +54,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     const state = await mockImportedTaste(page);
     await openTaste(page);
     await expect(page.getByRole("checkbox", { name: toggleLabel, exact: true })).not.toBeChecked();
-    await expect(page.getByText("Imported plays only shape Usually, never Lately.", { exact: true })).toBeVisible();
-    await expect(page.locator(".taste-settings .settings-row strong")).toHaveText(["Pause learning", toggleLabel]);
+    await expect(page.getByText("Imported plays shape your usual taste.", { exact: true })).toBeVisible();
+    await expect(page.locator(".taste-settings .settings-row strong")).toHaveText(["Private listening (pause learning)", toggleLabel]);
     await capture(page, "imported-taste-setting", width, theme);
     expect(state.mutations).toEqual([]);
   });

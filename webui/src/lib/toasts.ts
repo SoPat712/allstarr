@@ -19,7 +19,7 @@ function start(id: number) {
   life.started = Date.now();
   life.timer = setTimeout(() => dismiss(id), life.remaining);
 }
-function show(message: string, kind: ToastKind = "info", action?: ToastAction, busy = false) {
+function show(message: string, kind: ToastKind = "info", action?: ToastAction, busy = false, duration = 5000) {
   const id = ++sequence;
   store.update(items => {
     if (items.length >= 3) {
@@ -30,14 +30,14 @@ function show(message: string, kind: ToastKind = "info", action?: ToastAction, b
     return [...items.slice(-2), { id, message, kind, action, ...(busy ? { busy } : {}) }];
   });
   if (kind !== "error" && !busy) {
-    lifetimes.set(id, { remaining: 5000, started: Date.now(), pauses: new Set() });
+    lifetimes.set(id, { remaining: duration, started: Date.now(), pauses: new Set() });
     start(id);
   }
   return id;
 }
 export const toast = {
   show,
-  success: (message: string, action?: ToastAction) => show(message, "success", action),
+  success: (message: string, action?: ToastAction, duration = 5000) => show(message, "success", action, false, duration),
   info: (message: string, action?: ToastAction) => show(message, "info", action),
   error: (message: string, action?: ToastAction) => show(message, "error", action),
   /** Stays until dismissed; replace it with the outcome when the work ends. */
