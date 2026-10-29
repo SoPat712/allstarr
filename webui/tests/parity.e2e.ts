@@ -154,6 +154,20 @@ const schema = {
 };
 
 const responses: Record<string, unknown> = {
+  "/api/admin/mixes": [
+    ["daily-1", "Daily Mix 1"], ["daily-2", "Daily Mix 2"], ["daily-3", "Daily Mix 3"], ["daily-4", "Daily Mix 4"],
+    ["discover-weekly", "Discover Weekly"], ["release-radar", "Release Radar"], ["on-repeat", "On Repeat"], ["rewind", "Rewind"],
+    ["chill", "Chill"], ["focus", "Focus"], ["workout", "Workout"], ["party", "Party"], ["sleep", "Sleep"],
+  ].map(([kind, name], index) => ({
+    id: `mix-${kind}`, kind, name, description: "Songs picked for you", section: index < 8 ? "madeForYou" : "moods",
+    sortOrder: index, sourceLabel: null, recipeVersion: null, updatedAt: null,
+    readiness: { ready: true, message: "Ready" }, inApps: false, showInApps: true,
+    coverArtwork: ["ext-spotify-song-track-a"],
+  })),
+  "/api/admin/mixes/publish-setting": { enabled: false },
+  "/api/admin/audiomuse/status": { reason: "not_enabled", accessibleLibrarySongs: 0, analyzedSongs: 0, coverageComplete: false },
+  "/api/admin/audiomuse/connection": { baseUrl: "", keyConfigured: false, revision: 1 },
+  "/api/admin/releases": { entries: [], excluded: [], coverage: [] },
   "/api/admin/access/backend": { settings: { supported: false, connectionSaved: false, configured: false, needsReview: false, revision: "r1" }, csrfToken: "fixture" },
   "/api/admin/access/oidc": { settings: { enabled: false, authority: "", clientId: "", publicUrl: "", displayName: "Single sign-on", hasClientSecret: false, needsReview: false, revision: "r1" }, csrfToken: "fixture" },
   "/api/admin/storage/files": { settings: { available: true, pending: false, needsReview: false, files: 0 }, csrfToken: "fixture" },
@@ -887,7 +901,7 @@ const routes = [
   ["#/library/cached", "Library"],
   ["#/library/kept", "Library"],
   ["#/activity", "Activity"],
-  ["#/intelligence", "Intelligence"],
+  ["#/for-you", "For you"],
   ["#/integrations/services", "Sources"],
   ["#/integrations/accounts", "Sources"],
   ["#/integrations/extensions", "Sources"],
@@ -905,7 +919,7 @@ const stateRoutes = [
   ["#/settings/general", "Settings", "Loading Settings", "/api/admin/ui/schema", ["/api/admin/ui/schema"]],
 ] as const;
 
-test("core release exposes personal Intelligence without development APIs", async ({ page }) => {
+test("core release exposes personal mixes without development APIs", async ({ page }) => {
   const intelligenceRequests: string[] = [];
   page.on("request", (request) => {
     if (new URL(request.url()).pathname.startsWith("/api/admin/intelligence")) {
@@ -916,13 +930,17 @@ test("core release exposes personal Intelligence without development APIs", asyn
 
   await page.goto("#/intelligence");
 
-  await expect(page.getByRole("heading", { name: "Intelligence", exact: true })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Intelligence sections" }).getByRole("tab", { name: "For you", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page).toHaveURL(/#\/for-you$/);
+  await expect(page.getByRole("heading", { name: "For you", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Made for you", exact: true }).getByRole("button")).toHaveCount(8);
+  await expect(page.getByRole("region", { name: "Moods", exact: true }).getByRole("button")).toHaveCount(5);
+  await expect(page.getByRole("navigation", { name: "For you sections" }).getByRole("tab", { name: "For you", exact: true })).toHaveAttribute("aria-selected", "true");
   await page.goto("#/integrations/services?source=audiomuse-ai&section=configuration");
-  const configure = page.getByRole("link", { name: "Configure in Intelligence" });
-  await expect(configure).toHaveAttribute("href", "#/intelligence?section=sounds");
+  const configure = page.getByRole("link", { name: "Configure", exact: true });
+  await expect(configure).toHaveAttribute("href", "#/settings/sound-analysis");
   await configure.click();
-  await expect(page.getByRole("heading", { name: "Sounds like this", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sound analysis (AudioMuse)", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AudioMuse connection", exact: true })).toBeVisible();
   expect(intelligenceRequests).toEqual([]);
 });
 
@@ -1012,7 +1030,7 @@ for (const viewport of viewports) {
         if (screenshotTheme === "light" || screenshotTheme === "dark") {
           await page.addInitScript((theme) => localStorage.setItem("allstarr.theme", theme), screenshotTheme);
         }
-        await mockApi(page);
+        await mockApi(page, route === "#/for-you" ? { intelligenceEnabled: false } : {});
         await page.goto(route);
         const pageHeading = page.getByRole("heading", { name: heading, level: 1 });
         await expect(pageHeading).toBeVisible();
@@ -1494,11 +1512,11 @@ for (const viewport of viewports) {
       await expect(connect.getByRole("button", { name: "Save and test" })).toBeInViewport();
       await page.getByRole("button", { name: "Close source connection dialog" }).click();
       await page.goto("#/integrations/services?source=audiomuse-ai&section=configuration");
-      const intelligenceLink = page.getByRole("link", { name: "Configure in Intelligence" });
-      await expect(intelligenceLink).toHaveAttribute("href", "#/intelligence?section=automation");
-      await expect(page.locator(".service-page")).toContainText("AudioMuse-AI powers sound-based discovery");
-      await intelligenceLink.click();
-      await expect(page.getByText("AudioMuse-AI connection", { exact: true })).toBeVisible();
+      const soundSettings = page.getByRole("link", { name: "Configure", exact: true });
+      await expect(soundSettings).toHaveAttribute("href", "#/settings/sound-analysis");
+      await expect(page.locator(".service-page")).toContainText("Sound analysis (AudioMuse)");
+      await soundSettings.click();
+      await expect(page.getByRole("heading", { name: "AudioMuse connection", exact: true })).toBeVisible();
       await page.goto("#/integrations/accounts");
       await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
       await page.locator(".service-account").getByRole("button", { name: /^Actions for / }).click();
