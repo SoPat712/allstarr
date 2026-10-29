@@ -42,6 +42,8 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
         if (tags.TryGetValue("musicbrainz_releaseid", out var releaseId)) tag.MusicBrainzReleaseId = releaseId;
         if (tags.TryGetValue("musicbrainz_releasegroupid", out var releaseGroupId)) tag.MusicBrainzReleaseGroupId = releaseGroupId;
         if (tags.TryGetValue("musicbrainz_artistid", out var artistId)) tag.MusicBrainzArtistId = artistId;
+        if (tags.TryGetValue("cover", out var cover))
+            tag.Pictures = [new Picture(new ByteVector(Convert.FromBase64String(cover))) { Type = PictureType.FrontCover }];
     }
 
     private static string ReadTag(Tag tag, string key) => key switch
@@ -57,6 +59,7 @@ public sealed class TagLibManagedTagFileMutator : IManagedTagFileMutator
         "musicbrainz_releaseid" => tag.MusicBrainzReleaseId ?? string.Empty,
         "musicbrainz_releasegroupid" => tag.MusicBrainzReleaseGroupId ?? string.Empty,
         "musicbrainz_artistid" => tag.MusicBrainzArtistId ?? string.Empty,
+        "cover" => tag.Pictures.FirstOrDefault() is { } picture ? Convert.ToBase64String(picture.Data.Data) : string.Empty,
         _ => string.Empty
     };
 }

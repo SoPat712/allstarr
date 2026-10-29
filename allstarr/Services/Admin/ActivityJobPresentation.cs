@@ -294,6 +294,7 @@ internal static class ActivityJobPresentation
     private static string DisplayName(string type) => type.ToLowerInvariant() switch
     {
         "library.refresh" => "Library refresh",
+        "library.promote" => "Promote song to library",
         "health.smoke" => "Health check",
         "health.cleanup" => "Health cleanup",
         "health.alert" => "Health alert",

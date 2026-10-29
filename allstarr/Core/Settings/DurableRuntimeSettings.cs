@@ -128,6 +128,7 @@ public static class RuntimeSettingCatalog
             items.Add(new(key, RuntimeSettingValueType.String, key,
                 Choices: choices.ToHashSet(Comparer), AllowEmpty: allowEmpty));
         items.AddRange(OperatorSettingPolicy.Definitions);
+        items.Add(new("Promotion:Roots", RuntimeSettingValueType.String, "Promotion:Roots", MaximumLength: 4000, DefaultValue: "[]"));
         items.Add(new("Storage:BackupEnabled", RuntimeSettingValueType.Boolean, "Storage:BackupEnabled", DefaultValue: "true"));
         items.Add(new("Storage:BackupTimeUtc", RuntimeSettingValueType.String, "Storage:BackupTimeUtc", MaximumLength: 5, DefaultValue: "03:00"));
         items.Add(new("Storage:BackupDirectory", RuntimeSettingValueType.String, "Storage:BackupDirectory", AllowEmpty: true, MaximumLength: 2000, DefaultValue: ""));

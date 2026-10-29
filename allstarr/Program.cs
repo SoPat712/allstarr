@@ -97,6 +97,9 @@ builder.Services.AddSingleton<LegacyMediaInventory>();
 builder.Services.AddSingleton<LegacyMediaImport>();
 builder.Services.AddSingleton<IDurableJobHandler, LegacyMediaImportJobHandler>();
 builder.Services.AddProviderDownloadArtifacts(builder.Configuration);
+builder.Services.AddSingleton<PromotionRoots>();
+builder.Services.AddSingleton<LibraryPromotionService>();
+builder.Services.AddSingleton<IDurableJobHandler>(provider => provider.GetRequiredService<LibraryPromotionService>());
 builder.Services.AddFavoriteActions();
 builder.Services.AddSingleton<IScopedRecommendationAccountAccessor, ScopedRecommendationAccountAccessor>();
 if (releaseComposition.IntelligenceEnabled)

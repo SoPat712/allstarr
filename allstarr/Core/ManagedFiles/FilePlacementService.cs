@@ -9,6 +9,9 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
     public Task<ManagedFilePlacementResult> PlaceAsync(ManagedFilePlacementRequest request, CancellationToken cancellationToken = default) =>
         PlaceAsync(request, reuseExisting: true, cancellationToken);
 
+    internal Task<ManagedFilePlacementResult> PlacePromotionAsync(ManagedFilePlacementRequest request, CancellationToken cancellationToken) =>
+        PlaceAsync(request, reuseExisting: true, cancellationToken, exactDestination: true);
+
     internal Task<ManagedFilePlacementResult> PlaceFreshHouseholdAsync(
         ManagedFilePlacementRequest request, CancellationToken cancellationToken)
     {
@@ -18,7 +21,7 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
     }
 
     private async Task<ManagedFilePlacementResult> PlaceAsync(
-        ManagedFilePlacementRequest request, bool reuseExisting, CancellationToken cancellationToken)
+        ManagedFilePlacementRequest request, bool reuseExisting, CancellationToken cancellationToken, bool exactDestination = false)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!StringComparer.Ordinal.Equals(
@@ -41,7 +44,8 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
         var compatible = reuseExisting
             ? await ownership.FindCompatibleAsync(request.Root.Id, fingerprint, request.ScopeKey, cancellationToken)
             : null;
-        if (compatible is not null && File.Exists(compatible.CanonicalPath))
+        if (compatible is not null && File.Exists(compatible.CanonicalPath) &&
+            (!exactDestination || compatible.CanonicalPath == requestedTarget))
         {
             ValidateCompatibleOwnership(request, compatible);
             await ValidateExistingManagedFileAsync(root, compatible, fingerprint, length, cancellationToken);
@@ -68,6 +72,8 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
         if (pending is not null)
         {
             ValidateJournal(pending, request, root, fingerprint, length, referenceKey);
+            if (exactDestination && pending.TargetPath != requestedTarget)
+                throw new IOException("The saved promotion destination differs from the preview.");
             if (File.Exists(pending.TargetPath))
                 return await AdoptFinalizedJournalAsync(pending, request, root, referenceKey, journal, cancellationToken);
             if (File.Exists(pending.StagingPath)) File.Delete(pending.StagingPath);
@@ -75,7 +81,10 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
             pending = null;
         }
 
-        var target = await ResolveCollisionAsync(requestedTarget, fingerprint, cancellationToken);
+        if (exactDestination && (File.Exists(requestedTarget) || Directory.Exists(requestedTarget) ||
+            await ownership.IsPathReservedAsync(requestedTarget, cancellationToken)))
+            throw new IOException("The promotion destination already exists; no existing file was overwritten.");
+        var target = exactDestination ? requestedTarget : await ResolveCollisionAsync(requestedTarget, fingerprint, cancellationToken);
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         RejectSymlinksUnder(root, Path.GetDirectoryName(target)!);
 
