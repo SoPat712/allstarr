@@ -20,6 +20,37 @@ export function historySource(format: string) {
   return ({ "spotify-extended-streaming-history": "Spotify", "lastfm-recent-tracks": "Last.fm", "listenbrainz-export": "ListenBrainz", "maloja-export": "Maloja", "koito-export-v1": "Koito" } as Record<string, string>)[format] ?? "Other service";
 }
 
+export function combineHistoryPreviews(items: HistoryImport[]) {
+  const total = { completed: 0, skipped: 0, songs: 0, malformed: 0,
+    unresolvedNewRows: 0, duplicateInFile: 0, duplicateExisting: 0, outsideRetentionRows: 0,
+    earliest: null as string | null, latest: null as string | null };
+  for (const item of items) {
+    for (const key of ["completed", "skipped", "songs", "malformed", "unresolvedNewRows", "duplicateInFile", "duplicateExisting", "outsideRetentionRows"] as const) total[key] += item.preview[key] ?? 0;
+    const { earliest, latest } = item.preview;
+    if (earliest && Number.isFinite(Date.parse(earliest)) && (!total.earliest || Date.parse(earliest) < Date.parse(total.earliest))) total.earliest = earliest;
+    if (latest && Number.isFinite(Date.parse(latest)) && (!total.latest || Date.parse(latest) > Date.parse(total.latest))) total.latest = latest;
+  }
+  return total;
+}
+
+export function groupHistoryImports(items: HistoryImport[], batches: Record<string, string>) {
+  const groups = new Map<string, { id: string; items: HistoryImport[] }>();
+  for (const item of items) {
+    const id = batches[item.importId] || item.importId;
+    if (!groups.has(id)) groups.set(id, { id, items: [] });
+    groups.get(id)!.items.push(item);
+  }
+  return [...groups.values()];
+}
+
+export function importBatchProgress(items: HistoryImport[]) {
+  const finished = (item: HistoryImport) => ["completed", "failed", "cancelled", "expired"].includes(importPhase(item));
+  return {
+    percent: Math.floor(items.reduce((sum, item) => sum + (finished(item) ? 100 : importProgress(item)), 0) / Math.max(1, items.length)),
+    file: Math.min(items.length, items.filter(finished).length + 1),
+  };
+}
+
 export function importPhase(item: HistoryImport) {
   return typeof item.state === "number" ? ["previewed", "pending", "running", "completed", "cancelled", "failed", "expired"][item.state] : item.state.toLowerCase();
 }

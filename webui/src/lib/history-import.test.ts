@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { historyBytes, historyDateRange, historyPlays, historySource, importProgress, importState, importSummary } from "./history-import";
+import { combineHistoryPreviews, groupHistoryImports, historyBytes, historyDateRange, historyPlays, historySource, importBatchProgress, importProgress, importState, importSummary } from "./history-import";
 import type { HistoryImport } from "./api";
 
 describe("history presentation", () => {
@@ -37,5 +37,44 @@ describe("history presentation", () => {
     const item = { state: 3, importedRows: 50000, preview: { format: "spotify-extended-streaming-history", musicRows: 50000, completed: 48210, skipped: 1790, earliest: "2016-01-01T00:00:00Z", latest: "2026-10-28T00:00:00Z" } } as HistoryImport;
     expect(importSummary(item)).toBe("Imported 48,210 plays from Spotify (2016–2026)");
     expect(importSummary({ ...item, importedRows: 49000 })).toBe("Import from Spotify (2016–2026) is done.");
+  });
+});
+
+describe("history batches", () => {
+  const item = (id: string, first: string | null, last: string | null) => ({
+    importId: id, sizeBytes: 100, state: 0, importedRows: 0, duplicateRows: 0,
+    preview: { completed: 10, skipped: 2, songs: 4, malformed: 1, musicRows: 12,
+      unresolvedNewRows: 2, duplicateInFile: 1, duplicateExisting: 3, outsideRetentionRows: 0, earliest: first, latest: last },
+  }) as HistoryImport;
+  const first = item("first", "2020-01-01T00:00:00Z", "2021-01-01T00:00:00Z");
+  const second = item("second", "2016-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
+
+  it("adds preview counts and takes the full date range regardless of file order", () => {
+    expect(combineHistoryPreviews([first, second])).toEqual({
+      completed: 20, skipped: 4, songs: 8, malformed: 2,
+      unresolvedNewRows: 4, duplicateInFile: 2, duplicateExisting: 6, outsideRetentionRows: 0,
+      earliest: "2016-01-01T00:00:00Z", latest: "2026-01-01T00:00:00Z",
+    });
+    expect(combineHistoryPreviews([second, first])).toEqual(combineHistoryPreviews([first, second]));
+  });
+
+  it("keeps empty or missing dates out of the combined range", () => {
+    expect(combineHistoryPreviews([])).toMatchObject({ completed: 0, songs: 0, earliest: null, latest: null });
+    expect(combineHistoryPreviews([item("missing", null, "invalid"), first])).toMatchObject({ earliest: first.preview.earliest, latest: first.preview.latest });
+    expect(combineHistoryPreviews([first])).toMatchObject({ completed: 10, songs: 4 });
+  });
+
+  it("groups only imports with the same saved batch, preserving list order", () => {
+    const single = item("single", null, null);
+    expect(groupHistoryImports([first, single, second], { first: "batch", second: "batch" })).toEqual([
+      { id: "batch", items: [first, second] }, { id: "single", items: [single] },
+    ]);
+    expect(groupHistoryImports([first, second], {})).toHaveLength(2);
+  });
+
+  it("combines file progress and advances the file number after a completed file", () => {
+    expect(importBatchProgress([first, second])).toEqual({ percent: 0, file: 1 });
+    expect(importBatchProgress([{ ...first, state: 3 }, { ...second, state: 2, importedRows: 6 }])).toEqual({ percent: 75, file: 2 });
+    expect(importBatchProgress([{ ...first, state: 3 }, { ...second, state: 3 }])).toEqual({ percent: 100, file: 2 });
   });
 });
