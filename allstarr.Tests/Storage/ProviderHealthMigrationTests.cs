@@ -296,6 +296,27 @@ public sealed class ProviderHealthMigrationTests
         Assert.Equal(promotionObjects.Order(StringComparer.Ordinal), after.Where(row => promotionObjects.Contains(row.Name))
             .Select(row => row.Name).Order(StringComparer.Ordinal));
 
+        string[] profileObjects = ["shared_tag_profiles", "taste_profiles"];
+        Assert.DoesNotContain(before, row => profileObjects.Contains(row.Name));
+        Assert.Equal(profileObjects.Order(StringComparer.Ordinal), after.Where(row => profileObjects.Contains(row.Name))
+            .Select(row => row.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(NormalizeSchemaObject(new("table", "shared_tag_profiles", """
+            CREATE TABLE "shared_tag_profiles" (
+                "Key" TEXT NOT NULL CONSTRAINT "PK_shared_tag_profiles" PRIMARY KEY,
+                "PayloadJson" TEXT NOT NULL,
+                "RefreshedAt" INTEGER NOT NULL,
+                "CapturedAt" INTEGER NOT NULL
+            )
+            """)), NormalizeSchemaObject(Assert.Single(after, row => row.Type == "table" && row.Name == "shared_tag_profiles")));
+        Assert.Equal(NormalizeSchemaObject(new("table", "taste_profiles", """
+            CREATE TABLE "taste_profiles" (
+                "OwnerUserId" TEXT NOT NULL CONSTRAINT "PK_taste_profiles" PRIMARY KEY,
+                "PayloadJson" TEXT NOT NULL,
+                "Revision" INTEGER NOT NULL,
+                CONSTRAINT "FK_taste_profiles_users_OwnerUserId" FOREIGN KEY ("OwnerUserId") REFERENCES "users" ("Id") ON DELETE CASCADE
+            )
+            """)), NormalizeSchemaObject(Assert.Single(after, row => row.Type == "table" && row.Name == "taste_profiles")));
+
         var oldSchema = before
             .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
             .Select(row => row.Name == "runtime_settings" ? row with
@@ -307,7 +328,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name) && !reportObjects.Contains(row.Name) && !sharedFavoriteObjects.Contains(row.Name) && !alertObjects.Contains(row.Name) && !promotionObjects.Contains(row.Name))
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name) && !reportObjects.Contains(row.Name) && !sharedFavoriteObjects.Contains(row.Name) && !alertObjects.Contains(row.Name) && !promotionObjects.Contains(row.Name) && !profileObjects.Contains(row.Name))
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();
