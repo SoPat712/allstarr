@@ -3,7 +3,6 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
-using allstarr.Core.Protocols;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Intelligence;
@@ -19,9 +18,7 @@ public sealed class ListeningHistoryImportJobHandler(
     ListeningHistoryImporterRegistry importers,
     ListeningHistoryImportArtifactStore artifacts,
     ListeningHistoryImportOptions options,
-    IPlatformClock clock,
-    MusicBrainzListeningEnrichmentQueue musicBrainz,
-    IBackendLibraryAccessResolver libraryAccess) : IDurableJobHandler
+    IPlatformClock clock) : IDurableJobHandler
 {
     public const string JobTypeName = "listening-history.import";
     public string JobType => JobTypeName;
@@ -67,6 +64,7 @@ public sealed class ListeningHistoryImportJobHandler(
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
+                if (!await CancellationRequestedAsync(execution.Claim.JobId)) throw;
                 await CancelAsync(payload, execution.Claim.JobId);
                 return DurableJobCompletion.Cancelled();
             }
@@ -88,8 +86,7 @@ public sealed class ListeningHistoryImportJobHandler(
                       ?? throw new ListeningHistoryImportException(
                           "history_import_preview_invalid",
                           "The saved history import preview is invalid.");
-        var accumulator = new ApplyAccumulator(factory, payload, execution.Claim.JobId, clock,
-            await musicBrainz.IsEnabledForAsync(payload.Scope, cancellationToken), libraryAccess);
+        var accumulator = new ApplyAccumulator(factory, payload, execution, clock, preview.MusicRows);
         try
         {
             var scan = await importers.ScanAsync(
@@ -106,7 +103,6 @@ public sealed class ListeningHistoryImportJobHandler(
                     "history_import_preview_changed",
                     "The history file no longer matches its preview.");
             }
-            await QueueMusicBrainzAsync(payload, execution, cancellationToken);
             await CompleteAsync(payload, execution.Claim.JobId, cancellationToken);
             artifacts.Delete(payload.ImportId);
             await execution.ReportProgressAsync(new(
@@ -118,6 +114,7 @@ public sealed class ListeningHistoryImportJobHandler(
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            if (!await CancellationRequestedAsync(execution.Claim.JobId)) throw;
             await CancelAsync(payload, execution.Claim.JobId);
             artifacts.Delete(payload.ImportId);
             return DurableJobCompletion.Cancelled();
@@ -145,40 +142,10 @@ public sealed class ListeningHistoryImportJobHandler(
         return attemptNumber >= maxAttempts;
     }
 
-    private async Task QueueMusicBrainzAsync(
-        ListeningHistoryImportJobPayload payload,
-        DurableJobExecutionContext execution,
-        CancellationToken cancellationToken)
+    private async Task<bool> CancellationRequestedAsync(Guid jobId)
     {
-        if (!await musicBrainz.IsEnabledForAsync(payload.Scope, cancellationToken)) return;
-        await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        var provenance = $"history-import:{payload.ImportId:N}:";
-        var candidates = await db.ListeningEvents.AsNoTracking().Where(item =>
-                item.OwnerUserId == payload.Scope.OwnerUserId &&
-                item.Protocol == payload.Scope.Protocol && item.BackendInstanceId == payload.Scope.BackendInstanceId &&
-                item.State == ListeningEventState.Completed &&
-                item.SourceKind == "import" && item.ImportProvenance != null &&
-                item.ImportProvenance.StartsWith(provenance) &&
-                item.MusicBrainzEnrichmentState == MusicBrainzEnrichmentState.Pending)
-            .GroupBy(item => item.TrackReference)
-            .Select(group => new { TrackReference = group.Key, OccurrenceKey = group.Min(item => item.OccurrenceKey) })
-            .ToListAsync(cancellationToken);
-        for (var index = 0; index < candidates.Count; index++)
-        {
-            var candidate = candidates[index];
-            await musicBrainz.EnqueueImportedTrackAsync(
-                payload.Scope,
-                candidate.TrackReference,
-                candidate.OccurrenceKey!,
-                $"history-import:{payload.ImportId:N}",
-                cancellationToken);
-            if ((index + 1) % 100 == 0 || index + 1 == candidates.Count)
-                await execution.ReportProgressAsync(new(
-                    "history-import.enrichment",
-                    "Queued unique tracks for metadata enrichment.",
-                    index + 1,
-                    candidates.Count), cancellationToken);
-        }
+        await using var db = await factory.CreateDbContextAsync(CancellationToken.None);
+        return await db.Jobs.AnyAsync(item => item.Id == jobId && item.CancellationRequestedAt != null);
     }
 
     private async Task CompleteAsync(
@@ -250,8 +217,7 @@ public sealed class ListeningHistoryImportJobHandler(
         string occurrenceKey,
         ProviderTrackIdentityRecord? identity,
         CanonicalRecordingRecord? canonical,
-        LibraryTrackRecord? libraryTrack,
-        bool enrichWithMusicBrainz)
+        LibraryTrackRecord? libraryTrack)
     {
         var completed = row.Classification == ListeningHistoryImportClassification.Completed;
         return new()
@@ -281,9 +247,7 @@ public sealed class ListeningHistoryImportJobHandler(
             Album = row.Album,
             RecordingMusicBrainzId = libraryTrack?.MusicBrainzRecordingId ?? Identifier(canonical, RecordingIdentifierKinds.MusicBrainz) ?? row.RecordingMusicBrainzId,
             Isrc = libraryTrack?.Isrc ?? Identifier(canonical, RecordingIdentifierKinds.Isrc),
-            MusicBrainzEnrichmentState = enrichWithMusicBrainz && completed && canonical == null
-                ? MusicBrainzEnrichmentState.Pending
-                : MusicBrainzEnrichmentState.NotRequested,
+            MusicBrainzEnrichmentState = MusicBrainzEnrichmentState.NotRequested,
             CanonicalRecordingId = canonical?.Id,
             LibraryTrackId = libraryTrack?.Id,
             ProviderId = row.SourceService,
@@ -326,11 +290,11 @@ public sealed class ListeningHistoryImportJobHandler(
     private sealed class ApplyAccumulator(
         IDbContextFactory<AllstarrDbContext> factory,
         ListeningHistoryImportJobPayload payload,
-        Guid jobId,
+        DurableJobExecutionContext execution,
         IPlatformClock clock,
-        bool enrichWithMusicBrainz,
-        IBackendLibraryAccessResolver libraryAccess)
+        long total)
     {
+        private readonly Guid jobId = execution.Claim.JobId;
         private readonly List<ListeningHistoryImportRow> _rows = new(500);
         private long _nextSequence = -1;
         private DateTimeOffset? _retentionCutoff;
@@ -407,8 +371,9 @@ public sealed class ListeningHistoryImportJobHandler(
             var resolvedCanonicalIds = canonicals.Select(item => item.Id).ToArray();
             var libraryTracks = resolvedCanonicalIds.Length == 0
                 ? []
-                : await (await LocalRecommendationCatalog.ScopedAsync(db, payload.Scope, libraryAccess, cancellationToken))
-                    .AsNoTracking().Where(item =>
+                : await db.LibraryTracks.AsNoTracking().Where(item =>
+                        item.OwnerUserId == payload.Scope.OwnerUserId && item.Protocol == payload.Scope.Protocol &&
+                        item.BackendInstanceId == payload.Scope.BackendInstanceId &&
                         item.CanonicalRecordingId != null && resolvedCanonicalIds.Contains(item.CanonicalRecordingId.Value))
                     .OrderBy(item => item.Id).ToListAsync(cancellationToken);
             var libraryByCanonical = libraryTracks.GroupBy(item => item.CanonicalRecordingId!.Value)
@@ -439,7 +404,7 @@ public sealed class ListeningHistoryImportJobHandler(
                 }
                 if (canonical != null) libraryByCanonical.TryGetValue(canonical.Id, out libraryTrack);
                 db.ListeningEvents.Add(ListeningHistoryImportJobHandler.CreateEvent(
-                    payload, row, occurrenceKey, identity, canonical, libraryTrack, enrichWithMusicBrainz));
+                    payload, row, occurrenceKey, identity, canonical, libraryTrack));
                 imported++;
                 if (canonical == null) unresolved++; else resolved++;
             }
@@ -452,6 +417,9 @@ public sealed class ListeningHistoryImportJobHandler(
             import.UpdatedAt = clock.UtcNow;
             import.Revision++;
             await db.SaveChangesAsync(cancellationToken);
+            await execution.ReportProgressAsync(new("history-import.applying", "Importing listening history.",
+                (int)Math.Min(int.MaxValue, import.ImportedRows + import.DuplicateRows),
+                (int)Math.Min(int.MaxValue, total)), cancellationToken);
             _rows.Clear();
         }
 

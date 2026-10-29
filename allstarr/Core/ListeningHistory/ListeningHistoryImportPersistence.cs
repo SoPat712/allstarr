@@ -104,7 +104,8 @@ public sealed record ListeningHistoryImportPreview(
     DateTimeOffset? Earliest,
     DateTimeOffset? Latest,
     IReadOnlyDictionary<string, long> ReasonCounts,
-    long OutsideRetentionRows = 0);
+    long OutsideRetentionRows = 0,
+    int Songs = 0);
 
 public sealed record ListeningHistoryImportPreviewResult(
     Guid ImportId,
@@ -129,7 +130,8 @@ public sealed class ListeningHistoryImportOptions
 {
     public const string SectionName = "Intelligence:HistoryImport";
     public string RootPath { get; set; } = "/app/cache/listening-history-imports";
-    public long MaximumUploadBytes { get; set; } = 64L * 1024 * 1024;
+    public const long UploadLimitBytes = 500L * 1024 * 1024;
+    public long MaximumUploadBytes { get; set; } = UploadLimitBytes;
     public int MaximumRows { get; set; } = 1_000_000;
     public int PreviewLifetimeHours { get; set; } = 24;
 
@@ -322,7 +324,8 @@ public sealed class ListeningHistoryImportService(
                 scan.Earliest,
                 scan.Latest,
                 scan.ReasonCounts,
-                accumulator.OutsideRetentionRows);
+                accumulator.OutsideRetentionRows,
+                accumulator.Songs);
             var previewJson = JsonSerializer.Serialize(preview);
             var revision = Revision(scope, scan.Format, importers.RevisionFor(scan.Format), artifact.ContentSha256, previewJson);
             var expiresAt = previewedAt.AddHours(options.PreviewLifetimeHours);
@@ -519,10 +522,11 @@ public sealed class ListeningHistoryImportService(
         var record = await ScopedImport(db, scope, importId).SingleOrDefaultAsync(cancellationToken);
         if (record == null) return null;
         RequireRevision(record, expectedRevision);
-        if (record.State is ListeningHistoryImportState.Pending or ListeningHistoryImportState.Running)
-            throw new ListeningHistoryImportException(
-                "history_import_state_conflict",
-                "Cancel this active history import before removing it.");
+        if (record.JobId is { } jobId)
+        {
+            var job = await db.Jobs.SingleOrDefaultAsync(item => item.Id == jobId && item.OwnerUserId == scope.OwnerUserId, cancellationToken);
+            if (job != null) ListeningHistoryImportStateTransfer.CancelJobs([job], new HashSet<Guid> { jobId }, clock.UtcNow);
+        }
 
         var provenance = $"history-import:{importId:N}:";
         var importedEvents = ScopedListeningEvents(db, scope).Where(item =>
@@ -705,6 +709,8 @@ public sealed class ListeningHistoryImportService(
         DateTimeOffset? retentionCutoff)
     {
         private readonly List<(string OccurrenceKey, string? ExternalIdHash, string? RecordingMbid)> _rows = new(500);
+        private readonly HashSet<string> _songs = new(StringComparer.Ordinal);
+        public int Songs => _songs.Count;
         public long DuplicateRows { get; private set; }
         public long NewRows { get; private set; }
         public long ResolvedRows { get; private set; }
@@ -713,6 +719,7 @@ public sealed class ListeningHistoryImportService(
 
         public async ValueTask AddAsync(ListeningHistoryImportRow row, CancellationToken cancellationToken)
         {
+            _songs.Add(row.SourceService + ":" + row.SourceItemKey);
             if (retentionCutoff is { } cutoff && row.ListenedAt < cutoff)
             {
                 OutsideRetentionRows++;

@@ -12,13 +12,14 @@ public sealed record TasteNudgeRequest(string Kind, string Name, string Mode, bo
 public sealed record TasteNudge(string Kind, string Name, string Mode, DateTimeOffset? ExpiresAt);
 public sealed record TasteStrength(string Name, int Strength, double Value);
 public sealed record TasteLayer(IReadOnlyList<TasteStrength> Tags, IReadOnlyList<TasteStrength> Artists);
-public sealed record TasteProfile(TasteLayer Lately, TasteLayer Usually, double LatelyWeight, IReadOnlyList<TasteNudge> Nudges, bool Paused);
+public sealed record TasteProfile(TasteLayer Lately, TasteLayer Usually, double LatelyWeight, IReadOnlyList<TasteNudge> Nudges, bool Paused, bool UseImportedHistory = true);
 public sealed record TasteScore(double Score, IReadOnlyList<string> Reasons, bool Blocked = false);
 internal sealed record TasteAffinity(string Name, double Lately, double Usually, DateTimeOffset At);
 internal sealed record TasteOccurrence(DateTimeOffset At, double Position, double Listened, bool Done = false);
 internal sealed class TasteDocument
 {
     public bool Paused { get; set; }
+    public bool UseImportedHistory { get; set; } = true;
     public DateTimeOffset LearnAfter { get; set; }
     public Dictionary<string, TasteAffinity> Learned { get; set; } = [];
     public List<DateTimeOffset> Recent { get; set; } = [];
@@ -28,7 +29,7 @@ internal sealed class TasteDocument
     public Dictionary<string, TasteOccurrence> Occurrences { get; set; } = [];
 }
 
-public sealed class TasteService(IDbContextFactory<AllstarrDbContext> factory, SharedTagStore tags, IPlatformClock clock)
+public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> factory, SharedTagStore tags, IPlatformClock clock)
 {
     public static readonly TimeSpan LatelyHalfLife = TimeSpan.FromHours(6);
     public static readonly TimeSpan UsuallyHalfLife = TimeSpan.FromDays(30);
@@ -59,6 +60,7 @@ public sealed class TasteService(IDbContextFactory<AllstarrDbContext> factory, S
         await RequireUser(db, user, token);
         var document = Read(await db.TasteProfiles.AsNoTracking().SingleOrDefaultAsync(item => item.OwnerUserId == user, token));
         Prune(document);
+        if (document.UseImportedHistory && !document.Paused) await AddImportedHistoryAsync(db, user, document, token);
         return document;
     }
 
@@ -99,7 +101,7 @@ public sealed class TasteService(IDbContextFactory<AllstarrDbContext> factory, S
                 }).Where(item => item.Strength > 0).OrderByDescending(item => item.Strength).ThenBy(item => item.Name, StringComparer.Ordinal).Take(20).ToArray();
             return new(Top("tag"), Top("artist"));
         }
-        return new(Layer(true), Layer(false), Blend(document), document.Nudges, document.Paused);
+        return new(Layer(true), Layer(false), Blend(document), document.Nudges, document.Paused, document.UseImportedHistory);
     }
 
     public Task PutNudgeAsync(Guid user, TasteNudgeRequest request, CancellationToken token = default)

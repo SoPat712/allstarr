@@ -45,7 +45,9 @@ public sealed class ListeningHistoryImportCleanupService(
         await using var readDb = await factory.CreateDbContextAsync(cancellationToken);
         var expired = await readDb.ListeningHistoryImports.AsNoTracking().Where(item =>
                 item.ExpiresAt <= now && item.State != ListeningHistoryImportState.Completed &&
-                item.State != ListeningHistoryImportState.Expired)
+                item.State != ListeningHistoryImportState.Expired &&
+                !readDb.Jobs.Any(job => job.Id == item.JobId && (job.State == DurableJobState.Pending ||
+                    job.State == DurableJobState.RetryScheduled || job.State == DurableJobState.Running)))
             .OrderBy(item => item.ExpiresAt).Take(100)
             .Select(item => new { item.Id, item.OwnerUserId, item.JobId })
             .ToListAsync(cancellationToken);

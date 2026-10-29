@@ -1,21 +1,15 @@
 using System.Text.Json;
-using System.Collections.Immutable;
-using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Playback;
 using allstarr.Core.Storage;
-using allstarr.Core.Settings;
-using allstarr.Models.Settings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
-using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
+public sealed partial class ListeningHistoryImportIntegrationTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(
         Path.GetTempPath(), "allstarr-history-import-tests", Guid.NewGuid().ToString("N"));
@@ -88,11 +82,8 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
         var claim = await _jobs.ClaimNextAsync(
             "history-import-test", [ListeningHistoryImportJobHandler.JobTypeName], CancellationToken.None);
         Assert.NotNull(claim);
-        var musicBrainz = new MusicBrainzListeningEnrichmentQueue(
-            _jobs,
-            Options.Create(new MusicBrainzSettings { Enabled = true }));
         var handler = new ListeningHistoryImportJobHandler(
-            _factory, _importers, _artifacts, _importOptions, _clock, musicBrainz, new TestBackendLibraryAccess(_factory, "music"));
+            _factory, _importers, _artifacts, _importOptions, _clock);
         using var services = new ServiceCollection().BuildServiceProvider();
         var completion = await handler.ExecuteAsync(new(claim!, services), CancellationToken.None);
         await _jobs.CompleteAsync(claim!, completion, CancellationToken.None);
@@ -135,7 +126,7 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
                 Assert.Equal(ListeningEventState.Completed, item.State);
                 Assert.NotNull(item.ListenedAt);
             });
-        Assert.Single(await db.Jobs.Where(item => item.Type == MusicBrainzListeningEnrichmentQueue.JobType).ToListAsync());
+        Assert.Empty(await db.Jobs.Where(item => item.Type == MusicBrainzListeningEnrichmentQueue.JobType).ToListAsync());
         Assert.Empty(await db.PlaybackDeliveryCheckpoints.ToListAsync());
         var audits = await db.AuditEvents.AsNoTracking()
             .Where(item => item.Category == "listening-history-import")
@@ -227,10 +218,8 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
         var claim = await _jobs.ClaimNextAsync(
             "history-retention-test", [ListeningHistoryImportJobHandler.JobTypeName], CancellationToken.None);
         Assert.NotNull(claim);
-        var musicBrainz = new MusicBrainzListeningEnrichmentQueue(
-            _jobs, Options.Create(new MusicBrainzSettings()), DisabledCatalogPolicy());
         var handler = new ListeningHistoryImportJobHandler(
-            _factory, _importers, _artifacts, _importOptions, _clock, musicBrainz, new TestBackendLibraryAccess(_factory, "music"));
+            _factory, _importers, _artifacts, _importOptions, _clock);
         using var services = new ServiceCollection().BuildServiceProvider();
         var completion = await handler.ExecuteAsync(new(claim!, services), CancellationToken.None);
         await _jobs.CompleteAsync(claim!, completion, CancellationToken.None);
@@ -339,11 +328,8 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
             "history-import-failure-test", [ListeningHistoryImportJobHandler.JobTypeName], CancellationToken.None);
         Assert.NotNull(claim);
         _artifacts.Delete(preview.ImportId);
-        var musicBrainz = new MusicBrainzListeningEnrichmentQueue(
-            _jobs,
-            Options.Create(new MusicBrainzSettings()), DisabledCatalogPolicy());
         var handler = new ListeningHistoryImportJobHandler(
-            _factory, _importers, _artifacts, _importOptions, _clock, musicBrainz, new TestBackendLibraryAccess(_factory, "music"));
+            _factory, _importers, _artifacts, _importOptions, _clock);
         using var services = new ServiceCollection().BuildServiceProvider();
 
         var completion = await handler.ExecuteAsync(new(claim!, services), CancellationToken.None);
@@ -484,20 +470,6 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
         DetailsJson = "{}",
         UpdatedAt = _clock.UtcNow
     };
-
-    private IEffectiveProviderPolicyResolver DisabledCatalogPolicy()
-    {
-        var policy = new EffectiveProviderPolicySnapshot(
-            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
-            ImmutableHashSet<string>.Empty, "lossless", 0)
-        {
-            ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("musicbrainz", ProviderUseMode.Off)
-        };
-        var resolver = new Mock<IEffectiveProviderPolicyResolver>();
-        resolver.Setup(item => item.ResolveForUserAsync(_scope.OwnerUserId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(policy);
-        return resolver.Object;
-    }
 
     private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)
         : IDbContextFactory<AllstarrDbContext>

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -7,10 +8,12 @@ namespace allstarr.Core.Intelligence;
 
 public sealed class SpotifyListeningHistoryImporter : IListeningHistoryImporter
 {
-    public const string ImporterRevision = "spotify-extended-streaming-history-v1";
+    public const string ImporterRevision = "spotify-extended-streaming-history-v2";
     private static readonly JsonSerializerOptions JsonOptions = new() { MaxDepth = 16 };
     private static readonly DateTimeOffset MinimumTimestamp = new(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
     private const long MaximumMillisecondsPlayed = 24L * 60 * 60 * 1000;
+    private const int MaximumArchiveEntries = 1024;
+    private const long MaximumExpandedBytes = 1024L * 1024 * 1024;
 
     public string Format => "spotify-extended-streaming-history";
     public string Revision => ImporterRevision;
@@ -23,62 +26,12 @@ public sealed class SpotifyListeningHistoryImporter : IListeningHistoryImporter
     {
         if (context.MaximumRows is < 1 or > 10_000_000)
             throw new ArgumentOutOfRangeException(nameof(context), "MaximumRows must be between 1 and 10000000.");
+        if (source.CanSeek && await IsZipAsync(source, cancellationToken))
+            return await ScanArchiveAsync(source, context, onRow, cancellationToken);
         var state = new ScanState(Format);
         try
         {
-            await foreach (var element in JsonSerializer.DeserializeAsyncEnumerable<JsonElement>(
-                               source, JsonOptions, cancellationToken).ConfigureAwait(false))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                state.Rows++;
-                if (state.Rows > context.MaximumRows)
-                    throw new ListeningHistoryImportException(
-                        "history_import_row_limit",
-                        $"The history file exceeds the {context.MaximumRows} row limit.");
-                if (element.ValueKind != JsonValueKind.Object || !LooksLikeSpotify(element))
-                {
-                    if (state.Recognized)
-                    {
-                        state.Malformed++;
-                        AddReason(state.Reasons, "schema_mismatch_row");
-                    }
-                    else
-                    {
-                        state.UnrecognizedRows++;
-                    }
-                    continue;
-                }
-                if (!state.Recognized)
-                {
-                    state.Recognized = true;
-                    state.Malformed += state.UnrecognizedRows;
-                    AddReason(state.Reasons, "schema_mismatch_row", state.UnrecognizedRows);
-                    state.UnrecognizedRows = 0;
-                }
-                var row = Parse(element, state.Rows, context.Now, state);
-                if (row == null) continue;
-                var occurrence = Hash($"{row.SourceUserKey}\u001f{row.ListenedAt.ToUnixTimeMilliseconds()}\u001f{row.SourceItemKey}");
-                if (!state.Occurrences.Add(occurrence))
-                {
-                    state.Duplicate++;
-                    AddReason(state.Reasons, "duplicate");
-                    continue;
-                }
-                state.MusicRows++;
-                if (row.ProviderTrackReference == null) state.RowsWithoutProviderIdentity++;
-                state.SourceUsers.Add(row.SourceUserKey);
-                state.IdentityKeys.Add(row.SourceItemKey);
-                state.Earliest = state.Earliest == null || row.ListenedAt < state.Earliest ? row.ListenedAt : state.Earliest;
-                state.Latest = state.Latest == null || row.ListenedAt > state.Latest ? row.ListenedAt : state.Latest;
-                switch (row.Classification)
-                {
-                    case ListeningHistoryImportClassification.Completed: state.Completed++; break;
-                    case ListeningHistoryImportClassification.Partial: state.Partial++; break;
-                    case ListeningHistoryImportClassification.Skipped: state.Skipped++; break;
-                }
-                AddReason(state.Reasons, row.ReasonCode);
-                if (onRow != null) await onRow(row, cancellationToken);
-            }
+            await ScanRowsAsync(source, context, state, onRow, cancellationToken);
         }
         catch (JsonException exception)
         {
@@ -88,6 +41,130 @@ public sealed class SpotifyListeningHistoryImporter : IListeningHistoryImporter
                 "The Spotify history file contains invalid JSON.",
                 exception);
         }
+        return Finish(state);
+    }
+
+    private async Task<ListeningHistoryImportScan?> ScanArchiveAsync(
+        Stream source,
+        ListeningHistoryImportScanContext context,
+        Func<ListeningHistoryImportRow, CancellationToken, ValueTask>? onRow,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var archive = new ZipArchive(source, ZipArchiveMode.Read, leaveOpen: true);
+            if (archive.Entries.Count > MaximumArchiveEntries) throw ArchiveLimit();
+            var entries = archive.Entries.Where(entry =>
+                    entry.Name.StartsWith("Streaming_History_Audio_", StringComparison.OrdinalIgnoreCase) &&
+                    entry.Name.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(entry => entry.FullName, StringComparer.Ordinal)
+                .ToArray();
+            long declaredBytes = 0;
+            foreach (var entry in entries)
+            {
+                if (entry.Length < 0 || entry.Length > MaximumExpandedBytes - declaredBytes) throw ArchiveLimit();
+                declaredBytes += entry.Length;
+            }
+            var state = new ScanState(Format);
+            foreach (var entry in entries)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await using var stream = entry.Open();
+                await using var bounded = new ArchiveEntryStream(stream, state);
+                await ScanRowsAsync(bounded, context, state, onRow, cancellationToken);
+            }
+            return Finish(state);
+        }
+        catch (JsonException exception)
+        {
+            throw new ListeningHistoryImportException(
+                "history_import_json_invalid", "The Spotify history file contains invalid JSON.", exception);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or NotSupportedException)
+        {
+            throw new ListeningHistoryImportException(
+                "history_import_archive_invalid", "The Spotify history archive is invalid or unsupported.", exception);
+        }
+    }
+
+    private static async Task ScanRowsAsync(
+        Stream source,
+        ListeningHistoryImportScanContext context,
+        ScanState state,
+        Func<ListeningHistoryImportRow, CancellationToken, ValueTask>? onRow,
+        CancellationToken cancellationToken)
+    {
+        await foreach (var element in JsonSerializer.DeserializeAsyncEnumerable<JsonElement>(
+                           source, JsonOptions, cancellationToken).ConfigureAwait(false))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            state.Rows++;
+            if (state.Rows > context.MaximumRows)
+                throw new ListeningHistoryImportException(
+                    "history_import_row_limit",
+                    $"The history file exceeds the {context.MaximumRows} row limit.");
+            if (element.ValueKind != JsonValueKind.Object || !LooksLikeSpotify(element))
+            {
+                if (state.Recognized)
+                {
+                    state.Malformed++;
+                    AddReason(state.Reasons, "schema_mismatch_row");
+                }
+                else
+                {
+                    state.UnrecognizedRows++;
+                }
+                continue;
+            }
+            if (!state.Recognized)
+            {
+                state.Recognized = true;
+                state.Malformed += state.UnrecognizedRows;
+                AddReason(state.Reasons, "schema_mismatch_row", state.UnrecognizedRows);
+                state.UnrecognizedRows = 0;
+            }
+            var row = Parse(element, state.Rows, context.Now, state);
+            if (row == null) continue;
+            var occurrence = Hash($"{row.SourceUserKey}\u001f{row.ListenedAt.ToUnixTimeMilliseconds()}\u001f{row.SourceItemKey}");
+            if (!state.Occurrences.Add(occurrence))
+            {
+                state.Duplicate++;
+                AddReason(state.Reasons, "duplicate");
+                continue;
+            }
+            state.MusicRows++;
+            if (row.ProviderTrackReference == null) state.RowsWithoutProviderIdentity++;
+            state.SourceUsers.Add(row.SourceUserKey);
+            state.IdentityKeys.Add(row.SourceItemKey);
+            state.Earliest = state.Earliest == null || row.ListenedAt < state.Earliest ? row.ListenedAt : state.Earliest;
+            state.Latest = state.Latest == null || row.ListenedAt > state.Latest ? row.ListenedAt : state.Latest;
+            switch (row.Classification)
+            {
+                case ListeningHistoryImportClassification.Completed: state.Completed++; break;
+                case ListeningHistoryImportClassification.Partial: state.Partial++; break;
+                case ListeningHistoryImportClassification.Skipped: state.Skipped++; break;
+            }
+            AddReason(state.Reasons, row.ReasonCode);
+            if (onRow != null) await onRow(row, cancellationToken);
+        }
+    }
+
+    private static async Task<bool> IsZipAsync(Stream source, CancellationToken cancellationToken)
+    {
+        var position = source.Position;
+        var header = new byte[4];
+        var read = await source.ReadAtLeastAsync(header, header.Length, throwOnEndOfStream: false, cancellationToken);
+        source.Position = position;
+        return read == header.Length && header[0] == 'P' && header[1] == 'K' &&
+               (header[2], header[3]) is ((byte)3, (byte)4) or ((byte)5, (byte)6) or ((byte)7, (byte)8);
+    }
+
+    private static ListeningHistoryImportException ArchiveLimit() => new(
+        "history_import_archive_limit",
+        "The Spotify history archive exceeds the entry count or 1 GiB expanded-size limit.");
+
+    private static ListeningHistoryImportScan? Finish(ScanState state)
+    {
         if (!state.Recognized) return null;
         return new(
             state.Format,
@@ -122,6 +199,17 @@ public sealed class SpotifyListeningHistoryImporter : IListeningHistoryImporter
         {
             state.Episodes++;
             AddReason(state.Reasons, "episode");
+            return null;
+        }
+        if (!TryString(element, "audiobook_title", 500, out var audiobook) ||
+            !TryString(element, "audiobook_uri", 100, out var audiobookUri) ||
+            !TryString(element, "audiobook_chapter_title", 500, out var chapter) ||
+            !TryString(element, "audiobook_chapter_uri", 100, out var chapterUri))
+            return Malformed(state, "malformed_audiobook");
+        if (audiobook != null || audiobookUri != null || chapter != null || chapterUri != null)
+        {
+            state.NonTrack++;
+            AddReason(state.Reasons, "audiobook");
             return null;
         }
         if (!TryString(element, "master_metadata_track_name", 500, out var title) ||
@@ -217,7 +305,11 @@ public sealed class SpotifyListeningHistoryImporter : IListeningHistoryImporter
          element.TryGetProperty("episode_name", out _) ||
          element.TryGetProperty("episode_show_name", out _) ||
          element.TryGetProperty("spotify_track_uri", out _) ||
-         element.TryGetProperty("spotify_episode_uri", out _));
+         element.TryGetProperty("spotify_episode_uri", out _) ||
+         element.TryGetProperty("audiobook_title", out _) ||
+         element.TryGetProperty("audiobook_uri", out _) ||
+         element.TryGetProperty("audiobook_chapter_title", out _) ||
+         element.TryGetProperty("audiobook_chapter_uri", out _));
 
     private static ListeningHistoryImportRow? Malformed(ScanState state, string reason)
     {
@@ -304,11 +396,48 @@ public sealed class SpotifyListeningHistoryImporter : IListeningHistoryImporter
         reasons[reason] = current + count;
     }
 
+    private sealed class ArchiveEntryStream(Stream source, ScanState state) : Stream
+    {
+        public override bool CanRead => source.CanRead;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+        public override int Read(Span<byte> buffer) =>
+            TrackRead(source.Read(buffer[..AllowedReadLength(buffer.Length)]));
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            TrackRead(await source.ReadAsync(buffer[..AllowedReadLength(buffer.Length)], cancellationToken));
+
+        private int AllowedReadLength(int requested) =>
+            (int)Math.Min(requested, MaximumExpandedBytes - state.ExpandedBytes + 1);
+
+        private int TrackRead(int read)
+        {
+            state.ExpandedBytes += read;
+            if (state.ExpandedBytes > MaximumExpandedBytes) throw ArchiveLimit();
+            return read;
+        }
+
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     private sealed class ScanState(string format)
     {
         public string Format { get; } = format;
         public bool Recognized { get; set; }
         public long Rows { get; set; }
+        public long ExpandedBytes { get; set; }
         public long UnrecognizedRows { get; set; }
         public long MusicRows { get; set; }
         public long Completed { get; set; }
