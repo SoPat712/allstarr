@@ -490,7 +490,8 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         PublicArtwork(artist.ImageUrl),
         biography: artist.Biography,
         providerIds: artist.ProviderIds,
-        lastFmUrl: artist.LastFmUrl);
+        lastFmUrl: artist.LastFmUrl,
+        genres: artist.Genres);
 
     private ProviderArtistCredit MapArtistCredit(Artist artist)
     {

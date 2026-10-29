@@ -317,12 +317,10 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
                         song.AlbumArtists = CatalogDescriptiveMetadata.AlbumArtists(albumData, "deezer");
 
                     // Genre
-                    if (albumData.TryGetProperty("genres", out var genres) &&
-                        genres.TryGetProperty("data", out var genresData) &&
-                        genresData.GetArrayLength() > 0 &&
-                        genresData[0].TryGetProperty("name", out var genreName))
+                    if (DeezerGenres(albumData) is { Count: > 0 } genres)
                     {
-                        song.Genre = genreName.GetString();
+                        song.Genres = genres;
+                        song.Genre = genres[0];
                     }
 
                     // Total track count

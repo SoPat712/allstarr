@@ -5478,6 +5478,15 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasOne("allstarr.Core.Storage.PromotionRunRecord", null).WithMany().HasForeignKey("RunId").OnDelete(DeleteBehavior.Restrict).IsRequired();
                     b.ToTable("promotion_steps");
                 });
+            modelBuilder.Entity("allstarr.Core.Storage.SharedTagProfileRecord", b =>
+                {
+                    b.Property<string>("Key").HasMaxLength(400).HasColumnType("TEXT");
+                    b.Property<string>("PayloadJson").IsRequired().HasColumnType("TEXT");
+                    b.Property<long>("RefreshedAt").HasColumnType("INTEGER");
+                    b.Property<long>("CapturedAt").HasColumnType("INTEGER");
+                    b.HasKey("Key");
+                    b.ToTable("shared_tag_profiles");
+                });
 #pragma warning restore 612, 618
         }
     }

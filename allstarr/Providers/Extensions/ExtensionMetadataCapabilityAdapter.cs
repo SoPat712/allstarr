@@ -134,7 +134,8 @@ public sealed class ExtensionMetadataCapabilityAdapter : ExtensionCapabilityAdap
 
     private ProviderArtistMetadata MapArtist(JsonElement value) => new(Id(ProviderResourceKind.Artist, Text(value, "id")),
         Text(value, "name"), Artwork(value), OptionalText(value, "snapshotVersion"),
-        biography: OptionalText(value, "biography"), providerIds: ProviderIds(value), lastFmUrl: OptionalText(value, "lastFmUrl"));
+        biography: OptionalText(value, "biography"), providerIds: ProviderIds(value), lastFmUrl: OptionalText(value, "lastFmUrl"),
+        genres: Strings(value, "genres"));
 
     private IReadOnlyList<ProviderArtistCredit> Artists(JsonElement value, string name = "artists") =>
         value.TryGetProperty(name, out var artists) && artists.ValueKind == JsonValueKind.Array

@@ -710,6 +710,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     entry.AlbumArtists,
                     entry.Year,
                     entry.Genre,
+                    entry.Genres,
                     entry.MusicBrainzRecordingId
                 });
                 return (Payload: payload, PayloadHash: Hash(payload));

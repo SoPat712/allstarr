@@ -131,8 +131,10 @@ public class AdminAuthenticationMiddleware
         {
             var segments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
             return segments.Length == 5 && segments[2].Equals("recordings", StringComparison.OrdinalIgnoreCase) &&
-                Guid.TryParse(segments[3], out _) && segments[4].Equals("lyrics", StringComparison.OrdinalIgnoreCase) &&
-                (HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method));
+                Guid.TryParse(segments[3], out _) && (
+                    segments[4].Equals("tags", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsGet(method) ||
+                    segments[4].Equals("lyrics", StringComparison.OrdinalIgnoreCase) &&
+                    (HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method)));
         }
 
         if (path.TrimEnd('/').Equals("/api/admin/preferences", StringComparison.OrdinalIgnoreCase))

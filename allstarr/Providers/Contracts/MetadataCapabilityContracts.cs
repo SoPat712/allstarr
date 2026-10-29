@@ -349,7 +349,8 @@ public sealed record ProviderArtistMetadata
         string? snapshotVersion = null,
         string? biography = null,
         IReadOnlyDictionary<string, string>? providerIds = null,
-        string? lastFmUrl = null)
+        string? lastFmUrl = null,
+        IEnumerable<string>? genres = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         id.RequireOwner(id.ProviderId, ProviderResourceKind.Artist);
@@ -365,6 +366,7 @@ public sealed record ProviderArtistMetadata
             providerIds == null ? new Dictionary<string, string>(StringComparer.Ordinal)
                 : new Dictionary<string, string>(providerIds, StringComparer.Ordinal));
         LastFmUrl = ProviderContractValidation.OptionalText(lastFmUrl, nameof(lastFmUrl), 4000);
+        Genres = ProviderContractValidation.Copy((genres ?? []).Where(value => !string.IsNullOrWhiteSpace(value)));
     }
 
     public ProviderExternalResourceId Id { get; }
@@ -380,6 +382,8 @@ public sealed record ProviderArtistMetadata
     public IReadOnlyDictionary<string, string> ProviderIds { get; }
 
     public string? LastFmUrl { get; }
+
+    public IReadOnlyList<string> Genres { get; }
 }
 
 public sealed record ProviderMetadataSearchRequest

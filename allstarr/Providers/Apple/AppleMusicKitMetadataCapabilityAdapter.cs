@@ -305,7 +305,8 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
     {
         var id = Resource(item, ProviderResourceKind.Artist);
         var attributes = RequiredObject(item, "attributes");
-        return new(id, Required(attributes, "name"), Artwork(id, attributes, revision), revision, biography: Notes(attributes));
+        return new(id, Required(attributes, "name"), Artwork(id, attributes, revision), revision, biography: Notes(attributes),
+            genres: Strings(attributes, "genreNames"));
     }
 
     internal static ProviderArtworkReference? Artwork(

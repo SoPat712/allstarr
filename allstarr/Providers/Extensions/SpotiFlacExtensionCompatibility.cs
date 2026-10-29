@@ -1132,7 +1132,7 @@ public static class SpotiFlacExtensionCompatibility
           value = value && (value.artist || value) || {};
           return { id: String(value.id || ''), name: String(value.name || value.title || ''), artworkUrl: _sfArtwork(value),
             snapshotVersion: _sfFirst(value, ['snapshotVersion','snapshot_version']), biography: value.biography || value.description || null,
-            providerIds: _sfProviderIds(value), lastFmUrl: _sfFirst(value, ['lastFmUrl','last_fm_url']) };
+            providerIds: _sfProviderIds(value), lastFmUrl: _sfFirst(value, ['lastFmUrl','last_fm_url']), genres: _sfGenres(value) };
         }
         function _sfSearchFilter(filter) {
           var declared = (_sfManifest.searchBehavior || {}).filters;
