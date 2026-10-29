@@ -41,10 +41,17 @@ test("Visible water drifts within its frame cap and printed covers return to sti
   });
   await openHome(page); await expectPainted(page.locator(".mix-shelf canvas"));
   const liquid = page.getByRole("region", { name: "Made for you", exact: true }).locator("canvas").first();
-  const before = await pixels(liquid), count = await drawCount(liquid);
-  await page.waitForTimeout(650);
-  expect(await pixels(liquid)).not.toBe(before);
-  expect(await drawCount(liquid) - count).toBeLessThanOrEqual(21);
+  const sample = await liquid.evaluate(async element => {
+    const canvas = element as HTMLCanvasElement;
+    const draws = (window as unknown as { coverDraws: (canvas: HTMLCanvasElement) => number }).coverDraws;
+    const before = canvas.toDataURL(), count = draws(canvas), start = performance.now();
+    await new Promise(resolve => setTimeout(resolve, 650));
+    const elapsed = performance.now() - start, frames = draws(canvas) - count;
+    return { before, after: canvas.toDataURL(), elapsed, frames };
+  });
+  expect(sample.after).not.toBe(sample.before);
+  expect(sample.frames).toBeGreaterThan(0);
+  expect(sample.frames).toBeLessThanOrEqual(Math.ceil(sample.elapsed * 30 / 1000) + 1);
   expect(await page.evaluate(() => (window as unknown as { waterContexts: () => number }).waterContexts())).toBe(1);
   const printed = page.getByRole("region", { name: "Moods", exact: true }).locator("canvas").first();
   await page.mouse.move(0, 0); const still = await pixels(printed);
