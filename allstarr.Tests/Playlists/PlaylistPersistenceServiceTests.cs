@@ -78,6 +78,40 @@ public sealed partial class PlaylistPersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task LastFmLinksRequireTheListenersOwnPersonalAccount()
+    {
+        var accountId = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ProviderAccounts.Add(new ProviderAccountRecord
+            {
+                Id = accountId,
+                ProviderId = "lastfm",
+                DisplayName = "Last.fm",
+                Enabled = true,
+                CreatedAt = _now,
+                UpdatedAt = _now
+            });
+            await db.SaveChangesAsync();
+        }
+        var input = Link() with { ProviderAccountId = accountId, SourceProviderId = "lastfm" };
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _playlists.CreateLinkAsync(Context(_userA, "principal-a"), input));
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.Empty(await db.PlaylistLinks.ToListAsync());
+            var account = await db.ProviderAccounts.SingleAsync(item => item.Id == accountId);
+            account.OwnerUserId = _userA;
+            await db.SaveChangesAsync();
+        }
+        var link = await _playlists.CreateLinkAsync(Context(_userA, "principal-a"), input);
+        Assert.Equal(_userA, link.OwnerUserId);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _playlists.CreateLinkAsync(Context(_userB, "principal-b"), input));
+    }
+
+    [Fact]
     public async Task LocalMatches_UseViewerPermissionsAcrossIndexOwnersAndStopAfterRevocation()
     {
         await using (var db = await _factory.CreateDbContextAsync())

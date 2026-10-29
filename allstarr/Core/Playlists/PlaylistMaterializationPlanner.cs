@@ -56,7 +56,8 @@ public sealed record PlaylistSourceMetadata(
     string? Isrc = null,
     bool? IsExplicit = null,
     string? ArtworkUrl = null,
-    Guid? CanonicalRecordingId = null);
+    Guid? CanonicalRecordingId = null,
+    string? MusicBrainzRecordingId = null);
 
 public sealed record PlaylistResolvedRoute(
     TrackRouteKind Kind,

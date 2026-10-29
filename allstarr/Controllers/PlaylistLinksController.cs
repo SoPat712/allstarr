@@ -1096,6 +1096,8 @@ public sealed partial class PlaylistLinksController(
         catch (KeyNotFoundException) { return NotFound(); }
         catch (UnauthorizedAccessException) { return StatusCode(403, new { error = "The resource is outside the authenticated scope" }); }
         catch (DbUpdateConcurrencyException) { return Conflict(new { error = "The resource changed before this update" }); }
+        catch (PlaylistSourceUnavailableException exception) when (exception.Error != null)
+        { return DiscoveryFailure(exception.Error, exception.ProviderId ?? "unknown", null); }
         catch (ProviderPlaylistUpdateException exception)
         {
             var status = exception.Forbidden
@@ -1628,7 +1630,8 @@ public sealed partial class PlaylistLinksController(
                 isExplicit = item.SourceMetadata.IsExplicit,
                 artworkUrl = item.SourceMetadata.ArtworkUrl ?? (item.SourceIdentity?.ProviderId is { } provider
                     ? ProviderArtworkFallback.CoverPath(provider) : null),
-                canonicalRecordingId = item.SourceMetadata.CanonicalRecordingId
+                canonicalRecordingId = item.SourceMetadata.CanonicalRecordingId,
+                musicBrainzRecordingId = item.SourceMetadata.MusicBrainzRecordingId
             },
             resolvedRoute = item.ResolvedRoute == null ? null : new
             {

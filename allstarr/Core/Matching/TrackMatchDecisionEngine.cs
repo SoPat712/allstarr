@@ -793,8 +793,9 @@ public sealed class TrackMatchCandidateIndex
             _byCanonical.TryGetValue(source.CanonicalRecordingId.Value, out var canonicalCandidates))
             return canonicalCandidates;
 
-        if (!string.IsNullOrWhiteSpace(source.MusicBrainzRecordingId) &&
-            _byMusicBrainz.TryGetValue(source.MusicBrainzRecordingId.Trim(), out var recordingCandidates))
+        var recordingId = TrackMatchSignals.RecordingIdentity(source);
+        if (!string.IsNullOrWhiteSpace(recordingId) &&
+            _byMusicBrainz.TryGetValue(recordingId.Trim(), out var recordingCandidates))
             return recordingCandidates;
 
         var isrc = NormalizeIsrc(source.Isrc);
