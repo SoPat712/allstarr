@@ -112,11 +112,13 @@ test("Channels save without reading destinations and tests queue only on explici
   dialog = page.getByRole("dialog");
   await dialog.getByLabel("Channel type", { exact: true }).click();
   await page.getByRole("option", { name: "Webhook", exact: true }).click();
+  await expect(dialog.getByLabel("Channel type", { exact: true })).toContainText("Webhook");
   await dialog.getByLabel("Channel name", { exact: true }).fill("My webhook");
   await dialog.getByLabel("Destination URL", { exact: true }).fill("https://notify.example/private?token=secret-value");
   state.fail = "save";
   await dialog.getByRole("button", { name: "Save channel", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("Reload");
+  await expect(dialog.getByLabel("Channel type", { exact: true })).toContainText("Webhook");
   state.fail = "";
   await dialog.getByRole("button", { name: "Save channel", exact: true }).click();
   await expect(dialog).toHaveCount(0);
