@@ -47,3 +47,12 @@ test("A failed mix request can retry in place and background reads stay silent",
   await page.getByRole("button", { name: "Try again", exact: true }).click(); await openHome(page);
   await page.evaluate(() => window.dispatchEvent(new Event("focus"))); await expect(page.getByRole("button", { name: "Refresh page" })).toHaveAttribute("aria-busy", "false");
 });
+test("Loading shelves never push the page wider than the window", async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 800 }); await mockForYou(page, { partial: true });
+  await page.route(url => url.pathname === "/api/admin/mixes", () => new Promise(() => {}));
+  await openHome(page).catch(() => {});
+  await expect(page.getByRole("region", { name: "Loading Made for you" })).toBeVisible();
+  const refresh = page.getByRole("button", { name: "Refresh page" }); await expect(refresh).toBeVisible();
+  const box = await refresh.boundingBox(); expect(box!.x + box!.width).toBeLessThanOrEqual(1000);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1000);
+});

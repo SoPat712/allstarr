@@ -22,7 +22,10 @@ export default defineConfig({
   server: {
     proxy: {
       "/api": "http://127.0.0.1:5275",
-      "/fonts": "http://127.0.0.1:5275",
+      "/fonts": {
+        target: "http://127.0.0.1:5275",
+        bypass: req => /^\/fonts\/(?:ArchivoNarrow-Bold|CourierPrime-(?:Regular|Bold))\.woff2(?:\?|$)/.test(req.url ?? "") ? req.url : undefined,
+      },
       "/images": "http://127.0.0.1:5275",
       "/favicon.svg": "http://127.0.0.1:5275",
     },

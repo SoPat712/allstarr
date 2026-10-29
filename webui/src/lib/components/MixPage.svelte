@@ -10,7 +10,7 @@
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import { Popover } from "$lib/components/ui/popover";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import MixArtwork from "$lib/components/MixArtwork.svelte";
+  import MixCover from "$lib/components/MixCover.svelte";
   import MixSongs from "$lib/components/MixSongs.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
@@ -95,7 +95,7 @@
     <div class="mix-body">
       {#if error}<p role="alert">{error}</p><Button variant="secondary" onclick={load}>Try again</Button>{/if}
       {#if !detail && !error}<Skeleton class="skeleton-panel" aria-label="Loading mix" />{:else if detail}
-        <div class="mix-heading"><div class="mix-cover"><MixArtwork references={detail.mix.coverArtwork} /></div><p>{detail.mix.updatedAt ? `Updated ${new Date(detail.mix.updatedAt).toLocaleString(undefined, { weekday: "long", hour: "numeric", minute: "2-digit" })} · ` : ""}{detail.songs.length} songs</p></div>
+        <div class="mix-heading"><div class="mix-cover"><MixCover mix={detail.mix} songs={detail.songs} dim={!detail.mix.readiness.ready} /></div><p>{detail.mix.updatedAt ? `Updated ${new Date(detail.mix.updatedAt).toLocaleString(undefined, { weekday: "long", hour: "numeric", minute: "2-digit" })} · ` : ""}{detail.songs.length} songs</p></div>
         <div class="mix-actions">
           <label class="app-switch"><span class="settings-toggle"><Checkbox checked={detail.mix.showInApps} disabled={busy || published === false} aria-label="Show in my apps" onCheckedChange={enabled => void perform(target => mixes.inApps(target, enabled === true))} /></span><span>Show in my apps</span></label>
           {#if detail.mix.kind !== "custom" && detail.mix.kind !== "external"}<span title={throttled ? "Wait 15 minutes before refreshing again" : "Refresh this mix"}><RefreshButton label="Refresh mix" variant="secondary" disabled={busy || throttled} onrefresh={refresh} /></span>{/if}
