@@ -32,6 +32,8 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Controllers/AppleMusicController.cs"] = "managed audio",
             ["Controllers/DownloadsController.cs"] = "managed audio and lyrics sidecars",
             ["Core/Downloads/ProviderDownloadArtifactResolver.cs"] = "managed audio",
+            ["Core/Enrichment/LibraryPromotionService.cs"] = "private promotion audio workspace",
+            ["Core/Enrichment/PromotionRoots.cs"] = "temporary approved-root write probe",
             ["Core/Enrichment/TagLibManagedMetadataWriter.cs"] = "managed audio and artwork",
             ["Providers/Extensions/ExtensionSdkV1.cs"] = "extension packages",
             ["Providers/Extensions/ExtensionSignedSessionClient.cs"] = "protected extension session",
@@ -100,6 +102,7 @@ public sealed class RuntimeFileOwnershipContractTests
         {
             "Providers/Extensions/ExtensionSdkV1.cs",
             "Providers/Extensions/ExtensionSignedSessionClient.cs",
+            "Core/Enrichment/LibraryPromotionService.cs",
             "Core/Enrichment/TagLibManagedMetadataWriter.cs",
             "Core/ManagedFiles/FilePlacementService.cs",
             "Core/Storage/DurableBackupService.cs",
