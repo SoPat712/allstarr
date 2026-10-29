@@ -10,6 +10,21 @@ namespace allstarr.Tests;
 
 public sealed class PlaylistUrlResolverTests
 {
+    [Fact]
+    public async Task ListenBrainzUrlReadsNeverSelectHouseholdTokens()
+    {
+        var capability = Mock.Of<IProviderPlaylistCapability>(item => item.ProviderId == "listenbrainz" && item.Capability == ProviderCapabilityKind.Playlist);
+        var registry = PublicPlaylistTestRegistry.Create("listenbrainz");
+        var router = Router(registry, capability);
+        var result = await new PlaylistUrlResolver(registry, router.Object).ResolveAsync(
+            "https://listenbrainz.org/playlist/11111111-1111-4111-8111-111111111111", Actor(),
+            [new() { Id = Guid.NewGuid(), ProviderId = "listenbrainz", Enabled = true }], "url-fixture");
+        Assert.NotNull(result.Resource);
+        Assert.Null(result.ProviderAccountId);
+        router.Verify(item => item.PlanAsync<IProviderPlaylistCapability>(It.Is<ProviderRouteRequest>(request =>
+            !request.Policy.AllowSharedAccount && request.ProviderStates.Count == 0)), Times.Once());
+    }
+
     [Theory]
     [InlineData("spotify:playlist:mix", "spotify", ProviderResourceKind.Playlist, "mix")]
     [InlineData("spotify:album:record", "spotify", ProviderResourceKind.Album, "record")]
@@ -23,6 +38,7 @@ public sealed class PlaylistUrlResolverTests
     [InlineData("https://deezer.com/album/12", "deezer", ProviderResourceKind.Album, "12")]
     [InlineData("https://play.qobuz.com/playlist/42", "qobuz", ProviderResourceKind.Playlist, "42")]
     [InlineData("https://www.qobuz.com/us-en/album/title/abc", "qobuz", ProviderResourceKind.Album, "abc")]
+    [InlineData("https://listenbrainz.org/playlist/11111111-1111-4111-8111-111111111111", "listenbrainz", ProviderResourceKind.Playlist, "11111111-1111-4111-8111-111111111111")]
     public void BuiltInLinksAreParsedWithoutRequests(string url, string provider, ProviderResourceKind kind, string id)
     {
         var resource = PlaylistUrlResolver.ParseBuiltIn(new Uri(url), provider);

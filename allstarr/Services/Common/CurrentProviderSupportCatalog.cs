@@ -117,6 +117,7 @@ public static class CurrentProviderSupportCatalog
             "ListenBrainz",
             "user",
             "Exact user-scoped encrypted token with an optional compatible listening address.",
+            Capability("playlist", Supported, "Public JSPF playlists, the connected listener's own and created-for playlists, and following the newest playlist of the same kind.", "ListenBrainzPlaylistCapabilityAdapterTests; PlaylistPersistenceServiceTests"),
             Capability("scrobbling", Supported, "Durable Jellyfin and Subsonic playback delivery with idempotent checkpoints and exact user/account scope.", "PlaybackSignalPipelineTests; ScrobblingAdminControllerTests"),
             Capability("recommendation", Supported, "Collaborative-filtering recording recommendations join the same explained, scoped candidate pipeline.", "RecommendationSourceAdapterTests; IntelligenceCoreTests"),
             Capability("health", Partial, "Token validation and source readiness are exposed; provider failure remains isolated.", "ScrobblingAdminControllerTests; RecommendationSourceAdapterTests")),

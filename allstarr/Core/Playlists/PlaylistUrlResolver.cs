@@ -52,6 +52,7 @@ public sealed class PlaylistUrlResolver(
             var capability = source.Capabilities.FirstOrDefault(item => item.Capability == capabilityKind && item.HasUsableImplementation);
             if (capability == null) continue;
             var account = accounts.Where(item => item.Enabled && item.ProviderId == source.Id &&
+                    (source.Id != "listenbrainz" || item.Scope == ProviderAccountScope.Personal && item.OwnerUserId == actor.EffectiveUserId) &&
                     (item.OwnerUserId == null || item.OwnerUserId == actor.EffectiveUserId) &&
                     capability.AllowedAccountScopes.Contains(item.Scope))
                 .OrderByDescending(item => item.OwnerUserId == actor.EffectiveUserId)
@@ -63,7 +64,7 @@ public sealed class PlaylistUrlResolver(
             }
             var request = new ProviderRouteRequest(capabilityKind, actor,
                 new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, false), ProviderExplicitContentPolicy.Allow,
-                    false, true, false, [source.Id]), "playlist-url-resolve", correlationId, DateTimeOffset.UtcNow.AddMinutes(2),
+                    false, source.Id != "listenbrainz", false, [source.Id]), "playlist-url-resolve", correlationId, DateTimeOffset.UtcNow.AddMinutes(2),
                 [source.Id], account == null ? [] : [new(source.Id, requestedAccountId: account.Id, expectedAccountRevision: account.Revision)],
                 cancellationToken: cancellationToken, purpose: ProviderRoutePurpose.ManualSelection);
             ProviderExecutionContext? context;
@@ -126,6 +127,9 @@ public sealed class PlaylistUrlResolver(
 
     public static ProviderExternalResourceId? ParseBuiltIn(Uri uri, string providerId)
     {
+        if (providerId == "listenbrainz")
+            return Core.Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.TryNormalize(uri.AbsoluteUri, out var playlist)
+                ? new(providerId, ProviderResourceKind.Playlist, playlist) : null;
         if (providerId == "spotify" && uri.Scheme == "spotify")
         {
             var parts = uri.OriginalString.Split(':');

@@ -151,8 +151,14 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         ValidateImportPolicy(input.ImportMode, input.TrackRetention, input.ScheduleId);
         if (input.SourcePlaylistIdHash.Length != 64) throw new ArgumentException("A source playlist hash is required.", nameof(input));
         var providerId = PersistenceGuard.Required(input.SourceProviderId, nameof(input.SourceProviderId)).ToLowerInvariant();
+        if (providerId == "listenbrainz" && input.SourcePlaylistId.StartsWith("createdfor:", StringComparison.Ordinal))
+        {
+            if (!input.ProviderAccountId.HasValue) throw new UnauthorizedAccessException("Follow newest requires your personal ListenBrainz account.");
+            if (input.ImportMode != PlaylistImportMode.Linked) throw new ArgumentException("Follow newest requires a linked playlist.", nameof(input));
+        }
         if (input.ProviderAccountId.HasValue)
-            _ = await _accounts.ResolveAsync(new ProviderAccountResolutionRequest(principal, providerId, "playlist", input.ProviderAccountId), cancellationToken)
+            _ = await _accounts.ResolveAsync(new ProviderAccountResolutionRequest(principal, providerId, "playlist", input.ProviderAccountId,
+                AllowSharedAccount: providerId != "listenbrainz"), cancellationToken)
                 ?? throw new UnauthorizedAccessException("The provider account is unavailable.");
         else
         {

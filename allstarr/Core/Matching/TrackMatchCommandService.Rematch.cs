@@ -178,7 +178,7 @@ public sealed partial class TrackMatchCommandService
             payload.AlbumArtist,
             ReadDurationMilliseconds(snapshot.PayloadJson),
             payload.Isrc,
-            null,
+            payload.MusicBrainzRecordingId,
             payload.IsExplicit);
         var ownerPolicy = effectivePolicies == null ? null :
             await effectivePolicies.ResolveForUserAsync(snapshot.OwnerUserId, cancellationToken);

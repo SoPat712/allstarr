@@ -49,6 +49,7 @@ public sealed class CurrentProviderSupportCatalogTests
         AssertState("lastfm", "scrobbling", CurrentProviderSupportCatalog.Supported);
         AssertState("lastfm", "recommendation", CurrentProviderSupportCatalog.Supported);
         AssertState("listenbrainz", "scrobbling", CurrentProviderSupportCatalog.Supported);
+        AssertState("listenbrainz", "playlist", CurrentProviderSupportCatalog.Supported);
         AssertState("listenbrainz", "recommendation", CurrentProviderSupportCatalog.Supported);
         AssertState("lrcred", "lyrics", CurrentProviderSupportCatalog.Supported);
         AssertState("unison", "lyrics", CurrentProviderSupportCatalog.Supported);

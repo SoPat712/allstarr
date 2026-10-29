@@ -570,10 +570,10 @@ public sealed partial class PlaylistLinksControllerContractTests
         IPlatformClock? clock = null,
         AdminProtocolExecutionContextFactory? protocolContexts = null,
         IProviderRegistry? registry = null, IProviderRouter? router = null,
-        DurablePlaylistProjectionReader? projections = null)
+        DurablePlaylistProjectionReader? projections = null, allstarr.Core.Jobs.DurableJobQueue? jobs = null)
     {
         var controller = new PlaylistLinksController(
-            contextFactory!, playlists!, projections!, null!, null!, null!, null!, registry!, router!, null!, null!, null!, clock!, null!, protocolContexts!, null!, null!, null!, null!, null!);
+            contextFactory!, playlists!, projections!, null!, null!, jobs!, null!, registry!, router!, null!, null!, null!, clock!, null!, protocolContexts!, null!, null!, null!, null!, null!);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }

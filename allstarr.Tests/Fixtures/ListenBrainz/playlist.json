@@ -1,0 +1,41 @@
+{
+  "playlist": {
+    "identifier": "https://listenbrainz.org/playlist/11111111-1111-4111-8111-111111111111",
+    "title": "Weekly Jams",
+    "creator": "troi-bot",
+    "date": "2026-10-19T00:00:00+00:00",
+    "annotation": "A weekly selection.",
+    "extension": {
+      "https://musicbrainz.org/doc/jspf#playlist": {
+        "public": true,
+        "creator": "troi-bot",
+        "created_for": "listener",
+        "last_modified_at": "2026-10-19T01:00:00+00:00",
+        "additional_metadata": { "algorithm_metadata": { "source_patch": "weekly-jams" } }
+      }
+    },
+    "track": [
+      {
+        "identifier": ["https://musicbrainz.org/recording/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+        "title": "First Song",
+        "creator": "First Artist",
+        "album": "First Album",
+        "duration": 180000
+      },
+      {
+        "identifier": ["https://musicbrainz.org/recording/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"],
+        "title": "Second Song",
+        "creator": "Second Artist"
+      },
+      {
+        "identifier": ["https://musicbrainz.org/recording/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"],
+        "title": "First Song",
+        "creator": "First Artist",
+        "album": "First Album",
+        "duration": 180000
+      },
+      { "identifier": ["https://example.test/other/cccccccc-cccc-4ccc-8ccc-cccccccccccc"] },
+      {}
+    ]
+  }
+}

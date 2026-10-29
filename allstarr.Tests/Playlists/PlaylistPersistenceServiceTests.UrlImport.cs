@@ -8,11 +8,42 @@ using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Tests;
 
 public sealed partial class PlaylistPersistenceServiceTests
 {
+    [Fact]
+    public async Task ListenBrainzSubscriptionsAndPersonalTokensStayWithTheirExactListener()
+    {
+        var personal = Guid.CreateVersion7();
+        var shared = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ProviderAccounts.AddRange(
+                new ProviderAccountRecord { Id = personal, ProviderId = "listenbrainz", OwnerUserId = _userA,
+                    DisplayName = "Personal", Enabled = true, CreatedAt = _now, UpdatedAt = _now },
+                new ProviderAccountRecord { Id = shared, ProviderId = "listenbrainz",
+                    DisplayName = "Shared", Enabled = true, CreatedAt = _now, UpdatedAt = _now });
+            await db.SaveChangesAsync();
+        }
+        var input = Link() with
+        {
+            ProviderAccountId = personal,
+            SourceProviderId = "listenbrainz", SourcePlaylistId = "createdfor:weekly-jams",
+            SourcePlaylistIdHash = Hash("createdfor:weekly-jams")
+        };
+        var owner = Context(_userA, "principal-a");
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => _playlists.CreateLinkAsync(owner, input with { ProviderAccountId = null }));
+        await Assert.ThrowsAsync<ArgumentException>(() => _playlists.CreateLinkAsync(owner, input with { ImportMode = PlaylistImportMode.OneTime }));
+        var link = await _playlists.CreateLinkAsync(owner, input);
+        Assert.Equal(_userA, link.OwnerUserId);
+        Assert.Equal(personal, link.ProviderAccountId);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => _playlists.CreateLinkAsync(Context(_userB, "principal-b"), input));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => _playlists.CreateLinkAsync(owner, input with { ProviderAccountId = shared }));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

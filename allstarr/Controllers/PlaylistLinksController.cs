@@ -7,6 +7,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
+using allstarr.Core.Providers.ListenBrainz;
 using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
@@ -73,7 +74,8 @@ public sealed partial class PlaylistLinksController(
             {
                 if (!supportedProviders.TryGetValue(item.ProviderId, out var provider)) return false;
                 var capability = provider.Capabilities.Single(value => value.Capability == ProviderCapabilityKind.Playlist);
-                return capability.AllowedAccountScopes.Contains(item.Scope);
+                return capability.AllowedAccountScopes.Contains(item.Scope) &&
+                    (item.ProviderId != "listenbrainz" || item.OwnerUserId == session.AllstarrUserId);
             }).ToArray();
             var availableAccounts = capableAccounts;
             ProviderAccountRecord[] blockedAccounts = [];
@@ -612,6 +614,9 @@ public sealed partial class PlaylistLinksController(
                 return BadRequest(new { error = "The playlist workflow requires a mapped backend playlist with preservation of manual songs and removal of stale synchronized songs." });
             if (importMode == PlaylistImportMode.OneTime && request.ScheduleId.HasValue)
                 return BadRequest(new { error = "A one-time import cannot have an update schedule" });
+            if (request.FollowNewest && (request.SourceProviderId != "listenbrainz" ||
+                    importMode != PlaylistImportMode.Linked || !request.ProviderAccountId.HasValue))
+                return BadRequest(new { error = "Follow newest requires a linked playlist and your personal ListenBrainz account." });
             if (!ValidTargetProtocol(request.TargetProtocol)) return BadRequest(new { error = "TargetProtocol must be jellyfin or subsonic" });
             var context = await CreateExecutionAsync(session, cancellationToken);
             if (request.TargetProtocol.Equals("subsonic", StringComparison.OrdinalIgnoreCase) && mode != PlaylistLinkMode.Virtual)
@@ -638,6 +643,27 @@ public sealed partial class PlaylistLinksController(
                 if (!allstarr.Core.Providers.Spotify.SpotifyPlaylistReference.TryNormalize(source, out var normalizedSource))
                     return BadRequest(new { error = "Enter a Spotify playlist link, URI, or ID." });
                 source = normalizedSource;
+            }
+            if (sourceProvider == "listenbrainz")
+            {
+                if (!ListenBrainzPlaylistCapabilityAdapter.TryNormalize(source, out var normalizedSource))
+                    return BadRequest(new { error = "Enter a ListenBrainz playlist link or MBID." });
+                source = normalizedSource;
+                if (request.FollowNewest)
+                {
+                    await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+                    var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
+                        item.Id == request.ProviderAccountId && item.ProviderId == sourceProvider && item.Enabled &&
+                        item.OwnerUserId == session.AllstarrUserId, cancellationToken);
+                    if (account == null) return BadRequest(new { error = "Select your personal ListenBrainz account." });
+                    var candidate = await PlanPlaylistSourceAsync(session, account, "playlist-follow-newest", cancellationToken);
+                    if (candidate == null || !providerRegistry.TryGetCapability<ListenBrainzPlaylistCapabilityAdapter>(
+                            sourceProvider, ProviderCapabilityKind.Playlist, out var listenBrainz))
+                        return Conflict(new { error = "The selected account cannot currently read playlists." });
+                    var followed = await listenBrainz!.FollowNewestAsync(candidate.Context, new(sourceProvider, ProviderResourceKind.Playlist, source));
+                    if (!followed.IsSuccess) return DiscoveryFailure(followed.Error!, sourceProvider, account.Id);
+                    source = followed.RequireValue().Value;
+                }
             }
             var record = await playlists.CreateLinkAsync(context, new PlaylistLinkInput(
                 request.ProviderAccountId, sourceProvider, source,
@@ -1353,7 +1379,7 @@ public sealed partial class PlaylistLinksController(
         ? $"/api/admin/playlist-sources/{accountId}/playlists/{Uri.EscapeDataString(playlistId)}/artwork"
         : $"/api/admin/playlist-sources/public/{Uri.EscapeDataString(providerId)}/playlists/{Uri.EscapeDataString(playlistId)}/artwork";
 
-    private static object ToDto(PlaylistLinkRecord value, Guid? initialJobId = null, int? retentionQueued = null) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), importMode = LowerCamel(value.ImportMode.ToString()), trackRetention = LowerCamel(value.TrackRetention.ToString()), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id), initialJobId, retentionQueued };
+    private static object ToDto(PlaylistLinkRecord value, Guid? initialJobId = null, int? retentionQueued = null) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, followNewest = value.SourceProviderId == "listenbrainz" && value.SourcePlaylistId.StartsWith("createdfor:", StringComparison.Ordinal), targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), importMode = LowerCamel(value.ImportMode.ToString()), trackRetention = LowerCamel(value.TrackRetention.ToString()), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id), initialJobId, retentionQueued };
     private object ToListDto(PlaylistLinkRecord value, DurablePlaylistProjection? projection) => new
     {
         id = value.Id,
@@ -1365,6 +1391,7 @@ public sealed partial class PlaylistLinksController(
         providerAccountId = value.ProviderAccountId,
         sourceProviderId = value.SourceProviderId,
         sourcePlaylistId = value.SourcePlaylistId,
+        followNewest = value.SourceProviderId == "listenbrainz" && value.SourcePlaylistId.StartsWith("createdfor:", StringComparison.Ordinal),
         sourceUpdateAvailable = value.ProviderAccountId.HasValue && value.ImportMode == PlaylistImportMode.Linked && value.TargetPlaylistId != null && providerUpdates.CanReplaceSource(value.SourceProviderId),
         targetProtocol = value.TargetProtocol,
         targetBackendInstanceId = value.TargetBackendInstanceId,
@@ -1647,7 +1674,7 @@ public sealed record CreatePlaylistLinkRequest(Guid? ProviderAccountId, string S
     Guid? ScheduleId = null, string? TargetPlaylistId = null, Guid? TargetCredentialReferenceId = null,
     bool MirrorStaleEntries = true, bool PreserveManualEntries = true, bool SyncName = true,
     bool SyncDescription = true, bool SyncArtwork = true, string ProjectionMode = "resolved",
-    string ImportMode = "linked", string TrackRetention = "onDemand");
+    string ImportMode = "linked", string TrackRetention = "onDemand", bool FollowNewest = false);
 public sealed record UpdatePlaylistLinkRequest(long ExpectedRevision, string Mode, string MaterializationMode,
     Guid? ScheduleId, string? TargetPlaylistId, Guid? TargetCredentialReferenceId, bool MirrorStaleEntries,
     bool PreserveManualEntries, bool SyncName, bool SyncDescription, bool SyncArtwork,

@@ -743,6 +743,7 @@ public static class TrackMatchOverridePolicy
 public sealed class TrackMatchCandidateIndex
 {
     private readonly IReadOnlyDictionary<Guid, IReadOnlyList<LocalTrackMatchCandidate>> _byCanonical;
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<LocalTrackMatchCandidate>> _byMusicBrainz;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<LocalTrackMatchCandidate>> _byIsrc;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<LocalTrackMatchCandidate>> _byMatchKey;
     private readonly IReadOnlyDictionary<(string Provider, string Id), IReadOnlyList<LocalTrackMatchCandidate>> _byProviderTrack;
@@ -761,6 +762,11 @@ public sealed class TrackMatchCandidateIndex
             .ToDictionary(
                 group => group.Key,
                 group => (IReadOnlyList<LocalTrackMatchCandidate>)group.ToArray());
+        _byMusicBrainz = items
+            .Where(item => !string.IsNullOrWhiteSpace(TrackMatchSignals.RecordingIdentity(item)))
+            .GroupBy(item => TrackMatchSignals.RecordingIdentity(item)!.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key,
+                group => (IReadOnlyList<LocalTrackMatchCandidate>)group.ToArray(), StringComparer.OrdinalIgnoreCase);
         _byIsrc = items
             .Where(item => NormalizeIsrc(item.Isrc) != null)
             .GroupBy(item => NormalizeIsrc(item.Isrc)!, StringComparer.Ordinal)
@@ -786,6 +792,10 @@ public sealed class TrackMatchCandidateIndex
         if (source.CanonicalRecordingId.HasValue &&
             _byCanonical.TryGetValue(source.CanonicalRecordingId.Value, out var canonicalCandidates))
             return canonicalCandidates;
+
+        if (!string.IsNullOrWhiteSpace(source.MusicBrainzRecordingId) &&
+            _byMusicBrainz.TryGetValue(source.MusicBrainzRecordingId.Trim(), out var recordingCandidates))
+            return recordingCandidates;
 
         var isrc = NormalizeIsrc(source.Isrc);
         if (isrc != null && _byIsrc.TryGetValue(isrc, out var isrcCandidates))
