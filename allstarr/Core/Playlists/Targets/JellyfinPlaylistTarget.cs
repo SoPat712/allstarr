@@ -310,7 +310,7 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
     {
         var create = await SendAsync(context, HttpMethod.Post,
             $"Playlists?Name={Escape(request.Metadata.Name)}&Ids={Csv(request.OrderedBackendItemIds)}&UserId={Escape(context.VerifiedPrincipalId)}",
-            JsonContent.Create(new { }), cancellationToken);
+            request.Metadata.Private ? JsonContent.Create(new { IsPublic = false }) : JsonContent.Create(new { }), cancellationToken);
         if (!create.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(create);
         using var document = JsonDocument.Parse(create.Body!);
         var id = document.RootElement.StringOrNull("Id") ?? throw new JsonException("Jellyfin create-playlist response has no Id.");
