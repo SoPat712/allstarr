@@ -24,7 +24,7 @@ using allstarr.Core.Favorites;
 
 namespace allstarr.Tests;
 
-public sealed class PersonalMixServiceTests : IAsyncLifetime
+public sealed partial class PersonalMixServiceTests : IAsyncLifetime
 {
     private SqliteTestDatabase database = null!;
     private Factory factory = null!;
@@ -491,9 +491,9 @@ public sealed class PersonalMixServiceTests : IAsyncLifetime
         await service.EnsureSchedulesAsync(default);
         await using var db = factory.CreateDbContext();
         var schedules = await db.JobSchedules.Where(item => item.OwnerUserId == owner).ToArrayAsync();
-        Assert.Equal(5, schedules.Length);
+        Assert.Equal(10, schedules.Length);
         Assert.All(schedules.Where(item => item.CronExpression == "0 4 * * *"), item => Assert.Equal(DateTimeOffset.Parse(next), item.NextRunAt));
-        Assert.Equal(2, schedules.Count(item => item.CronExpression == "0 4 * * 1"));
+        Assert.Equal(7, schedules.Count(item => item.CronExpression == "0 4 * * 1"));
         Assert.Single(schedules, item => item.CronExpression == "0 4 * * 5");
         clock.UtcNow = DateTimeOffset.Parse(next);
         var options = new DurableJobOptions();

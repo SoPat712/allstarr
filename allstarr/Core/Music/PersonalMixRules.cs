@@ -12,11 +12,12 @@ internal static class PersonalMixRules
     // Qualified plays include imports. Daily selection uses exact 7:3 batches, up to 50 songs.
     internal const int RequiredPlays = 200, RepeatPlays = 30, ArtistLimit = 2, TopSongs = 300;
     internal const int SkipDays = 7, RefreshMinutes = 15, ReleaseDays = 14;
-    internal static readonly string[] Kinds = ["on-repeat", "rewind", "release-radar", "discover-weekly", "daily-1", "daily-2", "daily-3", "daily-4"];
+    internal static readonly string[] Kinds = ["on-repeat", "rewind", "release-radar", "discover-weekly", "daily-1", "daily-2", "daily-3", "daily-4", .. PersonalMixMoods.Kinds];
     internal static string Name(string kind) => kind.StartsWith("daily-", StringComparison.Ordinal)
-        ? "Daily Mix " + kind[^1] : kind switch
-        { "on-repeat" => "On Repeat", "rewind" => "Rewind", "release-radar" => "Release Radar", _ => "Discover Weekly" };
-    internal static string Cron(string kind) => kind switch
+        ? "Daily Mix " + kind[^1] : PersonalMixMoods.Kinds.Contains(kind)
+            ? char.ToUpperInvariant(kind[0]) + kind[1..] + " Mix" : kind switch
+            { "on-repeat" => "On Repeat", "rewind" => "Rewind", "release-radar" => "Release Radar", _ => "Discover Weekly" };
+    internal static string Cron(string kind) => PersonalMixMoods.Kinds.Contains(kind) ? "0 4 * * 1" : kind switch
     { "release-radar" => "0 4 * * 5", "discover-weekly" or "rewind" => "0 4 * * 1", _ => "0 4 * * *" };
 
     internal static MixReadiness Readiness(string kind, int plays, int recent, bool source, bool artists, bool old)
@@ -31,7 +32,7 @@ internal static class PersonalMixRules
     }
 
     internal static IReadOnlyList<MixCandidate> Select(string kind, IReadOnlyList<MixCandidate> candidates,
-        DateTimeOffset now, IReadOnlyCollection<string> previous)
+        DateTimeOffset now, IReadOnlyCollection<string> previous, int? length = null)
     {
         var rows = candidates.Where(item => !item.EarlySkipped).DistinctBy(item => Key(item.Song)).Where(item => kind switch
         {
@@ -55,7 +56,7 @@ internal static class PersonalMixRules
                 selected.Add(row);
                 foreach (var name in names) artists[name] = artists.GetValueOrDefault(name) + 1;
                 if (familiar >= 0) { if (row.Plays > 0 || row.Loved) familiar--; else fresh--; }
-                if (selected.Count == (kind.StartsWith("daily-", StringComparison.Ordinal) ? 50 : 30)) break;
+                if (selected.Count == (length ?? (kind.StartsWith("daily-", StringComparison.Ordinal) ? 50 : 30))) break;
             }
             return selected;
         }

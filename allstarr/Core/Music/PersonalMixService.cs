@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Enrichment;
+using allstarr.Core.AudioMuse;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
@@ -18,19 +19,26 @@ namespace allstarr.Core.Music;
 
 public sealed record PersonalMixItem(Guid MixId, int Generation, Song Song, string Source, string Reason, double Score);
 public sealed record PersonalMix(Guid Id, string Kind, string Name, string Description, int Generation,
-    DateTimeOffset? UpdatedAt, MixReadiness Readiness, bool ShowInApps, IReadOnlyList<PersonalMixItem> Songs);
+    DateTimeOffset? UpdatedAt, MixReadiness Readiness, bool ShowInApps, IReadOnlyList<PersonalMixItem> Songs)
+{
+    public string Section => Kind == "custom" ? "custom" : Kind == "external" ? "yourServices" : PersonalMixMoods.Kinds.Contains(Kind) ? "moods" : "madeForYou";
+    public int SortOrder => Kind == "external" || Kind == "custom" ? 0 : Array.IndexOf(PersonalMixRules.Kinds, Kind);
+    public string? SourceLabel { get; init; }
+    public string? RecipeVersion { get; init; }
+}
 public sealed record MixFeedback(string SongId, string Kind, bool TodayOnly = false);
 internal sealed class PersonalMixDocument
 {
     public string TimeZoneId { get; set; } = TimeZoneInfo.Local.Id;
     public Dictionary<string, PersonalMix> Mixes { get; set; } = [];
     public Dictionary<string, DateTimeOffset> DiscoverPicks { get; set; } = [];
+    public Dictionary<Guid, PersonalMix> Previews { get; set; } = [];
 }
 
 public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock,
     SharedTagStore tags, TasteService taste, MusicMixService radio, IProtocolProviderGateway providers,
     NewReleasesService releases, IDurableRuntimeSettings settings, IEffectiveProviderPolicyResolver policies,
-    IBackendLibraryAccessResolver libraryAccess)
+    IBackendLibraryAccessResolver libraryAccess, AudioMuseDiscovery? audioMuse = null)
 {
     public const string PublishKey = "Mixes:PublishToApps", JobType = "mixes.refresh";
     private const string ResourceKind = "personal-mixes";
@@ -53,15 +61,18 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     {
         var row = await RowAsync(db, user, token);
         var document = row == null ? new() : JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!;
-        if (document.Mixes.Count > 0) return document;
+        var missing = PersonalMixRules.Kinds.Where(kind => !document.Mixes.ContainsKey(kind)).ToArray();
+        if (missing.Length == 0) return document;
         var events = await Events(db, user).Where(item => item.State == ListeningEventState.Completed && item.ListenedAt <= clock.UtcNow).ToArrayAsync(token);
         var follows = await releases.ListAsync(user.Id, token);
-        foreach (var kind in PersonalMixRules.Kinds)
+        foreach (var kind in missing)
         {
             var ready = PersonalMixRules.Readiness(kind, events.Length, events.Count(item => item.ListenedAt >= clock.UtcNow.AddDays(-30)), false,
                 follows.Count > 0 || events.GroupBy(item => item.Artist).Any(group => group.Count() >= 5),
                 events.GroupBy(item => item.TrackReference).Any(group => group.Count() >= 5 && group.Max(item => item.ListenedAt) <= clock.UtcNow.AddMonths(-6)));
-            document.Mixes[kind] = new(Id(user, kind), kind, PersonalMixRules.Name(kind), "Made for you", 0, null, ready, true, []);
+            if (PersonalMixMoods.Kinds.Contains(kind)) ready = PersonalMixMoods.Readiness(0);
+            document.Mixes[kind] = new(Id(user, kind), kind, PersonalMixRules.Name(kind),
+                PersonalMixMoods.Kinds.Contains(kind) ? "Updated Monday · Music for " + kind : "Made for you", 0, null, ready, true, []);
         }
         return document;
     }
@@ -105,7 +116,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 document.TimeZoneId = timeZoneId.Trim();
                 await SaveAsync(db, user, document, token);
             }
-            return await VisibleAsync(owner, document, token);
+            return (await VisibleAsync(owner, document, token)).Concat(await ExternalMixesAsync(user, token)).ToArray();
         }
         finally { writes.Release(); }
     }
@@ -121,6 +132,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             var document = await LoadAsync(db, user, token);
             if (timeZoneId != null) { DurableScheduleEngine.Validate("0 4 * * *", timeZoneId); document.TimeZoneId = timeZoneId.Trim(); }
             var requested = mixId == null ? null : document.Mixes.Values.SingleOrDefault(item => item.Id == mixId) ?? throw new KeyNotFoundException();
+            if (requested?.Kind == "custom") throw new ArgumentException("Saved mixes do not refresh.");
             if (!scheduled && requested?.UpdatedAt > clock.UtcNow.AddMinutes(-PersonalMixRules.RefreshMinutes))
                 throw new InvalidOperationException("Wait 15 minutes before refreshing this mix again.");
             var events = await Events(db, user).Where(item => item.UpdatedAt <= clock.UtcNow &&
@@ -128,6 +140,9 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             var completed = events.Where(item => item.State == ListeningEventState.Completed && item.ListenedAt <= clock.UtcNow).ToArray();
             var candidates = await CandidatesAsync(db, user, events, token);
             var clusters = PersonalMixRules.Cluster(candidates);
+            var features = audioMuse == null || requested != null && !PersonalMixMoods.Kinds.Contains(requested.Kind)
+                ? new Dictionary<string, AudioMuseScores>() : await audioMuse.MixFeaturesAsync(await ContextAsync(user, token),
+                    candidates.Where(item => item.Song.IsLocal).Select(item => item.Song.Id), token);
             var follows = await releases.ListAsync(owner, token);
             var kinds = requested == null ? PersonalMixRules.Kinds : requested.Kind.StartsWith("daily-", StringComparison.Ordinal)
                 ? PersonalMixRules.Kinds.Where(kind => kind.StartsWith("daily-", StringComparison.Ordinal)).ToArray() : [requested.Kind];
@@ -155,12 +170,15 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                             .OrderBy(other => other.Distance).ThenBy(other => other.Slot).First().Slot == index).ToArray();
                     }
                 }
-                var selected = ready.Ready ? PersonalMixRules.Select(kind, pool, clock.UtcNow, previous) : [];
+                var mood = PersonalMixMoods.Kinds.Contains(kind);
+                if (mood) pool = PersonalMixMoods.Qualify(kind, candidates, features);
+                var selected = ready.Ready || mood ? PersonalMixRules.Select(kind, pool, clock.UtcNow, previous, mood ? 40 : null) : [];
+                if (mood) { ready = PersonalMixMoods.Readiness(selected.Count); if (!ready.Ready) selected = []; }
                 if (ready.Ready && selected.Count == 0) ready = new(false, kind.StartsWith("daily-", StringComparison.Ordinal)
                     ? "More familiar songs and close new picks are needed for a 70/30 mix." : "No eligible playable songs yet. Try again after more listening or new releases.");
                 var generation = mix.Generation + 1;
                 var items = selected.Select(item => new PersonalMixItem(mix.Id, generation, SafeSong(item.Song), item.Source,
-                    kind switch
+                    mood ? PersonalMixMoods.Reason(kind, item) : kind switch
                     {
                         "on-repeat" => $"Played {item.RecentPlays} times in 30 days",
                         "rewind" => "An old favourite you have not played in six months",
@@ -172,7 +190,8 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                     Name = name,
                     Generation = generation,
                     UpdatedAt = clock.UtcNow,
-                    Description = $"Made for you · {PersonalMixRules.Name(kind)}",
+                    Description = mood ? $"Updated Monday · Music for {kind}" : $"Made for you · {PersonalMixRules.Name(kind)}",
+                    RecipeVersion = mood ? PersonalMixMoods.RecipeVersion : null,
                     Readiness = ready,
                     Songs = items
                 };
@@ -205,8 +224,16 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         var songs = document.Mixes.Values.SelectMany(mix => mix.Songs).Select(item => item.Song).ToArray();
         var scores = await taste.ScoreManyAsync(owner, songs, token);
         var policy = await policies.ResolveForUserAsync(owner, token);
-        return document.Mixes.Values.Select(mix => mix with
-        { Songs = mix.Songs.Where(item => !scores[item.Song].Blocked && policy.Includes(item.Song)).ToArray() }).ToArray();
+        return document.Mixes.Values.Select(mix =>
+        {
+            var visible = mix.Songs.Where(item => !scores[item.Song].Blocked && policy.Includes(item.Song)).ToArray();
+            return mix with
+            {
+                Songs = visible,
+                Readiness = PersonalMixMoods.Kinds.Contains(mix.Kind) && mix.Generation > 0
+                ? PersonalMixMoods.Readiness(visible.Length) : mix.Readiness
+            };
+        }).ToArray();
     }
 
     public async Task SetInAppsAsync(Guid owner, Guid id, bool enabled, CancellationToken token)
@@ -216,9 +243,10 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         {
             await using var db = await factory.CreateDbContextAsync(token);
             var user = await UserAsync(db, owner, token);
+            if (await SetExternalInAppsAsync(user, id, enabled, token)) return;
             var document = await LoadAsync(db, user, token);
             var mix = document.Mixes.Values.SingleOrDefault(item => item.Id == id) ?? throw new KeyNotFoundException();
-            document.Mixes[mix.Kind] = mix with { ShowInApps = enabled };
+            document.Mixes[document.Mixes.First(item => item.Value.Id == id).Key] = mix with { ShowInApps = enabled };
             await SaveAsync(db, user, document, token);
         }
         finally { writes.Release(); }
@@ -243,7 +271,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 _ => throw new ArgumentException("Unknown feedback kind.")
             };
             await taste.PutNudgeAsync(owner, nudge, token);
-            document.Mixes[mix.Kind] = mix with { Songs = mix.Songs.Where(item => item.Song.Id != song.Id).ToArray() };
+            document.Mixes[document.Mixes.First(item => item.Value.Id == id).Key] = mix with { Songs = mix.Songs.Where(item => item.Song.Id != song.Id).ToArray() };
             await SaveAsync(db, user, document, token);
         }
         finally { writes.Release(); }
@@ -260,7 +288,8 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         var localIds = document.Mixes.Values.SelectMany(mix => mix.Songs).Where(item => item.Song.IsLocal).Select(item => item.Song.Id).ToArray();
         var allowed = localIds.Length == 0 ? [] : await LibraryTrackAccess.Query(db, context, await libraryAccess.ResolveAsync(context, token))
             .Where(item => localIds.Contains(item.BackendItemId)).Select(item => item.BackendItemId).ToArrayAsync(token);
-        return (await VisibleAsync(owner, document, token)).Where(mix => mix.Generation > 0 && mix.ShowInApps && mix.Readiness.Ready).Select(mix =>
+        return (await VisibleAsync(owner, document, token)).Where(mix => mix.Generation > 0 && mix.ShowInApps && mix.Readiness.Ready &&
+            (!PersonalMixMoods.Kinds.Contains(mix.Kind) || mix.Songs.Count(item => !item.Song.IsLocal || allowed.Contains(item.Song.Id)) >= 25)).Select(mix =>
             new VirtualPlaylistReadModel(PlaylistVirtualizationService.CreateProtocolId(mix.Id), mix.Id, mix.Id, mix.Name, mix.Description,
                 null, "allstarr", mix.Kind, mix.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture), PlaylistLinkMode.Virtual,
                 mix.Songs.Where(item => !item.Song.IsLocal || allowed.Contains(item.Song.Id)).Select((item, index) => new VirtualPlaylistTrack(index, item.Song.Id, item.Song.Title, item.Song.Artist,

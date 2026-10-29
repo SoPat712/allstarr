@@ -15,7 +15,9 @@ internal sealed record AudioMuseTrack(string Id, string? Title = null, string? A
     string? AlbumArtist = null, double? Distance = null, string? MoodVector = null, string? OtherFeatures = null,
     string? TopGenre = null, string? TopMood = null);
 internal sealed record AudioMuseCentroid(int? ClusterId, int? Index, double? MoodScore, int? SongCount, string[] TopTags);
-internal sealed record AudioMuseScores(double? Energy, double? Relaxed, double? Danceable, double? Party);
+internal sealed record AudioMuseScores(double? Energy, double? Relaxed, double? Danceable, double? Party,
+    double? Aggressive = null, double? Happy = null, double? Sad = null, double? Tempo = null,
+    double? LyricDensity = null, IReadOnlyDictionary<string, double>? Tags = null);
 
 public sealed class AudioMuseClient(IHttpClientFactory clients, EncryptedSecretStore secrets)
 {
@@ -88,13 +90,22 @@ public sealed class AudioMuseClient(IHttpClientFactory clients, EncryptedSecretS
     {
         var root = await GetAsync(endpoint, "external/get_score?id=" + Escape(id) + "&server=" + Escape(server), token, "song_not_analyzed");
         if (Text(root, "item_id") != id) throw new AudioMuseUnavailable("song_not_analyzed");
-        var features = (Text(root, "other_features") ?? "").Split(',').Select(part => part.Split(':'))
-            .Where(parts => parts.Length == 2 && double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && double.IsFinite(value))
-            .GroupBy(parts => parts[0], StringComparer.Ordinal).ToDictionary(g => g.Key,
+        return ParseScores(root);
+    }
+
+    internal static AudioMuseScores ParseScores(JsonElement root)
+    {
+        static Dictionary<string, double> Vector(string? text) => (text ?? "").Split(',').Select(part => part.Split(':'))
+            .Where(parts => parts.Length == 2 && double.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out var value) && value is >= 0 and <= 1)
+            .GroupBy(parts => parts[0].Trim(), StringComparer.Ordinal).ToDictionary(g => g.Key,
                 g => double.Parse(g.First()[1], CultureInfo.InvariantCulture), StringComparer.Ordinal);
+        var features = Vector(Text(root, "other_features"));
         if (features.Values.All(value => value == 0)) features.Clear();
-        return new(Number(root, "energy"), Feature("relaxed"), Feature("danceable"), Feature("party"));
+        return new(Unit("energy"), Feature("relaxed"), Feature("danceable"), Feature("party"),
+            Feature("aggressive"), Feature("happy"), Feature("sad"), Number(root, "tempo") ?? Number(root, "bpm"),
+            Unit("lyric_density"), Vector(Text(root, "mood_vector")));
         double? Feature(string name) => features.TryGetValue(name, out var value) ? value : null;
+        double? Unit(string name) => Number(root, name) is >= 0 and <= 1 ? Number(root, name) : null;
     }
 
     private async Task<JsonElement> GetAsync(AudioMuseEndpoint endpoint, string relative, CancellationToken token, string notFound = "not_set_up")

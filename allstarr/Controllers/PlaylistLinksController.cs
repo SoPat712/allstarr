@@ -601,7 +601,13 @@ public sealed partial class PlaylistLinksController(
     });
 
     [HttpPost]
-    public async Task<IActionResult> Create([FromBody] CreatePlaylistLinkRequest request, CancellationToken cancellationToken)
+    public Task<IActionResult> Create([FromBody] CreatePlaylistLinkRequest request, CancellationToken cancellationToken) =>
+        CreateLinkAsync(request, false, cancellationToken);
+
+    internal Task<IActionResult> CreateExternalMixAsync(CreatePlaylistLinkRequest request, CancellationToken cancellationToken) =>
+        CreateLinkAsync(request, true, cancellationToken);
+
+    private async Task<IActionResult> CreateLinkAsync(CreatePlaylistLinkRequest request, bool externalMix, CancellationToken cancellationToken)
     {
         return await Execute(async session =>
         {
@@ -609,7 +615,10 @@ public sealed partial class PlaylistLinksController(
                 !TryProjectionMode(request.ProjectionMode, out var projectionMode, out error) ||
                 !TryPlaylistPolicies(request.ImportMode, request.TrackRetention, out var importMode, out var trackRetention, out error))
                 return BadRequest(new { error });
-            if (!IsSupportedPlaylistWorkflow(mode, materialization, projectionMode,
+            var virtualMix = externalMix && mode == PlaylistLinkMode.Virtual && materialization == PlaylistMaterializationMode.Reconcile &&
+                projectionMode == PlaylistProjectionMode.Resolved && importMode == PlaylistImportMode.Linked &&
+                request.ProviderAccountId.HasValue && (request.SourceProviderId is "listenbrainz" or "lastfm");
+            if (!virtualMix && !IsSupportedPlaylistWorkflow(mode, materialization, projectionMode,
                     request.MirrorStaleEntries, request.PreserveManualEntries))
                 return BadRequest(new { error = "The playlist workflow requires a mapped backend playlist with preservation of manual songs and removal of stale synchronized songs." });
             if (importMode == PlaylistImportMode.OneTime && request.ScheduleId.HasValue)
