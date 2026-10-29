@@ -51,6 +51,7 @@ public sealed class ProviderDescriptiveMetadataTests
                 {"Name":"Partner","Id":"ext-deezer-artist-partner-1"}
               ],
               "Label":"Small label", "Notes":"First paragraph.\nSecond paragraph.",
+              "ReleaseType":"compilation", "ExclusionReason":"compilation",
               "ProviderIds":{"MusicBrainz":"release-1"}, "LastFmUrl":"https://www.last.fm/music/Ensemble/Collected+songs",
               "Songs":[
                 {"ExternalId":"guest-1","Title":"Guest song","Artist":"Guest","ArtistIds":["guest-artist"]},
@@ -68,6 +69,8 @@ public sealed class ProviderDescriptiveMetadataTests
         var result = JsonSerializer.SerializeToElement(ProtocolProviderGateway.Map(metadata));
 
         Assert.Equal("Small label", Property(result, "Label").GetString());
+        Assert.Equal("compilation", Property(result, "ReleaseType").GetString());
+        Assert.Equal("compilation", Property(result, "ExclusionReason").GetString());
         Assert.Equal("First paragraph.\nSecond paragraph.", Property(result, "Notes").GetString());
         Assert.Equal("release-1", Property(result, "ProviderIds").GetProperty("MusicBrainz").GetString());
         Assert.Equal("https://www.last.fm/music/Ensemble/Collected+songs", Property(result, "LastFmUrl").GetString());
@@ -127,6 +130,8 @@ public sealed class ProviderDescriptiveMetadataTests
         Assert.Equal(JsonValueKind.Null, Property(albumJson, "Label").ValueKind);
         Assert.Equal(JsonValueKind.Null, Property(albumJson, "Notes").ValueKind);
         Assert.Equal(JsonValueKind.Null, Property(albumJson, "LastFmUrl").ValueKind);
+        Assert.Equal(JsonValueKind.Null, Property(albumJson, "ReleaseType").ValueKind);
+        Assert.Equal(JsonValueKind.Null, Property(albumJson, "ExclusionReason").ValueKind);
         Assert.Empty(Property(artistJson, "ProviderIds").EnumerateObject());
         Assert.Equal(JsonValueKind.Null, Property(artistJson, "Biography").ValueKind);
         Assert.Equal(JsonValueKind.Null, Property(artistJson, "LastFmUrl").ValueKind);

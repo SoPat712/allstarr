@@ -247,7 +247,9 @@ public sealed record ProviderAlbumMetadata
         string? lastFmUrl = null,
         bool? isExplicit = null,
         string? upc = null,
-        string? edition = null)
+        string? edition = null,
+        string? releaseType = null,
+        string? exclusionReason = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         id.RequireOwner(id.ProviderId, ProviderResourceKind.Album);
@@ -290,6 +292,8 @@ public sealed record ProviderAlbumMetadata
         IsExplicit = isExplicit;
         Upc = ProviderContractValidation.OptionalText(upc, nameof(upc), 100);
         Edition = ProviderContractValidation.OptionalText(edition, nameof(edition), 500);
+        ReleaseType = ProviderContractValidation.OptionalText(releaseType, nameof(releaseType), 100);
+        ExclusionReason = ProviderContractValidation.OptionalText(exclusionReason, nameof(exclusionReason), 300);
         Tracks = tracks == null ? [] : ProviderContractValidation.Copy(tracks);
         if (Tracks.Any(track => !track.Id.ProviderId.Equals(id.ProviderId, StringComparison.Ordinal)))
         {
@@ -330,6 +334,10 @@ public sealed record ProviderAlbumMetadata
     public string? Upc { get; }
 
     public string? Edition { get; }
+
+    public string? ReleaseType { get; }
+
+    public string? ExclusionReason { get; }
 }
 
 public sealed record ProviderArtistMetadata

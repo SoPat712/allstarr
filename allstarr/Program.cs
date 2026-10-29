@@ -102,6 +102,8 @@ builder.Services.AddSingleton<PromotionRoots>();
 builder.Services.AddSingleton<LibraryPromotionService>();
 builder.Services.AddSingleton<IDurableJobHandler>(provider => provider.GetRequiredService<LibraryPromotionService>());
 builder.Services.AddFavoriteActions();
+builder.Services.AddSingleton<allstarr.Core.Releases.NewReleasesService>();
+builder.Services.AddSingleton<IDurableJobHandler, allstarr.Core.Releases.NewReleasesJobHandler>();
 builder.Services.AddSingleton<IScopedRecommendationAccountAccessor, ScopedRecommendationAccountAccessor>();
 if (releaseComposition.IntelligenceEnabled)
 {

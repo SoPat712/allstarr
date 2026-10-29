@@ -129,7 +129,8 @@ public sealed class ExtensionMetadataCapabilityAdapter : ExtensionCapabilityAdap
             ? tracks.EnumerateArray().Select(MapTrack) : [],
         isExplicit: value.TryGetProperty("isExplicit", out var explicitValue) &&
                     explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? explicitValue.GetBoolean() : null,
-        upc: OptionalText(value, "upc"), edition: OptionalText(value, "edition"));
+        upc: OptionalText(value, "upc"), edition: OptionalText(value, "edition"),
+        releaseType: OptionalText(value, "releaseType"), exclusionReason: OptionalText(value, "exclusionReason"));
 
     private ProviderArtistMetadata MapArtist(JsonElement value) => new(Id(ProviderResourceKind.Artist, Text(value, "id")),
         Text(value, "name"), Artwork(value), OptionalText(value, "snapshotVersion"),

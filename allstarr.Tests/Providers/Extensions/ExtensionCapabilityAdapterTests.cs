@@ -2309,7 +2309,8 @@ public sealed partial class ExtensionCapabilityAdapterTests
         var manifest = Manifest(ProviderCapabilityKind.Metadata, "getAlbum", "searchAlbums");
         var sandbox = Sandbox(manifest, $$$"""
             const album = {id:'album-1',title:'Album',artists:[{name:'Artist'}],
-              {{{rating}}}{{{(rating.Length > 0 ? "," : "")}}}upc:'0123456789012',edition:'Deluxe'};
+              {{{rating}}}{{{(rating.Length > 0 ? "," : "")}}}upc:'0123456789012',edition:'Deluxe',
+              releaseType:'compilation',exclusionReason:'compilation'};
             registerExtension({getAlbum:function(){return album;},searchAlbums:function(){return {items:[album]};}});
             """);
         var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
@@ -2322,6 +2323,8 @@ public sealed partial class ExtensionCapabilityAdapterTests
             Assert.Equal(expectedExplicit, album.IsExplicit);
             Assert.Equal("0123456789012", album.Upc);
             Assert.Equal("Deluxe", album.Edition);
+            Assert.Equal("compilation", album.ReleaseType);
+            Assert.Equal("compilation", album.ExclusionReason);
         }
     }
 
