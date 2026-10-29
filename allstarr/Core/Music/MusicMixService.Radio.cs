@@ -152,7 +152,7 @@ public sealed partial class MusicMixService : IDisposable
         catch (Exception) when (!token.IsCancellationRequested) { return default; }
     }
 
-    private static bool SameRadioRecording(Song left, Song right) =>
+    internal static bool SameRadioRecording(Song left, Song right) =>
         left.Id == right.Id || left.CanonicalRecordingId is { } recording && recording != Guid.Empty && recording == right.CanonicalRecordingId ||
         RadioIsrc(left.Isrc) is { } isrc && isrc == RadioIsrc(right.Isrc) ||
         MusicSearchService.MetadataRecordingsMatch(left, right);

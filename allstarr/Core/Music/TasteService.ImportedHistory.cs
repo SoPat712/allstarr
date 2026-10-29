@@ -40,6 +40,7 @@ public sealed partial class TasteService
                     seconds < 30 || seconds * 1000 < item.DurationMilliseconds * .25 ? -1 : -.3;
                 foreach (var feature in features[songs[index]])
                 {
+                    if (feature.Key.StartsWith("song:", StringComparison.Ordinal)) continue;
                     var prior = document.Learned.GetValueOrDefault(feature.Key) ?? new(feature.Value, 0, 0, clock.UtcNow);
                     document.Learned[feature.Key] = new(feature.Value,
                         Decay(prior.Lately, clock.UtcNow - prior.At, LatelyHalfLife),
