@@ -18,6 +18,7 @@ using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using allstarr.Core.Protocols.Jellyfin;
 using allstarr.Core.Protocols.Subsonic;
 using allstarr.Core.Favorites;
@@ -144,7 +145,88 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         await using var db = factory.CreateDbContext();
         Assert.Empty(await db.PlaylistLinks.ToArrayAsync());
         publish = true;
+        Assert.Empty(await service.PublishedAsync(Context(owner), default));
+        await service.SetInAppsAsync(owner, repeat.Id, true, default);
         Assert.Single(await service.PublishedAsync(Context(owner), default));
+    }
+
+    [Fact]
+    public async Task NewMixes_DefaultToHiddenAndRefreshPreservesListenerChoices()
+    {
+        Assert.All(await service.ListAsync(owner), mix => Assert.False(mix.ShowInApps));
+        await Seed();
+        var generated = await service.GenerateAsync(owner);
+        Assert.All(generated, mix => Assert.False(mix.ShowInApps));
+        var repeat = generated.Single(mix => mix.Kind == "on-repeat");
+        await service.SetInAppsAsync(owner, repeat.Id, true, default);
+        clock.UtcNow += TimeSpan.FromMinutes(16);
+        var refreshed = await NewService().GenerateAsync(owner);
+        Assert.True(refreshed.Single(mix => mix.Id == repeat.Id).ShowInApps);
+        Assert.All(refreshed.Where(mix => mix.Id != repeat.Id), mix => Assert.False(mix.ShowInApps));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LegacyVisibility_IsResetOnceAndPersistedBeforeListOrPublishedReads(bool publishedRead)
+    {
+        await Seed();
+        var repeat = (await service.GenerateAsync(owner)).Single(mix => mix.Kind == "on-repeat");
+        var customId = Guid.NewGuid();
+        var hiddenCustomId = Guid.NewGuid();
+        await using (var db = factory.CreateDbContext())
+        {
+            var row = await db.ExternalMetadataSnapshots.AsNoTracking().SingleAsync(item => item.ResourceKind == "personal-mixes");
+            var document = JsonNode.Parse(row.PayloadJson)!.AsObject();
+            document.Remove("AppsOptInVersion");
+            var mixes = document["Mixes"]!.AsObject();
+            foreach (var mix in mixes) mix.Value!["ShowInApps"] = true;
+            mixes[customId.ToString()] = JsonSerializer.SerializeToNode(repeat with { Id = customId, Kind = "custom", ShowInApps = true });
+            mixes[hiddenCustomId.ToString()] = JsonSerializer.SerializeToNode(repeat with { Id = hiddenCustomId, Kind = "custom", ShowInApps = false });
+            row.Id = Guid.NewGuid();
+            row.SnapshotVersion++;
+            row.PayloadJson = document.ToJsonString();
+            db.ExternalMetadataSnapshots.Add(row);
+            await db.SaveChangesAsync();
+        }
+        publish = true;
+        if (publishedRead)
+            Assert.Equal(customId, Assert.Single(await NewService().PublishedAsync(Context(owner), default)).LinkId);
+        var loaded = await NewService().ListAsync(owner);
+        Assert.All(loaded.Where(mix => mix.Kind != "custom"), mix => Assert.False(mix.ShowInApps));
+        Assert.True(loaded.Single(mix => mix.Id == customId).ShowInApps);
+        Assert.False(loaded.Single(mix => mix.Id == hiddenCustomId).ShowInApps);
+        await using (var db = factory.CreateDbContext())
+        {
+            var rows = await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "personal-mixes").OrderBy(item => item.SnapshotVersion).ToArrayAsync();
+            Assert.Equal(3, rows.Length);
+            var saved = JsonNode.Parse(rows[^1].PayloadJson)!;
+            Assert.Equal(1, saved["AppsOptInVersion"]!.GetValue<int>());
+            Assert.False(saved["Mixes"]!["on-repeat"]!["ShowInApps"]!.GetValue<bool>());
+        }
+        await service.SetInAppsAsync(owner, repeat.Id, true, default);
+        Assert.True((await NewService().ListAsync(owner)).Single(mix => mix.Id == repeat.Id).ShowInApps);
+        Assert.Contains(await service.PublishedAsync(Context(owner), default), mix => mix.LinkId == repeat.Id);
+        await using var read = factory.CreateDbContext();
+        Assert.Equal(4, await read.ExternalMetadataSnapshots.CountAsync(item => item.ResourceKind == "personal-mixes"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ListenerResponses_ExposeAppsAllowedAndKillSwitchHidesOptedInMixes(bool allowed)
+    {
+        await Seed(user: other);
+        var repeat = (await service.GenerateAsync(other)).Single(mix => mix.Kind == "on-repeat");
+        await service.SetInAppsAsync(other, repeat.Id, true, default);
+        publish = allowed;
+        var controller = Controller(other, false);
+        var list = Assert.IsType<OkObjectResult>(await controller.List());
+        var cards = JsonSerializer.SerializeToElement(list.Value);
+        Assert.All(cards.EnumerateArray(), card => Assert.Equal(allowed, card.GetProperty("appsAllowed").GetBoolean()));
+        var get = Assert.IsType<OkObjectResult>(await controller.Get(repeat.Id, default));
+        Assert.Equal(allowed, JsonSerializer.SerializeToElement(get.Value).GetProperty("mix").GetProperty("appsAllowed").GetBoolean());
+        Assert.Equal(allowed ? 1 : 0, (await service.PublishedAsync(Context(other), default)).Count);
     }
 
     [Theory]
@@ -161,6 +243,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         await Seed();
         publish = true;
         var first = (await service.GenerateAsync(owner)).Single(item => item.Kind == "on-repeat");
+        await service.SetInAppsAsync(owner, first.Id, true, default);
         var virtualization = new PlaylistVirtualizationService(factory, new(factory, access.Object), access.Object, personalMixes: service);
         var firstModel = await virtualization.ReadAsync(Context(owner), PlaylistVirtualizationService.CreateProtocolId(first.Id));
         Assert.NotNull(firstModel);
@@ -218,6 +301,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         await Seed();
         publish = true;
         var before = (await service.GenerateAsync(owner)).Single(item => item.Kind == "on-repeat");
+        await service.SetInAppsAsync(owner, before.Id, true, default);
         songs["0"].Title = "Unavailable";
         await service.GenerateAsync(owner, dryRun: true);
         var after = (await service.ListAsync(owner)).Single(item => item.Kind == "on-repeat");
@@ -448,6 +532,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         await Seed();
         publish = true;
         var repeat = (await service.GenerateAsync(owner)).Single(item => item.Kind == "on-repeat");
+        await service.SetInAppsAsync(owner, repeat.Id, true, default);
         await taste.PutNudgeAsync(owner, new("artist", repeat.Songs[0].Song.Artist, "never"));
         var blocked = repeat.Songs[0].Song.Id;
         var visible = Assert.Single(await service.PublishedAsync(Context(owner), default));
@@ -485,7 +570,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         Assert.Equal(403, Assert.IsType<StatusCodeResult>(await listener.SetPublishSetting(new(true), default)).StatusCode);
         Assert.IsType<OkObjectResult>(await Controller(owner, true).List());
         Assert.IsType<OkObjectResult>(await Controller(owner, true).DryRun(other));
-        Assert.Equal("false", RuntimeSettingCatalog.Require(PersonalMixService.PublishKey).DefaultValue);
+        Assert.Equal("true", RuntimeSettingCatalog.Require(PersonalMixService.PublishKey).DefaultValue);
     }
 
     [Theory]

@@ -13,13 +13,11 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await capture(page, "home-new", width, theme);
   });
 }
-test("Checklist publishing, history and per-listener dismissal", async ({ page }) => {
+test("Checklist keeps history and dismissal without an admin publishing action", async ({ page }) => {
   const state = await mockForYou(page, { admin: true, publish: false, brandNew: true }); await openHome(page);
-  await page.getByRole("button", { name: "Show in apps", exact: true }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Cancel" }).click();
-  await expect(page.getByRole("alertdialog")).toHaveCount(0); expect(state.publish).toBe(false);
-  await page.getByRole("button", { name: "Show in apps", exact: true }).click(); await page.getByRole("alertdialog").getByRole("button", { name: "Show in apps" }).click();
-  await expect.poll(() => state.publish).toBe(true);
+  await expect(page.getByText("Mixes are only visible here for now")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Show in apps", exact: true })).toHaveCount(0);
+  expect(state.calls.some(call => call.path === "/api/admin/mixes/publish-setting")).toBe(false);
   await page.getByRole("button", { name: "Import history", exact: true }).click(); await expect(page.getByRole("dialog", { name: "Bring in your history" })).toBeVisible();
   await expect(page.getByLabel("History file")).toHaveAttribute("multiple", "");
   await page.getByRole("button", { name: "Close history" }).click();
@@ -55,4 +53,11 @@ test("Loading shelves never push the page wider than the window", async ({ page 
   const refresh = page.getByRole("button", { name: "Refresh page" }); await expect(refresh).toBeVisible();
   const box = await refresh.boundingBox(); expect(box!.x + box!.width).toBeLessThanOrEqual(1000);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1000);
+});
+
+test("Not-ready shelf artwork stays visible with its readiness description", async ({ page }) => {
+  await mockForYou(page, { partial: true }); await openHome(page);
+  const mix = page.getByRole("region", { name: "Made for you", exact: true }).getByRole("button", { name: /Daily Mix 4/ });
+  await expect(mix.locator("canvas")).toHaveCSS("opacity", "1");
+  await expect(mix).toContainText("Needs more listening");
 });

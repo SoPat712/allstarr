@@ -20,7 +20,7 @@ public sealed partial class PersonalMixService
                 account.Id == link.ProviderAccountId && account.OwnerUserId == user.Id && account.Enabled &&
                 account.ProviderId == link.SourceProviderId));
 
-    private async Task<IReadOnlyList<PersonalMix>> ExternalMixesAsync(UserRecord user, CancellationToken token)
+    private async Task<IReadOnlyList<PersonalMix>> ExternalMixesAsync(UserRecord user, PersonalMixDocument document, CancellationToken token)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         var links = (await ExternalLinks(db, user).AsNoTracking().OrderBy(link => link.CreatedAt).ToArrayAsync(token))
@@ -57,7 +57,7 @@ public sealed partial class PersonalMixService
             result.Add(new(link.Id, "external", projection?.Name ?? ExternalName(link),
                 "Kept in sync · " + ExternalName(link), projection?.SnapshotVersion ?? 0,
                 projection?.RetrievedAt, new(items.Length > 0, items.Length > 0 ? "Your linked playlist is ready." : "Waiting for playable songs from your linked playlist."),
-                link.Enabled, items)
+                document.ExternalShowInApps.GetValueOrDefault(link.Id), items)
             { SourceLabel = link.SourceProviderId == "lastfm" ? "Last.fm" : "ListenBrainz" });
         }
         return result;
@@ -120,9 +120,17 @@ public sealed partial class PersonalMixService
         if (!IsExternalLink(link)) return true;
         if (context.Actor?.EffectiveUserId is not { } owner || link.OwnerUserId != owner ||
             !(bool)(await settings.GetAsync(PublishKey, token)).Value) return false;
-        await using var db = await factory.CreateDbContextAsync(token);
-        return await db.ProviderAccounts.AsNoTracking().AnyAsync(account => account.Id == link.ProviderAccountId &&
-            account.ProviderId == link.SourceProviderId && account.OwnerUserId == owner && account.Enabled, token);
+        await writes.WaitAsync(token);
+        try
+        {
+            await using var db = await factory.CreateDbContextAsync(token);
+            var user = await UserAsync(db, owner, token);
+            var document = await LoadAsync(db, user, token);
+            return document.ExternalShowInApps.GetValueOrDefault(link.Id) &&
+                await db.ProviderAccounts.AsNoTracking().AnyAsync(account => account.Id == link.ProviderAccountId &&
+                    account.ProviderId == link.SourceProviderId && account.OwnerUserId == owner && account.Enabled, token);
+        }
+        finally { writes.Release(); }
     }
 
     internal async Task<VirtualPlaylistReadModel> FilterExternalTracksAsync(ProtocolExecutionContext context,

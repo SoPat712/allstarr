@@ -1319,7 +1319,7 @@ export type TasteNudge = { kind: "tag" | "artist" | "song"; name: string; mode: 
 export type TasteProfile = { lately: TasteLayer; usually: TasteLayer; latelyWeight: number; nudges: TasteNudge[]; paused: boolean; useImportedHistory?: boolean };
 
 export type MixSong = { mixId: string; generation: number; source: string; reason: string; score: number; song: { id: string; canonicalRecordingId: string | null; title: string; artist: string; album: string; genre?: string | null; genres?: string[] | null } };
-export type MixCard = { id: string; kind: string; name: string; description: string; section: "madeForYou" | "moods" | "custom" | "yourServices"; sortOrder: number; sourceLabel: string | null; recipeVersion: string | null; updatedAt: string | null; readiness: { ready: boolean; message: string }; inApps: boolean; showInApps: boolean; coverArtwork: string[] };
+export type MixCard = { id: string; kind: string; name: string; description: string; section: "madeForYou" | "moods" | "custom" | "yourServices"; sortOrder: number; sourceLabel: string | null; recipeVersion: string | null; updatedAt: string | null; readiness: { ready: boolean; message: string }; inApps: boolean; showInApps: boolean; appsAllowed: boolean; coverArtwork: string[] };
 export type MixDetail = { mix: MixCard; songs: MixSong[] };
 export type MixPreview = { previewId: string; songs: MixSong[]; readiness: MixCard["readiness"] };
 export type MixSeed = { id: string; title: string; artist: string; artworkUrl: string | null; kind: "song" | "artist" };

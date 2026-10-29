@@ -14,8 +14,8 @@
   import IntelligenceHistoryImports from "$lib/components/IntelligenceHistoryImports.svelte";
   let { administrator = false, listenerId = "", listenerName = "", initialImport = false }: { initialImport?: boolean; administrator?: boolean; listenerId?: string; listenerName?: string } = $props();
   let cards = $state<MixCard[]>([]), releases = $state<MixCard[]>([]), accounts = $state<PlaylistSourceAccount[]>([]), links = $state<PlaylistLink[]>([]);
-  let status = $state<AudioMuseStatus | null>(null), published = $state<boolean | null>(null), loading = $state(true), error = $state("");
-  let hidden = $state(false), importOpen = $state(false), publishOpen = $state(false), external = $state<MixCard | null>(null), busy = $state(false), actionError = $state("");
+  let status = $state<AudioMuseStatus | null>(null), loading = $state(true), error = $state("");
+  let hidden = $state(false), importOpen = $state(false), external = $state<MixCard | null>(null), busy = $state(false), actionError = $state("");
   let pending: Promise<void> | null = null, disposed = false;
   const storageKey = $derived(`allstarr.mix-checklist.${listenerId}`);
   const made = $derived(cards.filter(item => item.section === "madeForYou").sort((a, b) => Number(b.readiness.ready) - Number(a.readiness.ready) || mixOrder.indexOf(a.kind) - mixOrder.indexOf(b.kind)));
@@ -26,7 +26,7 @@
   const dailyReady = $derived(daily.length > 0 && daily.every(item => item.readiness.ready));
   const remaining = $derived(daily.find(item => !item.readiness.ready)?.readiness.message.match(/about (\d+) more/)?.[1]);
   const soundReady = $derived(status?.reason === null && status.analyzedSongs > 0);
-  const checklist = $derived(!hidden && (!made.length || made.some(item => !item.readiness.ready) || !connected || administrator && (!soundReady || published === false)));
+  const checklist = $derived(!hidden && (!made.length || made.some(item => !item.readiness.ready) || !connected || administrator && !soundReady));
   const recipes = [
     { source: "listenbrainz", kind: "weekly-jams", name: "Weekly Jams", label: "ListenBrainz", cadence: "weekly" },
     { source: "listenbrainz", kind: "weekly-exploration", name: "Weekly Exploration", label: "ListenBrainz", cadence: "weekly" },
@@ -34,20 +34,19 @@
     { source: "lastfm", kind: "top", name: "Your top tracks", label: "Last.fm", cadence: "daily" },
     { source: "lastfm", kind: "similar", name: "Similar to your top tracks", label: "Last.fm", cadence: "daily" },
   ];
-  const suggestions = $derived(recipes.filter(recipe => accounts.some(account => account.scope === "personal" && account.providerId === recipe.source) && !links.some(link => link.sourceProviderId === recipe.source && link.sourcePlaylistId === (recipe.source === "listenbrainz" ? `createdfor:${recipe.kind}` : recipe.kind === "top" ? "top:1month:50" : recipe.kind))).map(recipe => ({ id: `add:${recipe.source}:${recipe.kind}`, kind: "external", name: recipe.name, description: `From ${recipe.label} · ${recipe.cadence}`, section: "yourServices", sortOrder: 0, sourceLabel: recipe.label, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, inApps: false, showInApps: false, coverArtwork: [] }) satisfies MixCard));
+  const suggestions = $derived(recipes.filter(recipe => accounts.some(account => account.scope === "personal" && account.providerId === recipe.source) && !links.some(link => link.sourceProviderId === recipe.source && link.sourcePlaylistId === (recipe.source === "listenbrainz" ? `createdfor:${recipe.kind}` : recipe.kind === "top" ? "top:1month:50" : recipe.kind))).map(recipe => ({ id: `add:${recipe.source}:${recipe.kind}`, kind: "external", name: recipe.name, description: `From ${recipe.label} · ${recipe.cadence}`, section: "yourServices", sortOrder: 0, sourceLabel: recipe.label, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, inApps: false, showInApps: false, appsAllowed: false, coverArtwork: [] }) satisfies MixCard));
   const services = $derived([...cards.filter(item => item.section === "yourServices").map(card => ({ ...card, description: card.sourceLabel ? `From ${card.sourceLabel} · kept in sync` : "From your connected service" })), ...suggestions]);
   async function load() {
     if (pending) return pending;
     pending = (async () => {
-      const results = await Promise.allSettled([mixes.list(), playlistLinks.sources(), playlistLinks.list(), releaseInbox.get(), administrator ? audioMuse.status() : Promise.resolve(null), administrator ? mixes.publishSetting() : Promise.resolve(null)] as const);
+      const results = await Promise.allSettled([mixes.list(), playlistLinks.sources(), playlistLinks.list(), releaseInbox.get(), administrator ? audioMuse.status() : Promise.resolve(null)] as const);
       if (disposed) return;
-      const [mixResult, sourceResult, linkResult, releaseResult, soundResult, publishResult] = results;
+      const [mixResult, sourceResult, linkResult, releaseResult, soundResult] = results;
       if (mixResult.status === "fulfilled") { cards = mixResult.value; error = ""; } else error = "Couldn't load your mixes. Try again.";
       if (sourceResult.status === "fulfilled") accounts = sourceResult.value.accounts ?? [];
       if (linkResult.status === "fulfilled") links = linkResult.value.playlistLinks ?? [];
       if (soundResult.status === "fulfilled") status = soundResult.value;
-      if (publishResult.status === "fulfilled") published = publishResult.value?.enabled ?? null;
-      if (releaseResult.status === "fulfilled") releases = releaseResult.value.entries.slice(0, 8).map(entry => ({ id: entry.id, kind: "release", name: entry.title, description: `${entry.artist} · ${entry.type === "album" ? "Album" : entry.type === "single" ? "Single" : "Release"}${/^\d{4}-\d{2}-\d{2}$/.test(entry.releaseDate ?? "") ? ` · ${new Date(`${entry.releaseDate}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" })}` : ""}`, section: "madeForYou", sortOrder: 0, sourceLabel: null, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, showInApps: false, inApps: false, coverArtwork: [] }));
+      if (releaseResult.status === "fulfilled") releases = releaseResult.value.entries.slice(0, 8).map(entry => ({ id: entry.id, kind: "release", name: entry.title, description: `${entry.artist} · ${entry.type === "album" ? "Album" : entry.type === "single" ? "Single" : "Release"}${/^\d{4}-\d{2}-\d{2}$/.test(entry.releaseDate ?? "") ? ` · ${new Date(`${entry.releaseDate}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" })}` : ""}`, section: "madeForYou", sortOrder: 0, sourceLabel: null, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, showInApps: false, inApps: false, appsAllowed: false, coverArtwork: [] }));
       loading = false;
     })().finally(() => { pending = null; });
     return pending;
@@ -55,13 +54,6 @@
   $effect(() => { if (initialImport) importOpen = true; });
   function hide() { hidden = true; try { localStorage.setItem(storageKey, "hidden"); } catch { /* Browser storage is optional. */ } }
   function openMix(card: MixCard) { if (card.id.startsWith("add:")) { actionError = ""; external = card; } else window.location.hash = `#/for-you?mix=${encodeURIComponent(card.id)}`; }
-  async function publish() {
-    if (busy) return;
-    busy = true; actionError = "";
-    try { await pending; await mixes.setPublishSetting(true); published = true; publishOpen = false; await load(); }
-    catch { actionError = "The setting could not be saved. Try again."; }
-    finally { busy = false; }
-  }
   async function addExternal() {
     if (busy || !external) return;
     const [, source, kind] = external.id.split(":"); busy = true; actionError = "";
@@ -85,7 +77,7 @@
       <div class="check-row"><span aria-label={dailyReady ? "Done" : "To do"}>{dailyReady ? "✓" : "○"}</span><span>{dailyReady ? "Enough listening for daily mixes" : `Listen to ${remaining ? `about ${remaining} more` : "more"} songs — or import your history`}</span>{#if !dailyReady}<Button variant="secondary" onclick={() => importOpen = true}>Import history</Button>{/if}</div>
       <div class="check-row"><span aria-label={connected ? "Done" : "To do"}>{connected ? "✓" : "○"}</span><span>Connect Last.fm or ListenBrainz for more discoveries</span>{#if !connected}<Button variant="secondary" href="#/sources">Connect</Button>{/if}</div>
       {#if administrator}<div class="check-row"><span aria-label={soundReady ? "Done" : "To do"}>{soundReady ? "✓" : "○"}</span><span>Turn on sound analysis for mood mixes</span>{#if !soundReady}<Button variant="secondary" href="#/settings/sound-analysis">Set up</Button>{/if}</div>
-      {#if published === false}<div class="check-row"><span aria-label="To do">○</span><span>Mixes are only visible here for now</span><Button variant="secondary" onclick={() => { actionError = ""; publishOpen = true; }}>Show in apps</Button></div>{/if}{/if}
+      {/if}
     </section>{/if}
     {#if error}<p class="muted" role="alert">{error} <Button variant="secondary" onclick={load}>Try again</Button></p>{/if}
     {#if !error && !made.some(item => item.readiness.ready)}<div class="settings-card empty"><p>Your mixes will appear here. Play some music, or import your history to start right away.</p></div>{/if}
@@ -101,7 +93,6 @@
   <header><div><Dialog.Title>Bring in your history</Dialog.Title><Dialog.Description>Start your mixes with the music you've already played.</Dialog.Description></div><Dialog.Close type="button" class="icon-button" aria-label="Close history">×</Dialog.Close></header>
   <IntelligenceHistoryImports onchanged={() => void load()} /><footer class="dialog-actions"><Dialog.Close type="button" class={buttonVariants({ variant: "secondary" })}>Done</Dialog.Close></footer>
 </Dialog.Content></Dialog.Portal></Dialog.Root>
-<ConfirmDialog bind:open={publishOpen} title="Show mixes in everyone's apps?" description="Each listener gets their own mixes as playlists in their music apps. They refresh automatically. Anyone can hide a mix from their apps." confirmLabel="Show in apps" confirmVariant="default" closeOnConfirm={false} disabled={busy} error={actionError} onConfirm={publish} />
 <ConfirmDialog bind:open={() => Boolean(external), value => { if (!value) external = null; }} onConfirm={addExternal} title="Keep this in your apps?" description={`It updates when ${external?.sourceLabel ?? "your service"} makes a new one.`} confirmLabel="Keep in apps" confirmVariant="default" closeOnConfirm={false} disabled={busy} error={actionError} />
 <style>
   .for-you { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-6); min-width: 0; }

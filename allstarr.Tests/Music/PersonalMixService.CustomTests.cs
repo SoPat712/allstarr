@@ -25,6 +25,7 @@ public sealed partial class PersonalMixServiceTests
         });
         Assert.Empty(await service.PublishedAsync(Context(owner), default));
         publish = true;
+        foreach (var mood in moods) await service.SetInAppsAsync(owner, mood.Id, true, default);
         Assert.Equal(5, (await service.PublishedAsync(Context(owner), default)).Count(item => PersonalMixMoods.Kinds.Contains(item.SourcePlaylistId)));
         for (var index = 24; index < 40; index++) await taste.PutNudgeAsync(owner, new("artist", "Artist " + index, "never"));
         Assert.All((await service.ListAsync(owner)).Where(item => item.Section == "moods"), mix => Assert.False(mix.Readiness.Ready));

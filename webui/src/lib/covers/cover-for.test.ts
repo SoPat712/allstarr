@@ -5,7 +5,7 @@ import { hash } from "./random";
 import { coverFor } from "./cover-for";
 
 function mix(kind: string, overrides: Partial<MixCard> = {}): MixCard {
-  return { id: kind, kind, name: kind, description: "", section: "madeForYou", sourceLabel: null, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "" }, inApps: true, showInApps: true, coverArtwork: [], sortOrder: 0, ...overrides };
+  return { id: kind, kind, name: kind, description: "", section: "madeForYou", sourceLabel: null, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "" }, inApps: true, showInApps: true, appsAllowed: true, coverArtwork: [], sortOrder: 0, ...overrides };
 }
 const songs = (count: number): MixSong[] => Array.from({ length: count }, (_, index) => ({ mixId: "release-radar", generation: 1, source: "library", reason: "", score: 1, song: { id: String(index), canonicalRecordingId: null, title: "Song", artist: "Artist", album: "Album" } }));
 const fallbackTag = (id: string) => Object.keys(PALETTES)[hash(id) % Object.keys(PALETTES).length];

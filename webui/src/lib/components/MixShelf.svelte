@@ -10,7 +10,7 @@
   <div class="mix-shelf" role="region" aria-label={title}>
     {#each cards as card (card.id)}
       <button type="button" class="mix-card" onclick={() => onopen(card)}>
-        <span class="cover">{#if albumArt}<MixArtwork references={card.coverArtwork} />{:else}<MixCover mix={card} dim={!card.readiness.ready} />{/if}{#if additions.includes(card.id)}<span class="add-chip">Add</span>{/if}</span>
+        <span class="cover">{#if albumArt}<MixArtwork references={card.coverArtwork} />{:else}<MixCover mix={card} />{/if}{#if additions.includes(card.id)}<span class="add-chip">Add</span>{/if}</span>
         <strong>{mixName(card.name)}</strong><span class="description">{card.readiness.ready ? card.description : shortReadiness(card.readiness.message)}</span>
         <small>{card.inApps ? "✓ In your apps" : ""}</small>
       </button>

@@ -55,7 +55,7 @@
     { id: "general", label: "General", group: "Server", icon: SlidersHorizontal, title: "General", description: "Server-wide behavior for every listener." },
     { id: "listeners", label: "Listeners", group: "Server", icon: Users, title: "Listeners", description: "Manage clean listening and see personal playlist copies." },
     { id: "alerts", label: "Alerts", group: "Server", icon: Bell, title: "Alerts", description: "Choose where Allstarr sends problem alerts." },
-    { id: "sound-analysis", label: "Sound analysis", group: "Server", icon: AudioLines, title: "Sound analysis (AudioMuse)", description: "Connect AudioMuse for sound analysis and choose whether to publish mixes in everyone's music apps." },
+    { id: "sound-analysis", label: "Sound analysis", group: "Server", icon: AudioLines, title: "Sound analysis (AudioMuse)", description: "Connect AudioMuse for sound analysis and choose whether listeners can add mixes to their apps." },
     { id: "storage", label: "Storage", group: "Server", icon: HardDrive, title: "Storage", description: "Manage saved music, cache space, and playback capacity." },
     { id: "network", label: "Network", group: "Server", icon: Network, title: "Network and security", description: "How the admin interface is exposed. These are usually set by your deployment." },
     { id: "backups", label: "Backups", group: "Maintenance", icon: Archive, title: "Backups", description: "Save and restore Allstarr's database, accounts and encryption keys." },
