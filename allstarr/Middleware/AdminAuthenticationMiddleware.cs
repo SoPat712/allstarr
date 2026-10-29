@@ -75,6 +75,20 @@ public class AdminAuthenticationMiddleware
         var path = request.Path.Value ?? string.Empty;
         var method = request.Method;
 
+        if (path.StartsWith("/api/admin/mixes", StringComparison.OrdinalIgnoreCase))
+        {
+            var segments = path.TrimEnd('/').ToLowerInvariant().Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length < 3 || segments[2] != "mixes") return false;
+            return segments.Length == 3 && HttpMethods.IsGet(method) ||
+                segments.Length == 4 && (Guid.TryParse(segments[3], out _) && (HttpMethods.IsGet(method) || HttpMethods.IsDelete(method)) ||
+                    segments[3] is "start" or "external" && HttpMethods.IsPost(method)) ||
+                segments.Length == 5 && Guid.TryParse(segments[3], out _) && (
+                    segments[4] is "refresh" or "feedback" && HttpMethods.IsPost(method) ||
+                    segments[4] == "in-apps" && HttpMethods.IsPut(method)) ||
+                segments.Length == 6 && segments[3] == "start" && Guid.TryParse(segments[4], out _) &&
+                    segments[5] == "save" && HttpMethods.IsPost(method);
+        }
+
         var releaseSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (releaseSegments.Length >= 3 && releaseSegments[2].Equals("releases", StringComparison.OrdinalIgnoreCase))
             return releaseSegments.Length == 3 && HttpMethods.IsGet(method) ||
