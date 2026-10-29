@@ -427,7 +427,7 @@ public class AdminUiController : ControllerBase
         var accounts = await context.ProviderAccounts.AsNoTracking()
             .Where(item => session.IsAdministrator || item.OwnerUserId == userId || item.OwnerUserId == null)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var jobs = await context.Jobs.AsNoTracking()
+        var jobs = await ActivityJobPresentation.HistoryJobs(context.Jobs.AsNoTracking())
             .Where(item => (everyone || item.OwnerUserId == userId) &&
                 (!before.HasValue || item.UpdatedAt < before.Value ||
                 (item.UpdatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
@@ -475,7 +475,7 @@ public class AdminUiController : ControllerBase
             .GroupBy(item => item.CanonicalRecordingId)
             .ToDictionary(group => group.Key, group => group.ToArray());
         var libraryTracks = matchActivity.LibraryTracks;
-        var audits = await context.AuditEvents.AsNoTracking()
+        var audits = await ActivityJobPresentation.HistoryAudits(context.AuditEvents.AsNoTracking(), context.Jobs)
             .Where(item => item.Category != allstarr.Core.Playback.PlaybackStartTimingStore.Category)
             .Where(item => (everyone || item.ActorUserId == userId) &&
                 (!before.HasValue || item.CreatedAt < before.Value ||
@@ -631,7 +631,9 @@ public class AdminUiController : ControllerBase
                 libraryTracks,
                 routeProviderPriority);
         }));
-        activity.AddRange(audits.Select(item =>
+        activity.AddRange(audits.Where(item =>
+            AuditJobReference(item) is not { } jobId || !activityJobs.TryGetValue(jobId, out var boundJob) ||
+            boundJob.OwnerUserId != item.ActorUserId || ActivityJobPresentation.ShowAuditInHistory(item, boundJob)).Select(item =>
         {
             var projected = AuditActivity(item);
             if (projected.JobId is { } jobText && Guid.TryParse(jobText, out var jobId) &&
@@ -923,6 +925,7 @@ public class AdminUiController : ControllerBase
             "failed" => "failed",
             "cancelled" => "cancelled",
             "deferred" => "waiting for a retry",
+            "retry_scheduled" => "retry scheduled",
             "interrupted" => "interrupted",
             _ => "finished"
         };

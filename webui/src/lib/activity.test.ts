@@ -116,6 +116,23 @@ describe("event log presentation", () => {
 });
 
 describe("background work presentation", () => {
+  it("names known enrichment, import and maintenance work in older history", async () => {
+    const { jobName } = await import("./activity");
+    for (const [type, label] of Object.entries({
+      "recording.tags.refresh": "Song details updated", "listening.musicbrainz.enrich": "Identify listened song",
+      "listening-history.import": "History import", "favorite.link-union": "Merge linked favorites",
+      "downloads.quality-check": "Audio quality check", "extension.session.verify": "Verify source sign-in",
+      "problem-alert.delivery": "Send problem alert", "recommendation.generate": "Generate recommendations",
+      "playlist.provider-source-update": "Update source playlist", "storage.verify-files": "Verify stored files",
+      "configuration.legacy-media": "Import existing media", "releases.poll": "Check new releases",
+      "library.refresh": "Library refresh", "library.promote": "Promote song to library",
+      "playback.signal.process": "Record a listen", "spotify-likes.import": "Import Spotify likes",
+    })) {
+      expect(jobName(type)).toBe(label);
+      expect(activityHeadline({ ...item(type, "Completed"), kind: "job", label: type })).toBe(label);
+    }
+  });
+
   it("uses ordinary job names and distinguishes deferred work", async () => {
     const { jobName, jobState, progressPercent } = await import("./activity");
     expect(jobName("playlist.materialize")).toBe("Update playlist");
@@ -126,6 +143,68 @@ describe("background work presentation", () => {
     expect(progressPercent(-1, 10)).toBe(0);
     expect(progressPercent(5, 0)).toBeNull();
     expect(progressPercent(NaN, 10)).toBeNull();
+  });
+});
+
+describe("consecutive activity consolidation", () => {
+  const songUpdate = (id: string, state = "succeeded", occurredAt = "2026-10-29T05:54:00Z"): ActivityItem => ({
+    id, jobId: id, kind: "job", source: "Recordings", label: "Song details updated", state,
+    detail: "Song details updated: attempt 1 completed.", action: "recording.tags.refresh",
+    actorUserId: "one", occurredAt,
+  });
+
+  it("collapses one hundred identical job rows and retains every item", () => {
+    const entries = Array.from({ length: 100 }, (_, index) => songUpdate(String(index)));
+    const groups = groupActivity(entries);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].title).toBe("Song details updated · 100 songs");
+    expect(groups[0].entries).toEqual(entries);
+    expect(groupOutcome(groups[0].entries)).toBe("succeeded");
+  });
+
+  it("keeps outcomes and intervening work separate", () => {
+    const groups = groupActivity([
+      songUpdate("one"), songUpdate("two", "failed"), songUpdate("three", "failed"),
+      songUpdate("four"), { ...songUpdate("five"), label: "Keep a song" }, songUpdate("six"),
+    ]);
+    expect(groups.map(group => group.entries.length)).toEqual([1, 2, 1, 1, 1]);
+    expect(groups.map(group => groupOutcome(group.entries))).toEqual(["succeeded", "failed", "succeeded", "succeeded", "succeeded"]);
+  });
+
+  it("bounds the whole group to ten minutes and leaves invalid times separate", () => {
+    const groups = groupActivity([
+      songUpdate("one"), songUpdate("two", "succeeded", "2026-10-29T05:44:00Z"),
+      songUpdate("three", "succeeded", "2026-10-29T05:43:59Z"), songUpdate("four", "succeeded", "invalid"),
+    ]);
+    expect(groups.map(group => group.entries.length)).toEqual([2, 1, 1]);
+  });
+
+  it("keeps owners, sources, kinds and severity separate", () => {
+    for (const changed of [
+      { actorUserId: "two" }, { source: "Listening" }, { providerId: "other" },
+      { kind: "caching" }, { severity: "warning" }, { action: "recording.keep" },
+    ]) expect(groupActivity([songUpdate("one"), { ...songUpdate("two"), ...changed }])).toHaveLength(2);
+  });
+
+  it("counts jobs while keeping each job's earlier attempts available", () => {
+    const groups = groupActivity([
+      songUpdate("one"), songUpdate("two"),
+      { ...songUpdate("one", "failed"), id: "earlier-one", occurredAt: "2026-10-29T05:53:00Z" },
+      { ...songUpdate("two", "failed"), id: "earlier-two", occurredAt: "2026-10-29T05:53:00Z" },
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].title).toBe("Song details updated · 2 songs");
+    expect(groups[0].entries).toHaveLength(4);
+    expect(groupOutcome(groups[0].entries)).toBe("succeeded");
+  });
+
+  it("consolidates ordinary events without a job or correlation", () => {
+    const groups = groupActivity(["one", "two"].map(id => ({
+      ...songUpdate(id), kind: "caching", jobId: null, label: "Song cached", detail: `Song ${id}`,
+    })));
+    expect(groups).toHaveLength(1);
+    expect(groups[0].title).toBe("Song cached · 2 songs");
+    expect(groups[0].entries.map(entry => entry.detail)).toEqual(["Song one", "Song two"]);
   });
 });
 

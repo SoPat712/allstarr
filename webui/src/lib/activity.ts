@@ -130,7 +130,32 @@ export function groupActivity(items: ActivityItem[]) {
       if (correlated) operations.set(operationKey, created);
     }
   }
-  return groups;
+  const consolidated: ActivityGroup[] = [];
+  for (const group of groups) {
+    const previous = consolidated.at(-1);
+    if (previous && canConsolidate(previous.entries, group.entries)) {
+      previous.entries.push(...group.entries);
+      previous.entries.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+      const first = previous.entries[0];
+      const count = new Set(previous.entries.map(entry => activityJobKey(entry) || entry.id)).size;
+      const unit = first.kind === "playlist" ? "playlists"
+        : first.kind === "matching" || first.kind === "caching" || first.action?.startsWith("recording.") ? "songs"
+        : first.jobId ? "tasks" : "events";
+      previous.title = first.kind === "matching" ? groupTitle(previous.entries)
+        : `${activityHeadline(first)} · ${count} ${unit}`;
+    } else consolidated.push(group);
+  }
+  return consolidated;
+}
+
+function canConsolidate(left: ActivityItem[], right: ActivityItem[]) {
+  const first = left[0], next = right[0];
+  if (first.kind !== next.kind || first.label !== next.label || first.action !== next.action ||
+      first.actorUserId !== next.actorUserId || first.source !== next.source || first.providerId !== next.providerId ||
+      groupOutcome(left) === "mixed" || groupOutcome(left) !== groupOutcome(right) ||
+      groupSeverity(left) !== groupSeverity(right)) return false;
+  const times = [...left, ...right].map(entry => Date.parse(entry.occurredAt));
+  return Math.max(...times) - Math.min(...times) <= 10 * 60_000;
 }
 
 function groupTitle(entries: ActivityItem[]) {
@@ -220,6 +245,14 @@ export const jobNames: Record<string, string> = {
   "playback.signal": "Record a listen", "favorite.process": "Update favorites", "favorite.display-backfill": "Recover favorite details",
   "recording.kept-cleanup": "Remove unused kept copy", "recording.keep": "Keep a song", "playlist.retain-track": "Keep playlist song",
   "track-match.rematch": "Refresh matches", "library.index": "Refresh library index", "recording.musicbrainz.enrich": "Identify recording", "recording.odesli.enrich": "Find recording links",
+  "recording.tags.refresh": "Song details updated", "listening.musicbrainz.enrich": "Identify listened song",
+  "listening-history.import": "History import", "favorite.link-union": "Merge linked favorites",
+  "downloads.quality-check": "Audio quality check", "extension.session.verify": "Verify source sign-in",
+  "problem-alert.delivery": "Send problem alert", "recommendation.generate": "Generate recommendations",
+  "playlist.provider-source-update": "Update source playlist", "storage.verify-files": "Verify stored files",
+  "configuration.legacy-media": "Import existing media", "releases.poll": "Check new releases",
+  "library.refresh": "Library refresh", "library.promote": "Promote song to library",
+  "playback.signal.process": "Record a listen", "spotify-likes.import": "Import Spotify likes",
 };
 export function jobName(type: string) { return jobNames[type] ?? "Background task"; }
 export function jobState(state: string) {

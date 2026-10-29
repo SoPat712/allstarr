@@ -745,6 +745,214 @@ public sealed class AdminUiActivityTests
         Assert.Contains("3 skipped", RequiredText(scan, "Detail"));
     }
 
+    [Theory]
+    [InlineData("recording.tags.refresh")]
+    [InlineData("recording.musicbrainz.enrich")]
+    [InlineData("recording.odesli.enrich")]
+    [InlineData("listening.musicbrainz.enrich")]
+    [InlineData("favorite.display-backfill")]
+    [InlineData("health.cleanup")]
+    [InlineData("recording.kept-cleanup")]
+    public async Task Activity_HidesRoutineWorkAndItsNonfailureAuditsWithoutRemovingRecords(string type)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var owner = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        var states = new[]
+        {
+            (DurableJobState.Pending, (string?)null),
+            (DurableJobState.Running, (string?)null),
+            (DurableJobState.Succeeded, "succeeded"),
+            (DurableJobState.Cancelled, "cancelled"),
+            (DurableJobState.RetryScheduled, "deferred")
+        };
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new() { Id = owner, DisplayName = "Listener", Enabled = true, BackendType = "jellyfin", BackendInstanceId = "fixture", BackendPrincipalId = owner.ToString("N") });
+            foreach (var (state, outcome) in states)
+            {
+                var job = HistoryJob(owner, type, state, outcome, now);
+                db.Jobs.Add(job);
+                if (outcome != null) DurableJobHistory.Append(db, job, now);
+                db.AuditEvents.Add(new()
+                {
+                    Id = Guid.CreateVersion7(), ActorUserId = owner, Category = "job-progress", Action = "refresh",
+                    SubjectType = "job", SubjectId = job.Id.ToString("N"), Outcome = "running", CreatedAt = now,
+                    DetailsJson = JsonSerializer.Serialize(new { jobId = job.Id, completed = 1, total = 2 })
+                });
+            }
+            var completed = db.Jobs.Local.First(item => item.State == DurableJobState.Succeeded);
+            db.AuditEvents.Add(new()
+            {
+                Id = Guid.CreateVersion7(), ActorUserId = owner, Category = "job-attempt", Action = "attempt-completed",
+                Outcome = "success", CreatedAt = now, DetailsJson = JsonSerializer.Serialize(new { jobId = completed.Id })
+            });
+            await db.SaveChangesAsync();
+        }
+        var matches = new TrackMatchCommandService(factory, new TrackMatchDecisionEngine(), new ProviderAccountResolver(factory), new SystemPlatformClock(), Mock.Of<IBackendLibraryAccessResolver>());
+        var controller = Controller(factory, matches, owner);
+        foreach (var scope in new[] { "mine", "everyone" })
+        {
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await controller.GetDashboardActivity(scope: scope)).Value));
+            Assert.Empty(json.RootElement.GetProperty("items").EnumerateArray());
+        }
+        await using var retained = await factory.CreateDbContextAsync();
+        Assert.Equal(states.Length, await retained.Jobs.CountAsync());
+        Assert.Equal(9, await retained.AuditEvents.CountAsync());
+    }
+
+    [Theory]
+    [InlineData("failed")]
+    [InlineData("retry_scheduled")]
+    [InlineData("interrupted")]
+    public async Task Activity_RetainsEarlierRoutineFailuresAfterTheCurrentJobRecovers(string outcome)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var owner = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        Guid jobId;
+        Guid auditId;
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new() { Id = owner, DisplayName = "Listener", Enabled = true, BackendType = "jellyfin", BackendInstanceId = "fixture", BackendPrincipalId = owner.ToString("N") });
+            var job = HistoryJob(owner, "recording.tags.refresh", DurableJobState.RetryScheduled, outcome, now);
+            jobId = job.Id;
+            db.Jobs.Add(job);
+            DurableJobHistory.Append(db, job, now);
+            auditId = Assert.Single(db.AuditEvents.Local).Id;
+            job.State = DurableJobState.Succeeded;
+            job.LastAttemptOutcome = "succeeded";
+            job.UpdatedAt = now.AddSeconds(1);
+            await db.SaveChangesAsync();
+        }
+        var matches = new TrackMatchCommandService(factory, new TrackMatchDecisionEngine(), new ProviderAccountResolver(factory), new SystemPlatformClock(), Mock.Of<IBackendLibraryAccessResolver>());
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await Controller(factory, matches, owner).GetDashboardActivity()).Value));
+        var row = Assert.Single(json.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal(auditId.ToString("N"), Text(row, "Id"));
+        Assert.Equal(jobId, JobId(row));
+        Assert.Equal("Song details updated", Text(row, "Label"));
+        Assert.Equal(outcome, Text(row, "State"));
+        Assert.Contains(outcome.Replace('_', ' '), RequiredText(row, "Detail"), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData(DurableJobState.Failed, "failed")]
+    [InlineData(DurableJobState.RetryScheduled, "retry_scheduled")]
+    [InlineData(DurableJobState.RetryScheduled, null)]
+    [InlineData(DurableJobState.Pending, "interrupted")]
+    [InlineData(DurableJobState.Running, "retry_scheduled")]
+    public async Task Activity_RetainsCurrentRoutineFailures(DurableJobState state, string? outcome)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var owner = Guid.CreateVersion7();
+        Guid jobId;
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new() { Id = owner, DisplayName = "Listener", Enabled = true, BackendType = "jellyfin", BackendInstanceId = "fixture", BackendPrincipalId = owner.ToString("N") });
+            var job = HistoryJob(owner, "recording.tags.refresh", state, outcome, DateTimeOffset.UtcNow);
+            jobId = job.Id;
+            db.Jobs.Add(job);
+            await db.SaveChangesAsync();
+        }
+        var matches = new TrackMatchCommandService(factory, new TrackMatchDecisionEngine(), new ProviderAccountResolver(factory), new SystemPlatformClock(), Mock.Of<IBackendLibraryAccessResolver>());
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await Controller(factory, matches, owner).GetDashboardActivity()).Value));
+        var row = Assert.Single(json.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal(jobId, JobId(row));
+        Assert.Equal("Song details updated", Text(row, "Label"));
+    }
+
+    [Fact]
+    public async Task Activity_RoutineWorkCannotFillTheScanBeforeAnOlderVisibleEvent()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var owner = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        Guid visibleId;
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new() { Id = owner, DisplayName = "Listener", Enabled = true, BackendType = "jellyfin", BackendInstanceId = "fixture", BackendPrincipalId = owner.ToString("N") });
+            for (var index = 0; index < 8; index++)
+            {
+                var job = HistoryJob(owner, "recording.tags.refresh", DurableJobState.Succeeded, "succeeded", now.AddMinutes(index));
+                db.Jobs.Add(job);
+                DurableJobHistory.Append(db, job, job.UpdatedAt);
+                db.AuditEvents.Add(new()
+                {
+                    Id = Guid.CreateVersion7(), ActorUserId = owner, Category = "job-progress", Action = "refresh", Outcome = "running",
+                    SubjectType = "job", SubjectId = job.Id.ToString("N"), CreatedAt = job.UpdatedAt
+                });
+            }
+            var visible = HistoryJob(owner, "favorite.process", DurableJobState.Succeeded, "succeeded", now.AddMinutes(-1));
+            visibleId = visible.Id;
+            db.Jobs.Add(visible);
+            await db.SaveChangesAsync();
+        }
+        var matches = new TrackMatchCommandService(factory, new TrackMatchDecisionEngine(), new ProviderAccountResolver(factory), new SystemPlatformClock(), Mock.Of<IBackendLibraryAccessResolver>());
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await Controller(factory, matches, owner).GetDashboardActivity(limit: 1)).Value));
+        Assert.Equal(visibleId, JobId(Assert.Single(json.RootElement.GetProperty("items").EnumerateArray())));
+        Assert.False(json.RootElement.GetProperty("hasMore").GetBoolean());
+    }
+
+    [Fact]
+    public async Task Activity_RoutinePolicyRequiresTheExactJobOwnerAndKeepsRequestedWork()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var owner = Guid.CreateVersion7();
+        var other = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        Guid requestedId;
+        Guid mismatchedAuditId;
+        Guid unboundAuditId;
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            foreach (var user in new[] { owner, other })
+                db.Users.Add(new() { Id = user, DisplayName = "Listener", Enabled = true, BackendType = "jellyfin", BackendInstanceId = "fixture", BackendPrincipalId = user.ToString("N") });
+            var routine = HistoryJob(other, "recording.tags.refresh", DurableJobState.Succeeded, "succeeded", now);
+            var requested = HistoryJob(owner, "recording.keep", DurableJobState.Succeeded, "succeeded", now);
+            requestedId = requested.Id;
+            requested.CorrelationId = routine.CorrelationId;
+            db.Jobs.AddRange(routine, requested);
+            var mismatched = new AuditEventRecord
+            {
+                Id = Guid.CreateVersion7(), ActorUserId = owner, Category = "job-progress", Action = "copy", Outcome = "running",
+                SubjectType = "job", SubjectId = routine.Id.ToString("D"), CorrelationId = routine.CorrelationId, CreatedAt = now
+            };
+            var unbound = new AuditEventRecord
+            {
+                Id = Guid.CreateVersion7(), ActorUserId = owner, Category = "job-attempt", Action = "attempt-completed", Outcome = "succeeded",
+                CorrelationId = routine.CorrelationId, DetailsJson = JsonSerializer.Serialize(new { jobType = routine.Type }), CreatedAt = now
+            };
+            mismatchedAuditId = mismatched.Id;
+            unboundAuditId = unbound.Id;
+            db.AuditEvents.AddRange(mismatched, unbound);
+            await db.SaveChangesAsync();
+        }
+        var matches = new TrackMatchCommandService(factory, new TrackMatchDecisionEngine(), new ProviderAccountResolver(factory), new SystemPlatformClock(), Mock.Of<IBackendLibraryAccessResolver>());
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await Controller(factory, matches, owner).GetDashboardActivity()).Value));
+        var rows = json.RootElement.GetProperty("items").EnumerateArray().ToArray();
+        Assert.Equal(3, rows.Length);
+        Assert.Single(rows, row => JobId(row) == requestedId);
+        Assert.Null(JobId(Assert.Single(rows, row => Text(row, "Id") == mismatchedAuditId.ToString("N"))));
+        Assert.Null(JobId(Assert.Single(rows, row => Text(row, "Id") == unboundAuditId.ToString("N"))));
+    }
+
+    private static DurableJobRecord HistoryJob(Guid owner, string type, DurableJobState state, string? outcome, DateTimeOffset at)
+    {
+        var id = Guid.CreateVersion7();
+        return new()
+        {
+            Id = id, OwnerUserId = owner, ScopeKey = owner.ToString("N"), IdempotencyKey = id.ToString("N"),
+            RequestFingerprint = new string('a', 64), Type = type, CorrelationId = id.ToString("N"), State = state,
+            AvailableAt = at, CreatedAt = at, UpdatedAt = at, MaxAttempts = 3, MaxDeferrals = 3, AttemptCount = 1,
+            LastAttemptOutcome = outcome, LastAttemptStartedAt = at.AddSeconds(-1), LastAttemptCompletedAt = at
+        };
+    }
+
     private static JsonElement FindJobOrActivity(IEnumerable<JsonElement> items, Guid jobId)
     {
         foreach (var item in items)

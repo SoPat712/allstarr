@@ -101,6 +101,38 @@ test("Activity lifecycle uses the latest result while retaining earlier failures
   await expect(page.getByText("Nothing matches these filters", { exact: true })).toBeVisible();
 });
 
+test("Activity consolidates repeated song updates and expands all items", async ({ page }) => {
+  const updates = Array.from({ length: 100 }, (_, index) => ({
+    id: `update-${index}`, jobId: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    kind: "job", source: "Recordings", label: "Song details updated", state: "succeeded",
+    detail: "Song details updated: attempt 1 completed.", sourceTitle: `Song ${index + 1}`,
+    action: "recording.tags.refresh", actorUserId: "viewer", actorDisplayName: "Josh",
+    occurredAt: "2026-10-29T05:54:00Z",
+  }));
+  await mockActivity(page, [...updates, ...updates.slice(0, 2).map((item, index) => ({
+    ...item, id: `failure-${index}`, jobId: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+    state: "failed", severity: "error", detail: `Song ${index + 1} could not be updated.`,
+  }))]);
+  await page.goto("/#/activity");
+  const groups = page.locator(".event-log-group");
+  await expect(groups).toHaveCount(2);
+  const succeeded = groups.first(), failed = groups.last();
+  await expect(succeeded.locator(":scope > summary")).toContainText("Song details updated · 100 songs");
+  await expect(succeeded.locator(":scope > summary [data-slot=badge]")).toHaveText("Succeeded");
+  await expectOutcome(succeeded.locator(":scope > summary [data-slot=badge]"), "success");
+  await expect(succeeded.locator(":scope > summary .event-kind-icon")).toHaveAttribute("data-tone", "success");
+  await expect(succeeded.locator(".event-child").first()).not.toBeVisible();
+  await succeeded.locator(":scope > summary").click();
+  await expect(succeeded.locator(".event-child")).toHaveCount(100);
+  await expect(succeeded.getByText("Song 1", { exact: true })).toBeVisible();
+  await expect(succeeded.getByText("Song 100", { exact: true })).toBeVisible();
+  await expect(failed.locator(":scope > summary")).toContainText("Song details updated · 2 songs");
+  await expectOutcome(failed.locator(":scope > summary [data-slot=badge]"), "danger");
+  await failed.locator(":scope > summary").click();
+  await expect(failed.locator(".event-child")).toHaveCount(2);
+  await expect(failed.getByText("Song 1 could not be updated.", { exact: true })).toBeVisible();
+});
+
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) test(`Activity colors jobs tasks attempts and diagnostics at ${width}px ${theme}`, async ({ page }, testInfo) => {
   await page.setViewportSize({ width, height: 900 });
   await page.emulateMedia({ colorScheme: theme });
