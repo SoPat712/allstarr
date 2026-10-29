@@ -137,6 +137,10 @@
         <div><strong>Pause learning</strong><small>While paused, plays and skips don't change your taste.</small></div>
         <span class="settings-toggle"><Checkbox checked={profile.paused} disabled={action} aria-label="Pause learning" onCheckedChange={paused => void update(() => taste.pause(paused === true))} /></span>
       </label>
+      <label class="settings-row">
+        <div><strong>Use imported history for my taste</strong><small>Imported plays only shape Usually, never Lately.</small></div>
+        <span class="settings-toggle"><Checkbox bind:checked={() => profile?.useImportedHistory ?? true, enabled => void update(() => taste.importedHistory(enabled === true))} disabled={action} aria-label="Use imported history for my taste" /></span>
+      </label>
       <footer><Button variant="secondary" disabled={action} onclick={openReset}>Reset taste</Button></footer>
     </div>
   {/if}

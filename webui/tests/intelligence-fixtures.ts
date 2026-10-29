@@ -38,6 +38,7 @@ export async function mockIntelligence(page: Page, options: Fixtures = {}) {
     }
     if (path === "/api/admin/playlist-links") return reply({ playlistLinks: saved });
     if (path === "/api/admin/stats") return reply(options.stats ?? {});
+    if (path === "/api/admin/history/imports") return reply([]);
     if (path === "/api/admin/releases/artists") return reply(options.artists ?? []);
     if (path === "/api/admin/releases") return reply(options.inbox ?? { entries: [], excluded: [], coverage: [] });
     return reply({});

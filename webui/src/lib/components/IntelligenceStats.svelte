@@ -7,11 +7,13 @@
   import SelectField from "$lib/components/SelectField.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
+  import IntelligenceHistoryImports from "$lib/components/IntelligenceHistoryImports.svelte";
   import { Skeleton } from "$lib/components/ui/skeleton";
 
   let stats = $state<ListeningStats | null>(null);
   let period = $state("30d"), year = $state(""), loading = $state(true), refreshing = $state(false), error = $state("");
   let request = 0;
+  let importedRefresh: ReturnType<typeof setTimeout> | undefined;
   let loadedSelection = $state("");
   const selection = $derived(year || period);
   const missingTime = $derived(Boolean(stats?.playCount && stats.coverage.unknownDurationCount >= stats.playCount));
@@ -42,11 +44,16 @@
   }
 
   function selectPeriod(value: string) { period = value; year = ""; void load(); }
+  function importsChanged() {
+    void load();
+    clearTimeout(importedRefresh);
+    importedRefresh = setTimeout(() => void load(), 31_000);
+  }
   const scheduler = createRefreshScheduler(load);
   onMount(() => {
     void load();
     const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
-    return () => { request++; unsubscribe(); scheduler.cancel(); };
+    return () => { request++; clearTimeout(importedRefresh); unsubscribe(); scheduler.cancel(); };
   });
 </script>
 
@@ -79,6 +86,7 @@
       <p>Imported from other services: {formatCount(stats.importedCount)} plays (not in these charts)</p>
     </footer>
   {/if}
+  <IntelligenceHistoryImports onchanged={importsChanged} />
 </div>
 
 <style>

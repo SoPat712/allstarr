@@ -1316,7 +1316,7 @@ export type AudioMusePreview = { reason: string | null; tracks: AudioMuseSong[];
 export type TasteStrength = { name: string; strength: number; value: number };
 export type TasteLayer = { tags: TasteStrength[]; artists: TasteStrength[] };
 export type TasteNudge = { kind: "tag" | "artist"; name: string; mode: "more" | "less" | "never"; expiresAt: string | null };
-export type TasteProfile = { lately: TasteLayer; usually: TasteLayer; latelyWeight: number; nudges: TasteNudge[]; paused: boolean };
+export type TasteProfile = { lately: TasteLayer; usually: TasteLayer; latelyWeight: number; nudges: TasteNudge[]; paused: boolean; useImportedHistory?: boolean };
 
 export type ListeningStats = {
   period: { from: string | null; to: string; timeZoneId: string };
@@ -1329,6 +1329,24 @@ export type ListeningStats = {
   topSongs: Array<{ title: string; artist: string; album: string | null; playCount: number }>;
   topArtists: Array<{ artist: string; playCount: number }>;
   topAlbums: Array<{ album: string; artist: string; playCount: number }>;
+};
+
+export type HistoryImport = {
+  importId: string;
+  revision: string;
+  displayFileName: string;
+  sizeBytes: number;
+  expiresAt: string;
+  state: number | string;
+  jobId: string | null;
+  jobState: string | null;
+  lastErrorCode: string | null;
+  lastErrorMessage: string | null;
+  importedRows: number;
+  duplicateRows: number;
+  resolvedRows: number;
+  unresolvedRows: number;
+  preview: ListeningHistoryImportPreview & { songs: number };
 };
 
 export type FollowedReleaseArtist = { providerId: string; artistId: string; displayName: string; musicBrainzArtistId?: string | null };
@@ -2314,6 +2332,9 @@ export const taste = {
   }),
   remove: (kind: TasteNudge["kind"], name: string) => json<TasteProfile>(`/api/admin/taste/nudge?${new URLSearchParams({ kind, name })}`, { method: "DELETE" }),
   pause: (paused: boolean) => json<TasteProfile>(`/api/admin/taste/${paused ? "pause" : "resume"}`, { method: "POST" }),
+  importedHistory: (enabled: boolean) => json<TasteProfile>("/api/admin/taste/imported-history", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }),
+  }),
   reset: (clearNudges: boolean) => json<TasteProfile>("/api/admin/taste/reset", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ clearNudges }),
   }),
@@ -2321,6 +2342,34 @@ export const taste = {
 
 export const listeningStats = {
   get: (period = "30d", year = "") => json<ListeningStats>(`/api/admin/stats?${new URLSearchParams(year ? { year } : { period })}`),
+};
+
+export const historyImports = {
+  list: () => json<HistoryImport[]>("/api/admin/history/imports"),
+  get: (id: string) => json<HistoryImport>(`/api/admin/history/imports/${encodeURIComponent(id)}`),
+  confirm: (item: HistoryImport) => json<HistoryImport>(`/api/admin/history/imports/${encodeURIComponent(item.importId)}/confirm`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ revision: item.revision }),
+  }),
+  remove: (item: HistoryImport) => json<{ removedListens: number }>(`/api/admin/history/imports/${encodeURIComponent(item.importId)}?${new URLSearchParams({ revision: item.revision })}`, { method: "DELETE" }),
+  upload: (file: File, progress: (bytes: number) => void, signal: AbortSignal) => new Promise<HistoryImport>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const abort = () => xhr.abort();
+    xhr.open("POST", adminUrl(`/api/admin/history/imports?${new URLSearchParams({ fileName: file.name })}`));
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.responseType = "json";
+    xhr.upload.onprogress = event => progress(event.loaded);
+    xhr.onload = () => {
+      const body = normalizeResponse(xhr.response);
+      if (xhr.status >= 200 && xhr.status < 300 && body) resolve(body as HistoryImport);
+      else reject(new ApiError(xhr.status, xhr.statusText, body));
+    };
+    xhr.onerror = () => reject(new Error("Upload failed"));
+    xhr.onabort = () => reject(new Error("Upload cancelled"));
+    xhr.onloadend = () => signal.removeEventListener("abort", abort);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) { signal.removeEventListener("abort", abort); reject(new Error("Upload cancelled")); }
+    else xhr.send(file);
+  }),
 };
 
 export const releaseInbox = {
