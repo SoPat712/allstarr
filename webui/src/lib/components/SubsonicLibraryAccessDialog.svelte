@@ -83,7 +83,7 @@
         <label class="field"><span>Subsonic password</span><input bind:value={password} type="password" autocomplete="current-password" required maxlength="2000" /></label>
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
         <footer class="library-access-actions">
-          <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
+          <Dialog.Close type="button" class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
           <Button type="submit" disabled={saving || !password}>{saving ? "Connecting…" : target?.credentialReferenceId ? "Update access" : "Allow and index"}</Button>
         </footer>
       </form>

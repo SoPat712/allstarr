@@ -258,7 +258,7 @@
         </div>
 
         <footer class="dialog-actions">
-          <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
+          <Dialog.Close type="button" class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
           <Button type="submit" disabled={loading || saving || playlist?.revision !== revision || !targetSelectionValid}>
             {saving ? "Saving…" : "Save settings"}
           </Button>
