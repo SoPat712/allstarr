@@ -179,7 +179,7 @@ test("match dialog shows field scores at 320px in dark mode", async ({ page }) =
 });
 
 for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as const) {
-  test(`interactive matching explains equal scores and keeps source priority at ${width}px ${colorScheme}`, async ({ page }, testInfo) => {
+  test(`interactive matching follows automatic order and keeps source priority at ${width}px ${colorScheme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
     const writes: Record<string, unknown>[] = [];
@@ -199,21 +199,21 @@ for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as 
     await page.route("**/api/admin/track-matches/targets/*?*", async route => json(route, {
       tracks: new URL(route.request().url()).pathname.endsWith("/provider") ? [
         { id: "deezer", externalId: "deezer", externalProvider: "deezer", title: "Power Trip", artist: "J. Cole",
-          album: "Born Sinner (Deluxe Version)", confidence: .9545, routingPriority: 2, matchesSourceAlbum: true, isExplicit: true,
+          album: "Born Sinner (Deluxe Version)", confidence: .992, routingPriority: 2, automaticOrder: 2, matchesSourceAlbum: true, isExplicit: true,
           media: { codec: "flac", bitDepth: 16, sampleRate: 44100 } },
         { id: "apple-standard", externalId: "apple-standard", externalProvider: "apple-download", title: "Power Trip (feat. Miguel)",
-          artist: "J. Cole", album: "Born Sinner", confidence: .9545, routingPriority: 1, matchesSourceAlbum: false,
+          artist: "J. Cole", album: "Born Sinner", confidence: .9545, routingPriority: 1, automaticOrder: 1, matchesSourceAlbum: false,
           media: { codec: "aac", bitrate: 256000 } },
         { id: "apple-deluxe", externalId: "apple-deluxe", externalProvider: "apple-download", title: "Power Trip (feat. Miguel)",
-          artist: "J. Cole", album: "Born Sinner (Deluxe Version)", confidence: .9545, routingPriority: 1, matchesSourceAlbum: true, isExplicit: true,
+          artist: "J. Cole", album: "Born Sinner (Deluxe Version)", confidence: .9545, routingPriority: 1, automaticOrder: 0, matchesSourceAlbum: true, isExplicit: true,
           media: { codec: "alac", bitDepth: 24, sampleRate: 48000 } },
         { id: "qobuz", externalId: "qobuz", externalProvider: "qobuz", title: "Power Trip", artist: "J. Cole",
-          confidence: .9544, routingPriority: 3, media: null },
+          confidence: .9544, routingPriority: 3, automaticOrder: 3, media: null },
         { id: "amazon", externalId: "amazon", externalProvider: "amazon", title: "Power Trip [feat. Miguel]",
-          artist: "J. Cole feat. Miguel", confidence: .94, routingPriority: 5, media: null,
+          artist: "J. Cole feat. Miguel", confidence: .94, routingPriority: 5, automaticOrder: 4, media: null,
           warnings: ["limited_recording_metadata"] },
         { id: "clean", externalId: "clean", externalProvider: "apple-download", title: "Power Trip (feat. Miguel)",
-          artist: "J. Cole", album: "Born Sinner", confidence: 0, routingPriority: 1, isExplicit: false,
+          artist: "J. Cole", album: "Born Sinner", confidence: 0, routingPriority: 1, automaticOrder: 5, isExplicit: false,
           reasons: ["clean_edit_of_explicit"], media: null },
       ] : [],
     }));
@@ -221,7 +221,7 @@ for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as 
     await page.getByRole("button", { name: "Interactive search" }).click();
     const dialog = page.getByRole("dialog", { name: "Power Trip (feat. Miguel)" });
     await expect(dialog.locator(".match-header")).toContainText("Explicit");
-    await expect(dialog).toContainText("Equal scores use streaming priority, then the same album edition");
+    await expect(dialog).toContainText("Good matches of the same version follow your streaming priority, then the same album edition");
     await dialog.getByRole("button", { name: "Search", exact: true }).click();
     const rows = dialog.locator(".target-results > button.match-row");
     await expect(rows).toHaveCount(6);
@@ -240,7 +240,8 @@ for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as 
     await expect(rows.nth(4)).toContainText("Audio format not reported");
     await expect(rows.nth(5)).toContainText("Not explicit");
     await expect(rows.nth(5)).toContainText("0%");
-    for (let index = 0; index < 3; index++) await expect(rows.nth(index)).toContainText("95.45%");
+    for (let index = 0; index < 2; index++) await expect(rows.nth(index)).toContainText("95.45%");
+    await expect(rows.nth(2)).toContainText("99.2%");
     const evidence = dialog.locator(".target-evidence").first();
     await evidence.locator("summary").click();
     await expect(evidence).toContainText("Source ISRCNot provided");
@@ -336,7 +337,7 @@ test("MatchDialog prefills the full title despite a legacy search query", async 
   await expect(dialog.getByLabel("Search local library and playable providers"))
     .toHaveValue("Layered song - Live");
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
-  await expect.poll(() => queries).toEqual(["Layered song - Live", "Layered song - Live"]);
+  await expect.poll(() => queries).toEqual(["Layered song - Live"]);
 });
 
 test("MatchDialog marks only the current candidate in the existing list", async ({ page }) => {
@@ -384,7 +385,8 @@ test("match titles mark only flagged ArtistGrid versions and preserve their scor
     })) },
   });
   await page.route("**/api/admin/track-matches/targets/*?*", route => json(route, {
-    tracks: variants.filter(item => Boolean(item.provider) === new URL(route.request().url()).pathname.endsWith("/provider"))
+    tracks: variants.filter(item => new URL(route.request().url()).searchParams.get("includeLocal") === "true" ||
+      Boolean(item.provider) === new URL(route.request().url()).pathname.endsWith("/provider"))
       .map(({ id, provider, ...track }) => ({ id, externalId: provider ? id : null, externalProvider: provider || null, ...track })),
     providers: ["artistgrid", "qobuz"],
   }));

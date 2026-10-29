@@ -649,7 +649,12 @@ async function mockApi(page: Page, options: {
       };
     if (url.pathname === "/api/admin/track-matches/targets/provider")
       body = {
-        tracks: [{
+        tracks: [...(url.searchParams.get("includeLocal") === "true" ? [{
+          id: "jellyfin-kiss-me-more", backendItemId: "jellyfin-kiss-me-more",
+          title: "Kiss Me More", artist: "Doja Cat feat. SZA", album: "Planet Her",
+          durationMilliseconds: 208_000, confidence: 0.91,
+          components: { priorityWindow: 0.07, routingPriority: 0, acceptanceQualified: 1 },
+        }] : []), {
           id: "provider-kiss-me-more", externalId: "provider-kiss-me-more",
           externalProvider: "lumen-audio", title: "Kiss Me More",
           artist: "Doja Cat feat. SZA", album: "Planet Her",
@@ -3311,31 +3316,27 @@ test("Manual and Rejected tabs expose explicit rematch and delete controls", asy
 
 test("MatchDialog deep links preserve title prefill and tentative mapping review", async ({ page }) => {
   await mockApi(page);
-  const delayedProvider = routeRelease();
+  const delayedSearch = routeRelease();
+  const searches: Record<string, string>[] = [];
   let localSearches = 0;
   await page.route("**/api/admin/track-matches/targets/local?*", (route) => {
     localSearches += 1;
-    const hasLocalResult = new URL(route.request().url()).searchParams.get("query") === "Kiss Me More";
+    return route.fulfill({ json: { tracks: [] } });
+  });
+  await page.route("**/api/admin/track-matches/targets/provider?*", async (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    searches.push(Object.fromEntries(params));
+    await delayedSearch.promise;
     return route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
-        tracks: hasLocalResult ? [{
+        tracks: [...(params.get("query") === "Kiss Me More" && params.get("includeLocal") === "true" ? [{
           id: "jellyfin-kiss-me-more", backendItemId: "jellyfin-kiss-me-more",
           title: "Kiss Me More", artist: "Doja Cat feat. SZA", album: "Planet Her",
           durationMilliseconds: 208_000, confidence: 0.91,
           components: { priorityWindow: 0.07, routingPriority: 0, acceptanceQualified: 1 },
-        }] : [],
-      }),
-    });
-  });
-  await page.route("**/api/admin/track-matches/targets/provider?*", async (route) => {
-    await delayedProvider.promise;
-    return route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        tracks: [{
+        }] : []), {
           id: "provider-kiss-me-more", externalId: "provider-kiss-me-more",
           externalProvider: "lumen-audio", title: "Kiss Me More",
           artist: "Doja Cat feat. SZA", album: "Planet Her",
@@ -3364,8 +3365,10 @@ test("MatchDialog deep links preserve title prefill and tentative mapping review
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
   await expect(dialog.getByRole("button", { name: "Searching…" })).toBeVisible();
   await expect(dialog.locator(".provider-result-summary")).toHaveCount(0);
-  delayedProvider.release();
-  await expect.poll(() => localSearches).toBe(1);
+  await expect.poll(() => searches).toEqual([{
+    query: "Kiss Me More", externalSnapshotId: "snapshot", limit: "50", includeLocal: "true",
+  }]);
+  delayedSearch.release();
   await expect(dialog.getByRole("button", { name: /Jellyfin 1/ })).toBeVisible();
   await expect(dialog.getByRole("button", { name: /Lumen Audio 1/ })).toBeVisible();
   await expect(dialog.getByRole("button", { name: /Qobuz/ })).toHaveCount(0);
@@ -3395,9 +3398,14 @@ test("MatchDialog deep links preserve title prefill and tentative mapping review
     .toBeVisible();
   await dialog.getByLabel("Search local library and playable providers").fill("No local copy");
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
-  await expect.poll(() => localSearches).toBe(2);
+  await expect.poll(() => searches).toEqual([
+    { query: "Kiss Me More", externalSnapshotId: "snapshot", limit: "50", includeLocal: "true" },
+    { query: "No local copy", externalSnapshotId: "snapshot", limit: "50", includeLocal: "true" },
+  ]);
   await expect(dialog.getByRole("button", { name: /Jellyfin 0/ })).toBeVisible();
   await expect(dialog.getByRole("button", { name: /Lumen Audio 1/ })).toBeVisible();
+  await expect(dialog.locator(".target-results > button .target-score")).toHaveCount(1);
+  expect(localSearches).toBe(0);
   await dialog.getByRole("button", { name: "Close match dialog" }).click();
 
   const request = page.waitForRequest((item) =>

@@ -22,11 +22,17 @@ public static class TrackSnapshotMetadata
     public static bool? IsExplicit(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object) return null;
-        return (root.TryGetProperty("isExplicit", out var value) ||
-                root.TryGetProperty("IsExplicit", out value)) &&
-               value.ValueKind is JsonValueKind.True or JsonValueKind.False
-            ? value.GetBoolean()
-            : null;
+        foreach (var key in new[] { "isExplicit", "IsExplicit", "explicitContentLyrics", "ExplicitContentLyrics" })
+        {
+            if (!root.TryGetProperty(key, out var value)) continue;
+            if (value.ValueKind is JsonValueKind.True or JsonValueKind.False) return value.GetBoolean();
+            if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number))
+            {
+                var known = number switch { 1 => true, 0 or 3 => false, _ => (bool?)null };
+                if (known.HasValue) return known;
+            }
+        }
+        return null;
     }
 
     public static string? Artist(JsonElement root)

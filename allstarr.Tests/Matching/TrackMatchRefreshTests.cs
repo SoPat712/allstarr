@@ -282,7 +282,9 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
                 ("IsExplicit", "true", true), ("isExplicit", "true", true),
                 ("IsExplicit", "false", false), ("isExplicit", "false", false),
                 ("IsExplicit", "null", null), ("isExplicit", "\"true\"", null),
-                ("IsExplicit", "1", null), ("", "null", null)
+                ("IsExplicit", "1", true),
+                ("ExplicitContentLyrics", "1", true), ("explicitContentLyrics", "3", false),
+                ("ExplicitContentLyrics", "2", null), ("", "null", null)
             })
                 yield return [branch, field, raw, expected];
     }
@@ -290,7 +292,7 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
     [Theory]
     [MemberData(nameof(StoredExplicitCases))]
     [Trait("Category", "Sqlite")]
-    public async Task RoutineCommandsUseOnlyStoredBooleanExplicitEvidence(bool refresh, string field, string raw, bool? expected)
+    public async Task RoutineCommandsReadStoredBooleanAndNumericExplicitEvidence(bool refresh, string field, string raw, bool? expected)
     {
         var payload = ExplicitPayload(field, raw);
         await using var fixture = await Fixture.CreateAsync(payload);
@@ -388,7 +390,8 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
         Assert.Equal(expected == true, cleanScore.Reasons.Contains("clean_edit_of_explicit"));
         if (expected == true)
         {
-            Assert.Equal(0, cleanScore.Confidence);
+            Assert.True(cleanScore.Confidence > 0);
+            Assert.Equal(0, cleanScore.Components!["explicitContent"]);
             Assert.Equal(1, Assert.Single(scores, item => item.BackendItemId == explicitTrack.ExternalId).Confidence);
         }
         else

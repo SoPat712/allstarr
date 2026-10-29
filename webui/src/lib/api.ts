@@ -1098,6 +1098,7 @@ export type MatchTarget = {
   durationMilliseconds?: number | null;
   confidence?: number | null;
   routingPriority?: number | null;
+  automaticOrder?: number | null;
   matchesSourceAlbum?: boolean | null;
   isExplicit?: boolean | null;
   media?: {
@@ -2593,9 +2594,9 @@ export const matchReview = {
     json<{ tracks: MatchTarget[] }>(
       `/api/admin/track-matches/targets/local?query=${encodeURIComponent(query)}&backendLibraryId=${encodeURIComponent(backendLibraryId)}&externalSnapshotId=${encodeURIComponent(externalSnapshotId)}`,
     ),
-  searchProviders: (query: string, externalSnapshotId: string) => {
-    const params = new URLSearchParams({ query, externalSnapshotId, limit: "50" });
-    return json<{ tracks: MatchTarget[]; providers: string[] }>(
+  searchProviders: (query: string, externalSnapshotId: string, includeLocal = false) => {
+    const params = new URLSearchParams({ query, externalSnapshotId, limit: "50", includeLocal: String(includeLocal) });
+    return json<{ tracks: MatchTarget[]; providers: string[]; partialSearch?: boolean }>(
       `/api/admin/track-matches/targets/provider?${params}`,
     );
   },

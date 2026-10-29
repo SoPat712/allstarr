@@ -1,9 +1,11 @@
+using System.Collections.Immutable;
 using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
+using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
 using allstarr.Services.Admin;
@@ -228,6 +230,191 @@ public sealed class TrackMatchesProviderSearchTests : IAsyncLifetime
         _gateway.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AcceptedVersionsFollowStreamingPriorityRegardlessOfScoreGap(bool reverse)
+    {
+        var preferred = new Song
+        {
+            ExternalId = "preferred",
+            ExternalProvider = "apple-download",
+            Title = "Communicate",
+            Artist = "who do we blame",
+            Duration = 122
+        };
+        var stronger = new Song
+        {
+            ExternalId = "stronger",
+            ExternalProvider = "deezer",
+            Title = "Communicate",
+            Artist = "who do we blame",
+            Duration = 115
+        };
+        _gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-musickit", "deezer"]);
+        _gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Communicate", 20))
+            .ReturnsAsync(reverse ? [stronger, preferred] : [preferred, stronger]);
+
+        var tracks = await SearchAsync("Communicate");
+
+        Assert.Equal(new[] { "preferred", "stronger" }, tracks.Select(item => item.GetProperty("externalId").GetString()));
+        Assert.True(tracks[0].GetProperty("confidence").GetDouble() < tracks[1].GetProperty("confidence").GetDouble() - .01);
+    }
+
+    [Fact]
+    public async Task InteractiveAutomaticOrderKeepsManualOnlySourcesAfterAutomaticChoices()
+    {
+        var policy = new EffectiveProviderPolicySnapshot(
+            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty
+                .Add(ProviderCapabilityKind.Streaming, ["apple-musickit", "deezer"]),
+            ImmutableHashSet<string>.Empty, "lossless", .07)
+        {
+            ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty
+                .Add("apple-musickit", ProviderUseMode.ManualOnly)
+        };
+        var policies = new Mock<IEffectiveProviderPolicyResolver>();
+        policies.Setup(item => item.ResolveForUserAsync(_user, It.IsAny<CancellationToken>())).ReturnsAsync(policy);
+        _gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-musickit", "deezer"]);
+        _gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Communicate", 20))
+            .ReturnsAsync([
+                new Song
+                {
+                    ExternalId = "manual",
+                    ExternalProvider = "apple-download",
+                    Title = "Communicate",
+                    Artist = "who do we blame",
+                    Duration = 115
+                },
+                new Song
+                {
+                    ExternalId = "automatic",
+                    ExternalProvider = "deezer",
+                    Title = "Communicate",
+                    Artist = "who do we blame",
+                    Duration = 122
+                }
+            ]);
+
+        var result = Assert.IsType<OkObjectResult>(await Controller(policies: policies.Object)
+            .SearchProviderTargets("Communicate", _snapshot));
+        var tracks = JsonSerializer.SerializeToElement(result.Value).GetProperty("tracks").EnumerateArray().ToArray();
+
+        Assert.Equal(new[] { "automatic", "manual" }, tracks.Select(item => item.GetProperty("externalId").GetString()));
+        Assert.True(tracks[0].GetProperty("confidence").GetDouble() < tracks[1].GetProperty("confidence").GetDouble());
+    }
+
+    [Fact]
+    public async Task InteractiveAutomaticOrderPreservesTheProviderOrderForEqualEditions()
+    {
+        Song Track(string id) => new()
+        {
+            ExternalId = id,
+            ExternalProvider = "deezer",
+            Title = "Communicate",
+            Artist = "who do we blame",
+            Duration = 115
+        };
+        var first = Track("first");
+        var second = Track("second");
+        _gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
+        _gateway.SetupSequence(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Communicate", 20))
+            .ReturnsAsync([first, second, first])
+            .ReturnsAsync([second, first]);
+
+        var forward = await SearchAsync("Communicate");
+        var reverse = await SearchAsync("Communicate");
+
+        Assert.Equal(2, forward.Length);
+        Assert.Equal(new[] { "first", "second" }, forward.Select(item => item.GetProperty("externalId").GetString()));
+        Assert.Equal(new[] { "second", "first" }, reverse.Select(item => item.GetProperty("externalId").GetString()));
+    }
+
+    [Theory]
+    [InlineData(120_000, true)]
+    [InlineData(300_000, false)]
+    public async Task CombinedInteractiveResultsUseTheAutomaticLocalAndProviderOrder(long duration, bool localFirst)
+    {
+        var local = new LibraryTrackRecord
+        {
+            Id = Guid.NewGuid(),
+            OwnerUserId = _user,
+            BackendInstanceId = "fixture",
+            BackendItemId = "local",
+            Title = "Communicate",
+            Artist = "who do we blame",
+            DurationMilliseconds = duration
+        };
+        var repository = new Mock<ITrackMatchRepository>(MockBehavior.Strict);
+        repository.Setup(item => item.SearchLocalTracksAsync(new TrackMatchActor(_user, false), "Communicate", null, 20,
+                It.IsAny<ExternalTrackMatchSnapshot>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([local]);
+        _gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
+        _gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Communicate", 20))
+            .ReturnsAsync([new Song
+            {
+                ExternalId = "external",
+                ExternalProvider = "deezer",
+                Title = "Communicate",
+                Artist = "who do we blame",
+                Duration = 115
+            }]);
+
+        var result = Assert.IsType<OkObjectResult>(await Controller(repository.Object)
+            .SearchProviderTargets("Communicate", _snapshot, includeLocal: true));
+        var tracks = JsonSerializer.SerializeToElement(result.Value).GetProperty("tracks").EnumerateArray().ToArray();
+
+        Assert.Equal(2, tracks.Length);
+        Assert.Equal(localFirst ? "local" : null, tracks[0].GetProperty("backendItemId").GetString());
+        Assert.Equal(new[] { 0, 1 }, tracks.Select(item => item.GetProperty("automaticOrder").GetInt32()));
+        if (localFirst)
+            Assert.True(tracks[0].GetProperty("confidence").GetDouble() < tracks[1].GetProperty("confidence").GetDouble());
+        repository.VerifyAll();
+    }
+
+    [Fact]
+    public async Task CombinedInteractiveSearchKeepsProviderResultsWhenLocalSearchFails()
+    {
+        var repository = new Mock<ITrackMatchRepository>(MockBehavior.Strict);
+        repository.Setup(item => item.SearchLocalTracksAsync(new TrackMatchActor(_user, false), "Communicate", null, 20,
+                It.IsAny<ExternalTrackMatchSnapshot>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Local search unavailable"));
+        _gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Communicate", 20))
+            .ReturnsAsync(Versions());
+
+        var result = Assert.IsType<OkObjectResult>(await Controller(repository.Object)
+            .SearchProviderTargets("Communicate", _snapshot, includeLocal: true));
+        var response = JsonSerializer.SerializeToElement(result.Value);
+
+        Assert.Equal(4, response.GetProperty("tracks").GetArrayLength());
+        Assert.True(response.GetProperty("partialSearch").GetBoolean());
+        repository.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(" - Single", true)]
+    [InlineData(" - EP", true)]
+    [InlineData(" (sInGlE)", true)]
+    [InlineData(" [Single]", true)]
+    [InlineData(" (EP)", true)]
+    [InlineData(" [ep]", true)]
+    [InlineData(" – Single", true)]
+    [InlineData(" (Deluxe)", false)]
+    [InlineData(" (Extended)", false)]
+    [InlineData(" (Remastered)", false)]
+    [InlineData(" (Live)", false)]
+    [InlineData(" - Single Collection", false)]
+    public async Task AlbumEditionComparisonOnlyIgnoresTrailingStoreFormats(string suffix, bool sameEdition)
+    {
+        var source = await PowerTripSourceAsync("IsExplicit", true);
+        _gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-musickit"]);
+        _gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Power Trip", 20))
+            .ReturnsAsync([PowerTrip("single", "apple-download", "Born Sinner (Deluxe Version)" + suffix)]);
+
+        var track = Assert.Single(await SearchAsync("Power Trip", source));
+
+        Assert.Equal(sameEdition, track.GetProperty("matchesSourceAlbum").GetBoolean());
+    }
+
     [Fact]
     public async Task PowerTripEqualRecordingScoresUseAppleAliasPriorityThenExactAlbumEdition()
     {
@@ -298,9 +485,10 @@ public sealed class TrackMatchesProviderSearchTests : IAsyncLifetime
         var explicitTrack = Assert.Single(tracks, item => item.GetProperty("externalId").GetString() == "explicit");
         if (explicitSource == true)
         {
-            Assert.Equal(0, clean.GetProperty("confidence").GetDouble());
+            Assert.True(clean.GetProperty("confidence").GetDouble() > 0);
+            Assert.Equal(0, clean.GetProperty("components").GetProperty("explicitContent").GetDouble());
             Assert.Contains(clean.GetProperty("reasons").EnumerateArray(), item => item.GetString() == "clean_edit_of_explicit");
-            Assert.True(explicitTrack.GetProperty("confidence").GetDouble() > clean.GetProperty("confidence").GetDouble());
+            Assert.Equal("explicit", tracks[0].GetProperty("externalId").GetString());
         }
         else if (explicitSource == false)
             Assert.True(clean.GetProperty("confidence").GetDouble() > explicitTrack.GetProperty("confidence").GetDouble());
@@ -485,7 +673,7 @@ public sealed class TrackMatchesProviderSearchTests : IAsyncLifetime
         return JsonSerializer.SerializeToElement(result.Value).GetProperty("tracks").EnumerateArray().ToArray();
     }
 
-    private TrackMatchesController Controller(ITrackMatchRepository? repository = null)
+    private TrackMatchesController Controller(ITrackMatchRepository? repository = null, IEffectiveProviderPolicyResolver? policies = null)
     {
         var http = new DefaultHttpContext();
         http.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
@@ -503,7 +691,7 @@ public sealed class TrackMatchesProviderSearchTests : IAsyncLifetime
         return new TrackMatchesController(
             repository ?? Mock.Of<ITrackMatchRepository>(), _gateway.Object,
             new AdminProtocolExecutionContextFactory(_factory, new SystemPlatformClock()),
-            _factory, null!, null!, new TrackMatchDecisionEngine(), null!)
+            _factory, null!, null!, new TrackMatchDecisionEngine(), null!, policies)
         { ControllerContext = new() { HttpContext = http } };
     }
 

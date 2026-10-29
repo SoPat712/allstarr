@@ -1288,6 +1288,200 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         Assert.Equal(scores[0].Confidence, scores[1].Confidence);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AnxietyAutomaticSelectionUsesStreamingPriorityForTheExplicitSingle(bool reverse)
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Title = "Anxiety",
+            Artist = "Doechii",
+            Album = "Anxiety",
+            AlbumArtist = null,
+            DurationMilliseconds = 249_160,
+            IsExplicit = true
+        };
+        var apple = ProviderCandidate(scope, "apple-download", 249_000) with
+        {
+            Title = source.Title,
+            Artist = source.Artist,
+            Album = "Anxiety - Single",
+            IsExplicit = true
+        };
+        var clean = apple with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "apple-clean",
+            Album = "Alligator Bites Never Heal (Extended)",
+            IsExplicit = false
+        };
+        var others = new[] { "deezer", "second-deezer", "soundcloud", "tidal", "youtubemusic" }
+            .Select(provider => apple with
+            {
+                LibraryTrackId = Guid.CreateVersion7(),
+                BackendItemId = provider,
+                Album = "Anxiety",
+                ProviderTrackIds = new Dictionary<string, string> { [provider] = provider }
+            });
+        var candidates = others.Concat([clean, apple]).ToArray();
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source,
+            reverse ? candidates.Reverse().ToArray() : candidates,
+            providerPriority: ["apple-musickit", "deezer", "third", "fourth", "fifth", "second-deezer",
+                "seventh", "eighth", "soundcloud", "tidal", "youtubemusic"]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(apple.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.Equal(.9909, decision.Confidence);
+        Assert.All(decision.Candidates.Where(score => score.LibraryTrackId != apple.LibraryTrackId &&
+            score.LibraryTrackId != clean.LibraryTrackId), score => Assert.Equal(.992, score.Confidence));
+        Assert.Equal(0, decision.Candidates.Single(score => score.LibraryTrackId == clean.LibraryTrackId).Components!["explicitContent"]);
+        Assert.Contains("accepted_route_priority_selected", decision.Reasons);
+
+        var withoutSingle = new TrackMatchDecisionEngine().Decide(scope, source,
+            candidates.Where(candidate => candidate.LibraryTrackId != apple.LibraryTrackId).ToArray(),
+            providerPriority: ["apple-download", "deezer"]);
+        Assert.NotEqual(clean.LibraryTrackId, withoutSingle.SelectedLibraryTrackId);
+    }
+
+    [Fact]
+    public void AutomaticStreamingSelectionUsesAlbumEditionBeforeScoreWithinOneProvider()
+    {
+        var scope = Scope();
+        var otherAlbum = ProviderCandidate(scope, "apple-download", 240_000) with { Album = "Another album" };
+        var single = otherAlbum with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "single",
+            Album = "The Album - Single",
+            DurationMilliseconds = 241_000
+        };
+        var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [otherAlbum, single],
+            providerPriority: ["apple-download"]);
+
+        Assert.Equal(single.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.True(decision.Candidates[0].Confidence < decision.Candidates[1].Confidence);
+    }
+
+    [Theory]
+    [InlineData("Live")]
+    [InlineData("Remix")]
+    [InlineData("Sped Up")]
+    [InlineData("Acoustic")]
+    public void AutomaticStreamingPriorityCannotPromoteADifferentVersionEvenWithAnExactIdentifier(string version)
+    {
+        var scope = Scope();
+        var source = Source() with { Isrc = "USAAA2600001" };
+        var original = ProviderCandidate(scope, "deezer", 240_000) with { Isrc = source.Isrc };
+        var variant = original with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "variant",
+            Title = source.Title + " (" + version + ")",
+            ProviderTrackIds = new Dictionary<string, string> { ["apple-download"] = "variant" }
+        };
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, [variant, original],
+            providerPriority: ["apple-download", "deezer"]);
+
+        Assert.Equal(original.LibraryTrackId, decision.SelectedLibraryTrackId);
+    }
+
+    [Theory]
+    [InlineData(249_000L)]
+    public void AutomaticStreamingPriorityRejectsKnownDurationOutsideTolerance(long? duration)
+    {
+        var scope = Scope();
+        var preferred = ProviderCandidate(scope, "apple-download", 240_000) with { DurationMilliseconds = duration };
+        var stronger = ProviderCandidate(scope, "deezer", 240_000);
+        var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [preferred, stronger],
+            providerPriority: ["apple-download", "deezer"]);
+
+        Assert.Equal(stronger.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.True(decision.Candidates[0].Confidence > decision.Candidates[1].Confidence);
+    }
+
+    [Theory]
+    [InlineData("Live")]
+    [InlineData("Remix")]
+    [InlineData("Sped Up")]
+    [InlineData("Extended")]
+    [InlineData("Demo")]
+    public void AutomaticStreamingPriorityCannotPromoteAVersionMarkedOnlyOnTheAlbum(string version)
+    {
+        var scope = Scope();
+        var original = ProviderCandidate(scope, "deezer", 240_000);
+        var variant = ProviderCandidate(scope, "apple-download", 241_000) with
+        {
+            Album = "The Album (" + version + ")"
+        };
+        var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [variant, original],
+            providerPriority: ["apple-download", "deezer"]);
+
+        Assert.Equal(original.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.NotEqual(TrackMatchReviewState.Accepted, new TrackMatchDecisionEngine().Decide(scope, Source(), [variant]).State);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AnxietySavedMetadataSelectsTheAppleSingleWithoutAlbumVersionAmbiguity(bool reverse)
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Title = "Anxiety",
+            Artist = "Doechii",
+            Album = "Anxiety",
+            AlbumArtist = null,
+            DurationMilliseconds = 249_302,
+            IsExplicit = null
+        };
+        var apple = ProviderCandidate(scope, "apple-download", 249_000) with
+        {
+            Title = source.Title,
+            Artist = source.Artist,
+            Album = "Anxiety - Single",
+            IsExplicit = true
+        };
+        var extended = apple with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "extended",
+            Album = "Alligator Bites Never Heal (Extended)",
+            IsExplicit = false
+        };
+        var deezer = apple with
+        {
+            LibraryTrackId = Guid.CreateVersion7(),
+            BackendItemId = "deezer",
+            Album = "Anxiety",
+            ProviderTrackIds = new Dictionary<string, string> { ["deezer"] = "deezer" }
+        };
+        var candidates = new[] { extended, deezer, apple };
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source,
+            reverse ? candidates.Reverse().ToArray() : candidates,
+            providerPriority: ["apple-musickit", "deezer"]);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(apple.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.Equal(new[] { apple.LibraryTrackId, deezer.LibraryTrackId, extended.LibraryTrackId },
+            decision.Candidates.Select(candidate => candidate.LibraryTrackId));
+        Assert.Equal(.9909, decision.Confidence);
+    }
+
+    [Fact]
+    public void AutomaticStreamingPriorityKeepsUnknownExplicitnessEligible()
+    {
+        var scope = Scope();
+        var original = ProviderCandidate(scope, "deezer", 240_000) with { IsExplicit = true };
+        var unknown = ProviderCandidate(scope, "apple-download", 241_000) with { IsExplicit = null };
+        var decision = new TrackMatchDecisionEngine().Decide(scope, Source() with { IsExplicit = true },
+            [unknown, original], providerPriority: ["apple-download", "deezer"]);
+
+        Assert.Equal(unknown.LibraryTrackId, decision.SelectedLibraryTrackId);
+    }
+
     [Fact]
     public void ProviderSearchIsSkippedForAnyAcceptedLocalMatch()
     {

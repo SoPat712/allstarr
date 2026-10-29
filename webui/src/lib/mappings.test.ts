@@ -137,6 +137,14 @@ describe("mapping review presentation", () => {
     expect(matchScore(Number.NaN)).toBe("—");
   });
 
+  it("uses the shared automatic order even when the preferred version has a lower score", () => {
+    expect(rankedTargets([
+      { id: "stronger", title: "Track", confidence: .99, automaticOrder: 1 },
+      { id: "preferred", title: "Track", confidence: .93, automaticOrder: 0 },
+      { id: "variant", title: "Track (Live)", confidence: .98, automaticOrder: 2 },
+    ]).map(target => target.id)).toEqual(["preferred", "stronger", "variant"]);
+  });
+
   it("keeps stronger recording evidence above preferred sources and reported resolution", () => {
     expect(rankedTargets([
       { id: "preferred", title: "Preferred", confidence: .9545, routingPriority: 1,

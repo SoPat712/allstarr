@@ -62,11 +62,29 @@ internal static class TrackMatchRuleSet
         LocalTrackMatchCandidate candidate,
         TrackMatchPolicy policy)
     {
+        candidate = candidate with { IsExplicit = TrackMatchSignals.Explicitness(candidate) };
         foreach (var rule in Default)
         {
             var outcome = rule.Evaluate(source, candidate, policy);
-            if (outcome != null && outcome.Disposition != TrackMatchRuleDisposition.Continue)
-                return outcome;
+            if (outcome == null || outcome.Disposition == TrackMatchRuleDisposition.Continue) continue;
+            if (outcome.Disposition == TrackMatchRuleDisposition.Accept &&
+                !TrackMatchSignals.RecordingVersionsMatch(source, candidate, policy.DurationToleranceSeconds))
+                outcome = FieldScoreRule.Score(source, candidate, policy);
+            if (outcome.Disposition != TrackMatchRuleDisposition.Reject &&
+                TrackMatchSignals.SourceAlbumRequiresConfirmation(source, candidate, policy.DurationToleranceSeconds))
+                outcome = outcome with
+                {
+                    Reasons = outcome.Reasons.Append("source_album_marker_confirmation").ToArray(),
+                    Components = new Dictionary<string, double>(outcome.Components) { ["sourceAlbumConfirmation"] = 0 }
+                };
+            if (outcome.Disposition != TrackMatchRuleDisposition.Reject && source.IsExplicit.HasValue &&
+                candidate.IsExplicit.HasValue && source.IsExplicit != candidate.IsExplicit)
+                outcome = outcome with
+                {
+                    Reasons = outcome.Reasons.Append(source.IsExplicit == true ? "clean_edit_of_explicit" : "explicit_edit_of_clean").ToArray(),
+                    Components = new Dictionary<string, double>(outcome.Components) { ["explicitContent"] = 0 }
+                };
+            return outcome;
         }
 
         return FieldScoreRule.Score(source, candidate, policy);
@@ -97,7 +115,7 @@ internal sealed class BackingRecordingRule : ITrackMatchRule
         LocalTrackMatchCandidate candidate,
         TrackMatchPolicy policy) =>
         FuzzyMatcher.BackingRecordingTags(string.Join(" ", candidate.Title, candidate.Artist, candidate.Album))
-            .Except(FuzzyMatcher.BackingRecordingTags(source.Title)).Any()
+            .Except(FuzzyMatcher.BackingRecordingTags(string.Join(" ", source.Title, source.Album))).Any()
             ? TrackMatchRuleSet.Reject("backing_recording_mismatch",
                 "The candidate is a karaoke, instrumental, or backing recording that the source did not request.",
                 "backingRecording", warnings: ["semantic_version_mismatch"])
@@ -132,8 +150,7 @@ internal sealed class ExplicitRecordingRule : ITrackMatchRule
         ExternalTrackMatchSnapshot source,
         LocalTrackMatchCandidate candidate,
         TrackMatchPolicy policy) =>
-        source.IsExplicit == true &&
-        (candidate.IsExplicit == false || FuzzyMatcher.HasCleanRecordingLabel(candidate.Title))
+        source.IsExplicit == true && FuzzyMatcher.HasCleanRecordingLabel(candidate.Title)
             ? TrackMatchRuleSet.Reject("clean_edit_of_explicit",
                 "The candidate is a clean or edited version of an explicit source recording.", "explicitContent")
             : null;
@@ -279,8 +296,8 @@ internal sealed class FieldScoreRule : ITrackMatchRule
             : (double?)null;
         var titleAnnotationsMatch = FuzzyMatcher.TitleAnnotationsMatch(
             source.Title, source.Artist, candidate.Title, candidate.Artist);
-        var versionMatch = FuzzyMatcher.SemanticVersionTags(source.Title)
-            .SetEquals(FuzzyMatcher.SemanticVersionTags(candidate.Title));
+        var versionMatch = TrackMatchSignals.RecordingVersionsMatch(source, candidate, policy.DurationToleranceSeconds) ||
+                           TrackMatchSignals.SourceAlbumRequiresConfirmation(source, candidate, policy.DurationToleranceSeconds);
         var components = new Dictionary<string, double>
         {
             ["title"] = Math.Round(title, 4),
@@ -349,6 +366,24 @@ internal sealed class FieldScoreRule : ITrackMatchRule
 
 internal static class TrackMatchSignals
 {
+    public static bool? Explicitness(LocalTrackMatchCandidate candidate) =>
+        candidate.IsExplicit ?? FuzzyMatcher.AlbumExplicitness(candidate.Album);
+
+    public static bool RecordingVersionsMatch(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate,
+        int durationToleranceSeconds) =>
+        FuzzyMatcher.RecordingVersionsMatch(source.Title, source.Album, candidate.Title, candidate.Album,
+            DurationsMatch(source, candidate, durationToleranceSeconds));
+
+    public static bool SourceAlbumRequiresConfirmation(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate,
+        int durationToleranceSeconds) =>
+        FuzzyMatcher.SourceAlbumRequiresConfirmation(source.Title, source.Album, candidate.Title, candidate.Album,
+            DurationsMatch(source, candidate, durationToleranceSeconds));
+
+    private static bool DurationsMatch(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate,
+        int durationToleranceSeconds) =>
+        source.DurationMilliseconds is > 0 && candidate.DurationMilliseconds is > 0 &&
+        Math.Abs(source.DurationMilliseconds.Value - candidate.DurationMilliseconds.Value) <= durationToleranceSeconds * 1000L;
+
     // Last.fm recording IDs remain supporting metadata.
     public static string? RecordingIdentity(ExternalTrackMatchSnapshot source) =>
         source.ProviderId.Equals("lastfm", StringComparison.OrdinalIgnoreCase) ? null : source.MusicBrainzRecordingId;
