@@ -138,6 +138,8 @@ public sealed partial class MusicMixService : IDisposable
                     if (row.Native != null && result.Any(existing => existing.Native?.Id == row.Native.Id)) continue;
                     accepted.Add(song);
                     result.Add(row);
+                    if (context.Actor?.EffectiveUserId != null)
+                        await providers.RememberTrackAsync(context, song.Id).WaitAsync(token);
                 }
                 catch (Exception) when (!token.IsCancellationRequested) { }
             }
