@@ -29,6 +29,22 @@ describe("shared toast lifecycle", () => {
     expect(get(toasts)).toHaveLength(0);
   });
 
+  it("updates one busy notification in place and starts its lifetime at completion", () => {
+    const id = toast.progress("Matching favourites · 0 of 10 songs");
+    vi.advanceTimersByTime(6000);
+    toast.update(id, { message: "Matching favourites · 4 of 10 songs" });
+    expect(get(toasts)).toEqual([{ id, message: "Matching favourites · 4 of 10 songs", kind: "info", busy: true }]);
+    const run = vi.fn();
+    toast.update(id, { message: "Favourites is ready · 8 of 10 songs matched", kind: "success", busy: false, action: { label: "Open", run } });
+    expect(get(toasts)[0]).toMatchObject({ id, kind: "success", busy: false, action: { label: "Open" } });
+    vi.advanceTimersByTime(4999);
+    expect(get(toasts)).toHaveLength(1);
+    vi.advanceTimersByTime(1);
+    expect(get(toasts)).toHaveLength(0);
+    toast.update(id, { message: "Late update" });
+    expect(get(toasts)).toHaveLength(0);
+  });
+
   it("pauses remaining time while either hover or focus is active", () => {
     const id = toast.success("Saved");
     vi.advanceTimersByTime(2000);

@@ -1,12 +1,12 @@
 import { expect, type Page } from "@playwright/test";
 export { appearance, capture } from "./intelligence-fixtures";
-import type { MixCard, MixSong, TasteProfile } from "../src/lib/api";
+import type { MixCard, MixSong, PlaylistLink, TasteProfile } from "../src/lib/api";
 
 export const songs: MixSong[] = Array.from({ length: 8 }, (_, i) => ({ mixId: "daily", generation: 1, source: "library", reason: i ? "Calm sound" : "Played 6 times in 30 days", score: 1, song: { id: `song-${i}`, canonicalRecordingId: null, title: ["Blue morning", "Quiet water", "Afterglow"][i % 3] + (i > 2 ? ` ${i + 1}` : ""), artist: ["North", "Cedar", "Willow"][i % 3], album: "Open skies" } }));
 const card = (id: string, name: string, section: MixCard["section"] = "madeForYou"): MixCard => ({ id, kind: id, name, section, sortOrder: 0, description: section === "moods" ? "Calm songs from your library" : "R&B · North, Cedar, Willow", sourceLabel: null, recipeVersion: null, updatedAt: "2026-10-29T04:00:00Z", readiness: { ready: true, message: "Ready" }, showInApps: true, inApps: true, appsAllowed: true, coverArtwork: songs.slice(0, 4).map(row => row.song.id) });
 export async function mockForYou(page: Page, options: { admin?: boolean; brandNew?: boolean; publish?: boolean; partial?: boolean; custom?: boolean } = {}) {
   const state = { cards: [1, 2, 3, 4].map(n => card(`daily-${n}`, `Daily Mix ${n}`)).concat([card("discover-weekly", "Discover Weekly"), card("release-radar", "Release Radar"), card("on-repeat", "On Repeat"), card("rewind", "Rewind"), ...["Chill", "Focus", "Workout", "Party", "Sleep"].map(name => card(name.toLowerCase(), name, "moods"))]), songs: structuredClone(songs), publish: options.publish ?? true, calls: [] as { path: string; method: string; body: any }[], taste: { lately: { tags: [{ name: "R&B", strength: 80, value: 1 }, { name: "pop", strength: 70, value: 1 }], artists: [{ name: "North", strength: 80, value: 1 }] }, usually: { tags: [{ name: "indie rock", strength: 90, value: 1 }, { name: "EDM", strength: 70, value: 1 }, { name: "hip-hop", strength: 60, value: 1 }], artists: [] }, latelyWeight: .7, nudges: [], paused: false, useImportedHistory: true } as TasteProfile };
-  const linked: { sourceProviderId: string; sourcePlaylistId: string }[] = [];
+  const linked: PlaylistLink[] = [];
   if (options.custom) state.cards.push(card("custom", "Evening listening", "custom"));
   if (options.brandNew || options.partial) for (const item of state.cards.filter(item => options.brandNew || item.id === "daily-4")) { item.readiness = { ready: false, message: "Play about 80 more songs, or import your listening history." }; item.coverArtwork = []; item.inApps = false; }
   await page.route("**/*", async route => {
@@ -27,7 +27,8 @@ export async function mockForYou(page: Page, options: { admin?: boolean; brandNe
     if (path === "/api/admin/mixes/publish-setting") { if (body) state.publish = body.enabled; return reply({ enabled: state.publish }); }
     if (path === "/api/admin/mixes/start") return reply({ previewId: "preview", songs, readiness: { ready: true, message: "Ready" } });
     if (path === "/api/admin/mixes/start/preview/save") { const saved = card("custom", body.name, "custom"); state.cards.push(saved); return reply({ ...saved, songs, generation: 1 }); }
-    if (path === "/api/admin/mixes/external") { const saved = { ...card("external", "Loved on Last.fm", "yourServices"), sourceLabel: "Last.fm" }; state.cards.push(saved); linked.push({ sourceProviderId: body.source, sourcePlaylistId: body.source === "listenbrainz" ? `createdfor:${body.kind}` : body.kind === "top" ? "top:1month:50" : body.kind }); return reply(saved, 201); }
+    if (path === "/api/admin/mixes/external" && method === "POST") { const saved = { ...card("external", "Loved on Last.fm", "yourServices"), sourceLabel: "Last.fm", appsAllowed: state.publish, inApps: state.publish, initialJobId: "external-job" }; state.cards.push(saved); linked.push({ id: saved.id, name: saved.name, enabled: true, providerAccountId: "account", sourceProviderId: body.source, sourcePlaylistId: body.source === "listenbrainz" ? `createdfor:${body.kind}` : body.kind === "top" ? "top:1month:50" : body.kind,
+      targetProtocol: "jellyfin", targetBackendInstanceId: "main", mode: "virtual", projectionMode: "resolved", materializationMode: "reconcile", importMode: "linked", trackRetention: "onDemand", mirrorStaleEntries: true, preserveManualEntries: true, syncName: true, syncDescription: true, syncArtwork: true, ruleVersion: "1", policyVersion: "1", revision: 1, trackCount: 10, matchedCount: 8, unmatchedCount: 2, playableCount: 8, materializedCount: 0, routeCoverage: [], metrics: { total: 10, matched: 8, unresolved: 2, review: 0, rejected: 0, playable: 8, materialized: 0 } }); return reply(saved, 201); }
     if (path === "/api/admin/mixes") return reply(state.cards.map(item => ({ ...item, appsAllowed: state.publish, inApps: state.publish && item.showInApps && item.readiness.ready })));
     if (path.endsWith("/feedback")) {
       const song = state.songs.find(row => row.song.id === body.songId)!.song;
@@ -52,6 +53,9 @@ export async function mockForYou(page: Page, options: { admin?: boolean; brandNe
     if (path === "/api/admin/releases/artists") return reply([{ providerId: "catalog", artistId: "north", displayName: "North" }]);
     if (path === "/api/admin/releases") return reply({ entries: options.brandNew ? [] : [{ id: "release", title: "Open skies", artist: "North", releaseDate: "2026-10-29", type: "album", sources: [], isExplicit: false, edition: "" }], excluded: [], coverage: [] });
     if (path === "/api/admin/playlist-links") return reply({ playlistLinks: linked });
+    if (path === "/api/admin/jobs/external-job") return reply({ job: { id: "external-job", state: "Succeeded" }, progress: [], attempts: [] });
+    if (path === "/api/admin/playlist-links/external") return reply({ trackCount: 10, matchedCount: 8 });
+    if (path.endsWith("/playlist-forks")) return reply([]);
     if (path === "/api/admin/releases/artists/from-hearts") return reply({ followed: 1 });
     if (path === "/api/admin/history/imports") return reply([]);
     if (path === "/api/admin/stats") return reply({ period: { from: null, to: "2026-10-29", timeZoneId: "America/New_York" }, playCount: 1200, activeDays: 28, importedCount: 300, observedSince: "2024-01-01", estimatedTimeFromSongLengthsMilliseconds: 18000000, coverage: { unknownSongIdentityCount: 0, unknownDurationCount: 0 }, topSongs: [{ title: "Blue morning", artist: "North", album: "Open skies", playCount: 25 }], topArtists: [{ artist: "North", playCount: 120 }], topAlbums: [] });

@@ -63,6 +63,10 @@ public sealed partial class PersonalMixService
         return result;
     }
 
+    internal static PersonalMix PendingExternalMix(PlaylistLinkRecord link) => new(link.Id, "external", ExternalName(link),
+        "Kept in sync · " + ExternalName(link), 0, null, new(false, "Matching songs…"), true, [])
+    { SourceLabel = link.SourceProviderId == "lastfm" ? "Last.fm" : "ListenBrainz" };
+
     private static string ExternalName(PlaylistLinkRecord link) => link.SourceProviderId == "listenbrainz"
         ? "Created for you · " + link.SourcePlaylistId[11..].Replace('-', ' ')
         : link.SourcePlaylistId switch

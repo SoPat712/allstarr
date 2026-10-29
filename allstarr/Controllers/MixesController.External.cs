@@ -28,23 +28,19 @@ public sealed partial class MixesController
             var account = await db.ProviderAccounts.AsNoTracking().Where(item => item.OwnerUserId == user.Id &&
                 item.ProviderId == source && item.Enabled).OrderBy(item => item.CreatedAt).ThenBy(item => item.Id)
                 .FirstOrDefaultAsync(token) ?? throw new ArgumentException("Connect your personal source account first.");
-            var id = await db.PlaylistLinks.AsNoTracking().Where(item => item.OwnerUserId == user.Id &&
-                item.ProviderAccountId == account.Id && item.SourceProviderId == source && item.SourcePlaylistId == selection &&
-                item.TargetProtocol == user.BackendType && item.TargetBackendInstanceId == user.BackendInstanceId &&
-                item.ImportMode == PlaylistImportMode.Linked).Select(item => (Guid?)item.Id).FirstOrDefaultAsync(token);
-            if (id == null)
-            {
-                var links = HttpContext.RequestServices.GetService<PlaylistLinksController>() ??
-                    ActivatorUtilities.CreateInstance<PlaylistLinksController>(HttpContext.RequestServices);
-                links.ControllerContext = ControllerContext;
-                var created = await links.CreateExternalMixAsync(new(account.Id, source!, selection,
-                    user.BackendType, user.BackendInstanceId, "virtual", "reconcile", FollowNewest: source == "listenbrainz"), token);
-                if (created is not CreatedAtActionResult response) return created;
-                id = JsonSerializer.SerializeToElement(response.Value).GetProperty("id").GetGuid();
-            }
-            await mixes.SetInAppsAsync(user.Id, id.Value, true, token);
-            var mix = (await mixes.ListAsync(user.Id, token: token)).Single(item => item.Id == id);
-            return Created($"/api/admin/mixes/{id}", Card(mix, (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value));
+            var links = HttpContext.RequestServices.GetService<PlaylistLinksController>() ??
+                ActivatorUtilities.CreateInstance<PlaylistLinksController>(HttpContext.RequestServices);
+            links.ControllerContext = ControllerContext;
+            var created = await links.CreateExternalMixAsync(new(account.Id, source!, selection,
+                user.BackendType, user.BackendInstanceId, "virtual", "reconcile"), token);
+            if (created is not CreatedAtActionResult response) return created;
+            var value = JsonSerializer.SerializeToElement(response.Value);
+            var id = value.GetProperty("id").GetGuid();
+            var initialJobId = value.GetProperty("initialJobId").GetGuid();
+            await mixes.SetInAppsAsync(user.Id, id, true, token);
+            var link = await db.PlaylistLinks.AsNoTracking().SingleAsync(item => item.Id == id && item.OwnerUserId == user.Id, token);
+            return Created($"/api/admin/mixes/{id}", Card(PersonalMixService.PendingExternalMix(link),
+                (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value, initialJobId));
         }, token);
         return result is OkObjectResult { Value: IActionResult response } ? response : result;
     }

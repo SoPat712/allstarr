@@ -77,7 +77,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
     public Task<IActionResult> DryRun([FromQuery] Guid listenerId, [FromQuery] string? timeZoneId = null, CancellationToken token = default) =>
         ExecuteAsync(async _ => await mixes.GenerateAsync(listenerId, dryRun: true, timeZoneId: timeZoneId, token: token), token, true);
 
-    private static object Card(PersonalMix mix, bool enabled) => new
+    private static object Card(PersonalMix mix, bool enabled, Guid? initialJobId = null) => new
     {
         mix.Id,
         mix.Kind,
@@ -92,7 +92,8 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
         inApps = enabled && mix.Generation > 0 && mix.Readiness.Ready && mix.ShowInApps,
         mix.ShowInApps,
         appsAllowed = enabled,
-        coverArtwork = mix.Songs.Take(4).Select(item => item.Song.Id).ToArray()
+        coverArtwork = mix.Songs.Take(4).Select(item => item.Song.Id).ToArray(),
+        initialJobId
     };
 
     private async Task<IActionResult> ExecuteAsync(Func<UserRecord, Task<object>> action, CancellationToken token, bool administrator = false)

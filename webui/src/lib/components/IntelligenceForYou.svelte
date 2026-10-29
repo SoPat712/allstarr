@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { audioMuse, mixes, playlistLinks, releaseInbox, type AudioMuseStatus, type MixCard, type PlaylistLink, type PlaylistSourceAccount } from "$lib/api";
+  import { activityWork, audioMuse, mixes, playlistLinks, releaseInbox, type AudioMuseStatus, type MixCard, type PlaylistLink, type PlaylistSourceAccount } from "$lib/api";
   import { greeting, mixOrder } from "$lib/for-you";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
+  import { progressDetails } from "$lib/jobs";
   import { toast } from "$lib/toasts";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { Dialog } from "$lib/components/ui/dialog";
@@ -17,6 +18,7 @@
   let status = $state<AudioMuseStatus | null>(null), loading = $state(true), error = $state("");
   let hidden = $state(false), importOpen = $state(false), external = $state<MixCard | null>(null), busy = $state(false), actionError = $state("");
   let pending: Promise<void> | null = null, disposed = false;
+  const matching = new Set<() => void>();
   const storageKey = $derived(`allstarr.mix-checklist.${listenerId}`);
   const made = $derived(cards.filter(item => item.section === "madeForYou").sort((a, b) => Number(b.readiness.ready) - Number(a.readiness.ready) || mixOrder.indexOf(a.kind) - mixOrder.indexOf(b.kind)));
   const moods = $derived(cards.filter(item => item.section === "moods").sort((a, b) => mixOrder.indexOf(a.kind) - mixOrder.indexOf(b.kind)));
@@ -54,18 +56,60 @@
   $effect(() => { if (initialImport) importOpen = true; });
   function hide() { hidden = true; try { localStorage.setItem(storageKey, "hidden"); } catch { /* Browser storage is optional. */ } }
   function openMix(card: MixCard) { if (card.id.startsWith("add:")) { actionError = ""; external = card; } else window.location.hash = `#/for-you?mix=${encodeURIComponent(card.id)}`; }
+  function watchExternal(card: MixCard, jobId: string) {
+    const notification = toast.progress(`Matching ${card.name} · 0 of 0 songs`);
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const stop = () => { clearTimeout(timer); clearTimeout(timeout); controller.abort(); matching.delete(cancel); };
+    const cancel = () => { stop(); toast.dismiss(notification); };
+    const timeout = setTimeout(() => {
+      toast.update(notification, { message: "Matching is taking longer than expected. Check your playlist again later.", busy: false, kind: "info" });
+      stop();
+    }, 15 * 60 * 1000);
+    matching.add(cancel);
+    async function poll() {
+      try {
+        const status = await activityWork.detail(jobId, "", "", controller.signal);
+        if (controller.signal.aborted) return;
+        if (["Failed", "Cancelled"].includes(status.job.state)) throw new Error(status.job.lastErrorMessage || "Playlist matching could not finish. Try again later.");
+        if (status.job.state === "Succeeded") {
+          const detail = await playlistLinks.details(card.id, undefined, controller.signal);
+          if (controller.signal.aborted) return;
+          toast.update(notification, { message: `${card.name} is ready · ${detail.matchedCount} of ${detail.trackCount} songs matched`, busy: false, kind: "success", action: { label: "Open", run: () => openMix(card) } });
+          stop();
+          void load();
+          return;
+        }
+        const progress = status.progress.map(progressDetails).find(item => item.stage === "playlist.match" && item.total != null);
+        if (progress) toast.update(notification, { message: `Matching ${card.name} · ${progress.completed ?? 0} of ${progress.total} songs` });
+        timer = setTimeout(() => void poll(), 2000);
+      } catch (cause) {
+        if (controller.signal.aborted) return;
+        toast.update(notification, { message: cause instanceof Error ? cause.message : "Playlist matching could not finish. Try again later.", busy: false, kind: "error" });
+        stop();
+      }
+    }
+    void poll();
+  }
   async function addExternal() {
     if (busy || !external) return;
     const [, source, kind] = external.id.split(":"); busy = true; actionError = "";
-    try { await pending; await mixes.external(source, kind); external = null; toast.success("Added to your mixes"); await load(); }
-    catch { actionError = "This mix could not be added. Try again later."; }
+    try {
+      const card = await mixes.external(source, kind);
+      if (disposed) return;
+      external = null;
+      watchExternal(card, card.initialJobId);
+      await pending;
+      if (!disposed) void load();
+    }
+    catch (cause) { if (!disposed) toast.error(cause instanceof Error ? cause.message : "This mix could not be added. Try again later."); }
     finally { busy = false; }
   }
   const scheduler = createRefreshScheduler(async () => { if (!busy) await load(); });
   onMount(() => {
     try { hidden = localStorage.getItem(storageKey) === "hidden"; } catch { /* Browser storage is optional. */ }
     void load(); const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
-    return () => { disposed = true; unsubscribe(); scheduler.cancel(); };
+    return () => { disposed = true; unsubscribe(); scheduler.cancel(); for (const cancel of matching) cancel(); };
   });
 </script>
 <div class="for-you">
