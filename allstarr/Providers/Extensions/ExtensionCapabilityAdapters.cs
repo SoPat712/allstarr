@@ -133,7 +133,8 @@ public abstract class ExtensionCapabilityAdapterBase : IProviderUrlCapability
                 context.CancellationToken.ThrowIfCancellationRequested();
                 if (context.IsExpired(DateTimeOffset.UtcNow)) return Failure<T>(ProviderErrorKind.CapabilityUnavailable);
                 var cacheContext = context.Account == null ? null : JsonSerializer.Serialize(new { context.Account.AccountId, context.Account.Revision });
-                var json = _sandbox.InvokeJson(hook, JsonSerializer.Serialize(request, JsonOptions), context.CancellationToken, cacheContext, resolutionDeadline);
+                var json = _sandbox.InvokeJson(hook, JsonSerializer.Serialize(request, JsonOptions), context.CancellationToken, cacheContext, resolutionDeadline,
+                    requireSuccessfulFetch: hook is "searchTracks" or "searchAlbums" or "searchArtists");
                 if (json == null) return Failure<T>(ProviderErrorKind.NotSupported);
                 using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 32 });
                 return ProviderOutcome<T>.Success(map(document.RootElement));

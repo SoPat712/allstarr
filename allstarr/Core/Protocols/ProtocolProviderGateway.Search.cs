@@ -19,6 +19,32 @@ public sealed partial class ProtocolProviderGateway
     private CacheSettings SearchSettings => searchSettings?.Value ??
         configuration?.GetSection("Cache").Get<CacheSettings>() ?? new();
 
+    public async Task<ProviderOutcome<IReadOnlyList<Song>>> SearchAutomaticProviderSongsAsync(
+        ProtocolExecutionContext protocol, string providerId, string query, int limit)
+    {
+        var id = NormalizeProvider(providerId);
+        var policy = await ResolveEffectivePolicyAsync(protocol);
+        if (!IsAutomaticProvider(id, policy))
+            return ProviderOutcome<IReadOnlyList<Song>>.Failure(new(ProviderErrorKind.CapabilityUnavailable));
+        var actor = protocol.Actor ?? new ProviderActorContext(ProviderActorKind.PublicRead, null);
+        var playable = await ResolvePlayableProviderOrderAsync(protocol, actor, [id]);
+        if (playable.Count == 0)
+            return ProviderOutcome<IReadOnlyList<Song>>.Failure(new(ProviderErrorKind.CapabilityUnavailable));
+        var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(
+            protocol, actor, ProviderCapabilityKind.Metadata, "protocol-playable-track-search",
+            providerIds: playable, sourceTrackId: null, purpose: ProviderRoutePurpose.Automatic));
+        var candidate = plan.Candidates.FirstOrDefault(item => NormalizeProvider(item.Provider.Id) == id);
+        if (candidate == null)
+            return ProviderOutcome<IReadOnlyList<Song>>.Failure(new(ProviderErrorKind.CapabilityUnavailable));
+        var snapshot = await SearchProviderWithinWindowAsync(candidate, query, Math.Clamp(limit, 1, 200),
+            true, false, false, SearchSettings).WaitAsync(protocol.CancellationToken);
+        if (snapshot == null || snapshot.Error != null)
+            return ProviderOutcome<IReadOnlyList<Song>>.Failure(snapshot?.Error ??
+                new(ProviderErrorKind.TransientFailure, SearchSettings.SearchFailureCooldown));
+        return ProviderOutcome<IReadOnlyList<Song>>.Success(snapshot.Result.Songs
+            .Where(song => policy?.Includes(song) != false).ToArray());
+    }
+
     private async Task<IReadOnlyList<SearchSnapshot>> SearchPlayableProvidersWithinBudgetAsync(
         IReadOnlyList<ProviderRouteCandidate<IProviderMetadataCapability>> candidates,
         string query,
@@ -155,8 +181,11 @@ public sealed partial class ProtocolProviderGateway
             var songPage = await songsTask;
             var albumPage = await albumsTask;
             var artistPage = await artistsTask;
-            if (SearchFailed(songs, songPage) || SearchFailed(albums, albumPage) || SearchFailed(artists, artistPage))
-                RecordFailure("provider failure");
+            var failed = SearchFailed(songs, songPage) || SearchFailed(albums, albumPage) || SearchFailed(artists, artistPage);
+            var error = failed ? songPage?.Error ?? albumPage?.Error ?? artistPage?.Error ??
+                new ProviderError(ProviderErrorKind.TransientFailure) : null;
+            if (failed)
+                RecordFailure("provider failure", error?.RetryAfter);
             else
             {
                 lock (failures)
@@ -178,9 +207,9 @@ public sealed partial class ProtocolProviderGateway
             };
             var serialized = JsonSerializer.Serialize(new SearchSnapshot(result,
                 result.Songs.Select(song => song.PreciseDuration).ToArray(),
-                songPage?.IsSuccess == true ? songPage.RequireValue().Items.Select(item => item.Id).ToArray() : []));
+                songPage?.IsSuccess == true ? songPage.RequireValue().Items.Select(item => item.Id).ToArray() : [], error));
             if (applicationCache?.IsEnabled == true &&
-                (songPage?.IsSuccess == true || albumPage?.IsSuccess == true || artistPage?.IsSuccess == true))
+                !failed && (songPage?.IsSuccess == true || albumPage?.IsSuccess == true || artistPage?.IsSuccess == true))
             {
                 try
                 {
@@ -193,11 +222,12 @@ public sealed partial class ProtocolProviderGateway
             }
             return serialized;
 
-            void RecordFailure(string reason)
+            void RecordFailure(string reason, TimeSpan? retryAfter = null)
             {
                 lock (failures)
                 {
                     failures.Count++;
+                    if (retryAfter is { } delay) failures.RetryAfter = clock.GetUtcNow() + delay;
                     if (failures.Count < 3) return;
                     failures.RetryAfter = clock.GetUtcNow() + settings.SearchFailureCooldown;
                     logger?.LogWarning("Search for {ProviderId} cooling down until {RetryAfter} after repeated {Reason}",
@@ -266,7 +296,8 @@ public sealed partial class ProtocolProviderGateway
         enabled && (outcome == null || !outcome.IsSuccess &&
             outcome.Error?.Kind is not (ProviderErrorKind.NotSupported or ProviderErrorKind.NotFound));
 
-    private sealed record SearchSnapshot(SearchResult Result, TimeSpan?[] Durations, ProviderExternalResourceId[] TrackIds);
+    private sealed record SearchSnapshot(SearchResult Result, TimeSpan?[] Durations, ProviderExternalResourceId[] TrackIds,
+        ProviderError? Error = null);
 
     private sealed class SearchFailureState
     {
