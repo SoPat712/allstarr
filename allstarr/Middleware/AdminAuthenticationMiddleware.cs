@@ -75,6 +75,14 @@ public class AdminAuthenticationMiddleware
         var path = request.Path.Value ?? string.Empty;
         var method = request.Method;
 
+        var releaseSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (releaseSegments.Length >= 3 && releaseSegments[2].Equals("releases", StringComparison.OrdinalIgnoreCase))
+            return releaseSegments.Length == 3 && HttpMethods.IsGet(method) ||
+                releaseSegments.Length == 4 && releaseSegments[3] == "artists" && (HttpMethods.IsGet(method) || HttpMethods.IsPut(method)) ||
+                releaseSegments.Length == 4 && releaseSegments[3] != "artists" && HttpMethods.IsDelete(method) ||
+                releaseSegments.Length == 5 && releaseSegments[3] == "artists" && releaseSegments[4] == "from-hearts" && HttpMethods.IsPost(method) ||
+                releaseSegments.Length == 6 && releaseSegments[3] == "artists" && HttpMethods.IsDelete(method);
+
         var traceSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (traceSegments.Length >= 3 && traceSegments[2].Equals("play-traces", StringComparison.OrdinalIgnoreCase))
             return HttpMethods.IsGet(method) && (traceSegments.Length == 3 || traceSegments.Length == 4 && Guid.TryParse(traceSegments[3], out _) ||
@@ -97,6 +105,10 @@ public class AdminAuthenticationMiddleware
             return HttpMethods.IsPost(method);
         if (reportPath.Equals("/api/admin/ui/listener-context", StringComparison.OrdinalIgnoreCase))
             return HttpMethods.IsGet(method);
+
+        if (path.StartsWith("/api/admin/audiomuse/", StringComparison.OrdinalIgnoreCase))
+            return traceSegments.Length == 4 && (HttpMethods.IsGet(method) && traceSegments[3] is "status" or "seeds" ||
+                HttpMethods.IsPost(method) && traceSegments[3] is "similar" or "mood" or "save");
 
         if (path.StartsWith("/api/admin/track-matches", StringComparison.OrdinalIgnoreCase))
         {

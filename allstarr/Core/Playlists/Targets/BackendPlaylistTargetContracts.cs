@@ -151,7 +151,10 @@ public sealed record BackendPlaylistMetadata(
     string Name,
     string? Description = null,
     byte[]? Artwork = null,
-    string? ArtworkContentType = null);
+    string? ArtworkContentType = null)
+{
+    public bool Private { get; init; }
+}
 
 public sealed record BackendPlaylistWriteRequest
 {

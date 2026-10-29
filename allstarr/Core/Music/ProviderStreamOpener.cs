@@ -37,6 +37,7 @@ public sealed class ProviderStreamOpener(
         if (admission != null && capacity == null) return;
         var (external, provider, kind, id) = LocalLibraryService.ParseExternalResource(itemId);
         if (!external || kind != "song" || provider == null || id == null) return;
+        if (!await cache.HasPreparationSpaceAsync(context.CancellationToken)) return;
         var started = Stopwatch.GetTimestamp();
         var outcome = "skipped";
         long bytes = 0;

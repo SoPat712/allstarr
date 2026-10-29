@@ -75,6 +75,9 @@ builder.Services.AddSingleton<IBackendConnectionVerifier, BackendConnectionVerif
 builder.Services.AddSingleton<BackendSetupService>();
 builder.Services.AddSingleton<AdminOidcSettingsService>();
 builder.Services.AddSingleton<OdesliApiKeySettingsService>();
+builder.Services.AddSingleton<allstarr.Core.AudioMuse.AudioMuseSettings>();
+builder.Services.AddSingleton<allstarr.Core.AudioMuse.AudioMuseClient>();
+builder.Services.AddSingleton<allstarr.Core.AudioMuse.AudioMuseDiscovery>();
 builder.Services.AddPlatformIdentity(builder.Configuration);
 var releaseComposition = ReleaseComposition.Resolve(builder.Configuration);
 builder.Services.AddSingleton(releaseComposition);
@@ -102,6 +105,8 @@ builder.Services.AddSingleton<PromotionRoots>();
 builder.Services.AddSingleton<LibraryPromotionService>();
 builder.Services.AddSingleton<IDurableJobHandler>(provider => provider.GetRequiredService<LibraryPromotionService>());
 builder.Services.AddFavoriteActions();
+builder.Services.AddSingleton<allstarr.Core.Releases.NewReleasesService>();
+builder.Services.AddSingleton<IDurableJobHandler, allstarr.Core.Releases.NewReleasesJobHandler>();
 builder.Services.AddSingleton<IScopedRecommendationAccountAccessor, ScopedRecommendationAccountAccessor>();
 if (releaseComposition.IntelligenceEnabled)
 {
@@ -323,6 +328,9 @@ builder.Services.ConfigureAll<HttpClientFactoryOptions>(options =>
 
     options.SuppressHandlerScope = true;
 });
+
+builder.Services.AddHttpClient("AudioMuse", client => client.Timeout = TimeSpan.FromSeconds(3)).RemoveAllLoggers()
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
 
 builder.Services.AddHttpClient(BackendConnectionVerifier.HttpClientName, client =>
 {
