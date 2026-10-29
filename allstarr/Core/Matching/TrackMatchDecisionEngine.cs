@@ -562,13 +562,21 @@ public sealed class TrackMatchDecisionEngine
             !FuzzyMatcher.RecordingVersionsMatch(left.Title, left.Album, right.Title, right.Album) &&
             !(MatchesSourceVariant(source, left, _policy.DurationToleranceSeconds) &&
               MatchesSourceVariant(source, right, _policy.DurationToleranceSeconds))) return false;
-        return !(left.CanonicalRecordingId.HasValue && right.CanonicalRecordingId.HasValue &&
-                 left.CanonicalRecordingId != right.CanonicalRecordingId) &&
-            !(TrackMatchSignals.RecordingIdentity(left) is { Length: > 0 } leftId &&
-              TrackMatchSignals.RecordingIdentity(right) is { Length: > 0 } rightId &&
-              !FuzzyMatcher.IdentifiersEqual(leftId, rightId)) &&
-            !(left.Isrc is { Length: > 0 } && right.Isrc is { Length: > 0 } &&
-              !FuzzyMatcher.IdentifiersEqual(left.Isrc, right.Isrc));
+        if (left.CanonicalRecordingId.HasValue && right.CanonicalRecordingId.HasValue &&
+            left.CanonicalRecordingId != right.CanonicalRecordingId ||
+            TrackMatchSignals.RecordingIdentity(left) is { Length: > 0 } leftId &&
+            TrackMatchSignals.RecordingIdentity(right) is { Length: > 0 } rightId &&
+            !FuzzyMatcher.IdentifiersEqual(leftId, rightId) ||
+            left.Isrc is { Length: > 0 } && right.Isrc is { Length: > 0 } &&
+            !FuzzyMatcher.IdentifiersEqual(left.Isrc, right.Isrc)) return false;
+        return SameAlbumEdition(source.Album, left.Album) == true &&
+               SameAlbumEdition(source.Album, right.Album) != true ||
+               FuzzyMatcher.SourceAlbumMarkersMatch(source.Title, source.Album, left.Album) &&
+               !FuzzyMatcher.SourceAlbumMarkersMatch(source.Title, source.Album, right.Album) ||
+               source.DurationMilliseconds is > 0 && left.DurationMilliseconds is > 0 &&
+               right.DurationMilliseconds is not > 0 &&
+               Math.Abs(source.DurationMilliseconds.Value - left.DurationMilliseconds.Value) <= _policy.DurationToleranceSeconds * 1000L ||
+               source.IsExplicit.HasValue && left.IsExplicit == source.IsExplicit && !right.IsExplicit.HasValue;
     }
 
     private sealed record RankedCandidate(

@@ -304,6 +304,50 @@ public sealed class TrackMatchKnownFactsTests
     }
 
     [Fact]
+    public void SameProviderCandidatesWithoutDistinguishingFactsRemainAmbiguous()
+    {
+        var source = Source() with { Album = null, DurationMilliseconds = null, IsExplicit = null };
+        var first = Candidate("deezer") with { Album = null, DurationMilliseconds = null, IsExplicit = null };
+        var second = first with { LibraryTrackId = Guid.NewGuid(), BackendItemId = "second" };
+        var result = Decide(source, first, second);
+        Assert.Equal(TrackMatchReviewState.Ambiguous, result.State);
+        Assert.Null(result.SelectedLibraryTrackId);
+        Assert.True(result.RequiresReview);
+        Assert.Equal(2, result.Candidates.Count);
+        Assert.All(result.Candidates, candidate => Assert.Equal(0.94, candidate.Confidence, 4));
+        var preferred = first with { ProviderTrackIds = new Dictionary<string, string> { ["apple-download"] = "preferred" } };
+        var acrossProviders = Decide(source, second, preferred);
+        Assert.Equal(TrackMatchReviewState.Accepted, acrossProviders.State);
+        Assert.Equal(preferred.LibraryTrackId, acrossProviders.SelectedLibraryTrackId);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void SameProviderTieNeedsSourceEditionOrDurationEvidence(bool durationKnown)
+    {
+        var source = Source() with { IsExplicit = null };
+        var supported = Candidate("deezer") with
+        {
+            Album = durationKnown ? null : source.Album,
+            DurationMilliseconds = durationKnown ? 240_000 : null,
+            IsExplicit = null
+        };
+        var unknown = supported with
+        {
+            LibraryTrackId = Guid.NewGuid(),
+            BackendItemId = "unknown",
+            Album = null,
+            DurationMilliseconds = null
+        };
+        var result = Decide(source, unknown, supported);
+        Assert.Equal(TrackMatchReviewState.Accepted, result.State);
+        Assert.Equal(supported.LibraryTrackId, result.SelectedLibraryTrackId);
+        Assert.Equal(TrackMatchReviewState.Ambiguous,
+            Decide(source with { Album = null, DurationMilliseconds = null }, unknown, supported).State);
+    }
+
+    [Fact]
     public void DuplicateEditionsUseProviderOrderAfterEditionAndScore()
     {
         var first = Candidate("apple-download");
