@@ -27,10 +27,28 @@ public sealed partial class PlaylistLinksControllerContractTests
         var clock = Mock.Of<allstarr.Core.Operations.IPlatformClock>(item => item.UtcNow == now);
         await using (var db = await factory.CreateDbContextAsync())
         {
-            db.Users.Add(new() { Id = user, BackendType = "jellyfin", BackendInstanceId = "backend", BackendPrincipalId = "owner",
-                DisplayName = "Owner", Enabled = true, CreatedAt = now, UpdatedAt = now, LastSeenAt = now });
-            db.ProviderAccounts.Add(new() { Id = account, ProviderId = "listenbrainz", OwnerUserId = user,
-                DisplayName = "ListenBrainz", Enabled = true, CreatedAt = now, UpdatedAt = now });
+            db.Users.Add(new()
+            {
+                Id = user,
+                BackendType = "jellyfin",
+                BackendInstanceId = "backend",
+                BackendPrincipalId = "owner",
+                DisplayName = "Owner",
+                Enabled = true,
+                CreatedAt = now,
+                UpdatedAt = now,
+                LastSeenAt = now
+            });
+            db.ProviderAccounts.Add(new()
+            {
+                Id = account,
+                ProviderId = "listenbrainz",
+                OwnerUserId = user,
+                DisplayName = "ListenBrainz",
+                Enabled = true,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
             await db.SaveChangesAsync();
         }
         var adapter = new ListenBrainzPlaylistCapabilityAdapter(new HttpClient(new PlaylistImportHandler()), new PlaylistImportSecrets());
@@ -50,8 +68,15 @@ public sealed partial class PlaylistLinksControllerContractTests
             .Returns<ProtocolExecutionContext, PlaylistLinkInput, CancellationToken>((_, input, _) =>
             {
                 captured = input;
-                return Task.FromResult(new PlaylistLinkRecord { Id = Guid.NewGuid(), OwnerUserId = user, ProviderAccountId = account,
-                    SourceProviderId = input.SourceProviderId, SourcePlaylistId = input.SourcePlaylistId, CreatedAt = now });
+                return Task.FromResult(new PlaylistLinkRecord
+                {
+                    Id = Guid.NewGuid(),
+                    OwnerUserId = user,
+                    ProviderAccountId = account,
+                    SourceProviderId = input.SourceProviderId,
+                    SourcePlaylistId = input.SourcePlaylistId,
+                    CreatedAt = now
+                });
             });
         var options = new DurableJobOptions();
         var queue = new DurableJobQueue(factory, options, new JobPayloadPolicy(options), clock);
@@ -59,8 +84,15 @@ public sealed partial class PlaylistLinksControllerContractTests
         controller.HttpContext.TraceIdentifier = "playlist-import";
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
         {
-            IsAdministrator = false, SessionId = "session", UserId = "owner", UserName = "Owner", BackendType = "jellyfin", BackendInstanceId = "backend",
-            JellyfinAccessToken = "fixture-token", AllstarrUserId = user, ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+            IsAdministrator = false,
+            SessionId = "session",
+            UserId = "owner",
+            UserName = "Owner",
+            BackendType = "jellyfin",
+            BackendInstanceId = "backend",
+            JellyfinAccessToken = "fixture-token",
+            AllstarrUserId = user,
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
         };
         var response = Assert.IsType<CreatedAtActionResult>(await controller.Create(new(account, "listenbrainz",
             "11111111-1111-4111-8111-111111111111", "jellyfin", "backend", "hybrid", "reconcile", FollowNewest: true), default));
@@ -77,8 +109,11 @@ public sealed partial class PlaylistLinksControllerContractTests
     private sealed class PlaylistImportHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(request.RequestUri!.AbsolutePath.EndsWith("validate-token")
-                ? "{\"valid\":true,\"user_name\":\"listener\"}" : File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "ListenBrainz", "playlist.json"))) });
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(request.RequestUri!.AbsolutePath.EndsWith("validate-token")
+                ? "{\"valid\":true,\"user_name\":\"listener\"}" : File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "ListenBrainz", "playlist.json")))
+            });
     }
 
     [Theory]
@@ -90,8 +125,13 @@ public sealed partial class PlaylistLinksControllerContractTests
         var controller = Controller();
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
         {
-            IsAdministrator = false, SessionId = "session", UserId = "owner", UserName = "Owner", JellyfinAccessToken = "fixture-token",
-            AllstarrUserId = Guid.NewGuid(), ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+            IsAdministrator = false,
+            SessionId = "session",
+            UserId = "owner",
+            UserName = "Owner",
+            JellyfinAccessToken = "fixture-token",
+            AllstarrUserId = Guid.NewGuid(),
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
         };
         var response = Assert.IsType<BadRequestObjectResult>(await controller.Create(new(
             account ? Guid.NewGuid() : null, provider, "11111111-1111-4111-8111-111111111111", "jellyfin", "backend",

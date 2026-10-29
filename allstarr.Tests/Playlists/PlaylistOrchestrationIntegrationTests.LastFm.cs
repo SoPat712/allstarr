@@ -105,7 +105,8 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         {
             Artists = ["Unrelated artist"],
             MusicBrainzRecordingId = mbid
-        }) with { ProviderId = "lastfm", ProviderAccountId = account };
+        }) with
+        { ProviderId = "lastfm", ProviderAccountId = account };
 
         var refreshed = await _service.RefreshAsync(Context(), _link);
 

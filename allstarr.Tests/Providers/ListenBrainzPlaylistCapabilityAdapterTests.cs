@@ -221,7 +221,9 @@ public sealed class ListenBrainzPlaylistCapabilityAdapterTests
     private static string Listing(params string[] playlists) => new JsonObject
     {
         ["playlists"] = new JsonArray(playlists.Select(item => JsonNode.Parse(item)).ToArray()),
-        ["playlist_count"] = playlists.Length, ["count"] = 100, ["offset"] = 0
+        ["playlist_count"] = playlists.Length,
+        ["count"] = 100,
+        ["offset"] = 0
     }.ToJsonString();
     private static string Newer(string kind, string id)
     {

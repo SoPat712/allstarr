@@ -22,16 +22,32 @@ public sealed partial class PlaylistPersistenceServiceTests
         await using (var db = await _factory.CreateDbContextAsync())
         {
             db.ProviderAccounts.AddRange(
-                new ProviderAccountRecord { Id = personal, ProviderId = "listenbrainz", OwnerUserId = _userA,
-                    DisplayName = "Personal", Enabled = true, CreatedAt = _now, UpdatedAt = _now },
-                new ProviderAccountRecord { Id = shared, ProviderId = "listenbrainz",
-                    DisplayName = "Shared", Enabled = true, CreatedAt = _now, UpdatedAt = _now });
+                new ProviderAccountRecord
+                {
+                    Id = personal,
+                    ProviderId = "listenbrainz",
+                    OwnerUserId = _userA,
+                    DisplayName = "Personal",
+                    Enabled = true,
+                    CreatedAt = _now,
+                    UpdatedAt = _now
+                },
+                new ProviderAccountRecord
+                {
+                    Id = shared,
+                    ProviderId = "listenbrainz",
+                    DisplayName = "Shared",
+                    Enabled = true,
+                    CreatedAt = _now,
+                    UpdatedAt = _now
+                });
             await db.SaveChangesAsync();
         }
         var input = Link() with
         {
             ProviderAccountId = personal,
-            SourceProviderId = "listenbrainz", SourcePlaylistId = "createdfor:weekly-jams",
+            SourceProviderId = "listenbrainz",
+            SourcePlaylistId = "createdfor:weekly-jams",
             SourcePlaylistIdHash = Hash("createdfor:weekly-jams")
         };
         var owner = Context(_userA, "principal-a");
