@@ -12,14 +12,15 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
 
 test.describe("Dense displays", () => {
   test.use({ deviceScaleFactor: 3 });
-  test("Header cover resizes at capped pixel density and keeps its dim state", async ({ page }) => {
+  test("Not-ready header cover stays undimmed and resizes at capped pixel density", async ({ page }) => {
   await appearance(page, 1280, "light"); const state = await mockCovers(page);
   state.cards[0].readiness.ready = false;
   await page.goto("/#/for-you?mix=daily-1"); const cover = page.getByRole("dialog").locator("canvas");
-  await expectPainted(cover); await expect(cover).toHaveCSS("opacity", "0.55");
+  await expectPainted(cover); await expect(cover).toHaveCSS("opacity", "1");
   expect(await cover.evaluate(element => (element as HTMLCanvasElement).width)).toBe(320);
   await page.setViewportSize({ width: 390, height: 900 }); await expectPainted(cover);
   await expect.poll(() => cover.evaluate(element => (element as HTMLCanvasElement).width)).toBe(240);
+  await expect(cover).toHaveCSS("opacity", "1");
 });
 
 });

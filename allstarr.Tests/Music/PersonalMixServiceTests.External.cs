@@ -154,6 +154,11 @@ public sealed partial class PersonalMixServiceTests
         Assert.Null(await virtualization.ReadAsync(Context(owner), id));
         Assert.Empty(await virtualization.ListAsync(Context(owner)));
         publish = true;
+        Assert.Null(await virtualization.ReadAsync(Context(owner), id));
+        Assert.False((await service.ListAsync(owner)).Single(mix => mix.Id == link.Id).ShowInApps);
+        await service.SetInAppsAsync(owner, link.Id, true, default);
+        await service.GenerateAsync(owner);
+        Assert.True((await NewService().ListAsync(owner)).Single(mix => mix.Id == link.Id).ShowInApps);
         var visible = await virtualization.ReadAsync(Context(owner), id);
         Assert.NotNull(visible);
         Assert.Equal("lastfm", visible.MixCover!.Source);
@@ -240,6 +245,7 @@ public sealed partial class PersonalMixServiceTests
         publish = true;
         var virtualization = new PlaylistVirtualizationService(factory, new(factory, access.Object), access.Object, personalMixes: service);
         var id = PlaylistVirtualizationService.CreateProtocolId(link.Id);
+        await service.SetInAppsAsync(owner, link.Id, true, default);
         Assert.Equal(4, (await virtualization.ReadAsync(Context(owner), id))!.Tracks.Count);
         Assert.Equal(4, (await service.ListAsync(owner)).Single(item => item.Id == link.Id).Songs.Count);
         await taste.PutNudgeAsync(owner, new("artist", "Artist 2", "never"));

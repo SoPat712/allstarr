@@ -25,12 +25,34 @@ test("Song feedback and preference undo", async ({ page }) => {
   await page.getByRole("button", { name: "Undo", exact: true }).click(); await expect.poll(() => state.taste.nudges.length).toBe(0);
   expect(state.calls.some(call => call.method === "DELETE" && call.path === "/api/admin/taste/nudge")).toBe(true);
 });
-test("Publication gate and refresh throttle", async ({ page }) => {
-  const state = await mockForYou(page, { admin: true, publish: false }); await page.goto("/#/for-you?mix=daily-1");
-  await expect(page.getByRole("checkbox", { name: "Show in my apps" })).toBeDisabled(); await expect(page.getByText("Not published yet")).toBeVisible();
+test("Every listener can choose to show a mix in their apps", async ({ page }) => {
+  const state = await mockForYou(page); state.cards[0].showInApps = false;
+  await page.goto("/#/for-you?mix=daily-1");
+  const toggle = page.getByRole("checkbox", { name: "Show in my apps" });
+  await expect(toggle).toBeEnabled(); await expect(toggle).not.toBeChecked();
+  await toggle.click(); await expect.poll(() => state.cards[0].showInApps).toBe(true);
+  await toggle.click(); await expect.poll(() => state.cards[0].showInApps).toBe(false);
+  expect(state.calls.filter(call => call.path.endsWith("/in-apps")).map(call => call.body)).toEqual([{ enabled: true }, { enabled: false }]);
+  expect(state.calls.some(call => call.path === "/api/admin/mixes/publish-setting")).toBe(false);
+});
+for (const admin of [false, true]) test(`Admin availability gates the app choice for ${admin ? "administrators" : "listeners"}`, async ({ page }) => {
+  const state = await mockForYou(page, { admin, publish: false }); await page.goto("/#/for-you?mix=daily-1");
+  await expect(page.getByRole("checkbox", { name: "Show in my apps" })).toBeDisabled();
+  await expect(page.getByText("Your admin has turned this off", { exact: true })).toBeVisible();
+  await expect(page.getByText("Not published yet")).toHaveCount(0);
   state.publish = true; await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await expect(page.getByRole("checkbox", { name: "Show in my apps" })).toBeEnabled(); await page.getByRole("checkbox", { name: "Show in my apps" }).click();
-  await expect.poll(() => state.cards[0].showInApps).toBe(false);
+  await expect(page.getByRole("checkbox", { name: "Show in my apps" })).toBeEnabled();
+  await expect(page.getByText("Your admin has turned this off", { exact: true })).toHaveCount(0);
+  expect(state.calls.some(call => call.path === "/api/admin/mixes/publish-setting")).toBe(false);
+});
+test("Not-ready mix artwork keeps its colour and explanation", async ({ page }) => {
+  await mockForYou(page, { partial: true }); await page.goto("/#/for-you?mix=daily-4");
+  await expect(page.getByRole("dialog").locator("canvas")).toHaveCSS("opacity", "1");
+  await expect(page.getByText("Play about 80 more songs, or import your listening history.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Show in my apps" })).toBeEnabled();
+});
+test("Refresh throttle stays in effect after a rejected request", async ({ page }) => {
+  await mockForYou(page); await page.goto("/#/for-you?mix=daily-1");
   await page.getByRole("button", { name: "Refresh mix", exact: true }).click(); await expect(page.getByRole("button", { name: "Refresh mix", exact: true })).toBeDisabled();
 });
 test("Undo preserves other and subsequently edited preferences", async ({ page }) => {

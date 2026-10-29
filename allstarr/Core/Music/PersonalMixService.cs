@@ -31,6 +31,8 @@ public sealed record PersonalMix(Guid Id, string Kind, string Name, string Descr
 public sealed record MixFeedback(string SongId, string Kind, bool TodayOnly = false);
 internal sealed class PersonalMixDocument
 {
+    public int AppsOptInVersion { get; set; }
+    public Dictionary<Guid, bool> ExternalShowInApps { get; set; } = [];
     public string TimeZoneId { get; set; } = TimeZoneInfo.Local.Id;
     public Dictionary<string, PersonalMix> Mixes { get; set; } = [];
     public Dictionary<string, DateTimeOffset> DiscoverPicks { get; set; } = [];
@@ -62,7 +64,15 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     private async Task<PersonalMixDocument> LoadAsync(AllstarrDbContext db, UserRecord user, CancellationToken token)
     {
         var row = await RowAsync(db, user, token);
-        var document = row == null ? new() : JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!;
+        var document = row == null ? new() { AppsOptInVersion = 1 } : JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!;
+        if (document.AppsOptInVersion < 1)
+        {
+            foreach (var key in document.Mixes.Keys.ToArray())
+                if (document.Mixes[key].Kind != "custom") document.Mixes[key] = document.Mixes[key] with { ShowInApps = false };
+            document.ExternalShowInApps.Clear();
+            document.AppsOptInVersion = 1;
+            await SaveAsync(db, user, document, token);
+        }
         var missing = PersonalMixRules.Kinds.Where(kind => !document.Mixes.ContainsKey(kind)).ToArray();
         var stale = document.Mixes.Values.Where(mix => PersonalMixRules.Kinds.Contains(mix.Kind) && !PersonalMixMoods.Kinds.Contains(mix.Kind) && !mix.Readiness.Ready)
             .Select(mix => mix.Kind).ToArray();
@@ -83,7 +93,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             if (PersonalMixMoods.Kinds.Contains(kind)) ready = PersonalMixMoods.Readiness(0);
             document.Mixes[kind] = document.Mixes.TryGetValue(kind, out var mix) ? mix with { Readiness = ready }
                 : new(Id(user, kind), kind, PersonalMixRules.Name(kind),
-                    PersonalMixMoods.Kinds.Contains(kind) ? "Updated Monday · Music for " + kind : "Made for you", 0, null, ready, true, []);
+                    PersonalMixMoods.Kinds.Contains(kind) ? "Updated Monday · Music for " + kind : "Made for you", 0, null, ready, false, []);
         }
         return document;
     }
@@ -147,7 +157,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 document.TimeZoneId = timeZoneId.Trim();
                 await SaveAsync(db, user, document, token);
             }
-            return (await VisibleAsync(owner, document, token)).Concat(await ExternalMixesAsync(user, token)).ToArray();
+            return (await VisibleAsync(owner, document, token)).Concat(await ExternalMixesAsync(user, document, token)).ToArray();
         }
         finally { writes.Release(); }
     }
@@ -274,8 +284,13 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         {
             await using var db = await factory.CreateDbContextAsync(token);
             var user = await UserAsync(db, owner, token);
-            if (await SetExternalInAppsAsync(user, id, enabled, token)) return;
             var document = await LoadAsync(db, user, token);
+            if (await SetExternalInAppsAsync(user, id, enabled, token))
+            {
+                document.ExternalShowInApps[id] = enabled;
+                await SaveAsync(db, user, document, token);
+                return;
+            }
             var mix = document.Mixes.Values.SingleOrDefault(item => item.Id == id) ?? throw new KeyNotFoundException();
             document.Mixes[document.Mixes.First(item => item.Value.Id == id).Key] = mix with { ShowInApps = enabled };
             await SaveAsync(db, user, document, token);
@@ -311,24 +326,29 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     public async Task<IReadOnlyList<VirtualPlaylistReadModel>> PublishedAsync(ProtocolExecutionContext context, CancellationToken token)
     {
         if (context.Actor?.EffectiveUserId is not { } owner || !(bool)(await settings.GetAsync(PublishKey, token)).Value) return [];
-        await using var db = await factory.CreateDbContextAsync(token);
-        var user = await UserAsync(db, owner, token);
-        if (user.BackendType != context.Protocol.ToString().ToLowerInvariant() || user.BackendInstanceId != context.BackendInstanceId ||
-            user.BackendPrincipalId != context.VerifiedBackendPrincipalId) return [];
-        var document = await LoadAsync(db, user, token);
-        var localIds = document.Mixes.Values.SelectMany(mix => mix.Songs).Where(item => item.Song.IsLocal).Select(item => item.Song.Id).ToArray();
-        var allowed = localIds.Length == 0 ? [] : await LibraryTrackAccess.Query(db, context, await libraryAccess.ResolveAsync(context, token))
-            .Where(item => localIds.Contains(item.BackendItemId)).Select(item => item.BackendItemId).ToArrayAsync(token);
-        return (await VisibleAsync(owner, document, token)).Where(mix => mix.Generation > 0 && mix.Songs.Count > 0 && mix.ShowInApps && mix.Readiness.Ready &&
-            (!PersonalMixMoods.Kinds.Contains(mix.Kind) || mix.Songs.Count(item => !item.Song.IsLocal || allowed.Contains(item.Song.Id)) >= 25)).Select(mix =>
-            new VirtualPlaylistReadModel(PlaylistVirtualizationService.CreateProtocolId(mix.Id), mix.Id, mix.Id, mix.Name, mix.Description,
-                null, "allstarr", mix.Kind, mix.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture), PlaylistLinkMode.Virtual,
-                mix.Songs.Where(item => !item.Song.IsLocal || allowed.Contains(item.Song.Id)).Select((item, index) => new VirtualPlaylistTrack(index, item.Song.Id, item.Song.Title, item.Song.Artist,
-                    item.Song.Album, null, item.Song.Duration * 1000L, null, TrackMatchState.Accepted,
-                    item.Song.ExternalProvider, item.Song.ExternalId, item.Song.IsLocal ? TrackRouteKind.Local : TrackRouteKind.External,
-                    item.Song.ExternalProvider, item.Song.ExternalId)
-                { PlaybackExplicitContentLyrics = item.Song.ExplicitContentLyrics }).ToArray())
-            { BackendPublic = false, MixCover = MixCoverInput.From(mix) }).ToArray();
+        await writes.WaitAsync(token);
+        try
+        {
+            await using var db = await factory.CreateDbContextAsync(token);
+            var user = await UserAsync(db, owner, token);
+            if (user.BackendType != context.Protocol.ToString().ToLowerInvariant() || user.BackendInstanceId != context.BackendInstanceId ||
+                user.BackendPrincipalId != context.VerifiedBackendPrincipalId) return [];
+            var document = await LoadAsync(db, user, token);
+            var localIds = document.Mixes.Values.SelectMany(mix => mix.Songs).Where(item => item.Song.IsLocal).Select(item => item.Song.Id).ToArray();
+            var allowed = localIds.Length == 0 ? [] : await LibraryTrackAccess.Query(db, context, await libraryAccess.ResolveAsync(context, token))
+                .Where(item => localIds.Contains(item.BackendItemId)).Select(item => item.BackendItemId).ToArrayAsync(token);
+            return (await VisibleAsync(owner, document, token)).Where(mix => mix.Generation > 0 && mix.Songs.Count > 0 && mix.ShowInApps && mix.Readiness.Ready &&
+                (!PersonalMixMoods.Kinds.Contains(mix.Kind) || mix.Songs.Count(item => !item.Song.IsLocal || allowed.Contains(item.Song.Id)) >= 25)).Select(mix =>
+                new VirtualPlaylistReadModel(PlaylistVirtualizationService.CreateProtocolId(mix.Id), mix.Id, mix.Id, mix.Name, mix.Description,
+                    null, "allstarr", mix.Kind, mix.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture), PlaylistLinkMode.Virtual,
+                    mix.Songs.Where(item => !item.Song.IsLocal || allowed.Contains(item.Song.Id)).Select((item, index) => new VirtualPlaylistTrack(index, item.Song.Id, item.Song.Title, item.Song.Artist,
+                        item.Song.Album, null, item.Song.Duration * 1000L, null, TrackMatchState.Accepted,
+                        item.Song.ExternalProvider, item.Song.ExternalId, item.Song.IsLocal ? TrackRouteKind.Local : TrackRouteKind.External,
+                        item.Song.ExternalProvider, item.Song.ExternalId)
+                    { PlaybackExplicitContentLyrics = item.Song.ExplicitContentLyrics }).ToArray())
+                { BackendPublic = false, MixCover = MixCoverInput.From(mix) }).ToArray();
+        }
+        finally { writes.Release(); }
     }
 
     public async Task EnsureSchedulesAsync(CancellationToken token)

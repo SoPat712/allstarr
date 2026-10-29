@@ -17,7 +17,7 @@
   import UiIcon from "$lib/components/UiIcon.svelte";
   let { id, administrator = false }: { id: string; administrator?: boolean } = $props();
   let detail = $state<MixDetail | null>(null), error = $state(""), busy = $state(false), throttled = $state(false);
-  let published = $state<boolean | null>(null), deleteOpen = $state(false), aboutOpen = $state(false);
+  let deleteOpen = $state(false), aboutOpen = $state(false);
   let aboutAnchor = $state<HTMLButtonElement | null>(null);
   let disposed = false, request = 0, currentId = "", pending: Promise<void> | null = null;
   let throttleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -29,8 +29,8 @@
     const version = ++request; currentId = target;
     pending = (async () => {
       try {
-        const [next, setting] = await Promise.all([mixes.get(target), administrator ? mixes.publishSetting() : Promise.resolve(null)]);
-        if (!disposed && version === request) { detail = next; published = setting?.enabled ?? null; error = ""; }
+        const next = await mixes.get(target);
+        if (!disposed && version === request) { detail = next; error = ""; }
       } catch { if (!disposed && version === request) error = "Couldn't load this mix. Try again."; }
       finally { if (version === request) pending = null; }
     })();
@@ -95,13 +95,13 @@
     <div class="mix-body">
       {#if error}<p role="alert">{error}</p><Button variant="secondary" onclick={load}>Try again</Button>{/if}
       {#if !detail && !error}<Skeleton class="skeleton-panel" aria-label="Loading mix" />{:else if detail}
-        <div class="mix-heading"><div class="mix-cover"><MixCover mix={detail.mix} songs={detail.songs} dim={!detail.mix.readiness.ready} /></div><p>{detail.mix.updatedAt ? `Updated ${new Date(detail.mix.updatedAt).toLocaleString(undefined, { weekday: "long", hour: "numeric", minute: "2-digit" })} · ` : ""}{detail.songs.length} songs</p></div>
+        <div class="mix-heading"><div class="mix-cover"><MixCover mix={detail.mix} songs={detail.songs} /></div><p>{detail.mix.updatedAt ? `Updated ${new Date(detail.mix.updatedAt).toLocaleString(undefined, { weekday: "long", hour: "numeric", minute: "2-digit" })} · ` : ""}{detail.songs.length} songs</p></div>
         <div class="mix-actions">
-          <label class="app-switch"><span class="settings-toggle"><Checkbox checked={detail.mix.showInApps} disabled={busy || published === false} aria-label="Show in my apps" onCheckedChange={enabled => void perform(target => mixes.inApps(target, enabled === true))} /></span><span>Show in my apps</span></label>
+          <label class="app-switch"><span class="settings-toggle"><Checkbox checked={detail.mix.showInApps} disabled={busy || !detail.mix.appsAllowed} aria-describedby={!detail.mix.appsAllowed ? "mix-apps-hint" : undefined} aria-label="Show in my apps" onCheckedChange={enabled => void perform(target => mixes.inApps(target, enabled === true))} /></span><span>Show in my apps</span></label>
           {#if detail.mix.kind !== "custom" && detail.mix.kind !== "external"}<span title={throttled ? "Wait 15 minutes before refreshing again" : "Refresh this mix"}><RefreshButton label="Refresh mix" variant="secondary" disabled={busy || throttled} onrefresh={refresh} /></span>{/if}
           <DropdownMenu.Root><DropdownMenu.Trigger bind:ref={aboutAnchor} class="icon-button" aria-label="Mix actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu mix-menu" align="end"><DropdownMenu.Item class="bits-menu-item" onSelect={() => setTimeout(() => { if (!disposed) aboutOpen = true; }, 0)}>About this mix</DropdownMenu.Item>{#if detail.mix.kind === "custom"}<DropdownMenu.Item class="bits-menu-item" onSelect={() => deleteOpen = true}>Delete mix</DropdownMenu.Item>{/if}</DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
         </div>
-        {#if published === false}<p class="muted">Not published yet</p>{/if}
+        {#if !detail.mix.appsAllowed}<p class="muted" id="mix-apps-hint">Your admin has turned this off</p>{/if}
         {#if !detail.mix.readiness.ready}<div class="settings-card explanation"><p>{detail.mix.readiness.message}</p><Button variant="secondary" href={nextStep.href}>{nextStep.label}</Button></div>
         {:else}<MixSongs songs={detail.songs} {busy} onfeedback={detail.mix.kind === "external" ? undefined : feedback} />{/if}
         <Popover.Root bind:open={aboutOpen}><Popover.Portal><Popover.Content customAnchor={aboutAnchor} class="bits-menu mix-about" sideOffset={8} onCloseAutoFocus={event => { event.preventDefault(); aboutAnchor?.focus(); }}><p>{mixExplanation(detail.mix.kind)}</p><Popover.Close class="icon-button" aria-label="Close explanation">×</Popover.Close></Popover.Content></Popover.Portal></Popover.Root>

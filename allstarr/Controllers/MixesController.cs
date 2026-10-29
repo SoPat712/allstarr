@@ -67,7 +67,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
 
     [HttpGet("publish-setting")]
     public Task<IActionResult> PublishSetting(CancellationToken token) => ExecuteAsync(async _ =>
-        new { enabled = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value, name = "Publish mixes to listeners' apps" }, token, true);
+        new { enabled = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value, name = "Let listeners add mixes to their apps" }, token, true);
 
     [HttpPut("publish-setting")]
     public Task<IActionResult> SetPublishSetting(MixInApps request, CancellationToken token) => ExecuteAsync(async user =>
@@ -91,6 +91,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
         mix.Readiness,
         inApps = enabled && mix.Generation > 0 && mix.Readiness.Ready && mix.ShowInApps,
         mix.ShowInApps,
+        appsAllowed = enabled,
         coverArtwork = mix.Songs.Take(4).Select(item => item.Song.Id).ToArray()
     };
 

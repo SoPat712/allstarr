@@ -17,3 +17,13 @@ test("Connection editing keeps a blank key write-only and retries conflicts", as
   await expect(dialog).toBeHidden(); expect(state.calls.filter(call => call.method === "PUT").at(-1)?.body.apiKey).toBe("sample-key");
   await page.getByRole("button", { name: "Edit connection" }).click(); await expect(dialog.getByLabel("API key", { exact: true })).toHaveValue("");
 });
+
+test("Admins choose whether listeners can add mixes to their apps", async ({ page }) => {
+  const state = await mockForYou(page, { admin: true, publish: false }); await page.goto("/#/settings/sound-analysis");
+  const toggle = page.getByRole("checkbox", { name: "Let listeners add mixes to their apps", exact: true });
+  await expect(toggle).toBeEnabled(); await expect(toggle).not.toBeChecked();
+  await toggle.click(); await expect.poll(() => state.publish).toBe(true);
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await toggle.click(); await expect.poll(() => state.publish).toBe(false);
+  expect(state.calls.filter(call => call.path === "/api/admin/mixes/publish-setting" && call.method === "PUT").map(call => call.body)).toEqual([{ enabled: true }, { enabled: false }]);
+});

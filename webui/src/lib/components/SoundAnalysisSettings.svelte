@@ -5,11 +5,11 @@
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { Dialog } from "$lib/components/ui/dialog";
+  import { Checkbox } from "$lib/components/ui/checkbox";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
-  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
 
   let status = $state<AudioMuseStatus | null>(null), connection = $state<AudioMuseConnection | null>(null);
-  let publishEnabled = $state<boolean | null>(null), publishOpen = $state(false), publishError = $state("");
+  let publishEnabled = $state<boolean | null>(null), publishError = $state("");
   let connectionOpen = $state(false), connectionLoading = $state(false), refreshing = $state(false);
   let address = $state(""), key = $state(""), connectionError = $state(""), error = $state(""), action = $state("");
   let refreshRequest = 0, connectionRequest = 0, disposed = false;
@@ -60,13 +60,10 @@
     try {
       await mixes.setPublishSetting(enabled);
       if (disposed) return;
-      publishEnabled = enabled; publishOpen = false;
-      toast.success(enabled ? "Mixes will appear in everyone's apps." : "Mixes will no longer be published automatically.");
+      publishEnabled = enabled;
+      toast.success(enabled ? "Listeners can add mixes to their apps." : "Listeners can no longer add mixes to their apps.");
     } catch {
-      if (!disposed) {
-        publishError = "The mix setting could not be saved. Try again.";
-        if (!enabled) toast.error(publishError);
-      }
+      if (!disposed) publishError = "The mix setting could not be saved. Try again.";
     } finally { if (!disposed) { action = ""; void refresh(); } }
   }
   onMount(() => {
@@ -84,10 +81,11 @@
     <div class="settings-row"><div><strong>{statusLabel}</strong>{#if connection?.keyConfigured}<small>Key saved</small>{/if}</div><Button type="button" variant="secondary" disabled={Boolean(action)} onclick={editConnection}>Edit connection</Button></div>
   </section>
   <section class="settings-card" aria-label="Mix publishing">
-    <div class="settings-row">
-      <div><strong>Show mixes in everyone's apps</strong><small>Each listener gets their own mixes as playlists in their music apps. They refresh automatically. Anyone can hide a mix from their apps.</small><small>{publishEnabled === null ? "Checking publishing…" : publishEnabled ? "Automatic publishing is on" : "Automatic publishing is off"}</small></div>
-      <Button type="button" variant="secondary" disabled={publishEnabled === null || Boolean(action)} onclick={() => { publishError = ""; if (publishEnabled) void setPublishing(false); else publishOpen = true; }}>{action === "publish" ? "Saving…" : publishEnabled ? "Turn off" : "Show in apps"}</Button>
-    </div>
+    <label class="settings-row">
+      <div><strong>Let listeners add mixes to their apps</strong><small>Each listener chooses which mixes to show as playlists in their music apps.</small>{#if publishEnabled === null}<small>Checking availability…</small>{/if}</div>
+      <span class="settings-toggle"><Checkbox checked={publishEnabled === true} disabled={publishEnabled === null || Boolean(action)} aria-label="Let listeners add mixes to their apps" onCheckedChange={enabled => void setPublishing(enabled === true)} /></span>
+    </label>
+    {#if publishError}<p class="notice-error" role="alert">{publishError}</p>{/if}
   </section>
 </div>
 
@@ -106,9 +104,11 @@
   </Dialog.Content></Dialog.Portal>
 </Dialog.Root>
 
-<ConfirmDialog bind:open={publishOpen} title="Show mixes in everyone’s apps?" description="Each listener gets their own mixes as playlists in their music apps. They refresh automatically. Anyone can hide a mix from their apps." confirmLabel="Show in apps" confirmVariant="default" disabled={Boolean(action)} closeOnConfirm={false} error={publishError} onConfirm={() => setPublishing(true)} />
-
 <style>
   .sound-settings, .connection-fields { display: grid; gap: var(--space-4); min-width: 0; }
   .sound-settings-actions { display: flex; justify-content: end; }
+  .settings-toggle :global([data-slot="checkbox"]) { box-sizing: border-box; width: 44px; height: 44px; padding: 0; margin: 0; border: 0; background: transparent; outline: 0; }
+  .settings-toggle :global([data-slot="checkbox"]:focus-visible) { outline: 2px solid var(--md-sys-color-primary); }
+  .settings-toggle :global([data-slot="checkbox-indicator"]) { width: 20px; height: 20px; border: 2px solid var(--md-sys-color-on-surface-variant); border-radius: 3px; }
+  .settings-toggle :global([data-checked] [data-slot="checkbox-indicator"]) { border-color: var(--md-sys-color-primary); background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
 </style>
