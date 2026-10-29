@@ -18,6 +18,7 @@ internal sealed class ExtensionInvocationBudget : IDisposable
 
     public static ExtensionInvocationBudget? Current => Ambient.Value;
     public CancellationToken Token => cancellation.Token;
+    public bool FetchFailed { get; private set; }
     public bool IsDownload { get; }
     public bool HasResolutionDeadline => resolutionDeadline.HasValue;
     private long FullRemainingMilliseconds => Math.Max(0, (long)(duration - clock.GetElapsedTime(started)).TotalMilliseconds);
@@ -44,6 +45,8 @@ internal sealed class ExtensionInvocationBudget : IDisposable
     }
 
     public Task DelayAsync(int milliseconds) => Task.Delay(TimeSpan.FromMilliseconds(milliseconds), clock, Token);
+
+    public void RecordFetchFailure() => FetchFailed = true;
 
     public void Check()
     {

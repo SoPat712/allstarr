@@ -289,6 +289,46 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Empty(cache.GetKeysByPattern("search:v3:*"));
     }
 
+    [Theory]
+    [InlineData("transport")]
+    [InlineData("budget")]
+    [InlineData("rate-limit")]
+    public async Task AutomaticProviderSearch_PreservesFailuresAndUsesSearchCooldown(string failure)
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var provider = DelayedSearchProvider("deezer", clock, TimeSpan.Zero);
+        var search = provider.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()));
+        if (failure == "transport") search.ThrowsAsync(new HttpRequestException("Transport unavailable."));
+        else search.ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(new(
+            failure == "rate-limit" ? ProviderErrorKind.RateLimited : ProviderErrorKind.TransientFailure,
+            TimeSpan.FromMinutes(5))));
+        var gateway = BudgetGateway(clock, new TestMemoryApplicationCache(), provider.Object);
+        for (var index = 0; index < 4; index++)
+            Assert.False((await gateway.SearchAutomaticProviderSongsAsync(Context(), "deezer", "Track", 15)).IsSuccess);
+        VerifySearchCount(provider, "songs", failure == "transport" ? 3 : 1);
+        clock.Advance(TimeSpan.FromMinutes(6));
+        search.ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("deezer", [])));
+        var completed = await gateway.SearchAutomaticProviderSongsAsync(Context(), "deezer", "Track", 15);
+        Assert.True(completed.IsSuccess);
+        Assert.Empty(completed.RequireValue());
+    }
+
+    [Fact]
+    public async Task AutomaticProviderSearch_TimeoutIsFailureAndHonorsCancellation()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var provider = DelayedSearchProvider("deezer", clock, TimeSpan.FromSeconds(40));
+        var gateway = BudgetGateway(clock, new TestMemoryApplicationCache(), provider.Object);
+        var search = gateway.SearchAutomaticProviderSongsAsync(Context(), "deezer", "Track", 15);
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(30));
+        clock.Advance(TimeSpan.FromSeconds(30));
+        Assert.False((await search).IsSuccess);
+        using var cancellation = new CancellationTokenSource();
+        var cancelled = gateway.SearchAutomaticProviderSongsAsync(WithSearchCancellation(Context(), cancellation.Token), "deezer", "Another", 15);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelled);
+    }
+
     private static ProtocolExecutionContext WithSearchCancellation(ProtocolExecutionContext context, CancellationToken token) =>
         new(context.Protocol, context.BackendInstanceId, context.VerifiedBackendPrincipalId, context.Principal,
             context.CorrelationId, context.Deadline, token, context.Client);

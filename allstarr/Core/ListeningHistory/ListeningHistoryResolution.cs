@@ -29,6 +29,7 @@ public sealed class ListeningHistoryResolution(
 {
     public const string JobTypeName = "listening-history.resolve";
     private const string ResourceKind = "history-resolution";
+    private const string ReceiptPayload = "{\"version\":1}";
     private const int ProviderLimit = 100;
     private const int LocalBatchSize = 100;
     public string JobType => JobTypeName;
@@ -75,7 +76,7 @@ public sealed class ListeningHistoryResolution(
         await using var db = await factory.CreateDbContextAsync(token);
         if (!await IntelligencePolicyService.OwnsBackendAsync(db, scope, token)) return;
         var plays = await MatchingEvents(db, scope).ToArrayAsync(token);
-        var recent = await Receipts(db, scope).Where(item => item.RetrievedAt > now.AddDays(-7))
+        var recent = await Receipts(db, scope).Where(item => item.PayloadJson == ReceiptPayload && item.RetrievedAt > now.AddDays(-7))
             .Select(item => item.ExternalIdHash).ToHashSetAsync(token);
         if (!plays.Any(play => !recent.Contains(SongKey(play)))) return;
         await using var transaction = await db.Database.BeginTransactionAsync(token);
@@ -121,7 +122,7 @@ public sealed class ListeningHistoryResolution(
             return DurableJobCompletion.Defer("history_resolution_library_unavailable", "Waiting for the listener's library access.", TimeSpan.FromMinutes(1));
         var tracks = await LibraryTrackAccess.Query(db, context, access).ToArrayAsync(token);
         var local = tracks.GroupBy(track => MetadataKey(track.Title, track.Artist)).ToDictionary(group => group.Key, group => group.ToArray());
-        var recent = await Receipts(db, saved.Scope).Where(item => item.RetrievedAt > clock.UtcNow.AddDays(-7))
+        var recent = await Receipts(db, saved.Scope).Where(item => item.PayloadJson == ReceiptPayload && item.RetrievedAt > clock.UtcNow.AddDays(-7))
             .Select(item => item.ExternalIdHash).ToHashSetAsync(token);
         var groups = (await MatchingEvents(db, saved.Scope).ToArrayAsync(token)).GroupBy(SongKey)
             .Where(group => !recent.Contains(group.Key)).OrderByDescending(group => group.Count(item => item.State == ListeningEventState.Completed))
@@ -164,17 +165,29 @@ public sealed class ListeningHistoryResolution(
             if (attempted++ > 0) await Task.Delay(TimeSpan.FromSeconds(2), timeProvider ?? TimeProvider.System, token);
             context = Execution();
             var play = group.First();
-            var match = await matches.MatchAsync(context, Source(group.Key, play), scope, [], null, token);
-            var selected = match.SelectedExternal;
+            PlayableTrackMatch match;
+            Song? selected;
             Song? song = null;
-            if (Accepted(match.Decision) && selected != null && SameEdition(play.Title, selected.Title) &&
-                !(FuzzyMatcher.HasCleanRecordingLabel(play.Title) && selected.ExplicitContentLyrics == 1))
+            try
             {
-                var reference = $"ext-{selected.ExternalProvider}-song-{selected.ExternalId}";
-                await providers.RememberTrackAsync(context, reference);
-                song = await providers.GetSongAsync(context, selected.ExternalProvider!, selected.ExternalId!);
-                if (song != null && (!SameEdition(play.Title, song.Title) ||
-                    FuzzyMatcher.HasCleanRecordingLabel(play.Title) && song.ExplicitContentLyrics == 1)) song = null;
+                var outcome = await matches.MatchImportedHistoryAsync(context, Source(group.Key, play), scope, token);
+                if (!outcome.IsSuccess) return ProviderUnavailable(outcome.Error?.RetryAfter);
+                match = outcome.RequireValue();
+                selected = match.SelectedExternal;
+                if (Accepted(match.Decision) && selected != null && SameEdition(play.Title, selected.Title) &&
+                    !(FuzzyMatcher.HasCleanRecordingLabel(play.Title) && selected.ExplicitContentLyrics == 1))
+                {
+                    var reference = $"ext-{selected.ExternalProvider}-song-{selected.ExternalId}";
+                    await providers.RememberTrackAsync(context, reference);
+                    song = await providers.GetSongAsync(context, selected.ExternalProvider!, selected.ExternalId!);
+                    if (song == null) return ProviderUnavailable();
+                    if (!SameEdition(play.Title, song.Title) ||
+                        FuzzyMatcher.HasCleanRecordingLabel(play.Title) && song.ExplicitContentLyrics == 1) song = null;
+                }
+            }
+            catch (Exception) when (!token.IsCancellationRequested)
+            {
+                return ProviderUnavailable();
             }
             var identity = song?.CanonicalRecordingId is { } recording
                 ? (await db.ProviderTrackIdentities.AsNoTracking().Where(item => item.CanonicalRecordingId == recording &&
@@ -184,6 +197,7 @@ public sealed class ListeningHistoryResolution(
                     .OrderBy(item => item.Id).ToArrayAsync(token)).FirstOrDefault(CatalogIdentityPolicy.IsPlaybackEligible) : null;
             var library = song?.CanonicalRecordingId is { } id
                 ? tracks.FirstOrDefault(track => track.CanonicalRecordingId == id && SameEdition(play.Title, track.Title)) : null;
+            if (song != null && identity == null) return ProviderUnavailable();
             await SaveAsync([new(group, identity == null ? null : song?.CanonicalRecordingId, library, selected, identity)]);
             await execution.ReportProgressAsync(new("history-resolution", "Matching imported listening history.", saved.Cursor,
                 saved.Cursor + Math.Max(0, remaining.Count - attempted)), token);
@@ -192,6 +206,10 @@ public sealed class ListeningHistoryResolution(
             return DurableJobCompletion.Defer("history_resolution_continuing", "Saved progress; more imported songs remain.", TimeSpan.FromMinutes(1));
         await mixes.RefreshAfterHistoryResolutionAsync(user.Id, execution.Claim.JobId, jobs, token);
         return DurableJobCompletion.Success();
+
+        static DurableJobCompletion ProviderUnavailable(TimeSpan? retryAfter = null) =>
+            DurableJobCompletion.Defer("history_resolution_provider_unavailable", "Waiting before retrying the imported song's provider search.",
+                retryAfter is { } delay && delay > TimeSpan.FromMinutes(1) ? delay : TimeSpan.FromMinutes(1));
 
         async Task SaveAsync(IReadOnlyCollection<Resolution> batch)
         {
@@ -261,8 +279,8 @@ public sealed class ListeningHistoryResolution(
                                 SnapshotVersion = version + 1,
                                 SourceJobId = execution.Claim.JobId,
                                 RetrievedAt = clock.UtcNow,
-                                PayloadJson = "{}",
-                                PayloadSha256 = ListeningHistoryImportService.Hash("{}"),
+                                PayloadJson = ReceiptPayload,
+                                PayloadSha256 = ListeningHistoryImportService.Hash(ReceiptPayload),
                                 CorrelationId = context.CorrelationId
                             });
                         }

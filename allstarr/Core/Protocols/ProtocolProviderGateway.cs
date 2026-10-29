@@ -55,6 +55,12 @@ public interface IProtocolProviderGateway
         string query,
         int limit);
 
+    Task<ProviderOutcome<IReadOnlyList<Song>>> SearchAutomaticProviderSongsAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string query,
+        int limit);
+
     Task<Song?> GetSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
 
     Task<bool> CanPlaySongAsync(ProtocolExecutionContext protocol, Song song);

@@ -27,20 +27,7 @@ public sealed class TrackMatchPlayableSearch(
         ScopedTrackMatchOverride? manualOverride,
         CancellationToken cancellationToken)
     {
-        var title = FuzzyMatcher.SearchQuery(source.Title);
-        var artist = source.Artist?.Split(',', 2, StringSplitOptions.TrimEntries)[0];
-        var queries = new[]
-            {
-                FuzzyMatcher.SearchQuery(source.Title, source.Artist),
-                Join(title, source.Album),
-                title,
-                artist,
-                source.Album
-            }
-            .Where(query => !string.IsNullOrWhiteSpace(query) && query.Trim().Length >= 2)
-            .Select(query => query!.Trim())
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        var queries = SearchQueries(source);
         var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(context, cancellationToken);
         if (!await CanAutomaticallyMatchAsync(context, source.ProviderId, cancellationToken))
             return DecideMatch(source, scope, [], [], manualOverride, providerOrder, effectiveMatcher);
@@ -65,6 +52,61 @@ public sealed class TrackMatchPlayableSearch(
             .Where(song => !song.ExternalProvider!.Equals(source.ProviderId, StringComparison.OrdinalIgnoreCase) ||
                            !song.ExternalId!.Equals(source.ExternalId, StringComparison.Ordinal))
             .DistinctBy(song => $"{song.ExternalProvider}:{song.ExternalId}", StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    public async Task<ProviderOutcome<PlayableTrackMatch>> MatchImportedHistoryAsync(
+        ProtocolExecutionContext context, ExternalTrackMatchSnapshot source, TrackMatchScope scope,
+        CancellationToken cancellationToken)
+    {
+        var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(context, cancellationToken);
+        var queries = SearchQueries(source);
+        if (providerOrder.Count == 0)
+            return ProviderOutcome<PlayableTrackMatch>.Failure(new(ProviderErrorKind.CapabilityUnavailable));
+        if (!await CanAutomaticallyMatchAsync(context, source.ProviderId, cancellationToken) || queries.Length == 0)
+            return ProviderOutcome<PlayableTrackMatch>.Success(DecideMatch(source, scope, [], [], null, providerOrder, effectiveMatcher));
+        var songs = new List<Song>();
+        ProviderError? failure = null;
+        foreach (var provider in providerOrder)
+        {
+            foreach (var query in queries)
+            {
+                var result = await gateway.SearchAutomaticProviderSongsAsync(context, provider, query, 15);
+                if (!result.IsSuccess)
+                {
+                    if (failure == null || result.Error!.RetryAfter > failure.RetryAfter.GetValueOrDefault()) failure = result.Error;
+                    break;
+                }
+                songs.AddRange(result.RequireValue().Where(song => IsPlayable(song, providerOrder) &&
+                    !string.IsNullOrWhiteSpace(song.ExternalProvider) && !string.IsNullOrWhiteSpace(song.ExternalId) &&
+                    (!song.ExternalProvider.Equals(source.ProviderId, StringComparison.OrdinalIgnoreCase) ||
+                     !song.ExternalId.Equals(source.ExternalId, StringComparison.Ordinal))));
+                songs = songs.DistinctBy(song => $"{song.ExternalProvider}:{song.ExternalId}", StringComparer.OrdinalIgnoreCase).ToList();
+                var match = DecideMatch(source, scope, songs, [], null, providerOrder, effectiveMatcher);
+                if (match.Decision.State == TrackMatchReviewState.Accepted && !match.Decision.RequiresReview &&
+                    !IsExplicitFallback(source, match, []))
+                    return ProviderOutcome<PlayableTrackMatch>.Success(match);
+            }
+        }
+        return failure != null ? ProviderOutcome<PlayableTrackMatch>.Failure(failure) :
+            ProviderOutcome<PlayableTrackMatch>.Success(DecideMatch(source, scope, songs, [], null, providerOrder, effectiveMatcher));
+    }
+
+    private static string[] SearchQueries(ExternalTrackMatchSnapshot source)
+    {
+        var title = FuzzyMatcher.SearchQuery(source.Title);
+        var artist = source.Artist?.Split(',', 2, StringSplitOptions.TrimEntries)[0];
+        return new[]
+            {
+                FuzzyMatcher.SearchQuery(source.Title, source.Artist),
+                Join(title, source.Album),
+                title,
+                artist,
+                source.Album
+            }
+            .Where(query => !string.IsNullOrWhiteSpace(query) && query.Trim().Length >= 2)
+            .Select(query => query!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
         static string Join(string? left, string? right) =>

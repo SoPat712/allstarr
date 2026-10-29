@@ -907,7 +907,7 @@ public class ExtensionSandbox
 
     /// <summary>Invokes an SDK v1 hook through a JSON-only boundary.</summary>
     public string? InvokeJson(string hook, string requestJson, CancellationToken cancellationToken = default, string? cacheContext = null,
-        DateTimeOffset? resolutionDeadline = null)
+        DateTimeOffset? resolutionDeadline = null, bool requireSuccessfulFetch = false)
     {
         if (string.IsNullOrWhiteSpace(hook)) throw new ArgumentException("A hook name is required.", nameof(hook));
         if (requestJson.Length > 1024 * 1024) throw new InvalidOperationException("Extension request is too large.");
@@ -928,6 +928,8 @@ public class ExtensionSandbox
                 var request = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("parse"), requestJson);
                 var result = _engine.Invoke(function, request);
                 budget.Check();
+                if (requireSuccessfulFetch && budget.FetchFailed)
+                    throw new InvalidOperationException("Extension search could not complete its fetch requests.");
                 if (result.IsUndefined()) return null;
                 var serialized = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("stringify"), result).ToString();
                 if (serialized.Length > MaximumHookResultCharacters)
@@ -1388,8 +1390,21 @@ public partial class ExtensionHostBridge
         (await RequireSignedSession().CompleteGrantViewAsync(grant, cancellationToken)) with { AccountId = _sessionAccount.Value };
     internal async Task<ExtensionSessionView> SessionClearViewAsync(CancellationToken cancellationToken) =>
         (await RequireSignedSession().ClearViewAsync(cancellationToken)) with { AccountId = _sessionAccount.Value };
-    public object SessionSignedFetch(string method, string path, string? body, object? headers) =>
-        RequireSignedSession().SignedFetch(method, path, body, headers);
+    public object SessionSignedFetch(string method, string path, string? body, object? headers)
+    {
+        try
+        {
+            var response = RequireSignedSession().SignedFetch(method, path, body, headers);
+            if (response is not IDictionary<string, object> values || !values.TryGetValue("ok", out var ok) || ok is not true)
+                ExtensionInvocationBudget.Current?.RecordFetchFailure();
+            return response;
+        }
+        catch
+        {
+            ExtensionInvocationBudget.Current?.RecordFetchFailure();
+            throw;
+        }
+    }
 
     internal void BindSessionAccounts(Guid defaultAccountId, Func<ProviderAccountContext, bool> validator)
     {
@@ -1999,6 +2014,7 @@ public partial class ExtensionHostBridge
             var routeKey = $"{normalizedMethod} {safeUri.GetLeftPart(UriPartial.Authority)}{safeUri.AbsolutePath}";
             if (TryGetHttpCooldown(routeKey, out var retryAfterSeconds, out var lastStatusCode))
             {
+                ExtensionInvocationBudget.Current?.RecordFetchFailure();
                 _lastSyntheticCooldownResponseAt = DateTimeOffset.UtcNow;
                 return new
                 {
@@ -2025,8 +2041,12 @@ public partial class ExtensionHostBridge
                 throw new UnauthorizedAccessException("Extension redirect left its approved origin.");
             if (response.IsSuccessStatusCode)
                 RecordHttpSuccess(routeKey);
-            else if (ShouldCoolDown(response.StatusCode))
-                RecordHttpFailure(routeKey, normalizedMethod, safeUri, (int)response.StatusCode);
+            else
+            {
+                ExtensionInvocationBudget.Current?.RecordFetchFailure();
+                if (ShouldCoolDown(response.StatusCode))
+                    RecordHttpFailure(routeKey, normalizedMethod, safeUri, (int)response.StatusCode);
+            }
             if (response.Content.Headers.ContentLength > 4 * 1024 * 1024)
                 throw new InvalidOperationException("Extension response exceeds 4 MiB.");
             using var responseStream = response.Content.ReadAsStream();
@@ -2068,6 +2088,7 @@ public partial class ExtensionHostBridge
         }
         catch (Exception ex)
         {
+            ExtensionInvocationBudget.Current?.RecordFetchFailure();
             LogHttpFailure(method, url, ex);
             return new
             {
