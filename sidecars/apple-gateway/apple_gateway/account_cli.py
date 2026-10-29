@@ -5,7 +5,9 @@ import asyncio
 import contextlib
 import importlib
 import io
+import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -84,7 +86,81 @@ class _DiagnosticBuffer(io.TextIOBase):
         return self.text.partition("\n")[2] if self.truncated else self.text
 
 
+@contextlib.contextmanager
+def song_preparation(cli, started: float | None = None):
+    from gamdl.interface.enums import CoverFormat
+    started = time.monotonic() if started is None else started
+    phases = []
+    originals = []
+
+    def measure(target, name, phase):
+        original = vars(target)[name]
+
+        async def measured(self, *args, **kwargs):
+            before = time.monotonic()
+            if not phases:
+                phases.append({"phase": "setup", "started_ms": 0,
+                    "elapsed_ms": round((before - started) * 1000, 3)})
+            try:
+                return await original(self, *args, **kwargs)
+            finally:
+                if len(phases) < 64:
+                    phases.append({"phase": phase, "started_ms": round((before - started) * 1000, 3),
+                        "elapsed_ms": round((time.monotonic() - before) * 1000, 3)})
+
+        originals.append((target, name, original))
+        setattr(target, name, measured)
+        return measured
+
+    measure(AppleMusicApi, "get_song", "catalog")
+    measure(cli.AppleMusicSongInterface, "get_lyrics", "lyrics")
+    measure(cli.WrapperApi, "get_playback", "playback")
+    measure(AppleMusicApi, "get_webplayback", "playback")
+    measure(cli.AppleMusicBaseInterface, "get_tags_from_asset_info", "metadata")
+    measure(cli.AppleMusicBaseInterface, "get_itunes_lookup_metadata", "itunes")
+    measure(cli.AppleMusicSongInterface, "get_stream_info", "manifest")
+    measure(cli.AppleMusicBaseInterface, "get_decryption_key", "license")
+    measure(cli.AppleMusicBaseDownloader, "download_stream", "download")
+    measure(cli.AppleMusicSongDownloader, "stage", "decrypt_mux")
+    cover_bytes = measure(cli.AppleMusicBaseInterface, "get_cover_bytes", "artwork")
+    measure(cli.AppleMusicBaseDownloader, "apply_tags", "tagging")
+    pending_covers = {}
+    original_download = cli.AppleMusicSongDownloader.download
+
+    async def get_cover_bytes(self, url):
+        if (task := pending_covers.get((self, url))) is not None:
+            return await task
+        return await cover_bytes(self, url)
+
+    async def download(self, item):
+        interface = self.base.interface.base
+        if interface.cover_format == CoverFormat.RAW:
+            return await original_download(self, item)
+        key = (interface, item.media.cover.url)
+        task = asyncio.create_task(cover_bytes(*key))
+        pending_covers[key] = task
+        try:
+            # The original downloader still awaits artwork before tagging. Keep
+            # the task's result, including failures, until it reaches that point.
+            return await original_download(self, item)
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            pending_covers.pop(key, None)
+
+    cli.AppleMusicBaseInterface.get_cover_bytes = get_cover_bytes
+    originals.append((cli.AppleMusicSongDownloader, "download", original_download))
+    cli.AppleMusicSongDownloader.download = download
+    try:
+        yield phases
+    finally:
+        for target, name, original in reversed(originals):
+            setattr(target, name, original)
+
+
 def run(argv: list[str]) -> int:
+    started = time.monotonic()
     failures: list[str] = []
     try:
         if argv.count("--cookies-path") != 1 or "--use-wrapper" not in argv or "--no-config-file" not in argv:
@@ -102,9 +178,11 @@ def run(argv: list[str]) -> int:
     # when this module is imported by the ASGI gateway.
     cli.AppleMusicApi = account_api_type(cookie_path, failures)
     diagnostics = _DiagnosticBuffer()
+    phases = []
     result = 0
     try:
-        with contextlib.redirect_stdout(diagnostics), contextlib.redirect_stderr(diagnostics):
+        with song_preparation(cli, started) as phases, \
+                contextlib.redirect_stdout(diagnostics), contextlib.redirect_stderr(diagnostics):
             # Supply the bounded stream to the writer's captured stdout as well.
             cli.CustomOutputWriter = lambda: original_writer(streams=[diagnostics])
             cli.main.main(args=argv, standalone_mode=False)
@@ -115,6 +193,9 @@ def run(argv: list[str]) -> int:
         cli.CustomOutputWriter = original_writer
     if failures:
         return ACCOUNT_MISMATCH_EXIT if "account_mismatch" in failures else ACCOUNT_UNAVAILABLE_EXIT
+    if phases:
+        sys.stdout.write(json.dumps({"elapsed_ms": round((time.monotonic() - started) * 1000, 3),
+            "phases": phases}) + "\n")
     token = next((line.split("\t")[-1] for line in cookie_path.read_text().splitlines()
         if "\tmedia-user-token\t" in line), "")
     tail = diagnostic_tail(diagnostics.tail(), token)

@@ -2,17 +2,47 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import os
 import signal
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator
 
 from .config import Settings
 from .security import safe_files, valid_media_token
+
+logger = logging.getLogger("uvicorn.error")
+
+
+def _log_preparation(stdout: str, quality: str, elapsed_ms: float) -> None:
+    try:
+        payload = json.loads(stdout)
+    except (ValueError, TypeError):
+        return
+    if not isinstance(payload, dict) or not isinstance(payload.get("phases"), list):
+        return
+
+    def numeric(value):
+        return type(value) in (int, float) and 0 <= value <= 86400000
+
+    if not numeric(payload.get("elapsed_ms")):
+        return
+    phases = []
+    for phase in payload["phases"][:64]:
+        if not isinstance(phase, dict) or not isinstance(phase.get("phase"), str) or phase["phase"] not in {
+            "setup", "catalog", "lyrics", "playback", "metadata", "itunes", "manifest", "license",
+            "download", "decrypt_mux", "artwork", "tagging",
+        }:
+            continue
+        if numeric(phase.get("started_ms")) and numeric(phase.get("elapsed_ms")):
+            phases.append({key: phase[key] for key in ("phase", "started_ms", "elapsed_ms")})
+    logger.info("Song preparation quality=%s wait_process_ms=%.3f entry_ms=%s phases=%s",
+        quality, elapsed_ms, payload["elapsed_ms"], json.dumps(phases))
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,7 +157,9 @@ class BoundedProcessRunner:
                 os.fchmod(cookie.fileno(), 0o600)
                 cookie.write("# Netscape HTTP Cookie File\n")
                 cookie.write(f".music.apple.com\tTRUE\t/\tTRUE\t0\tmedia-user-token\t{media_user_token}\n")
+            started = time.monotonic()
             result = await self.execute(argv, temporary)
+            elapsed_ms = (time.monotonic() - started) * 1000
         finally:
             cookie_path.unlink(missing_ok=True)
         if result.return_code == 78:
@@ -136,6 +168,7 @@ class BoundedProcessRunner:
             raise ProcessFailure("account_unavailable", stderr=result.stderr)
         if result.return_code != 0:
             raise ProcessFailure("gamdl_failed", stderr=result.stderr)
+        _log_preparation(result.stdout, quality, elapsed_ms)
         artifacts = safe_files(output, {".lrc"} if lyrics_only else {
             ".m4a", ".flac", ".mp4", ".m4v", ".lrc", ".srt", ".ttml", ".jpg", ".png"
         })
