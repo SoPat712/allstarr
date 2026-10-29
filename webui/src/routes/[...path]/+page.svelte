@@ -142,6 +142,7 @@
                 : route.startsWith("/integrations")
                   ? {
                       section: route.split("/")[2] || "services",
+                      developmentIntelligence,
                       currentUserId: session?.user?.allstarrUserId ?? "",
                       administrator,
                       initialSource: routeQuery.get("source") ?? "",

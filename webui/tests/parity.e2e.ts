@@ -905,7 +905,7 @@ const stateRoutes = [
   ["#/settings/general", "Settings", "Loading Settings", "/api/admin/ui/schema", ["/api/admin/ui/schema"]],
 ] as const;
 
-test("core release does not expose the deferred Intelligence route", async ({ page }) => {
+test("core release exposes personal Intelligence without development APIs", async ({ page }) => {
   const intelligenceRequests: string[] = [];
   page.on("request", (request) => {
     if (new URL(request.url()).pathname.startsWith("/api/admin/intelligence")) {
@@ -916,7 +916,13 @@ test("core release does not expose the deferred Intelligence route", async ({ pa
 
   await page.goto("#/intelligence");
 
-  await expect(page.getByRole("heading", { name: "This Allstarr view does not exist." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Intelligence", exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Intelligence sections" }).getByRole("tab", { name: "For you", exact: true })).toHaveAttribute("aria-selected", "true");
+  await page.goto("#/integrations/services?source=audiomuse-ai&section=configuration");
+  const configure = page.getByRole("link", { name: "Configure in Intelligence" });
+  await expect(configure).toHaveAttribute("href", "#/intelligence?section=sounds");
+  await configure.click();
+  await expect(page.getByRole("heading", { name: "Sounds like this", exact: true })).toBeVisible();
   expect(intelligenceRequests).toEqual([]);
 });
 
@@ -1491,6 +1497,8 @@ for (const viewport of viewports) {
       const intelligenceLink = page.getByRole("link", { name: "Configure in Intelligence" });
       await expect(intelligenceLink).toHaveAttribute("href", "#/intelligence?section=automation");
       await expect(page.locator(".service-page")).toContainText("AudioMuse-AI powers sound-based discovery");
+      await intelligenceLink.click();
+      await expect(page.getByText("AudioMuse-AI connection", { exact: true })).toBeVisible();
       await page.goto("#/integrations/accounts");
       await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
       await page.locator(".service-account").getByRole("button", { name: /^Actions for / }).click();
