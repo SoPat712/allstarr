@@ -40,19 +40,22 @@ public sealed class DurableScheduleEngine
     private readonly IPlatformClock _clock;
     private readonly ReleaseComposition _releaseComposition;
     private readonly DurableBackupService? _backups;
+    private readonly allstarr.Core.Music.PersonalMixService? _mixes;
 
     public DurableScheduleEngine(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         DurableJobQueue queue,
         IPlatformClock clock,
         ReleaseComposition releaseComposition,
-        DurableBackupService? backups = null)
+        DurableBackupService? backups = null,
+        allstarr.Core.Music.PersonalMixService? mixes = null)
     {
         _contextFactory = contextFactory;
         _queue = queue;
         _clock = clock;
         _releaseComposition = releaseComposition;
         _backups = backups;
+        _mixes = mixes;
     }
 
     public DurableScheduleEngine(
@@ -80,6 +83,7 @@ public sealed class DurableScheduleEngine
     {
         var now = _clock.UtcNow;
         if (_backups != null) await _backups.ReconcileScheduleAsync(cancellationToken);
+        if (_mixes != null) await _mixes.EnsureSchedulesAsync(cancellationToken);
         await using var scan = await _contextFactory.CreateDbContextAsync(cancellationToken);
         var dueSchedules = scan.JobSchedules.AsNoTracking()
             .Where(item => item.Enabled && item.NextRunAt != null && item.NextRunAt <= now)
@@ -157,9 +161,10 @@ public sealed class DurableScheduleEngine
                 if (_backups == null || schedule.OwnerUserId != null || schedule.Id != DurableBackupService.ScheduleId)
                     throw new InvalidOperationException("The backup schedule is invalid.");
             }
-            else if (jobType == NewReleasesService.JobType)
+            else if (jobType == NewReleasesService.JobType || jobType == allstarr.Core.Music.PersonalMixService.JobType)
             {
-                if (!await context.Users.AnyAsync(item => item.Id == schedule.OwnerUserId && item.Enabled, cancellationToken))
+                if (!await context.Users.AnyAsync(item => item.Id == schedule.OwnerUserId && item.Enabled &&
+                    (jobType != allstarr.Core.Music.PersonalMixService.JobType || !item.IsSynthetic), cancellationToken))
                 {
                     schedule.Enabled = false;
                     await context.SaveChangesAsync(cancellationToken);
@@ -216,6 +221,10 @@ public sealed class DurableScheduleEngine
                     await _queue.EnqueueInExistingTransactionAsync(context,
                         new DurableJobEnqueueRequest<object>(jobType, $"{idempotencyPrefix}{dueAt.UtcTicks}",
                             new { }, schedule.OwnerUserId, MaxDeferrals: 10000), cancellationToken);
+                else if (jobType == allstarr.Core.Music.PersonalMixService.JobType)
+                    await _queue.EnqueueInExistingTransactionAsync(context,
+                        new DurableJobEnqueueRequest<Guid>(jobType, $"{idempotencyPrefix}{dueAt.UtcTicks}",
+                            JsonSerializer.Deserialize<Guid>(schedule.PayloadTemplateJson), schedule.OwnerUserId), cancellationToken);
                 else if (health != null)
                     await _queue.EnqueueInExistingTransactionAsync(context,
                         new DurableJobEnqueueRequest<HealthSmokeJobPayload>(HealthSmokeService.JobType,

@@ -82,7 +82,8 @@ public sealed class PlaylistVirtualizationService(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     DurablePlaylistProjectionReader projections,
     IBackendLibraryAccessResolver libraryAccess,
-    IBackendPlaylistTargetResolver? targets = null) : IPlaylistVirtualizationService
+    IBackendPlaylistTargetResolver? targets = null,
+    allstarr.Core.Music.PersonalMixService? personalMixes = null) : IPlaylistVirtualizationService
 {
     public const string IdPrefix = "allstarr-vpl-";
     public const string UnresolvedItemPrefix = "allstarr-unresolved-";
@@ -134,6 +135,7 @@ public sealed class PlaylistVirtualizationService(
             var playlist = await ReadAsync(context, CreateProtocolId(linkId), cancellationToken);
             if (playlist != null) result.Add(playlist);
         }
+        if (personalMixes != null) result.AddRange(await personalMixes.PublishedAsync(context, cancellationToken));
         return result;
     }
 
@@ -180,6 +182,8 @@ public sealed class PlaylistVirtualizationService(
                 context.Protocol == ProtocolKind.Jellyfin)).ToArrayAsync(cancellationToken);
         var owned = links.Where(item => item.OwnerUserId == actor.EffectiveUserId).ToArray();
         var selected = owned.Length > 0 ? owned : links;
+        if (selected.Length == 0 && virtualId && personalMixes != null)
+            return (await personalMixes.PublishedAsync(context, cancellationToken)).SingleOrDefault(item => item.LinkId == linkId);
         if (selected.Length != 1) return null;
         var link = selected[0];
         BackendPlaylistSnapshot? authorizedTarget = null;

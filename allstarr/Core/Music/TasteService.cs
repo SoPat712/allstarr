@@ -133,6 +133,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
         {
             "tag" => SharedTagNormalization.Canonical(name, []) ?? throw new ArgumentException("Unknown canonical tag."),
             "artist" => name.Trim(),
+            "song" => name.Trim(),
             _ => throw new ArgumentException("Invalid nudge kind.")
         };
     }
@@ -231,6 +232,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
         if (at >= clock.UtcNow - LatelyHalfLife) document.Recent.Add(at);
         foreach (var feature in features)
         {
+            if (feature.Key.StartsWith("song:", StringComparison.Ordinal)) continue;
             var prior = document.Learned.GetValueOrDefault(feature.Key) ?? new(feature.Value, 0, 0, clock.UtcNow);
             document.Learned[feature.Key] = new(feature.Value,
                 Decay(prior.Lately, clock.UtcNow - prior.At, LatelyHalfLife) + Decay(value, clock.UtcNow - at, LatelyHalfLife),
@@ -244,6 +246,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
         return songs.Distinct().ToDictionary(song => song, song =>
         {
             var features = new Dictionary<string, string>();
+            features[Key("song", PersonalMixRules.Key(song))] = song.Title;
             if (song.CanonicalRecordingId is { } id && profiles.TryGetValue(id, out var profile))
                 foreach (var tag in profile.Tags) features[Key("tag", tag.Tag)] = tag.Tag;
             foreach (var artist in song.Artists.Append(song.Artist).Where(artist => !string.IsNullOrWhiteSpace(artist)).Distinct(StringComparer.OrdinalIgnoreCase))
@@ -256,7 +259,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
     {
         var matching = document.Nudges.Where(item => features.ContainsKey(Key(item.Kind, item.Name))).ToArray();
         if (matching.FirstOrDefault(item => item.Mode == "never") is { } blocked) return new(0, [$"You blocked {blocked.Name}"], true);
-        if (!features.Keys.Any(key => key.StartsWith("tag:", StringComparison.Ordinal))) return new(0, []);
+        if (!features.Keys.Any(key => key.StartsWith("tag:", StringComparison.Ordinal)) && matching.Length == 0) return new(0, []);
         var reasons = new List<(double Weight, string Reason)>();
         var blend = Blend(document);
         var score = 0d;
@@ -266,7 +269,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
             var lately = Decay(affinity.Lately, clock.UtcNow - affinity.At, LatelyHalfLife);
             var usually = Decay(affinity.Usually, clock.UtcNow - affinity.At, UsuallyHalfLife);
             var contribution = blend * Bounded(lately) + (1 - blend) * Bounded(usually);
-            score += contribution / features.Count;
+            score += contribution / Math.Max(1, features.Keys.Count(key => !key.StartsWith("song:", StringComparison.Ordinal)));
             if (Math.Abs(contribution) < .01) continue;
             var name = affinity.Name;
             reasons.Add((Math.Abs(contribution), blend > .5 && Math.Sign(lately) == Math.Sign(contribution)
@@ -288,6 +291,13 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
     {
         var document = await LoadAsync(user, token);
         return Score(document, (await FeaturesAsync([song], token))[song], seed, followed);
+    }
+
+    internal async Task<IReadOnlyDictionary<Song, TasteScore>> ScoreManyAsync(Guid user, IReadOnlyList<Song> songs, CancellationToken token)
+    {
+        var document = await LoadAsync(user, token);
+        var features = await FeaturesAsync(songs, token);
+        return features.ToDictionary(item => item.Key, item => Score(document, item.Value, null, false));
     }
 
     public async Task<IReadOnlyList<Song>> RankAsync(Guid user, IReadOnlyList<Song> songs, string? seed = null, CancellationToken token = default)

@@ -1,0 +1,95 @@
+using allstarr.Core.Music;
+using allstarr.Core.Operations;
+using allstarr.Core.Settings;
+using allstarr.Core.Storage;
+using allstarr.Filters;
+using allstarr.Services.Admin;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+
+namespace allstarr.Controllers;
+
+[ApiController]
+[Route("api/admin/mixes")]
+[ServiceFilter(typeof(AdminPortFilter))]
+public sealed class MixesController(PersonalMixService mixes, IDurableRuntimeSettings settings,
+    IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock) : ControllerBase
+{
+    [HttpGet]
+    public Task<IActionResult> List([FromQuery] string? timeZoneId = null, CancellationToken token = default) => ExecuteAsync(async user =>
+    {
+        var enabled = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value;
+        return (await mixes.ListAsync(user.Id, timeZoneId, token)).Select(mix => Card(mix, enabled));
+    }, token);
+
+    [HttpGet("{id:guid}")]
+    public Task<IActionResult> Get(Guid id, CancellationToken token) => ExecuteAsync(async user =>
+    {
+        var mix = (await mixes.ListAsync(user.Id, token: token)).SingleOrDefault(item => item.Id == id) ?? throw new KeyNotFoundException();
+        return new { mix = Card(mix, (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value), songs = mix.Songs };
+    }, token);
+
+    [HttpPost("{id:guid}/refresh")]
+    public Task<IActionResult> Refresh(Guid id, CancellationToken token) => ExecuteAsync(async user =>
+        (await mixes.GenerateAsync(user.Id, id, token: token)).Single(item => item.Id == id), token);
+
+    [HttpPut("{id:guid}/in-apps")]
+    public Task<IActionResult> InApps(Guid id, MixInApps request, CancellationToken token) => ExecuteAsync(async user =>
+    {
+        await mixes.SetInAppsAsync(user.Id, id, request.Enabled, token);
+        return new { enabled = request.Enabled };
+    }, token);
+
+    [HttpPost("{id:guid}/feedback")]
+    public Task<IActionResult> Feedback(Guid id, MixFeedback request, CancellationToken token) => ExecuteAsync(async user =>
+    {
+        await mixes.FeedbackAsync(user.Id, id, request, token);
+        return new { removed = request.SongId };
+    }, token);
+
+    [HttpGet("publish-setting")]
+    public Task<IActionResult> PublishSetting(CancellationToken token) => ExecuteAsync(async _ =>
+        new { enabled = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value, name = "Publish mixes to listeners' apps" }, token, true);
+
+    [HttpPut("publish-setting")]
+    public Task<IActionResult> SetPublishSetting(MixInApps request, CancellationToken token) => ExecuteAsync(async user =>
+        await settings.ApplyBatchAsync([new(PersonalMixService.PublishKey, request.Enabled ? "true" : "false")], "mixes", user.Id, token), token, true);
+
+    [HttpPost("dry-run")]
+    public Task<IActionResult> DryRun([FromQuery] Guid listenerId, [FromQuery] string? timeZoneId = null, CancellationToken token = default) =>
+        ExecuteAsync(async _ => await mixes.GenerateAsync(listenerId, dryRun: true, timeZoneId: timeZoneId, token: token), token, true);
+
+    private static object Card(PersonalMix mix, bool enabled) => new
+    {
+        mix.Id,
+        mix.Kind,
+        mix.Name,
+        mix.Description,
+        mix.UpdatedAt,
+        mix.Readiness,
+        inApps = enabled && mix.Generation > 0 && mix.Readiness.Ready && mix.ShowInApps,
+        mix.ShowInApps,
+        coverArtwork = mix.Songs.Take(4).Select(item => item.Song.Id).ToArray()
+    };
+
+    private async Task<IActionResult> ExecuteAsync(Func<UserRecord, Task<object>> action, CancellationToken token, bool administrator = false)
+    {
+        Response.Headers.CacheControl = "private, no-store";
+        if (HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] is not AdminAuthSession session ||
+            session.ExpiresAtUtc <= clock.UtcNow.UtcDateTime) return Unauthorized();
+        await using var db = await factory.CreateDbContextAsync(token);
+        var backend = session.BackendType.ToLowerInvariant();
+        var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == session.AllstarrUserId && item.Enabled &&
+            item.BackendType == backend && item.BackendInstanceId == session.BackendInstanceId &&
+            item.BackendPrincipalId == session.UserId && item.IsAdmin == session.IsAdministrator, token);
+        if (user == null || administrator && !user.IsAdmin) return StatusCode(403);
+        try { return Ok(await action(user)); }
+        catch (UnauthorizedAccessException) { return StatusCode(403); }
+        catch (KeyNotFoundException) { return NotFound(); }
+        catch (ArgumentException) { return BadRequest(new { error = "The mix request is invalid." }); }
+        catch (InvalidOperationException error) when (error.Message.StartsWith("Wait 15", StringComparison.Ordinal))
+        { return StatusCode(429, new { error = error.Message }); }
+    }
+}
+
+public sealed record MixInApps(bool Enabled);
