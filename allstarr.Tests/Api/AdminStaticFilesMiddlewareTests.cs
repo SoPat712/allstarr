@@ -143,6 +143,36 @@ public class AdminStaticFilesMiddlewareTests
         }
     }
 
+    [Theory]
+    [InlineData("ArchivoNarrow-Bold.woff2")]
+    [InlineData("CourierPrime-Regular.woff2")]
+    [InlineData("CourierPrime-Bold.woff2")]
+    public async Task InvokeAsync_AdminCoverFont_ServesFontContentTypeAndBytes(string filename)
+    {
+        var webRoot = CreateTempWebRoot();
+        var fonts = Path.Combine(webRoot, "fonts");
+        Directory.CreateDirectory(fonts);
+        byte[] expected = [0x77, 0x4f, 0x46, 0x32, 1, 2, 3, 4];
+        await File.WriteAllBytesAsync(Path.Combine(fonts, filename), expected);
+
+        try
+        {
+            var middleware = CreateMiddleware(webRoot, out var nextInvoked);
+            var context = CreateContext(localPort: 5275, path: "/fonts/" + filename);
+
+            await middleware.InvokeAsync(context);
+
+            Assert.False(nextInvoked());
+            Assert.Equal(StatusCodes.Status200OK, context.Response.StatusCode);
+            Assert.Equal("font/woff2", context.Response.ContentType);
+            Assert.Equal(expected, ((MemoryStream)context.Response.Body).ToArray());
+        }
+        finally
+        {
+            DeleteTempWebRoot(webRoot);
+        }
+    }
+
     [Fact]
     public async Task InvokeAsync_HashedAsset_ServesWithImmutableCaching()
     {

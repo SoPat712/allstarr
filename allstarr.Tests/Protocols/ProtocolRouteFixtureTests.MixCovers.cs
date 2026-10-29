@@ -110,6 +110,8 @@ public sealed partial class ProtocolRouteFixtureTests
             var path = request.RequestUri!.AbsolutePath;
             if (path == "/Users/Me") return Json(200, """{"Id":"user-1"}""");
             if (path == "/rest/ping.view") return Json(200, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""");
+            if (backend == "Jellyfin" && IsItemLookup(request, "native-playlist"))
+                return ItemLookup("""{"Id":"native-playlist","Type":"Playlist"}""");
             Assert.Equal(backend == "Jellyfin" ? "/Items/native-playlist/Images/Primary" : "/rest/getCoverArt", path);
             if (backend == "Subsonic") Assert.Contains($"id={id}", request.RequestUri.Query);
             relays++;

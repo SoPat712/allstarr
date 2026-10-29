@@ -2,14 +2,15 @@
   import type { MixCard } from "$lib/api";
   import { mixName, shortReadiness } from "$lib/for-you";
   import MixArtwork from "$lib/components/MixArtwork.svelte";
-  let { title, cards, onopen, seeAll = "", additions = [] }: { title: string; cards: MixCard[]; onopen: (card: MixCard) => void; seeAll?: string; additions?: string[] } = $props();
+  import MixCover from "$lib/components/MixCover.svelte";
+  let { title, cards, onopen, seeAll = "", additions = [], albumArt = false }: { title: string; cards: MixCard[]; onopen: (card: MixCard) => void; seeAll?: string; additions?: string[]; albumArt?: boolean } = $props();
 </script>
 <section>
   <header><h2>{title}</h2>{#if seeAll}<a href={seeAll}>See all</a>{/if}</header>
   <div class="mix-shelf" role="region" aria-label={title}>
     {#each cards as card (card.id)}
       <button type="button" class="mix-card" onclick={() => onopen(card)}>
-        <span class="cover"><MixArtwork references={card.coverArtwork} dim={!card.readiness.ready} />{#if additions.includes(card.id)}<span class="add-chip">Add</span>{/if}</span>
+        <span class="cover">{#if albumArt}<MixArtwork references={card.coverArtwork} />{:else}<MixCover mix={card} dim={!card.readiness.ready} />{/if}{#if additions.includes(card.id)}<span class="add-chip">Add</span>{/if}</span>
         <strong>{mixName(card.name)}</strong><span class="description">{card.readiness.ready ? card.description : shortReadiness(card.readiness.message)}</span>
         <small>{card.inApps ? "✓ In your apps" : ""}</small>
       </button>

@@ -297,6 +297,7 @@ public class AdminStaticFilesMiddleware
             ".gif" => "image/gif",
             ".svg" => "image/svg+xml",
             ".ico" => "image/x-icon",
+            ".woff2" => "font/woff2",
             _ => "application/octet-stream"
         };
     }

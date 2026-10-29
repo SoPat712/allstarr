@@ -93,7 +93,7 @@
     <MixShelf title="Moods" cards={moods} onopen={openMix} />
     <StartMix onsaved={async () => { await pending; await load(); }} />
     {#if custom.length}<MixShelf title="Your mixes" cards={custom} onopen={openMix} />{/if}
-    {#if releases.length}<MixShelf title="New releases" cards={releases} seeAll="#/for-you?section=releases" onopen={card => { window.location.hash = `#/for-you?section=releases&release=${encodeURIComponent(card.id)}`; }} />{/if}
+    {#if releases.length}<MixShelf title="New releases" cards={releases} albumArt seeAll="#/for-you?section=releases" onopen={card => { window.location.hash = `#/for-you?section=releases&release=${encodeURIComponent(card.id)}`; }} />{/if}
     {#if services.length}<MixShelf title="From your services" cards={services} additions={suggestions.map(item => item.id)} onopen={openMix} />{/if}
   {/if}
 </div>
@@ -104,7 +104,8 @@
 <ConfirmDialog bind:open={publishOpen} title="Show mixes in everyone's apps?" description="Each listener gets their own mixes as playlists in their music apps. They refresh automatically. Anyone can hide a mix from their apps." confirmLabel="Show in apps" confirmVariant="default" closeOnConfirm={false} disabled={busy} error={actionError} onConfirm={publish} />
 <ConfirmDialog bind:open={() => Boolean(external), value => { if (!value) external = null; }} onConfirm={addExternal} title="Keep this in your apps?" description={`It updates when ${external?.sourceLabel ?? "your service"} makes a new one.`} confirmLabel="Keep in apps" confirmVariant="default" closeOnConfirm={false} disabled={busy} error={actionError} />
 <style>
-  .for-you { display: grid; gap: var(--space-6); min-width: 0; }
+  .for-you { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-6); min-width: 0; }
+  .for-you > :global(section) { min-width: 0; }
   .section-heading, header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
   h2 { font-size: 1.125rem; font-weight: 600; }
   .section-heading p, .muted, .empty { color: var(--color-ink-muted); }
