@@ -19,9 +19,30 @@ internal sealed record ActivityJobDisplay(
 
 internal static class ActivityJobPresentation
 {
+    private static readonly string[] RoutineJobTypes =
+    [
+        "recording.tags.refresh", "recording.musicbrainz.enrich", "recording.odesli.enrich",
+        "listening.musicbrainz.enrich", "favorite.display-backfill", "health.cleanup", "recording.kept-cleanup"
+    ];
+    private static readonly string[] FailureOutcomes = ["failed", "failure", "error", "retry_scheduled", "interrupted"];
     private static readonly HashSet<string> KnownHealthSteps = HealthSmokeServerProbe.StepNames.Concat(HealthSmokeProtocolProbe.StepNames).ToHashSet(StringComparer.Ordinal);
     private sealed record FavoriteContext(Guid OwnerUserId, string ItemId, string? Operation, string? Title, string? Artist);
     private sealed record HealthContext(Guid OwnerUserId, HealthSmokeRunRecord Run);
+
+    public static IQueryable<DurableJobRecord> HistoryJobs(IQueryable<DurableJobRecord> jobs) => jobs.Where(job =>
+        !RoutineJobTypes.Contains(job.Type.ToLower()) || job.State == DurableJobState.Failed ||
+        job.State == DurableJobState.RetryScheduled && (job.LastAttemptOutcome == null || job.LastAttemptOutcome.ToLower() != "deferred") ||
+        job.LastAttemptOutcome != null && FailureOutcomes.Contains(job.LastAttemptOutcome.ToLower()));
+
+    public static IQueryable<AuditEventRecord> HistoryAudits(IQueryable<AuditEventRecord> audits, IQueryable<DurableJobRecord> jobs) => audits.Where(audit =>
+        audit.Category != "job-attempt" && audit.Category != "job-progress" || FailureOutcomes.Contains(audit.Outcome.ToLower()) ||
+        !jobs.Any(job => RoutineJobTypes.Contains(job.Type.ToLower()) && job.OwnerUserId == audit.ActorUserId &&
+            audit.SubjectType == "job" && audit.SubjectId != null &&
+            audit.SubjectId.Replace("-", "").ToUpper() == job.Id.ToString().Replace("-", "").ToUpper()));
+
+    public static bool ShowAuditInHistory(AuditEventRecord audit, DurableJobRecord job) =>
+        audit.Category is not ("job-attempt" or "job-progress") || !RoutineJobTypes.Contains(job.Type, StringComparer.OrdinalIgnoreCase) ||
+        FailureOutcomes.Contains(audit.Outcome, StringComparer.OrdinalIgnoreCase);
 
     public static async Task<IReadOnlyDictionary<Guid, ActivityJobDisplay>> ResolveAsync(
         AllstarrDbContext db, IReadOnlyCollection<DurableJobRecord> jobs,
@@ -302,13 +323,25 @@ internal static class ActivityJobPresentation
         "favorite.process" => "Favorite update",
         SpotifyLikesImport.Type => "Import Spotify likes",
         "favorite.display-backfill" => "Favorite metadata update",
+        "favorite.link-union" => "Merge linked favorites",
         "playlist.materialize" => "Playlist sync",
+        "playlist.provider-source-update" => "Update source playlist",
         "playlist.retain-track" => "Keep playlist song",
         "playback.signal" or "playback.signal.process" => "Record a listen",
+        "listening-history.import" => "History import",
+        "listening.musicbrainz.enrich" => "Identify listened song",
         "recording.keep" => "Keep a song",
         "recording.kept-cleanup" => "Remove unused kept copy",
+        "recording.tags.refresh" => "Song details updated",
         "recording.musicbrainz.enrich" => "Identify recording",
         "recording.odesli.enrich" => "Find recording links",
+        "downloads.quality-check" => "Audio quality check",
+        "extension.session.verify" => "Verify source sign-in",
+        "problem-alert.delivery" => "Send problem alert",
+        "recommendation.generate" => "Generate recommendations",
+        "storage.verify-files" => "Verify stored files",
+        "configuration.legacy-media" => "Import existing media",
+        "releases.poll" => "Check new releases",
         "track-match.rematch" => "Refresh matches",
         "library.index" => "Refresh library index",
         _ => "Background task"

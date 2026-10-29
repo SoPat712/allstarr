@@ -152,6 +152,23 @@ public sealed partial class JobsControllerTests
     [InlineData("playlist.retain-track", "Keep playlist song")]
     [InlineData("playback.signal", "Record a listen")]
     [InlineData("playback.signal.process", "Record a listen")]
+    [InlineData("recording.tags.refresh", "Song details updated")]
+    [InlineData("recording.musicbrainz.enrich", "Identify recording")]
+    [InlineData("recording.odesli.enrich", "Find recording links")]
+    [InlineData("listening.musicbrainz.enrich", "Identify listened song")]
+    [InlineData("favorite.display-backfill", "Favorite metadata update")]
+    [InlineData("favorite.link-union", "Merge linked favorites")]
+    [InlineData("health.cleanup", "Health cleanup")]
+    [InlineData("recording.kept-cleanup", "Remove unused kept copy")]
+    [InlineData("listening-history.import", "History import")]
+    [InlineData("downloads.quality-check", "Audio quality check")]
+    [InlineData("extension.session.verify", "Verify source sign-in")]
+    [InlineData("problem-alert.delivery", "Send problem alert")]
+    [InlineData("recommendation.generate", "Generate recommendations")]
+    [InlineData("playlist.provider-source-update", "Update source playlist")]
+    [InlineData("storage.verify-files", "Verify stored files")]
+    [InlineData("configuration.legacy-media", "Import existing media")]
+    [InlineData("releases.poll", "Check new releases")]
     public async Task JobPresentation_UsesReadableNamesForKnownJobTypes(string type, string expected)
     {
         await using (var db = await _factory.CreateDbContextAsync())
@@ -167,6 +184,8 @@ public sealed partial class JobsControllerTests
             .GetProperty("displayName").GetString()!;
         Assert.Equal(expected, displayName);
         Assert.DoesNotContain(type, displayName, StringComparison.OrdinalIgnoreCase);
+        using var detail = Json(await Controller(Session(_userId)).Get(_ownJobId));
+        Assert.Equal(expected, detail.RootElement.GetProperty("job").GetProperty("displayName").GetString());
     }
 
     [Fact]
