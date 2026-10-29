@@ -25,6 +25,10 @@ public sealed partial class TrackIdentityService
             song.Title,
             song.Artist,
             song.Album,
+            song.Genre,
+            song.Genres,
+            song.ArtistId,
+            song.ArtistIds,
             song.Isrc,
             DurationMilliseconds = song.PreciseDuration is { } precise ? (long?)precise.TotalMilliseconds : song.Duration is { } seconds ? seconds * 1000L : null,
             song.ExplicitContentLyrics

@@ -211,7 +211,8 @@ public sealed partial class ProtocolProviderGateway(
     RecordingKeptFiles? keptFiles = null,
     TimeProvider? timeProvider = null,
     IOptions<CacheSettings>? searchSettings = null,
-    IProviderAudioVerifier? audioVerifier = null) : IProtocolProviderGateway
+    IProviderAudioVerifier? audioVerifier = null,
+    Enrichment.SharedTagQueue? sharedTags = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
     private readonly IProviderAudioVerifier streamVerifier = audioVerifier ?? new ProviderAudioVerifier();
@@ -2440,6 +2441,7 @@ public sealed partial class ProtocolProviderGateway(
         ExternalProvider = PublicProviderId(item.Id),
         ExternalId = item.Id.Value,
         Name = item.Name,
+        Genres = item.Genres.ToList(),
         Biography = item.Biography,
         ProviderIds = new Dictionary<string, string>(item.ProviderIds, StringComparer.Ordinal),
         LastFmUrl = item.LastFmUrl,

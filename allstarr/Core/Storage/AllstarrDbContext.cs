@@ -90,6 +90,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         modelBuilder.ConfigureDownloadedSongMappings();
         ConfigureMetadataEnrichment(modelBuilder);
         ConfigurePromotions(modelBuilder);
+        ConfigureSharedTags(modelBuilder);
         IntelligenceModelConfiguration.Configure(modelBuilder);
         modelBuilder.ConfigurePlaybackDeliveryCheckpoints();
         ConfigureOperations(modelBuilder);

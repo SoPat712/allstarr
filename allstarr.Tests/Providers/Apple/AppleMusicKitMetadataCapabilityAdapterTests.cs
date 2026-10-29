@@ -198,6 +198,7 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
         Assert.Equal("2024-02-29", album.RequireValue().ReleaseDate);
         Assert.Equal("2024-02-29", albums.RequireValue().Items[0].ReleaseDate);
         Assert.Equal("Library Artist", artist.RequireValue().Name);
+        Assert.Equal(["Hip Hop", "Soul"], artist.RequireValue().Genres);
         Assert.Equal("https://is1-ssl.mzstatic.com/image/thumb/library/1024x1024bb.jpg",
             track.RequireValue().Artwork?.PublicUri?.ToString());
         Assert.Equal("https://is1-ssl.mzstatic.com/image/thumb/library/1024x1024bb.jpg",
@@ -403,7 +404,7 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
             {
                 id,
                 type,
-                attributes = new { name = "Library Artist" }
+                attributes = new { name = "Library Artist", genreNames = new[] { "Hip Hop", "Soul" } }
             },
             _ => new
             {

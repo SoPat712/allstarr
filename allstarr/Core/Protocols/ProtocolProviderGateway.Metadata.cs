@@ -65,6 +65,12 @@ public sealed partial class ProtocolProviderGateway
         {
             await CacheMetadataAsync(context, ProviderResourceKind.Artist, artist.ExternalId!, artist);
             if (detail) await CacheMetadataAsync(context, ProviderResourceKind.Artist, artist.ExternalId!, artist, true);
+            if (sharedTags != null && artist.Genres.Count > 0 && context.Actor.EffectiveUserId is { } owner)
+            {
+                try { await sharedTags.CaptureArtistAsync(owner, artist, context.ProviderId, context.CancellationToken); }
+                catch (Exception error) when (error is not OperationCanceledException)
+                { logger?.LogDebug("Could not retain artist genres ({ErrorType})", error.GetType().Name); }
+            }
         }
     }
 

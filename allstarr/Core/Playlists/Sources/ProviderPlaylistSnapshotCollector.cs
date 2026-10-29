@@ -37,6 +37,7 @@ public sealed record CollectedPlaylistSourceEntry(
     public string? Genre { get; init; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? MusicBrainzRecordingId { get; init; }
+    public IReadOnlyList<string> Genres { get; init; } = [];
 }
 
 public sealed record CollectedPlaylistSourceSnapshot(
@@ -229,7 +230,8 @@ public sealed class ProviderPlaylistSnapshotCollector
             Genre = metadata?.Genre,
             MusicBrainzRecordingId = metadata != null && (metadata.ProviderIds.TryGetValue("musicbrainzrecording", out var mbid) ||
                 metadata.ProviderIds.TryGetValue("musicbrainz", out mbid)) &&
-                Guid.TryParse(mbid, out var recording) && recording != Guid.Empty ? recording.ToString("D") : null
+                Guid.TryParse(mbid, out var recording) && recording != Guid.Empty ? recording.ToString("D") : null,
+            Genres = metadata?.Genres ?? []
         };
     }
 

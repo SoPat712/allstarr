@@ -259,7 +259,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
               getAlbum:function(){return {id:'album-1',title:'Album',artists:[{id:'artist-1',name:'Artist'}],
                 trackCount:8,releaseDate:'2026-02-03',genre:'Pop',label:'Label',description:'Album notes',
                 providerIds:{spotify:'spotify-album'},tracks:[{id:'track-1',name:'Song',artists:'Artist'}]};},
-              getArtist:function(){return {id:'artist-1',name:'Artist',biography:'Artist biography',
+              getArtist:function(){return {id:'artist-1',name:'Artist',biography:'Artist biography',genres:['Hip Hop','Soul'],
                 providerIds:{musicbrainz:'artist-mbid'},lastFmUrl:'https://www.last.fm/music/Artist'};}
             });
             """;
@@ -294,6 +294,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
         Assert.Equal("spotify-album", album.ProviderIds["spotify"]);
         Assert.Single(album.Tracks);
         Assert.Equal("Artist biography", artist.Biography);
+        Assert.Equal(["Hip Hop", "Soul"], artist.Genres);
         Assert.Equal("artist-mbid", artist.ProviderIds["musicbrainz"]);
         Assert.Equal("https://www.last.fm/music/Artist", artist.LastFmUrl);
     }

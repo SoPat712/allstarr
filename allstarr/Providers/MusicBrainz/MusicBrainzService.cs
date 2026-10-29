@@ -161,7 +161,7 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         return await GetCachedAsync(
             key,
             token => GetJsonAsync<MusicBrainzArtist>(
-                $"artist/{normalized}?fmt=json&inc=aliases",
+                $"artist/{normalized}?fmt=json&inc=aliases+genres+tags",
                 token),
             cancellationToken);
     }
@@ -656,6 +656,10 @@ public sealed class MusicBrainzArtist
     public string? Disambiguation { get; set; }
     [JsonPropertyName("aliases")]
     public List<MusicBrainzAlias>? Aliases { get; set; }
+    [JsonPropertyName("genres")]
+    public List<MusicBrainzGenre>? Genres { get; set; }
+    [JsonPropertyName("tags")]
+    public List<MusicBrainzTag>? Tags { get; set; }
 }
 
 public sealed class MusicBrainzAlias
@@ -710,6 +714,10 @@ public sealed class MusicBrainzReleaseGroup
     public List<MusicBrainzArtistCredit>? ArtistCredit { get; set; }
     [JsonPropertyName("aliases")]
     public List<MusicBrainzAlias>? Aliases { get; set; }
+    [JsonPropertyName("genres")]
+    public List<MusicBrainzGenre>? Genres { get; set; }
+    [JsonPropertyName("tags")]
+    public List<MusicBrainzTag>? Tags { get; set; }
 }
 
 public sealed class MusicBrainzMedium
@@ -765,6 +773,7 @@ public sealed class MusicBrainzGenre
     [JsonPropertyName("name")]
     public string? Name { get; set; }
     [JsonPropertyName("count")]
+    [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
     public int Count { get; set; }
 }
 
@@ -773,6 +782,7 @@ public sealed class MusicBrainzTag
     [JsonPropertyName("name")]
     public string? Name { get; set; }
     [JsonPropertyName("count")]
+    [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
     public int Count { get; set; }
 }
 
