@@ -4,6 +4,7 @@ using allstarr.Core.Intelligence;
 using allstarr.Core.Configuration;
 using allstarr.Core.Health;
 using allstarr.Core.Operations;
+using allstarr.Core.Releases;
 using allstarr.Core.Storage;
 using Cronos;
 using Microsoft.EntityFrameworkCore;
@@ -156,6 +157,16 @@ public sealed class DurableScheduleEngine
                 if (_backups == null || schedule.OwnerUserId != null || schedule.Id != DurableBackupService.ScheduleId)
                     throw new InvalidOperationException("The backup schedule is invalid.");
             }
+            else if (jobType == NewReleasesService.JobType)
+            {
+                if (!await context.Users.AnyAsync(item => item.Id == schedule.OwnerUserId && item.Enabled, cancellationToken))
+                {
+                    schedule.Enabled = false;
+                    await context.SaveChangesAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                    return default;
+                }
+            }
             else if (jobType != HealthSmokeService.JobType)
                 throw new InvalidOperationException("The enabled schedule job type is unsupported.");
 
@@ -201,6 +212,10 @@ public sealed class DurableScheduleEngine
                 }
                 else if (jobType == DurableBackupService.JobType)
                     shouldEnqueue = await _backups!.ReserveScheduledAsync(context, schedule, dueAt, cancellationToken);
+                else if (jobType == NewReleasesService.JobType)
+                    await _queue.EnqueueInExistingTransactionAsync(context,
+                        new DurableJobEnqueueRequest<object>(jobType, $"{idempotencyPrefix}{dueAt.UtcTicks}",
+                            new { }, schedule.OwnerUserId, MaxDeferrals: 10000), cancellationToken);
                 else if (health != null)
                     await _queue.EnqueueInExistingTransactionAsync(context,
                         new DurableJobEnqueueRequest<HealthSmokeJobPayload>(HealthSmokeService.JobType,

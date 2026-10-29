@@ -20,36 +20,25 @@ public sealed class UpcomingSongPreparation(
     private readonly Dictionary<DeviceKey, DeviceState> devices = [];
     private readonly HashSet<Task> work = [];
     private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
-    private int running;
-
-    public void RememberPlaylist(ProtocolExecutionContext context, IEnumerable<string> items)
-    {
-        if (Key(context, null) is not { } key) return;
-        lock (gate)
-        {
-            var state = Get(key);
-            state.Playlist = items.Take(10000).ToArray();
-            state.PlaylistAt = clock.GetUtcNow();
-        }
-    }
+    private readonly HashSet<Guid> runningListeners = [];
 
     public void RememberQueue(ProtocolExecutionContext context, string? current, IReadOnlyList<string> next)
     {
-        if (Key(context, null) is not { } key) return;
+        if (!settings.Value.PrepareUpcomingSongs || Key(context, null) is not { } key) return;
         lock (gate)
         {
             var state = Get(key);
+            var previousCurrent = state.QueueCurrent;
             state.QueueCurrent = current;
-            state.HasReportedQueue = true;
-            state.QueueNext = next.Take(2).ToArray();
-            if (state.Current != current || !state.Next.SequenceEqual(state.QueueNext))
+            state.QueueNext = next.Take(10000).ToArray();
+            if (previousCurrent != current || state.Current != current || !state.Next.SequenceEqual(state.QueueNext))
             {
                 state.Cancel();
                 state.Cancellation = new();
                 state.Attempted.Clear();
             }
             state.Next = state.Current == current ? state.QueueNext : [];
-            if (state.Context == null) state.PlaylistAt = clock.GetUtcNow();
+            if (state.Context == null) state.ObservedAt = clock.GetUtcNow();
         }
     }
 
@@ -68,19 +57,15 @@ public sealed class UpcomingSongPreparation(
             if (transition is not (PlaybackTransition.Start or PlaybackTransition.Progress or PlaybackTransition.InferredStart)) return;
             var state = Get(key);
             var now = clock.GetUtcNow();
-            var samePlayback = state.Current == current && state.Session == sessionId;
-            if (!samePlayback) state.HasReportedQueue = false;
-            if (next != null) state.HasReportedQueue = true;
-            if (next == null && samePlayback && state.HasReportedQueue) next = state.Next;
-            if (next == null && state.QueueCurrent == current)
+            var samePlayback = state.Current == current && state.Session == sessionId &&
+                !(positionTicks is { } position && state.PositionTicks is { } previous && position < previous);
+            if (!samePlayback && state.Current == current)
             {
-                next = state.QueueNext;
-                state.HasReportedQueue = true;
+                state.QueueCurrent = null;
+                state.QueueNext = [];
             }
-            next ??= now - state.PlaylistAt < TimeSpan.FromMinutes(10)
-                ? UpcomingPlaybackQueue.After(state.Playlist, current) : [];
-            var upcoming = next.Where(id => !string.IsNullOrWhiteSpace(id) && id.Length <= 500)
-                .Take(2).ToArray();
+            next ??= samePlayback ? state.Next : state.QueueCurrent == current ? state.QueueNext : [];
+            var upcoming = next.Take(10000).ToArray();
             var source = activity?.StreamFor(key.Owner, key.Device, current);
             var quality = context.Policy?.AudioQuality == "DataSaver" ? ProviderAudioQuality.DataSaver :
                 source?.Matches(context.Protocol.ToString().ToLowerInvariant(), context.BackendInstanceId) == true
@@ -91,8 +76,8 @@ public sealed class UpcomingSongPreparation(
                 state.Cancel();
                 state.Cancellation = new();
                 state.Attempted.Clear();
-                state.StartedAt = now;
             }
+            if (!samePlayback || state.Paused != paused) state.StartedAt = now;
             state.Current = current;
             state.Session = sessionId;
             state.Next = upcoming;
@@ -113,44 +98,35 @@ public sealed class UpcomingSongPreparation(
             {
                 if (!settings.Value.PrepareUpcomingSongs ||
                     state.Context != null && now - state.ObservedAt >= TimeSpan.FromMinutes(2) ||
-                    state.Context == null && now - state.PlaylistAt >= TimeSpan.FromMinutes(10))
+                    state.Context == null && now - state.ObservedAt >= TimeSpan.FromMinutes(10))
                 {
                     state.Cancel();
                     devices.Remove(key);
                     continue;
                 }
-                var count = Math.Clamp(settings.Value.PrepareUpcomingCount, 1, 2);
-                if (state.Limit != 0 && state.Limit != count)
-                {
-                    state.Cancel();
-                    state.Cancellation = new();
-                    state.Attempted.Clear();
-                }
-                state.Limit = count;
                 if (state.Context == null || state.Paused || state.Quality == ProviderAudioQuality.DataSaver ||
-                    (state.PositionTicks is { } ticks ? ticks < TimeSpan.FromSeconds(10).Ticks :
-                        now - state.StartedAt < TimeSpan.FromSeconds(10))) continue;
-                foreach (var item in state.Next.Take(count))
+                    (state.PositionTicks is { } ticks ? ticks < TimeSpan.FromSeconds(30).Ticks :
+                        now - state.StartedAt < TimeSpan.FromSeconds(30))) continue;
+                if (runningListeners.Count >= 2 || runningListeners.Contains(key.Owner)) continue;
+                var item = state.Next.FirstOrDefault();
+                if (string.IsNullOrWhiteSpace(item) || item.Length > 500 ||
+                    !state.Attempted.Add(item) || activity?.WasStreamOpened(item) == true) continue;
+                var original = state.Context;
+                var context = new ProtocolExecutionContext(original.Protocol, original.BackendInstanceId,
+                    original.VerifiedBackendPrincipalId, original.Principal, original.CorrelationId,
+                    now.AddMinutes(3), state.Cancellation.Token,
+                    original.Client)
+                { Policy = original.Policy, RequestedItemId = item, IsPreparation = true, PreparationQuality = state.Quality };
+                runningListeners.Add(key.Owner);
+                var task = Task.Run(async () =>
                 {
-                    if (running >= 2) break;
-                    if (!state.Attempted.Add(item) || activity?.WasStreamOpened(item) == true) continue;
-                    var original = state.Context;
-                    var context = new ProtocolExecutionContext(original.Protocol, original.BackendInstanceId,
-                        original.VerifiedBackendPrincipalId, original.Principal, original.CorrelationId,
-                        now.AddMinutes(3), state.Cancellation.Token,
-                        original.Client)
-                    { Policy = original.Policy, RequestedItemId = item, IsPreparation = true, PreparationQuality = state.Quality };
-                    running++;
-                    var task = Task.Run(async () =>
-                    {
-                        try { await preparation.PrepareAsync(context, item); }
-                        catch { /* Optional preparation never changes playback. */ }
-                        finally { lock (gate) running--; }
-                    });
-                    work.Add(task);
-                    _ = task.ContinueWith(completed => { lock (gate) work.Remove(completed); },
-                        CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-                }
+                    try { await preparation.PrepareAsync(context, item); }
+                    catch { /* Optional preparation never changes playback. */ }
+                    finally { lock (gate) runningListeners.Remove(key.Owner); }
+                });
+                work.Add(task);
+                _ = task.ContinueWith(completed => { lock (gate) work.Remove(completed); },
+                    CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
             }
         }
     }
@@ -194,7 +170,7 @@ public sealed class UpcomingSongPreparation(
         if (devices.TryGetValue(key, out var state)) return state;
         if (devices.Count >= 256)
         {
-            var oldest = devices.MinBy(pair => pair.Value.Context == null ? pair.Value.PlaylistAt : pair.Value.ObservedAt);
+            var oldest = devices.MinBy(pair => pair.Value.ObservedAt);
             oldest.Value.Cancel();
             devices.Remove(oldest.Key);
         }
@@ -209,19 +185,15 @@ public sealed class UpcomingSongPreparation(
     private sealed record DeviceKey(Guid Owner, ProtocolKind Protocol, string Backend, string Device);
     private sealed class DeviceState
     {
-        public string[] Playlist = [];
-        public DateTimeOffset PlaylistAt;
         public string? Current;
         public string? Session;
         public string[] Next = [];
-        public bool HasReportedQueue;
         public string? QueueCurrent;
         public string[] QueueNext = [];
         public ProtocolExecutionContext? Context;
         public DateTimeOffset StartedAt;
         public DateTimeOffset ObservedAt;
         public long? PositionTicks;
-        public int Limit;
         public bool Paused;
         public ProviderAudioQuality Quality;
         public CancellationTokenSource Cancellation = new();

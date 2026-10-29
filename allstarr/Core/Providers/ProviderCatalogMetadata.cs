@@ -129,7 +129,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         (catalog, token) => catalog.GetArtistAsync(ProviderId, request.Id.Value, token),
         MapArtist);
 
-    public Task<ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>> GetArtistAlbumsAsync(
+    public virtual Task<ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>> GetArtistAlbumsAsync(
         ProviderExecutionContext context,
         ProviderArtistItemsRequest request) => ExecuteCollectionPageAsync(
         context,
@@ -318,7 +318,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         }
     }
 
-    private static IReadOnlyList<TTarget> MapValid<TLegacy, TTarget>(
+    internal static IReadOnlyList<TTarget> MapValid<TLegacy, TTarget>(
         IEnumerable<TLegacy> values,
         Func<TLegacy, TTarget> map)
     {
@@ -454,7 +454,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
             string.IsNullOrEmpty(codec) ? "unknown" : codec, bitrate, sampleRate, bitDepth, channels);
     }
 
-    private ProviderAlbumMetadata MapAlbum(Album album)
+    internal ProviderAlbumMetadata MapAlbum(Album album)
     {
         if (album.Artists.Count == 0 && string.IsNullOrWhiteSpace(album.Artist))
             throw new InvalidOperationException($"The {ProviderId} album has no artist credit.");
@@ -479,7 +479,9 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
             lastFmUrl: album.LastFmUrl,
             isExplicit: album.IsExplicit,
             upc: album.Upc,
-            edition: album.Edition);
+            edition: album.Edition,
+            releaseType: album.ReleaseType,
+            exclusionReason: album.ExclusionReason);
     }
 
     private ProviderArtistMetadata MapArtist(Artist artist) => new(

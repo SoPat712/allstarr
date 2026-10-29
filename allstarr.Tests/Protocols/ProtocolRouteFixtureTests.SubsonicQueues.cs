@@ -26,6 +26,38 @@ public sealed partial class ProtocolRouteFixtureTests
     private static readonly string[] QueueIds = ["native", QueueSongA, QueueSongA, QueueSongB];
     private const string NativeQueueSong = """{"id":"native", "title":"Native", "isDir":false,"contentType":"audio/mpeg","future":{"value":1.00,"text":"keep"}}""";
 
+    [Fact]
+    public async Task SubsonicQueue_NativePlaybackReportsPrepareTheClientNextSongAndCancelOnSkip()
+    {
+        var audioMuse = new Mock<IAudioMuseRecommendationClient>(MockBehavior.Strict);
+        audioMuse.SetupGet(service => service.IsAvailable).Returns(false);
+        var prepared = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var preparation = new Mock<IUpcomingTrackPreparation>(MockBehavior.Strict);
+        preparation.Setup(service => service.PrepareAsync(It.IsAny<ProtocolExecutionContext>(), QueueSongB))
+            .Callback<ProtocolExecutionContext, string>((context, _) => prepared.TrySetResult(context.CancellationToken))
+            .Returns(Task.CompletedTask);
+        using var upcoming = new UpcomingSongPreparation(preparation.Object,
+            Options.Create(new PlaybackSettings { PrepareUpcomingSongs = true }));
+        using var factory = QueueFactory(QueueGateway(), services =>
+        {
+            SonicServices(audioMuse.Object)(services);
+            services.RemoveAll<UpcomingSongPreparation>();
+            services.AddSingleton(upcoming);
+        });
+        using var client = factory.CreateClient();
+        AssertQueueOk(await SaveQueue(client, "savePlayQueue", "json", true,
+            ["native", QueueSongB], "current", "native", "0", "Feishin"), "json");
+        var url = QueueUrl("reportPlayback", "json", "Feishin");
+        AssertQueueOk(await client.GetStringAsync(url + "&mediaId=native&state=playing&positionMs=29000"), "json");
+        upcoming.ProcessPending();
+        Assert.False(prepared.Task.IsCompleted);
+        AssertQueueOk(await client.GetStringAsync(url + "&mediaId=native&state=playing&positionMs=30000"), "json");
+        upcoming.ProcessPending();
+        var token = await prepared.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        AssertQueueOk(await client.GetStringAsync(url + "&mediaId=different-native&state=starting&positionMs=0"), "json");
+        Assert.True(token.IsCancellationRequested);
+    }
+
     [Theory]
     [InlineData("json", false)]
     [InlineData("xml", false)]
@@ -58,7 +90,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var context = Assert.IsType<ProtocolExecutionContext>(gateway.Invocations[0].Arguments[0]);
         Assert.NotNull(context.Actor);
         upcoming.Observe(context, PlaybackTransition.Progress, QueueSongA, context.Client.DeviceId ?? context.Client.ClientId, null,
-            TimeSpan.FromSeconds(10).Ticks);
+            TimeSpan.FromSeconds(30).Ticks);
         upcoming.ProcessPending();
         Assert.Equal(QueueSongB, await prepared.Task.WaitAsync(TimeSpan.FromSeconds(5)));
         preparation.VerifyAll();
@@ -416,6 +448,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var format = query["f"] == "xml" ? "xml" : "json";
         var path = request.RequestUri.AbsolutePath;
         if (path == "/rest/ping.view") return Json(200, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""");
+        if (path == "/rest/reportPlayback.view") return Json(200, """{"subsonic-response":{"status":"ok"}}""");
         if (path == "/rest/getSong.view")
         {
             Assert.Equal("native", query["id"].ToString());

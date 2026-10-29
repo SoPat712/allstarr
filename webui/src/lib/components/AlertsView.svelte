@@ -227,7 +227,7 @@
           <small>{editing?.hasDestination ? `Saved${savedHost(editing) ? ` · ${savedHost(editing)}` : ""}. Leave blank to keep this destination.` : "Enter the ntfy topic URL, Discord webhook URL, or webhook destination URL."}</small></label>
         <label class="alert-enabled"><span class="settings-toggle"><Checkbox aria-label="Channel enabled" bind:checked={enabled} disabled={Boolean(action)} /></span><span>Channel enabled</span></label>
         {#if editorError}<p class="notice-error" role="alert">{editorError}</p>{/if}
-        <footer class="dialog-actions"><Dialog.Close class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</Dialog.Close>
+        <footer class="dialog-actions"><Dialog.Close type="button" class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</Dialog.Close>
           <Button type="submit" disabled={Boolean(action) || !validChannel}>{action === "channel" ? "Saving…" : "Save channel"}</Button></footer>
       </form>
     </Dialog.Content>

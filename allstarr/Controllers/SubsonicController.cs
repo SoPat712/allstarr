@@ -1272,6 +1272,11 @@ public partial class SubsonicController : ControllerBase
                 parameters,
                 HttpContext.RequestAborted,
                 Request.Headers);
+            if (endpoint == "rest/savePlayQueue" && UpcomingPlaybackQueue.IsSuccessfulSubsonicSave(result))
+            {
+                var queue = UpcomingPlaybackQueue.ParseSubsonic(parameters, false);
+                _upcomingSongs?.RememberQueue(CurrentProtocolContext, queue.Current, queue.Next);
+            }
             return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
         catch (HttpRequestException ex)

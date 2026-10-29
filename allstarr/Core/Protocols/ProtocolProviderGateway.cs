@@ -2419,6 +2419,8 @@ public sealed partial class ProtocolProviderGateway(
             IsExplicit = item.IsExplicit,
             Upc = item.Upc,
             Edition = item.Edition,
+            ReleaseType = item.ReleaseType,
+            ExclusionReason = item.ExclusionReason,
             Notes = item.Notes,
             ProviderIds = new Dictionary<string, string>(item.ProviderIds, StringComparer.Ordinal),
             LastFmUrl = item.LastFmUrl,

@@ -182,7 +182,7 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
                 File.Move(path, path + $".legacy-id3-{Guid.NewGuid():N}");
                 return null;
             }
-            file = await OpenPinnedAudioAsync(path, cancellationToken);
+            file = await OpenPinnedAudioAsync(path, cancellationToken, preparation);
             if (file.Length == 0) { file.Dispose(); return null; }
             if (originalMapping != null && !await VerifyOriginalCacheAsync(file, originalMapping, cancellationToken)) return null;
             var extension = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
@@ -903,8 +903,23 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
             owner.completedMedia.Set(final, FileFacts.Measured ?? new TrackMediaFacts(Media, available),
                 new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1) });
             FileFacts.Media = Media;
-            await owner.localLibrary.RegisterDownloadedSongAsync(scope, song, final);
-            await owner.MarkAudioPublishedAsync(allocation, scope, provider, track, cancel.Token);
+            if (preparation) await owner.audioBudgetGate.WaitAsync(cancel.Token);
+            try
+            {
+                await owner.localLibrary.RegisterDownloadedSongAsync(scope, song, final);
+                var preparedUnplayed = false;
+                if (preparation)
+                {
+                    lock (gate)
+                    {
+                        // Subsequent readers use the completed file after its ownership stamp is saved.
+                        retired = true;
+                        preparedUnplayed = !playbackOwned;
+                    }
+                }
+                await owner.MarkAudioPublishedAsync(allocation, scope, provider, track, preparedUnplayed, cancel.Token);
+            }
+            finally { if (preparation) owner.audioBudgetGate.Release(); }
             if (!preparation)
                 owner.logger.LogInformation("Published completed provider stream to the managed track cache for {ProviderId}", provider);
             return true;

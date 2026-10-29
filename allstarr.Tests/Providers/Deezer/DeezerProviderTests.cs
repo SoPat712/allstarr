@@ -146,6 +146,24 @@ public class DeezerProviderTests
         Assert.False(result[0].IsLocal);
     }
 
+    [Theory]
+    [InlineData("\"record_type\":\"SINGLE\",", "single", null)]
+    [InlineData("\"record_type\":\"ep\",", "ep", null)]
+    [InlineData("\"record_type\":\"compilation\",", "compilation", "compilation")]
+    [InlineData("", null, null)]
+    public async Task Album_search_retains_release_type_without_inventing_missing_evidence(
+        string evidence, string? releaseType, string? exclusionReason)
+    {
+        SetupHttpResponse($$$"""
+            {"data":[{"id":456789,"title":"Album",{{{evidence}}}"artist":{"id":123,"name":"Artist"}}]}
+            """);
+
+        var album = Assert.Single((await _service.SearchAlbumsAsync(PublicContext(), new("album", new(1)))).RequireValue().Items);
+
+        Assert.Equal(releaseType, album.ReleaseType);
+        Assert.Equal(exclusionReason, album.ExclusionReason);
+    }
+
     [Fact]
     public async Task SearchArtistsAsync_ReturnsListOfArtists()
     {
@@ -439,7 +457,7 @@ public class DeezerProviderTests
     {
         var albumJson = $$$"""
             {"id":456789,"title":"Album","artist":{"id":123,"name":"Artist"},{{{rating}}}
-              "upc":"0123456789012","edition":"Deluxe","nb_tracks":1,"release_date":"2026-09-04",
+              "upc":"0123456789012","edition":"Deluxe","record_type":"COMPILE","nb_tracks":1,"release_date":"2026-09-04",
               "tracks":{"data":[{"id":111,"title":"Song","duration":180,"explicit_lyrics":true,"explicit_content_lyrics":1,
                 "artist":{"id":123,"name":"Artist"},"album":{"id":456789,"title":"Album"}}]}}
             """;
@@ -454,11 +472,15 @@ public class DeezerProviderTests
         Assert.Equal(expectedExplicit, legacy.IsExplicit);
         Assert.Equal("0123456789012", legacy.Upc);
         Assert.Equal("Deluxe", legacy.Edition);
+        Assert.Equal("compilation", legacy.ReleaseType);
+        Assert.Equal("compilation", legacy.ExclusionReason);
         foreach (var album in new[] { searched, full })
         {
             Assert.Equal(expectedExplicit, album.IsExplicit);
             Assert.Equal("0123456789012", album.Upc);
             Assert.Equal("Deluxe", album.Edition);
+            Assert.Equal("compilation", album.ReleaseType);
+            Assert.Equal("compilation", album.ExclusionReason);
         }
         Assert.True(Assert.Single(full.Tracks).IsExplicit);
     }
@@ -600,6 +622,61 @@ public class DeezerProviderTests
         Assert.Equal(["Track 1", "Track 2"], result.Songs.Select(song => song.Title));
         Assert.Contains("/album/456789/tracks?index=0&limit=100", requests);
         Assert.Contains("/album/456789/tracks?limit=100&index=1", requests);
+    }
+
+    [Fact]
+    public async Task TypedArtistAlbums_RequestsOnlyTheRequestedPage()
+    {
+        var requests = new List<string>();
+        SetupHttpResponse(request =>
+        {
+            requests.Add(request.RequestUri!.PathAndQuery);
+            return CreateJsonResponse("""
+                {"data":[{"id":2002,"title":"Second Album","artist":{"id":27,"name":"Artist"}}],"total":3}
+                """);
+        });
+
+        var page = (await _service.GetArtistAlbumsAsync(PublicContext(),
+            new(new("deezer", ProviderResourceKind.Artist, "27"), new(1, "1")))).RequireValue();
+
+        Assert.Equal("/artist/27/albums?index=1&limit=1", Assert.Single(requests));
+        Assert.Equal("2002", Assert.Single(page.Items).Id.Value);
+        Assert.Equal("2", page.NextCursor);
+    }
+
+    [Fact]
+    public async Task TypedArtistAlbums_PreservesPrimaryIdentityWhenItsNameIsMissing()
+    {
+        SetupHttpResponse(_ => CreateJsonResponse("""
+            {"artist":{"name":"Followed artist"},"data":[{"id":2002,"title":"Guest release","artist":{"id":99}}],"total":1}
+            """));
+
+        var page = (await _service.GetArtistAlbumsAsync(PublicContext(),
+            new(new("deezer", ProviderResourceKind.Artist, "27"), new(1)))).RequireValue();
+
+        Assert.Equal("99", Assert.Single(Assert.Single(page.Items).Artists).ArtistId!.Value);
+    }
+
+    [Fact]
+    public async Task TypedArtistAlbums_BoundsPageSizeAndAdvancesPastInvalidRecords()
+    {
+        var requests = new List<string>();
+        SetupHttpResponse(request =>
+        {
+            requests.Add(request.RequestUri!.PathAndQuery);
+            return CreateJsonResponse("""
+                {"data":[{"id":2002,"title":"Album","artist":{"id":27,"name":"Artist"}},
+                         {"id":2003,"title":"","artist":{"id":27,"name":"Artist"}}],"total":3}
+                """);
+        });
+
+        var page = (await _service.GetArtistAlbumsAsync(PublicContext(),
+            new(new("deezer", ProviderResourceKind.Artist, "27"), new(200)))).RequireValue();
+
+        Assert.Equal("/artist/27/albums?index=0&limit=100", Assert.Single(requests));
+        Assert.Equal("2002", Assert.Single(page.Items).Id.Value);
+        Assert.Equal("2", page.NextCursor);
+        Assert.True(page.IsPartial);
     }
 
     [Fact]

@@ -207,9 +207,19 @@ public partial class SubsonicController
         {
             var native = await _proxyService.RelayRawAsync(Request.Path.Value!.TrimStart('/'), parameters,
                 HttpContext.RequestAborted, Request.Headers);
-            if (AcceptedPlaybackResponse(native) && parameters.GetValueOrDefault("state") == "starting" &&
-                CurrentProtocolContext.CanRunUserScopedWork)
-                _playbackSessions.Remove(CurrentProtocolContext);
+            if (AcceptedPlaybackResponse(native) && CurrentProtocolContext.CanRunUserScopedWork)
+            {
+                var state = parameters.GetValueOrDefault("state");
+                if (state == "starting") _playbackSessions.Remove(CurrentProtocolContext);
+                if (state is "starting" or "playing" or "paused" or "stopped" &&
+                    parameters.GetValueOrDefault("mediaType", "song") == "song" &&
+                    long.TryParse(parameters.GetValueOrDefault("positionMs", "0"), NumberStyles.None,
+                        CultureInfo.InvariantCulture, out var position) && position <= TimeSpan.MaxValue.Ticks / TimeSpan.TicksPerMillisecond)
+                    _upcomingSongs?.Observe(CurrentProtocolContext, state == "stopped" ? PlaybackTransition.Stop :
+                        state == "starting" ? PlaybackTransition.Start : PlaybackTransition.Progress,
+                        parameters.GetValueOrDefault("mediaId"), CurrentProtocolContext.Client.DeviceId ?? CurrentProtocolContext.Client.ClientId,
+                        null, position * TimeSpan.TicksPerMillisecond, paused: state == "paused");
+            }
             return _relayProtocolAdapter.CreateResult(native, $"application/{format}");
         }
         catch (HttpRequestException)

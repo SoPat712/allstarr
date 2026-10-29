@@ -104,7 +104,7 @@
           <p class="credential-safety">Credentials stay encrypted and hidden. Household use may consume provider limits and use this account’s supported capabilities.</p>
           {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
           <footer class="dialog-actions">
-            <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
+            <Dialog.Close type="button" class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
             <Button type="submit" disabled={saving}>{saving ? "Saving…" : "Save access"}</Button>
           </footer>
         </form>
