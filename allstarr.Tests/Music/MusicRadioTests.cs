@@ -15,6 +15,26 @@ namespace allstarr.Tests;
 
 public sealed class MusicRadioTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Radio_RemembersCandidatesOnlyForTheLinkedListener(bool linked)
+    {
+        var gateway = Gateway();
+        var context = MusicObservationsTests.Context(linked);
+        var retained = new List<(Guid? User, string Id)>();
+        gateway.Setup(item => item.RememberTrackAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>()))
+            .Callback<ProtocolExecutionContext, string>((actor, id) => retained.Add((actor.Actor?.EffectiveUserId, id)))
+            .Returns(Task.CompletedTask);
+        using var service = new MusicMixService(gateway.Object);
+
+        var result = await Radio(service, context, 1);
+
+        Assert.Equal("ext-deezer-song-seed", Assert.Single(result).Song!.Id);
+        if (linked) Assert.Equal((context.Actor!.EffectiveUserId, "ext-deezer-song-seed"), Assert.Single(retained));
+        else Assert.Empty(retained);
+    }
+
     [Fact]
     public async Task SongRadio_SeedFirstDropsUnplayableAndDuplicateRecordingsAcrossProviders()
     {
