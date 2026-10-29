@@ -8,6 +8,7 @@
   let {
     section = "services",
     administrator,
+    developmentIntelligence = false,
     currentUserId = "",
     initialSource = "",
     initialSection = "data",
@@ -18,6 +19,7 @@
   }: {
     section?: string;
     administrator: boolean;
+    developmentIntelligence?: boolean;
     currentUserId?: string;
     initialSource?: string;
     initialSection?: string;
@@ -43,6 +45,7 @@
   <SourcesView
     mode={section === "accounts" ? "accounts" : "services"}
     {administrator}
+    {developmentIntelligence}
     {currentUserId}
     {initialSource}
     {initialSection}

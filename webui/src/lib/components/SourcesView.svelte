@@ -76,6 +76,7 @@
   let {
     mode = "services",
     administrator,
+    developmentIntelligence = false,
     currentUserId = "",
     initialSource = "",
     initialSection = "data",
@@ -86,6 +87,7 @@
   }: {
     mode?: "services" | "accounts";
     administrator: boolean;
+    developmentIntelligence?: boolean;
     currentUserId?: string;
     initialSource?: string;
     initialSection?: string;
@@ -685,7 +687,7 @@
       <section class="settings-card">
         <div class="settings-row">
           <div><strong>Set up in Intelligence</strong><small>AudioMuse-AI powers sound-based discovery, so its connection lives next to that feature.</small></div>
-          <Button href="#/intelligence?section=sounds">Configure in Intelligence</Button>
+          <Button href={`#/intelligence?section=${developmentIntelligence ? "automation" : "sounds"}`}>Configure in Intelligence</Button>
         </div>
       </section>
     {:else}
