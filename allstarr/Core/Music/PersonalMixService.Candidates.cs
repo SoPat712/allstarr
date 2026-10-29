@@ -22,6 +22,7 @@ public sealed partial class PersonalMixService
         if (start != null) query = query.Where(item => item.BackendItemId == start.SeedId);
         var library = await query.OrderByDescending(item => known.Contains(item.Id))
             .ThenBy(item => item.BackendItemId).Take(600).ToArrayAsync(token);
+        var libraryIds = library.ToDictionary(item => item.Id, item => item.BackendItemId);
         var rows = new List<(Song Song, string Source, DateTimeOffset? Release)>();
         var hearts = (await new FavoriteViewReader(factory).ReadAsync(context, token)).Where(item => item.Display.Kind == "song").Take(300).ToArray();
         rows.AddRange(hearts.Select(item => (item.Song(), "heart", (DateTimeOffset?)null)));
@@ -46,14 +47,17 @@ public sealed partial class PersonalMixService
         foreach (var group in recent.Concat(top).DistinctBy(group => group.Key))
         {
             var play = group.OrderByDescending(item => item.ListenedAt).First();
-            var existing = rows.FirstOrDefault(item => item.Song.Id == play.TrackReference || play.CanonicalRecordingId != null && item.Song.CanonicalRecordingId == play.CanonicalRecordingId).Song;
+            var libraryId = play.LibraryTrackId is { } id &&
+                libraryIds.TryGetValue(id, out var backendId) ? backendId : null;
+            var existing = rows.FirstOrDefault(item => item.Song.Id == play.TrackReference || libraryId != null && item.Song.Id == libraryId ||
+                play.CanonicalRecordingId != null && item.Song.CanonicalRecordingId == play.CanonicalRecordingId).Song;
             if (existing != null) { existing.CanonicalRecordingId ??= play.CanonicalRecordingId; continue; }
             var parsed = LocalLibraryService.ParseExternalResource(play.TrackReference);
             try
             {
                 Song? song = null;
                 if (parsed.isExternal && parsed.type == "song") song = await providers.GetSongAsync(context, parsed.provider!, parsed.externalId!);
-                else if (++lookups <= 30 && !string.IsNullOrWhiteSpace(play.Title) && !string.IsNullOrWhiteSpace(play.Artist))
+                else if (play.CanonicalRecordingId == null && ++lookups <= 30 && !string.IsNullOrWhiteSpace(play.Title) && !string.IsNullOrWhiteSpace(play.Artist))
                 {
                     var seed = new Song
                     {

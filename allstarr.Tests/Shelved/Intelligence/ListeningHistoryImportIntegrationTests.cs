@@ -83,7 +83,7 @@ public sealed partial class ListeningHistoryImportIntegrationTests : IAsyncLifet
             "history-import-test", [ListeningHistoryImportJobHandler.JobTypeName], CancellationToken.None);
         Assert.NotNull(claim);
         var handler = new ListeningHistoryImportJobHandler(
-            _factory, _importers, _artifacts, _importOptions, _clock);
+            _factory, _importers, _artifacts, _importOptions, _clock, _jobs);
         using var services = new ServiceCollection().BuildServiceProvider();
         var completion = await handler.ExecuteAsync(new(claim!, services), CancellationToken.None);
         await _jobs.CompleteAsync(claim!, completion, CancellationToken.None);
@@ -106,6 +106,7 @@ public sealed partial class ListeningHistoryImportIntegrationTests : IAsyncLifet
         Assert.Equal(ListeningHistoryImportState.Completed, import.State);
         Assert.Equal(3, import.ImportedRows);
         Assert.Equal(3, import.NextSequence);
+        Assert.Single(await db.Jobs.Where(item => item.Type == ListeningHistoryResolution.JobTypeName && item.OwnerUserId == _scope.OwnerUserId).ToArrayAsync());
         Assert.Equal(ListeningHistoryImportState.Completed, reimport.State);
         Assert.Equal(0, reimport.ImportedRows);
         Assert.Equal(3, reimport.DuplicateRows);
@@ -219,7 +220,7 @@ public sealed partial class ListeningHistoryImportIntegrationTests : IAsyncLifet
             "history-retention-test", [ListeningHistoryImportJobHandler.JobTypeName], CancellationToken.None);
         Assert.NotNull(claim);
         var handler = new ListeningHistoryImportJobHandler(
-            _factory, _importers, _artifacts, _importOptions, _clock);
+            _factory, _importers, _artifacts, _importOptions, _clock, _jobs);
         using var services = new ServiceCollection().BuildServiceProvider();
         var completion = await handler.ExecuteAsync(new(claim!, services), CancellationToken.None);
         await _jobs.CompleteAsync(claim!, completion, CancellationToken.None);
@@ -329,7 +330,7 @@ public sealed partial class ListeningHistoryImportIntegrationTests : IAsyncLifet
         Assert.NotNull(claim);
         _artifacts.Delete(preview.ImportId);
         var handler = new ListeningHistoryImportJobHandler(
-            _factory, _importers, _artifacts, _importOptions, _clock);
+            _factory, _importers, _artifacts, _importOptions, _clock, _jobs);
         using var services = new ServiceCollection().BuildServiceProvider();
 
         var completion = await handler.ExecuteAsync(new(claim!, services), CancellationToken.None);
