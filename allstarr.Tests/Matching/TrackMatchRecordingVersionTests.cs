@@ -202,7 +202,6 @@ public sealed class TrackMatchRecordingVersionTests
     }
 
     [Theory]
-    [InlineData("Hours In Silence", false)]
     [InlineData("Hours In Silence (Clean)", null)]
     [InlineData("Hours In Silence (Edited)", null)]
     [InlineData("Hours In Silence (Radio Edit)", null)]
@@ -218,8 +217,7 @@ public sealed class TrackMatchRecordingVersionTests
     [InlineData(true, true)]
     [InlineData(true, null)]
     [InlineData(false, false)]
-    [InlineData(false, true)]
-    public void ExplicitMetadataAllowsTheOriginalAndAnExplicitFallback(bool sourceExplicit, bool? candidateExplicit)
+    public void ExplicitMetadataAllowsMatchingAndUnknownFlags(bool sourceExplicit, bool? candidateExplicit)
     {
         AssertAccepted(Source("Hours In Silence") with { IsExplicit = sourceExplicit },
             Candidate("Hours In Silence") with { IsExplicit = candidateExplicit });
@@ -374,7 +372,8 @@ public sealed class TrackMatchRecordingVersionTests
 
         var result = await search.MatchAsync(Context(), source, Scope(), [], null, CancellationToken.None);
 
-        Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
+        Assert.Equal(cleanExists ? TrackMatchReviewState.Accepted : TrackMatchReviewState.Suggested, result.Decision.State);
+        Assert.Equal(!cleanExists, result.Decision.RequiresReview);
         Assert.Equal(cleanExists ? "clean" : "explicit", result.SelectedExternal!.ExternalId);
         Assert.Equal(cleanExists ? "clean" : "explicit", Assert.Single(result.RoutableExternalCandidates).ExternalId);
         gateway.Verify(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Espresso", 15), Times.Once);

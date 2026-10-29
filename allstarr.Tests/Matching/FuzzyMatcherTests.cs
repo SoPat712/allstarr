@@ -6,6 +6,38 @@ namespace allstarr.Tests;
 public class FuzzyMatcherTests
 {
     [Theory]
+    [InlineData("Anxiety - Single", "anxiety")]
+    [InlineData("Anxiety - EP", "anxiety")]
+    [InlineData("Anxiety (sInGlE)", "anxiety")]
+    [InlineData("Anxiety [Single]", "anxiety")]
+    [InlineData("Anxiety (EP)", "anxiety")]
+    [InlineData("Anxiety [e.p.]", "anxiety")]
+    [InlineData("Anxiety – Single  ", "anxiety")]
+    [InlineData("Anxiety (Deluxe)", "anxiety deluxe")]
+    [InlineData("Anxiety (Extended)", "anxiety extended")]
+    [InlineData("Anxiety (Remastered)", "anxiety remastered")]
+    [InlineData("Anxiety (Live)", "anxiety live")]
+    [InlineData("Anxiety - Single Collection", "anxiety single collection")]
+    [InlineData("Anxiety (Single) (Deluxe)", "anxiety single deluxe")]
+    [InlineData("Single", "single")]
+    [InlineData(null, "")]
+    public void AlbumNormalizationOnlyStripsTrailingStoreFormats(string? album, string expected)
+    {
+        Assert.Equal(expected, FuzzyMatcher.NormalizeAlbumForMatching(album));
+    }
+
+    [Theory]
+    [InlineData("Anxiety", "Anxiety - Single", true)]
+    [InlineData("Anxiety", "Anxiety - EP", true)]
+    [InlineData("Anxiety", "Anxiety (Deluxe)", true)]
+    [InlineData("Anxiety", "Anxiety (Demo)", false)]
+    [InlineData("Anxiety", "Anxiety (Remastered)", true)]
+    public void AlbumRecordingAnnotationsKeepVersionsSeparate(string source, string candidate, bool expected)
+    {
+        Assert.Equal(expected, FuzzyMatcher.RecordingVersionsMatch("Anxiety", source, "Anxiety", candidate));
+    }
+
+    [Theory]
     [InlineData("⭐ Song")]
     [InlineData("⭐Song")]
     public void BestVersionPrefixIsRemovedFromTitleQueriesAndNormalization(string title)

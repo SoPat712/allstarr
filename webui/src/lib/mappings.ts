@@ -90,6 +90,7 @@ export function rankedTargets(targets: MatchTarget[]) {
     return a < b ? -1 : a > b ? 1 : 0;
   };
   return targets.toSorted((left, right) =>
+    (left.automaticOrder ?? 2147483647) - (right.automaticOrder ?? 2147483647) ||
     confidence(right.confidence) - confidence(left.confidence) ||
     targetPriority(left) - targetPriority(right) ||
     Number(right.matchesSourceAlbum === true) - Number(left.matchesSourceAlbum === true) ||

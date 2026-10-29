@@ -1,0 +1,622 @@
+[
+  {
+    "name": "anxiety-single-over-extended-album",
+    "priority": [
+      "apple-musickit",
+      "deezer"
+    ],
+    "source": {
+      "title": "Anxiety",
+      "artist": "Doechii",
+      "album": "Anxiety",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 249302,
+      "isExplicit": null
+    },
+    "candidates": [
+      {
+        "title": "Anxiety",
+        "artist": "Doechii",
+        "album": "Anxiety - Single",
+        "provider": "apple-download",
+        "durationMilliseconds": 249000,
+        "isExplicit": true
+      },
+      {
+        "title": "Anxiety",
+        "artist": "Doechii",
+        "album": "Alligator Bites Never Heal (Extended)",
+        "provider": "apple-download",
+        "durationMilliseconds": 249000,
+        "isExplicit": false
+      },
+      {
+        "title": "Anxiety",
+        "artist": "Doechii",
+        "album": "Anxiety",
+        "provider": "deezer",
+        "durationMilliseconds": 249000,
+        "isExplicit": true
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "la-la-la-source-album-over-higher-score",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "qobuz",
+      "spotiflac-tidal-web",
+      "spotiflac-ytmusic-spotiflac"
+    ],
+    "source": {
+      "title": "La La La",
+      "artist": "Naughty Boy feat. Sam Smith",
+      "album": "Hotel Cabana",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 220000,
+      "isExplicit": null
+    },
+    "candidates": [
+      {
+        "title": "La La La",
+        "artist": "Naughty Boy & Sam Smith",
+        "album": "In The Lonely Hour (Drowning Shadows Edition)",
+        "provider": "apple-download",
+        "durationMilliseconds": 220000,
+        "isExplicit": null
+      },
+      {
+        "title": "La La La (feat. Sam Smith)",
+        "artist": "Naughty Boy",
+        "album": "Hotel Cabana",
+        "provider": "apple-download",
+        "durationMilliseconds": 222000,
+        "isExplicit": null
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 1
+  },
+  {
+    "name": "dark-horse-source-album-over-deluxe",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "qobuz",
+      "spotiflac-tidal-web",
+      "spotiflac-ytmusic-spotiflac"
+    ],
+    "source": {
+      "title": "Dark Horse",
+      "artist": "Katy Perry feat. Juicy J",
+      "album": "PRISM",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 215613,
+      "isExplicit": null
+    },
+    "candidates": [
+      {
+        "title": "Dark Horse (feat. Juicy J)",
+        "artist": "Katy Perry",
+        "album": "PRISM (Deluxe Version)",
+        "provider": "apple-download",
+        "durationMilliseconds": 215000,
+        "isExplicit": null
+      },
+      {
+        "title": "Dark Horse (feat. Juicy J)",
+        "artist": "Katy Perry",
+        "album": "PRISM",
+        "provider": "apple-download",
+        "durationMilliseconds": 215000,
+        "isExplicit": null
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 1
+  },
+  {
+    "name": "brand-new-chanel-single-store-suffix",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "qobuz",
+      "spotiflac-tidal-web",
+      "spotiflac-ytmusic-spotiflac"
+    ],
+    "source": {
+      "title": "brand new chanel$",
+      "artist": "Slayyyter",
+      "album": "brand new chanel$",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 238506,
+      "isExplicit": null
+    },
+    "candidates": [
+      {
+        "title": "brand new chanel$",
+        "artist": "Slayyyter",
+        "album": "WOR$T GIRL IN AMERICA / wor$t man in america",
+        "provider": "apple-download",
+        "durationMilliseconds": 238000,
+        "isExplicit": null
+      },
+      {
+        "title": "brand new chanel$",
+        "artist": "Slayyyter",
+        "album": "brand new chanel$ - Single",
+        "provider": "apple-download",
+        "durationMilliseconds": 238000,
+        "isExplicit": null
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 1
+  },
+  {
+    "name": "earrings-known-duration-over-missing-duration",
+    "priority": [
+      "deezer",
+      "spotiflac-ytmusic-spotiflac"
+    ],
+    "source": {
+      "title": "Earrings",
+      "artist": "Malcolm Todd",
+      "album": "Sweet Boy",
+      "provider": "spotify",
+      "durationMilliseconds": 151500,
+      "isExplicit": false
+    },
+    "candidates": [
+      {
+        "title": "Earrings",
+        "artist": "Malcolm Todd",
+        "album": "Sweet Boy",
+        "provider": "deezer",
+        "durationMilliseconds": 145000,
+        "isExplicit": false
+      },
+      {
+        "title": "Earrings",
+        "artist": "Malcolm Todd",
+        "album": "",
+        "provider": "spotiflac-ytmusic-spotiflac",
+        "durationMilliseconds": null,
+        "isExplicit": false
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "just-what-i-am-feature-credit-formatting",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "qobuz",
+      "spotiflac-tidal-web",
+      "spotiflac-ytmusic-spotiflac"
+    ],
+    "source": {
+      "title": "Just What I Am",
+      "artist": "Kid Cudi, King Chip",
+      "album": "Indicud",
+      "provider": "spotify",
+      "durationMilliseconds": 228026,
+      "isExplicit": true
+    },
+    "candidates": [
+      {
+        "title": "Just What I Am (feat. King Chip)",
+        "artist": "Kid Cudi",
+        "album": "Indicud",
+        "provider": "apple-download",
+        "durationMilliseconds": 228000,
+        "isExplicit": true
+      },
+      {
+        "title": "Just What I Am",
+        "artist": "Kid Cudi, King Chip",
+        "album": "Indicud",
+        "provider": "deezer",
+        "durationMilliseconds": 228000,
+        "isExplicit": true
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "ritmo-perfeito-live-album-label",
+    "priority": [
+      "apple-musickit",
+      "spotiflac-deezer"
+    ],
+    "source": {
+      "title": "Ritmo Perfeito",
+      "artist": "Anitta",
+      "album": null,
+      "provider": "lastfm",
+      "durationMilliseconds": null,
+      "isExplicit": null
+    },
+    "candidates": [
+      {
+        "title": "Ritmo Perfeito",
+        "artist": "Anitta",
+        "album": "Meu Lugar (Ao Vivo) [Deluxe Version]",
+        "provider": "apple-download",
+        "durationMilliseconds": 176000,
+        "isExplicit": null
+      },
+      {
+        "title": "Ritmo perfeito",
+        "artist": "Anitta",
+        "album": "Ritmo Perfeito",
+        "provider": "spotiflac-deezer",
+        "durationMilliseconds": 176000,
+        "isExplicit": null
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 1
+  },
+  {
+    "name": "confident-feature-credit-missing-duration-priority",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "qobuz",
+      "spotiflac-tidal-web",
+      "spotiflac-ytmusic-spotiflac"
+    ],
+    "source": {
+      "title": "Confident",
+      "artist": "Justin Bieber",
+      "album": null,
+      "provider": "lastfm",
+      "durationMilliseconds": null,
+      "isExplicit": null
+    },
+    "candidates": [
+      {
+        "title": "Confident (feat. Chance The Rapper)",
+        "artist": "Justin Bieber, Chance The Rapper",
+        "album": "Journals",
+        "provider": "apple-download",
+        "durationMilliseconds": 247000,
+        "isExplicit": null
+      },
+      {
+        "title": "Confident",
+        "artist": "Justin Bieber",
+        "album": "Journals",
+        "provider": "deezer",
+        "durationMilliseconds": 248000,
+        "isExplicit": null
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "anxiety-known-clean-rejects-explicit-only",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "qobuz",
+      "spotiflac-tidal-web",
+      "spotiflac-ytmusic-spotiflac"
+    ],
+    "source": {
+      "title": "Anxiety",
+      "artist": "Doechii",
+      "album": "Anxiety",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 249302,
+      "isExplicit": false
+    },
+    "candidates": [
+      {
+        "title": "Anxiety",
+        "artist": "Doechii",
+        "album": "Anxiety - Single",
+        "provider": "apple-download",
+        "durationMilliseconds": 249000,
+        "isExplicit": true
+      }
+    ],
+    "expectedState": "Suggested",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "anxiety-known-explicit-rejects-clean-only",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "qobuz",
+      "spotiflac-tidal-web",
+      "spotiflac-ytmusic-spotiflac"
+    ],
+    "source": {
+      "title": "Anxiety",
+      "artist": "Doechii",
+      "album": "Anxiety",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 249302,
+      "isExplicit": true
+    },
+    "candidates": [
+      {
+        "title": "Anxiety",
+        "artist": "Doechii",
+        "album": "Anxiety - Single",
+        "provider": "apple-download",
+        "durationMilliseconds": 249000,
+        "isExplicit": false
+      }
+    ],
+    "expectedState": "Suggested",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "anxiety-ep-store-suffix",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "qobuz",
+      "spotiflac-tidal-web",
+      "spotiflac-ytmusic-spotiflac"
+    ],
+    "source": {
+      "title": "Anxiety",
+      "artist": "Doechii",
+      "album": "Anxiety",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 249302,
+      "isExplicit": null
+    },
+    "candidates": [
+      {
+        "title": "Anxiety",
+        "artist": "Doechii",
+        "album": "Anxiety (EP)",
+        "provider": "apple-download",
+        "durationMilliseconds": 249000,
+        "isExplicit": true
+      },
+      {
+        "title": "Anxiety",
+        "artist": "Doechii",
+        "album": "Anxiety",
+        "provider": "deezer",
+        "durationMilliseconds": 249000,
+        "isExplicit": true
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "anxiety-duration-beyond-tolerance",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "qobuz",
+      "spotiflac-tidal-web",
+      "spotiflac-ytmusic-spotiflac"
+    ],
+    "source": {
+      "title": "Anxiety",
+      "artist": "Doechii",
+      "album": "Anxiety",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 249302,
+      "isExplicit": null
+    },
+    "candidates": [
+      {
+        "title": "Anxiety",
+        "artist": "Doechii",
+        "album": "Anxiety - Single",
+        "provider": "apple-download",
+        "durationMilliseconds": 260000,
+        "isExplicit": true
+      }
+    ],
+    "expectedState": "Unresolved",
+    "expectedCandidate": null
+  },
+  {
+    "name": "noble-slowed-album-marker",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "qobuz"
+    ],
+    "source": {
+      "title": "NOBLE",
+      "artist": "F3miii",
+      "album": "NOBLE (Slowed Down)",
+      "provider": "spotify",
+      "durationMilliseconds": 185806,
+      "isExplicit": false,
+      "isrc": null
+    },
+    "candidates": [
+      {
+        "title": "NOBLE",
+        "artist": "F3miii",
+        "album": "NOBLE - Single",
+        "provider": "apple-download",
+        "durationMilliseconds": 185000,
+        "isExplicit": false,
+        "isrc": "GXJBS2557689"
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "cheek-to-cheek-remaster-title-marker",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "qobuz"
+    ],
+    "source": {
+      "title": "Cheek To Cheek - 1998 Remastered",
+      "artist": "Frank Sinatra",
+      "album": "Come Dance With Me! (Remastered)",
+      "provider": "spotify",
+      "durationMilliseconds": 186093,
+      "isExplicit": false,
+      "isrc": null
+    },
+    "candidates": [
+      {
+        "title": "Cheek To Cheek",
+        "artist": "Frank Sinatra",
+        "album": "Come Dance With Me!",
+        "provider": "apple-download",
+        "durationMilliseconds": 185000,
+        "isExplicit": false,
+        "isrc": "USCA29800084"
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "teen-spirit-remaster-album-marker",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "qobuz"
+    ],
+    "source": {
+      "title": "Smells Like Teen Spirit",
+      "artist": "Nirvana",
+      "album": "Nevermind (Remastered)",
+      "provider": "spotify",
+      "durationMilliseconds": 301920,
+      "isExplicit": false,
+      "isrc": null
+    },
+    "candidates": [
+      {
+        "title": "Smells Like Teen Spirit",
+        "artist": "Nirvana",
+        "album": "Nevermind (Deluxe Edition)",
+        "provider": "apple-download",
+        "durationMilliseconds": 301000,
+        "isExplicit": false,
+        "isrc": "USGF19942501"
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "blackbird-remaster-local-marker",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "qobuz"
+    ],
+    "source": {
+      "title": "Blackbird - Remastered 2009",
+      "artist": "The Beatles",
+      "album": "The Beatles (Remastered 2009)",
+      "provider": "spotify",
+      "durationMilliseconds": 138386,
+      "isExplicit": false,
+      "isrc": null
+    },
+    "candidates": [
+      {
+        "title": "Blackbird",
+        "artist": "The Beatles",
+        "album": "The Beatles",
+        "provider": "local",
+        "durationMilliseconds": 138386,
+        "isExplicit": null,
+        "isrc": null
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "wasted-times-priority-with-unknown-candidate-explicitness",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "qobuz"
+    ],
+    "source": {
+      "title": "Wasted Times",
+      "artist": "The Weeknd",
+      "album": "My Dear Melancholy,",
+      "provider": "apple-musickit",
+      "durationMilliseconds": 220000,
+      "isExplicit": null,
+      "isrc": "USUG11800564"
+    },
+    "candidates": [
+      {
+        "title": "Wasted Times",
+        "artist": "The Weeknd",
+        "album": "My Dear Melancholy,",
+        "provider": "deezer",
+        "durationMilliseconds": 220000,
+        "isExplicit": null,
+        "isrc": "USUG11800564"
+      },
+      {
+        "title": "Wasted Times",
+        "artist": "The Weeknd",
+        "album": "My Dear Melancholy,",
+        "provider": "apple-download",
+        "durationMilliseconds": 220000,
+        "isExplicit": true,
+        "isrc": "USUG11800564"
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 1
+  },
+  {
+    "name": "anxiety-conflicting-recording-identifiers",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "qobuz"
+    ],
+    "source": {
+      "title": "Anxiety",
+      "artist": "Doechii",
+      "album": "Anxiety",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 249302,
+      "isExplicit": null,
+      "isrc": "USAAA2600001"
+    },
+    "candidates": [
+      {
+        "title": "Anxiety",
+        "artist": "Doechii",
+        "album": "Anxiety - Single",
+        "provider": "apple-download",
+        "durationMilliseconds": 249000,
+        "isExplicit": true,
+        "isrc": "USAAA2600002"
+      }
+    ],
+    "expectedState": "Unresolved",
+    "expectedCandidate": null
+  }
+]

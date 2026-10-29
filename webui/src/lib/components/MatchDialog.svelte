@@ -173,25 +173,17 @@
     searched = true;
     error = "";
     try {
-      const [local, external] = await Promise.allSettled([
-        matchReview.searchLocal(
-          targetQuery.trim(),
-          match.externalSnapshotId,
-        ),
-        matchReview.searchProviders(
-          targetQuery.trim(),
-          match.externalSnapshotId,
-        ),
-      ]);
-      results = rankedTargets([
-        ...(local.status === "fulfilled" ? local.value.tracks : []),
-        ...(external.status === "fulfilled" ? external.value.tracks : []),
-      ]);
-      if (local.status === "rejected" || external.status === "rejected")
-        error = "Some providers could not be searched. Available results are shown.";
+      const response = await matchReview.searchProviders(targetQuery.trim(), match.externalSnapshotId, true);
+      results = rankedTargets(response.tracks);
+      if (response.partialSearch) error = "Some providers could not be searched. Available results are shown.";
     } catch (cause) {
-      results = [];
-      error = cause instanceof Error ? cause.message : "Candidate search failed.";
+      try {
+        results = rankedTargets((await matchReview.searchLocal(targetQuery.trim(), match.externalSnapshotId)).tracks);
+        error = "Some providers could not be searched. Available results are shown.";
+      } catch {
+        results = [];
+        error = cause instanceof Error ? cause.message : "Candidate search failed.";
+      }
     } finally {
       loading = false;
     }
@@ -372,7 +364,7 @@
           <div class="match-section-heading">
             <h3 id="find-match-heading">Find a different match</h3>
           </div>
-          <p class="setting-help">Match scores compare recording details. Equal scores use streaming priority, then the same album edition. Artwork and reported audio do not change the score.</p>
+          <p class="setting-help">Match scores compare recording details. Good matches of the same version follow your streaming priority, then the same album edition. Artwork and reported audio do not change the score.</p>
           <form class="target-search" onsubmit={(event) => { event.preventDefault(); void search(); }}>
             <label class="field grow">
               <span class="sr-only">Search local library and playable providers</span>

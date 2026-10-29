@@ -489,7 +489,8 @@ public sealed class TrackMatchesController(
         [FromQuery] string query,
         [FromQuery] Guid? externalSnapshotId = null,
         [FromQuery] int limit = 20,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] bool includeLocal = false)
     {
         if (!TrySession(out var session, out var error)) return error!;
         query = query?.Trim() ?? string.Empty;
@@ -505,7 +506,7 @@ public sealed class TrackMatchesController(
             .Concat(downloadOrder)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        if (playableProviders.Length == 0)
+        if (playableProviders.Length == 0 && !includeLocal)
             return Ok(new { tracks = Array.Empty<object>(), providers = playableProviders });
 
         ProtocolExecutionContext execution;
@@ -519,7 +520,7 @@ public sealed class TrackMatchesController(
             return StatusCode(403, new { error = "The linked backend identity is unavailable" });
         }
         var source = await ReviewSourceAsync(session!, externalSnapshotId, cancellationToken);
-        var songs = await SearchAsync(query);
+        var songs = playableProviders.Length == 0 ? [] : await SearchAsync(query);
         var missingProviders = playableProviders.Where(provider =>
             !songs.Any(song => SameProvider(provider, song.ExternalProvider!))).ToArray();
         if (missingProviders.Length > 0 && source != null && source.Title.Trim().Length >= 2 &&
@@ -539,33 +540,66 @@ public sealed class TrackMatchesController(
             }
         }
         var effectiveMatcher = await MatchingEngineAsync(userId, cancellationToken);
-        var candidates = songs.Select(song => new
+        IReadOnlyList<LibraryTrackRecord> localTracks = [];
+        var partialSearch = false;
+        if (includeLocal)
         {
-            Song = song,
-            Candidate = ToCandidate(
-                song,
-                userId)
-        }).ToArray();
-        var scores = source == null
+            try
+            {
+                localTracks = await trackMatchCommands.SearchLocalTracksAsync(new TrackMatchActor(userId, session.IsAdministrator),
+                    query, null, limit, source, cancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                partialSearch = true;
+            }
+        }
+        var candidates = songs
+            .DistinctBy(song => TrackMatchPlayableSearch.CandidateId(song.ExternalProvider!, song.ExternalId ?? song.Id))
+            .Select(song => new
+            {
+                Song = (Song?)song,
+                LocalTrack = (LibraryTrackRecord?)null,
+                Candidate = ToCandidate(song, userId)
+            }).Concat(localTracks.Select(track => new
+            {
+                Song = (Song?)null,
+                LocalTrack = (LibraryTrackRecord?)track,
+                Candidate = ToCandidate(track)
+            })).ToArray();
+        var automaticProviders = effectivePolicies == null
+            ? streamingOrder
+            : (await effectivePolicies.ResolveForUserAsync(userId, cancellationToken))
+                .ApplyAutomaticProviderAvailability(ProviderCapabilityKind.Streaming, streamingOrder);
+        var automaticCandidates = candidates.Where(item => item.Candidate.IsLocal ||
+            automaticProviders.Any(provider => SameProvider(provider, item.Song!.ExternalProvider!))).ToArray();
+        var orderedScores = source == null
             ? []
-            : effectiveMatcher.ScoreCandidates(source, candidates.Select(item => item.Candidate),
-                    streamingOrder)
-                .ToDictionary(item => item.LibraryTrackId);
+            : effectiveMatcher.ScoreCandidates(source, automaticCandidates.Select(item => item.Candidate), automaticProviders)
+                .Concat(effectiveMatcher.ScoreCandidates(source,
+                    candidates.Except(automaticCandidates).Select(item => item.Candidate), streamingOrder))
+                .ToArray();
+        var scores = orderedScores.ToDictionary(item => item.LibraryTrackId);
+        var automaticOrder = orderedScores.Select((score, index) => (score.LibraryTrackId, Index: index))
+            .ToDictionary(item => item.LibraryTrackId, item => item.Index);
         var ranked = candidates
             .Select(item => new
             {
                 item.Song,
+                item.LocalTrack,
                 item.Candidate,
                 Score = scores.GetValueOrDefault(item.Candidate.LibraryTrackId),
-                RoutingPriority = ProviderRoutingPriority(item.Song.ExternalProvider!, streamingOrder),
-                MatchesSourceAlbum = MatchesSourceAlbum(source?.Album, item.Song.Album)
+                AutomaticOrder = automaticOrder.GetValueOrDefault(item.Candidate.LibraryTrackId, int.MaxValue),
+                RoutingPriority = item.Candidate.IsLocal ? 0 : ProviderRoutingPriority(item.Song!.ExternalProvider!, streamingOrder),
+                MatchesSourceAlbum = MatchesSourceAlbum(source?.Album, item.Candidate.Album)
             })
-            .OrderByDescending(item => item.Score?.Confidence)
+            .OrderBy(item => item.AutomaticOrder)
+            .ThenByDescending(item => item.Score?.Confidence)
             .ThenBy(item => item.RoutingPriority ?? int.MaxValue)
             .ThenByDescending(item => item.MatchesSourceAlbum == true)
-            .ThenBy(item => OrderKey(item.Song.ExternalProvider), StringComparer.Ordinal)
-            .ThenBy(item => OrderKey(item.Song.ExternalId ?? item.Song.Id), StringComparer.Ordinal)
-            .ThenBy(item => OrderKey(item.Song.Title), StringComparer.Ordinal)
+            .ThenBy(item => OrderKey(item.Song?.ExternalProvider), StringComparer.Ordinal)
+            .ThenBy(item => OrderKey(item.Song?.ExternalId ?? item.Song?.Id ?? item.Candidate.BackendItemId), StringComparer.Ordinal)
+            .ThenBy(item => OrderKey(item.Candidate.Title), StringComparer.Ordinal)
             .ToArray();
         return Ok(new
         {
@@ -574,30 +608,33 @@ public sealed class TrackMatchesController(
                 var song = item.Song;
                 return new
                 {
-                    id = song.ExternalId,
-                    externalId = song.ExternalId,
-                    externalProvider = song.ExternalProvider,
-                    isBestVersion = song.IsBestVersion && string.Equals(song.ExternalProvider, "artistgrid", StringComparison.OrdinalIgnoreCase),
-                    title = song.Title,
-                    artist = song.Artist,
-                    album = song.Album,
-                    artworkUrl = string.IsNullOrWhiteSpace(song.CoverArtUrl) ||
-                                 string.IsNullOrWhiteSpace(song.ExternalId)
-                        ? null
-                        : ExternalArtworkUrl(song.ExternalProvider!, song.ExternalId!),
-                    durationMilliseconds = song.Duration * 1000,
-                    isrc = song.Isrc,
+                    id = item.LocalTrack?.Id.ToString() ?? song?.ExternalId,
+                    backendItemId = item.LocalTrack?.BackendItemId,
+                    externalId = song?.ExternalId,
+                    externalProvider = song?.ExternalProvider,
+                    isBestVersion = song?.IsBestVersion == true && string.Equals(song.ExternalProvider, "artistgrid", StringComparison.OrdinalIgnoreCase),
+                    title = item.Candidate.Title,
+                    artist = item.Candidate.Artist,
+                    album = item.Candidate.Album,
+                    artworkUrl = item.LocalTrack != null
+                        ? item.LocalTrack.CoverArtReference == null ? null : LocalArtworkUrl(item.LocalTrack.BackendItemId)
+                        : string.IsNullOrWhiteSpace(song?.CoverArtUrl) || string.IsNullOrWhiteSpace(song.ExternalId)
+                            ? null : ExternalArtworkUrl(song.ExternalProvider!, song.ExternalId!),
+                    durationMilliseconds = item.Candidate.DurationMilliseconds,
+                    isrc = item.Candidate.Isrc,
                     isExplicit = item.Candidate.IsExplicit,
                     routingPriority = item.RoutingPriority,
+                    automaticOrder = source == null ? (int?)null : item.AutomaticOrder,
                     matchesSourceAlbum = item.MatchesSourceAlbum,
-                    media = ReportedMedia(song),
+                    media = song == null ? null : ReportedMedia(song),
                     confidence = item.Score?.Confidence,
                     components = item.Score?.Components,
                     reasons = item.Score?.Reasons,
                     warnings = item.Score?.Warnings
                 };
             }),
-            providers = playableProviders
+            providers = playableProviders,
+            partialSearch
         });
 
         async Task<Song[]> SearchAsync(string searchQuery) =>
@@ -1109,7 +1146,7 @@ public sealed class TrackMatchesController(
     private static LocalTrackMatchCandidate ToCandidate(
         Song song,
         Guid ownerUserId) => new(
-        Guid.CreateVersion7(),
+        TrackMatchPlayableSearch.CandidateId(song.ExternalProvider!, song.ExternalId ?? song.Id),
         ownerUserId,
         string.Empty,
         null,
@@ -1147,12 +1184,8 @@ public sealed class TrackMatchesController(
         return index < 0 ? null : index + 1;
     }
 
-    private static bool? MatchesSourceAlbum(string? sourceAlbum, string? candidateAlbum)
-    {
-        var source = TrackMatchReviewSearch.Normalize(sourceAlbum ?? string.Empty);
-        var candidate = TrackMatchReviewSearch.Normalize(candidateAlbum ?? string.Empty);
-        return source.Length == 0 || candidate.Length == 0 ? null : source == candidate;
-    }
+    private static bool? MatchesSourceAlbum(string? sourceAlbum, string? candidateAlbum) =>
+        TrackMatchDecisionEngine.SameAlbumEdition(sourceAlbum, candidateAlbum);
 
     private static string OrderKey(string? value) => value?.Trim().ToLowerInvariant() ?? string.Empty;
 

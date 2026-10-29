@@ -35,4 +35,10 @@
   <ItemGroup>
     <None Include="../allstarr/wwwroot/fonts/inter-cover.ttf" Link="Fixtures/inter-cover.ttf" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <Target Name="BuildMatchReplay" BeforeTargets="CoreCompile">
+    <Exec Command="python3 &quot;$(MSBuildProjectDirectory)/Matching/build_replay.py&quot; &quot;$(IntermediateOutputPath)MatchReplay&quot;" />
+    <ItemGroup>
+      <Compile Include="$(IntermediateOutputPath)MatchReplay/*.cs" />
+    </ItemGroup>
+  </Target>
 </Project>
