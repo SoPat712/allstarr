@@ -359,6 +359,38 @@ async def test_gamdl_command_targets_separate_wrapper_decrypt_socket(settings: S
 
 
 @pytest.mark.asyncio
+async def test_preparation_log_contains_only_known_numeric_phases(settings, tmp_path, caplog):
+    from apple_gateway.runner import ProcessResult
+
+    class TimedRunner(BoundedProcessRunner):
+        async def execute(self, argv, cwd):
+            (tmp_path / "output" / "fixture.m4a").write_bytes(b"complete")
+            return ProcessResult(0, json.dumps({
+                "elapsed_ms": 120,
+                "phases": [
+                    {"phase": "artwork", "started_ms": 20, "elapsed_ms": 80,
+                        "url": "https://private.invalid", "token": "private-value"},
+                    {"phase": "private-phase", "started_ms": 0, "elapsed_ms": 5},
+                    {"phase": [], "started_ms": 0, "elapsed_ms": 5},
+                    {"phase": "download", "started_ms": 0, "elapsed_ms": float("nan")},
+                ],
+                "private": "private-value",
+            }), "private-stderr")
+
+    with caplog.at_level("INFO"):
+        await TimedRunner(settings).download(
+            "https://music.apple.com/us/song/101", "alac", tmp_path / "output", tmp_path / "temporary",
+            media_user_token="fixture-account-token",
+        )
+    assert "Song preparation" in caplog.text
+    assert '"phase": "artwork"' in caplog.text
+    assert '"elapsed_ms": 80' in caplog.text
+    assert "private" not in caplog.text
+    assert "fixture-account-token" not in caplog.text
+    assert "NaN" not in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_process_runner_caps_output_and_times_out(settings: Settings, tmp_path: Path):
     runner = BoundedProcessRunner(settings)
     result = await runner.execute([sys.executable, "-c", "print('x' * 1000)"], tmp_path)

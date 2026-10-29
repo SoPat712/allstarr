@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 import socket
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -205,3 +206,31 @@ def test_cli_retains_only_redacted_diagnostic_tail(monkeypatch, tmp_path, capsys
     assert "private-fixture-token" not in output.err
     assert "private.example" not in output.err
     assert "private-session" not in output.err
+
+
+def test_cli_emits_bounded_numeric_phases_and_restores_methods(monkeypatch, tmp_path, capsys):
+    cli = importlib.import_module("gamdl.cli.cli")
+
+    async def get_cover_bytes(self, url):
+        return b"complete-cover"
+
+    def main(*args, **kwargs):
+        async def prepare():
+            for _ in range(70):
+                await cli.AppleMusicBaseInterface.get_cover_bytes(None, "https://private.invalid")
+        asyncio.run(prepare())
+
+    monkeypatch.setattr(cli.AppleMusicBaseInterface, "get_cover_bytes", get_cover_bytes)
+    monkeypatch.setattr(cli.main, "main", main)
+    original_download = cli.AppleMusicSongDownloader.download
+    assert run(argv(tmp_path)) == 0
+    output = capsys.readouterr()
+    report = json.loads(output.out)
+    assert report["elapsed_ms"] >= 0
+    assert len(report["phases"]) == 64
+    assert report["phases"][0]["phase"] == "setup"
+    assert all(set(phase) == {"phase", "started_ms", "elapsed_ms"} for phase in report["phases"])
+    assert all(phase["started_ms"] >= 0 and phase["elapsed_ms"] >= 0 for phase in report["phases"])
+    assert "private" not in output.out + output.err
+    assert cli.AppleMusicSongDownloader.download is original_download
+    assert cli.AppleMusicBaseInterface.get_cover_bytes is get_cover_bytes
