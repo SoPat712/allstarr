@@ -1,3 +1,6 @@
+import { ApiError, type PlayTrace } from "./api";
+import { formatDuration } from "./playlists";
+
 export function playDuration(milliseconds?: number | null): string {
   if (milliseconds == null || !Number.isFinite(milliseconds) || milliseconds < 0) return "Time not recorded";
   const seconds = Math.round(milliseconds / 100) / 10;
@@ -29,4 +32,26 @@ export function playSource(provider: string | null | undefined, cached: boolean 
 export function playOutcome(outcome: string): { state: string; label: string } {
   return ({ started: { state: "success", label: "Started" }, completed: { state: "success", label: "Played" },
     failed: { state: "failed", label: "Could not play" }, cancelled: { state: "cancelled", label: "Stopped" } } as Record<string, { state: string; label: string }>)[outcome.toLowerCase()] ?? { state: "unknown", label: "Not recorded" };
+}
+
+export function playComparison(play: Pick<PlayTrace, "request" | "resolution" | "received" | "differences">, providers: { id: string; name: string }[]) {
+  const field = (key: string, text: string) => ({ text, different: play.differences?.includes(`${key}-mismatch`) ?? false });
+  const asked = play.request.presented;
+  const source = field("source", playSource(play.resolution.provider, play.resolution.cached, providers));
+  const rows = [{ label: "Asked for", fields: [field("title", asked.title || "Unknown song"), field("artist", asked.artist || "Unknown artist"),
+    field("album", asked.album || "Unknown album"), field("duration", formatDuration(asked.durationMilliseconds))] }];
+  if (play.received) {
+    const { tags, durationSeconds } = play.received;
+    rows.push({ label: "Played", fields: [field("title", tags?.title || "Unknown song"), field("artist", tags?.artist || "Unknown artist"),
+      field("duration", formatDuration(durationSeconds == null ? null : durationSeconds * 1000)), source] });
+  } else rows[0].fields.push(source);
+  rows[0].fields.forEach(field => { field.different = false; });
+  return rows;
+}
+
+export function playActionError(error: unknown): string {
+  const message = error instanceof ApiError && error.details && typeof error.details === "object"
+    ? (error.details as { error?: unknown }).error : null;
+  return typeof message === "string" && message.length <= 300 && /^[\p{L}][\p{L}\p{N} ,.'’?!():\-]*[\p{L}\p{N}.!?)]$/u.test(message) && /\s/.test(message)
+    ? message : "That didn't work. Try again.";
 }
