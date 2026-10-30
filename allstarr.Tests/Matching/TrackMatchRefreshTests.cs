@@ -290,6 +290,105 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
     }
 
     [Theory]
+    [InlineData(TrackMatchState.Unresolved, false)]
+    [InlineData(TrackMatchState.Suggested, false)]
+    [InlineData(TrackMatchState.Ambiguous, false)]
+    [InlineData(TrackMatchState.Accepted, false)]
+    [InlineData(TrackMatchState.Unresolved, true)]
+    [Trait("Category", "Sqlite")]
+    public async Task AlgorithmRolloutSearchesAgainForNonAcceptedDecisions(TrackMatchState state, bool failure)
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        var cached = new Song { ExternalProvider = "deezer", ExternalId = "target", Title = "Track Melodies", Artist = "Artist" };
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
+        gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "target")).ReturnsAsync(cached);
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync(new MatchingSongSearchResult([cached], []));
+        if (failure)
+            gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+                .ThrowsAsync(new ProtocolProviderUnavailableException(new(ProviderErrorKind.TransientFailure)));
+        await using var fixture = await Fixture.CreateAsync(gateway: gateway.Object);
+        await using (var setup = fixture.Factory.CreateDbContext())
+        {
+            setup.TrackMatches.Add(new TrackMatchRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = fixture.Owner,
+                ExternalSnapshotId = fixture.SnapshotId,
+                CanonicalRecordingId = fixture.Recording,
+                State = state,
+                Confidence = .94,
+                Threshold = .88,
+                DecisionVersion = 1,
+                SourceSnapshotVersion = 1,
+                MatcherVersion = "accepted-routing-v25",
+                PolicyVersion = "previous",
+                CandidateResultsJson = "[]",
+                ReasonsJson = "[]",
+                WarningsJson = "[]",
+                CorrelationId = "previous",
+                DecidedAt = DateTimeOffset.UtcNow
+            });
+            await setup.SaveChangesAsync();
+        }
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "owner",
+            new AllstarrPrincipal(fixture.Owner, "jellyfin", "backend", "owner", "Owner", false),
+            "refresh-search", DateTimeOffset.UtcNow.AddMinutes(1), default);
+
+        if (failure)
+        {
+            await Assert.ThrowsAsync<ProtocolProviderUnavailableException>(() => fixture.Service.RematchSnapshotAsync(
+                context, fixture.SnapshotId, "refresh-search", TrackRematchAllService.RolloutPolicyVersion));
+            await using var unchanged = fixture.Factory.CreateDbContext();
+            var previous = Assert.Single(await unchanged.TrackMatches.ToArrayAsync());
+            Assert.Equal("accepted-routing-v25", previous.MatcherVersion);
+            Assert.Equal(state, previous.State);
+            return;
+        }
+        var result = await fixture.Service.RematchSnapshotAsync(context, fixture.SnapshotId, "refresh-search",
+            TrackRematchAllService.RolloutPolicyVersion);
+
+        Assert.True(result.Succeeded, result.Error);
+        gateway.Verify(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15),
+            state == TrackMatchState.Accepted ? Times.Never() : Times.Once());
+        gateway.Verify(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "target"),
+            state == TrackMatchState.Accepted ? Times.Once() : Times.Never());
+        await using var saved = fixture.Factory.CreateDbContext();
+        var decision = await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        Assert.Equal(TrackMatchState.Accepted, decision.State);
+        Assert.Equal(TrackMatchDecisionEngine.AlgorithmVersion, decision.MatcherVersion);
+    }
+
+    [Fact]
+    [Trait("Category", "Sqlite")]
+    public async Task ManualRematchSavesUnresolvedDecisionWhenLowerPriorityProviderIsLate()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-download", "deezer"]);
+        gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "target"))
+            .ReturnsAsync((Song?)null);
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync(new MatchingSongSearchResult([], ["deezer"]));
+        await using var fixture = await Fixture.CreateAsync(gateway: gateway.Object);
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "owner",
+            new AllstarrPrincipal(fixture.Owner, "jellyfin", "backend", "owner", "Owner", false),
+            "manual-search", DateTimeOffset.UtcNow.AddMinutes(1), default);
+
+        var result = await fixture.Service.RematchSnapshotAsync(
+            context, fixture.SnapshotId, "manual-search", "manual-rematch-v3");
+
+        Assert.True(result.Succeeded, result.Error);
+        Assert.Equal("unresolved", result.State);
+        gateway.Verify(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15),
+            Times.AtLeastOnce());
+        await using var saved = fixture.Factory.CreateDbContext();
+        var decision = Assert.Single(await saved.TrackMatches.ToArrayAsync());
+        Assert.Equal(TrackMatchState.Unresolved, decision.State);
+        Assert.Equal("manual-rematch-v3", decision.PolicyVersion);
+        Assert.Equal(TrackMatchDecisionEngine.AlgorithmVersion, decision.MatcherVersion);
+    }
+
+    [Theory]
     [MemberData(nameof(StoredExplicitCases))]
     [Trait("Category", "Sqlite")]
     public async Task RoutineCommandsReadStoredBooleanAndNumericExplicitEvidence(bool refresh, string field, string raw, bool? expected)
@@ -373,8 +472,8 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
         gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "target"))
             .ReturnsAsync(cached ? expected == false ? explicitTrack : clean : null);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync([clean, explicitTrack]);
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync(new MatchingSongSearchResult([clean, explicitTrack], []));
         await using var fixture = await Fixture.CreateAsync(ExplicitPayload(field, raw), gateway: gateway.Object);
         var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "owner",
             new AllstarrPrincipal(fixture.Owner, "jellyfin", "backend", "owner", "Owner", false),
@@ -403,8 +502,8 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
                 Assert.All(scores, score => Assert.True(score.Confidence > 0));
         }
         gateway.Verify(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "target"), Times.Once);
-        gateway.Verify(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15),
-            cached && expected == null ? Times.Never() : Times.Exactly(!cached && expected == null ? 5 : 1));
+        gateway.Verify(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15),
+            cached && expected == null ? Times.Never() : Times.Once());
         gateway.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming), Times.Exactly(cached && expected == null ? 1 : 2));
         gateway.VerifyNoOtherCalls();
     }
@@ -606,7 +705,7 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
         gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "target")).ReturnsAsync((Song?)null);
         await using var fixture = await Fixture.CreateAsync(ExplicitPayload("IsExplicit", "true"), gateway: gateway.Object);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
             .Returns(async () =>
             {
                 await using var concurrent = fixture.Factory.CreateDbContext();
@@ -623,7 +722,7 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
                     CreatedAt = DateTimeOffset.UtcNow
                 });
                 await concurrent.SaveChangesAsync();
-                return (IReadOnlyList<Song>)[new Song { ExternalProvider = "deezer", ExternalId = "explicit", Title = "Track Melodies", Artist = "Artist", Album = "Album", Duration = 180, ExplicitContentLyrics = 1 }];
+                return new MatchingSongSearchResult([new Song { ExternalProvider = "deezer", ExternalId = "explicit", Title = "Track Melodies", Artist = "Artist", Album = "Album", Duration = 180, ExplicitContentLyrics = 1 }], []);
             });
         var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "owner",
             new AllstarrPrincipal(fixture.Owner, "jellyfin", "backend", "owner", "Owner", false),

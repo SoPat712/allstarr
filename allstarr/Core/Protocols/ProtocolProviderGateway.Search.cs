@@ -45,7 +45,7 @@ public sealed partial class ProtocolProviderGateway
             .Where(song => policy?.Includes(song) != false).ToArray());
     }
 
-    private async Task<IReadOnlyList<SearchSnapshot>> SearchPlayableProvidersWithinBudgetAsync(
+    private async Task<(IReadOnlyList<SearchSnapshot> Snapshots, IReadOnlyList<string> IncompleteProviderIds)> SearchPlayableProvidersWithinBudgetAsync(
         IReadOnlyList<ProviderRouteCandidate<IProviderMetadataCapability>> candidates,
         string query,
         int limit,
@@ -57,8 +57,17 @@ public sealed partial class ProtocolProviderGateway
         var started = clock.GetTimestamp();
         var tasks = candidates.Select(async candidate =>
         {
-            var snapshot = await SearchProviderWithinWindowAsync(
-                candidate, query, limit, true, false, false, settings);
+            SearchSnapshot? snapshot;
+            try
+            {
+                snapshot = await SearchProviderWithinWindowAsync(
+                    candidate, query, limit, true, false, false, settings);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger?.LogDebug("Playable search failed for provider {ProviderId}", candidate.Provider.Id);
+                snapshot = null;
+            }
             return (Snapshot: snapshot, CompletedAfter: clock.GetElapsedTime(started));
         }).ToArray();
         try
@@ -80,10 +89,17 @@ public sealed partial class ProtocolProviderGateway
         if (droppedProviders.Length > 0)
             logger?.LogInformation("Playable search budget expired for providers {ProviderIds}",
                 string.Join(", ", droppedProviders));
-        return tasks.Where(task => task.IsCompletedSuccessfully && task.Result.CompletedAfter <= budget)
+        var snapshots = tasks.Where(task => task.IsCompletedSuccessfully && task.Result.CompletedAfter <= budget)
             .Select(task => task.Result.Snapshot)
             .OfType<SearchSnapshot>()
             .ToArray();
+        var incompleteProviders = candidates.Where((_, index) =>
+                !tasks[index].IsCompletedSuccessfully || tasks[index].Result.CompletedAfter > budget ||
+                tasks[index].Result.Snapshot is not { Error: null })
+            .Select(candidate => candidate.Provider.Id)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return (snapshots, incompleteProviders);
     }
 
     private async Task<SearchSnapshot?> SearchProviderWithinWindowAsync(

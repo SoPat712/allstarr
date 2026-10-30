@@ -16,18 +16,209 @@ namespace allstarr.Tests;
 
 public sealed class TrackMatchPlayableSearchTests
 {
+    [Theory]
+    [InlineData("apple-download", "deezer", false, false)]
+    [InlineData("deezer", "apple-download", false, true)]
+    [InlineData(null, "apple-download", false, true)]
+    [InlineData("deezer", "apple-download", true, false)]
+    [InlineData(null, "deezer", true, false)]
+    public async Task MatchingSettlesIncompleteSearchOnlyWhenProviderPriorityAllowsIt(
+        string? selectedProvider, string failedProvider, bool allowIncomplete, bool throws)
+    {
+        var user = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-download", "deezer"]);
+        IReadOnlyList<Song> songs = selectedProvider == null ? [] :
+            [new Song { ExternalProvider = selectedProvider, ExternalId = "original", Title = "Track", Artist = "Artist", Duration = 210 }];
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync(new MatchingSongSearchResult(songs, [failedProvider]));
+        var service = new TrackMatchPlayableSearch(gateway.Object, new(), NullLogger<TrackMatchPlayableSearch>.Instance);
+        var search = service.MatchAsync(Context(user),
+            new ExternalTrackMatchSnapshot("source", "spotify", "source", "Track", "Artist", null, null, 210_000, null, null, null),
+            new TrackMatchScope(user, "main", null, 2, 1, new HashSet<string>()), [], null, default,
+            allowIncompleteSearch: allowIncomplete);
+
+        if (throws) await Assert.ThrowsAsync<ProtocolProviderUnavailableException>(() => search);
+        else
+        {
+            var result = await search;
+            Assert.Equal(selectedProvider == null ? TrackMatchReviewState.Unresolved : TrackMatchReviewState.Accepted, result.Decision.State);
+            Assert.Equal(selectedProvider, result.SelectedExternal?.ExternalProvider);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MatchingKeepsCompletedFallbackSongsWhenAnotherFallbackFails(bool transportFailure)
+    {
+        var user = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-download", "deezer"]);
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync(new MatchingSongSearchResult([], []));
+        var failedQuery = gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Track Album", 15));
+        if (transportFailure) failedQuery.ThrowsAsync(new ProtocolProviderUnavailableException(new(ProviderErrorKind.TransientFailure)));
+        else failedQuery.ReturnsAsync(new MatchingSongSearchResult([], ["deezer"]));
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Track", 15))
+            .ReturnsAsync(new MatchingSongSearchResult(
+                [new Song { ExternalProvider = "apple-download", ExternalId = "original", Title = "Track", Artist = "Artist", Duration = 210 }], []));
+        var service = new TrackMatchPlayableSearch(gateway.Object, new(), NullLogger<TrackMatchPlayableSearch>.Instance);
+        var source = new ExternalTrackMatchSnapshot("source", "spotify", "source", "Track", "Artist", "Album", null, 210_000, null, null, null);
+        var scope = new TrackMatchScope(user, "main", null, 2, 1, new HashSet<string>());
+
+        if (transportFailure)
+            await Assert.ThrowsAsync<ProtocolProviderUnavailableException>(() =>
+                service.MatchAsync(Context(user), source, scope, [], null, default));
+        else
+            Assert.Equal("original", (await service.MatchAsync(Context(user), source, scope, [], null, default)).SelectedExternal!.ExternalId);
+        var result = await service.MatchAsync(Context(user), source, scope, [], null, default, allowIncompleteSearch: true);
+        Assert.Equal("original", result.SelectedExternal!.ExternalId);
+        Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
+    }
+
+    [Fact]
+    public async Task MatchingDoesNotSwallowQueryCancellation()
+    {
+        var user = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ThrowsAsync(new OperationCanceledException());
+        var service = new TrackMatchPlayableSearch(gateway.Object, new(), NullLogger<TrackMatchPlayableSearch>.Instance);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.MatchAsync(Context(user),
+            new ExternalTrackMatchSnapshot("source", "spotify", "source", "Track", "Artist", null, null, 210_000, null, null, null),
+            new TrackMatchScope(user, "main", null, 2, 1, new HashSet<string>()), [], null, default, allowIncompleteSearch: true));
+    }
+
+    [Fact]
+    public async Task AcceptedLocalCandidateCanSettleDespiteIncompleteProviders()
+    {
+        var user = Guid.CreateVersion7();
+        var id = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-download", "deezer"]);
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync(new MatchingSongSearchResult([], ["apple-download", "deezer"]));
+        var service = new TrackMatchPlayableSearch(gateway.Object, new(), NullLogger<TrackMatchPlayableSearch>.Instance);
+
+        var result = await service.MatchAsync(Context(user),
+            new ExternalTrackMatchSnapshot("source", "spotify", "source", "Track", "Artist", null, null, 210_000, null, null, null),
+            new TrackMatchScope(user, "main", null, 2, 1, new HashSet<string> { "music" }),
+            [new LocalTrackMatchCandidate(id, user, "main", "music", "local", null, "Track", "Artist", null, null, 210_000, null, null, null)],
+            null, default);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
+        Assert.Equal(id, result.Decision.SelectedLibraryTrackId);
+    }
+
+    [Theory]
+    [InlineData("All", "original")]
+    [InlineData("CleanOnly", "clean")]
+    public async Task MessyUsesTheDecisionOwnersEffectivePreferences(string filter, string expected)
+    {
+        var user = Guid.CreateVersion7();
+        var policy = new EffectiveProviderPolicySnapshot(
+            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+            ImmutableHashSet<string>.Empty, "lossless", .07)
+        { Preferences = new ListeningPreferences(ExplicitFilter: filter) };
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        policies.Setup(item => item.ResolveForUserAsync(user, It.IsAny<CancellationToken>())).ReturnsAsync(policy);
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-download"]);
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync(new MatchingSongSearchResult([
+                new Song { ExternalProvider = "apple-download", ExternalId = "clean", Title = "Messy", Artist = "Lola Young", Album = "This Wasn't Meant for You Anyway", Duration = 284, ExplicitContentLyrics = 3, Isrc = "GBUM72402815" },
+                new Song { ExternalProvider = "apple-download", ExternalId = "original", Title = "Messy", Artist = "Lola Young", Album = "This Wasn't Meant for You Anyway", Duration = 284, ExplicitContentLyrics = 1, Isrc = "GBUM72401610" }
+            ], []));
+        var service = new TrackMatchPlayableSearch(gateway.Object, new(),
+            NullLogger<TrackMatchPlayableSearch>.Instance, policies.Object);
+        var source = new ExternalTrackMatchSnapshot("source", "listenbrainz", "messy", "Messy", "Lola Young",
+            "This Wasn't Meant for You Anyway", null, 284068, null, null, null);
+
+        var result = await service.MatchAsync(Context(user), source,
+            new TrackMatchScope(user, "main", null, 2, 1, new HashSet<string>()), [], null, default);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
+        Assert.Equal(expected, result.SelectedExternal!.ExternalId);
+        policies.Verify(item => item.ResolveForUserAsync(user, It.IsAny<CancellationToken>()), Times.AtLeastOnce());
+        policies.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("Feel Good Inc.", "Gorillaz", "Demon Days", "feel good inc Gorillaz")]
+    [InlineData("Moth to a Flame", "Swedish House Mafia & The Weeknd", "Dawn FM (Alternate World)", "moth to a flame Swedish House Mafia")]
+    [InlineData("Danza kuduro", "Don Omar feat. Lucenzo", null, "danza kuduro Don Omar")]
+    [InlineData("With You", "Chris Brown", null, "With You Chris Brown")]
+    [InlineData("Let Me Love You (feat. Justin Bieber)", "DJ Snake", null, "Let Me Love You DJ Snake")]
+    public async Task AutomaticSearchRecallsTracksUsingTitleAndPrimaryArtist(
+        string title, string artist, string? album, string successfulQuery)
+    {
+        var user = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
+        var queries = new List<string>();
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .Returns((ProtocolExecutionContext _, string query, int _) =>
+            {
+                queries.Add(query);
+                IReadOnlyList<Song> songs = query == successfulQuery
+                    ? [new Song { ExternalProvider = "deezer", ExternalId = "original", Title = title, Artist = artist, Album = album ?? string.Empty, Duration = 210 }]
+                    : [];
+                return Task.FromResult(new MatchingSongSearchResult(songs, []));
+            });
+        var service = new TrackMatchPlayableSearch(gateway.Object, new(),
+            NullLogger<TrackMatchPlayableSearch>.Instance);
+
+        var result = await service.MatchAsync(Context(user),
+            new ExternalTrackMatchSnapshot("source", "spotify", "source-track", title, artist,
+                album, null, 210_000, null, null, null),
+            new TrackMatchScope(user, "main", null, 2, 1, new HashSet<string>()),
+            [], null, CancellationToken.None);
+
+        Assert.Contains(successfulQuery, queries);
+        Assert.Contains(result.ExternalCandidates.Values, song => song.ExternalId == "original");
+        Assert.Equal(queries.Count, queries.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.InRange(queries.Count, 1, 5);
+    }
+
+    [Fact]
+    public async Task TitleOnlyFallbackRecallsAProviderThatCreditsTheFeatureInItsTitle()
+    {
+        var user = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15)).ReturnsAsync(new MatchingSongSearchResult([], []));
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(), "Let Me Love You", 15))
+            .ReturnsAsync(new MatchingSongSearchResult([new Song { ExternalProvider = "deezer", ExternalId = "original", Title = "Let Me Love You (feat. Justin Bieber)", Artist = "DJ Snake", Duration = 205 }], []));
+        var service = new TrackMatchPlayableSearch(gateway.Object, new(),
+            NullLogger<TrackMatchPlayableSearch>.Instance);
+
+        var result = await service.MatchAsync(Context(user),
+            new ExternalTrackMatchSnapshot("source", "spotify", "source-track", "Let Me Love You", "DJ Snake",
+                null, null, 205_000, null, null, null),
+            new TrackMatchScope(user, "main", null, 2, 1, new HashSet<string>()),
+            [], null, CancellationToken.None);
+
+        Assert.Contains(result.ExternalCandidates.Values, song => song.ExternalId == "original");
+    }
+
     [Fact]
     public async Task AutomaticMatchingCarriesArtistGridBestVersionIntoScores()
     {
         var user = Guid.CreateVersion7();
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["artistgrid"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync([new Song
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync(new MatchingSongSearchResult([new Song
             {
                 ExternalProvider = "artistgrid", ExternalId = "best", Title = "Song", Artist = "Artist",
                 Duration = 180, IsBestVersion = true
-            }]);
+            }], []));
         var service = new TrackMatchPlayableSearch(gateway.Object, new(), NullLogger<TrackMatchPlayableSearch>.Instance);
         var source = new ExternalTrackMatchSnapshot("source", "spotify", "source", "Song", "Artist", null, null, 180000, null, null, null);
         var scope = new TrackMatchScope(user, "main", null, 2, 1, new HashSet<string>());
@@ -50,11 +241,11 @@ public sealed class TrackMatchPlayableSearchTests
         policies.Setup(item => item.ResolveForUserAsync(user, It.IsAny<CancellationToken>())).ReturnsAsync(policy);
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["manual", "deezer"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync([
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync(new MatchingSongSearchResult([
                 new Song { ExternalProvider = "manual", ExternalId = "demo", Title = "Song", Artist = "Artist", Duration = 180 },
                 new Song { ExternalProvider = "deezer", ExternalId = "released", Title = "Song", Artist = "Artist", Duration = 180 }
-            ]);
+            ], []));
         var service = new TrackMatchPlayableSearch(gateway.Object, new(),
             NullLogger<TrackMatchPlayableSearch>.Instance, policies.Object);
         var source = new ExternalTrackMatchSnapshot("source", "spotify", "source", "Song", "Artist", null, null, 180000, null, null, null);
@@ -66,7 +257,7 @@ public sealed class TrackMatchPlayableSearchTests
         var manualResult = await service.MatchAsync(Context(user), source with { ProviderId = "manual" },
             scope, [], null, CancellationToken.None);
         Assert.Null(manualResult.SelectedExternal);
-        gateway.Verify(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+        gateway.Verify(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Never);
     }
     [Fact]
     public void Provider_eligibility_comes_from_streaming_routes()
@@ -122,9 +313,9 @@ public sealed class TrackMatchPlayableSearchTests
             .Returns(["apple-download", "deezer"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download", "deezer"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), "Feels Calvin Harris", 15))
-            .ReturnsAsync(
+            .ReturnsAsync(new MatchingSongSearchResult(
                 [
                     new Song
                     {
@@ -144,7 +335,7 @@ public sealed class TrackMatchPlayableSearchTests
                         Album = "Funk Wav Bounces Vol. 1",
                         Duration = 223
                     }
-                ]);
+                ], []));
         var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
@@ -178,9 +369,9 @@ public sealed class TrackMatchPlayableSearchTests
             .Returns(["deezer", "qobuz"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["deezer", "qobuz"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync(
+            .ReturnsAsync(new MatchingSongSearchResult(
                 [
                     new Song
                     {
@@ -212,7 +403,7 @@ public sealed class TrackMatchPlayableSearchTests
                         Duration = 169,
                         Isrc = "US-LIVE-BOOMCLAP"
                     }
-                ]);
+                ], []));
         var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
@@ -248,9 +439,9 @@ public sealed class TrackMatchPlayableSearchTests
             .Returns(["deezer", "qobuz"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["deezer", "qobuz"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync(
+            .ReturnsAsync(new MatchingSongSearchResult(
                 [
                     new Song
                     {
@@ -272,7 +463,7 @@ public sealed class TrackMatchPlayableSearchTests
                         Duration = 169,
                         Isrc = "USA2P1408144"
                     }
-                ]);
+                ], []));
         var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
@@ -304,9 +495,9 @@ public sealed class TrackMatchPlayableSearchTests
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
             .Returns(["apple-download", "deezer", "qobuz", "fourth"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync(
+            .ReturnsAsync(new MatchingSongSearchResult(
             [
                 new Song
                 {
@@ -324,7 +515,7 @@ public sealed class TrackMatchPlayableSearchTests
                     Artist = "The Artist",
                     Duration = 240
                 }
-            ]);
+            ], []));
         var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
@@ -355,9 +546,9 @@ public sealed class TrackMatchPlayableSearchTests
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
             .Returns(["apple-musickit", "deezer"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync(
+            .ReturnsAsync(new MatchingSongSearchResult(
             [
                 new Song
                 {
@@ -375,7 +566,7 @@ public sealed class TrackMatchPlayableSearchTests
                     Artist = "The Artist",
                     Duration = 240
                 }
-            ]);
+            ], []));
         var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
@@ -407,9 +598,9 @@ public sealed class TrackMatchPlayableSearchTests
             .Returns(["jellyfin"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns([]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), "Link Up Metro Boomin", 15))
-            .ReturnsAsync(
+            .ReturnsAsync(new MatchingSongSearchResult(
             [
                 new Song
                 {
@@ -420,7 +611,7 @@ public sealed class TrackMatchPlayableSearchTests
                     Album = "Spider-Man: Across the Spider-Verse",
                     Duration = 195
                 }
-            ]);
+            ], []));
         var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
@@ -453,7 +644,7 @@ public sealed class TrackMatchPlayableSearchTests
         Assert.Contains(
             "semantic_version_mismatch",
             Assert.Single(result.Decision.Candidates).Warnings);
-        gateway.Verify(item => item.SearchAutomaticSongsAsync(
+        gateway.Verify(item => item.SearchMatchingSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), "Link Up Metro Boomin", 15), Times.Once);
     }
 
@@ -525,7 +716,7 @@ public sealed class TrackMatchPlayableSearchTests
             It.IsAny<ProtocolExecutionContext>(), "applemusic", "cached-track"), Times.Once);
         gateway.Verify(item => item.GetSongAsync(
             It.IsAny<ProtocolExecutionContext>(), "deezer", "fallback-track"), Times.Once);
-        gateway.Verify(item => item.SearchAutomaticSongsAsync(
+        gateway.Verify(item => item.SearchMatchingSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Never);
     }
 
@@ -679,9 +870,9 @@ public sealed class TrackMatchPlayableSearchTests
             .Returns(["apple-download"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), "Feels Calvin Harris", 15))
-            .ReturnsAsync(
+            .ReturnsAsync(new MatchingSongSearchResult(
                 [
                     new Song
                     {
@@ -692,7 +883,7 @@ public sealed class TrackMatchPlayableSearchTests
                         Album = "Funk Wav Bounces Vol. 1",
                         Duration = 223
                     }
-                ]);
+                ], []));
         var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
@@ -734,11 +925,11 @@ public sealed class TrackMatchPlayableSearchTests
             .Returns(["deezer"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(),
                 "Serenade No. 13 in G Major Wiener Philharmoniker",
                 15))
-            .ReturnsAsync(
+            .ReturnsAsync(new MatchingSongSearchResult(
             [
                 new Song
                 {
@@ -758,7 +949,7 @@ public sealed class TrackMatchPlayableSearchTests
                     Album = "Mozart: Eine kleine Nachtmusik",
                     Duration = 401
                 }
-            ]);
+            ], []));
         var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
@@ -798,13 +989,13 @@ public sealed class TrackMatchPlayableSearchTests
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
             .Returns(["apple-download"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync([new Song
+            .ReturnsAsync(new MatchingSongSearchResult([new Song
             {
                 ExternalProvider = "apple-download", ExternalId = "1440638659", Title = "Crush",
                 Artist = "Selena Gomez & The Scene", Album = "Kiss & Tell", Duration = 199
-            }]);
+            }], []));
         var service = new TrackMatchPlayableSearch(
             gateway.Object, new TrackMatchDecisionEngine(), NullLogger<TrackMatchPlayableSearch>.Instance);
 
@@ -819,9 +1010,9 @@ public sealed class TrackMatchPlayableSearchTests
 
         Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
         Assert.Equal("1440638659", result.SelectedExternal!.ExternalId);
-        gateway.Verify(item => item.SearchAutomaticSongsAsync(
+        gateway.Verify(item => item.SearchMatchingSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), "Crush Selena Gomez & The Scene", 15), Times.Once);
-        gateway.Verify(item => item.SearchAutomaticSongsAsync(
+        gateway.Verify(item => item.SearchMatchingSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Once);
         Assert.Single(result.Decision.Candidates);
     }
@@ -833,9 +1024,9 @@ public sealed class TrackMatchPlayableSearchTests
         var pinnedId = Guid.CreateVersion7();
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync([]);
+            .ReturnsAsync(new MatchingSongSearchResult([], []));
         var service = new TrackMatchPlayableSearch(
             gateway.Object, new TrackMatchDecisionEngine(), NullLogger<TrackMatchPlayableSearch>.Instance);
 
@@ -850,9 +1041,9 @@ public sealed class TrackMatchPlayableSearchTests
 
         Assert.Equal(TrackMatchReviewState.Pinned, result.Decision.State);
         Assert.Equal(pinnedId, result.Decision.SelectedLibraryTrackId);
-        gateway.Verify(item => item.SearchAutomaticSongsAsync(
+        gateway.Verify(item => item.SearchMatchingSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), "Crush Selena Gomez & The Scene", 15), Times.Once);
-        gateway.Verify(item => item.SearchAutomaticSongsAsync(
+        gateway.Verify(item => item.SearchMatchingSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Once);
     }
 
@@ -863,7 +1054,7 @@ public sealed class TrackMatchPlayableSearchTests
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
         var queries = new List<string>();
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
             .Returns((ProtocolExecutionContext _, string query, int _) =>
             {
@@ -876,7 +1067,7 @@ public sealed class TrackMatchPlayableSearchTests
                         ? [new Song { ExternalProvider = "deezer", ExternalId = "other", Title = "Another Song",
                             Artist = "Someone Else", Duration = 300 }]
                         : [];
-                return Task.FromResult(songs);
+                return Task.FromResult(new MatchingSongSearchResult(songs, []));
             });
         var service = new TrackMatchPlayableSearch(
             gateway.Object, new TrackMatchDecisionEngine(), NullLogger<TrackMatchPlayableSearch>.Instance);
@@ -892,8 +1083,8 @@ public sealed class TrackMatchPlayableSearchTests
         Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
         Assert.Equal("match", result.SelectedExternal!.ExternalId);
         Assert.Equal(2, result.Decision.Candidates.Count);
-        Assert.Equal(new[] { "Crush Selena Gomez & The Scene", "Crush Kiss & Tell", "Crush",
-            "Selena Gomez & The Scene", "Kiss & Tell" }, queries);
+        Assert.Equal(new[] { "Crush Selena Gomez & The Scene", "crush Selena Gomez", "Crush Kiss & Tell",
+            "Crush", "Kiss & Tell" }, queries);
     }
 
     private static ProtocolExecutionContext Context(Guid user) => new(

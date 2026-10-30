@@ -321,9 +321,9 @@ public sealed class TrackMatchRecordingVersionTests
         };
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-download", "deezer"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .Returns((ProtocolExecutionContext _, string query, int _) => Task.FromResult<IReadOnlyList<Song>>(
-                !broaderQuery ? [mix, original] : query == "Espresso Sabrina Carpenter" ? [mix] : [original]));
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .Returns((ProtocolExecutionContext _, string query, int _) => Task.FromResult(new MatchingSongSearchResult(
+                !broaderQuery ? [mix, original] : query == "Espresso Sabrina Carpenter" ? [mix] : [original], [])));
         var search = new TrackMatchPlayableSearch(gateway.Object, new TrackMatchDecisionEngine(),
             NullLogger<TrackMatchPlayableSearch>.Instance);
         var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "main", "principal",
@@ -364,9 +364,9 @@ public sealed class TrackMatchRecordingVersionTests
         };
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-download", "deezer"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .Returns((ProtocolExecutionContext _, string query, int _) => Task.FromResult<IReadOnlyList<Song>>(
-                query == "Espresso Sabrina Carpenter" || !cleanExists ? [explicitSong] : [clean]));
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .Returns((ProtocolExecutionContext _, string query, int _) => Task.FromResult(new MatchingSongSearchResult(
+                query == "Espresso Sabrina Carpenter" || !cleanExists ? [explicitSong] : [clean], [])));
         var search = new TrackMatchPlayableSearch(gateway.Object, new TrackMatchDecisionEngine(),
             NullLogger<TrackMatchPlayableSearch>.Instance);
 
@@ -376,7 +376,7 @@ public sealed class TrackMatchRecordingVersionTests
         Assert.Equal(!cleanExists, result.Decision.RequiresReview);
         Assert.Equal(cleanExists ? "clean" : "explicit", result.SelectedExternal!.ExternalId);
         Assert.Equal(cleanExists ? "clean" : "explicit", Assert.Single(result.RoutableExternalCandidates).ExternalId);
-        gateway.Verify(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Espresso", 15), Times.Once);
+        gateway.Verify(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Espresso", 15), Times.Once);
     }
 
     [Theory]

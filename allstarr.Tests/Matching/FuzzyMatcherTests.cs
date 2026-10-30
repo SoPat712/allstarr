@@ -247,6 +247,22 @@ public class FuzzyMatcherTests
     }
 
     [Theory]
+    [InlineData("Let Me Hit It - Audiostalkers Mix", "Sporty-O", "Let Me Hit It (Audiostalkers Mix)", "Sporty-O")]
+    [InlineData("Enemy (with JID) - from the series Arcane League of Legends", "Imagine Dragons", "Enemy (From the animated series \"Arcane League of Legends\")", "Imagine Dragons, Arcane & League of Legends Music")]
+    public void EquivalentTitleAnnotationsMatch(string source, string artist, string candidate, string candidateArtist)
+    {
+        Assert.True(FuzzyMatcher.TitleAnnotationsMatch(source, artist, candidate, candidateArtist));
+        Assert.Equal(FuzzyMatcher.NormalizeTitleForMatching(source, artist, candidateArtist),
+            FuzzyMatcher.NormalizeTitleForMatching(candidate, candidateArtist, artist));
+    }
+
+    [Fact]
+    public void OrdinaryWithTitleKeepsItsWords()
+    {
+        Assert.Equal("with you", FuzzyMatcher.NormalizeTitleForMatching("With You", "Chris Brown"));
+    }
+
+    [Theory]
     [InlineData("U2", "ua")]
     [InlineData("24K Magic", "2ak magic")]
     [InlineData("1999", "iggg")]

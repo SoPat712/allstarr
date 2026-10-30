@@ -618,5 +618,448 @@
     ],
     "expectedState": "Unresolved",
     "expectedCandidate": null
+  },
+  {
+    "name": "messy-original-over-clean",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "tidal"
+    ],
+    "source": {
+      "title": "Messy",
+      "artist": "Lola Young",
+      "album": "This Wasn’t Meant for You Anyway",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 284068,
+      "isExplicit": null,
+      "isrc": null
+    },
+    "candidates": [
+      {
+        "title": "Messy",
+        "artist": "Lola Young",
+        "album": "This Wasn’t Meant for You Anyway",
+        "provider": "apple-download",
+        "durationMilliseconds": 284068,
+        "isExplicit": false,
+        "isrc": "GBUM72402815"
+      },
+      {
+        "title": "Messy",
+        "artist": "Lola Young",
+        "album": "This Wasn’t Meant for You Anyway",
+        "provider": "apple-download",
+        "durationMilliseconds": 284068,
+        "isExplicit": true,
+        "isrc": "GBUM72401610"
+      },
+      {
+        "title": "Messy",
+        "artist": "Lola Young",
+        "album": "This Wasn’t Meant for You Anyway",
+        "provider": "deezer",
+        "durationMilliseconds": 284068,
+        "isExplicit": true,
+        "isrc": "GBUM72401610"
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 1
+  },
+  {
+    "name": "under-influence-original-over-clean",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "tidal"
+    ],
+    "source": {
+      "title": "Under the Influence",
+      "artist": "Chris Brown",
+      "album": "Indigo (Extended)",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 184000,
+      "isExplicit": null,
+      "isrc": null
+    },
+    "candidates": [
+      {
+        "title": "Under the Influence",
+        "artist": "Chris Brown",
+        "album": "Indigo (Extended)",
+        "provider": "apple-download",
+        "durationMilliseconds": 184000,
+        "isExplicit": false,
+        "isrc": "USRC11902744"
+      },
+      {
+        "title": "Under the Influence",
+        "artist": "Chris Brown",
+        "album": "Indigo (Extended)",
+        "provider": "apple-download",
+        "durationMilliseconds": 184000,
+        "isExplicit": true,
+        "isrc": "USRC11902743"
+      },
+      {
+        "title": "Under the Influence",
+        "artist": "Chris Brown",
+        "album": "Indigo (Extended)",
+        "provider": "deezer",
+        "durationMilliseconds": 184000,
+        "isExplicit": true,
+        "isrc": "USRC11902743"
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 1
+  },
+  {
+    "name": "side-to-side-original-over-clean",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "tidal"
+    ],
+    "source": {
+      "title": "Side to Side",
+      "artist": "Ariana Grande ft. Nicki Minaj",
+      "album": "Dangerous Woman",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 226000,
+      "isExplicit": null,
+      "isrc": null
+    },
+    "candidates": [
+      {
+        "title": "Side to Side",
+        "artist": "Ariana Grande ft. Nicki Minaj",
+        "album": "Dangerous Woman",
+        "provider": "apple-download",
+        "durationMilliseconds": 226000,
+        "isExplicit": false,
+        "isrc": "USUM71603410"
+      },
+      {
+        "title": "Side to Side",
+        "artist": "Ariana Grande ft. Nicki Minaj",
+        "album": "Dangerous Woman",
+        "provider": "apple-download",
+        "durationMilliseconds": 226000,
+        "isExplicit": true,
+        "isrc": "USUM71602107"
+      },
+      {
+        "title": "Side to Side",
+        "artist": "Ariana Grande ft. Nicki Minaj",
+        "album": "Dangerous Woman",
+        "provider": "deezer",
+        "durationMilliseconds": 226000,
+        "isExplicit": true,
+        "isrc": "USUM71602107"
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 1
+  },
+  {
+    "name": "fancy-corroborated-original-album",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "tidal"
+    ],
+    "source": {
+      "title": "Fancy",
+      "artist": "Iggy Azalea",
+      "album": null,
+      "provider": "listenbrainz",
+      "durationMilliseconds": null,
+      "isExplicit": null,
+      "isrc": null
+    },
+    "candidates": [
+      {
+        "title": "Fancy (feat. Charli xcx & Wiley)",
+        "artist": "Iggy Azalea",
+        "album": "Morning Motivation Pop",
+        "provider": "apple-download",
+        "durationMilliseconds": 219000,
+        "isExplicit": true,
+        "isrc": "OTHER"
+      },
+      {
+        "title": "Fancy (feat. Charli XCX)",
+        "artist": "Iggy Azalea",
+        "album": "The New Classic (Deluxe)",
+        "provider": "apple-download",
+        "durationMilliseconds": 199000,
+        "isExplicit": true,
+        "isrc": "GBUM71400597"
+      },
+      {
+        "title": "Fancy (feat. Charli XCX)",
+        "artist": "Iggy Azalea",
+        "album": "The New Classic",
+        "provider": "apple-download",
+        "durationMilliseconds": 199000,
+        "isExplicit": true,
+        "isrc": "GBUM71400597"
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 2
+  },
+  {
+    "name": "am-i-wrong-corroborated-album",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "tidal"
+    ],
+    "source": {
+      "title": "Am I Wrong",
+      "artist": "Nico & Vinz",
+      "album": null,
+      "provider": "listenbrainz",
+      "durationMilliseconds": null,
+      "isExplicit": null,
+      "isrc": null
+    },
+    "candidates": [
+      {
+        "title": "Am I Wrong",
+        "artist": "Nico & Vinz",
+        "album": "Am I Wrong - Single",
+        "provider": "apple-download",
+        "durationMilliseconds": 271000,
+        "isExplicit": null,
+        "isrc": "GBBET1459201"
+      },
+      {
+        "title": "Am I Wrong",
+        "artist": "Nico & Vinz",
+        "album": "Black Star Elephant",
+        "provider": "apple-download",
+        "durationMilliseconds": 247000,
+        "isExplicit": null,
+        "isrc": "USWB11304681"
+      },
+      {
+        "title": "Am I Wrong",
+        "artist": "Nico & Vinz",
+        "album": "Black Star Elephant",
+        "provider": "deezer",
+        "durationMilliseconds": 247000,
+        "isExplicit": null,
+        "isrc": "USWB11304681"
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 1
+  },
+  {
+    "name": "audiostalkers-mix-punctuation",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "tidal"
+    ],
+    "source": {
+      "title": "Let Me Hit It - Audiostalkers Mix",
+      "artist": "Sporty-O",
+      "album": null,
+      "provider": "listenbrainz",
+      "durationMilliseconds": 190000,
+      "isExplicit": null,
+      "isrc": null
+    },
+    "candidates": [
+      {
+        "title": "Let Me Hit It (Audiostalkers Mix)",
+        "artist": "Sporty-O",
+        "album": null,
+        "provider": "apple-download",
+        "durationMilliseconds": 190000,
+        "isExplicit": null,
+        "isrc": "USLZJ1395505"
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "enemy-series-description",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "tidal"
+    ],
+    "source": {
+      "title": "Enemy (with JID) - from the series Arcane League of Legends",
+      "artist": "Imagine Dragons, JID",
+      "album": null,
+      "provider": "listenbrainz",
+      "durationMilliseconds": 173381,
+      "isExplicit": null,
+      "isrc": null
+    },
+    "candidates": [
+      {
+        "title": "Enemy (From the series \"Arcane League of Legends\")",
+        "artist": "Imagine Dragons, Arcane & League of Legends Music",
+        "album": null,
+        "provider": "apple-download",
+        "durationMilliseconds": 173000,
+        "isExplicit": null,
+        "isrc": null
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "winter-generic-collection-remains-reviewable",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "tidal"
+    ],
+    "source": {
+      "title": "The Four Seasons - Violin Concerto in F Minor, Op. 8, No. 4, RV 297 \"Winter\": I. Allegro non molto",
+      "artist": "Joshua Bell",
+      "album": null,
+      "provider": "listenbrainz",
+      "durationMilliseconds": null,
+      "isExplicit": null,
+      "isrc": null
+    },
+    "candidates": [
+      {
+        "title": "The Four Seasons",
+        "artist": "Joshua Bell",
+        "album": "The World Of Classics Third Movement",
+        "provider": "apple-download",
+        "durationMilliseconds": null,
+        "isExplicit": null,
+        "isrc": null
+      }
+    ],
+    "expectedState": "Suggested",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "up-instrumental-album-needs-confirmation",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "tidal"
+    ],
+    "source": {
+      "title": "Up",
+      "artist": "Cardi B",
+      "album": "Up (Instrumental)",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 156946,
+      "isExplicit": null,
+      "isrc": null
+    },
+    "candidates": [
+      {
+        "title": "Up",
+        "artist": "Cardi B",
+        "album": "Up",
+        "provider": "apple-download",
+        "durationMilliseconds": 156000,
+        "isExplicit": null,
+        "isrc": null
+      }
+    ],
+    "expectedState": "Suggested",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "original-album-over-video-collection",
+    "priority": [
+      "apple-musickit",
+      "deezer"
+    ],
+    "source": {
+      "title": "Side to Side",
+      "artist": "Ariana Grande",
+      "album": null,
+      "provider": "listenbrainz",
+      "durationMilliseconds": 226000,
+      "isExplicit": null
+    },
+    "candidates": [
+      {
+        "title": "Side to Side (feat. Nicki Minaj)",
+        "artist": "Ariana Grande",
+        "album": "Dangerous Woman (Video Album)",
+        "provider": "apple-download",
+        "durationMilliseconds": 226000,
+        "isExplicit": true,
+        "isrc": "USUM71602107"
+      },
+      {
+        "title": "Side to Side (feat. Nicki Minaj)",
+        "artist": "Ariana Grande",
+        "album": "Dangerous Woman",
+        "provider": "apple-download",
+        "durationMilliseconds": 226000,
+        "isExplicit": true,
+        "isrc": "USUM71602107"
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 1
+  },
+  {
+    "name": "corroborated-recording-keeps-source-feature-credits",
+    "priority": [
+      "apple-musickit",
+      "deezer"
+    ],
+    "source": {
+      "title": "Taki Taki (with Selena Gomez, Ozuna & Cardi B)",
+      "artist": "DJ Snake, Selena Gomez, Ozuna, Cardi B",
+      "album": "Taki Taki (with Selena Gomez, Ozuna & Cardi B)",
+      "provider": "spotify",
+      "durationMilliseconds": 212500,
+      "isExplicit": true
+    },
+    "candidates": [
+      {
+        "title": "Taki Taki (feat. Cardi B)",
+        "artist": "DJ Snake, Selena Gomez & Ozuna",
+        "album": "Taki Taki (feat. Cardi B) - Single",
+        "provider": "apple-download",
+        "durationMilliseconds": 212000,
+        "isExplicit": null,
+        "isrc": "USUG11900033"
+      },
+      {
+        "title": "Taki Taki (feat. Selena Gomez, Ozuna & Cardi B)",
+        "artist": "DJ Snake",
+        "album": "Carte Blanche",
+        "provider": "apple-download",
+        "durationMilliseconds": 212000,
+        "isExplicit": null,
+        "isrc": "USUG11802029"
+      },
+      {
+        "title": "Taki Taki",
+        "artist": "DJ Snake",
+        "album": "Carte Blanche",
+        "provider": "deezer",
+        "durationMilliseconds": 212000,
+        "isExplicit": null,
+        "isrc": "USUG11802029"
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 1
   }
 ]

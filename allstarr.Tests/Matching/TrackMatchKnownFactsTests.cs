@@ -370,11 +370,13 @@ public sealed class TrackMatchKnownFactsTests
     }
 
     [Fact]
-    public void OppositeFlagsInTheSameSourceEditionRemainAmbiguousWhenSourceIsUnknown()
+    public void OppositeFlagsInTheSameSourceEditionDefaultToExplicitWhenSourceIsUnknown()
     {
         var clean = Candidate("apple-download");
         var explicitCopy = clean with { LibraryTrackId = Guid.NewGuid(), BackendItemId = "explicit", IsExplicit = true };
-        Assert.Equal(TrackMatchReviewState.Ambiguous, Decide(Source() with { IsExplicit = null }, clean, explicitCopy).State);
+        var result = Decide(Source() with { IsExplicit = null }, clean, explicitCopy);
+        Assert.Equal(TrackMatchReviewState.Accepted, result.State);
+        Assert.Equal(explicitCopy.LibraryTrackId, result.SelectedLibraryTrackId);
     }
 
     [Theory]

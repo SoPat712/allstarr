@@ -15,10 +15,13 @@ public static partial class FuzzyMatcher
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*-\s*from\s+[""']?[^""']+[""']?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex FromAlbumDecoratorRegex();
 
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*(?:[-–—]\s*|[\(\[]\s*)from the (?:animated )?series\s+[^\)\]]+[\)\]]?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex SeriesDecoratorRegex();
+
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*-\s*((?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?|single version|album version|bonus track|bonus|deluxe edition)[^\-]*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex VersionDecoratorRegex();
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\[\(]((?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?|single version|album version|bonus(?: track)?|deluxe(?: edition)?|official|audio|video|lyric)[^\]\)]*[\]\)]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\[\(]((?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?|single version|album version|bonus(?: track)?|deluxe(?: edition)?|official|audio|video|lyric)\b[^\]\)]*[\]\)]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex TypeDecoratorRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"\b(live|acoustic|instrumental|stripped|remix|radio edit|extended(?:[ -]+(?:mix|version))?|club[ -]+mix|original mix|clean|explicit|sped[ -]+up|slowed(?:[ -]+down)?|karaoke|drumless(?:[ -]+edition)?|a[ -]?cap{1,2}ella|nightcore|reverb|8d|bass[ -]*boosted|tribute|cover)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
@@ -191,7 +194,7 @@ public static partial class FuzzyMatcher
         var artists = SplitCredits(creditedArtists)
             .Select(NormalizeForMatching)
             .ToHashSet(StringComparer.Ordinal);
-        if (artists.Count == 1) artists.UnionWith(TitleFeatureCredits(title));
+        if (artists.Count == 1 || SeriesDecoratorRegex().IsMatch(title)) artists.UnionWith(TitleFeatureCredits(title));
 
         bool IsOwnCredit(string value)
         {
@@ -201,7 +204,7 @@ public static partial class FuzzyMatcher
         }
 
         var cleaned = BracketedTitlePartRegex().Replace(
-            StripBestVersionPrefix(title),
+            SeriesDecoratorRegex().Replace(StripBestVersionPrefix(title), " "),
             match => IsOwnCredit(match.Groups[1].Value) ? " " : match.Value);
         cleaned = DashTitlePartRegex().Replace(cleaned,
             match => IsOwnCredit(match.Groups[1].Value) ? " " : match.Value);
@@ -243,6 +246,16 @@ public static partial class FuzzyMatcher
                 !match.Value.TrimStart().StartsWith("with ", StringComparison.OrdinalIgnoreCase))
             .SelectMany(match => SplitCredits(CreditPrefixRegex().Replace(match.Value.Trim(' ', '(', ')', '[', ']'), "")))
             .Select(NormalizeForMatching).ToHashSet(StringComparer.Ordinal);
+
+    internal static string ArtistWithoutSeriesCredits(string title, string artist)
+    {
+        var description = SeriesDecoratorRegex().Match(title);
+        if (!description.Success) return artist;
+        var normalized = NormalizeForMatching(description.Value);
+        return string.Join(", ", SplitCredits(artist).Where((credit, index) =>
+            index == 0 || !normalized.Contains(
+                NormalizeForMatching(credit).Replace(" music", "", StringComparison.Ordinal), StringComparison.Ordinal)));
+    }
 
     public static bool TitleAnnotationsMatch(
         string sourceTitle, string? sourceArtist, string candidateTitle, string? candidateArtist)

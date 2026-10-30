@@ -217,17 +217,19 @@ public sealed partial class TrackMatchCommandService
                     null,
                     new HashSet<Guid> { manual.LibraryTrackId.Value })
                 : null;
-        var effectiveEngine = await DecisionEngineAsync(cancellationToken);
+        var effectiveEngine = await DecisionEngineAsync(cancellationToken, snapshot.OwnerUserId);
         var decision = effectiveEngine.Decide(scope, sourceTrack, localCandidates, rejectedOverride);
         PlayableTrackMatch? playable = null;
         var unavailableIdentities = new HashSet<Guid>();
         if (excludedProviderIdentityId.HasValue) unavailableIdentities.Add(excludedProviderIdentityId.Value);
+        var searchAgain = (policyVersion is TrackRematchAllService.RolloutPolicyVersion or TrackRematchAllService.RolloutFallbackPolicyVersion) &&
+                          existingSelection?.State != TrackMatchState.Accepted;
         if (automaticSource && execution != null &&
             playableSearch != null &&
             manual?.Decision is not ManualOverrideDecision.Pin &&
             !(manual?.Decision == ManualOverrideDecision.Reject && !manual.LibraryTrackId.HasValue) &&
             decision.State != TrackMatchReviewState.Pinned &&
-            !effectiveEngine.CanSkipProviderComparison(decision))
+            (searchAgain || !effectiveEngine.CanSkipProviderComparison(decision)))
         {
             var cachedRoutes = source == null
                 ? []
@@ -242,7 +244,7 @@ public sealed partial class TrackMatchCommandService
                         (item.Verification == ProviderIdentityVerification.Verified ||
                          item.Verification == ProviderIdentityVerification.Pinned))
                     .ToArrayAsync(cancellationToken);
-            playable = source == null
+            playable = source == null || searchAgain
                 ? null
                 : await playableSearch.ReuseAsync(
                     execution, sourceTrack, scope, cachedRoutes,
@@ -253,7 +255,8 @@ public sealed partial class TrackMatchCommandService
                 scope,
                 candidates.Select(ToLocalCandidate).ToArray(),
                 rejectedOverride,
-                cancellationToken);
+                cancellationToken,
+                allowIncompleteSearch: policyVersion != TrackRematchAllService.RolloutPolicyVersion);
             decision = playable.Decision;
         }
         var selected = decision.SelectedLibraryTrackId.HasValue

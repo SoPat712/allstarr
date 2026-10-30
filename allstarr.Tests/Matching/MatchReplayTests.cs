@@ -167,6 +167,49 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
                 GROUP BY s.OwnerUserId, s.Protocol, s.BackendInstanceId, s.BackendPrincipalId, s.ProviderId, s.ExternalIdHash
             )
             """)[0];
+        var olderAccepted = Query(db, """
+            WITH snapshots AS (
+                SELECT s.*, row_number() OVER (
+                    PARTITION BY s.OwnerUserId, s.Protocol, s.BackendInstanceId, s.BackendPrincipalId, s.ProviderId, s.ExternalIdHash, s.ResourceKind
+                    ORDER BY s.SnapshotVersion DESC, s.RetrievedAt DESC, s.Id DESC) AS SourceRank
+                FROM external_metadata_snapshots s
+            ), latest AS (
+                SELECT m.*, row_number() OVER (PARTITION BY m.ExternalSnapshotId ORDER BY m.DecisionVersion DESC) AS DecisionRank
+                FROM track_matches m
+            ), classified AS (
+                SELECT m.MatcherVersion,
+                    CASE
+                    WHEN s.ResourceKind<>'track' THEN 'non_track_snapshot'
+                    WHEN EXISTS (SELECT 1 FROM manual_track_overrides o WHERE o.SourceProviderId=s.ProviderId
+                        AND o.SourceExternalIdHash=s.ExternalIdHash AND o.RevokedAt IS NULL
+                        AND (o.OwnerUserId IS NULL OR o.OwnerUserId=s.OwnerUserId)) THEN 'manual'
+                    WHEN EXISTS (SELECT 1 FROM recording_kept_routes k WHERE k.CanonicalRecordingId=m.CanonicalRecordingId
+                        OR k.CanonicalRecordingId=(SELECT i.CanonicalRecordingId FROM provider_track_identities i WHERE i.Id=s.ProviderTrackIdentityId)) THEN 'kept_route'
+                    WHEN s.SourceRank<>1 THEN 'superseded_snapshot'
+                    WHEN NOT EXISTS (SELECT 1 FROM users u WHERE u.Id=s.OwnerUserId AND u.Enabled=1
+                        AND u.BackendInstanceId=s.BackendInstanceId AND u.BackendPrincipalId=s.BackendPrincipalId
+                        AND u.BackendType=CASE WHEN s.Protocol='opensubsonic' THEN 'subsonic' ELSE s.Protocol END)
+                        OR s.ProviderAccountId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM provider_accounts a
+                        WHERE a.Id=s.ProviderAccountId AND a.Enabled=1 AND a.ProviderId=s.ProviderId
+                        AND (a.OwnerUserId IS NULL OR a.OwnerUserId=s.OwnerUserId)) THEN 'inactive_scope'
+                    ELSE 'current_automatic' END AS Reason
+                FROM latest m JOIN snapshots s ON s.Id=m.ExternalSnapshotId
+                WHERE m.DecisionRank=1 AND m.State='Accepted'
+                    AND m.MatcherVersion<>'accepted-routing-v25'
+            ) SELECT MatcherVersion, Reason, count(*) FROM classified GROUP BY MatcherVersion, Reason
+            """).Select(row => new { version = (string)row[0]!, reason = (string)row[1]!, count = Convert.ToInt64(row[2]) }).ToArray();
+        var missingArtistInputs = Query(db, "SELECT ProviderId, PayloadJson FROM external_metadata_snapshots WHERE ResourceKind='track' AND PayloadJson LIKE '%Wicked Game%'")
+            .Select(row =>
+            {
+                using var document = JsonDocument.Parse((string)row[1]!);
+                return new
+                {
+                    provider = (string)row[0]!,
+                    title = Text(document.RootElement, "title", "Title", "name", "Name"),
+                    artist = TrackSnapshotMetadata.Artist(document.RootElement)
+                };
+            }).Distinct().ToArray();
+        var latestReview = new List<object>();
         var sourceKinds = Query(db, "SELECT ResourceKind, ProviderId, count(*) FROM external_metadata_snapshots GROUP BY ResourceKind, ProviderId")
             .Select(row => new { kind = (string)row[0]!, provider = (string)row[1]!, count = Convert.ToInt64(row[2]) }).ToArray();
         var history = tables.ContainsKey("listening_events")
@@ -428,6 +471,7 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
                 evidenceGaps = evidenceGaps.Order().ToArray(),
                 storedScoresReproduced = scoresAgree
             };
+            if (latest && after.State != TrackMatchReviewState.Accepted) latestReview.Add(example);
             if (previousChosen != null && chosen != null && Provider(previousChosen) != Provider(chosen))
             {
                 Add("provider_change/all");
@@ -560,6 +604,9 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
             history,
             storedStates,
             matcherVersions,
+            olderAccepted,
+            missingArtistInputs,
+            latestReview,
             rerunScopeUpperBound = new { groups = Convert.ToInt64(rerunGroups[0]), protectedManual = Convert.ToInt64(rerunGroups[1] ?? 0) },
             counts,
             affectedSongs = affectedSongs.ToDictionary(item => item.Key, item => item.Value.Count),

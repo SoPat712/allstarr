@@ -89,7 +89,18 @@ public sealed record TrackMatchCandidateScore(
     double? AlbumEvidence = null,
     long? DurationDeltaMilliseconds = null,
     bool IsLocal = true,
-    bool IsBestVersion = false);
+    bool IsBestVersion = false)
+{
+    public bool? IsExplicit { get; init; }
+    public string? AlbumArtist { get; init; }
+    public Guid? CanonicalRecordingId { get; init; }
+    public string? MusicBrainzRecordingId { get; init; }
+    public int CandidateOrder { get; init; }
+    public ExternalTrackMatchSnapshot? Source { get; init; }
+    public IReadOnlyList<string>? ProviderPriority { get; init; }
+    public TrackMatchPolicy? Policy { get; init; }
+    public bool CandidatesTruncated { get; init; }
+}
 
 public sealed record TrackMatchDecision(
     TrackMatchReviewState State,
@@ -138,7 +149,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "accepted-routing-v24";
+    public const string AlgorithmVersion = "accepted-routing-v25";
     private const double ScoreEpsilon = 0.0000001;
 
     private readonly TrackMatchPolicy _policy;
@@ -196,6 +207,7 @@ public sealed class TrackMatchDecisionEngine
         ArgumentNullException.ThrowIfNull(candidates);
         ValidateSource(source);
         var scored = candidates
+            .Select(candidate => candidate with { IsExplicit = TrackMatchSignals.Explicitness(candidate) })
             .Select(candidate => new RankedCandidate(
                 candidate,
                 ScoreCandidate(source, candidate),
@@ -231,26 +243,51 @@ public sealed class TrackMatchDecisionEngine
         if (ranked.Length == 0) return [];
 
         var highestConfidence = ranked[0].Score.Confidence;
-        var accepted = ranked.Where(candidate => IsAcceptanceQualified(candidate.Score)).ToArray();
+        var accepted = scored.Where(candidate => IsAcceptanceQualified(candidate.Score)).ToArray();
         var hasAllowedRecording = ranked.Any(candidate => IsRecordingAllowed(candidate.Score));
         var eligible = accepted.Length > 0 ? accepted : ranked
             .Where(candidate => candidate.Score.Confidence + candidate.Priority.Window + ScoreEpsilon >=
                                 highestConfidence &&
                                 (IsRecordingAllowed(candidate.Score) || !hasAllowedRecording));
-        var selected = eligible
-            .OrderBy(candidate => candidate.Priority.Rank)
-            .ThenByDescending(candidate => candidate.Score.Confidence)
-            .ThenBy(candidate => candidate.Score.LibraryTrackId)
-            .First();
-        return ranked
-            .OrderBy(candidate => candidate.Score.LibraryTrackId == selected.Score.LibraryTrackId ? 0 : 1)
-            .ThenByDescending(candidate => candidate.Score.Confidence)
-            .ThenBy(candidate => candidate.Score.LibraryTrackId)
+        var matchingEditionRanks = accepted.Where(candidate =>
+                SameAlbumEdition(source.Album, candidate.Candidate.Album) == true)
+            .Select(candidate => candidate.Priority.Rank).ToHashSet();
+        var preferred = accepted.Length > 0 && !accepted.Any(candidate => candidate.Candidate.IsLocal)
+            ? accepted
+                .OrderBy(candidate => candidate.Priority.Rank)
+                .ThenByDescending(candidate => SameAlbumEdition(source.Album, candidate.Candidate.Album) == true)
+                .ThenByDescending(candidate => FuzzyMatcher.SourceAlbumMarkersMatch(source.Title, source.Album, candidate.Candidate.Album))
+                .ThenByDescending(candidate => !source.IsExplicit.HasValue && candidate.Candidate.IsExplicit == true &&
+                    !matchingEditionRanks.Contains(candidate.Priority.Rank))
+                .ThenByDescending(candidate => candidate.Score.Confidence)
+                .ToArray()
+            : eligible
+                .OrderBy(candidate => candidate.Priority.Rank)
+                .ThenByDescending(candidate => candidate.Score.Confidence)
+                .ThenBy(candidate => candidate.Score.LibraryTrackId)
+                .ToArray();
+        var selected = preferred[0];
+        return preferred.Concat(ranked.Except(preferred))
             .Select(candidate => ExplainPrioritySelection(
                 candidate,
                 candidate.Score.LibraryTrackId == selected.Score.LibraryTrackId &&
                 candidate.Score.LibraryTrackId != ranked[0].Score.LibraryTrackId))
             .ToArray();
+    }
+
+    internal static bool MatchesSourceVariant(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate,
+        int durationToleranceSeconds = 8) =>
+        (!source.IsExplicit.HasValue || !TrackMatchSignals.Explicitness(candidate).HasValue || source.IsExplicit == TrackMatchSignals.Explicitness(candidate)) &&
+        (source.DurationMilliseconds is not > 0 || candidate.DurationMilliseconds is not > 0 ||
+         Math.Abs(source.DurationMilliseconds.Value - candidate.DurationMilliseconds.Value) <= durationToleranceSeconds * 1000L) &&
+        TrackMatchSignals.RecordingVersionsMatch(source, candidate, durationToleranceSeconds) &&
+        FuzzyMatcher.TitleAnnotationsMatch(source.Title, source.Artist, candidate.Title, candidate.Artist);
+
+    internal static bool? SameAlbumEdition(string? sourceAlbum, string? candidateAlbum)
+    {
+        var source = FuzzyMatcher.NormalizeAlbumForMatching(sourceAlbum);
+        var candidate = FuzzyMatcher.NormalizeAlbumForMatching(candidateAlbum);
+        return source.Length == 0 || candidate.Length == 0 ? null : source == candidate;
     }
 
     private TrackMatchCandidateScore ExplainPrioritySelection(
@@ -332,14 +369,21 @@ public sealed class TrackMatchDecisionEngine
     internal static bool IsAcceptedExternalCandidate(TrackMatchCandidateScore score, double acceptThreshold) =>
         IsRecordingAllowed(score) && score.Confidence >= acceptThreshold &&
         HasStrongArtistEvidence(score, acceptThreshold) && HasDurationWithinTolerance(score) &&
-        HasSameSemanticVersion(score) && HasSameTitleAnnotations(score);
+        HasSameSemanticVersion(score) && HasSameTitleAnnotations(score) && HasMatchingExplicitness(score) &&
+        HasConfirmedSourceAlbum(score);
 
     private bool IsAcceptanceQualified(TrackMatchCandidateScore score) =>
         IsRecordingAllowed(score) && score.Confidence >= _policy.AcceptThreshold &&
         HasStrongArtistEvidence(score) &&
         HasDurationWithinTolerance(score) &&
         HasSameSemanticVersion(score) &&
-        HasSameTitleAnnotations(score);
+        HasSameTitleAnnotations(score) && HasMatchingExplicitness(score) && HasConfirmedSourceAlbum(score);
+
+    private static bool HasConfirmedSourceAlbum(TrackMatchCandidateScore score) =>
+        score.Components?.GetValueOrDefault("sourceAlbumConfirmation", 1) != 0;
+
+    private static bool HasMatchingExplicitness(TrackMatchCandidateScore score) =>
+        score.Components?.GetValueOrDefault("explicitContent", 1) != 0;
 
     private static bool IsRecordingAllowed(TrackMatchCandidateScore score) =>
         score.Components?.GetValueOrDefault("recordingAllowed", 1) != 0;
@@ -379,6 +423,7 @@ public sealed class TrackMatchDecisionEngine
 
         var scopedCandidates = candidates
             .Where(candidate => IsVisible(scope, candidate))
+            .Select(candidate => candidate with { IsExplicit = TrackMatchSignals.Explicitness(candidate) })
             .ToList();
         if (scopedCandidates.Select(candidate => candidate.LibraryTrackId).Distinct().Count() != scopedCandidates.Count)
         {
@@ -425,7 +470,24 @@ public sealed class TrackMatchDecisionEngine
                 scope);
         }
 
-        var scores = rankedScores.Take(20).ToList();
+        var inputOrder = visible.Select((candidate, index) => (candidate.LibraryTrackId, Index: index))
+            .ToDictionary(item => item.LibraryTrackId, item => item.Index);
+        var scores = rankedScores.Take(20).Select(score => score with
+        {
+            CandidateOrder = inputOrder[score.LibraryTrackId]
+        }).ToList();
+        scores[0] = scores[0] with
+        {
+            Source = source with
+            {
+                ExactProviderAliases = source.ExactProviderAliases?.Take(100)
+                    .ToDictionary(item => item.Key, item => item.Value)
+            },
+            ProviderPriority = providerPriority?.Take(100).ToArray(),
+            Policy = _policy,
+            CandidatesTruncated = rankedScores.Count > scores.Count || providerPriority?.Count > 100 ||
+                                  source.ExactProviderAliases?.Count > 100
+        };
         var best = scores[0];
         var selected = visible.Single(candidate => candidate.LibraryTrackId == best.LibraryTrackId);
         var selectedPriority = Priority(selected, providerPriority);
@@ -436,9 +498,13 @@ public sealed class TrackMatchDecisionEngine
             Priority(
                 visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId),
                 providerPriority).Rank == selectedPriority.Rank &&
+            (!MatchesSourceVariant(source, selected, _policy.DurationToleranceSeconds) ||
+             MatchesSourceVariant(source, visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId), _policy.DurationToleranceSeconds)) &&
             !SameRecordingIdentity(
                 selected,
-                visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId), source.Artist));
+                visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId), source.Artist) &&
+            (selected.IsLocal || !CanResolveProviderDuplicate(source, selected,
+                visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId))));
         if (runnerUp != null &&
             best.Confidence >= _policy.SuggestThreshold &&
             best.Confidence - runnerUp.Confidence <= _policy.AmbiguityDelta)
@@ -473,6 +539,8 @@ public sealed class TrackMatchDecisionEngine
                 TrackMatchReviewState.Unresolved when !HasSameSemanticVersion(best) && decisionScore < _policy.AcceptThreshold =>
                     ["below_accept_threshold_review", "semantic_version_mismatch_review"],
                 TrackMatchReviewState.Unresolved when !HasSameSemanticVersion(best) => ["semantic_version_mismatch_review"],
+                TrackMatchReviewState.Suggested when !HasMatchingExplicitness(best) => ["explicitness_mismatch_review"],
+                TrackMatchReviewState.Suggested when !HasConfirmedSourceAlbum(best) => ["source_album_marker_confirmation"],
                 TrackMatchReviewState.Suggested when !HasSameTitleAnnotations(best) => ["title_annotation_mismatch_review"],
                 TrackMatchReviewState.Suggested => ["below_accept_threshold_review"],
                 TrackMatchReviewState.Unresolved when
@@ -481,6 +549,34 @@ public sealed class TrackMatchDecisionEngine
                 _ => []
             },
             scope);
+    }
+
+    private bool CanResolveProviderDuplicate(
+        ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate left, LocalTrackMatchCandidate right)
+    {
+        if (!source.IsExplicit.HasValue && left.IsExplicit.HasValue && right.IsExplicit.HasValue &&
+            left.IsExplicit != right.IsExplicit)
+            return SameAlbumEdition(source.Album, left.Album) != true || SameAlbumEdition(source.Album, right.Album) != true;
+        if (left.DurationMilliseconds is > 0 && right.DurationMilliseconds is > 0 &&
+            Math.Abs(left.DurationMilliseconds.Value - right.DurationMilliseconds.Value) > _policy.DurationToleranceSeconds * 1000L ||
+            !FuzzyMatcher.RecordingVersionsMatch(left.Title, left.Album, right.Title, right.Album) &&
+            !(MatchesSourceVariant(source, left, _policy.DurationToleranceSeconds) &&
+              MatchesSourceVariant(source, right, _policy.DurationToleranceSeconds))) return false;
+        if (left.CanonicalRecordingId.HasValue && right.CanonicalRecordingId.HasValue &&
+            left.CanonicalRecordingId != right.CanonicalRecordingId ||
+            TrackMatchSignals.RecordingIdentity(left) is { Length: > 0 } leftId &&
+            TrackMatchSignals.RecordingIdentity(right) is { Length: > 0 } rightId &&
+            !FuzzyMatcher.IdentifiersEqual(leftId, rightId) ||
+            left.Isrc is { Length: > 0 } && right.Isrc is { Length: > 0 } &&
+            !FuzzyMatcher.IdentifiersEqual(left.Isrc, right.Isrc)) return false;
+        return SameAlbumEdition(source.Album, left.Album) == true &&
+               SameAlbumEdition(source.Album, right.Album) != true ||
+               FuzzyMatcher.SourceAlbumMarkersMatch(source.Title, source.Album, left.Album) &&
+               !FuzzyMatcher.SourceAlbumMarkersMatch(source.Title, source.Album, right.Album) ||
+               source.DurationMilliseconds is > 0 && left.DurationMilliseconds is > 0 &&
+               right.DurationMilliseconds is not > 0 &&
+               Math.Abs(source.DurationMilliseconds.Value - left.DurationMilliseconds.Value) <= _policy.DurationToleranceSeconds * 1000L ||
+               source.IsExplicit.HasValue && left.IsExplicit == source.IsExplicit && !right.IsExplicit.HasValue;
     }
 
     private sealed record RankedCandidate(
@@ -524,9 +620,11 @@ public sealed class TrackMatchDecisionEngine
         LocalTrackMatchCandidate right,
         string? sourceArtist = null)
     {
-        if (FuzzyMatcher.IsContinuousMixExcerpt(left.Title, left.Album) !=
+        if (!FuzzyMatcher.RecordingVersionsMatch(left.Title, left.Album, right.Title, right.Album) ||
+            FuzzyMatcher.IsContinuousMixExcerpt(left.Title, left.Album) !=
             FuzzyMatcher.IsContinuousMixExcerpt(right.Title, right.Album) ||
-            left.IsExplicit.HasValue && right.IsExplicit.HasValue && left.IsExplicit != right.IsExplicit)
+            TrackMatchSignals.Explicitness(left).HasValue && TrackMatchSignals.Explicitness(right).HasValue &&
+            TrackMatchSignals.Explicitness(left) != TrackMatchSignals.Explicitness(right))
             return false;
 
         if (left.CanonicalRecordingId.HasValue &&
@@ -539,6 +637,7 @@ public sealed class TrackMatchDecisionEngine
             !string.IsNullOrWhiteSpace(rightRecording))
             return FuzzyMatcher.IdentifiersEqual(leftRecording, rightRecording);
 
+        if (FuzzyMatcher.IdentifiersEqual(left.Isrc, right.Isrc)) return true;
         if (left.CanonicalRecordingId.HasValue &&
             right.CanonicalRecordingId.HasValue &&
             string.IsNullOrWhiteSpace(leftRecording) &&
@@ -655,7 +754,13 @@ public sealed class TrackMatchDecisionEngine
             : null,
         candidate.IsLocal,
         !candidate.IsLocal && candidate.IsBestVersion &&
-        string.Equals(candidate.ExternalProvider, "artistgrid", StringComparison.OrdinalIgnoreCase));
+        string.Equals(candidate.ExternalProvider, "artistgrid", StringComparison.OrdinalIgnoreCase))
+        {
+            IsExplicit = candidate.IsExplicit,
+            AlbumArtist = candidate.AlbumArtist,
+            CanonicalRecordingId = candidate.CanonicalRecordingId,
+            MusicBrainzRecordingId = candidate.MusicBrainzRecordingId
+        };
 
     private static double? AlbumEvidence(
         ExternalTrackMatchSnapshot source,

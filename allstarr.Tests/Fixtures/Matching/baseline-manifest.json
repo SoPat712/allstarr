@@ -1,26 +1,26 @@
 {
-  "commit": "3d44b8049c5cc124fa9f128b9eaaedf3ceef5eec",
+  "commit": "e418cc7b2826911bdc1de5ca51caafb3d28d1075",
   "sourceRef": "origin/dev",
   "files": [
     {
       "path": "allstarr/Core/Matching/TrackMatchDecisionEngine.cs",
       "asset": "TrackMatchDecisionEngine.baseline.cs.txt",
-      "sha256": "c3ea5fa0df9475753dd4ae747a35fb75a6728c6a885b5154b7d40c0931db73f7"
+      "sha256": "f7b0a67701ea5a8d3520781a339684736c51996f2778891d7300b96183352243"
     },
     {
       "path": "allstarr/Core/Matching/TrackMatchRules.cs",
       "asset": "TrackMatchRules.baseline.cs.txt",
-      "sha256": "2566069ec2f9147d47f5546369b45ae81e1f35298e272c045fafab784efa825c"
+      "sha256": "1d145cdb2d9e4a972dfde14591cf08b243c067b0450b9db758c4d20e1579f291"
     },
     {
       "path": "allstarr/Services/Common/FuzzyMatcher.cs",
       "asset": "FuzzyMatcher.baseline.cs.txt",
-      "sha256": "de973b8a3584a00412b7a44f9f38e80aa0fa1c5250c8de50d0dbd16382ca12ff"
+      "sha256": "9bf48b37b1eb50e185df104b57ecc9c335ab657a502c946853e080e5e40155d1"
     },
     {
       "path": "allstarr/Core/Matching/TrackSnapshotMetadata.cs",
       "asset": "TrackSnapshotMetadata.baseline.cs.txt",
-      "sha256": "5a0caca25c298750c4b9fb07eb678a93421ac1f7361361434b9b4b63880ed35d"
+      "sha256": "20e984d1e1958f5590439b01985b2412761a345cb948d1688af25c0d3335e588"
     }
   ]
 }
