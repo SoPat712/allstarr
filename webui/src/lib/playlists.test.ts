@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { PlaylistLink, PlaylistSourceAccount, PlaylistTrack } from "./api";
+import type { MixCard, PlaylistLink, PlaylistSourceAccount, PlaylistTrack } from "./api";
 import {
   filterPlaylists,
   filterTracks,
@@ -97,6 +97,18 @@ describe("playlist presentation", () => {
     expect(filterPlaylists(result, "source", "attention", "name").map((item) => item.id)).toEqual([
       "partial", "review",
     ]);
+  });
+
+  it("includes app mixes in name filtering and sorting only for all states", () => {
+    const mix: MixCard & { trackCount: number | null } = { id: "mix", kind: "daily-1", name: "Daily Mix 1", description: "Songs picked for you", section: "madeForYou", sortOrder: 0, sourceLabel: null, recipeVersion: "1", updatedAt: "2026-10-29T04:00:00Z", readiness: { ready: true, message: "Ready" }, inApps: true, showInApps: true, appsAllowed: true, coverArtwork: [], trackCount: 20 };
+    const items = [playlist({ name: "Evening" }), mix];
+    expect(filterPlaylists(items, "", "all", "name").map(item => item.id)).toEqual(["mix", "one"]);
+    expect(filterPlaylists(items, "DAILY", "all", "name").map(item => item.id)).toEqual(["mix"]);
+    for (const state of ["ready", "attention", "paused"] as const)
+      expect(filterPlaylists(items, "daily", state, "name")).toEqual([]);
+    expect(filterPlaylists(items, "", "all", "tracks").map(item => item.id)).toEqual(["mix", "one"]);
+    expect(filterPlaylists(items, "", "all", "coverage").map(item => item.id)).toEqual(["one", "mix"]);
+    expect(filterPlaylists([playlist({ name: "Collection 24" }), playlist({ name: "Collection 9" })], "", "all", "name").map(item => item.name)).toEqual(["Collection 24", "Collection 9"]);
   });
 
   it("keeps source order by default and formats durations", () => {

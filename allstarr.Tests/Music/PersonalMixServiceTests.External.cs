@@ -24,7 +24,7 @@ public sealed partial class PersonalMixServiceTests
     public PersonalMixServiceTests(ITestOutputHelper output) => this.output = output;
 
     private async Task<PlaylistLinkRecord> ExternalLink(string source = "lastfm", string selection = "loved",
-        Guid? listener = null, bool schedule = true)
+        Guid? listener = null, bool schedule = true, string? artwork = null)
     {
         var user = listener ?? owner;
         access.Setup(item => item.ResolveUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
@@ -83,6 +83,7 @@ public sealed partial class PersonalMixServiceTests
             PlaylistLinkId = link.Id,
             ProviderAccountId = account.Id,
             Name = "External favourite songs",
+            ArtworkReferenceKey = artwork,
             SnapshotVersion = 1,
             ProviderRevision = "1",
             RetrievedAt = clock.UtcNow,

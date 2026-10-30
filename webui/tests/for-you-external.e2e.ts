@@ -48,6 +48,11 @@ test("External matching closes before background refresh and stops when leaving"
     polls++;
     return route.fulfill({ json: { job: { state: "Pending" }, attempts: [], progress: [] } });
   });
+  await page.route("**/api/admin/playlist-links/external?*", route => route.fulfill({ json: {
+    id: "external", name: "Loved on Last.fm", sourceProviderId: "lastfm", targetProtocol: "jellyfin",
+    trackCount: 10, matchedCount: 8, unmatchedCount: 2, unresolvedCount: 2, reviewCount: 0,
+    routeCoverage: [], tracks: [], durationMs: 0, unknownDurationCount: 0,
+  } }));
   await openHome(page); blockRefresh = true;
   await keep(page);
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
@@ -55,6 +60,10 @@ test("External matching closes before background refresh and stops when leaving"
   await expect.poll(() => polls).toBeGreaterThan(0);
   await page.goto("/#/library/playlists");
   await expect(page.getByRole("button", { name: "Open Loved on Last.fm playlist details", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open Loved on Last.fm mix", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Open Loved on Last.fm playlist details", exact: true }).click();
+  await expect(page.getByRole("dialog").getByRole("heading", { name: "Loved on Last.fm", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/#\/library\/playlists$/);
   const count = polls;
   await expect(page.getByRole("region", { name: "Notifications" }).getByRole("status")).toHaveCount(0);
   await page.waitForTimeout(2200);

@@ -4,6 +4,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
+using allstarr.Core.Music;
 using allstarr.Core.Operations;
 using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
@@ -583,7 +584,8 @@ public sealed partial class PlaylistLinksController(
                 projection,
                 schedule,
                 clientProjection,
-                preview?.Entries.ToDictionary(item => item.Position)));
+                preview?.Entries.ToDictionary(item => item.Position),
+                PersonalMixService.IsExternalLink(link) ? MixArtworkUrl(link.Id, projection.SnapshotVersion) : null));
         });
     }
 
@@ -1391,13 +1393,16 @@ public sealed partial class PlaylistLinksController(
         : $"/api/admin/playlist-sources/public/{Uri.EscapeDataString(providerId)}/playlists/{Uri.EscapeDataString(playlistId)}/artwork";
 
     private static object ToDto(PlaylistLinkRecord value, Guid? initialJobId = null, int? retentionQueued = null) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, followNewest = value.SourceProviderId == "listenbrainz" && value.SourcePlaylistId.StartsWith("createdfor:", StringComparison.Ordinal), targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), importMode = LowerCamel(value.ImportMode.ToString()), trackRetention = LowerCamel(value.TrackRetention.ToString()), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id), initialJobId, retentionQueued };
+    private static string MixArtworkUrl(Guid id, int generation) => $"/api/admin/mixes/{id}/cover?v={generation}";
+
     private object ToListDto(PlaylistLinkRecord value, DurablePlaylistProjection? projection) => new
     {
         id = value.Id,
         enabled = value.Enabled,
         name = projection?.Name ?? "Playlist",
         description = projection?.Description,
-        artworkUrl = projection?.ArtworkReferenceKey == null ? null :
+        artworkUrl = PersonalMixService.IsExternalLink(value) ? MixArtworkUrl(value.Id, projection?.SnapshotVersion ?? 0) :
+            projection?.ArtworkReferenceKey == null ? null :
             SourceArtworkUrl(value.ProviderAccountId, value.SourceProviderId, value.SourcePlaylistId),
         providerAccountId = value.ProviderAccountId,
         sourceProviderId = value.SourceProviderId,
@@ -1460,7 +1465,7 @@ public sealed partial class PlaylistLinksController(
         },
         virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id)
     };
-    private static object ToProjectionDto(DurablePlaylistProjection value, JobScheduleRecord? schedule = null, VirtualPlaylistReadModel? clientProjection = null, IReadOnlyDictionary<int, PersistedPlaylistPreviewEntry>? previewByPosition = null) => new
+    private static object ToProjectionDto(DurablePlaylistProjection value, JobScheduleRecord? schedule = null, VirtualPlaylistReadModel? clientProjection = null, IReadOnlyDictionary<int, PersistedPlaylistPreviewEntry>? previewByPosition = null, string? mixArtworkUrl = null) => new
     {
         id = value.LinkId,
         snapshotId = value.SnapshotId,
@@ -1472,8 +1477,8 @@ public sealed partial class PlaylistLinksController(
         projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(),
         targetProtocol = value.TargetProtocol,
         targetPlaylistId = value.TargetPlaylistId,
-        artworkUrl = value.ArtworkReferenceKey == null ? null :
-            SourceArtworkUrl(value.ProviderAccountId, value.SourceProviderId, value.SourcePlaylistId),
+        artworkUrl = mixArtworkUrl ?? (value.ArtworkReferenceKey == null ? null :
+            SourceArtworkUrl(value.ProviderAccountId, value.SourceProviderId, value.SourcePlaylistId)),
         retrievedAt = value.RetrievedAt,
         lastRematchedAt = value.LastMatchedAt,
         completedAt = value.CompletedAt,

@@ -524,7 +524,7 @@ public sealed partial class PlaylistLinksControllerContractTests
         var method = typeof(PlaylistLinksController).GetMethod(
             "ToProjectionDto", BindingFlags.NonPublic | BindingFlags.Static)!;
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(
-            method.Invoke(null, new object?[] { projection, null, client, preview })));
+            method.Invoke(null, new object?[] { projection, null, client, preview, null })));
 
         Assert.Equal(1, json.RootElement.GetProperty("trackCount").GetInt32());
         var clientProjection = json.RootElement.GetProperty("clientProjection");
