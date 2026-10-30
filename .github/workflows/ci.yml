@@ -21,6 +21,10 @@ env:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -37,6 +41,7 @@ jobs:
           python3 tools/tests/test_live_subsonic_smoke.py
           python3 tools/tests/test_listener_capacity.py
           python3 tools/tests/test_release_channels.py
+          python3 tools/tests/backend_test_shards.py --self-test
 
       - name: Install media test tools
         timeout-minutes: 8
@@ -49,24 +54,25 @@ jobs:
         run: python3 tools/tests/timing_report.py --name dotnet-build -- dotnet build --configuration Release --no-restore -p:TreatWarningsAsErrors=true
 
       - name: Test
-        run: >-
-          python3 tools/tests/timing_report.py
-          --name dotnet-test
-          --timeout-seconds 900
-          --require-tests
-          --trx "${{ runner.temp }}/build-and-test.trx"
-          --
-          dotnet test --configuration Release --no-build
-          --filter "Lane!=ReleaseCritical"
-          --verbosity minimal
-          --logger "trx;LogFileName=${{ runner.temp }}/build-and-test.trx"
+        run: |
+          test_filter="$(python3 tools/tests/backend_test_shards.py --shard ${{ matrix.shard }})"
+          python3 tools/tests/timing_report.py \
+            --name dotnet-test-shard-${{ matrix.shard }} \
+            --timeout-seconds 900 \
+            --require-tests \
+            --trx "${{ runner.temp }}/build-and-test-${{ matrix.shard }}.trx" \
+            -- \
+            dotnet test --configuration Release --no-build \
+            --filter "$test_filter" \
+            --verbosity minimal \
+            --logger "trx;LogFileName=${{ runner.temp }}/build-and-test-${{ matrix.shard }}.trx"
 
       - name: Upload .NET test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: dotnet-test-results-build-and-test
-          path: ${{ runner.temp }}/build-and-test.trx
+          name: dotnet-test-results-build-and-test-${{ matrix.shard }}
+          path: ${{ runner.temp }}/build-and-test-${{ matrix.shard }}.trx
           if-no-files-found: warn
 
   release-critical-tests:
