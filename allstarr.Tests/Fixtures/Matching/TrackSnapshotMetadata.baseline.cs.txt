@@ -4,6 +4,9 @@ namespace allstarr.Core.Matching;
 
 public static class TrackSnapshotMetadata
 {
+    public static string? DurationProvenance(JsonElement root) =>
+        Text(root, "durationProvenance", "DurationProvenance");
+
     public static string? MusicBrainzRecordingId(JsonElement root) =>
         Guid.TryParse(Text(root, "musicBrainzRecordingId", "MusicBrainzRecordingId"), out var id) && id != Guid.Empty
             ? id.ToString("D") : null;

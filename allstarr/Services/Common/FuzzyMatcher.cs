@@ -12,10 +12,10 @@ public static partial class FuzzyMatcher
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\(\[][^\)\]]*\b(feat\.?|ft\.?|with|featuring)\s+[^\)\]]+[\)\]]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex ParenthesizedCreditsRegex();
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\s*-\s*from\s+[""']?[^""']+[""']?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*(?:[-–—]\s*|[\(\[]\s*)from\s+(?:[""“‘'][^""”’']+[""”’']|[^\(\)\[\]]+?)(?:[\)\]]|(?=\s*[\(\[]|$))", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex FromAlbumDecoratorRegex();
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\s*(?:[-–—]\s*|[\(\[]\s*)from the (?:animated )?series\s+[^\)\]]+[\)\]]?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*(?:[-–—]\s*|[\(\[]\s*)from\s+(?:the\s+)?(?:animated\s+)?(?:film|movie|series)\s+[^\)\]]+[\)\]]?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex SeriesDecoratorRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*-\s*((?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?|single version|album version|bonus track|bonus|deluxe edition)[^\-]*$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
@@ -32,6 +32,9 @@ public static partial class FuzzyMatcher
 
     [System.Text.RegularExpressions.GeneratedRegex(@"\s+[-–—]\s+([^\(\)\[\]]+?)(?=\s+[-–—]\s+|\s*[\(\[]|$)")]
     private static partial System.Text.RegularExpressions.Regex DashTitlePartRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s+[-–—]\s+(from\b[^\(\)\[\]]+?)(?=\s*[\(\[]|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex FromDashTitlePartRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"\b(?:dj[\s-]+mix|mixed\s+by|continuous[\s-]+mix)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex ContinuousMixRegex();
@@ -116,27 +119,34 @@ public static partial class FuzzyMatcher
         tag is "instrumental" or "karaoke" or "acappella";
 
     public static bool RecordingVersionsMatch(string sourceTitle, string? sourceAlbum, string candidateTitle,
-        string? candidateAlbum, bool allowSourceAlbumOnlyMarkers = false)
+        string? candidateAlbum, bool allowSourceAlbumOnlyMarkers = false,
+        bool allowVocalSourceAlbumMarkers = false)
     {
         var titleTags = RecordingVersionTags(sourceTitle);
         var candidateTags = RecordingVersionTags(candidateTitle).Concat(AlbumRecordingTags(candidateAlbum))
             .ToHashSet(StringComparer.Ordinal);
         var albumTags = AlbumRecordingTags(sourceAlbum);
-        return titleTags.Concat(allowSourceAlbumOnlyMarkers
-                ? albumTags.Where(tag => RequiresVocalArrangementConfirmation(tag) || candidateTags.Contains(tag))
-                : albumTags)
+        return titleTags.Concat(albumTags
+                .Where(tag => !allowVocalSourceAlbumMarkers ||
+                    tag is not ("instrumental" or "karaoke") ||
+                    titleTags.Contains(tag) || candidateTags.Contains(tag))
+                .Where(tag => !allowSourceAlbumOnlyMarkers ||
+                    RequiresVocalArrangementConfirmation(tag) || candidateTags.Contains(tag)))
             .ToHashSet(StringComparer.Ordinal).SetEquals(candidateTags);
     }
 
     internal static bool SourceAlbumRequiresConfirmation(string sourceTitle, string? sourceAlbum, string candidateTitle,
-        string? candidateAlbum, bool allowSourceAlbumOnlyMarkers)
+        string? candidateAlbum, bool allowSourceAlbumOnlyMarkers,
+        bool allowVocalSourceAlbumMarkers = false)
     {
         var titleTags = RecordingVersionTags(sourceTitle);
         var candidateTags = RecordingVersionTags(candidateTitle).Concat(AlbumRecordingTags(candidateAlbum))
             .ToHashSet(StringComparer.Ordinal);
         var albumTags = AlbumRecordingTags(sourceAlbum).ToArray();
         var missing = albumTags.Except(titleTags).Except(candidateTags)
-            .Where(RequiresVocalArrangementConfirmation).ToArray();
+            .Where(RequiresVocalArrangementConfirmation)
+            .Where(tag => !allowVocalSourceAlbumMarkers || tag is not ("instrumental" or "karaoke"))
+            .ToArray();
         return missing.Length > 0 && titleTags.Concat(albumTags.Except(missing)
                 .Where(tag => !allowSourceAlbumOnlyMarkers || candidateTags.Contains(tag)))
             .ToHashSet(StringComparer.Ordinal).SetEquals(candidateTags);
@@ -270,6 +280,11 @@ public static partial class FuzzyMatcher
     public static bool TitleAnnotationsMatch(
         string sourceTitle, string? sourceArtist, string candidateTitle, string? candidateArtist)
     {
+        var sourceFromAnnotations = FromAnnotationKeys(sourceTitle);
+        var candidateFromAnnotations = FromAnnotationKeys(candidateTitle);
+        if (sourceFromAnnotations.Count > 0 && candidateFromAnnotations.Count > 0 &&
+            !sourceFromAnnotations.SetEquals(candidateFromAnnotations)) return false;
+
         var creditedArtists = string.Join(", ", sourceArtist, candidateArtist);
         var knownCredits = SplitCredits(creditedArtists).Select(NormalizeForMatching).ToHashSet(StringComparer.Ordinal);
         var sourceFeatures = TitleFeatureCredits(sourceTitle);
@@ -294,6 +309,36 @@ public static partial class FuzzyMatcher
         }
 
         return AnnotationsOccurIn(source, candidate) && AnnotationsOccurIn(candidate, source);
+    }
+
+    private static IReadOnlySet<string> FromAnnotationKeys(string title) =>
+        BracketedTitlePartRegex().Matches(title ?? string.Empty)
+            .Concat(FromDashTitlePartRegex().Matches(title ?? string.Empty))
+            .Select(match => FromAnnotationKey(match.Groups[1].Value))
+            .OfType<string>()
+            .ToHashSet(StringComparer.Ordinal);
+
+    private static string? FromAnnotationKey(string annotation)
+    {
+        var value = annotation.Trim();
+        if (!value.StartsWith("from", StringComparison.OrdinalIgnoreCase) ||
+            value.Length > 4 && !char.IsWhiteSpace(value[4])) return null;
+
+        value = value[4..].TrimStart();
+        var description = value;
+        if (description.StartsWith("the ", StringComparison.OrdinalIgnoreCase)) description = description[4..].TrimStart();
+        if (description.StartsWith("animated ", StringComparison.OrdinalIgnoreCase)) description = description[9..].TrimStart();
+        foreach (var descriptor in new[] { "film", "movie", "series" })
+        {
+            if (!description.StartsWith(descriptor, StringComparison.OrdinalIgnoreCase) ||
+                description.Length <= descriptor.Length || !char.IsWhiteSpace(description[descriptor.Length])) continue;
+            value = description[(descriptor.Length + 1)..].TrimStart();
+            break;
+        }
+
+        value = value.Trim().Trim('"', '\'', '“', '”', '‘', '’').Trim();
+        var normalized = NormalizeForMatching(value);
+        return normalized.Length == 0 ? null : normalized;
     }
 
     public static string SearchQuery(string title)

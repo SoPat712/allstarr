@@ -126,6 +126,72 @@ public sealed class TrackMatchKnownFactsTests
     }
 
     [Theory]
+    [InlineData("Instrumental", true, null)]
+    [InlineData("Karaoke", true, null)]
+    [InlineData("Instrumental", false, "spotify")]
+    [InlineData("Karaoke", false, "spotify")]
+    public void PositiveVocalEvidenceResolvesAlbumOnlyArrangementLabels(string marker, bool explicitSource, string? provenance)
+    {
+        var source = Source() with
+        {
+            Title = "Up",
+            Artist = "Cardi B",
+            Album = "Up (" + marker + ")",
+            DurationMilliseconds = 156_946,
+            DurationProvenance = provenance,
+            IsExplicit = explicitSource
+        };
+        var apple = Candidate("apple-download") with
+        {
+            Title = "Up",
+            Artist = "Cardi B",
+            Album = "AM I THE DRAMA?",
+            DurationMilliseconds = 156_000,
+            IsExplicit = explicitSource,
+            Isrc = "USAT22100061"
+        };
+        var clean = apple with { LibraryTrackId = Guid.NewGuid(), Album = "Up - Single", IsExplicit = false, Isrc = "USAT22100272" };
+        var result = Decide(source, apple, explicitSource ? clean : Candidate("deezer") with
+        {
+            Title = apple.Title,
+            Artist = apple.Artist,
+            Album = apple.Album,
+            DurationMilliseconds = apple.DurationMilliseconds,
+            Isrc = apple.Isrc
+        });
+        Assert.Equal(TrackMatchReviewState.Accepted, result.State);
+        Assert.Equal(apple.LibraryTrackId, result.SelectedLibraryTrackId);
+        Assert.DoesNotContain("source_album_marker_confirmation", result.Warnings);
+    }
+
+    [Fact]
+    public void BetterMatchingInstrumentalPreventsDurationOnlyVocalRescue()
+    {
+        var source = Source() with { Album = "Song (Instrumental)", DurationProvenance = "spotify" };
+        var vocal = Candidate("apple-download") with { DurationMilliseconds = 239_000 };
+        var instrumental = Candidate("deezer") with { Album = source.Album };
+        var result = Decide(source, vocal, instrumental);
+        Assert.Equal(TrackMatchReviewState.Accepted, result.State);
+        Assert.Equal(instrumental.LibraryTrackId, result.SelectedLibraryTrackId);
+        Assert.Equal(0, result.Candidates.Single(item => item.LibraryTrackId == vocal.LibraryTrackId).Components!["sourceAlbumConfirmation"]);
+        Assert.Equal(TrackMatchReviewState.Suggested, Decide(source with { DurationProvenance = "listenbrainz" }, vocal).State);
+        Assert.NotEqual(TrackMatchReviewState.Accepted,
+            Decide(source with { Title = "Song (Instrumental)", IsExplicit = true }, vocal with { IsExplicit = true }).State);
+    }
+
+    [Fact]
+    public void DescriptiveFromAnnotationKeepsStreamingPriority()
+    {
+        var source = Source() with { Title = "Magic - From \"Hexed\"", Artist = "Hailee Steinfeld", Album = "Magic (From \"Hexed\")" };
+        var apple = Candidate("apple-download") with { Title = "Magic (From \"Hexed\")", Artist = source.Artist, Album = source.Album, Isrc = "USWD12642617" };
+        var deezer = Candidate("deezer") with { Title = apple.Title, Artist = apple.Artist, Album = apple.Album, Isrc = apple.Isrc };
+        var result = Decide(source, deezer, apple);
+        Assert.Equal(TrackMatchReviewState.Accepted, result.State);
+        Assert.Equal(apple.LibraryTrackId, result.SelectedLibraryTrackId);
+        Assert.NotEqual(TrackMatchReviewState.Accepted, Decide(source, apple with { Title = "Magic (From \"Other Film\")" }).State);
+    }
+
+    [Theory]
     [InlineData("Clean", null, TrackMatchReviewState.Accepted)]
     [InlineData("Clean", false, TrackMatchReviewState.Accepted)]
     [InlineData("Clean", true, TrackMatchReviewState.Suggested)]
@@ -312,6 +378,192 @@ public sealed class TrackMatchKnownFactsTests
         Assert.Equal(TrackMatchReviewState.Accepted, Decide(source, original).State);
         Assert.Equal(TrackMatchReviewState.Suggested, Decide(source, original with { Album = "Encore" }).State);
         Assert.NotEqual(TrackMatchReviewState.Accepted, Decide(source with { Isrc = "source-recording" }, original with { Isrc = "other-recording" }).State);
+    }
+
+    [Theory]
+    [InlineData("Let Me Love You")]
+    [InlineData("Let Me Love You - Single")]
+    [InlineData("Let Me Love You (feat. Justin Bieber) - Single")]
+    [InlineData("Let Me Love You (feat. Justin Bieber) - EP")]
+    public void CorroboratedSingleRecordingAcceptsThePreferredAlbumCopy(string album)
+    {
+        var source = LoveYouSource() with { Album = album };
+        var apple = LoveYouCandidate("apple-download");
+        var deezer = LoveYouCandidate("deezer") with { Title = source.Title, DurationMilliseconds = 206_000 };
+        var result = Decide(source, deezer, apple);
+        Assert.Equal(TrackMatchReviewState.Accepted, result.State);
+        Assert.Equal(apple.LibraryTrackId, result.SelectedLibraryTrackId);
+        Assert.Contains("single_album_recording_corroborated", result.Candidates[0].Reasons);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CorroboratedSingleRecordingKeepsLocalPrecedenceAndFeaturedArtistEvidence(bool knownIsrc)
+    {
+        var local = LoveYouCandidate("local") with
+        {
+            IsLocal = true,
+            BackendLibraryId = "music",
+            ProviderTrackIds = null,
+            Title = "Let Me Love You",
+            Artist = "DJ Snake, Justin Bieber",
+            DurationMilliseconds = 206_000,
+            Isrc = knownIsrc ? "QMZSY1600015" : null
+        };
+        var result = Decide(LoveYouSource(), local, LoveYouCandidate("apple-download"), LoveYouCandidate("deezer"));
+        Assert.Equal(TrackMatchReviewState.Accepted, result.State);
+        Assert.Equal(local.LibraryTrackId, result.SelectedLibraryTrackId);
+        Assert.Equal(1, result.Candidates[0].Components!["primaryArtist"]);
+        Assert.Equal(1, result.Candidates[0].Components!["artist"]);
+        Assert.Contains("weak_source_duration", result.Reasons);
+        var conflict = local with { Isrc = "OTHER1600015" };
+        var fallback = LoveYouCandidate("apple-download");
+        Assert.Equal(fallback.LibraryTrackId,
+            Decide(LoveYouSource(), conflict, fallback, LoveYouCandidate("deezer")).SelectedLibraryTrackId);
+    }
+
+    [Fact]
+    public void PositiveVocalEvidenceKeepsLocalPrecedence()
+    {
+        var source = Source() with
+        {
+            Title = "Up",
+            Artist = "Cardi B",
+            Album = "Up (Instrumental)",
+            DurationMilliseconds = 156_946,
+            DurationProvenance = "spotify",
+            IsExplicit = true
+        };
+        var apple = Candidate("apple-download") with
+        {
+            Title = "Up",
+            Artist = "Cardi B",
+            Album = "AM I THE DRAMA?",
+            DurationMilliseconds = 156_000,
+            IsExplicit = true,
+            Isrc = "USAT22100061"
+        };
+        var local = apple with
+        {
+            LibraryTrackId = Guid.NewGuid(),
+            IsLocal = true,
+            BackendLibraryId = "music",
+            ProviderTrackIds = null,
+            Album = "Up",
+            DurationMilliseconds = 156_944
+        };
+        var result = Decide(source, local, apple);
+        Assert.Equal(TrackMatchReviewState.Accepted, result.State);
+        Assert.Equal(local.LibraryTrackId, result.SelectedLibraryTrackId);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("conflicting")]
+    [InlineData("same-provider")]
+    [InlineData("local-aliases")]
+    [InlineData("different-artist")]
+    [InlineData("remix")]
+    [InlineData("explicit")]
+    public void SingleAlbumRescueRequiresIndependentQualifiedRecordingEvidence(string evidence)
+    {
+        var apple = LoveYouCandidate("apple-download");
+        var other = LoveYouCandidate("deezer");
+        other = evidence switch
+        {
+            "missing" => other with { Isrc = null },
+            "conflicting" => other with { Isrc = "OTHER1600015" },
+            "same-provider" => other with { ProviderTrackIds = apple.ProviderTrackIds, Album = "Encore (Deluxe)" },
+            "local-aliases" => other with { IsLocal = true, BackendLibraryId = "music", ProviderTrackIds = new Dictionary<string, string> { ["apple-download"] = "copy", ["deezer"] = "copy" } },
+            "different-artist" => other with { Artist = "Mario" },
+            "remix" => other with { Title = "Let Me Love You (R3hab Remix)" },
+            "explicit" => other with { IsExplicit = true },
+            _ => other
+        };
+        Assert.NotEqual(TrackMatchReviewState.Accepted, Decide(LoveYouSource(), apple, other).State);
+    }
+
+    [Fact]
+    public void SingleAlbumRescuePreservesSourceAlbumAndArtistRequirements()
+    {
+        var apple = LoveYouCandidate("apple-download");
+        var deezer = LoveYouCandidate("deezer");
+        Assert.NotEqual(TrackMatchReviewState.Accepted,
+            Decide(LoveYouSource() with { Album = "Other Single" }, apple, deezer).State);
+        Assert.NotEqual(TrackMatchReviewState.Accepted,
+            Decide(LoveYouSource(), apple with { Artist = "Mario" }, deezer with { Artist = "Mario" }).State);
+    }
+
+    private static ExternalTrackMatchSnapshot LoveYouSource() => Source() with
+    {
+        ProviderId = "listenbrainz",
+        Title = "Let Me Love You",
+        Artist = "DJ Snake",
+        Album = "Let Me Love You",
+        DurationMilliseconds = 182_000,
+        DurationProvenance = "listenbrainz",
+        MusicBrainzRecordingId = "324cf63f-6cd4-483c-a81b-5e7fadeef7db"
+    };
+
+    private static LocalTrackMatchCandidate LoveYouCandidate(string provider) => Candidate(provider) with
+    {
+        Title = "Let Me Love You (feat. Justin Bieber)",
+        Artist = "DJ Snake",
+        Album = "Encore",
+        DurationMilliseconds = 205_000,
+        Isrc = "QMZSY1600015"
+    };
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("spotify")]
+    [InlineData("listenbrainz")]
+    public void StoredMusicBrainzIsrcAcceptsAcrossDurationProvenance(string? provenance)
+    {
+        var source = LoveYouSource() with
+        {
+            DurationProvenance = provenance,
+            MusicBrainzRecordingIsrcs = ["OTHER1600015", "QM-ZSY-16-00015"]
+        };
+        var apple = LoveYouCandidate("apple-download");
+        var result = Decide(source, LoveYouCandidate("deezer"), apple);
+        Assert.Equal(TrackMatchReviewState.Accepted, result.State);
+        Assert.Equal(apple.LibraryTrackId, result.SelectedLibraryTrackId);
+        Assert.Contains("musicbrainz_recording_isrc_exact", result.Reasons);
+    }
+
+    [Fact]
+    public void AlternateIsrcsStoredForTheSameMusicBrainzRecordingAreCompatible()
+    {
+        var source = LoveYouSource() with
+        {
+            Isrc = "OTHER1600015",
+            DurationProvenance = "spotify",
+            MusicBrainzRecordingIsrcs = ["OTHER1600015", "QMZSY1600015"]
+        };
+        Assert.Equal(TrackMatchReviewState.Accepted, Decide(source, LoveYouCandidate("apple-download")).State);
+    }
+
+    [Theory]
+    [InlineData("conflicting-isrc")]
+    [InlineData("different-artist")]
+    [InlineData("remix")]
+    public void StoredMusicBrainzEvidenceCannotAcceptConflictingRecordings(string conflict)
+    {
+        var source = LoveYouSource() with { MusicBrainzRecordingIsrcs = ["QMZSY1600015"] };
+        var apple = LoveYouCandidate("apple-download");
+        apple = conflict switch
+        {
+            "conflicting-isrc" => apple with { Isrc = "OTHER1600015" },
+            "different-artist" => apple with { Artist = "Mario" },
+            _ => apple with { Title = "Let Me Love You (R3hab Remix)" }
+        };
+        var deezer = LoveYouCandidate("deezer") with { Isrc = apple.Isrc, Artist = apple.Artist, Title = apple.Title };
+        var result = Decide(source, apple, deezer);
+        Assert.NotEqual(TrackMatchReviewState.Accepted, result.State);
+        if (conflict == "conflicting-isrc")
+            Assert.All(result.Candidates, score => Assert.Contains("musicbrainz_recording_isrc_conflict", score.Reasons));
     }
 
     [Fact]

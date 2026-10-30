@@ -37,6 +37,31 @@ public class FuzzyMatcherTests
         Assert.Equal(expected, FuzzyMatcher.RecordingVersionsMatch("Anxiety", source, "Anxiety", candidate));
     }
 
+    [Fact]
+    public void VocalSourceAlbumMarkersCanBeIgnoredOnlyWhenTheyAreAlbumOnly()
+    {
+        Assert.True(FuzzyMatcher.RecordingVersionsMatch(
+            "Track", "Album (Instrumental)", "Track", "Album",
+            allowVocalSourceAlbumMarkers: true));
+        Assert.False(FuzzyMatcher.RecordingVersionsMatch(
+            "Track (Instrumental)", "Album", "Track", "Album",
+            allowVocalSourceAlbumMarkers: true));
+        Assert.False(FuzzyMatcher.RecordingVersionsMatch(
+            "Track", "Album (A cappella)", "Track", "Album",
+            allowVocalSourceAlbumMarkers: true));
+    }
+
+    [Fact]
+    public void VocalSourceAlbumMarkerConfirmationRetainsACappellaAndIgnoresAlbumOnlyInstrumental()
+    {
+        Assert.False(FuzzyMatcher.SourceAlbumRequiresConfirmation(
+            "Track", "Album (Instrumental)", "Track", "Album",
+            allowSourceAlbumOnlyMarkers: false, allowVocalSourceAlbumMarkers: true));
+        Assert.True(FuzzyMatcher.SourceAlbumRequiresConfirmation(
+            "Track", "Album (A cappella)", "Track", "Album",
+            allowSourceAlbumOnlyMarkers: false, allowVocalSourceAlbumMarkers: true));
+    }
+
     [Theory]
     [InlineData("⭐ Song")]
     [InlineData("⭐Song")]
@@ -254,6 +279,70 @@ public class FuzzyMatcherTests
         Assert.True(FuzzyMatcher.TitleAnnotationsMatch(source, artist, candidate, candidateArtist));
         Assert.Equal(FuzzyMatcher.NormalizeTitleForMatching(source, artist, candidateArtist),
             FuzzyMatcher.NormalizeTitleForMatching(candidate, candidateArtist, artist));
+    }
+
+    [Theory]
+    [InlineData("Magic - From \"Hexed\"", "Magic (From \"Hexed\")")]
+    [InlineData("Magic – From “Hexed”", "Magic [from ‘Hexed’]")]
+    [InlineData("Magic - From the film \"Hexed\"", "Magic (From the movie ‘Hexed’)")]
+    [InlineData("Magic - From the series \"Hexed\"", "Magic (From Hexed)")]
+    [InlineData("Magic - From \"The Hexed\"", "Magic (From The Hexed)")]
+    public void EquivalentFromAnnotationsMatchAcrossDashBracketAndDescriptionForms(
+        string source, string candidate)
+    {
+        Assert.True(FuzzyMatcher.TitleAnnotationsMatch(
+            source, "Hailee Steinfeld", candidate, "Hailee Steinfeld"));
+        Assert.Equal(
+            FuzzyMatcher.NormalizeTitleForMatching(source, "Hailee Steinfeld"),
+            FuzzyMatcher.NormalizeTitleForMatching(candidate, "Hailee Steinfeld"));
+    }
+
+    [Theory]
+    [InlineData(
+        "Draw You Out - From The Hunger Games: Sunrise on the Reaping - The Album",
+        "Draw You Out (From The Hunger Games: Sunrise on the Reaping - The Album)")]
+    [InlineData(
+        "Back To You - From 13 Reasons Why – Season 2 Soundtrack",
+        "Back To You (From 13 Reasons Why – Season 2 Soundtrack)")]
+    public void EquivalentFromAnnotationsKeepInternalDashDescriptors(
+        string source, string candidate)
+    {
+        Assert.True(FuzzyMatcher.TitleAnnotationsMatch(
+            source, "Artist", candidate, "Artist"));
+        Assert.Equal(
+            FuzzyMatcher.NormalizeTitleForMatching(source, "Artist"),
+            FuzzyMatcher.NormalizeTitleForMatching(candidate, "Artist"));
+    }
+
+    [Fact]
+    public void ConflictingFromFilmDescriptorsRemainDistinctWithInternalDashes()
+    {
+        Assert.False(FuzzyMatcher.TitleAnnotationsMatch(
+            "Draw You Out - From The Hunger Games: Sunrise on the Reaping - The Album",
+            "Artist",
+            "Draw You Out (From Divergent: Original Motion Picture Soundtrack - The Album)",
+            "Artist"));
+    }
+
+    [Theory]
+    [InlineData("Magic - From \"Hexed\"", "Magic (From \"Wicked\")")]
+    [InlineData("Magic - From the film \"Hexed\"", "Magic (From the series \"Wicked\")")]
+    public void ConflictingFromAnnotationsRemainDistinct(string source, string candidate)
+    {
+        Assert.False(FuzzyMatcher.TitleAnnotationsMatch(
+            source, "Hailee Steinfeld", candidate, "Hailee Steinfeld"));
+    }
+
+    [Theory]
+    [InlineData("From X")]
+    [InlineData("From the film X")]
+    [InlineData("From the series X")]
+    public void OrdinaryFromTitlesKeepTheirWords(string title)
+    {
+        Assert.Equal(title, FuzzyMatcher.StripDecorators(title));
+        Assert.Equal(
+            FuzzyMatcher.NormalizeForMatching(title),
+            FuzzyMatcher.NormalizeTitleForMatching(title, "Artist"));
     }
 
     [Fact]

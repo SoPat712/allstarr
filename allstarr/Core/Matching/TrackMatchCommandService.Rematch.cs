@@ -168,6 +168,7 @@ public sealed partial class TrackMatchCommandService
             !await LocalLibraryAvailableAsync(db, snapshot, existingLocalId, access, candidates, cancellationToken))
             return await LocalLibraryUnavailableAsync(db, snapshot, correlationId, policyVersion, cancellationToken);
         var payload = ReadMetadata(snapshot.PayloadJson);
+        var musicBrainzIsrcs = await LoadMusicBrainzIsrcsAsync(db, [payload.MusicBrainzRecordingId], cancellationToken);
         var sourceTrack = new ExternalTrackMatchSnapshot(
             snapshot.Id.ToString("N"),
             source?.ProviderId ?? snapshot.ProviderId,
@@ -181,7 +182,8 @@ public sealed partial class TrackMatchCommandService
             payload.MusicBrainzRecordingId,
             payload.IsExplicit)
         {
-            DurationProvenance = payload.DurationProvenance
+            DurationProvenance = payload.DurationProvenance,
+            MusicBrainzRecordingIsrcs = musicBrainzIsrcs.GetValueOrDefault(payload.MusicBrainzRecordingId ?? "")
         };
         var ownerPolicy = effectivePolicies == null ? null :
             await effectivePolicies.ResolveForUserAsync(snapshot.OwnerUserId, cancellationToken);

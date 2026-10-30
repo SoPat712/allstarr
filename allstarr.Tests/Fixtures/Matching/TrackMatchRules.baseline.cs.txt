@@ -163,14 +163,18 @@ internal sealed class RecordingDurationRule : ITrackMatchRule
     public TrackMatchRuleOutcome? Evaluate(
         ExternalTrackMatchSnapshot source,
         LocalTrackMatchCandidate candidate,
-        TrackMatchPolicy policy) =>
-        source.DurationMilliseconds is > 0 && candidate.DurationMilliseconds is > 0 &&
-        Math.Abs(source.DurationMilliseconds.Value - candidate.DurationMilliseconds.Value) > policy.DurationToleranceSeconds * 1000L
-            ? TrackMatchRuleSet.Reject("duration_mismatch",
-                "The candidate duration differs from the source by more than the allowed tolerance.", "duration",
-                TrackMatchSignals.DurationScore(source.DurationMilliseconds.Value, candidate.DurationMilliseconds.Value,
-                    policy.DurationToleranceSeconds), ["duration_exceeds_tolerance"])
-            : null;
+        TrackMatchPolicy policy)
+    {
+        if (!TrackMatchSignals.DurationMismatch(source, candidate, policy.DurationToleranceSeconds)) return null;
+        if (TrackMatchSignals.WeakDurationIdentityMatches(source, candidate) &&
+            (string.IsNullOrWhiteSpace(source.Isrc) || string.IsNullOrWhiteSpace(candidate.Isrc) ||
+             FuzzyMatcher.IdentifiersEqual(source.Isrc, candidate.Isrc)))
+            return FieldScoreRule.Score(source, candidate, policy);
+        return TrackMatchRuleSet.Reject("duration_mismatch",
+            "The candidate duration differs from the source by more than the allowed tolerance.", "duration",
+            TrackMatchSignals.DurationScore(source.DurationMilliseconds!.Value, candidate.DurationMilliseconds!.Value,
+                policy.DurationToleranceSeconds), ["duration_exceeds_tolerance"]);
+    }
 }
 
 internal sealed class CanonicalRecordingExactRule : ITrackMatchRule
@@ -285,7 +289,7 @@ internal sealed class FieldScoreRule : ITrackMatchRule
         var warnings = new List<string>();
         var sourceTitle = FuzzyMatcher.NormalizeTitleForMatching(source.Title, source.Artist, candidate.Artist);
         var candidateTitle = FuzzyMatcher.NormalizeTitleForMatching(candidate.Title, candidate.Artist, source.Artist);
-        var title = FuzzyMatcher.CalculateSimilarity(sourceTitle, candidateTitle) / 100d;
+        var title = FuzzyMatcher.CalculateTitleSimilarity(sourceTitle, candidateTitle) / 100d;
         var seriesContext = source.Title + " | " + candidate.Title;
         var artist = TrackMatchSignals.ArtistSimilarity(
             FuzzyMatcher.ArtistWithoutSeriesCredits(seriesContext, source.Artist),
@@ -315,6 +319,15 @@ internal sealed class FieldScoreRule : ITrackMatchRule
         if (TrackMatchSignals.TitleComparisonReason(source.Title, candidate.Title, source.Artist, candidate.Artist) is { } titleReason)
             reasons.Add(titleReason);
         TrackMatchSignals.AddReason(reasons, "artist", artist);
+        var weakDuration = TrackMatchSignals.DurationMismatch(source, candidate, policy.DurationToleranceSeconds) &&
+                           TrackMatchSignals.WeakDurationIdentityMatches(source, candidate);
+        var weakAlbum = weakDuration && TrackMatchSignals.WeakDurationAlbumMatches(source, candidate);
+        if (weakDuration)
+        {
+            components["weakDurationAlbumAgreement"] = weakAlbum ? 1 : 0;
+            reasons.Add("weak_source_duration");
+            artist = Math.Max(artist, components["primaryArtist"]);
+        }
         var weightedScore = (title * 0.42) + (artist * 0.30);
         var totalWeight = 0.72;
         if (album.HasValue)
@@ -330,7 +343,7 @@ internal sealed class FieldScoreRule : ITrackMatchRule
         if (duration.HasValue)
         {
             components["duration"] = Math.Round(duration.Value, 4);
-            weightedScore += duration.Value * 0.16;
+            weightedScore += (weakDuration ? Math.Max(0.5, duration.Value) : duration.Value) * 0.16;
             totalWeight += 0.16;
             reasons.Add(duration.Value >= 0.9 ? "duration_close" : "duration_partial");
             if (duration.Value < 0.5) warnings.Add("duration_exceeds_tolerance");
@@ -356,6 +369,7 @@ internal sealed class FieldScoreRule : ITrackMatchRule
             confidence = Math.Min(confidence, 0.94);
             warnings.Add("limited_recording_metadata");
         }
+        if (weakDuration && !weakAlbum) confidence = Math.Min(confidence, policy.AcceptThreshold - 0.01);
         return new TrackMatchRuleOutcome(
             TrackMatchRuleDisposition.Score,
             Math.Round(confidence, 4),
@@ -369,6 +383,43 @@ internal sealed class FieldScoreRule : ITrackMatchRule
 
 internal static class TrackMatchSignals
 {
+    public static bool DurationMismatch(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate,
+        int toleranceSeconds) =>
+        source.DurationMilliseconds is > 0 && candidate.DurationMilliseconds is > 0 &&
+        Math.Abs(source.DurationMilliseconds.Value - candidate.DurationMilliseconds.Value) > toleranceSeconds * 1000L;
+
+    private static bool HasWeakDuration(ExternalTrackMatchSnapshot source)
+    {
+        if (string.IsNullOrWhiteSpace(source.DurationProvenance)) return false;
+        var provenance = TrackMatchDecisionEngine.NormalizeProvider(source.DurationProvenance);
+        return provenance != "spotify" &&
+               (provenance is "listenbrainz" or "lastfm" or "musicbrainz" ||
+                provenance != TrackMatchDecisionEngine.NormalizeProvider(source.ProviderId));
+    }
+
+    public static bool WeakDurationIdentityMatches(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate) =>
+        HasWeakDuration(source) &&
+        FuzzyMatcher.NormalizeTitleForMatching(source.Title, source.Artist, candidate.Artist) ==
+        FuzzyMatcher.NormalizeTitleForMatching(candidate.Title, candidate.Artist, source.Artist) &&
+        FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(source.Artist).FirstOrDefault() ?? "") ==
+        FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(candidate.Artist).FirstOrDefault() ?? "") &&
+        FuzzyMatcher.TitleAnnotationsMatch(source.Title, source.Artist, candidate.Title, candidate.Artist) &&
+        FuzzyMatcher.RecordingVersionsMatch(source.Title, source.Album, candidate.Title, candidate.Album);
+
+    public static bool WeakDurationAlbumMatches(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate)
+    {
+        var primary = FuzzyMatcher.SplitCredits(source.Artist).FirstOrDefault() ?? "";
+        string Album(string? value)
+        {
+            var album = value ?? "";
+            var prefix = primary + " Presents:";
+            if (primary.Length > 0 && album.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                album = album[prefix.Length..].Trim();
+            return FuzzyMatcher.StripDecorators(album, source.Artist);
+        }
+        return TrackMatchDecisionEngine.SameAlbumEdition(Album(source.Album), Album(candidate.Album)) == true;
+    }
+
     public static bool? Explicitness(LocalTrackMatchCandidate candidate) =>
         candidate.IsExplicit ?? FuzzyMatcher.AlbumExplicitness(candidate.Album);
 

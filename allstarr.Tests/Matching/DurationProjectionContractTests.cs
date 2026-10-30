@@ -9,7 +9,7 @@ namespace allstarr.Tests;
 public sealed class DurationProjectionContractTests
 {
     [Fact]
-    public void MappingRow_UsesLocalDurationThenSourceDuration()
+    public void MappingRow_KeepsSourceDurationWhenALocalTrackIsSelected()
     {
         var retrievedAt = new DateTimeOffset(2026, 7, 26, 20, 0, 0, TimeSpan.Zero);
         var snapshot = new ExternalMetadataSnapshotRecord
@@ -69,9 +69,9 @@ public sealed class DurationProjectionContractTests
             null,
             null
         ])!);
-        Assert.Equal(200_000, target.GetProperty("durationMilliseconds").GetInt64());
-        Assert.Equal("jellyfin", target.GetProperty("durationProvenance").GetString());
-        Assert.Equal(local.IndexedAt, target.GetProperty("durationRetrievedAt").GetDateTimeOffset());
+        Assert.Equal(196_456, target.GetProperty("durationMilliseconds").GetInt64());
+        Assert.Equal("spotify", target.GetProperty("durationProvenance").GetString());
+        Assert.Equal(retrievedAt, target.GetProperty("durationRetrievedAt").GetDateTimeOffset());
     }
 
     [Fact]

@@ -47,6 +47,7 @@ internal static class TrackMatchRuleSet
         new BackingRecordingRule(),
         new CoverArtistRule(),
         new ExplicitRecordingRule(),
+        new MusicBrainzRecordingIsrcRule(),
         new RecordingDurationRule(),
         new CanonicalRecordingExactRule(),
         new MusicBrainzExactRule(),
@@ -60,22 +61,34 @@ internal static class TrackMatchRuleSet
     public static TrackMatchRuleOutcome Evaluate(
         ExternalTrackMatchSnapshot source,
         LocalTrackMatchCandidate candidate,
-        TrackMatchPolicy policy)
+        TrackMatchPolicy policy,
+        bool singleAlbumAgreement = false,
+        bool allowVocalSourceAlbumMarkers = false)
     {
         candidate = candidate with { IsExplicit = TrackMatchSignals.Explicitness(candidate) };
         foreach (var rule in Default)
         {
             var outcome = rule.Evaluate(source, candidate, policy);
             if (outcome == null || outcome.Disposition == TrackMatchRuleDisposition.Continue) continue;
+            if (singleAlbumAgreement && outcome.Reasons.Contains("weak_source_duration") ||
+                allowVocalSourceAlbumMarkers && outcome.Disposition == TrackMatchRuleDisposition.Score)
+                outcome = FieldScoreRule.Score(source, candidate, policy, singleAlbumAgreement, allowVocalSourceAlbumMarkers);
             if (outcome.Disposition == TrackMatchRuleDisposition.Accept &&
-                !TrackMatchSignals.RecordingVersionsMatch(source, candidate, policy.DurationToleranceSeconds))
-                outcome = FieldScoreRule.Score(source, candidate, policy);
+                !TrackMatchSignals.RecordingVersionsMatch(source, candidate, policy.DurationToleranceSeconds, allowVocalSourceAlbumMarkers))
+                outcome = FieldScoreRule.Score(source, candidate, policy, singleAlbumAgreement, allowVocalSourceAlbumMarkers);
             if (outcome.Disposition != TrackMatchRuleDisposition.Reject &&
-                TrackMatchSignals.SourceAlbumRequiresConfirmation(source, candidate, policy.DurationToleranceSeconds))
+                TrackMatchSignals.SourceAlbumRequiresConfirmation(source, candidate, policy.DurationToleranceSeconds, allowVocalSourceAlbumMarkers))
                 outcome = outcome with
                 {
                     Reasons = outcome.Reasons.Append("source_album_marker_confirmation").ToArray(),
                     Components = new Dictionary<string, double>(outcome.Components) { ["sourceAlbumConfirmation"] = 0 }
+                };
+            if (allowVocalSourceAlbumMarkers && outcome.Disposition != TrackMatchRuleDisposition.Reject &&
+                TrackMatchSignals.RecordingVersionsMatch(source, candidate, policy.DurationToleranceSeconds, allowVocalSourceAlbumMarkers: true))
+                outcome = outcome with
+                {
+                    Reasons = outcome.Reasons.Append("source_album_vocal_evidence").ToArray(),
+                    Components = new Dictionary<string, double>(outcome.Components) { ["sourceAlbumVocalEvidence"] = 1 }
                 };
             if (outcome.Disposition != TrackMatchRuleDisposition.Reject && source.IsExplicit.HasValue &&
                 candidate.IsExplicit.HasValue && source.IsExplicit != candidate.IsExplicit)
@@ -174,6 +187,28 @@ internal sealed class RecordingDurationRule : ITrackMatchRule
             "The candidate duration differs from the source by more than the allowed tolerance.", "duration",
             TrackMatchSignals.DurationScore(source.DurationMilliseconds!.Value, candidate.DurationMilliseconds!.Value,
                 policy.DurationToleranceSeconds), ["duration_exceeds_tolerance"]);
+    }
+}
+
+internal sealed class MusicBrainzRecordingIsrcRule : ITrackMatchRule
+{
+    public string Id => "musicbrainz-recording-isrc";
+
+    public TrackMatchRuleOutcome? Evaluate(
+        ExternalTrackMatchSnapshot source,
+        LocalTrackMatchCandidate candidate,
+        TrackMatchPolicy policy)
+    {
+        if (string.IsNullOrWhiteSpace(source.MusicBrainzRecordingId) ||
+            source.MusicBrainzRecordingIsrcs is not { Count: > 0 } || string.IsNullOrWhiteSpace(candidate.Isrc))
+            return null;
+        if (!TrackMatchSignals.MusicBrainzIsrcMatches(source, candidate))
+            return TrackMatchRuleSet.Reject("musicbrainz_recording_isrc_conflict",
+                "The candidate ISRC conflicts with the stored MusicBrainz recording identifiers.", "musicbrainzIsrc");
+        return TrackMatchSignals.ExactRecordingFieldsMatch(source, candidate)
+            ? TrackMatchRuleSet.Accept("musicbrainz_recording_isrc_exact",
+                "The candidate ISRC belongs to the source MusicBrainz recording.", "musicbrainzIsrc", 0.99)
+            : null;
     }
 }
 
@@ -283,7 +318,9 @@ internal sealed class FieldScoreRule : ITrackMatchRule
     public static TrackMatchRuleOutcome Score(
         ExternalTrackMatchSnapshot source,
         LocalTrackMatchCandidate candidate,
-        TrackMatchPolicy policy)
+        TrackMatchPolicy policy,
+        bool singleAlbumAgreement = false,
+        bool allowVocalSourceAlbumMarkers = false)
     {
         var reasons = new List<string>();
         var warnings = new List<string>();
@@ -303,8 +340,8 @@ internal sealed class FieldScoreRule : ITrackMatchRule
             : (double?)null;
         var titleAnnotationsMatch = FuzzyMatcher.TitleAnnotationsMatch(
             source.Title, source.Artist, candidate.Title, candidate.Artist);
-        var versionMatch = TrackMatchSignals.RecordingVersionsMatch(source, candidate, policy.DurationToleranceSeconds) ||
-                           TrackMatchSignals.SourceAlbumRequiresConfirmation(source, candidate, policy.DurationToleranceSeconds);
+        var versionMatch = TrackMatchSignals.RecordingVersionsMatch(source, candidate, policy.DurationToleranceSeconds, allowVocalSourceAlbumMarkers) ||
+                           TrackMatchSignals.SourceAlbumRequiresConfirmation(source, candidate, policy.DurationToleranceSeconds, allowVocalSourceAlbumMarkers);
         var components = new Dictionary<string, double>
         {
             ["title"] = Math.Round(title, 4),
@@ -321,12 +358,15 @@ internal sealed class FieldScoreRule : ITrackMatchRule
         TrackMatchSignals.AddReason(reasons, "artist", artist);
         var weakDuration = TrackMatchSignals.DurationMismatch(source, candidate, policy.DurationToleranceSeconds) &&
                            TrackMatchSignals.WeakDurationIdentityMatches(source, candidate);
-        var weakAlbum = weakDuration && TrackMatchSignals.WeakDurationAlbumMatches(source, candidate);
+        var weakAlbum = weakDuration && (TrackMatchSignals.WeakDurationAlbumMatches(source, candidate) || singleAlbumAgreement);
         if (weakDuration)
         {
             components["weakDurationAlbumAgreement"] = weakAlbum ? 1 : 0;
             reasons.Add("weak_source_duration");
+            if (singleAlbumAgreement && !TrackMatchSignals.WeakDurationAlbumMatches(source, candidate))
+                reasons.Add("single_album_recording_corroborated");
             artist = Math.Max(artist, components["primaryArtist"]);
+            components["artist"] = Math.Round(artist, 4);
         }
         var weightedScore = (title * 0.42) + (artist * 0.30);
         var totalWeight = 0.72;
@@ -397,14 +437,29 @@ internal static class TrackMatchSignals
                 provenance != TrackMatchDecisionEngine.NormalizeProvider(source.ProviderId));
     }
 
+    public static bool HasStrongDuration(ExternalTrackMatchSnapshot source) =>
+        !string.IsNullOrWhiteSpace(source.DurationProvenance) && !HasWeakDuration(source);
+
     public static bool WeakDurationIdentityMatches(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate) =>
-        HasWeakDuration(source) &&
+        HasWeakDuration(source) && ExactRecordingFieldsMatch(source, candidate);
+
+    public static bool ExactRecordingFieldsMatch(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate) =>
+        !string.IsNullOrWhiteSpace(source.Title) && !string.IsNullOrWhiteSpace(source.Artist) &&
         FuzzyMatcher.NormalizeTitleForMatching(source.Title, source.Artist, candidate.Artist) ==
         FuzzyMatcher.NormalizeTitleForMatching(candidate.Title, candidate.Artist, source.Artist) &&
         FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(source.Artist).FirstOrDefault() ?? "") ==
         FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(candidate.Artist).FirstOrDefault() ?? "") &&
         FuzzyMatcher.TitleAnnotationsMatch(source.Title, source.Artist, candidate.Title, candidate.Artist) &&
         FuzzyMatcher.RecordingVersionsMatch(source.Title, source.Album, candidate.Title, candidate.Album);
+
+    public static bool SourceAlbumIsSingle(ExternalTrackMatchSnapshot source) =>
+        !string.IsNullOrWhiteSpace(source.Album) &&
+        FuzzyMatcher.NormalizeAlbumForMatching(FuzzyMatcher.StripDecorators(source.Album, source.Artist)) ==
+        FuzzyMatcher.NormalizeTitleForMatching(source.Title, source.Artist);
+
+    public static bool MusicBrainzIsrcMatches(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate) =>
+        !string.IsNullOrWhiteSpace(source.MusicBrainzRecordingId) &&
+        source.MusicBrainzRecordingIsrcs?.Any(isrc => FuzzyMatcher.IdentifiersEqual(isrc, candidate.Isrc)) == true;
 
     public static bool WeakDurationAlbumMatches(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate)
     {
@@ -424,14 +479,14 @@ internal static class TrackMatchSignals
         candidate.IsExplicit ?? FuzzyMatcher.AlbumExplicitness(candidate.Album);
 
     public static bool RecordingVersionsMatch(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate,
-        int durationToleranceSeconds) =>
+        int durationToleranceSeconds, bool allowVocalSourceAlbumMarkers = false) =>
         FuzzyMatcher.RecordingVersionsMatch(source.Title, source.Album, candidate.Title, candidate.Album,
-            DurationsMatch(source, candidate, durationToleranceSeconds));
+            DurationsMatch(source, candidate, durationToleranceSeconds), allowVocalSourceAlbumMarkers);
 
     public static bool SourceAlbumRequiresConfirmation(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate,
-        int durationToleranceSeconds) =>
+        int durationToleranceSeconds, bool allowVocalSourceAlbumMarkers = false) =>
         FuzzyMatcher.SourceAlbumRequiresConfirmation(source.Title, source.Album, candidate.Title, candidate.Album,
-            DurationsMatch(source, candidate, durationToleranceSeconds));
+            DurationsMatch(source, candidate, durationToleranceSeconds), allowVocalSourceAlbumMarkers);
 
     private static bool DurationsMatch(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate,
         int durationToleranceSeconds) =>

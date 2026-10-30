@@ -34,6 +34,45 @@ public sealed class TrackMatchesControllerContractTests
         else Assert.Equal(JsonValueKind.Null, actual.ValueKind);
     }
 
+    [Fact]
+    public void ReviewRowProjectsSourceDurationSeparatelyFromSelectedLocalDuration()
+    {
+        var sourceRetrievedAt = new DateTimeOffset(2026, 10, 30, 12, 0, 0, TimeSpan.Zero);
+        var localRetrievedAt = sourceRetrievedAt.AddMinutes(1);
+        var localId = Guid.NewGuid();
+        var source = new ExternalMetadataSnapshotRecord
+        {
+            Id = Guid.NewGuid(),
+            ProviderId = "spotify",
+            BackendInstanceId = "server",
+            RetrievedAt = sourceRetrievedAt,
+            PayloadJson = """{"title":"Track","artist":"Artist","durationMilliseconds":182000,"durationProvenance":"listenbrainz"}"""
+        };
+        var local = new LibraryTrackRecord
+        {
+            Id = localId,
+            BackendInstanceId = "server",
+            BackendItemId = "local-track",
+            DurationMilliseconds = 206000,
+            DurationProvenance = "jellyfin",
+            DurationRetrievedAt = localRetrievedAt
+        };
+        var row = typeof(TrackMatchesController).GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null,
+            [source, new TrackMatchRecord { State = TrackMatchState.Accepted, LibraryTrackId = localId },
+                new ManualTrackOverrideLayers(null, null), null,
+                new Dictionary<Guid, LibraryTrackRecord> { [localId] = local },
+                new Dictionary<Guid, ProviderTrackIdentityRecord[]>(), Array.Empty<string>(), Guid.NewGuid(), false, null, null])!;
+        var value = JsonSerializer.SerializeToElement(row.GetType().GetProperty("Value")!.GetValue(row));
+
+        Assert.Equal(182000, value.GetProperty("durationMilliseconds").GetInt64());
+        Assert.Equal("listenbrainz", value.GetProperty("durationProvenance").GetString());
+        Assert.Equal(sourceRetrievedAt, value.GetProperty("durationRetrievedAt").GetDateTimeOffset());
+        var nested = value.GetProperty("localTrack");
+        Assert.Equal(206000, nested.GetProperty("durationMilliseconds").GetInt64());
+        Assert.Equal("jellyfin", nested.GetProperty("durationProvenance").GetString());
+        Assert.Equal(localRetrievedAt, nested.GetProperty("durationRetrievedAt").GetDateTimeOffset());
+    }
+
     [Theory]
     [InlineData(" FLAC ", "flac")]
     [InlineData("pcm_s16le", "pcm_s16le")]
