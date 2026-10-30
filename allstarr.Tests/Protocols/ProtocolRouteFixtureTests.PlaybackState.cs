@@ -321,6 +321,24 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task JellyfinPlaybackStopAfterSessionRemovalIsInterrupted()
+    {
+        var forwarded = new List<(string Path, string Body)>();
+        var signals = new Mock<IPlaybackSignalPipeline>();
+        using var factory = PlaybackStateFactory(PlaybackStateGateway(), forwarded, signals, () => false);
+        await PreparePlaybackSessionAsync(factory, "fixture-user", "playback-device");
+        using var client = factory.CreateClient();
+        using var start = await client.SendAsync(PlaybackRequest("/Sessions/Playing",
+            """{"ItemId":"ext-deezer-song-42","PlaySessionId":"expired","PositionTicks":0}""", "playback-device"));
+        await factory.Services.GetRequiredService<JellyfinSessionManager>().RemoveSessionAsync(new("primary", "fixture-user", "playback-device"));
+        using var stop = await client.SendAsync(PlaybackRequest("/Sessions/Playing/Stopped",
+            """{"ItemId":"ext-deezer-song-42","PlaySessionId":"expired","PositionTicks":10000000}""", "playback-device"));
+        Assert.Equal(HttpStatusCode.NoContent, stop.StatusCode);
+        signals.Verify(value => value.RecordAsync(It.Is<PlaybackSignalRequest>(signal =>
+            signal.Transition == PlaybackTransition.Stop && signal.Failed), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task JellyfinExternalReports_KeepFailureAndPauseFlagsForLearning()
     {
         var forwarded = new List<(string Path, string Body)>();

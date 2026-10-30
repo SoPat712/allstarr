@@ -53,6 +53,7 @@ public interface IPlaybackDeliveryActivitySource
 {
     bool WasDelivered(Guid? userId, string itemId, string deviceId);
     bool WasStreamOpened(string itemId) => false;
+    bool WasInterrupted(ProtocolExecutionContext context, string? deviceId, string itemId, DateTimeOffset observedAt) => false;
     PlaybackStreamSource? StreamFor(Guid? userId, string? deviceId, string itemId) => null;
 }
 
@@ -69,6 +70,7 @@ public sealed record PlaybackStreamSource(
     private readonly long? size;
     private readonly ProviderMediaFormat? media;
     internal PlaybackFileFacts? FileFacts { get; init; }
+    internal bool Interrupted => FileFacts?.Failed == true;
     public long? Size { get => FileFacts != null ? FileFacts.Size : size; init => size = value; }
     public ProviderMediaFormat? Media { get => FileFacts != null ? FileFacts.Media : media; init => media = value; }
     public long? AccountRevision { get; init; }
@@ -154,7 +156,11 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
         var key = (userId, deviceId, StreamItemKey(itemId));
         lock (sourceGate)
         {
-            if (!context.IsOriginalDownload) Set(key, source);
+            if (!context.IsOriginalDownload)
+            {
+                Set(key, source);
+                _delivered.Remove((userId, context.Protocol, context.BackendInstanceId, deviceId, StreamItemKey(itemId), "interrupted"));
+            }
             Set(ContinuationKey(userId, context, itemId, quality), source);
         }
     }
@@ -183,6 +189,7 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
 
     public void StreamRejected(ProtocolExecutionContext context, string itemId, string? reason)
     {
+        StreamInterrupted(context, itemId);
         if (context.IsOriginalDownload || context.IsPreparation || context.Actor?.EffectiveUserId is not { } userId ||
             string.IsNullOrWhiteSpace(StreamDeviceId(context))) return;
         var key = (userId, StreamDeviceId(context), StreamItemKey(itemId));
@@ -193,6 +200,24 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
                 Set(key, source with { RejectionReason = allstarr.Core.Operations.ProblemReportText.Clean(reason) });
         }
     }
+
+    public void StreamInterrupted(ProtocolExecutionContext context, string itemId, ProtocolProviderStream? stream = null)
+    {
+        if (context.IsOriginalDownload || context.IsPreparation || context.IsReadOnly || context.Actor?.EffectiveUserId is not { } userId ||
+            string.IsNullOrWhiteSpace(StreamDeviceId(context))) return;
+        lock (sourceGate)
+        {
+            if (stream != null && StreamFor(userId, StreamDeviceId(context), itemId) is { } source &&
+                !ReferenceEquals(source.ObservationToken, stream.ObservationToken)) return;
+            _delivered.Set((userId, context.Protocol, context.BackendInstanceId, StreamDeviceId(context), StreamItemKey(itemId), "interrupted"),
+                DateTimeOffset.UtcNow, new MemoryCacheEntryOptions { AbsoluteExpirationRelativeToNow = Retention, Size = 1 });
+        }
+    }
+
+    public bool WasInterrupted(ProtocolExecutionContext context, string? deviceId, string itemId, DateTimeOffset observedAt) =>
+        context.Actor?.EffectiveUserId is { } userId &&
+        _delivered.TryGetValue((userId, context.Protocol, context.BackendInstanceId, deviceId, StreamItemKey(itemId), "interrupted"), out DateTimeOffset interruptedAt) &&
+        interruptedAt <= observedAt;
 
     public PlaybackStreamSource? StreamFor(ProtocolExecutionContext context, string itemId,
         ProviderAudioQuality quality) => context.Actor?.EffectiveUserId is { } userId

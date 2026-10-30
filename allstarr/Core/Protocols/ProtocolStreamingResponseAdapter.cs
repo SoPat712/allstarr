@@ -37,7 +37,8 @@ public sealed class ProtocolStreamingResponseAdapter(TimeProvider? timeProvider 
         CancellationToken cancellationToken,
         bool enableRangeProcessing,
         bool providerStream = false,
-        IDisposable? responseLease = null)
+        IDisposable? responseLease = null,
+        Action? interrupted = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(response);
@@ -101,7 +102,7 @@ public sealed class ProtocolStreamingResponseAdapter(TimeProvider? timeProvider 
         var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         return new FileStreamResult(
             new StartingResponseStream(stream, context.Response, clock, providerStream, seeking,
-                providerStream && partial ? response.Content.Headers.ContentLength : null, providerStream && partial, responseLease),
+                providerStream && partial ? response.Content.Headers.ContentLength : null, providerStream && partial, responseLease, interrupted),
             response.Content.Headers.ContentType?.ToString() ?? "audio/mpeg")
         {
             EnableRangeProcessing = enableRangeProcessing && !(providerStream && partial)
@@ -136,7 +137,7 @@ public sealed class ProtocolStreamingResponseAdapter(TimeProvider? timeProvider 
     }
 
     private sealed class StartingResponseStream(Stream source, HttpResponse response, TimeProvider clock,
-        bool providerStream, bool seeking, long? remaining, bool partial, IDisposable? capacityLease) : Stream
+        bool providerStream, bool seeking, long? remaining, bool partial, IDisposable? capacityLease, Action? interrupted) : Stream
     {
         private bool initialRead = true;
         public override bool CanRead => source.CanRead;
@@ -150,6 +151,16 @@ public sealed class ProtocolStreamingResponseAdapter(TimeProvider? timeProvider 
         public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
             ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            try { return await ReadCoreAsync(buffer, cancellationToken); }
+            catch (Exception error) when (error is IOException or HttpRequestException or OperationCanceledException)
+            {
+                if (!cancellationToken.IsCancellationRequested && !response.HttpContext.RequestAborted.IsCancellationRequested)
+                    interrupted?.Invoke();
+                throw;
+            }
+        }
+        private async ValueTask<int> ReadCoreAsync(Memory<byte> buffer, CancellationToken cancellationToken)
         {
             if (buffer.IsEmpty) return 0;
             await response.StartAsync(cancellationToken);

@@ -17,7 +17,9 @@ public sealed partial class ProtocolStreamingResponseAdapterTests
         var context = new DefaultHttpContext();
         using var source = new SeekSource();
         using var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(source) };
-        var result = Assert.IsType<FileStreamResult>(await adapter.CreateAsync(context, response, default, false, providerStream: true));
+        var interrupted = false;
+        var result = Assert.IsType<FileStreamResult>(await adapter.CreateAsync(context, response, default, false,
+            providerStream: true, interrupted: () => interrupted = true));
         await using var stream = result.FileStream;
         var pending = stream.ReadAsync(new byte[4]).AsTask();
         await source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -26,6 +28,25 @@ public sealed partial class ProtocolStreamingResponseAdapterTests
         Assert.False(pending.IsCompleted);
         clock.Advance(TimeSpan.FromSeconds(52));
         await Assert.ThrowsAsync<IOException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.True(interrupted);
+    }
+
+    [Fact]
+    public async Task ClientCancelledPlaybackDoesNotMarkProviderFailure()
+    {
+        var context = new DefaultHttpContext();
+        using var source = new SeekSource();
+        using var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(source) };
+        var interrupted = false;
+        var result = Assert.IsType<FileStreamResult>(await _adapter.CreateAsync(context, response, default, false,
+            providerStream: true, interrupted: () => interrupted = true));
+        await using var stream = result.FileStream;
+        using var cancellation = new CancellationTokenSource();
+        var pending = stream.ReadAsync(new byte[4], cancellation.Token).AsTask();
+        await source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        Assert.False(interrupted);
     }
 
     [Fact]

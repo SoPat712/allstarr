@@ -202,6 +202,7 @@ internal sealed class PlaybackFileFacts
     internal double? ExpectedDurationSeconds { get; set; }
     internal bool DurationIsDerived { get; set; }
     internal Action? SourceFailed { get; set; }
+    internal bool Failed { get; set; }
     private long size = -1;
     public long? Size
     {
@@ -1561,6 +1562,7 @@ public sealed partial class ProtocolProviderGateway(
                 void SourceFailed()
                 {
                     if (Interlocked.Exchange(ref failureReported, 1) != 0) return;
+                    sourceFacts.Failed = true;
                     var error = new ProviderError(ProviderErrorKind.TransientFailure);
                     outcomes?.ObservePlayback(candidateExecution, servingTrack, quality, error, Stopwatch.GetElapsedTime(started));
                     outcomes?.Observe(candidateExecution, ProviderCapabilityKind.Streaming, error, Stopwatch.GetElapsedTime(started));
