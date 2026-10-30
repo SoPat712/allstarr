@@ -20,6 +20,7 @@ internal sealed class ExtensionInvocationBudget : IDisposable
     public CancellationToken Token => cancellation.Token;
     public bool FetchFailed { get; private set; }
     public bool IsDownload { get; }
+    public bool IsHealthProbe { get; }
     public bool HasResolutionDeadline => resolutionDeadline.HasValue;
     private long FullRemainingMilliseconds => Math.Max(0, (long)(duration - clock.GetElapsedTime(started)).TotalMilliseconds);
     public long ResolutionRemainingMilliseconds => resolutionDeadline is { } deadline
@@ -31,9 +32,10 @@ internal sealed class ExtensionInvocationBudget : IDisposable
     }
 
     public ExtensionInvocationBudget(TimeSpan duration, CancellationToken token, TimeProvider clock, bool isDownload = false,
-        DateTimeOffset? resolutionDeadline = null)
+        DateTimeOffset? resolutionDeadline = null, bool isHealthProbe = false)
     {
         IsDownload = isDownload;
+        IsHealthProbe = isHealthProbe;
         this.duration = duration;
         this.clock = clock;
         this.resolutionDeadline = resolutionDeadline;
