@@ -25,34 +25,68 @@ public sealed class TrackMatchPlayableSearch(
         TrackMatchScope scope,
         IReadOnlyList<LocalTrackMatchCandidate> localCandidates,
         ScopedTrackMatchOverride? manualOverride,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool allowIncompleteSearch = false)
     {
         var queries = SearchQueries(source);
         var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(context, cancellationToken);
         if (!await CanAutomaticallyMatchAsync(context, source.ProviderId, cancellationToken))
             return DecideMatch(source, scope, [], [], manualOverride, providerOrder, effectiveMatcher);
-        var primarySongs = queries.Length == 0 ? [] : await SearchAsync(queries[0]);
+        var primaryResult = queries.Length == 0 ? new MatchingSongSearchResult([], []) : await SearchAsync(queries[0]);
+        var primarySongs = primaryResult.Songs;
+        var incompleteProviders = primaryResult.IncompleteProviderIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var primaryMatch = DecideMatch(
             source, scope, primarySongs, localCandidates, manualOverride, providerOrder, effectiveMatcher);
         if (primaryMatch.Decision.State == TrackMatchReviewState.Pinned ||
-            primaryMatch.Decision.State == TrackMatchReviewState.Accepted && !IsExplicitFallback(source, primaryMatch, localCandidates))
+            primaryMatch.Decision.State == TrackMatchReviewState.Accepted && !primaryMatch.Decision.RequiresReview &&
+            !IsExplicitFallback(source, primaryMatch, localCandidates) && CanSettle(primaryMatch))
             return primaryMatch;
 
-        var songs = primarySongs.Concat((await Task.WhenAll(queries.Skip(1).Select(SearchAsync)))
-                .SelectMany(result => result))
+        var fallbackResults = await Task.WhenAll(queries.Skip(1).Select(SearchAsync));
+        incompleteProviders.UnionWith(fallbackResults.SelectMany(result => result.IncompleteProviderIds));
+        var songs = primarySongs.Concat(fallbackResults.SelectMany(result => result.Songs))
             .DistinctBy(song => $"{song.ExternalProvider}:{song.ExternalId}", StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        return DecideMatch(source, scope, songs, localCandidates, manualOverride, providerOrder, effectiveMatcher);
+        var match = DecideMatch(source, scope, songs, localCandidates, manualOverride, providerOrder, effectiveMatcher);
+        if (!allowIncompleteSearch && !CanSettle(match))
+            throw new ProtocolProviderUnavailableException(new(ProviderErrorKind.TransientFailure));
+        return match;
 
-        async Task<Song[]> SearchAsync(string query) =>
-            ((await gateway.SearchAutomaticSongsAsync(context, query, 15)) ?? [])
-            .Where(song => IsPlayable(song, providerOrder))
-            .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
-                           !string.IsNullOrWhiteSpace(song.ExternalId))
-            .Where(song => !song.ExternalProvider!.Equals(source.ProviderId, StringComparison.OrdinalIgnoreCase) ||
-                           !song.ExternalId!.Equals(source.ExternalId, StringComparison.Ordinal))
-            .DistinctBy(song => $"{song.ExternalProvider}:{song.ExternalId}", StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        async Task<MatchingSongSearchResult> SearchAsync(string query)
+        {
+            MatchingSongSearchResult result;
+            try
+            {
+                result = await gateway.SearchMatchingSongsAsync(context, query, 15) ?? new([], []);
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TimeoutException)
+            {
+                // Retain other completed query results while treating this query's routes as unknown.
+                return new([], providerOrder);
+            }
+            return new(result.Songs
+                .Where(song => IsPlayable(song, providerOrder))
+                .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
+                               !string.IsNullOrWhiteSpace(song.ExternalId))
+                .Where(song => !song.ExternalProvider!.Equals(source.ProviderId, StringComparison.OrdinalIgnoreCase) ||
+                               !song.ExternalId!.Equals(source.ExternalId, StringComparison.Ordinal))
+                .DistinctBy(song => $"{song.ExternalProvider}:{song.ExternalId}", StringComparer.OrdinalIgnoreCase)
+                .ToArray(), result.IncompleteProviderIds);
+        }
+
+        bool CanSettle(PlayableTrackMatch result)
+        {
+            if (incompleteProviders.Count == 0 || result.Decision.State == TrackMatchReviewState.Pinned) return true;
+            if (result.Decision.State != TrackMatchReviewState.Accepted || result.Decision.RequiresReview ||
+                IsExplicitFallback(source, result, localCandidates)) return false;
+            if (result.Decision.Candidates.Any(candidate =>
+                    candidate.LibraryTrackId == result.Decision.SelectedLibraryTrackId && candidate.IsLocal)) return true;
+            if (result.SelectedExternal?.ExternalProvider is not { } selectedProvider) return false;
+            var ranks = ProviderRanks(providerOrder);
+            var selectedRank = ranks.GetValueOrDefault(ExternalTrackPlaybackPolicy.Normalize(selectedProvider), int.MaxValue);
+            return incompleteProviders.All(provider =>
+                ranks.GetValueOrDefault(ExternalTrackPlaybackPolicy.Normalize(provider), -1) > selectedRank);
+        }
     }
 
     public async Task<ProviderOutcome<PlayableTrackMatch>> MatchImportedHistoryAsync(
@@ -95,13 +129,20 @@ public sealed class TrackMatchPlayableSearch(
     private static string[] SearchQueries(ExternalTrackMatchSnapshot source)
     {
         var title = FuzzyMatcher.SearchQuery(source.Title);
+        // A title beginning with "With" can be mistaken for a feature credit.
+        if (string.IsNullOrWhiteSpace(title)) title = source.Title.Trim();
         var artist = source.Artist?.Split(',', 2, StringSplitOptions.TrimEntries)[0];
+        var primaryArtist = FuzzyMatcher.SplitCredits(source.Artist).FirstOrDefault();
+        var primary = Join(title, artist);
+        var normalized = Join(FuzzyMatcher.NormalizeForMatching(title), primaryArtist);
+        var hasFocusedFallback = !normalized.Equals(primary, StringComparison.OrdinalIgnoreCase);
         return new[]
             {
-                FuzzyMatcher.SearchQuery(source.Title, source.Artist),
+                primary,
+                hasFocusedFallback ? normalized : null,
                 Join(title, source.Album),
                 title,
-                artist,
+                hasFocusedFallback ? null : artist,
                 source.Album
             }
             .Where(query => !string.IsNullOrWhiteSpace(query) && query.Trim().Length >= 2)
@@ -163,7 +204,8 @@ public sealed class TrackMatchPlayableSearch(
             var match = DecideMatch(
                 source, scope, [song], localCandidates, manualOverride, providerOrder, effectiveMatcher);
             if (match.Decision.State == TrackMatchReviewState.Pinned ||
-                match.Decision.State == TrackMatchReviewState.Accepted && !IsExplicitFallback(source, match, localCandidates))
+                match.Decision.State == TrackMatchReviewState.Accepted && !match.Decision.RequiresReview &&
+                !IsExplicitFallback(source, match, localCandidates))
                 return match;
             unavailableIdentities?.Add(cached.Id);
         }
@@ -324,7 +366,8 @@ public sealed class TrackMatchPlayableSearch(
             policy.ApplyAutomaticProviderAvailability(
                 ProviderCapabilityKind.Streaming,
                 gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)),
-            matcher.WithLocalPriorityWindow(policy.LocalPreferenceWindow));
+            matcher.WithLocalPriorityWindow(policy.LocalPreferenceWindow,
+                policy.Preferences.ExplicitFilter == "CleanOnly" ? ProviderExplicitContentPolicy.CleanOnly : ProviderExplicitContentPolicy.Allow));
     }
 
     private async Task<bool> CanAutomaticallyMatchAsync(ProtocolExecutionContext context, string providerId,

@@ -65,7 +65,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         var repeated = await service.RefreshAsync(Context(), _link);
         disconnected.Cancel();
 
-        gateway.Verify(item => item.SearchAutomaticSongsAsync(
+        gateway.Verify(item => item.SearchMatchingSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Never);
         Assert.NotNull(first.JobId);
         Assert.Equal(first.JobId, repeated.JobId);
@@ -111,7 +111,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         var completion = await ExecuteRefreshRematch(service, matches, claim);
         Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
         await queue.CompleteAsync(claim, completion);
-        gateway.Verify(item => item.SearchAutomaticSongsAsync(
+        gateway.Verify(item => item.SearchMatchingSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), It.Is<string>(query => query.Contains("Old Song")), It.IsAny<int>()), Times.Never);
         var projection = await new DurablePlaylistProjectionReader(_factory,
             new TestBackendLibraryAccess(_factory, "music"), gateway.Object).ReadByLinkIdAsync(_user, _link);
@@ -397,9 +397,9 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
                     Album = "Album",
                     Duration = 180
                 });
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync([new Song { ExternalProvider = "deezer", ExternalId = "equivalent", Title = "New Song",
-                Artist = "Artist", Album = "Album", Duration = 180 }]);
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync(new MatchingSongSearchResult([new Song { ExternalProvider = "deezer", ExternalId = "equivalent", Title = "New Song",
+                Artist = "Artist", Album = "Album", Duration = 180 }], []));
         await using var db = await _factory.CreateDbContextAsync();
         var snapshot = await db.ExternalMetadataSnapshots.SingleAsync();
         Assert.True((await matches.RematchSnapshotAsync(Context(), snapshot.Id, "retain", "updated-policy")).Succeeded);
@@ -445,9 +445,9 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
                     Album = "Other collection",
                     Duration = 300
                 });
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync([new Song { ExternalProvider = "deezer", ExternalId = "replacement", Title = "New Song",
-                Artist = "Artist", Album = "Album", Duration = 180 }]);
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync(new MatchingSongSearchResult([new Song { ExternalProvider = "deezer", ExternalId = "replacement", Title = "New Song",
+                Artist = "Artist", Album = "Album", Duration = 180 }], []));
         Assert.True((await matches.RematchSnapshotAsync(Context(), snapshotId, "replace", "updated-policy")).Succeeded);
         await using var verify = await _factory.CreateDbContextAsync();
         var identities = await verify.ProviderTrackIdentities.Where(item => item.ProviderId == "deezer").ToArrayAsync();
@@ -469,10 +469,10 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
         gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["deezer"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync([new Song { ExternalProvider = "deezer", ExternalId = "new-song", Title = "New Song",
-                Artist = "Artist", Album = "Album", Duration = 180 }]);
+            .ReturnsAsync(new MatchingSongSearchResult([new Song { ExternalProvider = "deezer", ExternalId = "new-song", Title = "New Song",
+                Artist = "Artist", Album = "Album", Duration = 180 }], []));
         return gateway;
     }
 

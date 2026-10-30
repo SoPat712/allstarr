@@ -25,6 +25,10 @@ using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Protocols;
 
+public sealed record MatchingSongSearchResult(
+    IReadOnlyList<Song> Songs,
+    IReadOnlyList<string> IncompleteProviderIds);
+
 /// <summary>
 /// The provider boundary used by protocol adapters for synthesized resources.
 /// Native backend resources never enter this gateway and remain transparent relays.
@@ -51,6 +55,11 @@ public interface IProtocolProviderGateway
         int limit);
 
     Task<IReadOnlyList<Song>> SearchAutomaticSongsAsync(
+        ProtocolExecutionContext protocol,
+        string query,
+        int limit);
+
+    Task<MatchingSongSearchResult> SearchMatchingSongsAsync(
         ProtocolExecutionContext protocol,
         string query,
         int limit);
@@ -596,15 +605,19 @@ public sealed partial class ProtocolProviderGateway(
         }
     }
 
-    public Task<IReadOnlyList<Song>> SearchPlayableSongsAsync(
+    public async Task<IReadOnlyList<Song>> SearchPlayableSongsAsync(
         ProtocolExecutionContext protocol, string query, int limit) =>
-        SearchSongsAsync(protocol, query, limit, ProviderRoutePurpose.ManualSelection);
+        (await SearchSongsAsync(protocol, query, limit, ProviderRoutePurpose.ManualSelection)).Songs;
 
-    public Task<IReadOnlyList<Song>> SearchAutomaticSongsAsync(
+    public async Task<IReadOnlyList<Song>> SearchAutomaticSongsAsync(
+        ProtocolExecutionContext protocol, string query, int limit) =>
+        (await SearchSongsAsync(protocol, query, limit, ProviderRoutePurpose.Automatic)).Songs;
+
+    public Task<MatchingSongSearchResult> SearchMatchingSongsAsync(
         ProtocolExecutionContext protocol, string query, int limit) =>
         SearchSongsAsync(protocol, query, limit, ProviderRoutePurpose.Automatic);
 
-    private async Task<IReadOnlyList<Song>> SearchSongsAsync(
+    private async Task<MatchingSongSearchResult> SearchSongsAsync(
         ProtocolExecutionContext protocol, string query, int limit, ProviderRoutePurpose purpose)
     {
         ArgumentNullException.ThrowIfNull(protocol);
@@ -613,7 +626,7 @@ public sealed partial class ProtocolProviderGateway(
             .Select(NormalizeProvider)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        if (configuredProviderOrder.Length == 0) return [];
+        if (configuredProviderOrder.Length == 0) return new([], []);
 
         var actor = protocol.Actor ?? new ProviderActorContext(ProviderActorKind.PublicRead, null);
         var effectivePolicy = await ResolveEffectivePolicyAsync(protocol);
@@ -630,7 +643,7 @@ public sealed partial class ProtocolProviderGateway(
             protocol, actor, configuredProviderOrder);
         if (purpose == ProviderRoutePurpose.Automatic)
             providerOrder = providerOrder.Where(item => IsAutomaticProvider(item, effectivePolicy)).ToArray();
-        if (providerOrder.Count == 0) return [];
+        if (providerOrder.Count == 0) return new([], []);
         var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(
             protocol,
             actor,
@@ -639,19 +652,19 @@ public sealed partial class ProtocolProviderGateway(
             providerIds: providerOrder,
             sourceTrackId: null,
             purpose: purpose));
-        var snapshots = await SearchPlayableProvidersWithinBudgetAsync(
+        var (snapshots, incompleteProviders) = await SearchPlayableProvidersWithinBudgetAsync(
             plan.Candidates, query, limit, protocol.CancellationToken);
         var songs = snapshots.SelectMany(snapshot => snapshot.Result.Songs)
             .Where(song => effectivePolicy?.Includes(song) != false)
             .Where(song => providerOrder.Contains(
                 NormalizeProvider(song.ExternalProvider), StringComparer.Ordinal));
         // Matching needs every provider route so equivalent recordings remain available as fallbacks.
-        return Merge(
+        return new(Merge(
             songs,
             limit,
             item => Key(item.ExternalProvider, item.ExternalId, item.Id),
             item => item.ExternalProvider,
-            providerOrder);
+            providerOrder), incompleteProviders);
     }
 
     private async Task<IReadOnlyList<string>> ResolvePlayableProviderOrderAsync(

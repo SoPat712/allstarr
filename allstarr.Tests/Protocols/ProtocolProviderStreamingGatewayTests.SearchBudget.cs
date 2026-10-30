@@ -62,8 +62,10 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         VerifySearchCount(slow, kind, 1);
     }
 
-    [Fact]
-    public async Task PlayableSearch_DropsLateProvidersAndKeepsTheirCacheWorkRunning()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PlayableSearch_DropsLateProvidersAndKeepsTheirCacheWorkRunning(bool automatic)
     {
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -97,23 +99,16 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var gateway = BudgetGateway(clock, observedCache.Object, null, log.Object, fast.Object, slow.Object);
         using var requestCancellation = new CancellationTokenSource();
         var context = WithSearchCancellation(Context(), requestCancellation.Token);
-        var service = new TrackMatchPlayableSearch(gateway, new TrackMatchDecisionEngine(),
-            Microsoft.Extensions.Logging.Abstractions.NullLogger<TrackMatchPlayableSearch>.Instance);
-
-        var search = service.MatchAsync(context,
-            new ExternalTrackMatchSnapshot("source", "spotify", "source-track", "Track", "Artist",
-                null, null, 240_000, null, null, null),
-            new TrackMatchScope(context.Principal!.UserId, "main", Guid.CreateVersion7(), 2, 1,
-                new HashSet<string>(StringComparer.Ordinal)), [], null, requestCancellation.Token);
+        var search = automatic
+            ? gateway.SearchAutomaticSongsAsync(context, "Track Artist", 15)
+            : gateway.SearchPlayableSongsAsync(context, "Track Artist", 15);
         await clock.WaitForTimersAsync(TimeSpan.FromSeconds(12), TimeSpan.FromSeconds(9));
         await writes.Reader.ReadAsync(guard.Token);
         Assert.False(search.IsCompleted);
         clock.Advance(TimeSpan.FromSeconds(9));
         var result = await search.WaitAsync(guard.Token);
 
-        Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
-        Assert.Equal("deezer", result.SelectedExternal!.ExternalProvider);
-        Assert.DoesNotContain(result.Decision.Candidates, candidate => candidate.ProviderTrackIds?.ContainsKey("qobuz") == true);
+        Assert.Equal("deezer", Assert.Single(result).ExternalProvider);
         log.Verify(item => item.Log(LogLevel.Information, It.IsAny<EventId>(),
             It.Is<It.IsAnyType>((state, _) => state.ToString() == "Playable search budget expired for providers qobuz"),
             null, It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
@@ -126,6 +121,90 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Equal(new[] { "deezer", "qobuz" }, repeated.Select(song => song.ExternalProvider));
         VerifySearchCount(fast, "songs", 1);
         VerifySearchCount(slow, "songs", 1);
+    }
+
+    [Theory]
+    [InlineData("transport", true)]
+    [InlineData("transport", false)]
+    [InlineData("rate-limit", true)]
+    [InlineData("rate-limit", false)]
+    public async Task MatchingSearchReportsFailuresWhileAutomaticSeedSearchKeepsPartialResults(string failure, bool hasHealthyResult)
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var healthy = DelayedSearchProvider("deezer", clock, TimeSpan.Zero);
+        if (!hasHealthyResult)
+            healthy.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+                .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("deezer", [])));
+        var failed = DelayedSearchProvider("qobuz", clock, TimeSpan.Zero);
+        var search = failed.Setup(item => item.SearchTracksAsync(
+            It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()));
+        if (failure == "transport") search.ThrowsAsync(new HttpRequestException("unavailable"));
+        else search.ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(
+            new(ProviderErrorKind.RateLimited, TimeSpan.FromMinutes(5))));
+        var gateway = BudgetGateway(clock, new TestMemoryApplicationCache(), healthy.Object, failed.Object);
+
+        var matching = await gateway.SearchMatchingSongsAsync(Context(), "Track Artist", 15);
+        Assert.Equal(["qobuz"], matching.IncompleteProviderIds);
+        var automatic = await gateway.SearchAutomaticSongsAsync(Context(), "Track Artist", 15);
+        if (hasHealthyResult)
+        {
+            Assert.Equal("deezer", Assert.Single(matching.Songs).ExternalProvider);
+            Assert.Equal("deezer", Assert.Single(automatic).ExternalProvider);
+        }
+        else
+        {
+            Assert.Empty(matching.Songs);
+            Assert.Empty(automatic);
+        }
+    }
+
+    [Fact]
+    public async Task AutomaticSearchTimeoutCanRetryUsingTheLateCachedResult()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var cache = new TestMemoryApplicationCache();
+        var writes = Channel.CreateUnbounded<string>();
+        var observedCache = new Mock<IApplicationCache>();
+        observedCache.SetupGet(item => item.IsEnabled).Returns(true);
+        observedCache.Setup(item => item.GetStringAsync(It.IsAny<string>()))
+            .Returns((string key) => cache.GetStringAsync(key));
+        observedCache.Setup(item => item.SetStringAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan?>()))
+            .Returns(async (string key, string value, TimeSpan? ttl) =>
+            {
+                var saved = await cache.SetStringAsync(key, value, ttl);
+                writes.Writer.TryWrite(key);
+                return saved;
+            });
+        var slow = DelayedSearchProvider("deezer", clock, TimeSpan.FromSeconds(12));
+        var gateway = BudgetGateway(clock, observedCache.Object, slow.Object);
+
+        var context = Context();
+        var search = gateway.SearchMatchingSongsAsync(context, "Track Artist", 15);
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(12), TimeSpan.FromSeconds(9));
+        clock.Advance(TimeSpan.FromSeconds(9));
+        var timedOut = await search.WaitAsync(guard.Token);
+        Assert.Empty(timedOut.Songs);
+        Assert.Equal(["deezer"], timedOut.IncompleteProviderIds);
+
+        clock.Advance(TimeSpan.FromSeconds(3));
+        await writes.Reader.ReadAsync(guard.Token);
+        var repeated = await gateway.SearchMatchingSongsAsync(context, "Track Artist", 15).WaitAsync(guard.Token);
+        Assert.Single(repeated.Songs);
+        Assert.Empty(repeated.IncompleteProviderIds);
+        VerifySearchCount(slow, "songs", 1);
+    }
+
+    [Fact]
+    public async Task AutomaticSearchSuccessfulEmptyPageRemainsAnEmptyResult()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var provider = DelayedSearchProvider("deezer", clock, TimeSpan.Zero);
+        provider.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("deezer", [])));
+        var gateway = BudgetGateway(clock, new TestMemoryApplicationCache(), provider.Object);
+
+        Assert.Empty(await gateway.SearchAutomaticSongsAsync(Context(), "Track Artist", 15));
     }
 
     [Fact]

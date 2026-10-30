@@ -48,6 +48,7 @@ public sealed class TrackRematchAllService(
 {
     internal const string ForcePolicyVersion = "bulk-rematch-v1";
     internal const string RolloutPolicyVersion = "algorithm-rollout-v1";
+    internal const string RolloutFallbackPolicyVersion = "algorithm-rollout-final-v1";
 
     public async Task<TrackRematchAllPreview> PreviewAsync(
         TrackMatchActor actor,
@@ -350,7 +351,7 @@ public sealed class TrackRematchAllService(
         Convert.ToHexString(SHA256.HashData(snapshotId.ToByteArray()).AsSpan(0, 12)).ToLowerInvariant();
 
     internal static bool IsManagedPolicy(string policyVersion) =>
-        policyVersion is ForcePolicyVersion or RolloutPolicyVersion;
+        policyVersion is ForcePolicyVersion or RolloutPolicyVersion or RolloutFallbackPolicyVersion;
 
     internal static bool RequiresAuthorityGuard(string policyVersion) =>
         IsManagedPolicy(policyVersion);
@@ -474,6 +475,12 @@ public sealed class TrackRematchAllJobHandler(
             return DurableJobCompletion.Success();
         }
 
+        await using var budgetDb = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var budget = await budgetDb.Jobs.AsNoTracking().Where(item => item.Id == context.Claim.JobId)
+            .Select(item => new { item.FailureCount, item.MaxAttempts, item.DeferralCount, item.MaxDeferrals })
+            .SingleOrDefaultAsync(cancellationToken);
+        var exhausted = !payload.Force && budget != null &&
+                        (budget.FailureCount + 1 >= budget.MaxAttempts || budget.DeferralCount >= budget.MaxDeferrals);
         var batch = work.Pending.Take(BatchSize).ToArray();
         var runtimes = await LoadRuntimesAsync(
             batch.Select(item => item.Snapshot.OwnerUserId).Distinct().ToArray(),
@@ -514,7 +521,9 @@ public sealed class TrackRematchAllJobHandler(
                     work.OperationCorrelation,
                     payload.Force
                         ? TrackRematchAllService.ForcePolicyVersion
-                        : TrackRematchAllService.RolloutPolicyVersion,
+                        : exhausted
+                            ? TrackRematchAllService.RolloutFallbackPolicyVersion
+                            : TrackRematchAllService.RolloutPolicyVersion,
                     cancellationToken);
                 var permanent = result.Failure is TrackMatchCommandFailure.Invalid or
                     TrackMatchCommandFailure.NotFound or TrackMatchCommandFailure.Forbidden;

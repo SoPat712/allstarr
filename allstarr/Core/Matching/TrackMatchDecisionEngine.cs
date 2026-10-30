@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Storage;
+using allstarr.Core.Capabilities;
 using allstarr.Services.Common;
 
 namespace allstarr.Core.Matching;
@@ -119,6 +120,8 @@ public sealed record TrackMatchDecision(
 
 public sealed class TrackMatchPolicy
 {
+    public ProviderExplicitContentPolicy ExplicitContent { get; init; } = ProviderExplicitContentPolicy.Allow;
+
     public double LocalPriorityWindow { get; init; } = 0.07;
 
     public IReadOnlyList<double> ProviderPriorityWindows { get; init; } = [0.05, 0.03, 0.01];
@@ -149,7 +152,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "accepted-routing-v25";
+    public const string AlgorithmVersion = "accepted-routing-v26";
     private const double ScoreEpsilon = 0.0000001;
 
     private readonly TrackMatchPolicy _policy;
@@ -160,15 +163,17 @@ public sealed class TrackMatchDecisionEngine
         _policy.Validate();
     }
 
-    public TrackMatchDecisionEngine WithLocalPriorityWindow(double value) => new(new TrackMatchPolicy
-    {
-        LocalPriorityWindow = value,
-        ProviderPriorityWindows = _policy.ProviderPriorityWindows,
-        AcceptThreshold = _policy.AcceptThreshold,
-        SuggestThreshold = _policy.SuggestThreshold,
-        AmbiguityDelta = _policy.AmbiguityDelta,
-        DurationToleranceSeconds = _policy.DurationToleranceSeconds
-    });
+    public TrackMatchDecisionEngine WithLocalPriorityWindow(
+        double value, ProviderExplicitContentPolicy? explicitContent = null) => new(new TrackMatchPolicy
+        {
+            LocalPriorityWindow = value,
+            ExplicitContent = explicitContent ?? _policy.ExplicitContent,
+            ProviderPriorityWindows = _policy.ProviderPriorityWindows,
+            AcceptThreshold = _policy.AcceptThreshold,
+            SuggestThreshold = _policy.SuggestThreshold,
+            AmbiguityDelta = _policy.AmbiguityDelta,
+            DurationToleranceSeconds = _policy.DurationToleranceSeconds
+        });
 
     public static long LibraryIndexRevision(IEnumerable<LocalTrackMatchCandidate> candidates)
     {
@@ -208,6 +213,7 @@ public sealed class TrackMatchDecisionEngine
         ValidateSource(source);
         var scored = candidates
             .Select(candidate => candidate with { IsExplicit = TrackMatchSignals.Explicitness(candidate) })
+            .Where(candidate => candidate.IsLocal || _policy.ExplicitContent != ProviderExplicitContentPolicy.CleanOnly || candidate.IsExplicit == false)
             .Select(candidate => new RankedCandidate(
                 candidate,
                 ScoreCandidate(source, candidate),
@@ -249,16 +255,16 @@ public sealed class TrackMatchDecisionEngine
             .Where(candidate => candidate.Score.Confidence + candidate.Priority.Window + ScoreEpsilon >=
                                 highestConfidence &&
                                 (IsRecordingAllowed(candidate.Score) || !hasAllowedRecording));
-        var matchingEditionRanks = accepted.Where(candidate =>
-                SameAlbumEdition(source.Album, candidate.Candidate.Album) == true)
-            .Select(candidate => candidate.Priority.Rank).ToHashSet();
+        var corroboration = RecordingCorroboration(accepted.Select(candidate => candidate.Candidate));
         var preferred = accepted.Length > 0 && !accepted.Any(candidate => candidate.Candidate.IsLocal)
             ? accepted
                 .OrderBy(candidate => candidate.Priority.Rank)
                 .ThenByDescending(candidate => SameAlbumEdition(source.Album, candidate.Candidate.Album) == true)
                 .ThenByDescending(candidate => FuzzyMatcher.SourceAlbumMarkersMatch(source.Title, source.Album, candidate.Candidate.Album))
-                .ThenByDescending(candidate => !source.IsExplicit.HasValue && candidate.Candidate.IsExplicit == true &&
-                    !matchingEditionRanks.Contains(candidate.Priority.Rank))
+                .ThenByDescending(candidate => !source.IsExplicit.HasValue &&
+                    candidate.Candidate.IsExplicit == (_policy.ExplicitContent == ProviderExplicitContentPolicy.Allow))
+                .ThenByDescending(candidate => Corroboration(candidate.Candidate, corroboration))
+                .ThenByDescending(candidate => ReleasePreference(candidate.Candidate.Album))
                 .ThenByDescending(candidate => candidate.Score.Confidence)
                 .ToArray()
             : eligible
@@ -491,6 +497,9 @@ public sealed class TrackMatchDecisionEngine
         var best = scores[0];
         var selected = visible.Single(candidate => candidate.LibraryTrackId == best.LibraryTrackId);
         var selectedPriority = Priority(selected, providerPriority);
+        var qualifiedIds = rankedScores.Where(IsAcceptanceQualified).Select(score => score.LibraryTrackId).ToHashSet();
+        var qualified = visible.Where(candidate => qualifiedIds.Contains(candidate.LibraryTrackId)).ToArray();
+        var corroboration = RecordingCorroboration(qualified);
         var runnerUp = rankedScores.FirstOrDefault(score =>
             score.LibraryTrackId != best.LibraryTrackId &&
             IsRecordingAllowed(score) &&
@@ -504,7 +513,8 @@ public sealed class TrackMatchDecisionEngine
                 selected,
                 visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId), source.Artist) &&
             (selected.IsLocal || !CanResolveProviderDuplicate(source, selected,
-                visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId))));
+                visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId), corroboration,
+                IsAcceptanceQualified(best) && IsAcceptanceQualified(score))));
         if (runnerUp != null &&
             best.Confidence >= _policy.SuggestThreshold &&
             best.Confidence - runnerUp.Confidence <= _policy.AmbiguityDelta)
@@ -552,11 +562,32 @@ public sealed class TrackMatchDecisionEngine
     }
 
     private bool CanResolveProviderDuplicate(
-        ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate left, LocalTrackMatchCandidate right)
+        ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate left, LocalTrackMatchCandidate right,
+        IReadOnlyDictionary<string, int> corroboration, bool bothQualified)
     {
+        var sameTitle = FuzzyMatcher.NormalizeTitleForMatching(left.Title, left.Artist, string.Join(", ", right.Artist, source.Artist)) ==
+                        FuzzyMatcher.NormalizeTitleForMatching(right.Title, right.Artist, string.Join(", ", left.Artist, source.Artist));
+        var sameArtists = FuzzyMatcher.SplitCredits(left.Artist).Select(FuzzyMatcher.NormalizeForMatching)
+            .ToHashSet(StringComparer.Ordinal).SetEquals(
+                FuzzyMatcher.SplitCredits(right.Artist).Select(FuzzyMatcher.NormalizeForMatching));
         if (!source.IsExplicit.HasValue && left.IsExplicit.HasValue && right.IsExplicit.HasValue &&
             left.IsExplicit != right.IsExplicit)
-            return SameAlbumEdition(source.Album, left.Album) != true || SameAlbumEdition(source.Album, right.Album) != true;
+            return bothQualified && sameTitle && sameArtists &&
+                   left.DurationMilliseconds is > 0 && right.DurationMilliseconds is > 0 &&
+                   Math.Abs(left.DurationMilliseconds.Value - right.DurationMilliseconds.Value) <= _policy.DurationToleranceSeconds * 1000L &&
+                   SameAlbumEdition(left.Album, right.Album) == true ||
+                   SameAlbumEdition(source.Album, left.Album) != true || SameAlbumEdition(source.Album, right.Album) != true;
+        var samePrimaryArtist = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(left.Artist).FirstOrDefault() ?? "") ==
+                                FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(right.Artist).FirstOrDefault() ?? "");
+        if (bothQualified && sameTitle && samePrimaryArtist && string.IsNullOrWhiteSpace(source.Isrc) &&
+            !(left.CanonicalRecordingId.HasValue && right.CanonicalRecordingId.HasValue &&
+              left.CanonicalRecordingId != right.CanonicalRecordingId) &&
+            !(TrackMatchSignals.RecordingIdentity(left) is { Length: > 0 } leftRecording &&
+              TrackMatchSignals.RecordingIdentity(right) is { Length: > 0 } rightRecording &&
+              !FuzzyMatcher.IdentifiersEqual(leftRecording, rightRecording)) &&
+            FuzzyMatcher.RecordingVersionsMatch(left.Title, left.Album, right.Title, right.Album) &&
+            Corroboration(left, corroboration) > Math.Max(1, Corroboration(right, corroboration)))
+            return true;
         if (left.DurationMilliseconds is > 0 && right.DurationMilliseconds is > 0 &&
             Math.Abs(left.DurationMilliseconds.Value - right.DurationMilliseconds.Value) > _policy.DurationToleranceSeconds * 1000L ||
             !FuzzyMatcher.RecordingVersionsMatch(left.Title, left.Album, right.Title, right.Album) &&
@@ -577,6 +608,26 @@ public sealed class TrackMatchDecisionEngine
                right.DurationMilliseconds is not > 0 &&
                Math.Abs(source.DurationMilliseconds.Value - left.DurationMilliseconds.Value) <= _policy.DurationToleranceSeconds * 1000L ||
                source.IsExplicit.HasValue && left.IsExplicit == source.IsExplicit && !right.IsExplicit.HasValue;
+    }
+
+    private static Dictionary<string, int> RecordingCorroboration(IEnumerable<LocalTrackMatchCandidate> candidates) =>
+        candidates.Where(candidate => !string.IsNullOrWhiteSpace(candidate.Isrc))
+            .GroupBy(candidate => NormalizeIsrc(candidate.Isrc!), StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.SelectMany(candidate =>
+                    (candidate.ProviderTrackIds?.Keys ?? Enumerable.Empty<string>())
+                    .Select(provider => NormalizeProvider(provider) + ":" + FuzzyMatcher.NormalizeAlbumForMatching(candidate.Album)))
+                .Distinct(StringComparer.Ordinal).Count(), StringComparer.Ordinal);
+
+    private static int Corroboration(LocalTrackMatchCandidate candidate, IReadOnlyDictionary<string, int> counts) =>
+        string.IsNullOrWhiteSpace(candidate.Isrc) ? 0 : counts.GetValueOrDefault(NormalizeIsrc(candidate.Isrc));
+
+    private static string NormalizeIsrc(string value) => value.Replace("-", "", StringComparison.Ordinal).Trim().ToUpperInvariant();
+
+    private static int ReleasePreference(string? album)
+    {
+        var normalized = FuzzyMatcher.NormalizeAlbumForMatching(album);
+        if (new[] { "video album", "compilation", "playlist", "greatest hits" }.Any(normalized.Contains)) return -2;
+        return new[] { "deluxe", "expanded", "anniversary" }.Any(normalized.Contains) ? -1 : 0;
     }
 
     private sealed record RankedCandidate(

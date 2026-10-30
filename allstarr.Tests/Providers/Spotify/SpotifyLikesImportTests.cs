@@ -53,10 +53,10 @@ public sealed class SpotifyLikesImportTests : IAsyncLifetime
         queue = new(factory, options, new(options), clock);
         favorites = new(factory, queue, clock);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync((ProtocolExecutionContext _, string query, int _) => tracks
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync((ProtocolExecutionContext _, string query, int _) => new MatchingSongSearchResult(tracks
                 .Where(track => query.StartsWith(track.Metadata!.Title, StringComparison.Ordinal))
-                .Select(track => Song(track.TrackId.Value, track.Metadata!.Title)).ToArray());
+                .Select(track => Song(track.TrackId.Value, track.Metadata!.Title)).ToArray(), []));
         reader.Setup(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistTracksRequest>()))
             .ReturnsAsync((ProviderExecutionContext _, ProviderPlaylistTracksRequest request) => Page(request));
         router.Setup(item => item.PlanAsync<IProviderPlaylistCapability>(It.IsAny<ProviderRouteRequest>()))
@@ -111,8 +111,8 @@ public sealed class SpotifyLikesImportTests : IAsyncLifetime
         Add("first");
         Add("second");
         var fail = true;
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "second Artist", 15))
-            .Returns(() => fail ? throw new HttpRequestException("unavailable") : Task.FromResult<IReadOnlyList<Song>>([Song("second", "second")]));
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), "second Artist", 15))
+            .Returns(() => fail ? throw new HttpRequestException("unavailable") : Task.FromResult(new MatchingSongSearchResult([Song("second", "second")], [])));
         var run = await Start();
         Assert.Equal(DurableJobCompletionKind.Retry, (await Execute()).Kind);
         var partial = await Service().GetAsync(Context(owner), run.JobId);
@@ -126,7 +126,7 @@ public sealed class SpotifyLikesImportTests : IAsyncLifetime
         }
         Assert.Equal(DurableJobCompletionKind.Succeeded, (await Execute()).Kind);
         Assert.Equal(2, (await Service().GetAsync(Context(owner), run.JobId))!.Imported);
-        gateway.Verify(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "first Artist", 15), Times.Once);
+        gateway.Verify(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), "first Artist", 15), Times.Once);
         await using var verify = factory.CreateDbContext();
         Assert.Equal(2, await verify.FavoriteEvents.CountAsync());
     }
@@ -138,10 +138,10 @@ public sealed class SpotifyLikesImportTests : IAsyncLifetime
         Add("review");
         Add("missing");
         await favorites.RecordAsync(new(Context(owner), "ext-deezer-song-existing", FavoriteOperation.Favorite, "manual"));
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync((ProtocolExecutionContext _, string query, int _) => query.StartsWith("existing", StringComparison.Ordinal)
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync((ProtocolExecutionContext _, string query, int _) => new MatchingSongSearchResult(query.StartsWith("existing", StringComparison.Ordinal)
                 ? [Song("existing", "existing")]
-                : query.StartsWith("review", StringComparison.Ordinal) ? [Song("review", "review", 220)] : []);
+                : query.StartsWith("review", StringComparison.Ordinal) ? [Song("review", "review", 220)] : [], []));
         var run = await Start();
         Assert.Equal(DurableJobCompletionKind.Succeeded, (await Execute()).Kind);
         var status = await Service().GetAsync(Context(owner), run.JobId);

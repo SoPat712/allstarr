@@ -1177,14 +1177,14 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
         gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["deezer"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync([
+            .ReturnsAsync(new MatchingSongSearchResult([
                 new Song { ExternalProvider = "deezer", ExternalId = "new-song", Title = "New Song",
                     Artist = "Artist", Album = "Album", Duration = 180 },
                 new Song { ExternalProvider = "deezer", ExternalId = "later-song", Title = "Later Song",
                     Artist = "Artist", Album = "Album", Duration = 180 }
-            ]);
+            ], []));
         var matcher = new TrackMatchDecisionEngine();
         var matches = new TrackMatchCommandService(_factory, matcher, new ProviderAccountResolver(_factory),
             new Clock(_now), new TestBackendLibraryAccess(_factory, "music"),
@@ -1204,14 +1204,14 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
             .ExecuteAsync(new DurableJobExecutionContext(claim, EmptyServices.Instance), default);
 
         Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
-        gateway.Verify(item => item.SearchAutomaticSongsAsync(
+        gateway.Verify(item => item.SearchMatchingSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Never);
         await queue.CompleteAsync(claim, completion);
         var rematchClaim = Assert.IsType<DurableJobClaim>(await queue.ClaimNextAsync("scheduled-rematch-worker"));
         Assert.Equal(DurableJobCompletionKind.Succeeded,
             (await ExecuteRefreshRematch(service, matches, rematchClaim)).Kind);
-        gateway.Verify(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "New Song Artist", 15), Times.Once);
-        gateway.Verify(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Later Song Artist", 15), Times.Once);
+        gateway.Verify(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), "New Song Artist", 15), Times.Once);
+        gateway.Verify(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Later Song Artist", 15), Times.Once);
         var projection = await new DurablePlaylistProjectionReader(_factory,
             new TestBackendLibraryAccess(_factory, "music"), gateway.Object).ReadByLinkIdAsync(_user, _link);
         Assert.NotNull(projection);
@@ -1251,9 +1251,9 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
             .ReturnsAsync(["apple-download", "deezer"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download", "deezer"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), "Feels", 15))
-            .ReturnsAsync(
+            .ReturnsAsync(new MatchingSongSearchResult(
             [
                 new Song
                 {
@@ -1273,7 +1273,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
                     Album = "Album",
                     Duration = 180
                 }
-            ]);
+            ], []));
         var matcher = new TrackMatchDecisionEngine();
         var trackMatches = new TrackMatchCommandService(
             _factory,
@@ -1335,13 +1335,13 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
         gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["deezer"]);
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
-            .ReturnsAsync([new Song
+            .ReturnsAsync(new MatchingSongSearchResult([new Song
             {
                 ExternalProvider = "deezer", ExternalId = "shared-provider-track",
                 Title = "Shared source", Artist = "Artist", Duration = 180
-            }]);
+            }], []));
         var matcher = new TrackMatchDecisionEngine();
         var matches = new TrackMatchCommandService(
             _factory, matcher, new ProviderAccountResolver(_factory), new Clock(_now), new TestBackendLibraryAccess(_factory, "music"),
@@ -1424,14 +1424,14 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
             if (Volatile.Read(ref entered) >= snapshotIds.Length && Volatile.Read(ref joined) == rematches)
                 release.TrySetResult();
         }
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(
+        gateway.Setup(item => item.SearchMatchingSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), "Concurrent external", 15))
             .Returns(async () =>
             {
                 Interlocked.Increment(ref entered);
                 ReleaseWhenAllJoined();
                 await release.Task;
-                return
+                return new MatchingSongSearchResult(
                 [
                     new Song
                     {
@@ -1442,7 +1442,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
                         Album = "Album",
                         Duration = 180
                     }
-                ];
+                ], []);
             });
         var overlap = new ConcurrentIdentityLookup(Hash("apple-concurrent"));
         var concurrentFactory = new DbFactory(new DbContextOptionsBuilder<AllstarrDbContext>(_database.Options)

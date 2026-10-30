@@ -306,8 +306,13 @@ public sealed partial class TrackMatchCommandService(
     }
 
     private async Task<TrackMatchDecisionEngine> DecisionEngineAsync(
-        CancellationToken cancellationToken) => effectivePolicies == null
-        ? decisionEngine
-        : decisionEngine.WithLocalPriorityWindow(
-            (await effectivePolicies.ResolveAsync(cancellationToken)).LocalPreferenceWindow);
+        CancellationToken cancellationToken, Guid? ownerUserId = null)
+    {
+        if (effectivePolicies == null) return decisionEngine;
+        var policy = ownerUserId.HasValue
+            ? await effectivePolicies.ResolveForUserAsync(ownerUserId.Value, cancellationToken)
+            : await effectivePolicies.ResolveAsync(cancellationToken);
+        return decisionEngine.WithLocalPriorityWindow(policy.LocalPreferenceWindow,
+            policy.Preferences.ExplicitFilter == "CleanOnly" ? ProviderExplicitContentPolicy.CleanOnly : ProviderExplicitContentPolicy.Allow);
+    }
 }
