@@ -133,6 +133,14 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
         var groups = new Dictionary<string, List<object>>();
         var changes = new List<object>();
         var examples = new Dictionary<string, List<object>>();
+        var thresholdBands = new Dictionary<string, List<object>>();
+        var thresholdFlips = new Dictionary<string, List<object>>();
+        var recordingIsrcs = Query(db, """
+            SELECT m.Value, i.Value FROM recording_identifiers m
+            JOIN recording_identifiers i ON m.RecordingId=i.RecordingId
+            WHERE m.Kind='musicbrainz' AND i.Kind='isrc'
+            """).GroupBy(row => (string)row[0]!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Select(row => (string)row[1]!).Distinct().ToArray(), StringComparer.OrdinalIgnoreCase);
         var metadata = Query(db, "SELECT ProviderId, ExternalIdHash, PayloadJson, RetrievedAt FROM external_metadata_snapshots WHERE ResourceKind IN ('track','playback-metadata')")
             .Select(row =>
             {
@@ -244,7 +252,14 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
                 Text(root, "album"), Text(root, "albumArtist"), Duration(root), Text(root, "isrc"),
                 TrackSnapshotMetadata.MusicBrainzRecordingId(root), TrackSnapshotMetadata.IsExplicit(root));
             source = source with { DurationProvenance = source.DurationProvenance ?? TrackSnapshotMetadata.DurationProvenance(root) };
-            var baselineSource = retainedSource ?? source with { IsExplicit = ReplayBaselineSnapshotMetadata.IsExplicit(root) };
+            var baselineSource = retainedSource != null ? source : source with { IsExplicit = ReplayBaselineSnapshotMetadata.IsExplicit(root) };
+            source = source with
+            {
+                MusicBrainzRecordingIsrcs = source.MusicBrainzRecordingIsrcs ??
+                    recordingIsrcs.GetValueOrDefault(source.MusicBrainzRecordingId ?? "")
+            };
+            if (!string.IsNullOrWhiteSpace(source.MusicBrainzRecordingId))
+                Count(source.MusicBrainzRecordingIsrcs is { Count: > 0 } ? "source_musicbrainz_isrcs_available" : "source_musicbrainz_isrcs_unavailable");
             if (retainedSource != null) Count("retained_source_used");
             if (baselineSource.IsExplicit != source.IsExplicit) Count("source_explicitness_numeric_fix_difference");
             Count("with_candidate_evidence");
@@ -441,6 +456,8 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
             {
                 source = Metadata(source.Title, source.Artist, source.Album, source.ProviderId, null, source.IsExplicit, source.DurationMilliseconds, source.Isrc),
                 source.DurationProvenance,
+                source.MusicBrainzRecordingId,
+                source.MusicBrainzRecordingIsrcs,
                 baselineSourceExplicitness = baselineSource.IsExplicit,
                 productionSourceExplicitness = source.IsExplicit,
                 current = Describe(before, baselineCandidates),
@@ -474,6 +491,45 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
                 storedScoresReproduced = scoresAgree
             };
             if (latest && after.State != TrackMatchReviewState.Accepted) latestReview.Add(example);
+            if (latest && best != null && after.State != TrackMatchReviewState.Accepted)
+            {
+                if (after.State is TrackMatchReviewState.Suggested or TrackMatchReviewState.Ambiguous &&
+                    best.Confidence is >= .80 and < .88)
+                {
+                    var lower = best.Confidence < .82 ? .80 : best.Confidence < .84 ? .82 : best.Confidence < .86 ? .84 : .86;
+                    var band = $"{lower:F2}-{lower + .02:F2}";
+                    var capped = after.State == TrackMatchReviewState.Ambiguous ||
+                        best.Components?.GetValueOrDefault("weakDurationAlbumAgreement", 1) == 0 ||
+                        best.Components?.GetValueOrDefault("versionTags", 1) == 0 ||
+                        best.Components?.GetValueOrDefault("titleAnnotations", 1) == 0 ||
+                        best.Components?.GetValueOrDefault("explicitContent", 1) == 0 ||
+                        best.Components?.GetValueOrDefault("sourceAlbumConfirmation", 1) == 0;
+                    Count("threshold/" + band + (capped ? "/excluded" : "/eligible"));
+                    if (!capped)
+                    {
+                        if (!thresholdBands.TryGetValue(band, out var bandExamples)) thresholdBands[band] = bandExamples = [];
+                        if (bandExamples.Count < 10) bandExamples.Add(example);
+                    }
+                }
+                foreach (var threshold in new[] { .86, .84 })
+                {
+                    var lowerPolicy = new TrackMatchPolicy
+                    {
+                        AcceptThreshold = threshold,
+                        SuggestThreshold = rowPolicy.SuggestThreshold,
+                        AmbiguityDelta = rowPolicy.AmbiguityDelta,
+                        DurationToleranceSeconds = rowPolicy.DurationToleranceSeconds,
+                        LocalPriorityWindow = rowPolicy.LocalPriorityWindow,
+                        ProviderPriorityWindows = rowPolicy.ProviderPriorityWindows,
+                        ExplicitContent = rowPolicy.ExplicitContent
+                    };
+                    var lowerDecision = new TrackMatchDecisionEngine(lowerPolicy).Decide(scope, source, candidates, providerPriority: rowOrder);
+                    if (lowerDecision.State != TrackMatchReviewState.Accepted) continue;
+                    var key = threshold.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+                    if (!thresholdFlips.TryGetValue(key, out var flips)) thresholdFlips[key] = flips = [];
+                    flips.Add(new { detail = example, lower = Describe(lowerDecision, candidates) });
+                }
+            }
             if (previousChosen != null && chosen != null && Provider(previousChosen) != Provider(chosen))
             {
                 Add("provider_change/all");
@@ -520,10 +576,13 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
             if (chosen != null && after.State == TrackMatchReviewState.Accepted)
             {
                 if (source.IsExplicit.HasValue && chosen.IsExplicit.HasValue && source.IsExplicit != chosen.IsExplicit) Add("suspected_wrong/explicitness_mismatch");
-                if (!SameVersionMarkers(source, chosen)) Add("suspected_wrong/version_markers");
+                if (!SameVersionMarkers(source, chosen) && best?.Components?.GetValueOrDefault("sourceAlbumVocalEvidence") != 1) Add("suspected_wrong/version_markers");
                 else if (!SameVersions(source, chosen)) Add("review/annotation_difference");
                 if (source.DurationMilliseconds is > 0 && chosen.DurationMilliseconds is > 0 &&
-                    Math.Abs(source.DurationMilliseconds.Value - chosen.DurationMilliseconds.Value) > 8000) Add("suspected_wrong/duration_outlier");
+                    Math.Abs(source.DurationMilliseconds.Value - chosen.DurationMilliseconds.Value) > 8000)
+                    Add(best?.Components?.GetValueOrDefault("weakDurationAlbumAgreement") == 1 ||
+                        best?.Reasons.Contains("musicbrainz_recording_isrc_exact") == true
+                        ? "accepted_duration_override/recording_evidence" : "suspected_wrong/duration_outlier");
                 if (TrackMatchSignals.ArtistSimilarity(source.Artist, chosen.Artist) < .7) Add("suspected_wrong/different_artist");
                 if (source.IsExplicit.HasValue && chosen.IsExplicit == null) Add("unverifiable_pick/candidate_explicitness_missing");
             }
@@ -614,6 +673,8 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
             affectedSongs = affectedSongs.ToDictionary(item => item.Key, item => item.Value.Count),
             changeGroups = groups.ToDictionary(item => item.Key, item => new { count = item.Value.Count, examples = item.Value.Take(10).ToArray() }),
             changes,
+            thresholdBands,
+            thresholdFlips,
             taxonomyExamples = examples,
             chosenProviderChanges = Taxonomy("provider_change/"),
             appleRank1AcceptedToLowerPriority = Taxonomy("apple_rank1_accepted_to_lower_priority/"),
@@ -646,7 +707,8 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
 
     private static bool Acceptable(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate,
         TrackMatchCandidateScore score, double acceptThreshold) =>
-        TrackMatchDecisionEngine.IsAcceptedExternalCandidate(score, acceptThreshold) && SourceVariant(source, candidate);
+        TrackMatchDecisionEngine.IsAcceptedExternalCandidate(score, acceptThreshold) &&
+        TrackMatchDecisionEngine.MatchesSourceVariant(source, candidate, score: score);
 
     private static bool SourceVariant(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate) =>
         TrackMatchDecisionEngine.MatchesSourceVariant(source, candidate);
@@ -779,9 +841,9 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
 
     internal sealed record ReplayCase(string Name, string[] Priority, ReplaySong Source, ReplaySong[] Candidates, string ExpectedState, int? ExpectedCandidate);
 
-    internal sealed record ReplaySong(string Title, string Artist, string? Album, string Provider, long? DurationMilliseconds, bool? IsExplicit, string? Isrc = null, string? DurationProvenance = null)
+    internal sealed record ReplaySong(string Title, string Artist, string? Album, string Provider, long? DurationMilliseconds, bool? IsExplicit, string? Isrc = null, string? DurationProvenance = null, string? MusicBrainzRecordingId = null)
     {
-        public ExternalTrackMatchSnapshot Snapshot() => new("source", Provider, "source", Title, Artist, Album, null, DurationMilliseconds, Isrc, null, IsExplicit)
+        public ExternalTrackMatchSnapshot Snapshot() => new("source", Provider, "source", Title, Artist, Album, null, DurationMilliseconds, Isrc, MusicBrainzRecordingId, IsExplicit)
         {
             DurationProvenance = DurationProvenance
         };

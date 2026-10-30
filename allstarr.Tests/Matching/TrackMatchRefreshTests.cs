@@ -234,6 +234,74 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
     }
 
     [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [Trait("Category", "Sqlite")]
+    public async Task MatchingReadsOnlyStoredMusicBrainzRecordingIsrcs(bool rematch, bool stored)
+    {
+        const string mbid = "324cf63f-6cd4-483c-a81b-5e7fadeef7db";
+        await using var fixture = await Fixture.CreateAsync(JsonSerializer.Serialize(new
+        {
+            Title = "Track Melodies",
+            Artist = "Artist",
+            Album = "Single",
+            DurationMilliseconds = 182000,
+            MusicBrainzRecordingId = mbid,
+            durationProvenance = "spotify"
+        }));
+        await using (var setup = fixture.Factory.CreateDbContext())
+        {
+            setup.LibraryTracks.Add(new LibraryTrackRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = fixture.Owner,
+                BackendInstanceId = "backend",
+                BackendLibraryId = "music",
+                BackendItemId = "local",
+                Title = "Track Melodies",
+                Artist = "Artist",
+                Album = "Album",
+                DurationMilliseconds = 205000,
+                Isrc = "QMZSY1600015",
+                Protocol = "jellyfin"
+            });
+            if (stored)
+            {
+                var recordingId = Guid.NewGuid();
+                setup.CanonicalRecordings.Add(new CanonicalRecordingRecord
+                {
+                    Id = recordingId,
+                    CreatedByUserId = fixture.Owner,
+                    PublicId = "enriched-recording",
+                    Identifiers =
+                    [
+                        new() { Id = Guid.NewGuid(), RecordingId = recordingId, Kind = RecordingIdentifierKinds.MusicBrainz, Value = mbid, Source = "musicbrainz-isrc" },
+                        new() { Id = Guid.NewGuid(), RecordingId = recordingId, Kind = RecordingIdentifierKinds.Isrc, Value = "QMZSY1600015", Source = "musicbrainz-isrc" }
+                    ]
+                });
+            }
+            await setup.SaveChangesAsync();
+        }
+        if (rematch)
+            Assert.True((await fixture.Service.RematchSnapshotAsync(new(fixture.Owner, false), fixture.SnapshotId, "identity")).Succeeded);
+        else
+            await fixture.Service.MatchSourceTracksAsync(
+                [new("spotify", "source", "Track Melodies", "Artist", "Single", 182000, null, null, "1")], "identity");
+        await using var saved = fixture.Factory.CreateDbContext();
+        var latest = await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        Assert.Equal(stored, latest.State == TrackMatchState.Accepted);
+        var scores = JsonSerializer.Deserialize<TrackMatchCandidateScore[]>(latest.CandidateResultsJson)!;
+        if (stored)
+        {
+            Assert.Equal(new[] { "QMZSY1600015" }, scores[0].Source!.MusicBrainzRecordingIsrcs);
+            Assert.Contains("musicbrainz_recording_isrc_exact", scores[0].Reasons);
+        }
+        else Assert.Null(scores[0].Source!.MusicBrainzRecordingIsrcs);
+    }
+
+    [Theory]
     [InlineData(ProviderUseMode.Automatic, true)]
     [InlineData(ProviderUseMode.ManualOnly, false)]
     [InlineData(ProviderUseMode.Off, false)]

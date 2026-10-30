@@ -40,6 +40,8 @@ public sealed record ExternalTrackMatchSnapshot(
     bool? IsExplicit,
     Guid? CanonicalRecordingId = null)
 {
+    public string? DurationProvenance { get; init; }
+
     public IReadOnlyDictionary<string, string>? ExactProviderAliases { get; init; }
 }
 
@@ -152,7 +154,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "accepted-routing-v26";
+    public const string AlgorithmVersion = "accepted-routing-v27";
     private const double ScoreEpsilon = 0.0000001;
 
     private readonly TrackMatchPolicy _policy;
@@ -284,7 +286,8 @@ public sealed class TrackMatchDecisionEngine
     internal static bool MatchesSourceVariant(ExternalTrackMatchSnapshot source, LocalTrackMatchCandidate candidate,
         int durationToleranceSeconds = 8) =>
         (!source.IsExplicit.HasValue || !TrackMatchSignals.Explicitness(candidate).HasValue || source.IsExplicit == TrackMatchSignals.Explicitness(candidate)) &&
-        (source.DurationMilliseconds is not > 0 || candidate.DurationMilliseconds is not > 0 ||
+        (TrackMatchSignals.WeakDurationIdentityMatches(source, candidate) && TrackMatchSignals.WeakDurationAlbumMatches(source, candidate) ||
+         source.DurationMilliseconds is not > 0 || candidate.DurationMilliseconds is not > 0 ||
          Math.Abs(source.DurationMilliseconds.Value - candidate.DurationMilliseconds.Value) <= durationToleranceSeconds * 1000L) &&
         TrackMatchSignals.RecordingVersionsMatch(source, candidate, durationToleranceSeconds) &&
         FuzzyMatcher.TitleAnnotationsMatch(source.Title, source.Artist, candidate.Title, candidate.Artist);
@@ -344,7 +347,7 @@ public sealed class TrackMatchDecisionEngine
                 : 0);
     }
 
-    private static string NormalizeProvider(string provider)
+    internal static string NormalizeProvider(string provider)
     {
         var normalized = provider.Trim().ToLowerInvariant()
             .Replace("-", string.Empty, StringComparison.Ordinal)
@@ -401,6 +404,7 @@ public sealed class TrackMatchDecisionEngine
         score.Components == null || !score.Components.TryGetValue("titleAnnotations", out var match) || match > 0;
 
     private static bool HasDurationWithinTolerance(TrackMatchCandidateScore score) =>
+        score.Components?.GetValueOrDefault("weakDurationAlbumAgreement") == 1 ||
         score.Components == null ||
         !score.Components.TryGetValue("duration", out var duration) ||
         duration >= 0.5;

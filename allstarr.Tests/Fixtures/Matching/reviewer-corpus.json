@@ -950,7 +950,7 @@
     "expectedCandidate": 0
   },
   {
-    "name": "up-instrumental-album-needs-confirmation",
+    "name": "up-positive-vocal-evidence",
     "priority": [
       "apple-musickit",
       "deezer",
@@ -960,23 +960,33 @@
       "title": "Up",
       "artist": "Cardi B",
       "album": "Up (Instrumental)",
-      "provider": "listenbrainz",
+      "provider": "spotify",
       "durationMilliseconds": 156946,
-      "isExplicit": null,
-      "isrc": null
+      "isExplicit": true,
+      "isrc": null,
+      "durationProvenance": "spotify"
     },
     "candidates": [
       {
         "title": "Up",
         "artist": "Cardi B",
-        "album": "Up",
+        "album": "AM I THE DRAMA?",
         "provider": "apple-download",
         "durationMilliseconds": 156000,
-        "isExplicit": null,
-        "isrc": null
+        "isExplicit": true,
+        "isrc": "USAT22100061"
+      },
+      {
+        "title": "Up",
+        "artist": "Cardi B",
+        "album": "Up - Single",
+        "provider": "apple-download",
+        "durationMilliseconds": 156000,
+        "isExplicit": false,
+        "isrc": "USAT22100272"
       }
     ],
-    "expectedState": "Suggested",
+    "expectedState": "Accepted",
     "expectedCandidate": 0
   },
   {
@@ -1182,7 +1192,8 @@
       "provider": "listenbrainz",
       "durationMilliseconds": 182000,
       "isExplicit": null,
-      "durationProvenance": "listenbrainz"
+      "durationProvenance": "listenbrainz",
+      "musicBrainzRecordingId": "324cf63f-6cd4-483c-a81b-5e7fadeef7db"
     },
     "candidates": [
       {
@@ -1191,10 +1202,20 @@
         "album": "Encore",
         "provider": "apple-download",
         "durationMilliseconds": 205000,
-        "isExplicit": null
+        "isExplicit": null,
+        "isrc": "QMZSY1600015"
+      },
+      {
+        "title": "Let Me Love You",
+        "artist": "DJ Snake",
+        "album": "Encore",
+        "provider": "deezer",
+        "durationMilliseconds": 206000,
+        "isExplicit": null,
+        "isrc": "QMZSY1600015"
       }
     ],
-    "expectedState": "Suggested",
+    "expectedState": "Accepted",
     "expectedCandidate": 0
   },
   {
@@ -1223,6 +1244,150 @@
       }
     ],
     "expectedState": "Suggested",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "single-album-without-recording-corroboration",
+    "priority": [
+      "apple-musickit",
+      "deezer"
+    ],
+    "source": {
+      "title": "Let Me Love You",
+      "artist": "DJ Snake",
+      "album": "Let Me Love You",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 182000,
+      "isExplicit": null,
+      "durationProvenance": "listenbrainz"
+    },
+    "candidates": [
+      {
+        "title": "Let Me Love You (feat. Justin Bieber)",
+        "artist": "DJ Snake",
+        "album": "Encore",
+        "provider": "apple-download",
+        "durationMilliseconds": 205000,
+        "isExplicit": null
+      }
+    ],
+    "expectedState": "Suggested",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "same-title-different-primary-artist",
+    "priority": [
+      "apple-musickit",
+      "deezer"
+    ],
+    "source": {
+      "title": "Let Me Love You",
+      "artist": "DJ Snake",
+      "album": "Let Me Love You",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 182000,
+      "isExplicit": null,
+      "durationProvenance": "listenbrainz",
+      "musicBrainzRecordingId": "324cf63f-6cd4-483c-a81b-5e7fadeef7db"
+    },
+    "candidates": [
+      {
+        "title": "Let Me Love You (feat. Justin Bieber)",
+        "artist": "Mario",
+        "album": "Encore",
+        "provider": "apple-download",
+        "durationMilliseconds": 205000,
+        "isExplicit": null,
+        "isrc": "QMZSY1600015"
+      },
+      {
+        "title": "Let Me Love You",
+        "artist": "Mario",
+        "album": "Encore",
+        "provider": "deezer",
+        "durationMilliseconds": 206000,
+        "isExplicit": null,
+        "isrc": "QMZSY1600015"
+      }
+    ],
+    "expectedState": "Unresolved",
+    "expectedCandidate": null
+  },
+  {
+    "name": "album-only-instrumental-without-positive-vocal-evidence",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "tidal"
+    ],
+    "source": {
+      "title": "Up",
+      "artist": "Cardi B",
+      "album": "Up (Instrumental)",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 156946,
+      "isExplicit": null,
+      "isrc": null
+    },
+    "candidates": [
+      {
+        "title": "Up",
+        "artist": "Cardi B",
+        "album": "Up",
+        "provider": "apple-download",
+        "durationMilliseconds": 156000,
+        "isExplicit": null,
+        "isrc": null
+      }
+    ],
+    "expectedState": "Suggested",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "magic-descriptive-from-annotation",
+    "priority": [
+      "apple-musickit",
+      "deezer",
+      "tidal"
+    ],
+    "source": {
+      "title": "Magic - From \"Hexed\"",
+      "artist": "Hailee Steinfeld",
+      "album": "Magic (From \"Hexed\")",
+      "provider": "spotify",
+      "durationMilliseconds": null,
+      "isExplicit": null
+    },
+    "candidates": [
+      {
+        "title": "Magic (From \"Hexed\")",
+        "artist": "Hailee Steinfeld",
+        "album": "Magic (From \"Hexed\")",
+        "provider": "apple-download",
+        "durationMilliseconds": null,
+        "isExplicit": null,
+        "isrc": "USWD12642617"
+      },
+      {
+        "title": "Magic (From \"Hexed\")",
+        "artist": "Hailee Steinfeld",
+        "album": "Magic (From \"Hexed\")",
+        "provider": "deezer",
+        "durationMilliseconds": null,
+        "isExplicit": null,
+        "isrc": "USWD12642617"
+      },
+      {
+        "title": "Magic (From \"Hexed\")",
+        "artist": "Hailee Steinfeld",
+        "album": "Magic (From \"Hexed\")",
+        "provider": "tidal",
+        "durationMilliseconds": null,
+        "isExplicit": null,
+        "isrc": "USWD12642617"
+      }
+    ],
+    "expectedState": "Accepted",
     "expectedCandidate": 0
   }
 ]

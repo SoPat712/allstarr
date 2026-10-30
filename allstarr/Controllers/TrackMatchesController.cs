@@ -1020,14 +1020,14 @@ public sealed class TrackMatchesController(
             candidateArtworkUrl,
             isrc = metadata.Isrc,
             isExplicit = metadata.IsExplicit,
-            durationMilliseconds = track?.DurationMilliseconds ?? sourceDuration,
+            durationMilliseconds = sourceDuration,
             media = ReportedMedia(measured),
-            durationProvenance = track?.DurationMilliseconds.HasValue == true
-                ? track.DurationProvenance ?? track.Protocol
-                : sourceDuration.HasValue ? snapshot.ProviderId : null,
-            durationRetrievedAt = track?.DurationMilliseconds.HasValue == true
-                ? (DateTimeOffset?)(track.DurationRetrievedAt ?? track.IndexedAt)
-                : sourceDuration.HasValue ? measuredDuration.HasValue ? mediaSnapshot!.RetrievedAt : snapshot.RetrievedAt : null,
+            durationProvenance = sourceDuration.HasValue
+                ? metadata.DurationProvenance ?? snapshot.ProviderId
+                : null,
+            durationRetrievedAt = sourceDuration.HasValue
+                ? (DateTimeOffset?)(measuredDuration.HasValue ? mediaSnapshot!.RetrievedAt : snapshot.RetrievedAt)
+                : null,
             localTrack = track == null ? null : new
             {
                 id = track.Id,

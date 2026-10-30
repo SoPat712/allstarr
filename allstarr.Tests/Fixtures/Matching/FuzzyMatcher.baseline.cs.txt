@@ -6,7 +6,7 @@ public static partial class FuzzyMatcher
 
     private const int StackallocLevenshteinLimit = 128;
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\(\[]?\s*\b(feat\.?|ft\.?|with|featuring)\s+[^\)\]]+[\)\]]?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    [System.Text.RegularExpressions.GeneratedRegex(@"(?:\s*[\(\[]\s*|(?<=\S)\s+(?:[-–—]\s*)?)\b(feat\.?|ft\.?|with|featuring)\s+[^\)\]]+[\)\]]?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex FeatDecoratorRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\(\[][^\)\]]*\b(feat\.?|ft\.?|with|featuring)\s+[^\)\]]+[\)\]]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
@@ -188,13 +188,13 @@ public static partial class FuzzyMatcher
         return cleaned;
     }
 
-    public static string StripDecorators(string title, string? creditedArtists)
+    public static string StripDecorators(string title, string? creditedArtists, bool allowTitleFeatures = false)
     {
         if (string.IsNullOrWhiteSpace(title)) return string.Empty;
         var artists = SplitCredits(creditedArtists)
             .Select(NormalizeForMatching)
             .ToHashSet(StringComparer.Ordinal);
-        if (artists.Count == 1 || SeriesDecoratorRegex().IsMatch(title)) artists.UnionWith(TitleFeatureCredits(title));
+        if (allowTitleFeatures || artists.Count == 1 || SeriesDecoratorRegex().IsMatch(title)) artists.UnionWith(TitleFeatureCredits(title));
 
         bool IsOwnCredit(string value)
         {
@@ -219,7 +219,17 @@ public static partial class FuzzyMatcher
 
     public static string NormalizeTitleForMatching(
         string title, string? creditedArtists, string? additionalArtists = null) =>
-        NormalizeForMatching(StripDecorators(title, string.Join(", ", creditedArtists, additionalArtists)));
+        NormalizeForMatching(StripDecorators(title, string.Join(", ", creditedArtists, additionalArtists),
+            CanCompareTitleFeatures(creditedArtists, additionalArtists)));
+
+    private static bool CanCompareTitleFeatures(string? left, string? right)
+    {
+        var leftArtists = SplitCredits(left);
+        var rightArtists = SplitCredits(right);
+        var primary = NormalizeForMatching(leftArtists.FirstOrDefault() ?? "");
+        return (leftArtists.Count == 1 || rightArtists.Count == 1) && primary.Length > 0 &&
+               primary == NormalizeForMatching(rightArtists.FirstOrDefault() ?? "");
+    }
 
     public static bool IsContinuousMixExcerpt(string? title, string? album = null) =>
         ContinuousMixRegex().IsMatch(album ?? string.Empty) ||
@@ -266,8 +276,9 @@ public static partial class FuzzyMatcher
         var candidateFeatures = TitleFeatureCredits(candidateTitle);
         if (sourceFeatures.Count > 0 && candidateFeatures.Count > 0 && !sourceFeatures.SetEquals(candidateFeatures) &&
             !sourceFeatures.Concat(candidateFeatures).All(knownCredits.Contains)) return false;
-        var source = StripDecorators(sourceTitle, creditedArtists);
-        var candidate = StripDecorators(candidateTitle, creditedArtists);
+        var allowTitleFeatures = CanCompareTitleFeatures(sourceArtist, candidateArtist);
+        var source = StripDecorators(sourceTitle, creditedArtists, allowTitleFeatures);
+        var candidate = StripDecorators(candidateTitle, creditedArtists, allowTitleFeatures);
 
         static bool AnnotationsOccurIn(string title, string counterpart)
         {
@@ -300,6 +311,16 @@ public static partial class FuzzyMatcher
         var primaryArtist = artist?.Split(',', 2, StringSplitOptions.TrimEntries)[0];
         return string.Join(' ', new[] { SearchQuery(title), primaryArtist }
             .Where(value => !string.IsNullOrWhiteSpace(value)));
+    }
+
+    public static int CalculateTitleSimilarity(string source, string candidate)
+    {
+        var left = NormalizeForMatching(source);
+        var right = NormalizeForMatching(candidate);
+        if (left != right && (CreditPrefixRegex().Replace(left, "") == right ||
+                              CreditPrefixRegex().Replace(right, "") == left))
+            return CalculateLevenshteinScore(left, right);
+        return CalculateSimilarity(source, candidate);
     }
 
     public static int CalculateSimilarity(string query, string target)

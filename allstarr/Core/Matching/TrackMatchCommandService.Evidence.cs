@@ -6,6 +6,21 @@ namespace allstarr.Core.Matching;
 
 public sealed partial class TrackMatchCommandService
 {
+    private static async Task<IReadOnlyDictionary<string, string[]>> LoadMusicBrainzIsrcsAsync(
+        AllstarrDbContext db, IEnumerable<string?> recordingIds, CancellationToken cancellationToken)
+    {
+        var ids = recordingIds.Where(value => Guid.TryParse(value, out _))
+            .Select(value => Guid.Parse(value!).ToString("D")).Distinct().ToArray();
+        if (ids.Length == 0) return new Dictionary<string, string[]>();
+        var identifiers = await (from recording in db.RecordingIdentifiers.AsNoTracking()
+                                 join isrc in db.RecordingIdentifiers.AsNoTracking() on recording.RecordingId equals isrc.RecordingId
+                                 where recording.Kind == RecordingIdentifierKinds.MusicBrainz && ids.Contains(recording.Value) &&
+                                       isrc.Kind == RecordingIdentifierKinds.Isrc
+                                 select new { recording.Value, Isrc = isrc.Value }).ToArrayAsync(cancellationToken);
+        return identifiers.GroupBy(item => item.Value, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Select(item => item.Isrc).Distinct().ToArray(), StringComparer.OrdinalIgnoreCase);
+    }
+
     private static IReadOnlyDictionary<string, string>? FilterAutomaticCrossLinks(
         IReadOnlyDictionary<string, string>? links,
         EffectiveProviderPolicySnapshot? policy) => links == null || policy == null

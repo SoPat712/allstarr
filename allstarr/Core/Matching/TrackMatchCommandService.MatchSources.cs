@@ -128,6 +128,8 @@ public sealed partial class TrackMatchCommandService
 
         var results = new List<AutomatedSourceMatchResult>(snapshots.Length);
         var aliases = await LoadCrossLinksAsync(db, identities.Select(item => item.CanonicalRecordingId), cancellationToken);
+        var musicBrainzIsrcs = await LoadMusicBrainzIsrcsAsync(db,
+            snapshots.Select(item => ReadMetadata(item.PayloadJson).MusicBrainzRecordingId), cancellationToken);
         var now = DateTimeOffset.UtcNow;
         var effectiveEngine = await DecisionEngineAsync(cancellationToken);
         foreach (var snapshot in snapshots)
@@ -190,6 +192,7 @@ public sealed partial class TrackMatchCommandService
                 metadata.IsExplicit)
             {
                 DurationProvenance = metadata.DurationProvenance,
+                MusicBrainzRecordingIsrcs = musicBrainzIsrcs.GetValueOrDefault(metadata.MusicBrainzRecordingId ?? ""),
                 ExactProviderAliases = FilterAutomaticCrossLinks(
                     aliases.GetValueOrDefault(identity.CanonicalRecordingId),
                     ownerPolicies[snapshot.OwnerUserId])
