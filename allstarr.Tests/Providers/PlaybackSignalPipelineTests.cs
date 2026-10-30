@@ -714,8 +714,13 @@ public sealed partial class PlaybackSignalPipelineTests : IAsyncLifetime
     [InlineData(60, "complete")]
     public async Task StopSignal_ClassifiesShortAndCompletedPlayback(int playedSeconds, string expectedType)
     {
-        await new PlaybackSignalPipeline(jobs).RecordAsync(
-            Signal(PlaybackTransition.Stop, "track-1", TimeSpan.FromSeconds(playedSeconds).Ticks));
+        var pipeline = new PlaybackSignalPipeline(jobs);
+        await pipeline.RecordAsync(Signal(PlaybackTransition.Start, "track-1", 0));
+        var startClaim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]);
+        var startHandler = new PlaybackSignalJobHandler(new Writer(), new Scrobbles(), new Lyrics(), factory, playbackTracks);
+        await jobs.CompleteAsync(startClaim!, await startHandler.ExecuteAsync(new(startClaim!, EmptyServices.Instance), default));
+        clock.UtcNow += TimeSpan.FromSeconds(playedSeconds);
+        await pipeline.RecordAsync(Signal(PlaybackTransition.Stop, "track-1", TimeSpan.FromSeconds(playedSeconds).Ticks));
         var claim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]);
         var writer = new Writer();
         var handler = new PlaybackSignalJobHandler(
@@ -1144,6 +1149,7 @@ public sealed class PlaybackOccurrenceKeyTests
     [InlineData(PlaybackTransition.Stop, true, 60, ListeningEventState.Completed)]
     [InlineData(PlaybackTransition.Stop, true, 10, ListeningEventState.Skipped)]
     [InlineData(PlaybackTransition.InferredStop, false, 10, ListeningEventState.Abandoned)]
+    [InlineData(PlaybackTransition.InferredStop, true, 10, ListeningEventState.Abandoned)]
     [InlineData(PlaybackTransition.Submission, false, 0, ListeningEventState.Completed)]
     public void JellyfinAndSubsonicTransitionMatrixClassifiesEveryVariant(
         PlaybackTransition transition,
@@ -1159,6 +1165,6 @@ public sealed class PlaybackOccurrenceKeyTests
             ? new PlaybackTrackSnapshot(null, null, "track", "Track", "Artist", null, 120_000)
             : null;
 
-        Assert.Equal(expected, PlaybackSignalJobHandler.Classify(payload, track));
+        Assert.Equal(expected, PlaybackSignalJobHandler.Classify(payload, track, started: true));
     }
 }

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Core.Enrichment;
+using allstarr.Core.Intelligence;
 using allstarr.Core.Operations;
 using allstarr.Core.Playback;
 using allstarr.Core.Storage;
@@ -15,7 +16,7 @@ public sealed record TasteLayer(IReadOnlyList<TasteStrength> Tags, IReadOnlyList
 public sealed record TasteProfile(TasteLayer Lately, TasteLayer Usually, double LatelyWeight, IReadOnlyList<TasteNudge> Nudges, bool Paused, bool UseImportedHistory = true);
 public sealed record TasteScore(double Score, IReadOnlyList<string> Reasons, bool Blocked = false);
 internal sealed record TasteAffinity(string Name, double Lately, double Usually, DateTimeOffset At);
-internal sealed record TasteOccurrence(DateTimeOffset At, double Position, double Listened, bool Done = false);
+internal sealed record TasteOccurrence(DateTimeOffset At, double Position, double Listened, bool Done = false, bool Interrupted = false);
 internal sealed class TasteDocument
 {
     public bool Paused { get; set; }
@@ -144,6 +145,27 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
         return ChangeAsync(user, document => document.Nudges.RemoveAll(item => Key(item.Kind, item.Name) == Key(kind, name)), token);
     }
 
+    internal async Task InterruptPendingAsync(CancellationToken token)
+    {
+        await writes.WaitAsync(token);
+        try
+        {
+            await using var db = await factory.CreateDbContextAsync(token);
+            await foreach (var row in db.TasteProfiles.AsAsyncEnumerable().WithCancellation(token))
+            {
+                var document = Read(row);
+                var pending = document.Occurrences.Where(item => !item.Value.Done).Select(item => item.Key).ToArray();
+                if (pending.Length == 0) continue;
+                foreach (var key in pending)
+                    document.Occurrences[key] = document.Occurrences[key] with { Done = true };
+                row.PayloadJson = JsonSerializer.Serialize(document);
+                row.Revision++;
+            }
+            await db.SaveChangesAsync(token);
+        }
+        finally { writes.Release(); }
+    }
+
     public Task SetPausedAsync(Guid user, bool paused, CancellationToken token = default) => ChangeAsync(user, document =>
     {
         if (document.Paused == paused) return;
@@ -170,8 +192,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
 
     public async Task ObservePlaybackAsync(PlaybackSignalPayload payload, PlaybackTrackSnapshot? track, CancellationToken token)
     {
-        if (payload.Failed || payload.StreamSource?.RejectionReason != null || payload.SourceKind != "protocol" || track?.CanonicalRecordingId == null ||
-            payload.Transition == PlaybackTransition.InferredStop ||
+        if (payload.SourceKind != "protocol" || track?.CanonicalRecordingId == null ||
             await ExcludedAsync(payload.Scope.OwnerUserId, token)) return;
         var song = new Song { CanonicalRecordingId = track.CanonicalRecordingId, Artist = track.Artist };
         var features = await FeaturesAsync([song], token);
@@ -179,6 +200,11 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
         await ChangeAsync(payload.Scope.OwnerUserId, document =>
         {
             if (document.Paused || payload.ObservedAt < document.LearnAfter || payload.ObservedAt > clock.UtcNow || payload.ObservedAt < clock.UtcNow.AddDays(-8)) return;
+            if (payload.Failed || payload.StreamSource?.RejectionReason != null || payload.Transition == PlaybackTransition.InferredStop)
+            {
+                document.Occurrences[payload.OccurrenceKey ?? payload.SignalKey] = new(payload.ObservedAt, 0, 0, true);
+                return;
+            }
             if (payload.Transition == PlaybackTransition.Submission)
             {
                 if (!payload.Paused) Learn(document, occurrence, song, features[song], 1, payload.ObservedAt, true);
@@ -186,10 +212,10 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
             }
             var seconds = TimeSpan.FromTicks(payload.ReportedPositionTicks ?? payload.PositionTicks ?? 0).TotalSeconds;
             var previous = document.Occurrences.GetValueOrDefault(occurrence);
-            if (previous?.Done == true || previous?.At >= payload.ObservedAt) return;
+            if (previous?.Done == true || previous?.At > payload.ObservedAt) return;
             if (payload.Transition is PlaybackTransition.Start or PlaybackTransition.InferredStart)
             {
-                document.Occurrences.TryAdd(occurrence, new(payload.ObservedAt, seconds, 0));
+                document.Occurrences.TryAdd(occurrence, new(payload.ObservedAt, seconds, 0, Interrupted: seconds > 0));
                 return;
             }
             if (previous == null) return;
@@ -205,9 +231,11 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
             var stopped = payload.Transition == PlaybackTransition.Stop;
             var qualified = ScopedPlaybackScrobbleDelivery.EligibleForCompletedScrobble(track.DurationMilliseconds, TimeSpan.FromSeconds(listened).Ticks) ||
                 stopped && track.DurationMilliseconds is > 0 && listened * 1000 >= track.DurationMilliseconds;
-            document.Occurrences[occurrence] = new(payload.ObservedAt, seconds, listened, stopped || qualified);
+            var interrupted = previous.Interrupted || delta < 0 || delta > elapsed + 2 || elapsed > 300;
+            document.Occurrences[occurrence] = new(payload.ObservedAt, seconds, listened, stopped || qualified, interrupted);
             if (qualified) Learn(document, occurrence, song, features[song], 1, payload.ObservedAt, true);
-            else if (stopped && listened > 0 && delta >= 0 && delta <= elapsed + 2)
+            else if (PlaybackSignalJobHandler.Classify(payload, track, started: true) == ListeningEventState.Skipped &&
+                !interrupted)
                 Learn(document, occurrence, song, features[song], listened < 30 || listened * 1000 < track.DurationMilliseconds * .25 ? -1 : -.3, payload.ObservedAt, false);
         }, token);
     }

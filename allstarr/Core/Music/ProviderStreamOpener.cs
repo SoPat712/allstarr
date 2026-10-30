@@ -102,9 +102,16 @@ public sealed class ProviderStreamOpener(
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(context);
+        var itemId = context.RequestedItemId ?? $"ext-{providerId}-song-{externalId}";
+        void Interrupted(ProtocolProviderStream? stream = null)
+        {
+            if (!HttpMethods.IsHead(http.Request.Method) && !http.RequestAborted.IsCancellationRequested)
+                activity?.StreamInterrupted(context, itemId, stream);
+        }
         IDisposable? capacity = admission?.TryEnter(context);
         if (admission != null && capacity == null)
         {
+            Interrupted();
             LocalCapacityException.MarkResponse(http.Response);
             throw new LocalCapacityException("provider-stream");
         }
@@ -152,6 +159,7 @@ public sealed class ProviderStreamOpener(
                 headOnly && !timeSeek);
             if (routed == null)
             {
+                Interrupted();
                 return new ObjectResult(new { error = "No verified playback source is available." })
                 {
                     StatusCode = StatusCodes.Status503ServiceUnavailable
@@ -159,6 +167,7 @@ public sealed class ProviderStreamOpener(
             }
             if (!routed.Response.IsSuccessStatusCode)
             {
+                Interrupted();
                 var status = (int)routed.Response.StatusCode;
                 routed.Response.Dispose();
                 return new StatusCodeResult(status);
@@ -190,6 +199,7 @@ public sealed class ProviderStreamOpener(
                 finally { previous.Response.Dispose(); }
                 if (routed == null || !routed.Response.IsSuccessStatusCode)
                 {
+                    Interrupted();
                     routed?.Response.Dispose();
                     return new StatusCodeResult(StatusCodes.Status503ServiceUnavailable);
                 }
@@ -208,7 +218,6 @@ public sealed class ProviderStreamOpener(
                 context.IsOriginalDownload ? context with { IsReadOnly = true } : context, routed.ServingProviderId, servingId);
             try
             {
-                var itemId = context.RequestedItemId ?? $"ext-{providerId}-song-{externalId}";
                 void Selected(string rung) => activity?.SeekRungSelected(context, itemId, routed.EffectiveQuality, routed, rung);
                 if (!context.IsOriginalDownload && (!headOnly || timeSeek)) StreamDurationGuidance.Attach(routed, Metadata, Selected);
                 if (cache != null)
@@ -246,7 +255,8 @@ public sealed class ProviderStreamOpener(
                     Selected("time-seek");
                 }
                 var result = await responses.CreateAsync(http, routed.Response, http.RequestAborted,
-                    enableRangeProcessing: conversion == null && (timeSeek || routed.IsCached || cacheRung != null), providerStream: true, responseLease: capacity);
+                    enableRangeProcessing: conversion == null && (timeSeek || routed.IsCached || cacheRung != null), providerStream: true, responseLease: capacity,
+                    interrupted: () => Interrupted(routed));
                 capacity = null;
                 return result;
             }
@@ -270,7 +280,13 @@ public sealed class ProviderStreamOpener(
         }
         catch (LocalCapacityException)
         {
+            Interrupted();
             LocalCapacityException.MarkResponse(http.Response);
+            throw;
+        }
+        catch
+        {
+            Interrupted();
             throw;
         }
         finally { capacity?.Dispose(); }

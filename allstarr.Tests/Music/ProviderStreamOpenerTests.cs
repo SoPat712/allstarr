@@ -32,6 +32,33 @@ public sealed partial class ProviderStreamOpenerTests
         Assert.Equal(StatusCodes.Status503ServiceUnavailable, unavailable.StatusCode);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task PlaybackOpenDistinguishesProviderFailuresFromClientCancellation(bool throws, bool clientAbort)
+    {
+        var principal = new allstarr.Core.Identity.AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "backend", "principal", "Listener", false);
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "principal", principal,
+            "failed-stream", DateTimeOffset.UtcNow.AddMinutes(1), default, new("client", "device"));
+        using var activity = new allstarr.Services.Common.PlaybackDeliveryActivityStore();
+        using var cancellation = new CancellationTokenSource();
+        if (clientAbort) cancellation.Cancel();
+        var http = new DefaultHttpContext { RequestAborted = cancellation.Token };
+        var gateway = new Mock<IProtocolProviderGateway>();
+        if (throws)
+        {
+            Exception failure = clientAbort ? new OperationCanceledException(cancellation.Token) : new HttpRequestException("Source unavailable");
+            gateway.Setup(value => value.OpenStreamAsync(context, "deezer", "42", ProviderAudioQuality.Any, null, false))
+                .ThrowsAsync(failure);
+        }
+        var opener = new ProviderStreamOpener(gateway.Object, new ProtocolStreamingResponseAdapter(), activity: activity);
+        if (clientAbort) await Assert.ThrowsAnyAsync<OperationCanceledException>(() => opener.OpenAsync(http, context, "deezer", "42", ProviderAudioQuality.Any));
+        else if (throws) await Assert.ThrowsAsync<HttpRequestException>(() => opener.OpenAsync(http, context, "deezer", "42", ProviderAudioQuality.Any));
+        else await opener.OpenAsync(http, context, "deezer", "42", ProviderAudioQuality.Any);
+        Assert.Equal(!clientAbort, activity.WasInterrupted(context, "device", "ext-deezer-song-42", DateTimeOffset.UtcNow));
+    }
+
     [Fact]
     public async Task UpstreamFailureKeepsItsStatusAndForwardsRangeAndHead()
     {

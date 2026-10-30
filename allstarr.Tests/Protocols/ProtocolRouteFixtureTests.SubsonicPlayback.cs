@@ -48,6 +48,37 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Contains(recorded, signal => signal.ItemId == "ext-deezer-song-42" && signal.Transition == PlaybackTransition.Start);
     }
 
+    [Fact]
+    public async Task SubsonicPlaybackStopAfterSessionRemovalIsInterrupted()
+    {
+        var recorded = new List<PlaybackSignalRequest>();
+        using var factory = SubsonicPlaybackFactory("json", recorded, []);
+        using var client = factory.CreateClient();
+        var url = SubsonicPlaybackUrl("reportPlayback", "json", "Feishin") +
+            "&mediaId=ext-deezer-song-42&mediaType=song&positionMs=0&state=";
+        using var start = await client.GetAsync(url + "starting");
+        factory.Services.GetRequiredService<SubsonicPlaybackSessions>().Remove(Assert.Single(recorded).ExecutionContext);
+        using var stop = await client.GetAsync(url + "stopped");
+        Assert.Equal(HttpStatusCode.OK, stop.StatusCode);
+        Assert.True(recorded.Last().Failed);
+    }
+
+    [Fact]
+    public async Task SubsonicImmediatePlaybackStopPreservesReportOrder()
+    {
+        var recorded = new List<PlaybackSignalRequest>();
+        using var factory = SubsonicPlaybackFactory("json", recorded, []);
+        using var client = factory.CreateClient();
+        var url = SubsonicPlaybackUrl("reportPlayback", "json", "Feishin") +
+            "&mediaId=ext-deezer-song-42&mediaType=song&positionMs=0&state=";
+        using var start = await client.GetAsync(url + "starting");
+        using var stop = await client.GetAsync(url + "stopped");
+        Assert.Equal(HttpStatusCode.OK, stop.StatusCode);
+        Assert.Equal(2, recorded.Count);
+        Assert.Equal(recorded[0].PlaySessionId, recorded[1].PlaySessionId);
+        Assert.True(recorded[1].ObservedAt >= recorded[0].ObservedAt);
+    }
+
     [Theory]
     [InlineData("json", false)]
     [InlineData("xml", false)]

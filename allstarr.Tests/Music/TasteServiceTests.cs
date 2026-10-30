@@ -49,7 +49,7 @@ public sealed class TasteServiceTests
         var song = await fixture.Song("pop");
         var track = fixture.Track(song, 200);
         await fixture.Service.ObservePlaybackAsync(fixture.Payload(PlaybackTransition.Start, 0), track, default);
-        await fixture.Service.ObservePlaybackAsync(fixture.Payload(PlaybackTransition.Stop, 0), track, default);
+        await fixture.Service.ObservePlaybackAsync(fixture.Payload(PlaybackTransition.InferredStop, 0), track, default);
         fixture.Session = "seek";
         await fixture.Service.ObservePlaybackAsync(fixture.Payload(PlaybackTransition.Start, 0), track, default);
         fixture.Clock.UtcNow += TimeSpan.FromSeconds(2);
@@ -77,6 +77,59 @@ public sealed class TasteServiceTests
         fixture.Clock.UtcNow += TimeSpan.FromSeconds(100);
         await fixture.Service.ObservePlaybackAsync(fixture.Payload(PlaybackTransition.Progress, 100) with { Paused = true }, track, default);
         Assert.Empty((await fixture.Service.GetAsync(fixture.User)).Usually.Tags);
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, false)]
+    [InlineData(1, true)]
+    public async Task ImmediateStopLearnsOnlyWhenPlaybackStartedHealthy(int seconds, bool failed)
+    {
+        await using var fixture = await Fixture.Create();
+        var song = await fixture.Song("pop");
+        var track = fixture.Track(song, 200);
+        await fixture.Service.ObservePlaybackAsync(fixture.Payload(PlaybackTransition.Start, 0), track, default);
+        fixture.Clock.UtcNow += TimeSpan.FromSeconds(1);
+        await fixture.Service.ObservePlaybackAsync(fixture.Payload(PlaybackTransition.Stop, seconds) with { Failed = failed }, track, default);
+        fixture.Clock.UtcNow += TimeSpan.FromSeconds(1);
+        await fixture.Service.ObservePlaybackAsync(fixture.Payload(PlaybackTransition.Stop, seconds), track, default);
+        var tags = (await fixture.Service.GetAsync(fixture.User)).Usually.Tags;
+        if (failed) Assert.Empty(tags);
+        else Assert.Equal(-1, Assert.Single(tags).Value, 3);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(60)]
+    public async Task SeekProgressDoesNotTeachDislikeOnALaterStop(int position)
+    {
+        await using var fixture = await Fixture.Create();
+        var song = await fixture.Song("pop");
+        var track = fixture.Track(song, 200);
+        await fixture.Service.ObservePlaybackAsync(fixture.Payload(PlaybackTransition.Start, 0), track, default);
+        fixture.Clock.UtcNow += TimeSpan.FromSeconds(10);
+        await fixture.Service.ObservePlaybackAsync(fixture.Payload(PlaybackTransition.Progress, 10), track, default);
+        fixture.Clock.UtcNow += TimeSpan.FromSeconds(1);
+        await fixture.Service.ObservePlaybackAsync(fixture.Payload(PlaybackTransition.Progress, position), track, default);
+        fixture.Clock.UtcNow += TimeSpan.FromSeconds(1);
+        await fixture.Service.ObservePlaybackAsync(fixture.Payload(PlaybackTransition.Stop, position + 1), track, default);
+        Assert.Empty((await fixture.Service.GetAsync(fixture.User)).Usually.Tags);
+    }
+
+    [Fact]
+    public async Task RestartInterruptsPendingTasteWithoutChangingLearnedPreferences()
+    {
+        await using var fixture = await Fixture.Create();
+        var song = await fixture.Song("pop");
+        await fixture.Play(song, 120, 200);
+        fixture.Session = "interrupted";
+        var track = fixture.Track(song, 200);
+        await fixture.Service.ObservePlaybackAsync(fixture.Payload(PlaybackTransition.Start, 0), track, default);
+        var before = (await fixture.Service.GetAsync(fixture.User)).Usually.Tags;
+        await fixture.Service.InterruptPendingAsync(default);
+        fixture.Clock.UtcNow += TimeSpan.FromSeconds(1);
+        await fixture.Service.ObservePlaybackAsync(fixture.Payload(PlaybackTransition.Stop, 1), track, default);
+        Assert.Equal(Assert.Single(before).Value, Assert.Single((await fixture.Service.GetAsync(fixture.User)).Usually.Tags).Value, 3);
     }
 
     [Fact]

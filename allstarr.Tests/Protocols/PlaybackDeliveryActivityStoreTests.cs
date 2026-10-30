@@ -131,6 +131,51 @@ public sealed class PlaybackDeliveryActivityStoreTests
         }
     }
 
+    [Fact]
+    public void SourceFailureRemainsAttachedToTheOpenedPlayback()
+    {
+        using var store = new PlaybackDeliveryActivityStore();
+        using var response = new HttpResponseMessage(HttpStatusCode.OK);
+        var context = Context("source-failure");
+        var stream = Stream(response, false, "lease", true);
+        store.StreamOpened(context, "ext-deezer-song-42", ProviderAudioQuality.Any, stream);
+        stream.FileFacts.Failed = true;
+        Assert.True(store.StreamFor(context.Actor!.EffectiveUserId, "device", "ext-deezer-song-42")!.Interrupted);
+    }
+
+    [Fact]
+    public void InterruptedPlaybackIsScopedAndAHealthyReopenClearsIt()
+    {
+        using var store = new PlaybackDeliveryActivityStore();
+        var context = Context("failure");
+        const string item = "ext-deezer-song-42";
+        store.StreamInterrupted(context, item);
+        Assert.True(store.WasInterrupted(context, "device", item, DateTimeOffset.UtcNow));
+        Assert.False(store.WasInterrupted(context, "other-device", item, DateTimeOffset.UtcNow));
+        Assert.False(store.WasInterrupted(context, "device", "ext-deezer-song-43", DateTimeOffset.UtcNow));
+        using var response = new HttpResponseMessage(HttpStatusCode.OK);
+        var first = Stream(response, false, "first", true);
+        var next = Stream(response, false, "next", true);
+        store.StreamOpened(context, item, ProviderAudioQuality.Any, first);
+        Assert.False(store.WasInterrupted(context, "device", item, DateTimeOffset.UtcNow));
+        store.StreamOpened(context, item, ProviderAudioQuality.Any, next);
+        store.StreamInterrupted(context, item, first);
+        Assert.False(store.WasInterrupted(context, "device", item, DateTimeOffset.UtcNow));
+        store.StreamInterrupted(context, item, next);
+        Assert.True(store.WasInterrupted(context, "device", item, DateTimeOffset.UtcNow));
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void OptionalReadsCannotInterruptPlayback(bool preparation, bool originalDownload)
+    {
+        using var store = new PlaybackDeliveryActivityStore();
+        var context = Context("optional") with { IsPreparation = preparation, IsOriginalDownload = originalDownload };
+        store.StreamInterrupted(context, "ext-deezer-song-42");
+        Assert.False(store.WasInterrupted(context, "device", "ext-deezer-song-42", DateTimeOffset.UtcNow));
+    }
+
     private static readonly Guid UserId = Guid.CreateVersion7();
     private static readonly Guid AccountId = Guid.CreateVersion7();
     private static ProtocolExecutionContext Context(string correlation) => new(

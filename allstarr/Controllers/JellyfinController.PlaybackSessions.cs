@@ -946,6 +946,7 @@ public partial class JellyfinController
             playSessionId = ParsePlaybackSessionId(doc.RootElement);
 
             deviceId = ResolveDeviceId(deviceId, doc.RootElement);
+            var sessionEnded = !string.IsNullOrWhiteSpace(deviceId) && !_sessionManager.HasSession(PlaybackSessionKey(deviceId));
 
             // Some clients send stop without ItemId. Recover from tracked session state when possible.
             if (string.IsNullOrWhiteSpace(itemId) && !string.IsNullOrWhiteSpace(deviceId))
@@ -1038,7 +1039,7 @@ public partial class JellyfinController
                     var acknowledged = false;
                     if (stopStatusCode == 204 || stopStatusCode == 200)
                     {
-                        acknowledged = await ObserveExternalReportAsync(externalReport, PlaybackTransition.Stop, deviceId, receipt, stopped: true);
+                        acknowledged = await ObserveExternalReportAsync(externalReport, PlaybackTransition.Stop, deviceId, receipt, stopped: true, failed: sessionEnded);
                         _logger.LogDebug("✓ Ghost playback stop forwarded to Jellyfin ({StatusCode})", stopStatusCode);
                     }
 
@@ -1141,7 +1142,7 @@ public partial class JellyfinController
             {
                 await QueuePlaybackSignalAsync(PlaybackTransition.Stop, itemId, deviceId, playSessionId, positionTicks,
                     paused: stopDoc.RootElement.TryGetProperty("IsPaused", out var paused) && paused.ValueKind == JsonValueKind.True,
-                    failed: stopDoc.RootElement.TryGetProperty("Failed", out var failed) && failed.ValueKind == JsonValueKind.True);
+                    failed: sessionEnded || stopDoc.RootElement.TryGetProperty("Failed", out var failed) && failed.ValueKind == JsonValueKind.True);
                 _logger.LogDebug("✓ Playback stop forwarded to Jellyfin ({StatusCode})", statusCode);
                 if (!string.IsNullOrWhiteSpace(deviceId))
                 {

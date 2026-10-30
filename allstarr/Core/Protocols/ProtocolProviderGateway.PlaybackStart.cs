@@ -216,9 +216,11 @@ public sealed partial class ProtocolProviderGateway
                 var lease = outcome.RequireValue().Lease;
                 response = outcome.RequireValue().Response;
                 var failureReported = 0;
+                var sourceFacts = new PlaybackFileFacts();
                 void Failed()
                 {
                     if (Interlocked.Exchange(ref failureReported, 1) != 0) return;
+                    sourceFacts.Failed = true;
                     var failure = new ProviderError(ProviderErrorKind.TransientFailure);
                     outcomes?.ObservePlayback(execution, track, quality, failure, clock.GetElapsedTime(started));
                     outcomes?.Observe(execution, ProviderCapabilityKind.Streaming, failure, clock.GetElapsedTime(started));
@@ -231,11 +233,8 @@ public sealed partial class ProtocolProviderGateway
                     return await OpenAtAsync(renewed.RequireValue(), new(offset, end), tag, token);
                 }
                 await ProviderPlaybackStream.AttachAsync(response, lease.SupportsByteRanges, ResumeAsync, Failed, clock, streamCancellation);
-                var sourceFacts = new PlaybackFileFacts
-                {
-                    ExpectedDurationSeconds = await ExpectedPlaybackDurationAsync(execution, track, requestedTrack),
-                    SourceFailed = Failed
-                };
+                sourceFacts.ExpectedDurationSeconds = await ExpectedPlaybackDurationAsync(execution, track, requestedTrack);
+                sourceFacts.SourceFailed = Failed;
                 async Task<HttpResponseMessage> FullAsync(CancellationToken token)
                 {
                     var full = await OpenCandidateAsync(

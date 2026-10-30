@@ -65,7 +65,7 @@ public partial class JellyfinController
     }
 
     private async Task<bool> ObserveExternalReportAsync(JsonObject report, PlaybackTransition transition, string? deviceId,
-        JellyfinSessionManager.PlaybackReportReceipt receipt, bool stopped = false)
+        JellyfinSessionManager.PlaybackReportReceipt receipt, bool stopped = false, bool failed = false)
     {
         var signalType = transition is PlaybackTransition.Start or PlaybackTransition.InferredStart ? "start" :
             transition is PlaybackTransition.Stop or PlaybackTransition.InferredStop ? "stop" : null;
@@ -78,7 +78,7 @@ public partial class JellyfinController
         await QueuePlaybackSignalAsync(transition, JellyfinExternalPlaybackReport.Text(report, "ItemId"), deviceId,
             JellyfinExternalPlaybackReport.SignalSession(report), report["PositionTicks"]?.GetValue<long>(),
             paused: report["IsPaused"]?.ToString().Equals("true", StringComparison.OrdinalIgnoreCase) == true,
-            failed: report["Failed"]?.ToString().Equals("true", StringComparison.OrdinalIgnoreCase) == true);
+            failed: failed || report["Failed"]?.ToString().Equals("true", StringComparison.OrdinalIgnoreCase) == true);
         return accepted;
     }
 

@@ -51,7 +51,8 @@ public sealed class PlaybackSignalPipeline(
         var scope = new IntelligenceScope(owner, execution.Protocol.ToString().ToLowerInvariant(),
             execution.BackendInstanceId);
         var bucket = request.Transition == PlaybackTransition.Progress ? (request.PositionTicks ?? 0) / TimeSpan.TicksPerSecond / 10 : 0;
-        var deviceId = request.DeviceId ?? execution.Client.DeviceId;
+        var deviceId = request.DeviceId ?? execution.Client.DeviceId ??
+            (execution.Protocol == ProtocolKind.Subsonic ? execution.Client.ClientId : null);
         var streamSource = playbackActivity?.StreamFor(owner, deviceId, request.ItemId);
         if (streamSource?.Matches(scope.Protocol, scope.BackendInstanceId) != true ||
             streamSource?.OpenedAt > request.ObservedAt)
@@ -62,7 +63,8 @@ public sealed class PlaybackSignalPipeline(
         var payload = new PlaybackSignalPayload(scope, request.Transition, request.ItemId, deviceId,
             request.PlaySessionId, normalizedTicks, request.ObservedAt, string.Empty, occurrenceKey,
             execution.Client.ClientId, execution.Client.DeviceName, request.SubmittedTrack,
-            request.RelayExternally, request.SourceKind, streamSource, ReportedPositionTicks: request.PositionTicks, Paused: request.Paused, Failed: request.Failed);
+            request.RelayExternally, request.SourceKind, streamSource, ReportedPositionTicks: request.PositionTicks, Paused: request.Paused, Failed: request.Failed || streamSource?.Interrupted == true ||
+                playbackActivity?.WasInterrupted(execution, deviceId, request.ItemId, request.ObservedAt) == true);
         // A paused or repeated position can still be a new observation. Only identical
         // observations share a job; listening effects deduplicate by occurrence separately.
         var key = Hash(JsonSerializer.Serialize(payload));
@@ -98,9 +100,16 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
     IDbContextFactory<AllstarrDbContext> factory, IPlaybackTrackResolver? tracks = null,
     MusicBrainzListeningEnrichmentQueue? musicBrainz = null, DurableJobQueue? recoveryJobs = null, allstarr.Core.Music.TasteService? taste = null) : IDurableJobHandler, IDurableJobRecoveryHandler
 {
+    private DateTimeOffset? recoveredAt;
     public string JobType => PlaybackSignalPipeline.JobType;
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
+        recoveredAt ??= DateTimeOffset.UtcNow;
+        await using (var recoveryDb = await factory.CreateDbContextAsync(cancellationToken))
+            await recoveryDb.ListeningEvents.Where(x => x.State == ListeningEventState.Playing)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.State, ListeningEventState.Abandoned)
+                    .SetProperty(x => x.Revision, x => x.Revision + 1), cancellationToken);
+        if (taste != null) await taste.InterruptPendingAsync(cancellationToken);
         if (recoveryJobs != null)
             await new PlaybackScrobbleRepair(factory, recoveryJobs, tracks).ReconcileStartupAsync(cancellationToken);
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
@@ -142,6 +151,8 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         var payload = execution.Claim.Payload.Deserialize<PlaybackSignalPayload>();
         if (payload == null || execution.Claim.OwnerUserId != payload.Scope.OwnerUserId)
             return DurableJobCompletion.Failure("playback_signal_scope_invalid", "The playback signal scope is invalid.");
+        if (payload.Transition != PlaybackTransition.Submission && recoveredAt is { } restart && payload.ObservedAt < restart)
+            payload = payload with { Failed = true };
         await using var ownerDb = await factory.CreateDbContextAsync(cancellationToken);
         if (!await ownerDb.Users.AsNoTracking().AnyAsync(user => user.Id == payload.Scope.OwnerUserId &&
                 user.Enabled && user.BackendType == payload.Scope.Protocol &&
@@ -270,9 +281,17 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         PlaybackTrackSnapshot? track, bool added, bool enrichWithMusicBrainz)
     {
         var latest = added || payload.ObservedAt >= record.UpdatedAt;
-        var next = payload.Transition == PlaybackTransition.Progress &&
-            payload.ItemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase)
-            ? ListeningEventState.Playing : Classify(payload, track);
+        var next = Classify(payload, track, !added && record.State == ListeningEventState.Playing &&
+            record.StartedAt != null && payload.ObservedAt >= record.UpdatedAt &&
+            (record.ResumePositionTicks == null || payload.PositionTicks == null ||
+                payload.PositionTicks >= record.ResumePositionTicks &&
+                payload.PositionTicks - record.ResumePositionTicks <= (payload.ObservedAt - record.UpdatedAt + TimeSpan.FromSeconds(2)).Ticks));
+        if (payload.Transition == PlaybackTransition.Progress && payload.ItemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase))
+            next = payload.Failed || payload.StreamSource?.RejectionReason != null ? ListeningEventState.Abandoned : ListeningEventState.Playing;
+        if (next == ListeningEventState.Playing && !added && record.ResumePositionTicks is { } previous &&
+            (payload.ReportedPositionTicks ?? payload.PositionTicks) is { } position &&
+            (position < previous || position - previous > (payload.ObservedAt - record.UpdatedAt + TimeSpan.FromSeconds(2)).Ticks))
+            next = ListeningEventState.Abandoned;
         record.State = added || Rank(next) > Rank(record.State) ? next : record.State;
         if (record.StartedAt == null && payload.Transition != PlaybackTransition.Submission)
             record.StartedAt = InferStart(payload);
@@ -314,16 +333,18 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         record.Revision++;
     }
 
-    internal static ListeningEventState Classify(PlaybackSignalPayload payload, PlaybackTrackSnapshot? track) =>
+    internal static ListeningEventState Classify(PlaybackSignalPayload payload, PlaybackTrackSnapshot? track, bool started = false) =>
         payload.Transition switch
         {
             PlaybackTransition.Submission => ListeningEventState.Completed,
             PlaybackTransition.Progress or PlaybackTransition.Stop or PlaybackTransition.InferredStop
                 when ScopedPlaybackScrobbleDelivery.EligibleForCompletedScrobble(track?.DurationMilliseconds, payload.PositionTicks)
                 => ListeningEventState.Completed,
-            PlaybackTransition.Stop or PlaybackTransition.InferredStop when track == null
-                => ListeningEventState.Abandoned,
-            PlaybackTransition.Stop or PlaybackTransition.InferredStop => ListeningEventState.Skipped,
+            PlaybackTransition.Stop when started && track != null && !payload.Failed && payload.StreamSource?.RejectionReason == null
+                => ListeningEventState.Skipped,
+            PlaybackTransition.Stop or PlaybackTransition.InferredStop => ListeningEventState.Abandoned,
+            PlaybackTransition.Start or PlaybackTransition.InferredStart when payload.PositionTicks is > 0 => ListeningEventState.Abandoned,
+            _ when payload.Failed || payload.StreamSource?.RejectionReason != null => ListeningEventState.Abandoned,
             _ => ListeningEventState.Playing
         };
 

@@ -494,8 +494,10 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         await Assert.ThrowsAsync<KeyNotFoundException>(() => service.FeedbackAsync(other, repeat.Id, new(song.Id, kind, false), default));
     }
 
-    [Fact]
-    public async Task Filters_ApplyCleanOnlyNeverUnplayableAndRecentEarlySkips()
+    [Theory]
+    [InlineData(ListeningEventState.Skipped)]
+    [InlineData(ListeningEventState.Abandoned)]
+    public async Task Filters_ApplyCleanOnlyNeverUnplayableAndRecentEarlySkips(ListeningEventState state)
     {
         await Seed();
         filter = "CleanOnly";
@@ -512,9 +514,9 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
                 Protocol = protocol,
                 BackendInstanceId = "main",
                 OccurrenceKey = "skip",
-                TrackReference = songs["4"].Id,
-                CanonicalRecordingId = songs["4"].CanonicalRecordingId,
-                State = ListeningEventState.Skipped,
+                TrackReference = songs["10"].Id,
+                CanonicalRecordingId = songs["10"].CanonicalRecordingId,
+                State = state,
                 UpdatedAt = clock.UtcNow,
                 PositionTicks = TimeSpan.FromSeconds(10).Ticks,
                 DurationMilliseconds = 180000
@@ -523,7 +525,8 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         }
         var all = (await service.GenerateAsync(owner)).SelectMany(item => item.Songs).ToArray();
         Assert.NotEmpty(all);
-        Assert.DoesNotContain(all, item => new[] { "0", "1", "2", "3", "4" }.Contains(item.Song.ExternalId));
+        Assert.DoesNotContain(all, item => new[] { "0", "1", "2", "3" }.Contains(item.Song.ExternalId));
+        Assert.Equal(state == ListeningEventState.Abandoned, all.Any(item => item.Song.ExternalId == "10"));
     }
 
     [Fact]

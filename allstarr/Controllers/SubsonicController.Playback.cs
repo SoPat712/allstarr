@@ -254,14 +254,13 @@ public partial class SubsonicController
             stateName == "starting");
         var transition = stateName == "stopped" ? PlaybackTransition.Stop : stateName == "starting"
             ? PlaybackTransition.Start : PlaybackTransition.Progress;
-        var observedAt = transition == PlaybackTransition.Start ? state.StartedAt :
-            DateTimeOffset.FromUnixTimeSeconds(now.ToUnixTimeSeconds() / 10 * 10);
+        var observedAt = transition == PlaybackTransition.Start ? state.StartedAt : now;
         _upcomingSongs?.Observe(CurrentProtocolContext, transition, itemId,
             CurrentProtocolContext.Client.DeviceId ?? CurrentProtocolContext.Client.ClientId, state.Occurrence,
             position * TimeSpan.TicksPerMillisecond, paused: stateName == "paused");
         if (!await _playbackObservations.RecordAsync(new PlaybackSignalRequest(CurrentProtocolContext, transition, itemId,
             CurrentProtocolContext.Client.DeviceId ?? CurrentProtocolContext.Client.ClientId, state.Occurrence,
-            position * TimeSpan.TicksPerMillisecond, observedAt, RelayExternally: !ignore, Paused: stateName == "paused"), HttpContext.RequestAborted))
+            position * TimeSpan.TicksPerMillisecond, observedAt, RelayExternally: !ignore, Paused: stateName == "paused", Failed: stateName == "stopped" && previous == null), HttpContext.RequestAborted))
             return _responseBuilder.CreateOkResponse(format);
         _playbackSessions.Set(CurrentProtocolContext, state with
         {
