@@ -189,6 +189,7 @@ public sealed partial class TrackMatchCommandService
                 metadata.MusicBrainzRecordingId,
                 metadata.IsExplicit)
             {
+                DurationProvenance = metadata.DurationProvenance,
                 ExactProviderAliases = FilterAutomaticCrossLinks(
                     aliases.GetValueOrDefault(identity.CanonicalRecordingId),
                     ownerPolicies[snapshot.OwnerUserId])
