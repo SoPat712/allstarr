@@ -745,13 +745,7 @@
               {/if}
               {#if accountCts}<p class="service-note">Click to stream: {ctsMeasurementLabel(accountCts)} · {relativeTime(accountCts.testedAt)}</p>{/if}
               {#if account.providerId === "spotify" && account.scope === "Personal" && account.enabled && account.ownerUserId === currentUserId}
-                {#await import("$lib/components/SpotifyLikesImport.svelte")}
-                  <Button variant="secondary" disabled>Import Spotify likes</Button>
-                {:then { default: SpotifyLikesImport }}
-                  <SpotifyLikesImport accountId={account.id} />
-                {:catch}
-                  <p class="notice-error" role="alert">Spotify likes import could not be loaded. Refresh this page to try again.</p>
-                {/await}
+                <Button variant="secondary" href={`#/library/import?account=${encodeURIComponent(account.id)}`}>Move your Spotify collection</Button>
               {/if}
             </article>
           {:else}
