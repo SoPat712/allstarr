@@ -37,6 +37,7 @@
     { id: "mappings", label: "Mappings", href: "#/library/mappings" },
     { id: "cached", label: "Cached", href: "#/library/cached" },
     { id: "kept", label: "Kept", href: "#/library/kept" },
+    { id: "import", label: "Import", href: "#/library/import" },
   ];
   const bootMessages = [
     "Checking your session",
@@ -81,7 +82,7 @@
   const moreDestinations = $derived([preferencesDestination, ...navigationDestinations.filter((item) => !item.mobile)]);
   const librarySections = $derived(administrator
     ? allLibrarySections
-    : allLibrarySections.filter((item) => item.id === "playlists" || item.id === "mappings"));
+    : allLibrarySections.filter((item) => item.id === "playlists" || item.id === "mappings" || item.id === "import"));
 
   function currentRoute(path: string) {
     if (path === "/intelligence" && !developmentIntelligence) return "/for-you";
@@ -134,7 +135,9 @@
   const activeProps = $derived(
     route === "/"
       ? { administrator }
-      : route === "/library/playlists"
+      : route === "/library/import"
+        ? { initialAccount: routeQuery.get("account") ?? "", initialRun: routeQuery.get("run") ?? "", currentUserId: session?.user?.allstarrUserId ?? session?.user?.id ?? "" }
+        : route === "/library/playlists"
         ? { initialId: routeQuery.get("playlist") ?? "", currentUserId: session?.user?.allstarrUserId ?? "" }
         : route === "/library/mappings"
           ? {
@@ -217,6 +220,7 @@
   function viewLoader(path: string) {
     if (forbiddenRoute) return;
     if (path === "/") return import("$lib/components/HomeView.svelte");
+    if (path === "/library/import") return import("$lib/components/ImportView.svelte");
     if (path === "/library/playlists") return import("$lib/components/PlaylistsView.svelte");
     if (path === "/library/mappings") return import("$lib/components/MappingView.svelte");
     if (path === "/library/cached" || path === "/library/kept") {

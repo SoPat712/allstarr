@@ -75,6 +75,11 @@
   <section class="settings-content" aria-label="Listening guide">
     <header class="panel-heading"><div><h2>Your music apps</h2><p>Connect your usual music app to Allstarr and sign in with your media-server account.</p></div></header>
     <article class="settings-card">
+      <header><h3>Coming from Spotify?</h3></header>
+      <p class="settings-impact">Bring your playlists and liked songs. Nothing changes in Spotify.</p>
+      <footer><Button variant="secondary" href="#/library/import">Move your Spotify collection</Button></footer>
+    </article>
+    <article class="settings-card">
       <header><div><h3>Connection details</h3><small>This server uses {context.backend === "Jellyfin" ? "Jellyfin" : "Subsonic / OpenSubsonic"}.</small></div></header>
       {#if context.addressSource === "unconfigured"}
         <p class="notice-info" role="status">Your administrator has not set a music-client address. Enter the address they gave you below.</p>
