@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using allstarr.Core.Routing;
 using Xunit.Abstractions;
 using allstarr.Controllers;
@@ -153,6 +154,48 @@ public sealed partial class PersonalMixServiceTests
         var scheduled = await read.PlaylistLinks.SingleAsync(item => item.Id == unscheduled.Id);
         Assert.NotNull(scheduled.ScheduleId);
         Assert.True((await read.JobSchedules.SingleAsync(item => item.Id == scheduled.ScheduleId)).Enabled);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public async Task ExternalAppChoicesSurviveVisibilityUpgradeAndRepairMissingLegacyChoices(int version)
+    {
+        await Seed();
+        await service.GenerateAsync(owner);
+        var restored = await ExternalLink("listenbrainz", "createdfor:weekly-jams");
+        var explicitHidden = await ExternalLink("lastfm", "similar");
+        var disabled = await ExternalLink();
+        await ExternalLink(listener: other);
+        await using (var db = factory.CreateDbContext())
+        {
+            (await db.PlaylistLinks.SingleAsync(item => item.Id == disabled.Id)).Enabled = false;
+            var row = await db.ExternalMetadataSnapshots.AsNoTracking().SingleAsync(item => item.ResourceKind == "personal-mixes");
+            var document = JsonNode.Parse(row.PayloadJson)!;
+            document["AppsOptInVersion"] = version;
+            document["ExternalShowInApps"] = new JsonObject { [explicitHidden.Id.ToString()] = false };
+            row.Id = Guid.NewGuid();
+            row.SnapshotVersion++;
+            row.PayloadJson = document.ToJsonString();
+            db.ExternalMetadataSnapshots.Add(row);
+            await db.SaveChangesAsync();
+        }
+        publish = true;
+        Assert.True(await NewService().IsExternalVisibleAsync(Context(owner), restored, default));
+        var cards = await NewService().ListAsync(owner);
+        Assert.True(cards.Single(item => item.Id == restored.Id).ShowInApps);
+        Assert.False(cards.Single(item => item.Id == explicitHidden.Id).ShowInApps);
+        Assert.False(cards.Single(item => item.Id == disabled.Id).ShowInApps);
+        Assert.False(await service.IsExternalVisibleAsync(Context(other), restored, default));
+        await using var read = factory.CreateDbContext();
+        var rows = await read.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "personal-mixes")
+            .OrderBy(item => item.SnapshotVersion).ToArrayAsync();
+        Assert.Equal(3, rows.Length);
+        var saved = JsonNode.Parse(rows[^1].PayloadJson)!;
+        Assert.Equal(2, saved["AppsOptInVersion"]!.GetValue<int>());
+        Assert.Equal(3, saved["ExternalShowInApps"]!.AsObject().Count);
+        await service.SetInAppsAsync(owner, restored.Id, false, default);
+        Assert.False((await NewService().ListAsync(owner)).Single(item => item.Id == restored.Id).ShowInApps);
     }
 
     [Fact]

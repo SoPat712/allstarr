@@ -10,6 +10,48 @@ namespace allstarr.Tests;
 
 public sealed partial class PlaylistOrchestrationIntegrationTests
 {
+    [Fact]
+    public async Task HomePlaylistCountsMatchPublishedProjectionsAndResolveViewerAccessOnce()
+    {
+        _source.Snapshot = Snapshot("home-counts",
+            Entry(0, "one", "source-1", "One"),
+            Entry(1, "missing", "missing", "Missing"));
+        await _service.RunAsync(Context(), new(_link, 1));
+        var second = Link();
+        second.Id = Guid.CreateVersion7();
+        second.SourcePlaylistId = "second";
+        second.SourcePlaylistIdHash = Hash("second");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.PlaylistLinks.Add(second);
+            await db.SaveChangesAsync();
+        }
+        await _service.RunAsync(Context(), new(second.Id, 1));
+        var realAccess = new TestBackendLibraryAccess(_factory, "music");
+        var access = new Mock<IBackendLibraryAccessResolver>();
+        access.Setup(item => item.ResolveUserAsync(_user, It.IsAny<CancellationToken>()))
+            .Returns((Guid user, CancellationToken token) => realAccess.ResolveUserAsync(user, token));
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["fixture"]);
+        var reader = new DurablePlaylistProjectionReader(_factory, access.Object, gateway.Object);
+        Guid[] links = [_link, second.Id, Guid.CreateVersion7()];
+        var full = await reader.ReadByLinkIdsAsync(_user, links, viewerUserId: _user);
+        access.Invocations.Clear();
+        gateway.Invocations.Clear();
+
+        var counts = await reader.ReadHomeCountsAsync(_user, links, _user);
+
+        Assert.Equal(full.Values.Sum(item => item.PlayableCount), counts.PlayableTracks);
+        Assert.Equal(full.Values.Sum(item => item.MissingCount), counts.UnresolvedTracks);
+        Assert.True(counts.PlayableTracks > 0);
+        Assert.True(counts.UnresolvedTracks > 0);
+        access.Verify(item => item.ResolveUserAsync(_user, It.IsAny<CancellationToken>()), Times.Once);
+        gateway.Verify(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal((0, 0), await reader.ReadHomeCountsAsync(Guid.CreateVersion7(), links, _user));
+        Assert.Equal((0, 0), await reader.ReadHomeCountsAsync(_user, [], _user));
+    }
+
     [Theory]
     [InlineData(PlaylistLinkMode.Materialized)]
     [InlineData(PlaylistLinkMode.Hybrid)]

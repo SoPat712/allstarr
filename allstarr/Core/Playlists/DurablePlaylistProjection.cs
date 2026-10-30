@@ -204,6 +204,34 @@ public sealed class DurablePlaylistProjectionReader(
         return result;
     }
 
+    internal async Task<(int PlayableTracks, int UnresolvedTracks)> ReadHomeCountsAsync(
+        Guid? ownerUserId, IReadOnlyCollection<Guid> playlistLinkIds, Guid viewerUserId,
+        CancellationToken cancellationToken = default)
+    {
+        if (playlistLinkIds.Count == 0) return (0, 0);
+        await using var database = await factory.CreateDbContextAsync(cancellationToken);
+        var query = database.PlaylistSourceSnapshots.AsNoTracking().Where(item =>
+            playlistLinkIds.Contains(item.PlaylistLinkId) && item.PublishedAt.HasValue);
+        if (ownerUserId.HasValue) query = query.Where(item => item.OwnerUserId == ownerUserId.Value);
+        var snapshots = await query.GroupBy(item => item.PlaylistLinkId)
+            .Select(group => group.OrderByDescending(item => item.SnapshotVersion)
+                .ThenByDescending(item => item.RetrievedAt).First()).ToArrayAsync(cancellationToken);
+        if (snapshots.Length == 0) return (0, 0);
+        var access = await libraryAccess.ResolveUserAsync(viewerUserId, cancellationToken);
+        var providerOrder = providerGateway == null ? null : access.Context?.Actor is { } actor
+            ? await providerGateway.GetPlayableProviderOrderAsync(actor, cancellationToken) : [];
+        var playable = 0;
+        var unresolved = 0;
+        foreach (var snapshot in snapshots)
+        {
+            var projection = await ProjectAsync(database, snapshot, viewerUserId, cancellationToken,
+                access, includeHistory: false, retainedProviderOrder: providerOrder);
+            playable += projection.PlayableCount;
+            unresolved += projection.MissingCount;
+        }
+        return (playable, unresolved);
+    }
+
     internal Task<BackendLibraryAccessContext> ResolveRetentionAccessAsync(Guid ownerUserId,
         CancellationToken cancellationToken) => libraryAccess.ResolveUserAsync(ownerUserId, cancellationToken);
 
@@ -541,7 +569,9 @@ public sealed class DurablePlaylistProjectionReader(
         PlaylistSourceSnapshotRecord snapshot,
         Guid viewerUserId,
         CancellationToken cancellationToken,
-        BackendLibraryAccessContext? retainedAccess = null)
+        BackendLibraryAccessContext? retainedAccess = null,
+        bool includeHistory = true,
+        IReadOnlyList<string>? retainedProviderOrder = null)
     {
         var ownerUserId = snapshot.OwnerUserId;
         var link = await database.PlaylistLinks.AsNoTracking()
@@ -632,7 +662,7 @@ public sealed class DurablePlaylistProjectionReader(
                 .ToListAsync(cancellationToken);
             identities = identities.Concat(matchedIdentities).ToList();
         }
-        var providerOrder = await ResolveProviderOrderAsync(
+        var providerOrder = retainedProviderOrder ?? await ResolveProviderOrderAsync(
             link.SourceProviderId, identities, overrides.Values, viewerUserId, access, cancellationToken);
         var providerPolicy = effectivePolicies == null ? null :
             await effectivePolicies.ResolveForUserAsync(viewerUserId, cancellationToken);
@@ -656,6 +686,22 @@ public sealed class DurablePlaylistProjectionReader(
                                  item.Protocol == "opensubsonic" ||
                                  item.Protocol == "navidrome"))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var projectedEntries = entries.Select(entry => ProjectEntry(
+                entry,
+                external[entry.ExternalMetadataSnapshotId],
+                scopedSourceIdentities,
+                identities,
+                providerOrder,
+                entry.PublishedTrackMatchId is { } matchId
+                    ? publishedMatches.GetValueOrDefault(matchId)
+                    : null,
+                overrides,
+                library, providerPolicy))
+            .ToArray();
+        if (!includeHistory)
+            return new(link.Id, snapshot.Id, snapshot.SnapshotVersion, snapshot.Name,
+                link.SourceProviderId, link.SourcePlaylistId, link.ProviderAccountId, link.TargetProtocol,
+                link.TargetPlaylistId, snapshot.ArtworkReferenceKey, snapshot.RetrievedAt, null, null, projectedEntries);
         var run = await database.PlaylistSyncRuns.AsNoTracking()
             .Where(item => item.PlaylistLinkId == link.Id &&
                            item.OwnerUserId == ownerUserId &&
@@ -718,19 +764,6 @@ public sealed class DurablePlaylistProjectionReader(
                 external[entry.ExternalMetadataSnapshotId],
                 linkedSourceIdentities))
             .ToArray();
-        var projectedEntries = entries.Select(entry => ProjectEntry(
-                entry,
-                external[entry.ExternalMetadataSnapshotId],
-                scopedSourceIdentities,
-                identities,
-                providerOrder,
-                entry.PublishedTrackMatchId is { } matchId
-                    ? publishedMatches.GetValueOrDefault(matchId)
-                    : null,
-                overrides,
-                library, providerPolicy))
-            .ToArray();
-
         return new(
             link.Id,
             snapshot.Id,

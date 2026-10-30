@@ -272,9 +272,9 @@ public class AdminUiController : ControllerBase
         }
 
         var linkIds = await linksQuery.Select(item => item.Id).ToArrayAsync(cancellationToken);
-        var projections = await services.GetRequiredService<DurablePlaylistProjectionReader>()
-            .ReadByLinkIdsAsync(session.IsAdministrator ? null : session.AllstarrUserId,
-                linkIds, cancellationToken, session.AllstarrUserId);
+        var playlistCounts = await services.GetRequiredService<DurablePlaylistProjectionReader>()
+            .ReadHomeCountsAsync(session.IsAdministrator ? null : session.AllstarrUserId,
+                linkIds, session.AllstarrUserId.Value, cancellationToken);
         var activeJobs = await jobsQuery.CountAsync(item =>
             item.State != DurableJobState.Succeeded && item.State != DurableJobState.Failed &&
             item.State != DurableJobState.Cancelled, cancellationToken);
@@ -337,8 +337,8 @@ public class AdminUiController : ControllerBase
             stats = new
             {
                 linkedPlaylists = linkIds.Length,
-                playableTracks = projections.Values.Sum(item => item.PlayableCount),
-                unresolvedTracks = projections.Values.Sum(item => item.MissingCount),
+                playableTracks = playlistCounts.PlayableTracks,
+                unresolvedTracks = playlistCounts.UnresolvedTracks,
                 activeJobs,
                 completedListens,
                 currentWeekListens,
@@ -475,7 +475,7 @@ public class AdminUiController : ControllerBase
             .GroupBy(item => item.CanonicalRecordingId)
             .ToDictionary(group => group.Key, group => group.ToArray());
         var libraryTracks = matchActivity.LibraryTracks;
-        var audits = await ActivityJobPresentation.HistoryAudits(context.AuditEvents.AsNoTracking(), context.Jobs)
+        var audits = await ActivityJobPresentation.HistoryAudits(context)
             .Where(item => item.Category != allstarr.Core.Playback.PlaybackStartTimingStore.Category)
             .Where(item => (everyone || item.ActorUserId == userId) &&
                 (!before.HasValue || item.CreatedAt < before.Value ||

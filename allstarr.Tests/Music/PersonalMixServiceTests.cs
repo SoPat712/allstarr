@@ -201,7 +201,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
             var rows = await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "personal-mixes").OrderBy(item => item.SnapshotVersion).ToArrayAsync();
             Assert.Equal(3, rows.Length);
             var saved = JsonNode.Parse(rows[^1].PayloadJson)!;
-            Assert.Equal(1, saved["AppsOptInVersion"]!.GetValue<int>());
+            Assert.Equal(2, saved["AppsOptInVersion"]!.GetValue<int>());
             Assert.False(saved["Mixes"]!["on-repeat"]!["ShowInApps"]!.GetValue<bool>());
         }
         await service.SetInAppsAsync(owner, repeat.Id, true, default);
