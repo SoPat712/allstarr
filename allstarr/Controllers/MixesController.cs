@@ -13,7 +13,7 @@ namespace allstarr.Controllers;
 [Route("api/admin/mixes")]
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed partial class MixesController(PersonalMixService mixes, IDurableRuntimeSettings settings,
-    IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock) : ControllerBase
+    IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, MixCoverImageService covers) : ControllerBase
 {
     [HttpGet]
     public Task<IActionResult> List([FromQuery] string? timeZoneId = null, CancellationToken token = default) => ExecuteAsync(async user =>
@@ -28,6 +28,24 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
         var mix = (await mixes.ListAsync(user.Id, token: token)).SingleOrDefault(item => item.Id == id) ?? throw new KeyNotFoundException();
         return new { mix = Card(mix, (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value), songs = mix.Songs };
     }, token);
+
+    [HttpGet("{id:guid}/cover")]
+    public async Task<IActionResult> Cover(Guid id, CancellationToken token)
+    {
+        var result = await ExecuteAsync(async user =>
+        {
+            var mix = (await mixes.ListAsync(user.Id, token: token)).SingleOrDefault(item => item.Id == id) ?? throw new KeyNotFoundException();
+            var input = MixCoverInput.From(mix);
+            if (mix.Kind == "external")
+            {
+                await using var db = await factory.CreateDbContextAsync(token);
+                var link = await db.PlaylistLinks.AsNoTracking().SingleAsync(item => item.Id == id && item.OwnerUserId == user.Id, token);
+                input = input with { Source = link.SourceProviderId, SourcePlaylistId = link.SourcePlaylistId };
+            }
+            return covers.CreateResponse(input, HttpContext);
+        }, token);
+        return result is OkObjectResult { Value: IActionResult response } ? response : result;
+    }
 
     [HttpPost("{id:guid}/refresh")]
     public Task<IActionResult> Refresh(Guid id, CancellationToken token) => ExecuteAsync(async user =>

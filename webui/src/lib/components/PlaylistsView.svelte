@@ -25,6 +25,7 @@
   import {
     home,
     matchReview,
+    mixes,
     playlistLinks,
     type MatchReviewItem,
     type PlaylistCopy,
@@ -33,7 +34,7 @@
     type PlaylistTrack,
     type ProviderDefinition,
   } from "$lib/api";
-  import { humanize, relativeTime } from "$lib/activity";
+  import { relativeTime } from "$lib/activity";
   import {
     confirmationCoverage,
     filterPlaylists,
@@ -47,6 +48,7 @@
     providerColor,
     scheduleCadence,
     scheduleZoneLabel,
+    type PlaylistMix,
     type PlaylistSort,
     type TrackRouteFilter,
     type TrackSort,
@@ -57,6 +59,7 @@
   let { initialId = "", currentUserId = "" }: { initialId?: string; currentUserId?: string } = $props();
 
   let playlists = $state<PlaylistLink[]>([]);
+  let keptMixes = $state<PlaylistMix[]>([]);
   let copies = $state<PlaylistCopy[]>([]);
   let copiesError = $state("");
   let providers = $state<ProviderDefinition[]>([]);
@@ -85,7 +88,6 @@
   let matchWasOpen = false;
   let matchReturnFocus: HTMLElement | null = null;
   let refreshInFlight = false;
-  let page = $state(1);
   let addOpen = $state(false);
   let operationJobId = $state("");
   let bulkProgress = $state("");
@@ -120,13 +122,9 @@
   let sourceUpdateOpen = $state(false);
   let rematchOpen = $state(false);
 
-  const visiblePlaylists = $derived(filterPlaylists(playlists, query, stateFilter, sort));
+  const playlistCount = $derived(playlists.length + keptMixes.length);
+  const visiblePlaylists = $derived(filterPlaylists<PlaylistLink | PlaylistMix>([...playlists, ...keptMixes], query, stateFilter, sort));
   const refreshablePlaylists = $derived(playlists.filter((playlist) => playlist.importMode === "linked"));
-  const pageCount = $derived(Math.max(1, Math.ceil(visiblePlaylists.length / 20)));
-  const currentPage = $derived(Math.min(page, pageCount));
-  const pagePlaylists = $derived(
-    visiblePlaylists.slice((currentPage - 1) * 20, currentPage * 20),
-  );
   const projectedTracks = $derived.by((): PlaylistTrack[] => {
     if (!details) return [];
     // Playlists written into the media server have no separate listener projection; show their source rows.
@@ -233,7 +231,7 @@
   const provider = (providerId: string) => findProviderDefinition(providers, providerId);
 
   function providerName(providerId?: string | null) {
-    return mediaServerName(providerId) ?? humanize(providerDisplayName(providers, providerId, "Unresolved"));
+    return mediaServerName(providerId) ?? providerDisplayName(providers, providerId, "Unresolved");
   }
 
   function editSchedule() {
@@ -315,6 +313,7 @@
     error = "";
     degraded = "";
     try {
+      const mixesRequest = Promise.allSettled([currentUserId ? mixes.list() : Promise.resolve([])]);
       const [linksResult, schemaResult, copiesResult] = await Promise.allSettled([
         playlistLinks.list(),
         home.schema(),
@@ -338,6 +337,19 @@
       }
       if (schemaResult.status === "fulfilled") providers = schemaResult.value.providers;
       else degraded = "Provider names and artwork are temporarily unavailable.";
+      if (playlists.length || error) loading = false;
+      const [mixesResult] = await mixesRequest;
+      if (mixesResult.status === "fulfilled") {
+        const nextMixes: PlaylistMix[] = mixesResult.value
+          .filter((mix) => mix.inApps && mix.kind !== "external" && !playlists.some((playlist) => playlist.id === mix.id))
+          .map((mix) => ({ ...mix, trackCount: null }));
+        const results = await runBounded(nextMixes, 3, async (mix) => {
+          mix.trackCount = (await mixes.get(mix.id)).songs.length;
+        });
+        keptMixes = nextMixes;
+        if (results.some((result) => result.status === "rejected"))
+          degraded = [degraded, "Some mix song counts are temporarily unavailable."].filter(Boolean).join(" ");
+      } else degraded = [degraded, "Your mixes are temporarily unavailable."].filter(Boolean).join(" ");
       loading = false;
     } finally {
       refreshInFlight = false;
@@ -502,7 +514,7 @@
     message={error}
     onRetry={refresh}
   />
-{:else if !playlists.length}
+{:else if !playlistCount}
   <section class="panel empty-state">
     <span class="empty-orbit" aria-hidden="true">♫</span>
     <h2>No playlists yet</h2>
@@ -523,8 +535,8 @@
     <article class="panel playlist-list">
       <header class="panel-heading playlist-toolbar">
         <div>
-          <h2>Imported playlists</h2>
-          <p>{playlists.length} {playlists.length === 1 ? "playlist" : "playlists"}</p>
+          <h2>Playlists</h2>
+          <p>{playlistCount} {playlistCount === 1 ? "playlist" : "playlists"}</p>
         </div>
         <div class="panel-heading-actions playlist-toolbar-actions">
           <Button onclick={() => addOpen = true}>Import playlist</Button>
@@ -561,64 +573,82 @@
       </div>
 
       <div class="playlist-rows" aria-label="Playlists">
-        {#each pagePlaylists as playlist}
-          {@const confirmedPercent = Math.round(confirmationCoverage(playlist) * 100)}
-          <div
-            class:active={playlist.id === selectedId}
-            class="playlist-row"
-          >
-            <button
-              class="playlist-open-button"
-              type="button"
-              aria-label={`Open ${playlist.name} playlist details`}
-              onclick={(event) => void loadDetails(playlist.id, event.currentTarget)}
-            ></button>
-            <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
-            <span class="playlist-copy">
-              <span class="playlist-title-line">
-                <strong>{playlist.name}</strong>
-                {#if hasCopy(playlist)}<Badge tone="neutral">Your copy</Badge>{/if}
-                {#if playlist.importMode === "oneTime"}<Badge tone="neutral">Once</Badge>{/if}
-                {#if playlist.trackRetention === "keepAll"}<Badge state="healthy">Kept</Badge>{/if}
-                <small class="route-pair">
-                  <ProviderMark id={playlist.sourceProviderId} definition={provider(playlist.sourceProviderId)} />
-                  <span>{providerName(playlist.sourceProviderId)}</span>
-                  <ArrowRight size={18} aria-hidden="true" />
-                  <ProviderMark id={playlist.targetProtocol} definition={provider(playlist.targetProtocol)} />
-                  <span>{providerName(playlist.targetProtocol)}</span>
+        {#each visiblePlaylists as playlist}
+          {#if "inApps" in playlist}
+            <div class="playlist-row playlist-row-mix">
+              <a
+                class="playlist-open-button"
+                href={`#/for-you?mix=${encodeURIComponent(playlist.id)}`}
+                aria-label={`Open ${playlist.name} mix`}
+              ></a>
+              <MediaArtwork class="playlist-art" url={`/api/admin/mixes/${encodeURIComponent(playlist.id)}/cover?v=${encodeURIComponent(playlist.updatedAt ?? playlist.recipeVersion ?? "")}`} fallback="♫" />
+              <span class="playlist-copy">
+                <span class="playlist-title-line"><strong>{playlist.name}</strong></span>
+                <small class="playlist-metrics">Mix · in your apps</small>
+              </span>
+              <span class="playlist-summary">
+                <small>{playlist.trackCount === null ? "Song count unavailable" : `${playlist.trackCount} ${playlist.trackCount === 1 ? "song" : "songs"}`}</small>
+              </span>
+            </div>
+          {:else}
+            {@const confirmedPercent = Math.round(confirmationCoverage(playlist) * 100)}
+            <div
+              class:active={playlist.id === selectedId}
+              class="playlist-row"
+            >
+              <button
+                class="playlist-open-button"
+                type="button"
+                aria-label={`Open ${playlist.name} playlist details`}
+                onclick={(event) => void loadDetails(playlist.id, event.currentTarget)}
+              ></button>
+              <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
+              <span class="playlist-copy">
+                <span class="playlist-title-line">
+                  <strong>{playlist.name}</strong>
+                  {#if hasCopy(playlist)}<Badge tone="neutral">Your copy</Badge>{/if}
+                  {#if playlist.importMode === "oneTime"}<Badge tone="neutral">Once</Badge>{/if}
+                  {#if playlist.trackRetention === "keepAll"}<Badge state="healthy">Kept</Badge>{/if}
+                  <small class="route-pair">
+                    <ProviderMark id={playlist.sourceProviderId} definition={provider(playlist.sourceProviderId)} />
+                    <span>{providerName(playlist.sourceProviderId)}</span>
+                    <ArrowRight size={18} aria-hidden="true" />
+                    <ProviderMark id={playlist.targetProtocol} definition={provider(playlist.targetProtocol)} />
+                    <span>{providerName(playlist.targetProtocol)}</span>
+                  </small>
+                </span>
+                <small class="playlist-metrics">
+                  <span>{playlist.matchedCount} confirmed</span>
+                  <span>{playlist.metrics.review} to review</span>
+                  <span>{playlist.unmatchedCount} unresolved</span>
+                  <span>{playlist.lastRunCode === "backend_access_missing" ? "Media-server access needed" : playlist.lastRunAt
+                    ? playlist.mode === "virtual"
+                      ? "Updated in Allstarr"
+                      : `${playlist.materializedCount} in ${providerName(playlist.targetProtocol)}`
+                    : "Not updated yet"}</span>
                 </small>
               </span>
-              <small class="playlist-metrics">
-                <span>{playlist.matchedCount} confirmed</span>
-                <span>{playlist.metrics.review} to review</span>
-                <span>{playlist.unmatchedCount} unresolved</span>
-                <span>{playlist.lastRunCode === "backend_access_missing" ? "Media-server access needed" : playlist.lastRunAt
-                  ? playlist.mode === "virtual"
-                    ? "Updated in Allstarr"
-                    : `${playlist.materializedCount} in ${providerName(playlist.targetProtocol)}`
-                  : "Not updated yet"}</span>
-              </small>
-            </span>
-            <span
-              class="playlist-summary"
-              role="group"
-              aria-label={`${confirmedPercent}% confirmed, ${playlist.playableCount} of ${playlist.trackCount} playable${playlist.enabled ? "" : ", paused"}`}
-            >
-              <span class="playlist-coverage">
-                <strong>{confirmedPercent}%</strong>
-                <small>confirmed</small>
+              <span
+                class="playlist-summary"
+                role="group"
+                aria-label={`${confirmedPercent}% confirmed, ${playlist.playableCount} of ${playlist.trackCount} playable${playlist.enabled ? "" : ", paused"}`}
+              >
+                <span class="playlist-coverage">
+                  <strong>{confirmedPercent}%</strong>
+                  <small>confirmed</small>
+                </span>
+                <small>{playlist.playableCount} of {playlist.trackCount} playable</small>
+                {#if !playlist.enabled}<Badge state="suggested">Paused</Badge>{/if}
               </span>
-              <small>{playlist.playableCount} of {playlist.trackCount} playable</small>
-              {#if !playlist.enabled}<Badge state="suggested">Paused</Badge>{/if}
-            </span>
-            <CoverageBar
-              routes={playlist.routeCoverage}
-              total={playlist.trackCount}
-              unresolved={playlist.unmatchedCount}
-              {providerName}
-              compact
-            />
-          </div>
+              <CoverageBar
+                routes={playlist.routeCoverage}
+                total={playlist.trackCount}
+                unresolved={playlist.unmatchedCount}
+                {providerName}
+                compact
+              />
+            </div>
+          {/if}
         {:else}
           <div class="compact-empty">
             <strong>No playlists match these filters</strong>
@@ -626,13 +656,6 @@
           </div>
         {/each}
       </div>
-      {#if pageCount > 1}
-        <nav class="playlist-pagination" aria-label="Playlist pages">
-          <Button variant="secondary" size="sm" disabled={currentPage === 1} onclick={() => { page = Math.max(1, currentPage - 1); }}>Previous</Button>
-          <span>Page {currentPage} of {pageCount}</span>
-          <Button variant="secondary" size="sm" disabled={currentPage === pageCount} onclick={() => { page = Math.min(pageCount, currentPage + 1); }}>Next</Button>
-        </nav>
-      {/if}
     </article>
 
     <Dialog.Root bind:open={detailOpen}>
@@ -1014,3 +1037,19 @@
     onSaved={matchSaved}
   />
 {/if}
+
+<style>
+  @media (max-width: 650px) {
+    .playlist-row-mix {
+      row-gap: 0.18rem;
+    }
+
+    .playlist-row-mix :global(.playlist-art) {
+      grid-row: span 2;
+    }
+
+    .playlist-row-mix .playlist-copy {
+      align-self: end;
+    }
+  }
+</style>

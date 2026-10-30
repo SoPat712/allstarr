@@ -83,6 +83,7 @@ public class AdminAuthenticationMiddleware
                 segments.Length == 4 && (Guid.TryParse(segments[3], out _) && (HttpMethods.IsGet(method) || HttpMethods.IsDelete(method)) ||
                     segments[3] is "start" or "external" && HttpMethods.IsPost(method)) ||
                 segments.Length == 5 && Guid.TryParse(segments[3], out _) && (
+                    segments[4] == "cover" && HttpMethods.IsGet(method) ||
                     segments[4] is "refresh" or "feedback" && HttpMethods.IsPost(method) ||
                     segments[4] == "in-apps" && HttpMethods.IsPut(method)) ||
                 segments.Length == 6 && segments[3] == "start" && Guid.TryParse(segments[4], out _) &&

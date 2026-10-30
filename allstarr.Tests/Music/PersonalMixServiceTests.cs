@@ -555,7 +555,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
             JellyfinAccessToken = "",
             ExpiresAtUtc = clock.UtcNow.AddHours(1).UtcDateTime
         };
-        return new(service, settings.Object, factory, clock) { ControllerContext = new() { HttpContext = http } };
+        return new(service, settings.Object, factory, clock, new()) { ControllerContext = new() { HttpContext = http } };
     }
 
     [Fact]

@@ -36,6 +36,72 @@ namespace allstarr.Tests;
 public sealed partial class PersonalMixServiceTests
 {
     [Fact]
+    public async Task ListenerHttp_MixCoverReturnsPngAndRevalidatesOnlyOwnMix()
+    {
+        await Seed(user: other);
+        var own = (await service.GenerateAsync(other)).Single(mix => mix.Kind == "on-repeat");
+        var foreign = (await service.ListAsync(owner)).Single(mix => mix.Kind == "on-repeat");
+        using var host = await ForYouHost();
+        using var client = await ListenerClient(host, other);
+        var path = $"/api/admin/mixes/{own.Id}/cover";
+        using var first = await client.GetAsync(path);
+        Assert.Equal(HttpStatusCode.OK, first.StatusCode);
+        Assert.Equal("image/png", first.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }, (await first.Content.ReadAsByteArrayAsync())[..8]);
+        Assert.NotNull(first.Headers.ETag);
+        Assert.True(first.Headers.CacheControl?.Private);
+        Assert.True(first.Headers.CacheControl?.MustRevalidate);
+        Assert.Equal(TimeSpan.Zero, first.Headers.CacheControl?.MaxAge);
+        using var request = new HttpRequestMessage(HttpMethod.Get, path);
+        request.Headers.IfNoneMatch.Add(first.Headers.ETag!);
+        using var unchanged = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.NotModified, unchanged.StatusCode);
+
+        clock.UtcNow += TimeSpan.FromMinutes(16);
+        await ReadSuccess(await client.PostAsync($"/api/admin/mixes/{own.Id}/refresh", null));
+        using var refreshed = await client.GetAsync(path);
+        Assert.Equal(HttpStatusCode.OK, refreshed.StatusCode);
+        Assert.NotEqual(first.Headers.ETag, refreshed.Headers.ETag);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/admin/mixes/{foreign.Id}/cover")).StatusCode);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ListenerHttp_LibraryMixCoverOverridesProviderArtworkAndNormalPlaylistStaysUnchanged(bool providerArtwork)
+    {
+        var artwork = providerArtwork ? "provider-artwork" : null;
+        var mix = await ExternalLink(listener: other, artwork: artwork);
+        var normal = await ExternalLink(selection: "ordinary-playlist", listener: other, artwork: artwork);
+        using var host = await ForYouHost();
+        using var client = await ListenerClient(host, other);
+        var coverUrl = $"/api/admin/mixes/{mix.Id}/cover?v=1";
+        var normalUrl = providerArtwork ? $"/api/admin/playlist-sources/{normal.ProviderAccountId}/playlists/ordinary-playlist/artwork" : null;
+        var links = (await ReadSuccess(await client.GetAsync("/api/admin/playlist-links")))
+            .GetProperty("playlistLinks").EnumerateArray().ToArray();
+        Assert.Equal(coverUrl, links.Single(link => link.GetProperty("id").GetGuid() == mix.Id).GetProperty("artworkUrl").GetString());
+        Assert.Equal(normalUrl, links.Single(link => link.GetProperty("id").GetGuid() == normal.Id).GetProperty("artworkUrl").GetString());
+        var detail = await ReadSuccess(await client.GetAsync($"/api/admin/playlist-links/{mix.Id}"));
+        Assert.Equal(coverUrl, detail.GetProperty("artworkUrl").GetString());
+        var normalDetail = await ReadSuccess(await client.GetAsync($"/api/admin/playlist-links/{normal.Id}"));
+        Assert.Equal(normalUrl, normalDetail.GetProperty("artworkUrl").GetString());
+        using var image = await client.GetAsync(coverUrl);
+        Assert.Equal(HttpStatusCode.OK, image.StatusCode);
+        Assert.Equal("image/png", image.Content.Headers.ContentType?.MediaType);
+
+        await using (var db = factory.CreateDbContext())
+        {
+            var snapshot = await db.PlaylistSourceSnapshots.AsNoTracking().SingleAsync(item => item.PlaylistLinkId == mix.Id);
+            snapshot.Id = Guid.NewGuid();
+            snapshot.SnapshotVersion++;
+            db.PlaylistSourceSnapshots.Add(snapshot);
+            await db.SaveChangesAsync();
+        }
+        detail = await ReadSuccess(await client.GetAsync($"/api/admin/playlist-links/{mix.Id}"));
+        Assert.Equal($"/api/admin/mixes/{mix.Id}/cover?v=2", detail.GetProperty("artworkUrl").GetString());
+    }
+
+    [Fact]
     public async Task ListenerHttp_MixActionsUseOwnDataAndRejectOtherListenersIds()
     {
         await Seed(user: other);
@@ -324,6 +390,7 @@ public sealed partial class PersonalMixServiceTests
             services.AddSingleton<IPlatformClock>(clock);
             services.AddSingleton(settings.Object);
             services.AddSingleton(service);
+            services.AddSingleton<MixCoverImageService>();
             services.AddSingleton(taste);
             services.AddSingleton(releases);
             services.AddSingleton(queue);

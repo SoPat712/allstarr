@@ -1,4 +1,6 @@
-import type { PlaylistLink, PlaylistSourceAccount, PlaylistTrack } from "./api";
+import type { MixCard, PlaylistLink, PlaylistSourceAccount, PlaylistTrack } from "./api";
+
+export type PlaylistMix = MixCard & { trackCount: number | null };
 
 export type PlaylistSort = "name" | "tracks" | "coverage" | "updated";
 export type TrackSort = "position" | "title" | "duration" | "route";
@@ -57,8 +59,8 @@ export function confirmationCoverage(
   return playlist.trackCount ? playlist.matchedCount / playlist.trackCount : 0;
 }
 
-export function filterPlaylists(
-  playlists: PlaylistLink[],
+export function filterPlaylists<T extends PlaylistLink | PlaylistMix>(
+  playlists: T[],
   query: string,
   state: "all" | "ready" | "attention" | "paused",
   sort: PlaylistSort,
@@ -68,9 +70,10 @@ export function filterPlaylists(
     .filter((playlist) => {
       const matchesQuery =
         !needle ||
-        `${playlist.name} ${playlist.description ?? ""} ${playlist.sourceProviderId} ${playlist.targetProtocol}`
+        `${playlist.name} ${playlist.description ?? ""} ${"inApps" in playlist ? "" : `${playlist.sourceProviderId} ${playlist.targetProtocol}`}`
           .toLocaleLowerCase()
           .includes(needle);
+      if ("inApps" in playlist) return matchesQuery && state === "all";
       const matchesState =
         state === "all" ||
         (state === "paused" && !playlist.enabled) ||
@@ -87,11 +90,11 @@ export function filterPlaylists(
       return matchesQuery && matchesState;
     })
     .toSorted((left, right) => {
-      if (sort === "tracks") return right.trackCount - left.trackCount;
+      if (sort === "tracks") return (right.trackCount ?? -1) - (left.trackCount ?? -1);
       if (sort === "coverage")
-        return confirmationCoverage(right) - confirmationCoverage(left);
+        return ("inApps" in right ? 0 : confirmationCoverage(right)) - ("inApps" in left ? 0 : confirmationCoverage(left));
       if (sort === "updated")
-        return Date.parse(right.lastRunAt ?? "") - Date.parse(left.lastRunAt ?? "");
+        return Date.parse(("inApps" in right ? right.updatedAt : right.lastRunAt) ?? "") - Date.parse(("inApps" in left ? left.updatedAt : left.lastRunAt) ?? "");
       return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
     });
 }
