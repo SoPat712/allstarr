@@ -66,8 +66,18 @@ public sealed partial class FavoriteActionPipeline(
         string sourceRevision, CancellationToken cancellationToken = default) =>
         (await RecordCoreAsync(new(execution, itemId, FavoriteOperation.Favorite, sourceRevision), true, cancellationToken)).Imported;
 
+    public async Task<IReadOnlyList<bool>> ImportMigrationLikesAsync(ProtocolExecutionContext execution,
+        IReadOnlyList<(string ItemId, string SourceRevision)> items, DateTimeOffset startedAt, CancellationToken cancellationToken = default)
+    {
+        if (items.Count > 100) throw new ArgumentException("Import at most 100 hearts at a time.");
+        var imported = new List<bool>(items.Count);
+        foreach (var item in items)
+            imported.Add((await RecordCoreAsync(new(execution, item.ItemId, FavoriteOperation.Favorite, item.SourceRevision), true, cancellationToken, startedAt)).Imported);
+        return imported;
+    }
+
     private async Task<(FavoriteEventReceipt? Receipt, bool Imported)> RecordCoreAsync(
-        FavoriteMutationRequest request, bool spotifyImport, CancellationToken cancellationToken)
+        FavoriteMutationRequest request, bool spotifyImport, CancellationToken cancellationToken, DateTimeOffset? importedAfter = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         var execution = request.ExecutionContext;
@@ -78,13 +88,13 @@ public sealed partial class FavoriteActionPipeline(
         var display = await CaptureDisplayAsync(request, itemId, userId, cancellationToken);
         for (var attempt = 0; ; attempt++)
         {
-            try { return await RecordOnceAsync(request, itemId, sourceRevision, display, spotifyImport, cancellationToken); }
+            try { return await RecordOnceAsync(request, itemId, sourceRevision, display, spotifyImport, cancellationToken, importedAfter); }
             catch (Exception error) when (FavoriteLinkService.Retryable(error) && attempt < 3) { }
         }
     }
 
     private async Task<(FavoriteEventReceipt? Receipt, bool Imported)> RecordOnceAsync(FavoriteMutationRequest request, string itemId,
-        string sourceRevision, string? display, bool spotifyImport, CancellationToken cancellationToken)
+        string sourceRevision, string? display, bool spotifyImport, CancellationToken cancellationToken, DateTimeOffset? importedAfter)
     {
         var execution = request.ExecutionContext;
         var userId = execution.RequireActor().EffectiveUserId!.Value;
@@ -108,6 +118,10 @@ public sealed partial class FavoriteActionPipeline(
         var member = real ? await FavoriteLinkScope.MemberAsync(context, user, cancellationToken) : null;
         if (spotifyImport)
         {
+            if (importedAfter.HasValue && await context.FavoriteEvents.AnyAsync(item => item.OwnerUserId == userId &&
+                item.Protocol == protocol && item.BackendInstanceId == backend && item.ItemId == itemId &&
+                item.Operation == FavoriteOperation.Unfavorite && item.CreatedAt >= importedAfter.Value, cancellationToken))
+                return (null, false);
             var prior = await context.FavoriteEvents.AsNoTracking().FirstOrDefaultAsync(item =>
                 item.OwnerUserId == userId && item.Protocol == protocol && item.BackendInstanceId == backend &&
                 item.BackendPrincipalId == execution.VerifiedBackendPrincipalId && item.SourceRevision == sourceRevision,

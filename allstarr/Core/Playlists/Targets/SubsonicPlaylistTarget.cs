@@ -85,7 +85,8 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
                 trackCount,
                 playlist.StringOrNull("comment"),
                 playlist.StringOrNull("coverArt"),
-                string.Equals(playlist.StringOrNull("owner"), context.VerifiedPrincipalId, StringComparison.Ordinal)));
+                string.Equals(playlist.StringOrNull("owner"), context.VerifiedPrincipalId, StringComparison.Ordinal),
+                DateTimeOffset.TryParse(playlist.StringOrNull("created"), out var created) ? created : null));
             if (values.Count == limit) break;
         }
 
@@ -358,6 +359,12 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
                 durationMilliseconds: MillisecondsFromSeconds(song.Int64OrNull("duration")),
                 nativeEntryJson: song.GetRawText()),
             response.Status);
+    }
+
+    public async Task<bool> FavoriteAsync(BackendPlaylistTargetContext context, string backendItemId, CancellationToken cancellationToken)
+    {
+        var result = await CallAsync(context, "star", [Pair("id", backendItemId)], cancellationToken);
+        return result.IsSuccess && TryProtocolSuccess(result, out _);
     }
 
     private async Task<HttpResult> CallAsync(

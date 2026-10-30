@@ -5496,6 +5496,7 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasOne("allstarr.Core.Storage.UserRecord", null).WithMany().HasForeignKey("OwnerUserId").OnDelete(DeleteBehavior.Cascade).IsRequired();
                     b.ToTable("taste_profiles");
                 });
+            CollectionMigrationModel.ConfigureSnapshot(modelBuilder);
 #pragma warning restore 612, 618
         }
     }

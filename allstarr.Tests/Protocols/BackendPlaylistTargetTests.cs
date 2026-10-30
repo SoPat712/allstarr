@@ -14,6 +14,40 @@ public sealed class BackendPlaylistTargetTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task MigrationNativeFavoriteWritesOnlyScopedMembership(bool subsonic)
+    {
+        using var handler = new FavoriteBackend();
+        using var http = new HttpClient(handler);
+        IBackendPlaylistTarget target = subsonic
+            ? new SubsonicPlaylistTarget(http, new Uri("https://backend.test/"), new FakeAuthenticationResolver())
+            : new JellyfinPlaylistTarget(http, new Uri("https://backend.test/"), new FakeAuthenticationResolver());
+        Assert.True(await target.FavoriteAsync(Context(), "native-one", default));
+        Assert.Equal(HttpMethod.Post, handler.Method);
+        if (subsonic)
+        {
+            Assert.Equal("/rest/star.view", handler.Path);
+            Assert.Contains("id=native-one", handler.Body);
+        }
+        else Assert.Equal("/Users/user-1/FavoriteItems/native-one", handler.Path);
+    }
+
+    private sealed class FavoriteBackend : HttpMessageHandler
+    {
+        public HttpMethod? Method { get; private set; }
+        public string? Path { get; private set; }
+        public string Body { get; private set; } = "";
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Method = request.Method;
+            Path = request.RequestUri!.AbsolutePath;
+            Body = request.Content == null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
+            return new(HttpStatusCode.OK) { Content = new StringContent("{\"subsonic-response\":{\"status\":\"ok\"}}") };
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task UnconfiguredTargets_ReturnRecoverableFailureWithoutContactingABackend(bool subsonic)
     {
         var backend = new SubsonicFakeBackend("p1", "Fixture", []);

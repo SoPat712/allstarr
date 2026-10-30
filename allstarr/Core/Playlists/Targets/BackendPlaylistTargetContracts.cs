@@ -143,7 +143,8 @@ public sealed record BackendPlaylistSummary(
     int? TrackCount = null,
     string? Description = null,
     string? ArtworkReference = null,
-    bool Writable = true);
+    bool Writable = true,
+    DateTimeOffset? CreatedAt = null);
 
 public sealed record BackendPlaylistArtwork(byte[] Bytes, string ContentType);
 
@@ -274,6 +275,8 @@ public interface IBackendPlaylistTarget
         Task.FromResult(new BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistMember>>(
             BackendPlaylistTargetStatus.Unsupported,
             ErrorCode: "native-item-read-unsupported"));
+
+    Task<bool> FavoriteAsync(BackendPlaylistTargetContext context, string backendItemId, CancellationToken cancellationToken) => Task.FromResult(false);
 
     Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> WriteAsync(
         BackendPlaylistTargetContext context,

@@ -114,6 +114,7 @@ public interface IPlaylistPersistenceService
     Task DeleteLinkAsync(ProtocolExecutionContext context, Guid linkId, long expectedRevision, CancellationToken cancellationToken = default);
     Task<PlaylistSourceSnapshotRecord> CaptureSourceSnapshotAsync(ProtocolExecutionContext context, Guid linkId, PlaylistSourceSnapshotInput input, CancellationToken cancellationToken = default);
     Task<PlaylistPreview> ReadPreviewAsync(ProtocolExecutionContext context, Guid linkId, Guid snapshotId, CancellationToken cancellationToken = default);
+    Task<PlaylistPreview> ReadPreviewPageAsync(ProtocolExecutionContext context, Guid linkId, Guid snapshotId, int offset, int limit, CancellationToken cancellationToken = default);
     Task<PlaylistSyncRunRecord> RecordRunAsync(ProtocolExecutionContext context, Guid linkId, PlaylistRunInput input, IReadOnlyList<PlaylistRunEntryInput> results, CancellationToken cancellationToken = default);
 }
 
@@ -385,7 +386,13 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         db.PlaylistSourceEntries.AddRange(input.Entries.Select(entry => new PlaylistSourceEntryRecord { Id = Guid.CreateVersion7(), PlaylistSourceSnapshotId = snapshot.Id, ExternalMetadataSnapshotId = entry.ExternalMetadataSnapshotId, SourcePosition = entry.Position, SourceEntryIdHash = entry.SourceEntryIdHash })); await db.SaveChangesAsync(cancellationToken); return snapshot;
     }
 
-    public async Task<PlaylistPreview> ReadPreviewAsync(ProtocolExecutionContext context, Guid linkId, Guid snapshotId, CancellationToken cancellationToken = default)
+    public Task<PlaylistPreview> ReadPreviewAsync(ProtocolExecutionContext context, Guid linkId, Guid snapshotId, CancellationToken cancellationToken = default) =>
+        ReadPreviewCoreAsync(context, linkId, snapshotId, 0, null, cancellationToken);
+
+    public Task<PlaylistPreview> ReadPreviewPageAsync(ProtocolExecutionContext context, Guid linkId, Guid snapshotId, int offset, int limit, CancellationToken cancellationToken = default) =>
+        ReadPreviewCoreAsync(context, linkId, snapshotId, Math.Max(0, offset), Math.Clamp(limit, 1, 100), cancellationToken);
+
+    private async Task<PlaylistPreview> ReadPreviewCoreAsync(ProtocolExecutionContext context, Guid linkId, Guid snapshotId, int offset, int? limit, CancellationToken cancellationToken)
     {
         var actor = context.RequireActor();
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
@@ -401,7 +408,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             cancellationToken) ?? throw new KeyNotFoundException("Playlist snapshot not found.");
         var entries = await db.PlaylistSourceEntries.AsNoTracking()
             .Where(item => item.PlaylistSourceSnapshotId == snapshot.Id)
-            .OrderBy(item => item.SourcePosition)
+            .OrderBy(item => item.SourcePosition).Skip(offset).Take(limit ?? int.MaxValue)
             .ToListAsync(cancellationToken);
         var externalSnapshotIds = entries.Select(item => item.ExternalMetadataSnapshotId).Distinct().ToArray();
         var resolution = await _trackMatches.GetResolutionDataAsync(

@@ -153,6 +153,23 @@ public sealed class SpotifyLikesImportTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MigrationMembershipSkipsLaterUnheartWithoutAcquisition()
+    {
+        var execution = Context(owner);
+        var started = clock.UtcNow.AddMinutes(-1);
+        await favorites.RecordAsync(new(execution, "ext-deezer-song-one", FavoriteOperation.Unfavorite, "manual"));
+        await favorites.ImportMigrationLikesAsync(execution,
+            [("ext-deezer-song-one", "migration:one"), ("ext-deezer-song-two", "migration:two")], started);
+        await new FavoriteActionPipeline(factory, queue, clock).ImportMigrationLikesAsync(execution,
+            [("ext-deezer-song-one", "migration:one"), ("ext-deezer-song-two", "migration:two")], started);
+        await using var db = factory.CreateDbContext();
+        Assert.False((await db.FavoriteStates.SingleAsync(item => item.ItemId == "ext-deezer-song-one")).IsFavorite);
+        Assert.True((await db.FavoriteStates.SingleAsync(item => item.ItemId == "ext-deezer-song-two")).IsFavorite);
+        Assert.All(await db.FavoriteActions.ToArrayAsync(), item => Assert.Equal("virtual-liked", item.ActionType));
+        Assert.DoesNotContain(await db.Jobs.ToArrayAsync(), item => item.Type.Contains("keep") || item.Type.Contains("download"));
+    }
+
+    [Fact]
     public async Task ReceiptsSurviveCheckpointGapAndLaterUnheart()
     {
         var context = Context(owner);
