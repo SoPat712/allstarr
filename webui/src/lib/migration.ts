@@ -1,8 +1,8 @@
 import type { MigrationCounts, MigrationReviewItem, MigrationStatus } from "./api";
 
 export function collectionStateLabel(state: string) {
-  return ({ available: "Waiting", collecting: "Reading from Spotify", verifying: "Checking songs", matching: "Checking songs",
-    review: "Ready to review", applying: "Adding songs", applied: "Moved", skipped: "Skipped", waiting: "Waiting", cancelled: "Stopped" } as Record<string, string>)[state] ?? "Waiting";
+  return ({ available: "Waiting", collecting: "Reading from Spotify", verifying: "Checking music", matching: "Checking music",
+    review: "Ready to review", applying: "Adding music", applied: "Moved", skipped: "Skipped", waiting: "Waiting", cancelled: "Stopped" } as Record<string, string>)[state] ?? "Waiting";
 }
 
 export function migrationStep(status: MigrationStatus | null) {
@@ -22,19 +22,41 @@ export function songCount(count: number) {
   return `${count} ${count === 1 ? "song" : "songs"}`;
 }
 
+export function collectionChoiceOrder(kind: string) {
+  return ({ "liked-songs": 0, "saved-albums": 1, "followed-artists": 2 } as Record<string, number>)[kind] ?? 3;
+}
+
+export function collectionCount(count: number, kind: string) {
+  const noun = kind === "saved-albums" ? "album" : kind === "followed-artists" ? "artist" : "song";
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+export function unavailableCollectionsLine(items: { kind: string }[]) {
+  const kinds = new Set(items.map(item => item.kind));
+  const names = [kinds.has("saved-albums") ? "saved albums" : "", kinds.has("followed-artists") ? "followed artists" : ""].filter(Boolean).join(" and ");
+  return names ? `${names[0].toUpperCase()}${names.slice(1)} can't be moved yet.` : "";
+}
+
+export function resourceDetails(item: { year?: number | null; trackCount?: number | null; albums?: string[] }) {
+  return [item.year, item.trackCount == null ? null : songCount(item.trackCount), ...(item.albums ?? [])].filter(value => value != null && value !== "").join(" · ");
+}
+
 export function addedCountLine(count: number, kind: string) {
+  if (["saved-albums", "followed-artists"].includes(kind)) return `${collectionCount(count, kind)} ${kind === "followed-artists" ? "followed" : "added"}`;
   return `${kind === "liked-songs" ? `${count} ${count === 1 ? "heart" : "hearts"}` : songCount(count)} added`;
 }
 
-export function remainingCountLine(count: number) {
-  return `${songCount(count)} still ${count === 1 ? "needs" : "need"} a look`;
+export function remainingCountLine(count: number, mixed = false) {
+  return `${mixed ? `${count} ${count === 1 ? "item" : "items"}` : songCount(count)} still ${count === 1 ? "needs" : "need"} a look`;
 }
 
-export function moveCountLine(count: number, more = false) {
+export function moveCountLine(count: number, more = false, mixed = false) {
+  if (mixed) return `Move ${count} ${more ? "more " : ""}${count === 1 ? "item" : "items"}${more ? "" : " now"}`;
   return more ? `Move ${count} more ${count === 1 ? "song" : "songs"}` : `Move ${songCount(count)} now`;
 }
 
 export function readyToMove(item: MigrationReviewItem) {
+  if (item.resource) return item.resource.state === "accepted" && !item.resource.applied;
   if (!item.metadata.title || item.preview?.state === 3 || needsReview(item)) return false;
   return !item.receipt || item.receipt.outcome >= 4 && !["duplicate", "streamed", "existing-or-later-intent"].includes(item.receipt.outcomeCode ?? "");
 }
@@ -54,12 +76,17 @@ export function migrationError(error?: string | null) {
 }
 
 export function needsReview(item: MigrationReviewItem) {
+  if (item.resource) return ["review", "unmatched"].includes(item.resource.state);
   if (!item.metadata.title || item.preview?.state === 3) return false;
   const preview = item.preview;
   return !preview || !([0, 1].includes(preview.status) && preview.resolvedRoute?.kind === 1 || preview.status === 10 && preview.resolvedRoute?.kind === 2);
 }
 
 export function reviewReason(item: MigrationReviewItem) {
+  if (item.resource) {
+    const noun = item.resource.kind === "saved-albums" ? "album" : "artist";
+    return item.resource.state === "unmatched" ? `No ${noun} found yet.` : `Choose the right ${noun}.`;
+  }
   if ([7, 8].includes(item.preview?.status ?? -1)) return "This song is not available in your library right now.";
   if (item.preview?.status === 9) return "This match needs another check.";
   if (item.preview?.status === 6) return "This match needs your approval.";

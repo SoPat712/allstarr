@@ -14,7 +14,7 @@ namespace allstarr.Core.Providers.Spotify;
 /// profile reads. The typed playlist capability supplies scoped authentication
 /// for each operation.
 /// </summary>
-public sealed class SpotifyPathfinderPlaylistClient
+public sealed partial class SpotifyPathfinderPlaylistClient
 {
     internal const string LibraryOperation = "libraryV3";
     internal const string LibraryQueryHash = SpotifyApiSettings.DefaultLibraryQueryHash;

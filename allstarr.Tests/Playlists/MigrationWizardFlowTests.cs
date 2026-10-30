@@ -23,7 +23,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class MigrationWizardFlowTests : IAsyncLifetime
+public sealed partial class MigrationWizardFlowTests : IAsyncLifetime
 {
     private readonly Guid owner = Guid.NewGuid(), other = Guid.NewGuid(), account = Guid.NewGuid();
     private readonly SystemPlatformClock clock = new();
@@ -131,6 +131,8 @@ public sealed class MigrationWizardFlowTests : IAsyncLifetime
             .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Success(new("spotify", [Summary("owned"), Summary("followed")])));
         reader.Setup(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderPlaylistTracksRequest>()))
             .ReturnsAsync((ProviderExecutionContext _, ProviderPlaylistTracksRequest request) => Page(request));
+        reader.Setup(item => item.GetLibraryResourcesAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<string>(), It.IsAny<ProviderPageRequest>()))
+            .ReturnsAsync((ProviderExecutionContext _, string kind, ProviderPageRequest page) => LibraryPage(kind, page));
         reader.SetupGet(item => item.ProviderId).Returns("spotify");
         router.Setup(item => item.PlanAsync<IProviderPlaylistCapability>(It.IsAny<ProviderRouteRequest>()))
             .ReturnsAsync((ProviderRouteRequest request) => new(request,
@@ -396,7 +398,7 @@ public sealed class MigrationWizardFlowTests : IAsyncLifetime
     }
 
     private CollectionMigrationService Service(ITrackIdentityService? identityService = null) => new(factory, queue, router.Object, matches, playlists, orchestration, targets.Object,
-        favorites, new(), clock, identityService ?? identities);
+        favorites, new(), clock, identityService ?? identities, gateway.Object, new(factory, clock, router.Object, new Moq.Mock<allstarr.Core.Settings.IDurableRuntimeSettings>().Object));
     private Task<Guid> Start() => Service().StartAsync(Context(owner), account, "request", default);
     private async Task<Guid> Selected(string source, bool keepInSync = false)
     {

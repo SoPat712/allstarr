@@ -1820,11 +1820,17 @@ export type MigrationStatus = {
   id: string; run: { providerAccountId: string; state: string; phase: string; jobId: string | null };
   collections: MigrationCollectionStatus[]; total: MigrationCounts; provisional: boolean;
 };
+export type MigrationResourceCandidate = {
+  providerId: string; resourceId: string; title: string; artist: string | null;
+  year: number | null; trackCount: number | null; artworkUrl: string | null; albums: string[];
+};
 export type MigrationReviewItem = {
   collectionId: string; sourceEntryId: string; position: number; externalSnapshotId: string;
-  metadata: { title?: string | null; artists?: string[]; artworkUrl?: string | null };
+  metadata: { title?: string | null; artists?: string[]; artworkUrl?: string | null; year?: number | null; trackCount?: number | null };
   preview: { state: number; status: number; resolvedRoute: { kind: number } | null } | null;
   receipt: { outcome: number; outcomeCode?: string | null } | null;
+  resource?: { kind: "saved-albums" | "followed-artists"; state: "accepted" | "review" | "unmatched" | "skipped";
+    candidates: MigrationResourceCandidate[]; chosen: MigrationResourceCandidate | null; applied: boolean } | null;
 };
 export const migrations = {
   start: (providerAccountId: string, requestKey: string) => json<{ id: string }>("/api/admin/migrations", {
@@ -1832,12 +1838,16 @@ export const migrations = {
     body: JSON.stringify({ ProviderAccountId: providerAccountId, RequestKey: requestKey }),
   }),
   status: (id: string, summary = false) => json<MigrationStatus>(`/api/admin/migrations/${encodeURIComponent(id)}${summary ? "/summary" : ""}`),
-  discover: (id: string, cursor?: string) => json<{ items: MigrationChoice[]; nextCursor: string | null }>(
+  discover: (id: string, cursor?: string) => json<{ items: MigrationChoice[]; nextCursor: string | null; unsupported?: { kind: string }[] }>(
     `/api/admin/migrations/${encodeURIComponent(id)}/discover${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`),
   choose: (id: string, collections: { SourceId: string; KeepInSync: boolean }[]) => request(`/api/admin/migrations/${encodeURIComponent(id)}/choose`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ Collections: collections }),
   }),
   change: (id: string, action: "apply" | "resume" | "cancel") => request(`/api/admin/migrations/${encodeURIComponent(id)}/${action}`, { method: "POST" }),
+  chooseResource: (id: string, collectionId: string, entryId: string, choice: { providerId: string; resourceId: string } | { skip: true }) => request(
+    `/api/admin/migrations/${encodeURIComponent(id)}/review/${encodeURIComponent(collectionId)}/${encodeURIComponent(entryId)}/choose`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(choice),
+    }),
   review: (id: string, collectionId: string, offset = 0) => json<MigrationReviewItem[]>(
     `/api/admin/migrations/${encodeURIComponent(id)}/review?collectionId=${encodeURIComponent(collectionId)}&offset=${offset}&limit=50`),
 };
