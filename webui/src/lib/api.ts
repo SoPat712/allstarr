@@ -154,11 +154,20 @@ export type PlayTrace = {
   listenerId?: string | null;
   startedAt: string;
   outcome: string;
-  request: { presented: { title?: string | null; artist?: string | null; artwork?: string | null } };
-  resolution: { provider?: string | null; cached?: boolean | null };
+  request: { presented: { title?: string | null; artist?: string | null; album?: string | null; durationMilliseconds?: number | null; artwork?: string | null } };
+  resolution: { provider?: string | null; cached?: boolean | null; state?: string | null; externalSnapshotId?: string | null;
+    authorityScope?: MatchAuthorityScope | "automatic"; authorityId?: string | null; authorityRevision?: number | null };
+  received?: { tags?: { title?: string | null; artist?: string | null; album?: string | null } | null; durationSeconds?: number | null } | null;
+  differences?: string[];
   timing: { elapsedMs: number; firstByteMs?: number | null; headersMs?: number | null; omittedPhases: number;
     phases: { phase: string; provider?: string | null; startedMs: number; elapsedMs: number }[] };
 };
+
+export type PlayTraceChoice =
+  | { targetType: "local"; libraryTrackId: string }
+  | { targetType: "provider"; externalProvider: string; externalId: string };
+export type PlayTraceAuthority = { authorityScope: MatchAuthorityScope; expectedAuthority?: ExpectedMatchAuthority };
+export type PlayTraceReportRequest = { requestId: string; note: string };
 
 export type ActivityItem = {
   jobId?: string | null;
@@ -2655,6 +2664,15 @@ export const playTraces = {
   list: (before = "") => json<PlayTrace[]>(`/api/admin/play-traces?limit=50${before ? `&before=${encodeURIComponent(before)}` : ""}`),
   detail: (id: string) => json<PlayTrace>(`/api/admin/play-traces/${encodeURIComponent(id)}`),
   diagnostics: async (id: string) => (await request(`/api/admin/play-traces/${encodeURIComponent(id)}/diagnostics`)).text(),
+  report: (id: string, body: PlayTraceReportRequest) => json<{ replayed: boolean }>(`/api/admin/play-traces/${encodeURIComponent(id)}/report`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }),
+  version: (id: string, body: PlayTraceChoice & PlayTraceAuthority) => json<unknown>(`/api/admin/play-traces/${encodeURIComponent(id)}/version`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }),
+  forget: (id: string, body: PlayTraceAuthority) => json<unknown>(`/api/admin/play-traces/${encodeURIComponent(id)}/forget`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  }),
 };
 
 export const activityWork = {

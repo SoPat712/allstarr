@@ -9,6 +9,7 @@
     type MatchReviewItem,
     type MatchTarget,
     type ProviderDefinition,
+    type PlayTraceChoice,
   } from "$lib/api";
   import RecordingLyricsPicker from "$lib/components/RecordingLyricsPicker.svelte";
   import ArtworkSimilarity from "$lib/shelved/ArtworkSimilarity.svelte";
@@ -44,6 +45,7 @@
     showReject = true,
     onSaved,
     onReject,
+    onChoose,
   }: {
     open: boolean;
     match: MatchReviewItem | null;
@@ -53,6 +55,7 @@
     showReject?: boolean;
     onSaved: (message: string) => void | Promise<void>;
     onReject?: (match: MatchReviewItem, authorityScope: MatchAuthorityScope) => void;
+    onChoose?: (choice: PlayTraceChoice) => Promise<void>;
   } = $props();
 
   let preparedId = $state("");
@@ -81,7 +84,7 @@
       : results,
   );
   const selectedScopeEditable = $derived(
-    match ? canEditAuthorityScope(match, authorityScope) : false,
+    match ? !!onChoose || canEditAuthorityScope(match, authorityScope) : false,
   );
 
   $effect(() => {
@@ -193,7 +196,9 @@
     if (!match || saving || !selectedScopeEditable) return;
     saving = true;
     try {
-      await matchReview.resolve(match.externalSnapshotId, {
+      const choice: PlayTraceChoice = { targetType: "local", libraryTrackId };
+      if (onChoose) await onChoose(choice);
+      else await matchReview.resolve(match.externalSnapshotId, {
         targetType: "local",
         libraryTrackId,
         reason,
@@ -213,7 +218,9 @@
     if (!match || !target.externalProvider || !target.externalId || saving || !selectedScopeEditable) return;
     saving = true;
     try {
-      await matchReview.resolve(match.externalSnapshotId, {
+      const choice: PlayTraceChoice = { targetType: "provider", externalProvider: target.externalProvider, externalId: target.externalId };
+      if (onChoose) await onChoose(choice);
+      else await matchReview.resolve(match.externalSnapshotId, {
         targetType: "provider",
         externalProvider: target.externalProvider,
         externalId: target.externalId,
@@ -258,7 +265,7 @@
             <RecordingLyricsPicker recordingId={match.canonicalRecordingId} {providers} allowHousehold={allowedAuthorityScopes(match).includes("household")} />
           </div>
         {:else}
-        {#if allowedAuthorityScopes(match).includes("household")}
+        {#if !onChoose && allowedAuthorityScopes(match).includes("household")}
           <fieldset class="match-section authority-scope-picker" disabled={saving}>
             <legend>Save decision for</legend>
             <div class="authority-scope-options">
