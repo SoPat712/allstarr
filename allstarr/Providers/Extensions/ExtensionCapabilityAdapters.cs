@@ -628,10 +628,18 @@ public sealed class ExtensionLyricsCapabilityAdapter : ExtensionCapabilityAdapte
 public sealed class ExtensionHealthCapabilityAdapter : ExtensionCapabilityAdapterBase, IProviderHealthProbeCapability
 {
     private readonly ProviderDiagnosticSamples _diagnosticSamples = new();
+    private readonly ExtensionSandbox _sandbox;
     public ExtensionHealthCapabilityAdapter(ExtensionSandbox sandbox, ExtensionSdkManifest manifest,
-        IProviderAccountSecretAccessor? secrets = null) : base(sandbox, manifest, ProviderCapabilityKind.Health, secrets) { }
+        IProviderAccountSecretAccessor? secrets = null) : base(sandbox, manifest, ProviderCapabilityKind.Health, secrets) => _sandbox = sandbox;
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Health;
     public async Task<ProviderOutcome<ProviderHealthProbeResult>> ProbeAsync(ProviderExecutionContext context, ProviderHealthProbeRequest request)
+    {
+        var result = await ProbeCoreAsync(context, request);
+        _sandbox.LogHealthProbeResult(context.Account?.AccountId, request.TargetCapability, result);
+        return result;
+    }
+
+    private async Task<ProviderOutcome<ProviderHealthProbeResult>> ProbeCoreAsync(ProviderExecutionContext context, ProviderHealthProbeRequest request)
     {
         var hook = request.TargetCapability switch { ProviderCapabilityKind.Metadata => "probeMetadata", ProviderCapabilityKind.Playlist => "probePlaylist", ProviderCapabilityKind.Streaming => "probeStreaming", ProviderCapabilityKind.Download => "probeDownload", ProviderCapabilityKind.Intelligence => "probeIntelligence", _ => "" };
         var started = Stopwatch.GetTimestamp();

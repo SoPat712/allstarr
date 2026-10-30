@@ -650,6 +650,8 @@ public class ExtensionSandbox
     private readonly ILogger _logger;
     private readonly Action<string, string>? _logSink;
     private readonly object _engineLock = new();
+    private readonly Dictionary<(Guid? AccountId, ProviderCapabilityKind Capability),
+        (bool Failing, DateTimeOffset LastLoggedAt, int RepeatedFailures)> _probeLogStates = new();
     private bool _cleanupCompleted;
     private readonly ExtensionHostBridge _hostBridge;
     private readonly TimeSpan _hookTimeout;
@@ -915,7 +917,8 @@ public class ExtensionSandbox
         {
             var callerToken = ExtensionArtifactInvocationScope.Current?.CancellationToken ?? cancellationToken;
             using var budget = new ExtensionInvocationBudget(hook == "download" ? _downloadTimeout : _hookTimeout, callerToken, _timeProvider,
-                hook == "download", resolutionDeadline);
+                hook == "download", resolutionDeadline,
+                isHealthProbe: hook is "probeMetadata" or "probePlaylist" or "probeStreaming" or "probeDownload" or "probeIntelligence");
             try
             {
                 budget.Check();
@@ -962,7 +965,8 @@ public class ExtensionSandbox
         };
         if (limit == null) return false;
         exception.Data[InvocationLimitLogged] = true;
-        _logger.LogWarning("Extension {ExtensionId} operation {Operation} stopped by {Limit} limit", Id, operation, limit);
+        if (ExtensionInvocationBudget.Current?.IsHealthProbe != true)
+            _logger.LogWarning("Extension {ExtensionId} operation {Operation} stopped by {Limit} limit", Id, operation, limit);
         _logSink?.Invoke("warn", $"Extension {Id} operation {operation} stopped by {limit} limit");
         return true;
     }
@@ -972,6 +976,34 @@ public class ExtensionSandbox
         if (exception.Message.Contains(ExtensionDownloadPostProcessor.FailureMessage, StringComparison.Ordinal)) return;
         if (exception.Data.Contains(InvocationLimitLogged)) return;
         _logger.LogWarning(exception, "Extension download failed for {ProviderId}: {Reason}", Id, SafeFailureReason(exception.Message));
+    }
+
+    internal void LogHealthProbeResult(Guid? accountId, ProviderCapabilityKind capability,
+        ProviderOutcome<ProviderHealthProbeResult> outcome)
+    {
+        if (outcome.Error?.Kind is ProviderErrorKind.Canceled or ProviderErrorKind.NotSupported) return;
+        var failing = !outcome.IsSuccess || outcome.RequireValue().Status != ProviderProbeStatus.Healthy;
+        var reason = SafeFailureReason(outcome.IsSuccess ? outcome.RequireValue().SafeCode : outcome.Error?.Code);
+        var now = _timeProvider.GetUtcNow();
+        lock (_engineLock)
+        {
+            var key = (accountId, capability);
+            var known = _probeLogStates.TryGetValue(key, out var previous);
+            var repeated = known && previous.Failing && failing ? previous.RepeatedFailures + 1 : 0;
+            if (failing && (!known || !previous.Failing || now - previous.LastLoggedAt >= TimeSpan.FromHours(1)))
+            {
+                _logger.LogWarning("Extension {ExtensionId} {Capability} health probe failing for account {AccountId}: {Reason}; {RepeatedFailures} repeated failures since the last report",
+                    Id, capability, accountId, reason, repeated);
+                _probeLogStates[key] = (true, now, 0);
+            }
+            else if (!failing && known && previous.Failing)
+            {
+                _logger.LogInformation("Extension {ExtensionId} {Capability} health probe recovered for account {AccountId}",
+                    Id, capability, accountId);
+                _probeLogStates[key] = (false, now, 0);
+            }
+            else _probeLogStates[key] = (failing, previous.LastLoggedAt, repeated);
+        }
     }
 
     // Extension errors are provider text: keep the reason readable but drop links (which can carry tokens) and bound it.
@@ -1473,6 +1505,8 @@ public partial class ExtensionHostBridge
         if (suppressedCount > 0)
             message = $"{message} ({suppressedCount} equivalent events suppressed.)";
         _permissions.LogSink?.Invoke(level, message);
+        // Probe results are reported once after all sample attempts; retain the UI diagnostics.
+        if (ExtensionInvocationBudget.Current?.IsHealthProbe == true) return;
         switch (level.ToLowerInvariant())
         {
             case "error":
@@ -2114,9 +2148,10 @@ public partial class ExtensionHostBridge
             _ => "Request preparation or response processing failed."
         };
         var normalizedMethod = method.Trim().ToUpperInvariant();
-        _logger.LogWarning(
-            "Extension fetch failed for {ExtensionId}: {Method} {Host}: {Reason}",
-            _extensionId, normalizedMethod, host, reason);
+        if (ExtensionInvocationBudget.Current?.IsHealthProbe != true)
+            _logger.LogWarning(
+                "Extension fetch failed for {ExtensionId}: {Method} {Host}: {Reason}",
+                _extensionId, normalizedMethod, host, reason);
         _permissions.LogSink?.Invoke("warn", $"Extension fetch failed for {_extensionId}: {normalizedMethod} {host}: {reason}");
     }
 
@@ -2196,7 +2231,7 @@ public partial class ExtensionHostBridge
                 recovered = state;
         }
 
-        if (recovered != null)
+        if (recovered != null && ExtensionInvocationBudget.Current?.IsHealthProbe != true)
         {
             _logger.LogInformation(
                 "Extension provider route recovered {EventCode} for {ExtensionId} after HTTP {StatusCode}",
@@ -2239,7 +2274,7 @@ public partial class ExtensionHostBridge
                 statusCode);
         }
 
-        if (openedCooldown is { } duration)
+        if (openedCooldown is { } duration && ExtensionInvocationBudget.Current?.IsHealthProbe != true)
         {
             _logger.LogWarning(
                 "Extension provider route paused {EventCode} for {ExtensionId}: {Method} {Host}{Path} returned HTTP {StatusCode}; retrying after {RetryAfterSeconds}s",
