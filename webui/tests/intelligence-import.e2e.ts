@@ -48,6 +48,7 @@ async function mockImport(page: Page, options: { lastfmAccount?: boolean; public
         { id: "lastfm", name: "Last.fm", categories: ["playlist"], settings: [] },
         { id: "jellyfin", name: "Jellyfin", categories: ["streaming"], settings: [] },
       ] });
+    if (path === "/api/admin/mixes") return reply([]);
     if (path === "/api/admin/playlist-sources") return reply({
       accounts: options.lastfmAccount === false ? [] : [{ id: lastfmAccountId, providerId: "lastfm",
         displayName: "My Last.fm", ownerDisplayName: "Alex", accessLabel: "Personal account", scope: "personal" }],
