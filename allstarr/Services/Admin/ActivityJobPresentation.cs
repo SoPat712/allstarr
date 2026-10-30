@@ -34,11 +34,24 @@ internal static class ActivityJobPresentation
         job.State == DurableJobState.RetryScheduled && (job.LastAttemptOutcome == null || job.LastAttemptOutcome.ToLower() != "deferred") ||
         job.LastAttemptOutcome != null && FailureOutcomes.Contains(job.LastAttemptOutcome.ToLower()));
 
-    public static IQueryable<AuditEventRecord> HistoryAudits(IQueryable<AuditEventRecord> audits, IQueryable<DurableJobRecord> jobs) => audits.Where(audit =>
-        audit.Category != "job-attempt" && audit.Category != "job-progress" || FailureOutcomes.Contains(audit.Outcome.ToLower()) ||
-        !jobs.Any(job => RoutineJobTypes.Contains(job.Type.ToLower()) && job.OwnerUserId == audit.ActorUserId &&
-            audit.SubjectType == "job" && audit.SubjectId != null &&
-            audit.SubjectId.Replace("-", "").ToUpper() == job.Id.ToString().Replace("-", "").ToUpper()));
+    // Normalize the audit reference, leaving the stored job ID available for an indexed lookup.
+    public static IQueryable<AuditEventRecord> HistoryAudits(AllstarrDbContext db) => db.AuditEvents.FromSqlInterpolated($"""
+        SELECT a.* FROM audit_events AS a
+        WHERE a."Category" NOT IN ('job-attempt', 'job-progress')
+            OR lower(a."Outcome") IN (SELECT value FROM json_each({JsonSerializer.Serialize(FailureOutcomes)}))
+            OR NOT EXISTS (
+                SELECT 1 FROM durable_jobs AS j
+                WHERE j."Id" = upper(
+                    substr(replace(a."SubjectId", '-', ''), 1, 8) || '-' ||
+                    substr(replace(a."SubjectId", '-', ''), 9, 4) || '-' ||
+                    substr(replace(a."SubjectId", '-', ''), 13, 4) || '-' ||
+                    substr(replace(a."SubjectId", '-', ''), 17, 4) || '-' ||
+                    substr(replace(a."SubjectId", '-', ''), 21, 12))
+                    AND length(replace(a."SubjectId", '-', '')) = 32
+                    AND j."OwnerUserId" IS a."ActorUserId"
+                    AND a."SubjectType" = 'job'
+                    AND lower(j."Type") IN (SELECT value FROM json_each({JsonSerializer.Serialize(RoutineJobTypes)})))
+        """).AsNoTracking();
 
     public static bool ShowAuditInHistory(AuditEventRecord audit, DurableJobRecord job) =>
         audit.Category is not ("job-attempt" or "job-progress") || !RoutineJobTypes.Contains(job.Type, StringComparer.OrdinalIgnoreCase) ||

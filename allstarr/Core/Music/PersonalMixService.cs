@@ -64,13 +64,19 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     private async Task<PersonalMixDocument> LoadAsync(AllstarrDbContext db, UserRecord user, CancellationToken token)
     {
         var row = await RowAsync(db, user, token);
-        var document = row == null ? new() { AppsOptInVersion = 1 } : JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!;
-        if (document.AppsOptInVersion < 1)
+        var document = row == null ? new() { AppsOptInVersion = 2 } : JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!;
+        if (document.AppsOptInVersion < 2)
         {
-            foreach (var key in document.Mixes.Keys.ToArray())
-                if (document.Mixes[key].Kind != "custom") document.Mixes[key] = document.Mixes[key] with { ShowInApps = false };
-            document.ExternalShowInApps.Clear();
-            document.AppsOptInVersion = 1;
+            if (document.AppsOptInVersion < 1)
+                foreach (var key in document.Mixes.Keys.ToArray())
+                    if (document.Mixes[key].Kind != "custom") document.Mixes[key] = document.Mixes[key] with { ShowInApps = false };
+            var links = await db.PlaylistLinks.AsNoTracking().Where(link => link.OwnerUserId == user.Id &&
+                link.TargetProtocol == user.BackendType && link.TargetBackendInstanceId == user.BackendInstanceId &&
+                db.ProviderAccounts.Any(account => account.Id == link.ProviderAccountId &&
+                    account.OwnerUserId == user.Id && account.ProviderId == link.SourceProviderId)).ToArrayAsync(token);
+            // External visibility was stored on the link before the separate app choices existed.
+            foreach (var link in links.Where(IsExternalLink)) document.ExternalShowInApps.TryAdd(link.Id, link.Enabled);
+            document.AppsOptInVersion = 2;
             await SaveAsync(db, user, document, token);
         }
         var missing = PersonalMixRules.Kinds.Where(kind => !document.Mixes.ContainsKey(kind)).ToArray();
