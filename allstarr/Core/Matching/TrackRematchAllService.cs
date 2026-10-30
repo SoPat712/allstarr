@@ -1,3 +1,4 @@
+using System.Data;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -5,6 +6,7 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Jobs;
+using allstarr.Core.ManagedFiles;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
@@ -94,31 +96,32 @@ public sealed class TrackRematchAllService(
     {
         var cutoff = clock.UtcNow;
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable, cancellationToken);
+        if (await db.Jobs.AsNoTracking().AnyAsync(item =>
+                item.Type == TrackRematchJobHandler.Type &&
+                item.IdempotencyKey.StartsWith("track-rematch-all:algorithm:") &&
+                (item.State == DurableJobState.Pending || item.State == DurableJobState.Running ||
+                 item.State == DurableJobState.RetryScheduled), cancellationToken))
+            return 0;
         var owners = await db.ExternalMetadataSnapshots.AsNoTracking()
             .Where(item => item.ResourceKind == "track")
             .Select(item => item.OwnerUserId)
             .Distinct()
             .ToArrayAsync(cancellationToken);
-        var queued = 0;
         foreach (var ownerUserId in owners)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var scope = await ReadScopeAsync(
-                ownerUserId, cutoff, cancellationToken);
+                ownerUserId, cutoff, cancellationToken, algorithmRollout: true);
             var targets = scope.Groups.Where(item =>
                     !item.ProtectedManual &&
-                    (item.Decision == null ||
-                     item.Decision.MatcherVersion != TrackMatchDecisionEngine.AlgorithmVersion))
+                    item.Decision != null &&
+                    item.Decision.MatcherVersion != TrackMatchDecisionEngine.AlgorithmVersion)
                 .ToArray();
             if (targets.Length == 0) continue;
             var requestKey =
-                $"algorithm:{TrackMatchDecisionEngine.AlgorithmVersion}:{scope.SnapshotFingerprint}";
-            if (await db.Jobs.AsNoTracking().AnyAsync(item =>
-                    item.OwnerUserId == ownerUserId &&
-                    item.Type == TrackRematchJobHandler.Type &&
-                    item.IdempotencyKey == $"track-rematch-all:{requestKey}",
-                    cancellationToken))
-                continue;
+                $"algorithm:{TrackMatchDecisionEngine.AlgorithmVersion}:{Guid.CreateVersion7():N}";
             var result = await EnqueueAsync(
                 ownerUserId,
                 requestKey,
@@ -127,20 +130,25 @@ public sealed class TrackRematchAllService(
                 ownerUserId,
                 targets.Length,
                 false,
-                cancellationToken);
-            if (result.Created) queued++;
+                cancellationToken,
+                db);
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return result.Created ? 1 : 0;
         }
-        return queued;
+        return 0;
     }
 
     internal async Task<TrackRematchWork> ReadWorkAsync(
         TrackRematchAllJobPayload payload,
         CancellationToken cancellationToken)
     {
+        var algorithmRollout = !payload.Force && payload.Scope == TrackRematchScopes.Algorithm;
         var scope = await ReadScopeAsync(
-            payload.ScopeOwnerUserId, payload.SnapshotCutoff, cancellationToken);
+            payload.ScopeOwnerUserId, algorithmRollout ? clock.UtcNow : payload.SnapshotCutoff,
+            cancellationToken, algorithmRollout);
         var operationCorrelation = OperationCorrelation(payload.OperationId);
-        if (!scope.SnapshotFingerprint.Equals(payload.SnapshotFingerprint, StringComparison.Ordinal))
+        if (!algorithmRollout && !scope.SnapshotFingerprint.Equals(payload.SnapshotFingerprint, StringComparison.Ordinal))
             return new([], operationCorrelation, true);
         var skippedHashes = await ReadPermanentSkipsAsync(
             operationCorrelation, cancellationToken);
@@ -149,7 +157,7 @@ public sealed class TrackRematchAllService(
             .Where(item => payload.Force
                 ? item.Decision?.CorrelationId != operationCorrelation ||
                   item.Decision.MatcherVersion != payload.TargetAlgorithmVersion
-                : item.Decision == null ||
+                : item.Decision != null &&
                   item.Decision.MatcherVersion != payload.TargetAlgorithmVersion)
             .Select(item => new TrackRematchWorkItem(
                 item.Snapshot,
@@ -176,10 +184,11 @@ public sealed class TrackRematchAllService(
         Guid? scopeOwnerUserId,
         int approvedCount,
         bool force,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AllstarrDbContext? db = null)
     {
         var operationId = OperationId($"{ownerUserId:N}:{requestKey}");
-        return jobs.EnqueueAsync(new DurableJobEnqueueRequest<TrackRematchAllJobPayload>(
+        var request = new DurableJobEnqueueRequest<TrackRematchAllJobPayload>(
             TrackRematchJobHandler.Type,
             $"track-rematch-all:{requestKey}",
             new(
@@ -192,15 +201,20 @@ public sealed class TrackRematchAllService(
                 force,
                 force ? TrackRematchScopes.All : TrackRematchScopes.Algorithm),
             OwnerUserId: ownerUserId,
+            Priority: force ? 0 : -100,
             MaxAttempts: 25,
             MaxDeferrals: 10_000,
-            CorrelationId: OperationCorrelation(operationId)), cancellationToken);
+            CorrelationId: OperationCorrelation(operationId));
+        return db == null
+            ? jobs.EnqueueAsync(request, cancellationToken)
+            : jobs.EnqueueInExistingTransactionAsync(db, request, cancellationToken);
     }
 
     private async Task<TrackRematchScope> ReadScopeAsync(
         Guid? ownerUserId,
         DateTimeOffset snapshotCutoff,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool algorithmRollout = false)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var publicProviders = registry?.Providers.Where(item => Core.Playlists.PersistenceGuard.IsPublicPlaylistSource(registry, item.Id))
@@ -266,12 +280,27 @@ public sealed class TrackRematchAllService(
             .ToArrayAsync(cancellationToken);
         var decisionsBySnapshot = decisions.ToDictionary(item => item.ExternalSnapshotId);
         var protectedSnapshots = await ManualTrackOverrides.ProtectedSnapshotIdsAsync(db, snapshotIds, cancellationToken);
+        if (algorithmRollout)
+        {
+            var keptRecordingIds = await db.Set<RecordingKeptRouteEntity>().AsNoTracking()
+                .Select(item => item.CanonicalRecordingId).ToArrayAsync(cancellationToken);
+            protectedSnapshots.UnionWith(decisions.Where(item =>
+                    item.CanonicalRecordingId.HasValue && keptRecordingIds.Contains(item.CanonicalRecordingId.Value))
+                .Select(item => item.ExternalSnapshotId));
+            var keptSnapshots = await db.ExternalMetadataSnapshots.AsNoTracking()
+                .Where(snapshot => snapshotIds.Contains(snapshot.Id) &&
+                    db.ProviderTrackIdentities.Any(identity => identity.Id == snapshot.ProviderTrackIdentityId &&
+                        keptRecordingIds.Contains(identity.CanonicalRecordingId)))
+                .Select(snapshot => snapshot.Id).ToArrayAsync(cancellationToken);
+            protectedSnapshots.UnionWith(keptSnapshots);
+        }
         var groups = snapshotGroups.Select(group => new TrackRematchGroup(
                 group.Current,
                 group.Snapshots.Select(item => decisionsBySnapshot.GetValueOrDefault(item.Id))
                     .Where(item => item != null).OrderByDescending(item => item!.DecidedAt)
                     .ThenByDescending(item => item!.DecisionVersion).FirstOrDefault(),
-                group.Snapshots.Any(item => protectedSnapshots.Contains(item.Id))))
+                group.Snapshots.Any(item => protectedSnapshots.Contains(item.Id) ||
+                    algorithmRollout && decisionsBySnapshot.GetValueOrDefault(item.Id)?.State == TrackMatchState.Pinned)))
             .ToArray();
         var snapshotFingerprint = Hash(string.Join('\n', groups
             .OrderBy(item => item.Snapshot.Id)
@@ -641,10 +670,12 @@ public sealed class TrackMatchAlgorithmRolloutService(
     TrackRematchAllService rematches,
     DurableStorageState storageState,
     ILogger<TrackMatchAlgorithmRolloutService> logger,
-    PlaylistMatchPublication? publications = null) : BackgroundService
+    PlaylistMatchPublication? publications = null,
+    TimeProvider? timeProvider = null) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var publishOnStartup = true;
         while (!stoppingToken.IsCancellationRequested)
         {
             if (storageState.GetSnapshot().Readiness != DurableStorageReadiness.Ready)
@@ -655,7 +686,8 @@ public sealed class TrackMatchAlgorithmRolloutService(
             try
             {
                 var queued = await rematches.QueueAlgorithmUpgradesAsync(stoppingToken);
-                if (publications != null) await publications.QueueAsync(stoppingToken);
+                if (publishOnStartup && publications != null) await publications.QueueAsync(stoppingToken);
+                publishOnStartup = false;
                 if (queued > 0)
                     logger.LogInformation(
                         "Queued {Count} matching algorithm rollout jobs for {AlgorithmVersion}",
@@ -671,7 +703,7 @@ public sealed class TrackMatchAlgorithmRolloutService(
                     "Matching algorithm rollout scan failed ({FailureKind})",
                     exception.GetType().Name);
             }
-            return;
+            await Task.Delay(TimeSpan.FromMinutes(10), timeProvider ?? TimeProvider.System, stoppingToken);
         }
     }
 }

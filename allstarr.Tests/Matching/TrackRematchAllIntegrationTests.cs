@@ -14,7 +14,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class TrackRematchAllIntegrationTests
+public sealed partial class TrackRematchAllIntegrationTests
 {
     [Theory]
     [InlineData(false, false)]
