@@ -2364,7 +2364,7 @@ test("Legacy Library links open their current shared views", async ({ page }) =>
   await mockApi(page);
   for (const route of ["#/library", "#/library/link", "#/library/injected", "#/library/external"]) {
     await page.goto(route);
-    await expect(page.getByText("Imported playlists", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Playlists", exact: true })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Playlists" })).toHaveAttribute("aria-selected", "true");
   }
   for (const route of ["#/library/missing", "#/library/migration"]) {
