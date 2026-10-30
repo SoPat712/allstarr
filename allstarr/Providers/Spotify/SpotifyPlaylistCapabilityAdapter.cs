@@ -75,6 +75,10 @@ public sealed partial class SpotifyPlaylistCapabilityAdapter : IProviderPlaylist
         _tokenExchange = new SpotifyWebTokenExchange(http, secrets, _settings, timeProvider ?? TimeProvider.System);
     }
 
+    public Task<ProviderOutcome<ProviderLibraryPage>> GetLibraryResourcesAsync(ProviderExecutionContext context,
+        string kind, ProviderPageRequest page) => ExecuteAsync(context,
+            (token, cancellationToken) => _pathfinder.GetLibraryResourcesAsync(token, kind, page, cancellationToken));
+
     public string ProviderId => StableProviderId;
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Playlist;
     public ProviderPlaylistMutationSupport MutationSupport { get; } = new(true, true);

@@ -14,6 +14,7 @@ namespace allstarr.Controllers;
 public sealed class CollectionMigrationsController(CollectionMigrationService migrations,
     AdminProtocolExecutionContextFactory contexts, IDbContextFactory<AllstarrDbContext> factory) : ControllerBase
 {
+    public sealed record ResourceChoiceRequest(string? ProviderId = null, string? ResourceId = null, bool Skip = false);
     public sealed record StartRequest(Guid ProviderAccountId, string RequestKey);
     public sealed record ChooseRequest(IReadOnlyList<MigrationSelection> Collections);
 
@@ -38,6 +39,14 @@ public sealed class CollectionMigrationsController(CollectionMigrationService mi
     public Task<IActionResult> Review(Guid id, [FromQuery] Guid collectionId, [FromQuery] int offset,
         [FromQuery] Guid? targetUserId, CancellationToken token, [FromQuery] int limit = 50) =>
         ExecuteAsync(async execution => Ok(await migrations.ReviewAsync(execution, id, collectionId, offset, limit, token)), targetUserId, token);
+
+    [HttpPost("{id:guid}/review/{collectionId:guid}/{entryId:guid}/choose")]
+    public Task<IActionResult> ChooseResource(Guid id, Guid collectionId, Guid entryId, [FromBody] ResourceChoiceRequest request,
+        [FromQuery] Guid? targetUserId, CancellationToken token) => ExecuteAsync(async execution =>
+        {
+            await migrations.ChooseResourceAsync(execution, id, collectionId, entryId, request.ProviderId, request.ResourceId, request.Skip, token);
+            return Ok();
+        }, targetUserId, token);
 
     [HttpPost("{id:guid}/choose")]
     public Task<IActionResult> Choose(Guid id, [FromBody] ChooseRequest request, [FromQuery] Guid? targetUserId, CancellationToken token) =>

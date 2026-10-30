@@ -352,8 +352,17 @@ public sealed record ProviderPlaylistMutationReceipt
     public IReadOnlyList<string> Warnings { get; }
 }
 
+public sealed record ProviderLibraryResource(string SourceId, string Title, string[] Artists, string[] ArtistIds,
+    string? ReleaseDate, int? TrackCount, string? ArtworkUrl, string? Upc = null, bool? IsExplicit = null,
+    string? Edition = null, string[]? Albums = null, string? MusicBrainzArtistId = null);
+public sealed record ProviderLibraryPage(IReadOnlyList<ProviderLibraryResource> Items, int Total, string? NextCursor);
+
 public interface IProviderPlaylistCapability : IProviderCapability
 {
+    Task<ProviderOutcome<ProviderLibraryPage>> GetLibraryResourcesAsync(ProviderExecutionContext context,
+        string kind, ProviderPageRequest page) => Task.FromResult(
+            ProviderOutcome<ProviderLibraryPage>.Failure(new(ProviderErrorKind.CapabilityUnavailable)));
+
     ProviderPlaylistMutationSupport MutationSupport => ProviderPlaylistMutationSupport.None;
 
     Task<ProviderOutcome<string>> GetSourceUserAsync(ProviderExecutionContext context) => Task.FromResult(

@@ -11,6 +11,7 @@ using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Sources;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Protocols;
+using allstarr.Core.Releases;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -58,6 +59,7 @@ public sealed class MigrationCollection
     public DateTimeOffset? CreateStartedAt { get; set; }
     public string[]? DestinationIdsBefore { get; set; }
     public string? Error { get; set; }
+    public List<MigrationResourceEntry>? Resources { get; set; }
 }
 public sealed record MigrationCollectionStatus(Guid Id, string SourceId, MigrationCollection Collection, MigrationCounts Counts)
 {
@@ -66,12 +68,12 @@ public sealed record MigrationCollectionStatus(Guid Id, string SourceId, Migrati
 public sealed record MigrationStatus(Guid Id, MigrationRun Run, IReadOnlyList<MigrationCollectionStatus> Collections,
     MigrationCounts Total, bool Provisional);
 public sealed record MigrationReviewItem(Guid CollectionId, Guid SourceEntryId, int Position, Guid ExternalSnapshotId,
-    JsonElement Metadata, TrackMatchRecord? Match, PlaylistSyncEntryResultRecord? Receipt, PersistedPlaylistPreviewEntry? Preview);
+    JsonElement Metadata, TrackMatchRecord? Match, PlaylistSyncEntryResultRecord? Receipt, PersistedPlaylistPreviewEntry? Preview, MigrationResourceEntry? Resource = null);
 
-public sealed class CollectionMigrationService(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs,
+public sealed partial class CollectionMigrationService(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs,
     IProviderRouter router, ITrackMatchRepository matches, IPlaylistPersistenceService playlists,
     PlaylistOrchestrationService orchestration, IBackendPlaylistTargetResolver targets, FavoriteActionPipeline favorites,
-    ProviderPlaylistSnapshotCollector collector, IPlatformClock clock, ITrackIdentityService identities) : IDurableJobHandler
+    ProviderPlaylistSnapshotCollector collector, IPlatformClock clock, ITrackIdentityService identities, IProtocolProviderGateway catalog, NewReleasesService releases) : IDurableJobHandler
 {
     public const string Type = "collection.migrate";
     public string JobType => Type;
@@ -148,6 +150,28 @@ public sealed class CollectionMigrationService(IDbContextFactory<AllstarrDbConte
         var likes = await source.Implementation.GetPlaylistTracksAsync(source.Context,
             new(new("spotify", ProviderResourceKind.Playlist, "liked-songs"), new(1)));
         if (!likes.IsSuccess) throw new InvalidOperationException("Liked Songs are temporarily unavailable.");
+        var resourceChoices = new List<object>();
+        var unsupported = new List<object>();
+        foreach (var (kind, name) in new[] { ("saved-albums", "Saved albums"), ("followed-artists", "Followed artists") })
+        {
+            var library = await source.Implementation.GetLibraryResourcesAsync(source.Context, kind, new(1));
+            if (!library.IsSuccess)
+            {
+                if (library.Error!.Kind is not (ProviderErrorKind.CapabilityUnavailable or ProviderErrorKind.NotSupported or ProviderErrorKind.PermanentFailure))
+                    throw new InvalidOperationException("Spotify library is temporarily unavailable.");
+                unsupported.Add(new { kind, support = "not-supported-yet", count = (int?)null });
+                continue;
+            }
+            resourceChoices.Add(new { sourceId = kind, Name = name, count = (int?)library.RequireValue().Total, kind, support = "available" });
+            if (!await db.Set<CollectionMigrationCollectionRecord>().AnyAsync(value => value.RunId == id && value.SourceId == kind, token))
+                db.Add(new CollectionMigrationCollectionRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    RunId = id,
+                    SourceId = kind,
+                    PayloadJson = JsonSerializer.Serialize(new MigrationCollection { Kind = kind, Name = name, Expected = library.RequireValue().Total, Resources = [] })
+                });
+        }
         var discovered = page.RequireValue().Items.Append(likes.RequireValue().Playlist).DistinctBy(item => item.Id.Value).ToArray();
         foreach (var item in discovered)
         {
@@ -169,17 +193,16 @@ public sealed class CollectionMigrationService(IDbContextFactory<AllstarrDbConte
         await db.SaveChangesAsync(token);
         return new
         {
-            items = discovered.Select(item => new
+            items = discovered.Select(item => (object)new
             {
                 sourceId = item.Id.Value,
                 item.Name,
                 count = item.TrackCount,
                 kind = item.Id.Value == "liked-songs" ? "liked-songs" : "playlist",
                 support = "available"
-            }),
+            }).Concat(resourceChoices),
             page.RequireValue().NextCursor,
-            unsupported = new[] { new { kind = "saved-albums", support = "not-supported-yet", count = (int?)null },
-                new { kind = "followed-artists", support = "not-supported-yet", count = (int?)null } }
+            unsupported
         };
     }
 
@@ -199,8 +222,8 @@ public sealed class CollectionMigrationService(IDbContextFactory<AllstarrDbConte
             if (run.State != "choosing" || selections is not { Count: > 0 and <= 1000 } ||
                 selections.Select(item => item.SourceId).Distinct().Count() != selections.Count) throw new InvalidOperationException("Choose discovered collections once.");
             var rows = await db.Set<CollectionMigrationCollectionRecord>().Where(item => item.RunId == id).ToArrayAsync(token);
-            if (selections.Any(item => !rows.Any(row => row.SourceId == item.SourceId) || item.SourceId == "liked-songs" && item.KeepInSync))
-                throw new ArgumentException("Select discovered playlists or Liked Songs.");
+            if (selections.Any(item => !rows.Any(row => row.SourceId == item.SourceId) || item.SourceId is "liked-songs" or "saved-albums" or "followed-artists" && item.KeepInSync))
+                throw new ArgumentException("Select discovered collections.");
             foreach (var row in rows)
             {
                 var collection = Read<MigrationCollection>(row.PayloadJson);
@@ -255,6 +278,15 @@ public sealed class CollectionMigrationService(IDbContextFactory<AllstarrDbConte
         {
             var collection = Read<MigrationCollection>(row.PayloadJson);
             int selected = 0, local = 0, streamed = 0, review = 0, unmatched = 0, unsupported = 0, skipped = 0;
+            if (collection.Resources != null)
+            {
+                selected = collection.Resources.Count;
+                streamed = collection.Resources.Count(item => item.State == "accepted");
+                review = collection.Resources.Count(item => item.State == "review");
+                unmatched = collection.Resources.Count(item => item.State == "unmatched");
+                skipped = collection.Resources.Count(item => item.State == "skipped");
+                collection.Resources = null;
+            }
             if (collection.SnapshotId != null)
                 for (var offset = 0; offset < collection.Read; offset += 100)
                 {
@@ -285,6 +317,16 @@ public sealed class CollectionMigrationService(IDbContextFactory<AllstarrDbConte
         var row = await db.Set<CollectionMigrationCollectionRecord>().SingleOrDefaultAsync(item => item.Id == collectionId && item.RunId == id, token)
             ?? throw new KeyNotFoundException();
         var collection = Read<MigrationCollection>(row.PayloadJson);
+        if (collection.Resources != null) return collection.Resources.Skip(Math.Max(0, offset)).Take(Math.Clamp(limit, 1, 100))
+            .Select((item, index) => new MigrationReviewItem(row.Id, item.Id, Math.Max(0, offset) + index, Guid.Empty,
+                JsonSerializer.SerializeToElement(new
+                {
+                    item.Source.Title,
+                    item.Source.Artists,
+                    item.Source.ArtworkUrl,
+                    Year = ReleaseYear(item.Source.ReleaseDate),
+                    item.Source.TrackCount
+                }), null, null, null, item)).ToArray();
         var result = new List<MigrationReviewItem>();
         var preview = collection.SnapshotId == null ? null : await playlists.ReadPreviewPageAsync(execution,
             collection.LinkId!.Value, collection.SnapshotId.Value, offset, limit, token);
@@ -325,7 +367,8 @@ public sealed class CollectionMigrationService(IDbContextFactory<AllstarrDbConte
         {
             if (!await context.ReportProgressAsync(new(Type, "Moving your Spotify collection.", collection.Read, collection.Expected, "spotify", collection.Name), token))
                 return DurableJobCompletion.Cancelled();
-            if (collection.State is "collecting" or "verifying")
+            if (collection.Resources != null) await ProcessResourcesAsync(db, execution, record, run, row, collection, token);
+            else if (collection.State is "collecting" or "verifying")
             {
                 var source = await SourceAsync(execution, await AccountAsync(db, user.Id, run.ProviderAccountId, token), token);
                 await VerifySourceAsync(source, run, token);

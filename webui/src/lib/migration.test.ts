@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collectionCountsLine, collectionStateLabel, migrationError, migrationProgress, migrationStep, needsReview, reviewReason, songCount, addedCountLine, remainingCountLine, moveCountLine, readyToMove } from "./migration";
+import { collectionCountsLine, collectionStateLabel, migrationError, migrationProgress, migrationStep, needsReview, reviewReason, songCount, addedCountLine, remainingCountLine, moveCountLine, readyToMove, collectionChoiceOrder, collectionCount, unavailableCollectionsLine, resourceDetails } from "./migration";
 import type { MigrationCollectionStatus, MigrationReviewItem, MigrationStatus } from "./api";
 
 const counts = { selected: 12, local: 3, streamed: 5, accepted: 8, review: 2, unmatched: 1, unsupported: 1, skipped: 0 };
@@ -9,7 +9,7 @@ const status = { id: "run", run: { providerAccountId: "account", state: "collect
 describe("music import copy", () => {
   it("uses plain state names and keeps interrupted work on its saved step", () => {
     expect(["collecting", "verifying", "matching", "review", "waiting", "cancelled"].map(collectionStateLabel))
-      .toEqual(["Reading from Spotify", "Checking songs", "Checking songs", "Ready to review", "Waiting", "Stopped"]);
+      .toEqual(["Reading from Spotify", "Checking music", "Checking music", "Ready to review", "Waiting", "Stopped"]);
     expect(migrationStep(status)).toBe(1);
     expect(migrationStep({ ...status, run: { ...status.run, state: "review" } })).toBe(1);
     expect(migrationStep({ ...status, run: { ...status.run, state: "waiting", phase: "applying" } })).toBe(3);
@@ -27,11 +27,15 @@ describe("music import copy", () => {
     expect([0, 1, 2].map(songCount)).toEqual(["0 songs", "1 song", "2 songs"]);
     expect([0, 1, 2].map(n => addedCountLine(n, "playlist"))).toEqual(["0 songs added", "1 song added", "2 songs added"]);
     expect([0, 1, 2].map(n => addedCountLine(n, "liked-songs"))).toEqual(["0 hearts added", "1 heart added", "2 hearts added"]);
-    expect([0, 1, 2].map(remainingCountLine)).toEqual(["0 songs still need a look", "1 song still needs a look", "2 songs still need a look"]);
+    expect([0, 1, 2].map(n => remainingCountLine(n))).toEqual(["0 songs still need a look", "1 song still needs a look", "2 songs still need a look"]);
     expect(moveCountLine(1)).toBe("Move 1 song now");
     expect(moveCountLine(2)).toBe("Move 2 songs now");
     expect(moveCountLine(1, true)).toBe("Move 1 more song");
     expect(moveCountLine(2, true)).toBe("Move 2 more songs");
+    expect(remainingCountLine(1, true)).toBe("1 item still needs a look");
+    expect(remainingCountLine(2, true)).toBe("2 items still need a look");
+    expect(moveCountLine(1, false, true)).toBe("Move 1 item now");
+    expect(moveCountLine(2, true, true)).toBe("Move 2 more items");
   });
   it("offers another move only for accepted songs without a completed membership receipt", () => {
     const row = { metadata: { title: "Song" }, preview: { state: 2, status: 0, resolvedRoute: { kind: 1 } }, receipt: null } as MigrationReviewItem;
@@ -43,6 +47,35 @@ describe("music import copy", () => {
     expect(readyToMove({ ...row, preview: { state: 0, status: 2, resolvedRoute: null } })).toBe(false);
     expect(readyToMove({ ...row, preview: { state: 3, status: 5, resolvedRoute: null } })).toBe(false);
     expect(readyToMove({ ...row, metadata: { title: null } })).toBe(false);
+  });
+  it("orders and counts saved collections and explains only unavailable kinds", () => {
+    expect(["playlist", "followed-artists", "liked-songs", "saved-albums"].sort((a, b) => collectionChoiceOrder(a) - collectionChoiceOrder(b)))
+      .toEqual(["liked-songs", "saved-albums", "followed-artists", "playlist"]);
+    expect(collectionCount(1, "saved-albums")).toBe("1 album");
+    expect(collectionCount(2, "followed-artists")).toBe("2 artists");
+    expect(collectionCount(0, "playlist")).toBe("0 songs");
+    expect(addedCountLine(1, "saved-albums")).toBe("1 album added");
+    expect(addedCountLine(2, "saved-albums")).toBe("2 albums added");
+    expect(addedCountLine(1, "followed-artists")).toBe("1 artist followed");
+    expect(addedCountLine(2, "followed-artists")).toBe("2 artists followed");
+    expect(unavailableCollectionsLine([])).toBe("");
+    expect(unavailableCollectionsLine([{ kind: "saved-albums" }])).toBe("Saved albums can't be moved yet.");
+    expect(unavailableCollectionsLine([{ kind: "followed-artists" }])).toBe("Followed artists can't be moved yet.");
+    expect(unavailableCollectionsLine([{ kind: "saved-albums" }, { kind: "followed-artists" }])).toBe("Saved albums and followed artists can't be moved yet.");
+    expect(resourceDetails({ year: 2020, trackCount: 1, albums: ["Evening"] })).toBe("2020 · 1 song · Evening");
+    expect(resourceDetails({ year: null, trackCount: null, albums: [] })).toBe("");
+  });
+  it("reviews collection resources and moves only accepted unapplied resources", () => {
+    const row: MigrationReviewItem = { collectionId: "albums", sourceEntryId: "album-1", position: 0, externalSnapshotId: "", preview: null, receipt: null, metadata: { title: "Evening" }, resource: { kind: "saved-albums", state: "review", candidates: [], chosen: null, applied: false } };
+    expect(needsReview(row)).toBe(true);
+    expect(reviewReason(row)).toBe("Choose the right album.");
+    expect(readyToMove(row)).toBe(false);
+    expect(needsReview({ ...row, resource: { ...row.resource!, state: "unmatched" } })).toBe(true);
+    expect(needsReview({ ...row, resource: { ...row.resource!, state: "skipped" } })).toBe(false);
+    expect(needsReview({ ...row, resource: { ...row.resource!, state: "accepted" } })).toBe(false);
+    expect(readyToMove({ ...row, resource: { ...row.resource!, state: "accepted" } })).toBe(true);
+    expect(readyToMove({ ...row, resource: { ...row.resource!, state: "accepted", applied: true } })).toBe(false);
+    expect(reviewReason({ ...row, resource: { ...row.resource!, kind: "followed-artists", state: "unmatched" } })).toBe("No artist found yet.");
   });
   it("uses known enumeration coverage and stays indeterminate for unknown sizes", () => {
     expect(migrationProgress(status)).toBe(50);
