@@ -196,6 +196,44 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "Sqlite")]
+    public async Task StoredDurationProvenanceReachesMatching(bool rematch)
+    {
+        await using var fixture = await Fixture.CreateAsync(
+            "{\"Title\":\"Track Melodies\",\"Artist\":\"Artist\",\"Album\":\"Album\",\"DurationMilliseconds\":255000,\"durationProvenance\":\"listenbrainz\"}");
+        await using (var setup = fixture.Factory.CreateDbContext())
+        {
+            setup.LibraryTracks.Add(new LibraryTrackRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = fixture.Owner,
+                BackendInstanceId = "backend",
+                BackendLibraryId = "music",
+                BackendItemId = "local",
+                Title = "Track Melodies",
+                Artist = "Artist",
+                Album = "Album",
+                DurationMilliseconds = 222000,
+                Protocol = "jellyfin"
+            });
+            await setup.SaveChangesAsync();
+        }
+        if (rematch)
+            Assert.True((await fixture.Service.RematchSnapshotAsync(new(fixture.Owner, false), fixture.SnapshotId, "duration")).Succeeded);
+        else
+            await fixture.Service.MatchSourceTracksAsync(
+                [new("spotify", "source", "Track Melodies", "Artist", "Album", 255000, null, null, "1")], "duration");
+        await using var saved = fixture.Factory.CreateDbContext();
+        var latest = await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        Assert.Equal(TrackMatchState.Accepted, latest.State);
+        var scores = JsonSerializer.Deserialize<TrackMatchCandidateScore[]>(latest.CandidateResultsJson)!;
+        Assert.Equal("listenbrainz", scores[0].Source!.DurationProvenance);
+        Assert.Contains("weak_source_duration", scores[0].Reasons);
+    }
+
+    [Theory]
     [InlineData(ProviderUseMode.Automatic, true)]
     [InlineData(ProviderUseMode.ManualOnly, false)]
     [InlineData(ProviderUseMode.Off, false)]

@@ -1061,5 +1061,168 @@
     ],
     "expectedState": "Accepted",
     "expectedCandidate": 1
+  },
+  {
+    "name": "feel-good-inc-weak-duration-demon-days",
+    "priority": [
+      "apple-musickit",
+      "deezer"
+    ],
+    "source": {
+      "title": "Feel Good Inc.",
+      "artist": "Gorillaz",
+      "album": "Demon Days",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 255000,
+      "isExplicit": null,
+      "durationProvenance": "listenbrainz"
+    },
+    "candidates": [
+      {
+        "title": "Feel Good Inc. (feat. David Jolicoeur, Kelvin Mercer & Vincent Mason)",
+        "artist": "Gorillaz & De La Soul",
+        "album": "Demon Days",
+        "provider": "apple-download",
+        "durationMilliseconds": 221000,
+        "isExplicit": null
+      },
+      {
+        "title": "Feel Good Inc",
+        "artist": "Gorillaz",
+        "album": "Feel Good Inc - EP",
+        "provider": "apple-download",
+        "durationMilliseconds": 222000,
+        "isExplicit": null
+      },
+      {
+        "title": "Feel Good Inc.",
+        "artist": "Gorillaz",
+        "album": "Demon Days",
+        "provider": "deezer",
+        "durationMilliseconds": 222000,
+        "isExplicit": null
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "danza-kuduro-weak-duration-album",
+    "priority": [
+      "apple-musickit",
+      "deezer"
+    ],
+    "source": {
+      "title": "Danza kuduro",
+      "artist": "Don Omar feat. Lucenzo",
+      "album": "Don Omar Presents: Meet the Orphans",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 236000,
+      "isExplicit": null,
+      "durationProvenance": "listenbrainz"
+    },
+    "candidates": [
+      {
+        "title": "Danza Kuduro (feat. Lucenzo)",
+        "artist": "Don Omar",
+        "album": "Meet The Orphans (Deluxe Edition)",
+        "provider": "apple-download",
+        "durationMilliseconds": 198000,
+        "isExplicit": null
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "with-you-keeps-leading-word",
+    "priority": [
+      "apple-musickit",
+      "deezer"
+    ],
+    "source": {
+      "title": "With You",
+      "artist": "Chris Brown",
+      "album": null,
+      "provider": "listenbrainz",
+      "durationMilliseconds": null,
+      "isExplicit": null
+    },
+    "candidates": [
+      {
+        "title": "With You",
+        "artist": "Chris Brown",
+        "album": "Exclusive (Expanded Edition)",
+        "provider": "apple-download",
+        "durationMilliseconds": null,
+        "isExplicit": null
+      },
+      {
+        "title": "You",
+        "artist": "Chris Brown",
+        "album": "Exclusive (Expanded Edition)",
+        "provider": "apple-download",
+        "durationMilliseconds": null,
+        "isExplicit": null
+      }
+    ],
+    "expectedState": "Accepted",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "let-me-love-you-weak-duration-original",
+    "priority": [
+      "apple-musickit",
+      "deezer"
+    ],
+    "source": {
+      "title": "Let Me Love You",
+      "artist": "DJ Snake",
+      "album": "Let Me Love You",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 182000,
+      "isExplicit": null,
+      "durationProvenance": "listenbrainz"
+    },
+    "candidates": [
+      {
+        "title": "Let Me Love You (feat. Justin Bieber)",
+        "artist": "DJ Snake",
+        "album": "Encore",
+        "provider": "apple-download",
+        "durationMilliseconds": 205000,
+        "isExplicit": null
+      }
+    ],
+    "expectedState": "Suggested",
+    "expectedCandidate": 0
+  },
+  {
+    "name": "weak-duration-different-album-single",
+    "priority": [
+      "apple-musickit",
+      "deezer"
+    ],
+    "source": {
+      "title": "Feel Good Inc.",
+      "artist": "Gorillaz",
+      "album": "Demon Days",
+      "provider": "listenbrainz",
+      "durationMilliseconds": 255000,
+      "isExplicit": null,
+      "durationProvenance": "listenbrainz"
+    },
+    "candidates": [
+      {
+        "title": "Feel Good Inc",
+        "artist": "Gorillaz",
+        "album": "Feel Good Inc - EP",
+        "provider": "apple-download",
+        "durationMilliseconds": 222000,
+        "isExplicit": null
+      }
+    ],
+    "expectedState": "Suggested",
+    "expectedCandidate": 0
   }
 ]

@@ -1066,7 +1066,7 @@ public sealed class TrackMatchesController(
                 projection.PrimaryProviderRoute?.IsManual == true));
     }
 
-    private static (string? Title, string? Artist, string? Album, string? ArtworkUrl, string? Isrc, long? DurationMilliseconds, bool? IsExplicit) Metadata(string json)
+    private static (string? Title, string? Artist, string? Album, string? ArtworkUrl, string? Isrc, long? DurationMilliseconds, bool? IsExplicit, string? DurationProvenance) Metadata(string json)
     {
         try
         {
@@ -1082,9 +1082,10 @@ public sealed class TrackMatchesController(
                     Text(root, "artworkReference") ?? Text(root, "ArtworkReference"),
                 Text(root, "isrc") ?? Text(root, "Isrc") ?? Text(root, "ISRC"),
                 DurationMilliseconds(root),
-                TrackSnapshotMetadata.IsExplicit(root));
+                TrackSnapshotMetadata.IsExplicit(root),
+                TrackSnapshotMetadata.DurationProvenance(root));
         }
-        catch (JsonException) { return (null, null, null, null, null, null, null); }
+        catch (JsonException) { return default; }
     }
 
     private async Task<ExternalTrackMatchSnapshot?> ReviewSourceAsync(
@@ -1123,7 +1124,10 @@ public sealed class TrackMatchesController(
             metadata.Isrc,
             null,
             metadata.IsExplicit,
-            canonicalId);
+            canonicalId)
+        {
+            DurationProvenance = metadata.DurationProvenance
+        };
     }
 
     private static LocalTrackMatchCandidate ToCandidate(LibraryTrackRecord item) => new(
@@ -1282,7 +1286,10 @@ public sealed class TrackMatchesController(
             var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
             var source = new ExternalTrackMatchSnapshot(snapshot.Id.ToString("N"), snapshot.ProviderId, snapshot.Id.ToString("N"),
                 metadata.Title ?? "Unknown", metadata.Artist ?? "Unknown", metadata.Album, null, metadata.DurationMilliseconds,
-                metadata.Isrc, null, metadata.IsExplicit);
+                metadata.Isrc, null, metadata.IsExplicit)
+            {
+                DurationProvenance = metadata.DurationProvenance
+            };
             var fallback = current != null
                 ? new TrackMatchDecisionEngine().ScoreCandidates(source, [ToCandidate(current)]).Single()
                 : new TrackMatchCandidateScore(Guid.Empty, $"ext-{route!.ProviderId}-song-{route.ExternalId}", decision?.Confidence ?? 0,

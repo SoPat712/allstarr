@@ -263,6 +263,31 @@ public class FuzzyMatcherTests
     }
 
     [Theory]
+    [InlineData("With You", "You")]
+    [InlineData("Feat You", "You")]
+    [InlineData("Featuring You", "You")]
+    [InlineData("Ft You", "You")]
+    public void LeadingCreditWordsRemainPartOfTheTitle(string title, string shorter)
+    {
+        Assert.Equal(FuzzyMatcher.NormalizeForMatching(title), FuzzyMatcher.NormalizeTitleForMatching(title, "Artist", "Artist"));
+        Assert.Equal(title, FuzzyMatcher.StripDecorators(title));
+        Assert.True(FuzzyMatcher.CalculateTitleSimilarity(title, shorter) < 80);
+    }
+
+    [Theory]
+    [InlineData("Song (with Guest)")]
+    [InlineData("Song [with Guest]")]
+    [InlineData("Song - with Guest")]
+    [InlineData("Song with Guest")]
+    [InlineData("Song feat. Guest")]
+    [InlineData("Song featuring Guest")]
+    [InlineData("Song ft. Guest")]
+    public void TrailingCreditsCanBeNormalized(string title)
+    {
+        Assert.Equal("song", FuzzyMatcher.NormalizeTitleForMatching(title, "Artist, Guest"));
+    }
+
+    [Theory]
     [InlineData("U2", "ua")]
     [InlineData("24K Magic", "2ak magic")]
     [InlineData("1999", "iggg")]

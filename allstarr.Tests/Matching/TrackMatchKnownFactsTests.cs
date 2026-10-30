@@ -275,6 +275,57 @@ public sealed class TrackMatchKnownFactsTests
         Assert.NotEqual(TrackMatchReviewState.Accepted, Decide(source, candidate with { Artist = "Unrelated Singer" }).State);
     }
 
+    [Theory]
+    [InlineData("spotify", "spotify", false)]
+    [InlineData("apple-musickit", "apple-musickit", false)]
+    [InlineData("apple-musickit", " apple-download ", false)]
+    [InlineData("spotify", " Spotify ", false)]
+    [InlineData("listenbrainz", "spotify", false)]
+    [InlineData("listenbrainz", null, false)]
+    [InlineData("listenbrainz", "listenbrainz", true)]
+    [InlineData("spotify", "musicbrainz", true)]
+    public void SourceDurationProvenanceControlsMismatch(string provider, string? provenance, bool accepted)
+    {
+        var source = Source() with { ProviderId = provider, DurationMilliseconds = 255_000, DurationProvenance = provenance };
+        var candidate = Candidate("apple-download") with { DurationMilliseconds = 222_000 };
+        Assert.Equal(accepted, Decide(source, candidate).State == TrackMatchReviewState.Accepted);
+    }
+
+    [Theory]
+    [InlineData("Song (Live)")]
+    [InlineData("Song (Remix)")]
+    [InlineData("Song (Instrumental)")]
+    [InlineData("Song (Acoustic)")]
+    [InlineData("Song (Sped Up)")]
+    public void WeakDurationDoesNotBypassRecordingVersionConflicts(string title)
+    {
+        var source = Source() with { DurationMilliseconds = 255_000, DurationProvenance = "listenbrainz" };
+        var candidate = Candidate("apple-download") with { Title = title, DurationMilliseconds = 222_000 };
+        Assert.NotEqual(TrackMatchReviewState.Accepted, Decide(source, candidate).State);
+    }
+
+    [Fact]
+    public void WeakDurationOriginalWithFeatureRequiresMatchingAlbum()
+    {
+        var source = Source() with { Title = "Let Me Love You", Artist = "DJ Snake", Album = "Let Me Love You", DurationMilliseconds = 182_000, DurationProvenance = "listenbrainz" };
+        var original = Candidate("apple-download") with { Title = "Let Me Love You (feat. Justin Bieber)", Artist = "DJ Snake", Album = "Let Me Love You - Single", DurationMilliseconds = 205_000 };
+        Assert.Equal(TrackMatchReviewState.Accepted, Decide(source, original).State);
+        Assert.Equal(TrackMatchReviewState.Suggested, Decide(source, original with { Album = "Encore" }).State);
+        Assert.NotEqual(TrackMatchReviewState.Accepted, Decide(source with { Isrc = "source-recording" }, original with { Isrc = "other-recording" }).State);
+    }
+
+    [Fact]
+    public void WeakDurationRequiresExactTitleAndPrimaryArtist()
+    {
+        var source = Source() with { DurationMilliseconds = 255_000, DurationProvenance = "listenbrainz" };
+        var candidate = Candidate("apple-download") with { DurationMilliseconds = 222_000 };
+        Assert.NotEqual(TrackMatchReviewState.Accepted, Decide(source, candidate with { Title = "Other Song" }).State);
+        Assert.NotEqual(TrackMatchReviewState.Accepted, Decide(source, candidate with { Artist = "Other Artist" }).State);
+        Assert.NotEqual(TrackMatchReviewState.Accepted, Decide(source with { Album = null }, candidate).State);
+        Assert.Equal(TrackMatchReviewState.Accepted, Decide(source, candidate with { Album = source.Album + " (Deluxe Edition)" }).State);
+        Assert.Equal(TrackMatchReviewState.Accepted, Decide(source, candidate with { DurationMilliseconds = null }).State);
+    }
+
     [Fact]
     public void MainArtistOnlyMetadataCanCompareTitleSideFeatureCredits()
     {
@@ -397,7 +448,7 @@ public sealed class TrackMatchKnownFactsTests
     [Fact]
     public void PersistedEvidenceRetainsKnownAndUnknownInputsAndTruncation()
     {
-        var source = Source() with { ExactProviderAliases = new Dictionary<string, string> { ["deezer"] = "source-alias" } };
+        var source = Source() with { DurationProvenance = "spotify", ExactProviderAliases = new Dictionary<string, string> { ["deezer"] = "source-alias" } };
         var local = Candidate("local") with { IsLocal = true, BackendLibraryId = "music", CanonicalRecordingId = Guid.NewGuid(), MusicBrainzRecordingId = Guid.NewGuid().ToString(), IsExplicit = null };
         var others = Enumerable.Range(0, 21).Select(index => Candidate("apple-download") with { BackendItemId = "copy-" + index, IsExplicit = index % 2 == 0 });
         var decision = Decide(source, [local, .. others]);

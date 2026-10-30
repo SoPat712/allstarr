@@ -179,7 +179,10 @@ public sealed partial class TrackMatchCommandService
             ReadDurationMilliseconds(snapshot.PayloadJson),
             payload.Isrc,
             payload.MusicBrainzRecordingId,
-            payload.IsExplicit);
+            payload.IsExplicit)
+        {
+            DurationProvenance = payload.DurationProvenance
+        };
         var ownerPolicy = effectivePolicies == null ? null :
             await effectivePolicies.ResolveForUserAsync(snapshot.OwnerUserId, cancellationToken);
         var automaticSource = ownerPolicy?.IsAutomatic(sourceTrack.ProviderId) ??

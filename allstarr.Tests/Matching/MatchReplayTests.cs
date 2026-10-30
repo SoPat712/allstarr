@@ -195,7 +195,7 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
                     ELSE 'current_automatic' END AS Reason
                 FROM latest m JOIN snapshots s ON s.Id=m.ExternalSnapshotId
                 WHERE m.DecisionRank=1 AND m.State='Accepted'
-                    AND m.MatcherVersion<>'accepted-routing-v25'
+                    AND m.MatcherVersion<>'accepted-routing-v27'
             ) SELECT MatcherVersion, Reason, count(*) FROM classified GROUP BY MatcherVersion, Reason
             """).Select(row => new { version = (string)row[0]!, reason = (string)row[1]!, count = Convert.ToInt64(row[2]) }).ToArray();
         var missingArtistInputs = Query(db, "SELECT ProviderId, PayloadJson FROM external_metadata_snapshots WHERE ResourceKind='track' AND PayloadJson LIKE '%Wicked Game%'")
@@ -243,6 +243,7 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
             var source = retainedSource ?? new ExternalTrackMatchSnapshot("source", (string)row[4]!, (string)row[7]!, title, artist,
                 Text(root, "album"), Text(root, "albumArtist"), Duration(root), Text(root, "isrc"),
                 TrackSnapshotMetadata.MusicBrainzRecordingId(root), TrackSnapshotMetadata.IsExplicit(root));
+            source = source with { DurationProvenance = source.DurationProvenance ?? TrackSnapshotMetadata.DurationProvenance(root) };
             var baselineSource = retainedSource ?? source with { IsExplicit = ReplayBaselineSnapshotMetadata.IsExplicit(root) };
             if (retainedSource != null) Count("retained_source_used");
             if (baselineSource.IsExplicit != source.IsExplicit) Count("source_explicitness_numeric_fix_difference");
@@ -439,6 +440,7 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
             var example = new
             {
                 source = Metadata(source.Title, source.Artist, source.Album, source.ProviderId, null, source.IsExplicit, source.DurationMilliseconds, source.Isrc),
+                source.DurationProvenance,
                 baselineSourceExplicitness = baselineSource.IsExplicit,
                 productionSourceExplicitness = source.IsExplicit,
                 current = Describe(before, baselineCandidates),
@@ -777,9 +779,12 @@ public sealed class MatchReplayTests(ITestOutputHelper output)
 
     internal sealed record ReplayCase(string Name, string[] Priority, ReplaySong Source, ReplaySong[] Candidates, string ExpectedState, int? ExpectedCandidate);
 
-    internal sealed record ReplaySong(string Title, string Artist, string? Album, string Provider, long? DurationMilliseconds, bool? IsExplicit, string? Isrc = null)
+    internal sealed record ReplaySong(string Title, string Artist, string? Album, string Provider, long? DurationMilliseconds, bool? IsExplicit, string? Isrc = null, string? DurationProvenance = null)
     {
-        public ExternalTrackMatchSnapshot Snapshot() => new("source", Provider, "source", Title, Artist, Album, null, DurationMilliseconds, Isrc, null, IsExplicit);
+        public ExternalTrackMatchSnapshot Snapshot() => new("source", Provider, "source", Title, Artist, Album, null, DurationMilliseconds, Isrc, null, IsExplicit)
+        {
+            DurationProvenance = DurationProvenance
+        };
 
         public LocalTrackMatchCandidate Candidate(int index) => new(
             new Guid(SHA256.HashData(Encoding.UTF8.GetBytes($"candidate-{index}")).AsSpan(0, 16)),
