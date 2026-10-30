@@ -356,6 +356,9 @@ public interface IProviderPlaylistCapability : IProviderCapability
 {
     ProviderPlaylistMutationSupport MutationSupport => ProviderPlaylistMutationSupport.None;
 
+    Task<ProviderOutcome<string>> GetSourceUserAsync(ProviderExecutionContext context) => Task.FromResult(
+        ProviderOutcome<string>.Failure(new(ProviderErrorKind.CapabilityUnavailable)));
+
     Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(
         ProviderExecutionContext context,
         ProviderUserPlaylistsRequest request);

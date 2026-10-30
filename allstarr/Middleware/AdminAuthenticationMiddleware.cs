@@ -237,6 +237,12 @@ public class AdminAuthenticationMiddleware
             return routeSegments.Length == 5 && (HttpMethods.IsGet(method) || HttpMethods.IsPost(method)) ||
                 routeSegments.Length == 6 && Guid.TryParse(routeSegments[5], out _) && (HttpMethods.IsGet(method) || HttpMethods.IsDelete(method)) ||
                 routeSegments.Length == 7 && Guid.TryParse(routeSegments[5], out _) && routeSegments[6] == "confirm" && HttpMethods.IsPost(method);
+        if (routeSegments.Length >= 4 && routeSegments[3] == "migrations")
+            return routeSegments.Length == 4 && HttpMethods.IsPost(method) ||
+                routeSegments.Length == 5 && Guid.TryParse(routeSegments[4], out _) && HttpMethods.IsGet(method) ||
+                routeSegments.Length == 6 && Guid.TryParse(routeSegments[4], out _) &&
+                (HttpMethods.IsGet(method) && routeSegments[5] is "discover" or "summary" or "review" ||
+                 HttpMethods.IsPost(method) && routeSegments[5] is "choose" or "apply" or "cancel" or "resume");
         if (routeSegments.Length == 5 && routeSegments[3].Equals("spotify-likes", StringComparison.OrdinalIgnoreCase))
             return HttpMethods.IsPost(method) && routeSegments[4] == "import" ||
                    HttpMethods.IsGet(method) && Guid.TryParse(routeSegments[4], out _);

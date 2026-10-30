@@ -61,7 +61,7 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
         var search = string.IsNullOrWhiteSpace(query)
             ? string.Empty
             : $"&SearchTerm={Escape(query.Trim())}";
-        var path = $"Users/{Escape(context.VerifiedPrincipalId)}/Items?IncludeItemTypes=Playlist&Recursive=true&Fields=Overview,ChildCount,PrimaryImageTag&StartIndex={offset}&Limit={limit}{search}";
+        var path = $"Users/{Escape(context.VerifiedPrincipalId)}/Items?IncludeItemTypes=Playlist&Recursive=true&Fields=Overview,ChildCount,PrimaryImageTag,DateCreated&StartIndex={offset}&Limit={limit}{search}";
         var response = await SendAsync(context, HttpMethod.Get, path, null, cancellationToken);
         if (!response.IsSuccess)
             return ConvertFailure<IReadOnlyList<BackendPlaylistSummary>>(response);
@@ -82,7 +82,8 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
                 trackCount,
                 item.StringOrNull("Overview"),
                 string.IsNullOrWhiteSpace(imageTag) ? null : $"jellyfin:{id}:{imageTag}",
-                await CanWriteAsync(context, id, cancellationToken)));
+                await CanWriteAsync(context, id, cancellationToken),
+                DateTimeOffset.TryParse(item.StringOrNull("DateCreated"), out var created) ? created : null));
         }
 
         return new(BackendPlaylistTargetStatus.Success, values, response.Status);
@@ -302,6 +303,9 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
             return new(BackendPlaylistTargetStatus.Cancelled, ErrorCode: "cancelled", RecoveryPlaylistId: request.BackendPlaylistId);
         }
     }
+
+    public async Task<bool> FavoriteAsync(BackendPlaylistTargetContext context, string backendItemId, CancellationToken cancellationToken) =>
+        (await SendAsync(context, HttpMethod.Post, $"Users/{Escape(context.VerifiedPrincipalId)}/FavoriteItems/{Escape(backendItemId)}", null, cancellationToken)).IsSuccess;
 
     private async Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> CreateAsync(
         BackendPlaylistTargetContext context,

@@ -119,6 +119,8 @@ if (releaseComposition.IntelligenceEnabled)
 builder.Services.AddSingleton<allstarr.Core.Music.ProviderUserDataStore>();
 builder.Services.AddDurablePlaybackSignals(releaseComposition.IntelligenceEnabled);
 builder.Services.AddPlaylistOrchestration();
+builder.Services.AddSingleton<allstarr.Core.Migrations.CollectionMigrationService>();
+builder.Services.AddSingleton<allstarr.Core.Jobs.IDurableJobHandler>(provider => provider.GetRequiredService<allstarr.Core.Migrations.CollectionMigrationService>());
 builder.Services.AddExtensionControlPlane();
 builder.Services.AddHostedService<ProviderAccountNameNormalizer>();
 builder.Services.AddPlatformOperations(builder.Configuration);

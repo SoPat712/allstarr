@@ -324,6 +324,7 @@ internal static class ActivityJobPresentation
         SpotifyLikesImport.Type => "Import Spotify likes",
         "favorite.display-backfill" => "Favorite metadata update",
         "favorite.link-union" => "Merge linked favorites",
+        "collection.migrate" => "Move Spotify collection",
         "playlist.materialize" => "Playlist sync",
         "playlist.provider-source-update" => "Update source playlist",
         "playlist.retain-track" => "Keep playlist song",

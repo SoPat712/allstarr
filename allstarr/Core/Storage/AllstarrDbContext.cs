@@ -74,6 +74,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
+        CollectionMigrationModel.Configure(modelBuilder);
         ConfigureUsers(modelBuilder);
         ConfigureOnboarding(modelBuilder);
         ConfigureAdminAuthSessions(modelBuilder);

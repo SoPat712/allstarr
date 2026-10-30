@@ -9,6 +9,7 @@ public static class DurableJobRegistration
         var options = configuration.GetSection(DurableJobOptions.SectionName)
                           .Get<DurableJobOptions>()
                       ?? new DurableJobOptions();
+        options.TypeConcurrencyLimits.TryAdd(allstarr.Core.Migrations.CollectionMigrationService.Type, 1);
         options.Validate();
         services.AddSingleton(options);
         services.AddSingleton<JobPayloadPolicy>();

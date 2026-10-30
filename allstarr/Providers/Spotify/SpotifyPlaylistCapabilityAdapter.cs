@@ -79,6 +79,19 @@ public sealed partial class SpotifyPlaylistCapabilityAdapter : IProviderPlaylist
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Playlist;
     public ProviderPlaylistMutationSupport MutationSupport { get; } = new(true, true);
 
+    public Task<ProviderOutcome<string>> GetSourceUserAsync(ProviderExecutionContext context) => ExecuteAsync(context,
+        async (token, cancellationToken) =>
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(WebApiOrigin, "v1/me"));
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            using var response = await _http.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode) return ProviderOutcome<string>.Failure(Error(response));
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            return body.RootElement.TryGetProperty("id", out var id) && !string.IsNullOrWhiteSpace(id.GetString())
+                ? ProviderOutcome<string>.Success(id.GetString()!)
+                : ProviderOutcome<string>.Failure(new(ProviderErrorKind.PermanentFailure));
+        });
+
     public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(
         ProviderExecutionContext context, ProviderUserPlaylistsRequest request)
     {

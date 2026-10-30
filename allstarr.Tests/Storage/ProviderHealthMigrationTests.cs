@@ -296,6 +296,12 @@ public sealed class ProviderHealthMigrationTests
         Assert.Equal(promotionObjects.Order(StringComparer.Ordinal), after.Where(row => promotionObjects.Contains(row.Name))
             .Select(row => row.Name).Order(StringComparer.Ordinal));
 
+        string[] migrationObjects = ["collection_migration_runs", "collection_migration_collections",
+            "IX_collection_migration_runs_OwnerUserId_RequestKey", "IX_collection_migration_collections_RunId_SourceId"];
+        Assert.DoesNotContain(before, row => migrationObjects.Contains(row.Name));
+        Assert.Equal(migrationObjects.Order(StringComparer.Ordinal), after.Where(row => migrationObjects.Contains(row.Name))
+            .Select(row => row.Name).Order(StringComparer.Ordinal));
+
         string[] profileObjects = ["shared_tag_profiles", "taste_profiles"];
         Assert.DoesNotContain(before, row => profileObjects.Contains(row.Name));
         Assert.Equal(profileObjects.Order(StringComparer.Ordinal), after.Where(row => profileObjects.Contains(row.Name))
@@ -328,7 +334,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name) && !reportObjects.Contains(row.Name) && !sharedFavoriteObjects.Contains(row.Name) && !alertObjects.Contains(row.Name) && !promotionObjects.Contains(row.Name) && !profileObjects.Contains(row.Name))
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex and not "IX_health_smoke_runs_CreatedAt" and not "IX_health_smoke_runs_OwnerUserId" && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable && row.Name != healthTable && !backupObjects.Contains(row.Name) && !reportObjects.Contains(row.Name) && !sharedFavoriteObjects.Contains(row.Name) && !alertObjects.Contains(row.Name) && !promotionObjects.Contains(row.Name) && !profileObjects.Contains(row.Name) && !migrationObjects.Contains(row.Name))
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();

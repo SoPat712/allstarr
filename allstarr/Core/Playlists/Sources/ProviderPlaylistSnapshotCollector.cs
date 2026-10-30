@@ -68,6 +68,31 @@ public sealed record ProviderPlaylistSnapshotRequest(
 
 public sealed class ProviderPlaylistSnapshotCollector
 {
+    public async Task<(CollectedPlaylistSourceSnapshot Snapshot, string? NextCursor, int Total)> CollectPageAsync(
+        IProviderPlaylistCapability capability, ProviderExecutionContext context, ProviderPlaylistSnapshotRequest request,
+        string? cursor, int offset)
+    {
+        context.RequireResourceOwner(request.PlaylistId, ProviderResourceKind.Playlist);
+        if (context.Account == null || capability.ProviderId != context.ProviderId || request.PageSize is < 1 or > 200)
+            throw new UnauthorizedAccessException();
+        var outcome = await capability.GetPlaylistTracksAsync(context,
+            new(request.PlaylistId, new(request.PageSize, cursor), request.ExpectedSourceRevision));
+        if (!outcome.IsSuccess) throw new allstarr.Core.Playlists.PlaylistSourceUnavailableException("source_unavailable", outcome.Error);
+        var page = outcome.RequireValue();
+        try { ValidatePage(capability.ProviderId, request.PlaylistId, page, null, null, [], request.PageSize); }
+        catch (InvalidProviderPageException) { throw new InvalidDataException("The source returned an incomplete page."); }
+        if (request.ExpectedSourceRevision != null && page.Playlist.SourceRevision != request.ExpectedSourceRevision ||
+            page.Playlist.TrackCount is not (>= 0 and <= MaximumEntries) || offset < 0 ||
+            !page.Tracks.Items.Select(item => item.Position).SequenceEqual(Enumerable.Range(offset, page.Tracks.Items.Count)) ||
+            page.Tracks.NextCursor != null && (page.Tracks.Items.Count == 0 || page.Tracks.NextCursor == cursor) ||
+            page.Tracks.NextCursor == null && offset + page.Tracks.Items.Count != page.Playlist.TrackCount)
+            throw new InvalidDataException("The source changed or returned an incomplete page.");
+        return (new(capability.ProviderId, context.Account.AccountId, HashResource(request.PlaylistId),
+            page.Playlist.SourceRevision, page.Playlist.SourceETag, page.Playlist.Name, page.Playlist.Description,
+            StableArtworkReference(page.Playlist.Artwork), page.Tracks.Items.Select(item => ToCollectedEntry(request.PlaylistId, item)).ToArray()),
+            page.Tracks.NextCursor, page.Playlist.TrackCount!.Value);
+    }
+
     private const int MaximumPages = 1_000;
     private const int MaximumEntries = 100_000;
 
