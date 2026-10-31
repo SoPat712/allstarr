@@ -9,6 +9,7 @@ public sealed partial class SpotifyPathfinderPlaylistClient
         CancellationToken cancellationToken)
     {
         var current = ArtworkUri(playlist);
+        if (current != null) return current;
         var owner = TryPath(playlist, out var ownerData, "ownerV2", "data")
             ? String(ownerData, "username") ?? String(ownerData, "uri")
             : null;

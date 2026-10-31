@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Spotify;
+using allstarr.Services.Common;
 
 namespace allstarr.Tests;
 
@@ -47,13 +48,14 @@ public sealed class SpotifyPlaylistArtworkTests
     }
 
     [Fact]
-    public async Task Spotify_owned_playlist_uses_the_public_thumbnail_when_only_a_template_is_offered()
+    public async Task Spotify_owned_playlist_uses_the_public_thumbnail_when_no_response_image_is_offered()
     {
-        const string personalized = "https://pickasso.spotifycdn.com/image/listener-cover";
+        const string fallback = "https://pickasso.spotifycdn.com/image/public-cover";
         var handler = new ArtworkHandler
         {
             OwnerUsername = "spotify",
-            ThumbnailResponse = JsonSerializer.Serialize(new { thumbnail_url = personalized })
+            ThumbnailResponse = JsonSerializer.Serialize(new { thumbnail_url = fallback }),
+            ImageItems = []
         };
         var client = new SpotifyPathfinderPlaylistClient(new HttpClient(handler), new TestMemoryApplicationCache());
 
@@ -63,8 +65,8 @@ public sealed class SpotifyPlaylistArtworkTests
         var discovery = (await client.GetUserPlaylistsAsync("token", new ProviderPageRequest(), null, default)).RequireValue();
         var artwork = await client.GetPlaylistArtworkUriAsync("token", playlist.Artwork!, default);
 
-        Assert.Equal(personalized, uncached.RequireValue().AbsoluteUri);
-        Assert.Equal(personalized, artwork.RequireValue().AbsoluteUri);
+        Assert.Equal(fallback, uncached.RequireValue().AbsoluteUri);
+        Assert.Equal(fallback, artwork.RequireValue().AbsoluteUri);
         Assert.Equal(Assert.Single(discovery.Items).Artwork, playlist.Artwork);
         Assert.Equal(1, handler.ThumbnailRequestCount);
         Assert.Null(handler.ThumbnailAuthorization);
@@ -73,18 +75,23 @@ public sealed class SpotifyPlaylistArtworkTests
     }
 
     [Fact]
-    public async Task Spotify_owned_playlist_refreshes_an_existing_personalized_cover_from_public_thumbnail()
+    public async Task Spotify_owned_playlist_keeps_the_account_response_cover_without_requesting_public_thumbnail()
     {
         var handler = new ArtworkHandler
         {
             OwnerUsername = "spotify",
-            ThumbnailResponse = """{"thumbnail_url":"https://pickasso.spotifycdn.com/image/current-cover"}""",
-            ImageItems = [new { url = "https://pickasso.spotifycdn.com/image/old-cover", width = 640, height = 640 }]
+            ThumbnailResponse = """{"thumbnail_url":"https://pickasso.spotifycdn.com/image/public-cover"}""",
+            ImageItems = [new { sources = new[] { new { url = "https://pickasso.spotifycdn.com/image/account-cover", width = 640, height = 640 } } }]
         };
-        var client = new SpotifyPathfinderPlaylistClient(new HttpClient(handler), new TestMemoryApplicationCache());
+        var cache = new TestMemoryApplicationCache();
+        foreach (var revision in new string?[] { null, "public-oembed-v1" })
+            await cache.SetAsync(CacheKeyBuilder.BuildProviderPlaylistArtworkDescriptorKey(
+                "spotify", TracksRequest().PlaylistId.Value, revision),
+                new { Uri = "https://pickasso.spotifycdn.com/image/cached-public-cover" });
+        var client = new SpotifyPathfinderPlaylistClient(new HttpClient(handler), cache);
         var artwork = await client.GetPlaylistArtworkUriAsync("token", new ProviderArtworkReference(TracksRequest().PlaylistId), default);
-        Assert.Equal("https://pickasso.spotifycdn.com/image/current-cover", artwork.RequireValue().AbsoluteUri);
-        Assert.Equal(1, handler.ThumbnailRequestCount);
+        Assert.Equal("https://pickasso.spotifycdn.com/image/account-cover", artwork.RequireValue().AbsoluteUri);
+        Assert.Equal(0, handler.ThumbnailRequestCount);
     }
 
     [Theory]
@@ -92,11 +99,12 @@ public sealed class SpotifyPlaylistArtworkTests
     [InlineData("malformed")]
     [InlineData("unsafe")]
     [InlineData("oversized")]
-    public async Task Unusable_public_thumbnail_omits_template_artwork_and_caches_the_miss(string response)
+    public async Task Unusable_public_thumbnail_without_response_artwork_caches_the_miss(string response)
     {
         var handler = new ArtworkHandler
         {
             OwnerUsername = "spotify",
+            ImageItems = [],
             ThumbnailStatus = response == "failure" ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK,
             ThumbnailResponse = response switch
             {
@@ -114,6 +122,49 @@ public sealed class SpotifyPlaylistArtworkTests
         Assert.Null(second.Artwork);
         Assert.Equal("unchanged-content", second.SourceRevision);
         Assert.Equal(1, handler.ThumbnailRequestCount);
+    }
+
+    [Theory]
+    [InlineData("artwork")]
+    [InlineData("tracks")]
+    [InlineData("discovery")]
+    public async Task Account_covers_for_the_same_playlist_and_revision_do_not_share_cached_results(string read)
+    {
+        var cache = new TestMemoryApplicationCache();
+        var firstHandler = new ArtworkHandler
+        {
+            OwnerUsername = "spotify",
+            CoverUrl = "https://pickasso.spotifycdn.com/image/first-listener"
+        };
+        var secondHandler = new ArtworkHandler
+        {
+            OwnerUsername = "spotify",
+            CoverUrl = "https://pickasso.spotifycdn.com/image/second-listener"
+        };
+        var first = new SpotifyPathfinderPlaylistClient(new HttpClient(firstHandler), cache);
+        var second = new SpotifyPathfinderPlaylistClient(new HttpClient(secondHandler), cache);
+        var reference = new ProviderArtworkReference(TracksRequest().PlaylistId, revision: "unchanged-content");
+        switch (read)
+        {
+            case "tracks":
+                await first.GetPlaylistTracksAsync("first-session", TracksRequest(), default);
+                break;
+            case "discovery":
+                await first.GetUserPlaylistsAsync("first-session", new ProviderPageRequest(), null, default);
+                break;
+            default:
+                await first.GetPlaylistArtworkUriAsync("first-session", reference, default);
+                break;
+        }
+
+        var secondArtwork = await second.GetPlaylistArtworkUriAsync("second-session", reference, default);
+        var firstArtwork = await first.GetPlaylistArtworkUriAsync("first-session", reference, default);
+
+        Assert.Equal(secondHandler.CoverUrl, secondArtwork.RequireValue().AbsoluteUri);
+        Assert.Equal(firstHandler.CoverUrl, firstArtwork.RequireValue().AbsoluteUri);
+        Assert.Equal(1, firstHandler.RequestCount);
+        Assert.Equal(1, secondHandler.RequestCount);
+        Assert.Equal(0, firstHandler.ThumbnailRequestCount + secondHandler.ThumbnailRequestCount);
     }
 
     [Fact]

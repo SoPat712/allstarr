@@ -211,8 +211,8 @@ public sealed partial class SpotifyPathfinderPlaylistClient
                         summaries.Add(summary);
                         if (artwork != null)
                         {
-                            await CacheArtworkAsync(playlistId, summary.SourceRevision, artwork);
-                            await CacheArtworkAsync(playlistId, summary.Artwork?.Revision, artwork);
+                            await CacheArtworkAsync(token, playlistId, summary.SourceRevision, artwork);
+                            await CacheArtworkAsync(token, playlistId, summary.Artwork?.Revision, artwork);
                         }
                     }
                 }
@@ -318,8 +318,8 @@ public sealed partial class SpotifyPathfinderPlaylistClient
                 summary = MapSummary(playlist, playlistId, artwork);
                 if (summary != null && artwork != null)
                 {
-                    await CacheArtworkAsync(playlistId, summary.SourceRevision, artwork);
-                    await CacheArtworkAsync(playlistId, summary.Artwork?.Revision, artwork);
+                    await CacheArtworkAsync(token, playlistId, summary.SourceRevision, artwork);
+                    await CacheArtworkAsync(token, playlistId, summary.Artwork?.Revision, artwork);
                 }
             }
             if (summary == null)
@@ -430,7 +430,7 @@ public sealed partial class SpotifyPathfinderPlaylistClient
         var playlistId = artwork.ResourceId;
         if (playlistId == null || playlistId.Value == SpotifyPlaylistReference.LikedSongsId)
             return ProviderOutcome<Uri>.Failure(new ProviderError(ProviderErrorKind.NotFound));
-        if (await TryCachedArtworkAsync(playlistId.Value, artwork.Revision) is { } cached)
+        if (await TryCachedArtworkAsync(token, playlistId.Value, artwork.Revision) is { } cached)
             return ProviderOutcome<Uri>.Success(cached);
 
         var variables = new { uri = $"spotify:playlist:{playlistId.Value}", offset = 0, limit = 1 };
@@ -449,7 +449,7 @@ public sealed partial class SpotifyPathfinderPlaylistClient
             if (!TryPath(document.RootElement, out var playlist, "data", "playlistV2") ||
                 await PlaylistArtworkUriAsync(playlist, playlistId.Value, cancellationToken) is not { } resolvedArtwork)
                 return ProviderOutcome<Uri>.Failure(new ProviderError(ProviderErrorKind.NotFound));
-            await CacheArtworkAsync(playlistId.Value, artwork.Revision, resolvedArtwork);
+            await CacheArtworkAsync(token, playlistId.Value, artwork.Revision, resolvedArtwork);
             return ProviderOutcome<Uri>.Success(resolvedArtwork);
         }
         catch (JsonException)
@@ -586,11 +586,15 @@ public sealed partial class SpotifyPathfinderPlaylistClient
         return summary;
     }
 
-    private async Task<Uri?> TryCachedArtworkAsync(string playlistId, string? revision)
+    private static string ArtworkCacheKey(string token, string playlistId, string? revision) =>
+        CacheKeyBuilder.BuildProviderPlaylistArtworkDescriptorKey(ProviderId, playlistId,
+            $"account-response-v2:{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(token)))}:{revision}");
+
+    private async Task<Uri?> TryCachedArtworkAsync(string token, string playlistId, string? revision)
     {
         if (cache == null) return null;
         var entry = await cache.GetAsync<ArtworkCacheEntry>(
-            CacheKeyBuilder.BuildProviderPlaylistArtworkDescriptorKey(ProviderId, playlistId, revision));
+            ArtworkCacheKey(token, playlistId, revision));
         return entry != null &&
                Uri.TryCreate(entry.Uri, UriKind.Absolute, out var artwork) &&
                artwork.Scheme == Uri.UriSchemeHttps
@@ -598,11 +602,11 @@ public sealed partial class SpotifyPathfinderPlaylistClient
             : null;
     }
 
-    private async Task CacheArtworkAsync(string playlistId, string? revision, Uri artwork)
+    private async Task CacheArtworkAsync(string token, string playlistId, string? revision, Uri artwork)
     {
         if (cache == null) return;
         await cache.SetAsync(
-            CacheKeyBuilder.BuildProviderPlaylistArtworkDescriptorKey(ProviderId, playlistId, revision),
+            ArtworkCacheKey(token, playlistId, revision),
             new ArtworkCacheEntry(artwork.AbsoluteUri),
             TimeSpan.FromMinutes(30));
     }
