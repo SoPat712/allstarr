@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { greeting, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep } from "./for-you";
+import { greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep } from "./for-you";
 
 describe("personal mix presentation", () => {
+  it.each([["r&b", "R&B"], ["indie rock", "Indie rock"], ["edm", "EDM"], ["uk garage", "UK garage"]])("shows the %s style in plain display case", (raw, label) => {
+    expect(mixDescription(`Made for you · ${raw} · North, Cedar`, "daily-1")).toBe(`Made for you · ${label} · North, Cedar`);
+    expect(mixDescription("Made for you · · North", "daily-1")).toBe("Made for you · · North");
+    expect(mixDescription("Made for you · Just Dropped", "release-radar")).toBe("Made for you · Just Dropped");
+  });
   it("greets by local hour with an optional first name", () => {
     expect(greeting(5, "Josh Patra")).toBe("Good morning, Josh");
     expect(greeting(11)).toBe("Good morning");
@@ -39,7 +44,8 @@ describe("personal mix presentation", () => {
   it("turns linked mix period names into plain words", () => {
     expect(mixName("Your top tracks · 1month")).toBe("Your top tracks · Last month");
     expect(mixName("Created for you · weekly jams")).toBe("Weekly Jams");
-    expect(mixName("Daily Mix 1")).toBe("Daily Mix 1");
+    expect(mixName("R&B Blend")).toBe("R&B Blend");
+    expect(mixName("Blend 4")).toBe("Blend 4");
   });
   it("offers the relevant next step for an unready mix", () => {
     expect(mixNextStep("daily-1", "Play about 80 more songs.", false).label).toBe("Import history");

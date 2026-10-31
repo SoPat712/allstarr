@@ -1329,7 +1329,7 @@ export type TasteNudge = { kind: "tag" | "artist" | "song"; name: string; mode: 
 export type TasteProfile = { lately: TasteLayer; usually: TasteLayer; latelyWeight: number; nudges: TasteNudge[]; paused: boolean; useImportedHistory?: boolean };
 
 export type MixSong = { mixId: string; generation: number; source: string; reason: string; score: number; song: { id: string; canonicalRecordingId: string | null; title: string; artist: string; album: string; genre?: string | null; genres?: string[] | null } };
-export type MixCard = { id: string; kind: string; name: string; description: string; section: "madeForYou" | "moods" | "custom" | "yourServices"; sortOrder: number; sourceLabel: string | null; recipeVersion: string | null; updatedAt: string | null; readiness: { ready: boolean; message: string }; inApps: boolean; showInApps: boolean; appsAllowed: boolean; coverArtwork: string[] };
+export type MixCard = { id: string; kind: string; name: string; description: string; section: "madeForYou" | "moods" | "custom" | "yourServices"; sortOrder: number; sourceLabel: string | null; recipeVersion: string | null; updatedAt: string | null; readiness: { ready: boolean; message: string }; inApps: boolean; appsAllowed: boolean; coverArtwork: string[] };
 export type MixDetail = { mix: MixCard; songs: MixSong[] };
 export type MixPreview = { previewId: string; songs: MixSong[]; readiness: MixCard["readiness"] };
 export type MixSeed = { id: string; title: string; artist: string; artworkUrl: string | null; kind: "song" | "artist" };
@@ -2368,13 +2368,14 @@ export const audioMuse = {
 
 export const mixes = {
   list: () => json<MixCard[]>(`/api/admin/mixes?${new URLSearchParams({ timeZoneId: Intl.DateTimeFormat().resolvedOptions().timeZone })}`),
-  get: (id: string) => json<MixDetail>(`/api/admin/mixes/${encodeURIComponent(id)}`),
+  get: (id: string) => json<MixDetail>(`/api/admin/mixes/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(20_000) }),
   refresh: (id: string) => json<unknown>(`/api/admin/mixes/${encodeURIComponent(id)}/refresh`, { method: "POST" }),
-  inApps: (id: string, enabled: boolean) => json<{ enabled: boolean }>(`/api/admin/mixes/${encodeURIComponent(id)}/in-apps`, intelligenceBody({ enabled }, "PUT")),
+  add: (id: string) => json<unknown>(`/api/admin/mixes/${encodeURIComponent(id)}/in-apps`, { method: "POST" }),
+  remove: (id: string) => json<unknown>(`/api/admin/mixes/${encodeURIComponent(id)}/in-apps`, { method: "DELETE" }),
   feedback: (id: string, songId: string, kind: "moreLikeThis" | "notForMe" | "neverArtist", todayOnly = false) => json<{ removed: string }>(`/api/admin/mixes/${encodeURIComponent(id)}/feedback`, intelligenceBody({ songId, kind, todayOnly })),
   start: (seed: MixSeed, length: number) => json<MixPreview>("/api/admin/mixes/start", intelligenceBody({ seedKind: seed.kind, seedId: seed.id, length })),
   save: (id: string, name: string) => json<{ id: string }>(`/api/admin/mixes/start/${encodeURIComponent(id)}/save`, intelligenceBody({ name })),
-  remove: (id: string) => json<unknown>(`/api/admin/mixes/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  delete: (id: string) => json<unknown>(`/api/admin/mixes/${encodeURIComponent(id)}`, { method: "DELETE" }),
   external: (source: string, kind: string) => json<MixCard & { initialJobId: string }>("/api/admin/mixes/external", intelligenceBody({ source, kind })),
   publishSetting: () => json<{ enabled: boolean }>("/api/admin/mixes/publish-setting"),
   setPublishSetting: (enabled: boolean) => json<unknown>("/api/admin/mixes/publish-setting", intelligenceBody({ enabled }, "PUT")),

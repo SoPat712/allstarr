@@ -11,6 +11,9 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(page.getByRole("region", { name: shelf, exact: true })).toBeVisible();
   }
   expect(await page.evaluate(async () => Promise.all(['700 40px "Archivo Narrow"', '400 40px "Courier Prime"', '700 40px "Courier Prime"'].map(font => document.fonts.load(font).then(faces => faces.length))))).toEqual([1, 1, 1]);
+  for (const name of ["R&B Blend", "Indie Rock Blend", "Electronic Blend", "Hip-Hop Blend", "Uncharted", "Just Dropped", "Heavy Rotation", "Long Lost"]) {
+    await expect(page.getByRole("region", { name: "Made for you", exact: true }).getByRole("button", { name: `Open ${name}`, exact: true })).toBeVisible();
+  }
   await capture(page, "home", width, theme);
   expect(errors).toEqual([]);
 });

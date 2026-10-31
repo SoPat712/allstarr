@@ -13,10 +13,20 @@ internal static class PersonalMixRules
     internal const int RequiredPlays = 200, RepeatPlays = 30, ArtistLimit = 2, TopSongs = 300;
     internal const int SkipDays = 7, RefreshMinutes = 15, ReleaseDays = 14;
     internal static readonly string[] Kinds = ["on-repeat", "rewind", "release-radar", "discover-weekly", "daily-1", "daily-2", "daily-3", "daily-4", .. PersonalMixMoods.Kinds];
-    internal static string Name(string kind) => kind.StartsWith("daily-", StringComparison.Ordinal)
-        ? "Daily Mix " + kind[^1] : PersonalMixMoods.Kinds.Contains(kind)
-            ? char.ToUpperInvariant(kind[0]) + kind[1..] + " Mix" : kind switch
-            { "on-repeat" => "On Repeat", "rewind" => "Rewind", "release-radar" => "Release Radar", _ => "Discover Weekly" };
+    internal static string Name(string kind, string? style = null)
+    {
+        if (kind.StartsWith("daily-", StringComparison.Ordinal))
+        {
+            if (string.IsNullOrWhiteSpace(style)) return "Blend " + kind[^1];
+            var label = style.Trim().Equals("r&b", StringComparison.OrdinalIgnoreCase) ? "R&B"
+                : style.Trim().Equals("edm", StringComparison.OrdinalIgnoreCase) ? "EDM"
+                : System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(style.Trim());
+            if (label.StartsWith("Uk ", StringComparison.Ordinal)) label = "UK" + label[2..];
+            return label + " Blend";
+        }
+        return PersonalMixMoods.Kinds.Contains(kind) ? char.ToUpperInvariant(kind[0]) + kind[1..] + " Mix" : kind switch
+        { "on-repeat" => "Heavy Rotation", "rewind" => "Long Lost", "release-radar" => "Just Dropped", _ => "Uncharted" };
+    }
     internal static string Cron(string kind) => PersonalMixMoods.Kinds.Contains(kind) ? "0 4 * * 1" : kind switch
     { "release-radar" => "0 4 * * 5", "discover-weekly" or "rewind" => "0 4 * * 1", _ => "0 4 * * *" };
 

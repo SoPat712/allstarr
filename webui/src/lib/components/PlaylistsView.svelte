@@ -9,6 +9,7 @@
   import { Badge } from "$lib/components/ui/badge";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { ArrowRight, ChevronDown, MoreHorizontal, Server, X } from "@lucide/svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
   import CoverageBar from "$lib/components/CoverageBar.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
@@ -43,6 +44,7 @@
     listeningTime,
     mediaServerName,
     isReviewTrack,
+    isServiceMix,
     playlistOutcomeLabel,
     runBounded,
     providerColor,
@@ -59,6 +61,8 @@
   let { initialId = "", currentUserId = "" }: { initialId?: string; currentUserId?: string } = $props();
 
   let playlists = $state<PlaylistLink[]>([]);
+  let removingMix = $state<{ id: string; name: string } | null>(null);
+  let removing = $state(false), removeError = $state("");
   let keptMixes = $state<PlaylistMix[]>([]);
   let copies = $state<PlaylistCopy[]>([]);
   let copiesError = $state("");
@@ -327,7 +331,7 @@
             ? linksResult.reason.message
             : "Playlists are unavailable.";
       } else {
-        playlists = linksResult.value.playlistLinks;
+        playlists = linksResult.value.playlistLinks.filter(link => link.enabled || !isServiceMix(link));
         const nextId = playlists.some((playlist) => playlist.id === selectedId) ? selectedId : "";
         if (nextId && (detailOpen || initialId === nextId)) await loadDetails(nextId);
         else {
@@ -466,6 +470,19 @@
     }
   }
 
+  async function removeMix() {
+    if (!removingMix || removing) return;
+    const target = removingMix;
+    removing = true; removeError = "";
+    try {
+      await mixes.remove(target.id);
+      keptMixes = keptMixes.filter(mix => mix.id !== target.id);
+      playlists = playlists.filter(playlist => playlist.id !== target.id);
+      removingMix = null;
+    } catch { removeError = "This mix could not be removed. Try again."; }
+    finally { removing = false; }
+  }
+
   async function matchSaved(message: string) {
     toast.success(message);
     await refresh();
@@ -588,6 +605,7 @@
               </span>
               <span class="playlist-summary">
                 <small>{playlist.trackCount === null ? "Song count unavailable" : `${playlist.trackCount} ${playlist.trackCount === 1 ? "song" : "songs"}`}</small>
+                <span class="mix-remove"><Button variant="ghost" aria-label={`Remove ${playlist.name} from my apps`} onclick={() => { removeError = ""; removingMix = playlist; }}>Remove from my apps</Button></span>
               </span>
             </div>
           {:else}
@@ -639,6 +657,7 @@
                 </span>
                 <small>{playlist.playableCount} of {playlist.trackCount} playable</small>
                 {#if !playlist.enabled}<Badge state="suggested">Paused</Badge>{/if}
+                {#if isServiceMix(playlist)}<span class="mix-remove"><Button variant="ghost" aria-label={`Remove ${playlist.name} from my apps`} onclick={() => { removeError = ""; removingMix = playlist; }}>Remove from my apps</Button></span>{/if}
               </span>
               <CoverageBar
                 routes={playlist.routeCoverage}
@@ -1038,7 +1057,9 @@
   />
 {/if}
 
+<ConfirmDialog bind:open={() => Boolean(removingMix), value => { if (!value) removingMix = null; }} title="Remove from my apps?" description={`${removingMix?.name ?? "This mix"} will be removed from your apps. You can add it again in For you.`} confirmLabel="Remove from my apps" disabled={removing} closeOnConfirm={false} error={removeError} onConfirm={removeMix} />
 <style>
+  .mix-remove { position: relative; z-index: calc(var(--layer-content) + 1); }
   @media (max-width: 650px) {
     .playlist-row-mix {
       row-gap: 0.18rem;

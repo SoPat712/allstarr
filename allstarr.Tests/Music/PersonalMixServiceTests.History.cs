@@ -10,12 +10,13 @@ namespace allstarr.Tests;
 public sealed partial class PersonalMixServiceTests
 {
     [Fact]
-    public async Task SavedNotReadyMix_UpdatesReadinessWithoutRegeneration()
+    public async Task SavedEmptyMix_DoesNotAppearReadyBeforeRegeneration()
     {
         await service.GenerateAsync(owner);
         await Seed(count: 10, plays: 5);
         var mixes = await NewService().ListAsync(owner);
-        Assert.True(mixes.Single(item => item.Kind == "on-repeat").Readiness.Ready);
+        Assert.False(mixes.Single(item => item.Kind == "on-repeat").Readiness.Ready);
+        Assert.Contains("Refresh", mixes.Single(item => item.Kind == "on-repeat").Readiness.Message);
         Assert.Contains("150 more", mixes.Single(item => item.Kind == "daily-1").Readiness.Message);
         Assert.All(mixes, item => Assert.Equal(1, item.Generation));
         Assert.All(mixes, item => Assert.Empty(item.Songs));

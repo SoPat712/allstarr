@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
+  import { goto } from "$app/navigation";
   import { mixes, type MixPreview, type MixSeed } from "$lib/api";
   import { toast } from "$lib/toasts";
   import { Button, buttonVariants } from "$lib/components/ui/button";
@@ -39,7 +40,7 @@
       const saved = await mixes.save(preview.previewId, name.trim());
       if (disposed) return;
       open = false; query = "";
-      toast.success("Saved — it's in Your mixes", { label: "Open", run: () => { window.location.hash = `#/for-you?mix=${encodeURIComponent(saved.id)}`; } });
+      toast.success("Saved — it's in Your mixes", { label: "Open", run: () => { void goto(`#/for-you?mix=${encodeURIComponent(saved.id)}`, { keepFocus: true, noScroll: true }); } });
       await onsaved();
     } catch { if (!disposed) error = "The mix could not be saved. Preview it again and retry."; }
     finally { if (!disposed) { busy = false; saving = false; } }

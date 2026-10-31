@@ -20,10 +20,10 @@ public sealed partial class PersonalMixService
                 account.Id == link.ProviderAccountId && account.OwnerUserId == user.Id && account.Enabled &&
                 account.ProviderId == link.SourceProviderId));
 
-    private async Task<IReadOnlyList<PersonalMix>> ExternalMixesAsync(UserRecord user, PersonalMixDocument document, CancellationToken token)
+    private async Task<IReadOnlyList<PersonalMix>> ExternalMixesAsync(UserRecord user, CancellationToken token, Guid? id = null)
     {
         await using var db = await factory.CreateDbContextAsync(token);
-        var links = (await ExternalLinks(db, user).AsNoTracking().OrderBy(link => link.CreatedAt).ToArrayAsync(token))
+        var links = (await ExternalLinks(db, user).Where(link => id == null || link.Id == id).AsNoTracking().OrderBy(link => link.CreatedAt).ToArrayAsync(token))
             .Where(IsExternalLink).ToArray();
         var reader = new DurablePlaylistProjectionReader(factory, libraryAccess, providers, policies);
         var policy = await policies.ResolveForUserAsync(user.Id, token);
@@ -57,7 +57,7 @@ public sealed partial class PersonalMixService
             result.Add(new(link.Id, "external", projection?.Name ?? ExternalName(link),
                 "Kept in sync · " + ExternalName(link), projection?.SnapshotVersion ?? 0,
                 projection?.RetrievedAt, new(items.Length > 0, items.Length > 0 ? "Your linked playlist is ready." : "Waiting for playable songs from your linked playlist."),
-                document.ExternalShowInApps.GetValueOrDefault(link.Id), items)
+                link.Enabled, items)
             { SourceLabel = link.SourceProviderId == "lastfm" ? "Last.fm" : "ListenBrainz" });
         }
         return result;
@@ -76,11 +76,12 @@ public sealed partial class PersonalMixService
             _ => "Your top tracks · " + link.SourcePlaylistId.Split(':')[1]
         };
 
-    private async Task<bool> SetExternalInAppsAsync(UserRecord user, Guid id, bool enabled, CancellationToken token)
+    private async Task<bool> SetExternalInAppsAsync(UserRecord user, Guid id, bool enabled, CancellationToken token, string timeZoneId)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         var link = await ExternalLinks(db, user).SingleOrDefaultAsync(item => item.Id == id, token);
         if (link == null || !IsExternalLink(link)) return false;
+        if (link.Enabled == enabled && (!enabled || link.ScheduleId != null)) return true;
         JobScheduleRecord? schedule = null;
         if (link.ScheduleId is { } scheduleId)
         {
@@ -90,14 +91,13 @@ public sealed partial class PersonalMixService
         }
         if (schedule == null && enabled)
         {
-            var document = await LoadAsync(db, user, token);
             schedule = new()
             {
                 Id = Guid.CreateVersion7(),
                 OwnerUserId = user.Id,
                 JobType = DurableScheduleEngine.PlaylistSyncJobType,
                 CronExpression = "0 4 * * *",
-                TimeZoneId = document.TimeZoneId,
+                TimeZoneId = timeZoneId,
                 OverlapPolicy = ScheduleOverlapPolicy.Skip,
                 MisfirePolicy = ScheduleMisfirePolicy.RunOnce,
                 CreatedAt = clock.UtcNow
@@ -129,8 +129,9 @@ public sealed partial class PersonalMixService
         {
             await using var db = await factory.CreateDbContextAsync(token);
             var user = await UserAsync(db, owner, token);
-            var document = await LoadAsync(db, user, token);
-            return document.ExternalShowInApps.GetValueOrDefault(link.Id) &&
+            await LoadAsync(db, user, token);
+            var enabled = await db.PlaylistLinks.AsNoTracking().AnyAsync(item => item.Id == link.Id && item.Enabled, token);
+            return enabled &&
                 await db.ProviderAccounts.AsNoTracking().AnyAsync(account => account.Id == link.ProviderAccountId &&
                     account.ProviderId == link.SourceProviderId && account.OwnerUserId == owner && account.Enabled, token);
         }

@@ -25,7 +25,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
     [HttpGet("{id:guid}")]
     public Task<IActionResult> Get(Guid id, CancellationToken token) => ExecuteAsync(async user =>
     {
-        var mix = (await mixes.ListAsync(user.Id, token: token)).SingleOrDefault(item => item.Id == id) ?? throw new KeyNotFoundException();
+        var mix = await mixes.GetAsync(user.Id, id, token);
         return new { mix = Card(mix, (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value), songs = mix.Songs };
     }, token);
 
@@ -34,7 +34,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
     {
         var result = await ExecuteAsync(async user =>
         {
-            var mix = (await mixes.ListAsync(user.Id, token: token)).SingleOrDefault(item => item.Id == id) ?? throw new KeyNotFoundException();
+            var mix = await mixes.GetAsync(user.Id, id, token);
             var input = MixCoverInput.From(mix);
             if (mix.Kind == "external")
             {
@@ -51,11 +51,19 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
     public Task<IActionResult> Refresh(Guid id, CancellationToken token) => ExecuteAsync(async user =>
         (await mixes.GenerateAsync(user.Id, id, token: token)).Single(item => item.Id == id), token);
 
-    [HttpPut("{id:guid}/in-apps")]
-    public Task<IActionResult> InApps(Guid id, MixInApps request, CancellationToken token) => ExecuteAsync(async user =>
+    [HttpPost("{id:guid}/in-apps")]
+    public Task<IActionResult> AddToApps(Guid id, CancellationToken token) => ExecuteAsync(async user =>
     {
-        await mixes.SetInAppsAsync(user.Id, id, request.Enabled, token);
-        return new { enabled = request.Enabled };
+        if (!(bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value) throw new UnauthorizedAccessException();
+        await mixes.SetInAppsAsync(user.Id, id, true, token);
+        return new { inApps = true };
+    }, token);
+
+    [HttpDelete("{id:guid}/in-apps")]
+    public Task<IActionResult> RemoveFromApps(Guid id, CancellationToken token) => ExecuteAsync(async user =>
+    {
+        await mixes.SetInAppsAsync(user.Id, id, false, token);
+        return new { inApps = false };
     }, token);
 
     [HttpPost("start")]
@@ -88,7 +96,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
         new { enabled = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value, name = "Let listeners add mixes to their apps" }, token, true);
 
     [HttpPut("publish-setting")]
-    public Task<IActionResult> SetPublishSetting(MixInApps request, CancellationToken token) => ExecuteAsync(async user =>
+    public Task<IActionResult> SetPublishSetting(MixPublishSetting request, CancellationToken token) => ExecuteAsync(async user =>
         await settings.ApplyBatchAsync([new(PersonalMixService.PublishKey, request.Enabled ? "true" : "false")], "mixes", user.Id, token), token, true);
 
     [HttpPost("dry-run")]
@@ -107,8 +115,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
         mix.RecipeVersion,
         mix.UpdatedAt,
         mix.Readiness,
-        inApps = enabled && mix.Generation > 0 && mix.Readiness.Ready && mix.ShowInApps,
-        mix.ShowInApps,
+        inApps = mix.Added,
         appsAllowed = enabled,
         coverArtwork = mix.Songs.Take(4).Select(item => item.Song.Id).ToArray(),
         initialJobId
@@ -134,6 +141,6 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
     }
 }
 
-public sealed record MixInApps(bool Enabled);
+public sealed record MixPublishSetting(bool Enabled);
 
 public sealed record MixSaveRequest(string Name);

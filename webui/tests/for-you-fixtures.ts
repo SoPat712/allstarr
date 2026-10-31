@@ -1,11 +1,13 @@
 import { expect, type Page } from "@playwright/test";
-export { appearance, capture } from "./intelligence-fixtures";
+export { appearance } from "./intelligence-fixtures";
+import { mkdir } from "node:fs/promises";
+import { expectContainedMobileGeometry } from "./mobile-geometry";
 import type { MixCard, MixSong, PlaylistLink, TasteProfile } from "../src/lib/api";
 
 export const songs: MixSong[] = Array.from({ length: 8 }, (_, i) => ({ mixId: "daily", generation: 1, source: "library", reason: i ? "Calm sound" : "Played 6 times in 30 days", score: 1, song: { id: `song-${i}`, canonicalRecordingId: null, title: ["Blue morning", "Quiet water", "Afterglow"][i % 3] + (i > 2 ? ` ${i + 1}` : ""), artist: ["North", "Cedar", "Willow"][i % 3], album: "Open skies" } }));
-const card = (id: string, name: string, section: MixCard["section"] = "madeForYou"): MixCard => ({ id, kind: id, name, section, sortOrder: 0, description: section === "moods" ? "Calm songs from your library" : "R&B · North, Cedar, Willow", sourceLabel: null, recipeVersion: null, updatedAt: "2026-10-29T04:00:00Z", readiness: { ready: true, message: "Ready" }, showInApps: true, inApps: true, appsAllowed: true, coverArtwork: songs.slice(0, 4).map(row => row.song.id) });
+const card = (id: string, name: string, section: MixCard["section"] = "madeForYou"): MixCard => ({ id, kind: id, name, section, sortOrder: 0, description: section === "moods" ? "Calm songs from your library" : id.startsWith("daily-") ? `Made for you · Blend ${id.slice(-1)}` : "R&B · North, Cedar, Willow", sourceLabel: null, recipeVersion: null, updatedAt: "2026-10-29T04:00:00Z", readiness: { ready: true, message: "Ready" }, inApps: true, appsAllowed: true, coverArtwork: songs.slice(0, 4).map(row => row.song.id) });
 export async function mockForYou(page: Page, options: { admin?: boolean; brandNew?: boolean; publish?: boolean; partial?: boolean; custom?: boolean } = {}) {
-  const state = { cards: [1, 2, 3, 4].map(n => card(`daily-${n}`, `Daily Mix ${n}`)).concat([card("discover-weekly", "Discover Weekly"), card("release-radar", "Release Radar"), card("on-repeat", "On Repeat"), card("rewind", "Rewind"), ...["Chill", "Focus", "Workout", "Party", "Sleep"].map(name => card(name.toLowerCase(), name, "moods"))]), songs: structuredClone(songs), publish: options.publish ?? true, calls: [] as { path: string; method: string; body: any }[], taste: { lately: { tags: [{ name: "R&B", strength: 80, value: 1 }, { name: "pop", strength: 70, value: 1 }], artists: [{ name: "North", strength: 80, value: 1 }] }, usually: { tags: [{ name: "indie rock", strength: 90, value: 1 }, { name: "EDM", strength: 70, value: 1 }, { name: "hip-hop", strength: 60, value: 1 }], artists: [] }, latelyWeight: .7, nudges: [], paused: false, useImportedHistory: true } as TasteProfile };
+  const state = { cards: [1, 2, 3, 4].map(n => card(`daily-${n}`, `Blend ${n}`)).concat([card("discover-weekly", "Uncharted"), card("release-radar", "Just Dropped"), card("on-repeat", "Heavy Rotation"), card("rewind", "Long Lost"), ...["Chill", "Focus", "Workout", "Party", "Sleep"].map(name => card(name.toLowerCase(), name, "moods"))]), songs: structuredClone(songs), publish: options.publish ?? true, calls: [] as { path: string; method: string; body: any }[], taste: { lately: { tags: [{ name: "R&B", strength: 80, value: 1 }, { name: "pop", strength: 70, value: 1 }], artists: [{ name: "North", strength: 80, value: 1 }] }, usually: { tags: [{ name: "indie rock", strength: 90, value: 1 }, { name: "EDM", strength: 70, value: 1 }, { name: "hip-hop", strength: 60, value: 1 }], artists: [] }, latelyWeight: .7, nudges: [], paused: false, useImportedHistory: true } as TasteProfile };
   const linked: PlaylistLink[] = [];
   if (options.custom) state.cards.push(card("custom", "Evening listening", "custom"));
   if (options.brandNew || options.partial) for (const item of state.cards.filter(item => options.brandNew || item.id === "daily-4")) { item.readiness = { ready: false, message: "Play about 80 more songs, or import your listening history." }; item.coverArtwork = []; item.inApps = false; }
@@ -27,9 +29,9 @@ export async function mockForYou(page: Page, options: { admin?: boolean; brandNe
     if (path === "/api/admin/mixes/publish-setting") { if (body) state.publish = body.enabled; return reply({ enabled: state.publish }); }
     if (path === "/api/admin/mixes/start") return reply({ previewId: "preview", songs, readiness: { ready: true, message: "Ready" } });
     if (path === "/api/admin/mixes/start/preview/save") { const saved = card("custom", body.name, "custom"); state.cards.push(saved); return reply({ ...saved, songs, generation: 1 }); }
-    if (path === "/api/admin/mixes/external" && method === "POST") { const saved = { ...card("external", "Loved on Last.fm", "yourServices"), sourceLabel: "Last.fm", appsAllowed: state.publish, inApps: state.publish, initialJobId: "external-job" }; state.cards.push(saved); linked.push({ id: saved.id, name: saved.name, enabled: true, providerAccountId: "account", sourceProviderId: body.source, sourcePlaylistId: body.source === "listenbrainz" ? `createdfor:${body.kind}` : body.kind === "top" ? "top:1month:50" : body.kind,
+    if (path === "/api/admin/mixes/external" && method === "POST") { if (!state.publish) return reply({ error: "Your admin hasn’t allowed adding mixes to apps." }, 403); const saved = { ...card("external", "Loved on Last.fm", "yourServices"), sourceLabel: "Last.fm", appsAllowed: state.publish, inApps: true, initialJobId: "external-job" }; state.cards = [...state.cards.filter(item => item.id !== saved.id), saved]; const previous = linked.findIndex(item => item.id === saved.id); if (previous >= 0) linked.splice(previous, 1); linked.push({ id: saved.id, name: saved.name, enabled: true, providerAccountId: "account", sourceProviderId: body.source, sourcePlaylistId: body.source === "listenbrainz" ? `createdfor:${body.kind}` : body.kind === "top" ? "top:1month:50" : body.kind,
       targetProtocol: "jellyfin", targetBackendInstanceId: "main", mode: "virtual", projectionMode: "resolved", materializationMode: "reconcile", importMode: "linked", trackRetention: "onDemand", mirrorStaleEntries: true, preserveManualEntries: true, syncName: true, syncDescription: true, syncArtwork: true, ruleVersion: "1", policyVersion: "1", revision: 1, trackCount: 10, matchedCount: 8, unmatchedCount: 2, playableCount: 8, materializedCount: 0, routeCoverage: [], metrics: { total: 10, matched: 8, unresolved: 2, review: 0, rejected: 0, playable: 8, materialized: 0 } }); return reply(saved, 201); }
-    if (path === "/api/admin/mixes") return reply(state.cards.map(item => ({ ...item, appsAllowed: state.publish, inApps: state.publish && item.showInApps && item.readiness.ready })));
+    if (path === "/api/admin/mixes") return reply(state.cards.map(item => ({ ...item, appsAllowed: state.publish })));
     if (path.endsWith("/feedback")) {
       const song = state.songs.find(row => row.song.id === body.songId)!.song;
       state.songs = state.songs.filter(row => body.kind === "neverArtist" ? row.song.artist !== song.artist : row.song.id !== body.songId);
@@ -37,7 +39,7 @@ export async function mockForYou(page: Page, options: { admin?: boolean; brandNe
       state.taste.nudges = [...state.taste.nudges.filter(item => item.kind !== nudge.kind || item.name !== nudge.name), nudge];
       return reply({ removed: body.songId });
     }
-    if (path.endsWith("/in-apps")) { state.cards.find(item => path.includes(`/${item.id}/`))!.showInApps = body.enabled; return reply({ enabled: body.enabled }); }
+    if (path.endsWith("/in-apps")) { if (method === "POST" && !state.publish) return reply({ error: "Your admin hasn’t allowed adding mixes to apps." }, 403); const item = state.cards.find(item => path.includes(`/${item.id}/`))!; item.inApps = method === "POST"; const link = linked.find(link => link.id === item.id); if (link) link.enabled = item.inApps; return reply(item); }
     if (path.endsWith("/refresh")) return reply({ error: "Wait 15 minutes before refreshing this mix again." }, 429);
     if (path.startsWith("/api/admin/mixes/")) { if (method === "DELETE") { state.cards = state.cards.filter(item => item.id !== path.split("/").at(-1)); return reply({}); } return reply({ mix: { ...state.cards.find(item => item.id === path.split("/").at(-1)), appsAllowed: state.publish }, songs: state.songs }); }
     if (path.includes("/track-matches/targets/")) return reply({ tracks: [{ id: "local", backendItemId: "seed", title: "Golden hour", artist: "Mira", album: "Warm light", artworkUrl: null }], providers: [] });
@@ -54,7 +56,7 @@ export async function mockForYou(page: Page, options: { admin?: boolean; brandNe
     if (path === "/api/admin/releases") return reply({ entries: options.brandNew ? [] : [{ id: "release", title: "Open skies", artist: "North", releaseDate: "2026-10-29", type: "album", sources: [], isExplicit: false, edition: "" }], excluded: [], coverage: [] });
     if (path === "/api/admin/playlist-links") return reply({ playlistLinks: linked });
     if (path === "/api/admin/jobs/external-job") return reply({ job: { id: "external-job", state: "Succeeded" }, progress: [], attempts: [] });
-    if (path === "/api/admin/playlist-links/external") return reply({ trackCount: 10, matchedCount: 8 });
+    if (path === "/api/admin/playlist-links/external") return reply({ ...linked.find(link => link.id === "external"), tracks: [], trackCount: 10, matchedCount: 8, unresolvedCount: 2, reviewCount: 0, durationMs: 0, unknownDurationCount: 0 });
     if (path.endsWith("/playlist-forks")) return reply([]);
     if (path === "/api/admin/releases/artists/from-hearts") return reply({ followed: 1 });
     if (path === "/api/admin/history/imports") return reply([]);
@@ -64,3 +66,13 @@ export async function mockForYou(page: Page, options: { admin?: boolean; brandNe
   return state;
 }
 export async function openHome(page: Page) { await page.goto("/#/for-you"); await expect(page.getByRole("heading", { name: "Made for you", exact: true })).toBeVisible(); }
+
+export async function capture(page: Page, name: string, width: number, theme: "light" | "dark") {
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  if (width === 390) await expectContainedMobileGeometry(page);
+  await page.evaluate(() => { window.scrollTo({ top: 0, behavior: "instant" }); (document.activeElement as HTMLElement)?.blur(); });
+  const folder = process.env.ALLSTARR_SCREENSHOT_DIR ?? new URL("../../test-results/screenshots/", import.meta.url).pathname;
+  await mkdir(folder, { recursive: true });
+  const dialog = await page.getByRole("dialog").count() + await page.getByRole("alertdialog").count();
+  await page.screenshot({ path: `${folder}/${name}-${width}-${theme}.png`, fullPage: !dialog });
+}

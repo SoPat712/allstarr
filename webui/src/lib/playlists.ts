@@ -1,5 +1,10 @@
 import type { MixCard, PlaylistLink, PlaylistSourceAccount, PlaylistTrack } from "./api";
 
+export function isServiceMix(link: Pick<PlaylistLink, "sourceProviderId" | "sourcePlaylistId" | "importMode">) {
+  return link.importMode === "linked" && (link.sourceProviderId === "lastfm" && (["loved", "similar"].includes(link.sourcePlaylistId) || link.sourcePlaylistId.startsWith("top:"))
+    || link.sourceProviderId === "listenbrainz" && link.sourcePlaylistId.startsWith("createdfor:"));
+}
+
 export type PlaylistMix = MixCard & { trackCount: number | null };
 
 export type PlaylistSort = "name" | "tracks" | "coverage" | "updated";

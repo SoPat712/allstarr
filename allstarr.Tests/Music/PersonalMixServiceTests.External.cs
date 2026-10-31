@@ -97,9 +97,61 @@ public sealed partial class PersonalMixServiceTests
     }
 
     [Fact]
+    public async Task MixDetailAndCover_DoNotReadUnrelatedLinkedPlaylists()
+    {
+        await Seed();
+        var mix = (await service.GenerateAsync(owner)).Single(item => item.Kind == "daily-1");
+        await ExternalLink();
+        access.Setup(item => item.ResolveUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Linked playlist unavailable."));
+        var controller = Controller(owner, true);
+        var response = Assert.IsType<OkObjectResult>(await controller.Get(mix.Id, default));
+        var detail = JsonSerializer.SerializeToElement(response.Value);
+        Assert.Equal(mix.Id, detail.GetProperty("mix").GetProperty("Id").GetGuid());
+        Assert.Equal(mix.Songs.Count, detail.GetProperty("songs").GetArrayLength());
+        Assert.IsAssignableFrom<IActionResult>(await controller.Cover(mix.Id, default));
+        access.Verify(item => item.ResolveUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task ExternalVisibility_MigratesChoicesAndEnabledLinksOnce()
+    {
+        var enabled = await ExternalLink();
+        var chosen = await ExternalLink();
+        var hidden = await ExternalLink();
+        await service.GenerateAsync(owner);
+        await using (var db = factory.CreateDbContext())
+        {
+            foreach (var id in new[] { chosen.Id, hidden.Id })
+                (await db.PlaylistLinks.SingleAsync(item => item.Id == id)).Enabled = false;
+            var row = await db.ExternalMetadataSnapshots.AsNoTracking().SingleAsync(item => item.ResourceKind == "personal-mixes");
+            var payload = System.Text.Json.Nodes.JsonNode.Parse(row.PayloadJson)!;
+            payload["AppsOptInVersion"] = 1;
+            payload["ExternalShowInApps"] = JsonSerializer.SerializeToNode(new Dictionary<Guid, bool> { [chosen.Id] = true, [hidden.Id] = false });
+            row.PayloadJson = payload.ToJsonString();
+            row.Id = Guid.NewGuid();
+            row.SnapshotVersion++;
+            db.ExternalMetadataSnapshots.Add(row);
+            await db.SaveChangesAsync();
+        }
+        var cards = await NewService().ListAsync(owner);
+        Assert.True(cards.Single(item => item.Id == enabled.Id).Added);
+        Assert.True(cards.Single(item => item.Id == chosen.Id).Added);
+        Assert.False(cards.Single(item => item.Id == hidden.Id).Added);
+        await service.SetInAppsAsync(owner, chosen.Id, false, default);
+        await service.SetInAppsAsync(owner, chosen.Id, false, default);
+        Assert.False((await NewService().ListAsync(owner)).Single(item => item.Id == chosen.Id).Added);
+        await using var read = factory.CreateDbContext();
+        Assert.Equal(3, await read.ExternalMetadataSnapshots.CountAsync(item => item.ResourceKind == "personal-mixes"));
+        var saved = await read.ExternalMetadataSnapshots.OrderByDescending(item => item.SnapshotVersion).FirstAsync(item => item.ResourceKind == "personal-mixes");
+        Assert.DoesNotContain("ExternalShowInApps", saved.PayloadJson);
+    }
+
+    [Fact]
     public async Task ExternalCards_UseOwnedLinkedAccountsAndCurrentBackend()
     {
         var loved = await ExternalLink();
+        var imported = await ExternalLink("spotify", "provider-playlist");
         await ExternalLink("lastfm", "top:1month:50");
         await ExternalLink("lastfm", "similar");
         await ExternalLink("listenbrainz", "createdfor:weekly-jams");
@@ -121,6 +173,7 @@ public sealed partial class PersonalMixServiceTests
         }
         var cards = (await service.ListAsync(owner)).Where(item => item.Kind == "external").ToArray();
         Assert.Equal(4, cards.Length);
+        Assert.DoesNotContain(cards, item => item.Id == imported.Id);
         Assert.Equal("Last.fm", cards.Single(item => item.Id == loved.Id).SourceLabel);
         Assert.Equal("Kept in sync · Loved on Last.fm", cards.Single(item => item.Id == loved.Id).Description);
         Assert.Single(cards, item => item.SourceLabel == "ListenBrainz");
@@ -159,7 +212,8 @@ public sealed partial class PersonalMixServiceTests
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
-    public async Task ExternalAppChoicesSurviveVisibilityUpgradeAndRepairMissingLegacyChoices(int version)
+    [InlineData(2)]
+    public async Task ExternalVisibility_PreservesEnabledLinksAndRemovesSeparateChoices(int version)
     {
         await Seed();
         await service.GenerateAsync(owner);
@@ -183,19 +237,19 @@ public sealed partial class PersonalMixServiceTests
         publish = true;
         Assert.True(await NewService().IsExternalVisibleAsync(Context(owner), restored, default));
         var cards = await NewService().ListAsync(owner);
-        Assert.True(cards.Single(item => item.Id == restored.Id).ShowInApps);
-        Assert.False(cards.Single(item => item.Id == explicitHidden.Id).ShowInApps);
-        Assert.False(cards.Single(item => item.Id == disabled.Id).ShowInApps);
+        Assert.True(cards.Single(item => item.Id == restored.Id).Added);
+        Assert.True(cards.Single(item => item.Id == explicitHidden.Id).Added);
+        Assert.False(cards.Single(item => item.Id == disabled.Id).Added);
         Assert.False(await service.IsExternalVisibleAsync(Context(other), restored, default));
         await using var read = factory.CreateDbContext();
         var rows = await read.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "personal-mixes")
             .OrderBy(item => item.SnapshotVersion).ToArrayAsync();
         Assert.Equal(3, rows.Length);
         var saved = JsonNode.Parse(rows[^1].PayloadJson)!;
-        Assert.Equal(2, saved["AppsOptInVersion"]!.GetValue<int>());
-        Assert.Equal(3, saved["ExternalShowInApps"]!.AsObject().Count);
+        Assert.Equal(3, saved["AppsOptInVersion"]!.GetValue<int>());
+        Assert.Null(saved["ExternalShowInApps"]);
         await service.SetInAppsAsync(owner, restored.Id, false, default);
-        Assert.False((await NewService().ListAsync(owner)).Single(item => item.Id == restored.Id).ShowInApps);
+        Assert.False((await NewService().ListAsync(owner)).Single(item => item.Id == restored.Id).Added);
     }
 
     [Fact]
@@ -207,11 +261,11 @@ public sealed partial class PersonalMixServiceTests
         Assert.Null(await virtualization.ReadAsync(Context(owner), id));
         Assert.Empty(await virtualization.ListAsync(Context(owner)));
         publish = true;
-        Assert.Null(await virtualization.ReadAsync(Context(owner), id));
-        Assert.False((await service.ListAsync(owner)).Single(mix => mix.Id == link.Id).ShowInApps);
+        Assert.NotNull(await virtualization.ReadAsync(Context(owner), id));
+        Assert.True((await service.ListAsync(owner)).Single(mix => mix.Id == link.Id).Added);
         await service.SetInAppsAsync(owner, link.Id, true, default);
         await service.GenerateAsync(owner);
-        Assert.True((await NewService().ListAsync(owner)).Single(mix => mix.Id == link.Id).ShowInApps);
+        Assert.True((await NewService().ListAsync(owner)).Single(mix => mix.Id == link.Id).Added);
         var visible = await virtualization.ReadAsync(Context(owner), id);
         Assert.NotNull(visible);
         Assert.Equal("lastfm", visible.MixCover!.Source);
@@ -313,6 +367,7 @@ public sealed partial class PersonalMixServiceTests
     [InlineData("lastfm", "unknown", null)]
     public async Task ExternalCreation_RejectsUnsupportedSelections(string source, string kind, string? period)
     {
+        publish = true;
         Assert.IsType<BadRequestObjectResult>(await Controller(owner, true).External(new(source, kind, period), default));
     }
 
@@ -367,6 +422,11 @@ public sealed partial class PersonalMixServiceTests
         var result = await controller.External(new(source, kind, period), default);
         timer.Stop();
         output.WriteLine($"External POST {source}: {timer.ElapsedMilliseconds} ms; provider plans {providerCalls}; other projections {projectionCalls} (300 ms per projection, 700 ms per provider plan).");
+        if (!allowed)
+        {
+            Assert.Equal(403, Assert.IsType<StatusCodeResult>(result).StatusCode);
+            return;
+        }
         var response = Assert.IsType<CreatedResult>(result);
         Assert.Equal(0, providerCalls);
         Assert.Equal(0, projectionCalls);
@@ -376,9 +436,9 @@ public sealed partial class PersonalMixServiceTests
         gateway.VerifyNoOtherCalls();
         Assert.True(timer.Elapsed < TimeSpan.FromSeconds(1), $"POST took {timer.ElapsedMilliseconds} ms.");
         var card = JsonSerializer.SerializeToElement(response.Value);
-        Assert.True(card.GetProperty("ShowInApps").GetBoolean());
+        Assert.False(card.TryGetProperty("Added", out _));
         Assert.Equal(allowed, card.GetProperty("appsAllowed").GetBoolean());
-        Assert.False(card.GetProperty("inApps").GetBoolean());
+        Assert.True(card.GetProperty("inApps").GetBoolean());
         Assert.False(card.GetProperty("Readiness").GetProperty("Ready").GetBoolean());
         Assert.Equal("Matching songs…", card.GetProperty("Readiness").GetProperty("Message").GetString());
         Assert.Empty(card.GetProperty("coverArtwork").EnumerateArray());
@@ -387,9 +447,7 @@ public sealed partial class PersonalMixServiceTests
         Assert.Equal(PlaylistLinkMode.Virtual, created.Mode);
         Assert.Equal(PlaylistImportMode.Linked, created.ImportMode);
         Assert.Equal(accountLink.ProviderAccountId, created.ProviderAccountId);
-        var document = await read.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "personal-mixes")
-            .OrderByDescending(item => item.SnapshotVersion).FirstAsync();
-        Assert.True(JsonSerializer.Deserialize<PersonalMixDocument>(document.PayloadJson)!.ExternalShowInApps[created.Id]);
+        Assert.True(created.Enabled);
         Assert.True((await read.JobSchedules.SingleAsync(item => item.Id == created.ScheduleId)).Enabled);
         var job = Assert.Single(await read.Jobs.ToArrayAsync());
         Assert.Equal("playlist.materialize", job.Type);

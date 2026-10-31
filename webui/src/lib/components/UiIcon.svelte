@@ -2,6 +2,7 @@
   import {
     Activity,
     BookOpen,
+    Check,
     Headphones,
     House,
     Library,
@@ -14,6 +15,7 @@
   let { name, size = 18 }: { name: string; size?: number } = $props();
   const icons = {
     activity: Activity,
+    check: Check,
     guide: BookOpen,
     headphones: Headphones,
     home: House,

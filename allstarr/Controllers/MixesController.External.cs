@@ -24,6 +24,7 @@ public sealed partial class MixesController
                 (request.Period ?? "1month") is "7day" or "1month" or "3month" or "12month" or "overall")
                 selection = "top:" + (request.Period ?? "1month") + ":50";
             else throw new ArgumentException("Unknown external mix selection.");
+            if (!(bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value) throw new UnauthorizedAccessException();
             await using var db = await factory.CreateDbContextAsync(token);
             var account = await db.ProviderAccounts.AsNoTracking().Where(item => item.OwnerUserId == user.Id &&
                 item.ProviderId == source && item.Enabled).OrderBy(item => item.CreatedAt).ThenBy(item => item.Id)

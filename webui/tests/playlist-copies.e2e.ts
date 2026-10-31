@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 import type { MixCard } from "../src/lib/api";
+import { capture } from "./for-you-fixtures";
 import { expectContainedMobileGeometry } from "./mobile-geometry";
 
 const listener = "11111111-1111-4111-8111-111111111111";
@@ -9,8 +10,8 @@ const virtualPlaylistId = `allstarr-vpl-${id.replaceAll("-", "")}`;
 const playlist = { id, virtualPlaylistId, name: "Evening mix", enabled: true, sourceProviderId: "spotify", sourcePlaylistId: "evening", targetProtocol: "jellyfin", targetBackendInstanceId: "home", targetPlaylistId: "33333333333343338333333333333333", mode: "virtual", importMode: "linked", projectionMode: "resolved", trackRetention: "onDemand", trackCount: 1, matchedCount: 1, unmatchedCount: 0, playableCount: 1, materializedCount: 0, routeCoverage: [], metrics: { total: 1, review: 0 } };
 const coverUrl = `/api/admin/mixes/${id}/cover?v=1`;
 const mixPlaylist = { ...playlist, name: "After hours mix", sourceProviderId: "lastfm", sourcePlaylistId: "loved", artworkUrl: coverUrl };
-const keptMix: MixCard = { id: "66666666-6666-4666-8666-666666666666", kind: "daily-1", name: "Daily Mix 1", description: "Songs picked for you", section: "madeForYou", sortOrder: 0, sourceLabel: null, recipeVersion: "1", updatedAt: "2026-10-29T04:00:00Z", readiness: { ready: true, message: "Ready" }, inApps: true, showInApps: true, appsAllowed: true, coverArtwork: [] };
-const builtInMixes: MixCard[] = [keptMix, { ...keptMix, id: "77777777-7777-4777-8777-777777777777", kind: "focus", name: "Focus", section: "moods" }, { ...keptMix, id: "88888888-8888-4888-8888-888888888888", kind: "custom", name: "Evening listening", section: "custom" }, { ...keptMix, id: "99999999-9999-4999-8999-999999999999", kind: "discover-weekly", name: "Discover Weekly", inApps: false, showInApps: false }, { ...keptMix, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", kind: "release-radar", name: "Release Radar", inApps: false, appsAllowed: false }];
+const keptMix: MixCard = { id: "66666666-6666-4666-8666-666666666666", kind: "daily-1", name: "Blend 1", description: "Songs picked for you", section: "madeForYou", sortOrder: 0, sourceLabel: null, recipeVersion: "1", updatedAt: "2026-10-29T04:00:00Z", readiness: { ready: true, message: "Ready" }, inApps: true, appsAllowed: true, coverArtwork: [] };
+const builtInMixes: MixCard[] = [keptMix, { ...keptMix, id: "77777777-7777-4777-8777-777777777777", kind: "focus", name: "Focus", section: "moods" }, { ...keptMix, id: "88888888-8888-4888-8888-888888888888", kind: "custom", name: "Evening listening", section: "custom" }, { ...keptMix, id: "99999999-9999-4999-8999-999999999999", kind: "discover-weekly", name: "Uncharted", inApps: false, }, { ...keptMix, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", kind: "release-radar", name: "Just Dropped", inApps: false, appsAllowed: false }];
 async function mockCopies(page: Page, copies = true, byTarget = false, items?: Array<typeof playlist & { artworkUrl?: string }>, cards: MixCard[] = []) {
   const reads: string[] = [];
   await page.route("**/*", async route => {
@@ -23,6 +24,11 @@ async function mockCopies(page: Page, copies = true, byTarget = false, items?: A
     if (path === "/api/admin/ui/schema") return reply({ providers: [{ id: "spotify", name: "Spotify" }, { id: "lastfm", name: "Last.fm" }, { id: "jellyfin", name: "Jellyfin" }], configSections: [] });
     if (path.startsWith("/api/admin/mixes/") && path.endsWith("/cover")) return route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400"><rect width="400" height="400" fill="#163c45"/><circle cx="200" cy="200" r="150" fill="#dcae62"/><circle cx="200" cy="200" r="95" fill="#163c45"/><circle cx="200" cy="200" r="24" fill="#e5d8bf"/></svg>' });
     if (path === "/api/admin/mixes") return reply(cards);
+    if (path.endsWith("/in-apps")) {
+      reads.push(`${route.request().method()} ${path}`);
+      const card = cards.find(card => path.includes(`/${card.id}/`))!; card.inApps = route.request().method() === "POST";
+      return reply(card);
+    }
     if (path.startsWith("/api/admin/mixes/")) {
       reads.push(path);
       return reply({ mix: cards.find(card => card.id === path.split("/").at(-1)), songs: [{ mixId: keptMix.id, generation: 1, source: "library", reason: "A familiar favourite", score: 1, song: { id: "song", canonicalRecordingId: null, title: "Blue morning", artist: "North", album: "Open skies" } }] });
@@ -139,14 +145,14 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
-    const reads = await mockCopies(page, false, false, [mixPlaylist], [...builtInMixes, { ...keptMix, id, kind: "external", name: mixPlaylist.name, section: "yourServices" }]);
+    const reads = await mockCopies(page, false, false, [mixPlaylist], [...builtInMixes.map(card => ({ ...card })), { ...keptMix, id, kind: "external", name: mixPlaylist.name, section: "yourServices" }]);
     await page.goto("/#/library/playlists");
     const rows = page.locator(".playlist-row");
     await expect(rows).toHaveCount(4);
     await expect(page.getByText("4 playlists", { exact: true })).toBeVisible();
-    await expect(rows.locator(".playlist-title-line strong")).toHaveText(["After hours mix", "Daily Mix 1", "Evening listening", "Focus"]);
-    await expect(rows.filter({ hasText: "Discover Weekly" })).toHaveCount(0);
-    await expect(rows.filter({ hasText: "Release Radar" })).toHaveCount(0);
+    await expect(rows.locator(".playlist-title-line strong")).toHaveText(["After hours mix", "Blend 1", "Evening listening", "Focus"]);
+    await expect(rows.filter({ hasText: "Uncharted" })).toHaveCount(0);
+    await expect(rows.filter({ hasText: "Just Dropped" })).toHaveCount(0);
     const row = rows.filter({ hasText: keptMix.name });
     await expect(row.getByText("Mix · in your apps", { exact: true })).toBeVisible();
     await expect(row.getByText("1 song", { exact: true })).toBeVisible();
@@ -166,10 +172,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
         expect(count!.y - (label!.y + label!.height)).toBeLessThanOrEqual(8);
       }
     }
-    const folder = new URL("../test-results/libcovers/", import.meta.url).pathname;
-    await mkdir(folder, { recursive: true });
-    await page.screenshot({ path: `${folder}/playlist-kept-mixes-${width}-${theme}.png`, fullPage: true });
-    await page.getByRole("searchbox", { name: "Filter playlists" }).fill("daily mix");
+    await capture(page, "playlist-added-mixes", width, theme);
+    await page.getByRole("searchbox", { name: "Filter playlists" }).fill("blend");
     await expect(rows).toHaveCount(1);
     await expect(rows).toContainText(keptMix.name);
     await page.getByRole("searchbox", { name: "Filter playlists" }).fill("");
@@ -185,6 +189,16 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(page.getByRole("dialog").getByRole("heading", { name: keptMix.name, exact: true })).toBeVisible();
     expect(reads.filter(path => path === `/api/admin/mixes/${id}`)).toHaveLength(0);
     expect(reads.filter(path => path === `/api/admin/mixes/${builtInMixes[3].id}`)).toHaveLength(0);
+    await page.getByRole("dialog").getByRole("link", { name: "Manage in Playlists", exact: true }).click();
+    await page.getByRole("button", { name: `Remove ${keptMix.name} from my apps`, exact: true }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Remove from my apps", exact: true }).click();
+    await expect(rows.filter({ hasText: keptMix.name })).toHaveCount(0);
+    await capture(page, "playlist-after-remove", width, theme);
+    await page.goto(`/#/for-you?mix=${keptMix.id}`);
+    await page.getByRole("dialog").getByRole("button", { name: "Add to my apps", exact: true }).click();
+    await page.getByRole("dialog").getByRole("link", { name: "Manage in Playlists", exact: true }).click();
+    await expect(rows.filter({ hasText: keptMix.name })).toHaveCount(1);
+    await capture(page, "playlist-after-readd", width, theme);
   });
 }
 
@@ -194,4 +208,30 @@ test("Kept mixes appear when there are no imported playlists", async ({ page }) 
   await expect(page.locator(".playlist-row")).toHaveCount(1);
   await expect(page.getByText("1 playlist", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: `Open ${keptMix.name} mix`, exact: true })).toBeVisible();
+});
+
+test("Removing a mix from playlists keeps it available to add again", async ({ page }) => {
+  const cards = [{ ...keptMix }]; const reads = await mockCopies(page, false, false, [], cards);
+  await page.goto("/#/library/playlists");
+  const remove = page.getByRole("button", { name: `Remove ${keptMix.name} from my apps`, exact: true }); await remove.click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(cards[0].inApps).toBe(true); await remove.click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove from my apps", exact: true }).click();
+  await expect(page.locator(".playlist-row")).toHaveCount(0);
+  expect(reads).toContain(`DELETE /api/admin/mixes/${keptMix.id}/in-apps`);
+  await page.goto(`/#/for-you?mix=${keptMix.id}`);
+  await page.getByRole("dialog").getByRole("button", { name: "Add to my apps", exact: true }).click();
+  await expect(page.getByRole("dialog").getByText("In your apps", { exact: true })).toBeVisible();
+  await page.getByRole("dialog").getByRole("link", { name: "Manage in Playlists", exact: true }).click();
+  await expect(page.locator(".playlist-row")).toHaveCount(1);
+});
+test("A failed removal keeps the mix and can be retried", async ({ page }) => {
+  const cards = [{ ...keptMix }]; await mockCopies(page, false, false, [], cards); let failing = true;
+  await page.route("**/in-apps", route => failing ? route.fulfill({ status: 503, json: {} }) : route.fallback());
+  await page.goto("/#/library/playlists");
+  await page.getByRole("button", { name: `Remove ${keptMix.name} from my apps`, exact: true }).click();
+  const dialog = page.getByRole("alertdialog"), confirm = dialog.getByRole("button", { name: "Remove from my apps", exact: true });
+  await confirm.click(); await expect(dialog.getByRole("alert")).toContainText("Try again.");
+  expect(cards[0].inApps).toBe(true); failing = false; await confirm.click();
+  await expect(dialog).toHaveCount(0); await expect(page.locator(".playlist-row")).toHaveCount(0);
 });

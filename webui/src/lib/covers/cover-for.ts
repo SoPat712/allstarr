@@ -19,10 +19,10 @@ export type CoverDescription = {
 };
 
 const kinds: Record<string, [CoverStyle, string[]]> = {
-  "discover-weekly": ["stars", ["Discover", "Weekly"]],
-  "release-radar": ["radar", ["Release", "Radar"]],
-  "on-repeat": ["stamped", ["On", "Repeat"]],
-  rewind: ["sun", ["Rewind"]],
+  "discover-weekly": ["stars", ["Uncharted"]],
+  "release-radar": ["radar", ["Just", "Dropped"]],
+  "on-repeat": ["stamped", ["Heavy", "Rotation"]],
+  rewind: ["sun", ["Long Lost"]],
   chill: ["waves", ["Chill"]],
   focus: ["ruled", ["Focus"]],
   workout: ["zigzag", ["Workout"]],
@@ -57,12 +57,14 @@ export function coverFor(mix: MixCard, songs?: MixSong[]): CoverDescription {
   const daily = /^daily-([1-4])$/.exec(mix.kind);
   const preset = Object.prototype.hasOwnProperty.call(kinds, mix.kind) ? kinds[mix.kind] : undefined;
   if (daily) {
-    const label = /^Daily Mix\s+\d+(?:\s*·\s*([^·]*))?(?:\s*·\s*(.*))?$/i.exec(mix.name.trim());
+    const label = /^(.+?)\s+Blend$/i.exec(name);
+    const metadata = /^Made for you\s*·\s*([^·]*)(?:·\s*(.*))?$/i.exec(mix.description.trim());
     cover.style = "liquid";
     cover.number = daily[1];
-    cover.tag = label?.[1]?.trim() || cover.tag;
-    cover.artists = label?.[2]?.trim() || "";
-    cover.lines = ["Daily", "Mix"];
+    const tag = metadata?.[1]?.trim();
+    cover.tag = (tag && !/^Blend [1-4]$/i.test(tag) ? tag : "") || label?.[1]?.trim() || cover.tag;
+    cover.artists = metadata?.[2]?.trim() || "";
+    cover.lines = [label ? name : `Blend ${daily[1]}`];
   } else if (preset) {
     cover.style = preset[0];
     cover.lines = [...preset[1]];

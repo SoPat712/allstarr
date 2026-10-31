@@ -155,13 +155,13 @@ const schema = {
 
 const responses: Record<string, unknown> = {
   "/api/admin/mixes": [
-    ["daily-1", "Daily Mix 1"], ["daily-2", "Daily Mix 2"], ["daily-3", "Daily Mix 3"], ["daily-4", "Daily Mix 4"],
-    ["discover-weekly", "Discover Weekly"], ["release-radar", "Release Radar"], ["on-repeat", "On Repeat"], ["rewind", "Rewind"],
+    ["daily-1", "Blend 1"], ["daily-2", "Blend 2"], ["daily-3", "Blend 3"], ["daily-4", "Blend 4"],
+    ["discover-weekly", "Uncharted"], ["release-radar", "Just Dropped"], ["on-repeat", "Heavy Rotation"], ["rewind", "Long Lost"],
     ["chill", "Chill"], ["focus", "Focus"], ["workout", "Workout"], ["party", "Party"], ["sleep", "Sleep"],
   ].map(([kind, name], index) => ({
     id: `mix-${kind}`, kind, name, description: "Songs picked for you", section: index < 8 ? "madeForYou" : "moods",
     sortOrder: index, sourceLabel: null, recipeVersion: null, updatedAt: null,
-    readiness: { ready: true, message: "Ready" }, inApps: false, showInApps: true,
+    readiness: { ready: true, message: "Ready" }, inApps: false, appsAllowed: true,
     coverArtwork: ["ext-spotify-song-track-a"],
   })),
   "/api/admin/mixes/publish-setting": { enabled: false },
@@ -937,8 +937,8 @@ test("core release exposes personal mixes without development APIs", async ({ pa
 
   await expect(page).toHaveURL(/#\/for-you$/);
   await expect(page.getByRole("heading", { name: "For you", exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Made for you", exact: true }).getByRole("button")).toHaveCount(8);
-  await expect(page.getByRole("region", { name: "Moods", exact: true }).getByRole("button")).toHaveCount(5);
+  await expect(page.getByRole("region", { name: "Made for you", exact: true }).locator(".mix-card")).toHaveCount(8);
+  await expect(page.getByRole("region", { name: "Moods", exact: true }).locator(".mix-card")).toHaveCount(5);
   await expect(page.getByRole("navigation", { name: "For you sections" }).getByRole("tab", { name: "For you", exact: true })).toHaveAttribute("aria-selected", "true");
   await page.goto("#/integrations/services?source=audiomuse-ai&section=configuration");
   const configure = page.getByRole("link", { name: "Configure", exact: true });

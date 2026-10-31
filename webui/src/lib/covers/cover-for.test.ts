@@ -5,7 +5,7 @@ import { hash } from "./random";
 import { coverFor } from "./cover-for";
 
 function mix(kind: string, overrides: Partial<MixCard> = {}): MixCard {
-  return { id: kind, kind, name: kind, description: "", section: "madeForYou", sourceLabel: null, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "" }, inApps: true, showInApps: true, appsAllowed: true, coverArtwork: [], sortOrder: 0, ...overrides };
+  return { id: kind, kind, name: kind, description: "", section: "madeForYou", sourceLabel: null, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "" }, inApps: true, appsAllowed: true, coverArtwork: [], sortOrder: 0, ...overrides };
 }
 const songs = (count: number): MixSong[] => Array.from({ length: count }, (_, index) => ({ mixId: "release-radar", generation: 1, source: "library", reason: "", score: 1, song: { id: String(index), canonicalRecordingId: null, title: "Song", artist: "Artist", album: "Album" } }));
 const fallbackTag = (id: string) => Object.keys(PALETTES)[hash(id) % Object.keys(PALETTES).length];
@@ -22,22 +22,37 @@ describe("coverFor", () => {
     if (style !== "letter" && style !== "liquid") expect(cover.tag).toBe("");
   });
 
-  it("reads a daily label and takes its number from the kind", () => {
-    const cover = coverFor(mix("daily-2", { name: "  Daily Mix 4 ·  R&B  ·  Sade, Cleo Sol  " }));
-    expect(cover).toMatchObject({ number: "2", tag: "R&B", artists: "Sade, Cleo Sol" });
+  it.each([
+    ["discover-weekly", ["Uncharted"]], ["release-radar", ["Just", "Dropped"]],
+    ["on-repeat", ["Heavy", "Rotation"]], ["rewind", ["Long Lost"]],
+  ] as const)("uses the household name on the %s cover", (kind, lines) => {
+    expect(coverFor(mix(kind)).lines).toEqual(lines);
+  });
+  it("reads a clean Blend name and its description metadata", () => {
+    const cover = coverFor(mix("daily-2", { name: "  Hip-Hop Blend  ", description: "Made for you ·  hip-hop  ·  Sade, Cleo Sol  " }));
+    expect(cover).toMatchObject({ number: "2", tag: "hip-hop", artists: "Sade, Cleo Sol", lines: ["Hip-Hop Blend"] });
   });
 
-  it.each(["", "Daily Mix 2", "Daily Mix 2 ·   ·   ", "Something else · Pop · Singer"])("uses stable daily fallbacks for %s", name => {
+  it("uses the style in a clean Blend name without description metadata", () => {
+    expect(coverFor(mix("daily-3", { name: "Jazz Blend" }))).toMatchObject({ tag: "Jazz", artists: "", lines: ["Jazz Blend"] });
+  });
+
+  it.each(["", "Blend 2", "Something else · Pop · Singer"])("uses stable Blend fallbacks for %s", name => {
     const card = mix("daily-2", { name });
-    expect(coverFor(card)).toMatchObject({ number: "2", tag: fallbackTag(card.id), artists: "" });
+    expect(coverFor(card)).toMatchObject({ number: "2", tag: fallbackTag(card.id), artists: "", lines: ["Blend 2"] });
   });
 
-  it("keeps a daily tag when artist names are absent", () => {
-    expect(coverFor(mix("daily-3", { name: "Daily Mix 3 · Jazz" }))).toMatchObject({ tag: "Jazz", artists: "" });
+  it.each([1, 2, 3, 4])("prints fallback Blend %s without treating it as a style", number => {
+    const card = mix(`daily-${number}`, { name: `Blend ${number}`, description: `Made for you · Blend ${number}` });
+    expect(coverFor(card)).toMatchObject({ number: String(number), tag: fallbackTag(card.id), artists: "", lines: [`Blend ${number}`] });
   });
 
-  it("keeps artist names when the daily tag is absent", () => {
-    expect(coverFor(mix("daily-2", { name: "Daily Mix 2 · · Singer" }))).toMatchObject({ tag: fallbackTag("daily-2"), artists: "Singer" });
+  it("keeps artist names when description style is absent", () => {
+    expect(coverFor(mix("daily-2", { name: "Blend 2", description: "Made for you · · Singer" }))).toMatchObject({ tag: fallbackTag("daily-2"), artists: "Singer", lines: ["Blend 2"] });
+  });
+
+  it("keeps the raw style for palette selection while printing the clean title", () => {
+    expect(coverFor(mix("daily-1", { name: "R&B Blend", description: "Made for you · r&b · North, Cedar" }))).toMatchObject({ tag: "r&b", artists: "North, Cedar", lines: ["R&B Blend"] });
   });
 
   it.each([0, 1, 9, 14, 25])("caps radar marks for %s songs", count => {
@@ -121,7 +136,7 @@ describe("coverFor", () => {
 
   it("keeps printed and liquid seeds stable for the same identity and tag", () => {
     for (const kind of ["daily-1", "discover-weekly", "chill", "external"]) {
-      const card = mix(kind, { name: "Daily Mix 1 · Pop · Artists", sourceLabel: kind === "external" ? "Last.fm" : null });
+      const card = mix(kind, { name: "Pop Blend", description: "Made for you · Pop · Artists", sourceLabel: kind === "external" ? "Last.fm" : null });
       const cover = coverFor(card);
       expect(cover.layoutSeed).toBe(hash(card.id + cover.tag));
       expect(cover.wobbleSeed).toBe(hash(card.id));

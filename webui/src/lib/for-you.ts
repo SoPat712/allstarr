@@ -49,3 +49,14 @@ export function mixNextStep(kind: string, message: string, administrator: boolea
   if (kind === "custom") return { href: "#/for-you", label: "Try another song" };
   return { href: "#/for-you?import=1", label: "Import history" };
 }
+
+export function mixDescription(description: string, kind: string) {
+  if (!kind.startsWith("daily-")) return description;
+  return description.replace(/^(Made for you · )([^·]+)(.*)$/, (match: string, prefix: string, style: string, rest: string) => {
+    if (!style.trim()) return match;
+    const words = style.trim().toLowerCase().split(/\s+/);
+    const acronyms: Record<string, string> = { "r&b": "R&B", edm: "EDM", uk: "UK" };
+    const label = words.map((word, index) => Object.hasOwn(acronyms, word) ? acronyms[word] : (index ? word : word[0].toUpperCase() + word.slice(1))).join(" ");
+    return prefix + label + (rest ? " " + rest.trimStart() : "");
+  });
+}
