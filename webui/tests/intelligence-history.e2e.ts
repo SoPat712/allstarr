@@ -264,7 +264,7 @@ test("Raw upload previews before confirmation, then polling updates progress and
     state.complete = true;
     await expect(page.getByText("Imported 48,210 plays from Spotify (2016–2026)", { exact: true })).toBeVisible();
     await expect.poll(() => state.statsReads).toBeGreaterThan(reads);
-    await expect(page.getByText("Imported from other services: 48,210 plays (not in these charts)", { exact: true })).toBeVisible();
+    await expect(page.getByText("Imported from other services: 48,210 plays", { exact: true })).toBeVisible();
     await expect(page.getByText("Done", { exact: true })).toBeVisible();
   } finally {
     server.closeAllConnections();
@@ -386,7 +386,7 @@ test("Preview confirmation failure remains in the dialog in words", async ({ pag
 test("Delete uses the current revision and refreshes stats after confirmation", async ({ page }) => {
   const state = await mockHistory(page, [{ ...preview, state: 3, importedRows: 50000 }]);
   await openHistory(page);
-  await expect(page.getByText("Imported from other services: 48,210 plays (not in these charts)", { exact: true })).toBeVisible();
+  await expect(page.getByText("Imported from other services: 48,210 plays", { exact: true })).toBeVisible();
   const reads = state.statsReads;
   await page.getByRole("button", { name: "Delete", exact: true }).click();
   const dialog = page.getByRole("alertdialog", { name: "Delete this import?", exact: true });
@@ -400,7 +400,7 @@ test("Delete uses the current revision and refreshes stats after confirmation", 
   await expect(page.getByText("No imports yet.", { exact: true })).toBeVisible();
   expect(state.deletes).toEqual([`?revision=${preview.revision}`, `?revision=${preview.revision}`]);
   await expect.poll(() => state.statsReads).toBeGreaterThan(reads);
-  await expect(page.getByText("Imported from other services: 0 plays (not in these charts)", { exact: true })).toBeVisible();
+  await expect(page.getByText("Imported from other services: 0 plays", { exact: true })).toBeVisible();
 });
 
 test("Background refresh keeps the preview open, list visible and refresh button still", async ({ page }) => {

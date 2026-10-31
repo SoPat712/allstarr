@@ -447,7 +447,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Radar_UsesRecentAlbumsFromFrequentlyPlayedArtists()
+    public async Task HistoryRadar_UsesRecentAlbumsFromFrequentlyPlayedArtists()
     {
         await Seed();
         gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Artist 0", 0, 0, 1, null))
@@ -468,6 +468,8 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
             });
         var radar = (await service.GenerateAsync(owner)).Single(item => item.Kind == "release-radar");
         Assert.Equal("New release", Assert.Single(radar.Songs).Song.Title);
+        await taste.SetUseImportedHistoryAsync(owner, false);
+        Assert.Empty((await service.GenerateAsync(owner)).Single(item => item.Kind == "release-radar").Songs);
         gateway.Verify(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "old"), Times.Never);
         gateway.Verify(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "future"), Times.Never);
     }

@@ -53,8 +53,22 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     private static async Task<UserRecord> UserAsync(AllstarrDbContext db, Guid owner, CancellationToken token) =>
         await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == owner && item.Enabled && !item.IsSynthetic, token)
             ?? throw new UnauthorizedAccessException();
-    private static IQueryable<ListeningEventRecord> Events(AllstarrDbContext db, UserRecord user) =>
-        db.ListeningEvents.AsNoTracking().Where(item => item.OwnerUserId == user.Id && item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId);
+    private static IQueryable<ListeningEventRecord> Events(AllstarrDbContext db, UserRecord user, bool imported) =>
+        db.ListeningEvents.AsNoTracking().Where(item => item.OwnerUserId == user.Id && item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId &&
+            (imported || item.SourceKind == "protocol"));
+    private HashSet<Guid> RecentHistory(IReadOnlyList<ListeningEventRecord> events)
+    {
+        var live = events.Where(item => item.SourceKind == "protocol" && item.State == ListeningEventState.Completed &&
+            item.ListenedAt >= clock.UtcNow.AddDays(-30)).ToArray();
+        var result = live.Select(item => item.Id).ToHashSet();
+        if (live.Length >= PersonalMixRules.RepeatPlays) return result;
+        var imports = events.Where(item => item.SourceKind != "protocol" && item.State == ListeningEventState.Completed &&
+            item.ListenedAt <= clock.UtcNow).ToArray();
+        var latest = imports.Select(item => item.ListenedAt).Max();
+        result.UnionWith(imports.Where(item => item.ListenedAt >= latest?.AddDays(-30)).Select(item => item.Id));
+        return result;
+    }
+
     private static Task<ExternalMetadataSnapshotRecord?> RowAsync(AllstarrDbContext db, UserRecord user, CancellationToken token, string kind = ResourceKind) =>
         db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == user.Id && item.Protocol == user.BackendType &&
             item.BackendInstanceId == user.BackendInstanceId && item.BackendPrincipalId == user.BackendPrincipalId &&
@@ -102,13 +116,13 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         var stale = document.Mixes.Values.Where(mix => PersonalMixRules.Kinds.Contains(mix.Kind) && !PersonalMixMoods.Kinds.Contains(mix.Kind) && !mix.Readiness.Ready)
             .Select(mix => mix.Kind).ToArray();
         if (missing.Length == 0 && stale.Length == 0) return document;
-        var events = await Events(db, user).Where(item => item.State == ListeningEventState.Completed && item.ListenedAt <= clock.UtcNow)
-            .Select(item => new { item.Artist, item.TrackReference, item.ListenedAt }).ToArrayAsync(token);
+        var events = await Events(db, user, await taste.UseImportedHistoryAsync(user.Id, token)).Where(item => item.State == ListeningEventState.Completed && item.ListenedAt <= clock.UtcNow)
+            .ToArrayAsync(token);
         var follows = await releases.ListAsync(user.Id, token);
         var loved = (await db.FavoriteStates.AsNoTracking().Where(item => item.OwnerUserId == user.Id &&
             item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId && item.IsFavorite)
             .Select(item => item.ItemId).ToArrayAsync(token)).ToHashSet(StringComparer.Ordinal);
-        var recent = events.Count(item => item.ListenedAt >= clock.UtcNow.AddDays(-30));
+        var recent = RecentHistory(events).Count;
         var artists = follows.Count > 0 || events.GroupBy(item => item.Artist).Any(group => group.Count() >= 5);
         var old = events.GroupBy(item => item.TrackReference).Any(group => (group.Count() >= 5 || loved.Contains(group.Key)) &&
             group.Max(item => item.ListenedAt) <= clock.UtcNow.AddMonths(-6));
@@ -217,7 +231,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             if (requested?.Kind == "custom") throw new ArgumentException("Saved mixes do not refresh.");
             if (!scheduled && requested?.UpdatedAt > clock.UtcNow.AddMinutes(-PersonalMixRules.RefreshMinutes))
                 throw new InvalidOperationException("Wait 15 minutes before refreshing this mix again.");
-            var events = await Events(db, user).Where(item => item.UpdatedAt <= clock.UtcNow &&
+            var events = await Events(db, user, await taste.UseImportedHistoryAsync(user.Id, token)).Where(item => item.UpdatedAt <= clock.UtcNow &&
                 (item.ListenedAt == null || item.ListenedAt <= clock.UtcNow)).ToArrayAsync(token);
             var completed = events.Where(item => item.State == ListeningEventState.Completed && item.ListenedAt <= clock.UtcNow).ToArray();
             var (candidates, _) = await CandidatesAsync(db, user, events, token);
@@ -233,7 +247,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             foreach (var kind in kinds)
             {
                 var mix = document.Mixes[kind];
-                var ready = PersonalMixRules.Readiness(kind, completed.Length, completed.Count(item => item.ListenedAt >= clock.UtcNow.AddDays(-30)),
+                var ready = PersonalMixRules.Readiness(kind, completed.Length, RecentHistory(completed).Count,
                     candidates.Any(item => item.Source == "radio" || item.Plays == 0 && !item.Loved && item.Tags.Count > 0),
                     follows.Count > 0 || completed.GroupBy(item => item.Artist).Any(group => group.Count() >= 5),
                     candidates.Any(item => (item.Plays >= 5 || item.Loved) && item.LastPlayed <= clock.UtcNow.AddMonths(-6)));

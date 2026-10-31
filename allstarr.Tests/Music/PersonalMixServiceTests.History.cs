@@ -1,3 +1,4 @@
+using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Music;
 using allstarr.Core.Storage;
@@ -9,6 +10,100 @@ namespace allstarr.Tests;
 
 public sealed partial class PersonalMixServiceTests
 {
+    [Fact]
+    public async Task ImportedHistory_FillsRecentFallbackAndToggleExcludesAllMixInputs()
+    {
+        await Seed(count: 40, age: 1000);
+        var mixes = await service.GenerateAsync(owner);
+        Assert.Equal(30, mixes.Single(item => item.Kind == "on-repeat").Songs.Count);
+        Assert.Equal(30, mixes.Single(item => item.Kind == "rewind").Songs.Count);
+        await taste.SetUseImportedHistoryAsync(owner, false);
+        mixes = await service.GenerateAsync(owner);
+        Assert.All(mixes, mix => Assert.Empty(mix.Songs));
+    }
+
+    [Fact]
+    public async Task ImportedHistory_RecentFavouritesPreferSufficientLivePlays()
+    {
+        await Seed(count: 40, age: 1);
+        await using (var db = factory.CreateDbContext())
+        {
+            foreach (var play in await db.ListeningEvents.Where(item => item.Title == "Song 39").ToArrayAsync())
+                play.SourceKind = "protocol";
+            var seed = await db.ListeningEvents.FirstAsync(item => item.Title == "Song 39");
+            for (var index = 0; index < 30; index++) db.ListeningEvents.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = owner,
+                Protocol = protocol,
+                BackendInstanceId = "main",
+                SourceKind = "protocol",
+                State = ListeningEventState.Completed,
+                OccurrenceKey = "live-" + index,
+                TrackReference = seed.TrackReference,
+                CanonicalRecordingId = seed.CanonicalRecordingId,
+                Title = seed.Title,
+                Artist = seed.Artist,
+                ListenedAt = clock.UtcNow.AddDays(-1),
+                UpdatedAt = clock.UtcNow.AddDays(-1)
+            });
+            await db.SaveChangesAsync();
+        }
+        var repeat = (await service.GenerateAsync(owner)).Single(item => item.Kind == "on-repeat");
+        Assert.Single(repeat.Songs);
+        Assert.Equal("Song 39", repeat.Songs[0].Song.Title);
+    }
+
+    [Fact]
+    public async Task ImportedHistory_PowersDiscoveryDailyAndMoodScoresAndDeletionRemovesInputs()
+    {
+        await Seed();
+        await NewPicks();
+        foreach (var song in songs.Values) await tags.SaveAsync(allstarr.Core.Enrichment.SharedTagStore.RecordingKey(song.CanonicalRecordingId!.Value),
+            [new("lastfm-track", [new("calm")], clock.UtcNow)], [], false, default);
+        var mixes = await service.GenerateAsync(owner);
+        Assert.NotEmpty(mixes.Single(item => item.Kind == "discover-weekly").Songs);
+        Assert.NotEmpty(mixes.Single(item => item.Kind == "daily-1").Songs);
+        Assert.NotEmpty(mixes.Single(item => item.Kind == "chill").Songs);
+        Assert.Contains(mixes.Single(item => item.Kind == "daily-1").Songs, item => item.Score > 0);
+        await using (var db = factory.CreateDbContext()) await db.ListeningEvents.ExecuteDeleteAsync();
+        mixes = await service.GenerateAsync(owner);
+        Assert.Empty(mixes.Single(item => item.Kind == "discover-weekly").Songs);
+        Assert.Empty(mixes.Single(item => item.Kind == "daily-1").Songs);
+        Assert.Empty(mixes.Single(item => item.Kind == "chill").Songs);
+    }
+
+    [Fact]
+    public async Task ImportedHistoryToggle_QueuesRefreshForExistingMixes()
+    {
+        await Seed();
+        await service.GenerateAsync(owner);
+        var jobs = new DurableJobQueue(factory, new(), new(new()), clock);
+        await new allstarr.Core.Music.TasteService(factory, tags, clock, jobs).SetUseImportedHistoryAsync(owner, false);
+        await using var db = factory.CreateDbContext();
+        Assert.Single(await db.Jobs.Where(item => item.Type == PersonalMixService.JobType).ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task HistoryTagCompletion_DebouncesRefreshForExistingMixes()
+    {
+        await Seed();
+        await service.GenerateAsync(owner);
+        var jobs = new DurableJobQueue(factory, new(), new(new()), clock);
+        var queue = new allstarr.Core.Enrichment.SharedTagQueue(factory, jobs, clock);
+        var due = clock.UtcNow.AddMinutes(5);
+        foreach (var song in songs.Values.Take(3))
+        {
+            await queue.RefreshListenersAsync(song.CanonicalRecordingId!.Value, default);
+            clock.UtcNow += TimeSpan.FromSeconds(1);
+        }
+        await using var db = factory.CreateDbContext();
+        var job = Assert.Single(await db.Jobs.Where(item => item.Type == PersonalMixService.JobType).ToArrayAsync());
+        Assert.Equal(owner, job.OwnerUserId);
+        Assert.Equal(due, job.AvailableAt);
+        Assert.Equal(-100, job.Priority);
+    }
+
     [Fact]
     public async Task SavedEmptyMix_DoesNotAppearReadyBeforeRegeneration()
     {

@@ -65,9 +65,9 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
             ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty, ImmutableHashSet.Create("spotify"), "Lossless", .07));
     }
 
-    private ListeningHistoryResolution Handler() => new(factory, jobs,
+    private ListeningHistoryResolution Handler(bool collectTags = false) => new(factory, jobs,
         new(gateway.Object, new(), NullLogger<TrackMatchPlayableSearch>.Instance, matchingPolicies.Object), new(), gateway.Object,
-        access.Object, identities.Object, Mixes(), clock, new(new DurableJobOptions()), time);
+        access.Object, identities.Object, Mixes(), clock, new(new DurableJobOptions()), time, collectTags ? new(factory, jobs, clock) : null);
 
     private PersonalMixService Mixes()
     {
@@ -128,11 +128,11 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
         return track;
     }
 
-    private async Task<DurableJobCompletion> Run(TimeSpan? firstDelay = null)
+    private async Task<DurableJobCompletion> Run(TimeSpan? firstDelay = null, bool collectTags = false)
     {
         var claim = await jobs.ClaimNextAsync("history-test", [ListeningHistoryResolution.JobTypeName]);
         Assert.NotNull(claim);
-        var running = Handler().ExecuteAsync(new(claim, services), default);
+        var running = Handler(collectTags).ExecuteAsync(new(claim, services), default);
         if (firstDelay != null) Assert.Equal(firstDelay.Value, await time.NextTimerAsync());
         while (!running.IsCompleted) { time.Advance(TimeSpan.FromSeconds(2)); await Task.Delay(1); }
         var result = await running;
@@ -182,9 +182,9 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
         });
         Assert.Single(await db.ListeningEvents.Where(item => item.State == ListeningEventState.Skipped).ToArrayAsync());
         var live = await db.ListeningEvents.SingleAsync(item => item.SourceKind == "protocol");
-        Assert.Null(live.CanonicalRecordingId);
-        Assert.Equal("history:Song", live.TrackReference);
-        Assert.Equal(0, live.Revision);
+        Assert.Equal(track.CanonicalRecordingId, live.CanonicalRecordingId);
+        Assert.Equal(track.BackendItemId, live.TrackReference);
+        Assert.Equal(1, live.Revision);
         var import = await db.ListeningHistoryImports.SingleAsync(item => item.Id == importId);
         Assert.Equal(2, import.ResolvedRows);
         Assert.Equal(0, import.UnresolvedRows);
@@ -332,7 +332,7 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
     [InlineData("budget")]
     [InlineData("transport")]
     [InlineData("rate-limit")]
-    public async Task InterruptedProviderSearch_DefersWithoutReceiptAndRetriesNextRun(string failure)
+    public async Task InterruptedProviderSearch_DefersWithoutNegativeReceiptAndRetriesNextRun(string failure)
     {
         await Add("Song");
         await Add("Song", source: "protocol");
@@ -348,7 +348,7 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
         Assert.True(result.RetryDelay >= TimeSpan.FromMinutes(1));
         await using (var db = factory.CreateDbContext())
         {
-            Assert.Empty(await db.ExternalMetadataSnapshots.ToArrayAsync());
+            Assert.Empty(await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "history-resolution").ToArrayAsync());
             Assert.All(await db.ListeningEvents.ToArrayAsync(), item =>
             {
                 Assert.Null(item.CanonicalRecordingId);
@@ -364,14 +364,15 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
         gateway.Verify(item => item.SearchAutomaticProviderSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), 15), Times.AtLeastOnce);
         await using var read = factory.CreateDbContext();
-        Assert.Single(await read.ExternalMetadataSnapshots.ToArrayAsync());
+        Assert.Single(await read.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "history-resolution").ToArrayAsync());
         Assert.Equal(0, (await read.ListeningEvents.SingleAsync(item => item.SourceKind == "protocol")).Revision);
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ProviderSearch_FollowsListenerStreamingPriorityAndStopsAtFirstConfidentMatch(bool firstUnavailable)
+    [InlineData("empty")]
+    [InlineData("unavailable")]
+    [InlineData("interrupted")]
+    public async Task ProviderSearch_FollowsListenerStreamingPriorityAndStopsAtFirstConfidentMatch(string firstResult)
     {
         await Add("Song");
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer", "qobuz", "tidal"]);
@@ -384,7 +385,8 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
             .ReturnsAsync((ProtocolExecutionContext _, string provider, string query, int limit) =>
             {
                 searched.Add(provider);
-                if (provider == "qobuz" && firstUnavailable)
+                if (provider == "qobuz" && firstResult == "interrupted") throw new OperationCanceledException();
+                if (provider == "qobuz" && firstResult == "unavailable")
                     return ProviderOutcome<IReadOnlyList<Song>>.Failure(new(ProviderErrorKind.TransientFailure));
                 return ProviderOutcome<IReadOnlyList<Song>>.Success(provider == "deezer"
                     ? [new Song { ExternalProvider = provider, ExternalId = "found", Title = "Song", Artist = "Artist", Album = "Album", Duration = 180 }]
@@ -409,7 +411,7 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
         await Handler().RecoverAsync(default);
         Assert.Equal(DurableJobCompletionKind.Deferred, (await Run()).Kind);
         await using var db = factory.CreateDbContext();
-        Assert.Empty(await db.ExternalMetadataSnapshots.ToArrayAsync());
+        Assert.Empty(await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "history-resolution").ToArrayAsync());
         Assert.Null((await db.ListeningEvents.SingleAsync()).CanonicalRecordingId);
     }
 
@@ -432,7 +434,7 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task StartupBackfill_QueuesOnlyCurrentListenersWithUnresolvedImportsOnce()
+    public async Task StartupBackfill_QueuesCurrentListenersWithUnresolvedPlaysOnce()
     {
         await Add("Missing");
         await using (var db = factory.CreateDbContext())
@@ -475,9 +477,98 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
         await Handler().RecoverAsync(default);
         await Handler().RecoverAsync(default);
         await using var read = factory.CreateDbContext();
-        var job = Assert.Single(await read.Jobs.ToArrayAsync());
-        Assert.Equal(owner, job.OwnerUserId);
-        Assert.Equal(ListeningHistoryResolution.JobTypeName, job.Type);
+        var queued = await read.Jobs.ToArrayAsync();
+        Assert.Equal(3, queued.Length);
+        Assert.Contains(queued, job => job.OwnerUserId == owner);
+        Assert.All(queued, job =>
+        {
+            Assert.Equal(ListeningHistoryResolution.JobTypeName, job.Type);
+            Assert.Equal(-100, job.Priority);
+        });
+    }
+
+    [Fact]
+    public async Task ProviderFailure_ResumesAtAnotherSongWithoutNegativeReceipt()
+    {
+        await Add("First");
+        await Add("Second");
+        await Add("Third");
+        await Add("Fourth");
+        gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), 15))
+            .ReturnsAsync(ProviderOutcome<IReadOnlyList<Song>>.Failure(new(ProviderErrorKind.TransientFailure)));
+        await Handler().RecoverAsync(default);
+        Assert.Equal(DurableJobCompletionKind.Deferred, (await Run()).Kind);
+        var firstQuery = gateway.Invocations.First(item => item.Method.Name == nameof(IProtocolProviderGateway.SearchAutomaticProviderSongsAsync)).Arguments[2];
+        gateway.Invocations.Clear();
+        clock.UtcNow += TimeSpan.FromMinutes(2);
+        Assert.Equal(DurableJobCompletionKind.Deferred, (await Run()).Kind);
+        var nextQuery = gateway.Invocations.First(item => item.Method.Name == nameof(IProtocolProviderGateway.SearchAutomaticProviderSongsAsync)).Arguments[2];
+        Assert.NotEqual(firstQuery, nextQuery);
+        await using var db = factory.CreateDbContext();
+        Assert.Empty(await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "history-resolution").ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task FailedHistorySongs_HaveBoundedAttemptsAndDoNotBlockOtherSongs()
+    {
+        await Add("Broken");
+        await Add("Available");
+        gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), 15))
+            .Returns((ProtocolExecutionContext _, string _, string query, int _) => Task.FromResult(
+                query.Contains("Broken", StringComparison.OrdinalIgnoreCase)
+                    ? ProviderOutcome<IReadOnlyList<Song>>.Failure(new(ProviderErrorKind.TransientFailure))
+                    : ProviderOutcome<IReadOnlyList<Song>>.Success([])));
+        await Handler().RecoverAsync(default);
+        Assert.Equal(DurableJobCompletionKind.Deferred, (await Run()).Kind);
+        await using (var db = factory.CreateDbContext())
+            Assert.Single(await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "history-resolution").ToArrayAsync());
+        clock.UtcNow += TimeSpan.FromMinutes(2);
+        Assert.Equal(DurableJobCompletionKind.Deferred, (await Run()).Kind);
+        clock.UtcNow += TimeSpan.FromMinutes(2);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await Run()).Kind);
+        await Handler().RecoverAsync(default);
+        await using var read = factory.CreateDbContext();
+        Assert.Single(await read.Jobs.ToArrayAsync());
+        Assert.Equal(2, await read.ExternalMetadataSnapshots.CountAsync(item => item.ResourceKind == "history-resolution"));
+    }
+
+    [Fact]
+    public async Task ResolvedHistory_QueuesTagsAndFeedsUsuallyAfterCollection()
+    {
+        var track = await Library("Song");
+        const string mbid = "31e68c1d-31f9-432c-a3a4-13aef4a53833";
+        await using (var db = factory.CreateDbContext())
+        {
+            db.RecordingIdentifiers.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                RecordingId = track.CanonicalRecordingId!.Value,
+                Kind = RecordingIdentifierKinds.MusicBrainz,
+                Value = mbid
+            });
+            await db.SaveChangesAsync();
+        }
+        await Add("Song");
+        var tags = new SharedTagStore(factory, clock);
+        var taste = new TasteService(factory, tags, clock);
+        await tags.SaveAsync(SharedTagStore.RecordingKey(track.CanonicalRecordingId!.Value), [], [], true, default, capturedAt: clock.UtcNow);
+        Assert.Empty((await taste.GetAsync(owner)).Usually.Tags);
+        await Handler().RecoverAsync(default);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await Run(collectTags: true)).Kind);
+        var claim = Assert.IsType<DurableJobClaim>(await jobs.ClaimNextAsync("history-tags", [SharedTagQueue.JobType]));
+        var catalog = new Mock<allstarr.Services.MusicBrainz.IMusicBrainzCatalogClient>(MockBehavior.Strict);
+        catalog.Setup(item => item.LookupByMbidAsync(mbid, It.IsAny<CancellationToken>())).ReturnsAsync(
+            new allstarr.Services.MusicBrainz.MusicBrainzRecording { Id = mbid, Genres = [new() { Name = "Pop", Count = 1 }] });
+        var settings = new Mock<Microsoft.Extensions.Options.IOptionsMonitor<allstarr.Models.Settings.ScrobblingSettings>>();
+        settings.SetupGet(item => item.CurrentValue).Returns(new allstarr.Models.Settings.ScrobblingSettings());
+        var handler = new SharedTagJobHandler(factory, tags, new(catalog.Object, Mock.Of<IHttpClientFactory>(MockBehavior.Strict), settings.Object, clock), clock);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await handler.ExecuteAsync(new(claim, services), default)).Kind);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await handler.ExecuteAsync(new(claim, services), default)).Kind);
+        catalog.Verify(item => item.LookupByMbidAsync(mbid, It.IsAny<CancellationToken>()), Times.Once);
+        var profile = await taste.GetAsync(owner);
+        Assert.Equal("pop", Assert.Single(profile.Usually.Tags).Name);
+        Assert.Empty(profile.Lately.Tags);
+        Assert.Equal(TasteService.Decay(1, TimeSpan.FromDays(1), TasteService.ImportedHistoryHalfLife), profile.Usually.Tags[0].Value, 6);
     }
 
     [Fact]
@@ -503,7 +594,7 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
         Assert.Equal(DurableJobCompletionKind.Deferred, (await Run()).Kind);
         await using var db = factory.CreateDbContext();
         Assert.Null((await db.ListeningEvents.SingleAsync()).CanonicalRecordingId);
-        Assert.Empty(await db.ExternalMetadataSnapshots.ToArrayAsync());
+        Assert.Empty(await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "history-resolution").ToArrayAsync());
         gateway.Verify(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), 15), Times.Never);
     }
 

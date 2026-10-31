@@ -59,7 +59,7 @@ public sealed partial class ListeningHistoryResolutionTests
 
             await using (var db = factory.CreateDbContext())
             {
-                Assert.Empty(await db.ExternalMetadataSnapshots.ToArrayAsync());
+                Assert.Empty(await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "history-resolution").ToArrayAsync());
                 Assert.Equal(0, (await db.ListeningEvents.SingleAsync()).Revision);
                 using var payload = JsonDocument.Parse((await db.Jobs.SingleAsync()).PayloadJson);
                 Assert.Equal(0, payload.RootElement.GetProperty("Cursor").GetInt32());
@@ -68,7 +68,7 @@ public sealed partial class ListeningHistoryResolutionTests
             clock.UtcNow += TimeSpan.FromMinutes(6);
             Assert.Equal(DurableJobCompletionKind.Succeeded, (await Run()).Kind);
             await using var read = factory.CreateDbContext();
-            Assert.Single(await read.ExternalMetadataSnapshots.ToArrayAsync());
+            Assert.Single(await read.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "history-resolution").ToArrayAsync());
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }

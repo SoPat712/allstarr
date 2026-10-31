@@ -136,6 +136,44 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
         Assert.Empty(await context.AuditEvents.Where(item => item.Category == "job-attempt").ToListAsync());
     }
 
+    [Fact]
+    public async Task PruneNowAsync_RemovesExpiredFinishedTagJobsAcrossBatchesAndPreservesReferences()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var referenced = Job("recording.tags.refresh", DurableJobState.Succeeded, now.AddDays(-40), "referenced");
+        var audited = Job("recording.tags.refresh", DurableJobState.Succeeded, now.AddDays(-40), "audited");
+        var audit = Event(now.AddDays(-1), "retained-evidence");
+        audit.SubjectType = "job";
+        audit.SubjectId = audited.Id.ToString("D");
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
+            context.Jobs.AddRange(Enumerable.Range(0, 105).Select(index =>
+                Job("recording.tags.refresh", DurableJobState.Succeeded, now.AddDays(-31), $"expired-{index:D3}")));
+            context.Jobs.AddRange(
+                referenced, audited,
+                Job("recording.tags.refresh", DurableJobState.Cancelled, now.AddDays(-31), "cancelled"),
+                Job("recording.tags.refresh", DurableJobState.Succeeded, now.AddDays(-29), "recent"),
+                Job("recording.tags.refresh", DurableJobState.Failed, now.AddDays(-31), "failed"),
+                Job("recording.tags.refresh", DurableJobState.Pending, now.AddDays(-31), "pending"),
+                Job("recording.tags.refresh", DurableJobState.Running, now.AddDays(-31), "running"),
+                Job("recording.tags.refresh", DurableJobState.RetryScheduled, now.AddDays(-31), "retry"));
+            context.BackupArtifacts.Add(new() { Id = Guid.NewGuid(), JobId = referenced.Id, CreatedAt = now.AddDays(-40) });
+            context.AuditEvents.Add(audit);
+            await context.SaveChangesAsync();
+        }
+
+        await Worker(retentionDays: 30, maximumRows: 1000).PruneNowAsync();
+
+        await using var verification = provider.CreateAsyncScope();
+        var database = verification.ServiceProvider.GetRequiredService<AllstarrDbContext>();
+        var remaining = await database.Jobs.AsNoTracking().OrderBy(item => item.IdempotencyKey)
+            .Select(item => item.IdempotencyKey).ToListAsync();
+        Assert.Equal(["audited", "failed", "pending", "recent", "referenced", "retry", "running"], remaining);
+        Assert.True(await database.BackupArtifacts.AnyAsync(item => item.JobId == referenced.Id));
+        Assert.True(await database.AuditEvents.AnyAsync(item => item.Id == audit.Id));
+    }
+
     [Theory]
     [InlineData("job-attempt")]
     [InlineData("managed-storage")]

@@ -51,7 +51,7 @@ internal static class PersonalMixRules
             "discover-weekly" => !item.Heard && !item.Loved && item.Plays == 0 && !IdentityKeys(item.Song).Any(previous.Contains),
             "release-radar" => item.ReleasedAt >= now.AddDays(-ReleaseDays) && item.ReleasedAt <= now,
             _ => true
-        }).OrderByDescending(item => kind == "on-repeat" ? item.RecentPlays : 0)
+        }).OrderByDescending(item => kind == "on-repeat" ? item.RecentPlays : kind == "rewind" ? item.Plays : 0)
             .ThenByDescending(item => item.Score).ThenBy(item => item.Song.Id, StringComparer.Ordinal).ToArray();
         List<MixCandidate> Take(int familiar, int fresh)
         {

@@ -1,3 +1,6 @@
+using allstarr.Core.Enrichment;
+using allstarr.Core.Favorites;
+using allstarr.Core.ManagedFiles;
 using allstarr.Core.Matching;
 using allstarr.Core.Playback;
 using allstarr.Core.Storage;
@@ -9,7 +12,7 @@ namespace allstarr.Core.Operations;
 /// Keeps the operator-facing event log useful without allowing high-volume
 /// playback and matching activity to grow the operational database forever.
 /// Referenced audit events are retained because they are part of another
-/// durable record's evidence chain. Finished playback jobs expire on the same
+/// durable record's evidence chain. Finished routine jobs expire on the same
 /// schedule: every progress report is its own job, and listening history keeps
 /// its own duplicate protection once the job is gone.
 /// </summary>
@@ -119,11 +122,11 @@ public sealed class AuditEventRetentionService(
                     maximumRows);
             }
 
-            var deletedJobs = await PrunePlaybackJobsAsync(cutoff, cancellationToken);
+            var deletedJobs = await PruneRoutineJobsAsync(cutoff, cancellationToken);
             if (deletedJobs > 0)
             {
                 logger.LogInformation(
-                    "Pruned {Count} finished playback jobs older than {Cutoff}.",
+                    "Pruned {Count} unreferenced finished routine jobs older than {Cutoff}.",
                     deletedJobs,
                     cutoff);
             }
@@ -164,28 +167,53 @@ public sealed class AuditEventRetentionService(
         return deleted;
     }
 
-    private async Task<int> PrunePlaybackJobsAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)
+    private async Task<int> PruneRoutineJobsAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)
     {
         var deleted = 0;
         while (!cancellationToken.IsCancellationRequested)
         {
             await using var scope = scopeFactory.CreateAsyncScope();
             var database = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
-            var ids = await database.Jobs.AsNoTracking()
-                .Where(item => item.Type == PlaybackSignalPipeline.JobType &&
-                               (item.State == DurableJobState.Succeeded || item.State == DurableJobState.Cancelled) &&
-                               item.CompletedAt < cutoff)
+            var candidates = DeletableJobs(database).Where(item => item.CompletedAt < cutoff);
+            var ids = await candidates.AsNoTracking()
                 .OrderBy(item => item.CompletedAt)
+                .ThenBy(item => item.Id)
                 .Select(item => item.Id)
                 .Take(batchSize)
                 .ToListAsync(cancellationToken);
             if (ids.Count == 0) break;
 
-            deleted += await database.Jobs.Where(item => ids.Contains(item.Id)).ExecuteDeleteAsync(cancellationToken);
+            deleted += await candidates.Where(item => ids.Contains(item.Id)).ExecuteDeleteAsync(cancellationToken);
             if (ids.Count < batchSize) break;
         }
         return deleted;
     }
+
+    private static IQueryable<DurableJobRecord> DeletableJobs(AllstarrDbContext database) =>
+        database.Jobs.Where(job =>
+            (job.Type == PlaybackSignalPipeline.JobType || job.Type == SharedTagQueue.JobType) &&
+            (job.State == DurableJobState.Succeeded || job.State == DurableJobState.Cancelled) &&
+            !database.ExternalMetadataSnapshots.Any(item => item.SourceJobId == job.Id) &&
+            !database.PlaylistSourceSnapshots.Any(item => item.SourceJobId == job.Id) &&
+            !database.PlaylistSyncRuns.Any(item => item.JobId == job.Id) &&
+            !database.FavoriteEvents.Any(item => item.JobId == job.Id) &&
+            !database.Set<ProviderFavoriteLinkRecord>().Any(item => item.UnionJobId == job.Id) &&
+            !database.Set<ProviderFavoriteLinkRequestRecord>().Any(item => item.JobId == job.Id) &&
+            !database.ManagedFiles.Any(item => item.SourceJobId == job.Id) &&
+            !database.Set<RecordingKeptRouteEntity>().Any(item => item.PublicationJobId == job.Id) &&
+            !database.Set<ManagedStorageIdentityRecord>().Any(item => item.VerificationJobId == job.Id) &&
+            !database.ProviderDownloadWorkspaces.Any(item => item.DurableJobId == job.Id) &&
+            !database.ProviderDownloadArtifacts.Any(item => item.DurableJobId == job.Id) &&
+            !database.MetadataEnrichmentPlans.Any(item => item.LineageJobId == job.Id) &&
+            !database.MetadataEnrichmentApplications.Any(item => item.LineageJobId == job.Id) &&
+            !database.BackupArtifacts.Any(item => item.JobId == job.Id) &&
+            !database.Set<PromotionRunRecord>().Any(item => item.JobId == job.Id) &&
+            !database.ListeningHistoryImports.Any(item => item.JobId == job.Id) &&
+            !database.ListeningSignals.Any(item => item.SourceJobId == job.Id) &&
+            !database.RecommendationRuns.Any(item => item.JobId == job.Id) &&
+            !database.NotificationDeliveries.Any(item => item.JobId == job.Id) &&
+            !database.AuditEvents.Any(item => item.SubjectType == "job" &&
+                (item.SubjectId == job.Id.ToString().ToLower() || item.SubjectId == job.Id.ToString().ToUpper())));
 
     private static IQueryable<AuditEventRecord> Deletable(AllstarrDbContext database) =>
         database.AuditEvents.Where(audit =>

@@ -37,7 +37,7 @@ public sealed partial class TrackIdentityServiceTests
     }
 
     [Fact]
-    public async Task SharedTagJob_RetainsSavedGenresWhenEnrichmentRetries()
+    public async Task SharedTagJob_ReusesSavedGenresWithoutEnrichmentRequests()
     {
         var context = Context(Actor(_userA), "deezer");
         var track = Track("deezer", "retry-tagged-track");
@@ -60,10 +60,31 @@ public sealed partial class TrackIdentityServiceTests
 
         var result = await handler.ExecuteAsync(new(claim!, Mock.Of<IServiceProvider>()), default);
 
-        Assert.Equal(DurableJobCompletionKind.Retry, result.Kind);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
         Assert.Equal("rock", Assert.Single((await store.GetTags(id)).Tags).Tag);
+        catalog.Verify(item => item.LookupByIsrcAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Equal(DateTimeOffset.MinValue, (await db.SharedTagProfiles.SingleAsync()).RefreshedAt);
+    }
+
+    [Fact]
+    public async Task SharedTagDiscovery_IgnoresMetadataThatCollectionCannotUse()
+    {
+        var context = Context(Actor(_userA), "deezer");
+        var track = Track("deezer", "unverified-tags");
+        var recording = await _service.RememberSourceAsync(context, track, "ext-deezer-song-unverified-tags", ProviderIdentityScope.Catalog);
+        var store = new SharedTagStore(_factory, _clock);
+        await store.SaveAsync(SharedTagStore.RecordingKey(recording), [new("provider", [new("Pop")], _clock.UtcNow)], [], true, default,
+            capturedAt: _clock.UtcNow);
+        _clock.Advance(TimeSpan.FromSeconds(1));
+        await _service.RememberPlaybackMetadataAsync(context, track, new Song { Title = "Song", Artist = "Singer", Genres = ["Rock"] });
+        await using (var db = _factory.CreateDbContext())
+        {
+            (await db.ProviderTrackIdentities.SingleAsync()).VerificationMethod = "automatic-suggestion";
+            await db.SaveChangesAsync();
+        }
+        var jobs = new DurableJobQueue(_factory, new(), new(new()), _clock);
+        Assert.Equal(0, await new SharedTagQueue(_factory, jobs, _clock).EnqueuePendingAsync(default));
     }
 
     [Fact]
@@ -92,7 +113,7 @@ public sealed partial class TrackIdentityServiceTests
         }
         await Collect();
         await using (var db = await _factory.CreateDbContextAsync())
-            Assert.Equal(DateTimeOffset.MinValue, (await db.SharedTagProfiles.SingleAsync()).RefreshedAt);
+            Assert.Equal(_clock.UtcNow, (await db.SharedTagProfiles.SingleAsync()).RefreshedAt);
         _clock.Advance(TimeSpan.FromSeconds(1));
         await _service.RememberPlaybackMetadataAsync(context, track, song);
         await Collect();

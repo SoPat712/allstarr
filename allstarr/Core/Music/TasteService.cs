@@ -17,6 +17,7 @@ public sealed record TasteProfile(TasteLayer Lately, TasteLayer Usually, double 
 public sealed record TasteScore(double Score, IReadOnlyList<string> Reasons, bool Blocked = false);
 internal sealed record TasteAffinity(string Name, double Lately, double Usually, DateTimeOffset At);
 internal sealed record TasteOccurrence(DateTimeOffset At, double Position, double Listened, bool Done = false, bool Interrupted = false);
+internal sealed record TastePlaybackLearning(DateTimeOffset At, double Value, IReadOnlyDictionary<string, string> Features, bool Legacy = false);
 internal sealed class TasteDocument
 {
     public bool Paused { get; set; }
@@ -27,13 +28,17 @@ internal sealed class TasteDocument
     public List<TasteNudge> Nudges { get; set; } = [];
     public Dictionary<string, DateTimeOffset> Receipts { get; set; } = [];
     public Dictionary<Guid, DateTimeOffset> Plays { get; set; } = [];
+    public Dictionary<string, TastePlaybackLearning> PlaybackLearning { get; set; } = [];
     public Dictionary<string, TasteOccurrence> Occurrences { get; set; } = [];
 }
 
-public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> factory, SharedTagStore tags, IPlatformClock clock)
+public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> factory, SharedTagStore tags, IPlatformClock clock, allstarr.Core.Jobs.DurableJobQueue? jobs = null)
 {
     public static readonly TimeSpan LatelyHalfLife = TimeSpan.FromHours(6);
+    // Live preferences halve over 30 days as listening changes.
     public static readonly TimeSpan UsuallyHalfLife = TimeSpan.FromDays(30);
+    // Imported preferences halve over 180 days to preserve the long-term baseline.
+    public static readonly TimeSpan ImportedHistoryHalfLife = TimeSpan.FromDays(180);
     private const int RecentThreshold = 5;
     private const double RecentBlend = .8;
     private readonly SemaphoreSlim writes = new(1, 1);
@@ -60,8 +65,9 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
         await using var db = await factory.CreateDbContextAsync(token);
         await RequireUser(db, user, token);
         var document = Read(await db.TasteProfiles.AsNoTracking().SingleOrDefaultAsync(item => item.OwnerUserId == user, token));
+        await RememberPlaybackAsync(db, user, document, token);
         Prune(document);
-        if (document.UseImportedHistory && !document.Paused) await AddImportedHistoryAsync(db, user, document, token);
+        if (!document.Paused) await AddListeningHistoryAsync(db, user, document, token);
         return document;
     }
 
@@ -79,6 +85,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
             await RequireUser(db, user, token);
             var row = await db.TasteProfiles.SingleOrDefaultAsync(item => item.OwnerUserId == user, token);
             var document = Read(row);
+            await RememberPlaybackAsync(db, user, document, token);
             Prune(document);
             change(document);
             if (row == null) db.TasteProfiles.Add(row = new() { OwnerUserId = user });
@@ -180,6 +187,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
         document.Recent.Clear();
         document.Plays.Clear();
         document.Occurrences.Clear();
+        document.PlaybackLearning.Clear();
         document.LearnAfter = clock.UtcNow;
         if (clearNudges) document.Nudges.Clear();
     }, token);
@@ -207,7 +215,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
             }
             if (payload.Transition == PlaybackTransition.Submission)
             {
-                if (!payload.Paused) Learn(document, occurrence, song, features[song], 1, payload.ObservedAt, true);
+                if (!payload.Paused) Learn(document, occurrence, song, features[song], 1, payload.ObservedAt, true, history: true);
                 return;
             }
             var seconds = TimeSpan.FromTicks(payload.ReportedPositionTicks ?? payload.PositionTicks ?? 0).TotalSeconds;
@@ -233,10 +241,10 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
                 stopped && track.DurationMilliseconds is > 0 && listened * 1000 >= track.DurationMilliseconds;
             var interrupted = previous.Interrupted || delta < 0 || delta > elapsed + 2 || elapsed > 300;
             document.Occurrences[occurrence] = new(payload.ObservedAt, seconds, listened, stopped || qualified, interrupted);
-            if (qualified) Learn(document, occurrence, song, features[song], 1, payload.ObservedAt, true);
+            if (qualified) Learn(document, occurrence, song, features[song], 1, payload.ObservedAt, true, history: true);
             else if (PlaybackSignalJobHandler.Classify(payload, track, started: true) == ListeningEventState.Skipped &&
                 !interrupted)
-                Learn(document, occurrence, song, features[song], listened < 30 || listened * 1000 < track.DurationMilliseconds * .25 ? -1 : -.3, payload.ObservedAt, false);
+                Learn(document, occurrence, song, features[song], listened < 30 || listened * 1000 < track.DurationMilliseconds * .25 ? -1 : -.3, payload.ObservedAt, false, history: true);
         }, token);
     }
 
@@ -249,7 +257,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
 
     private bool CanLearn(TasteDocument document, DateTimeOffset at) => !document.Paused && at > document.LearnAfter && at <= clock.UtcNow && at >= clock.UtcNow.AddDays(-8);
 
-    private void Learn(TasteDocument document, string receipt, Song song, IReadOnlyDictionary<string, string> features, double value, DateTimeOffset at, bool play)
+    private void Learn(TasteDocument document, string receipt, Song song, IReadOnlyDictionary<string, string> features, double value, DateTimeOffset at, bool play, bool history = false)
     {
         if (!CanLearn(document, at) || !document.Receipts.TryAdd(receipt, at)) return;
         if (play && song.CanonicalRecordingId is { } id)
@@ -257,6 +265,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
             if (document.Plays.TryGetValue(id, out var previous) && previous <= at && at - previous <= TimeSpan.FromDays(7)) value += .5;
             if (previous <= at) document.Plays[id] = at;
         }
+        if (history) document.PlaybackLearning[receipt] = new(at, value, features);
         if (at >= clock.UtcNow - LatelyHalfLife) document.Recent.Add(at);
         foreach (var feature in features)
         {

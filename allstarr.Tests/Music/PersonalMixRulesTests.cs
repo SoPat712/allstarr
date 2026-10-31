@@ -44,6 +44,13 @@ public sealed class PersonalMixRulesTests
     }
 
     [Fact]
+    public void HistoryOldFavourites_OrderByPlayCountBeforeTasteScore()
+    {
+        var rows = new[] { Candidate(1, plays: 5, age: 200, score: 10), Candidate(2, plays: 20, age: 200) };
+        Assert.Equal(["0002", "0001"], PersonalMixRules.Select("rewind", rows, Now, []).Select(item => item.Song.Id));
+    }
+
+    [Fact]
     public void Discovery_ExcludesAnyPlayedSongPreviousWeekAndEarlySkips()
     {
         var rows = new[] { Candidate(1, plays: 0), Candidate(2), Candidate(3, plays: 0),
