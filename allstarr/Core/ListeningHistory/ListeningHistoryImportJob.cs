@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Enrichment;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
@@ -19,7 +20,7 @@ public sealed class ListeningHistoryImportJobHandler(
     ListeningHistoryImportArtifactStore artifacts,
     ListeningHistoryImportOptions options,
     IPlatformClock clock,
-    DurableJobQueue jobs) : IDurableJobHandler
+    DurableJobQueue jobs, SharedTagQueue? tags = null) : IDurableJobHandler
 {
     public const string JobTypeName = "listening-history.import";
     public string JobType => JobTypeName;
@@ -48,6 +49,7 @@ public sealed class ListeningHistoryImportJobHandler(
             if (record.State == ListeningHistoryImportState.Completed)
             {
                 await ListeningHistoryResolution.EnqueueAsync(factory, jobs, payload.Scope, clock.UtcNow, cancellationToken);
+                if (tags != null) await tags.EnqueuePendingAsync(cancellationToken);
                 artifacts.Delete(record.Id);
                 return DurableJobCompletion.Success();
             }
@@ -107,6 +109,7 @@ public sealed class ListeningHistoryImportJobHandler(
             }
             await CompleteAsync(payload, execution.Claim.JobId, cancellationToken);
             await ListeningHistoryResolution.EnqueueAsync(factory, jobs, payload.Scope, clock.UtcNow, cancellationToken);
+            if (tags != null) await tags.EnqueuePendingAsync(cancellationToken);
             artifacts.Delete(payload.ImportId);
             await execution.ReportProgressAsync(new(
                 "history-import.complete",

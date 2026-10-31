@@ -89,7 +89,7 @@
     </div>
     <footer>
       <p>{stats.observedSince ? `Counting since ${new Date(stats.observedSince).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.` : "Counting starts with your first listen."} {formatCount(stats.coverage.unknownSongIdentityCount)} {stats.coverage.unknownSongIdentityCount === 1 ? "play couldn't" : "plays couldn't"} be identified.</p>
-      <p>Imported from other services: {formatCount(stats.importedCount)} plays (not in these charts)</p>
+      <p>Imported from other services: {formatCount(stats.importedCount)} plays</p>
     </footer>
   {/if}
   {#if recapYear && yearStats}

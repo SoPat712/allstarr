@@ -397,6 +397,153 @@ public sealed class TasteServiceTests
         gateway.Verify(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed"), Times.Exactly(2));
     }
 
+    [Theory]
+    [InlineData("import")]
+    [InlineData("listenbrainz-api")]
+    public async Task PastImports_LearnNewTagsOnlyInUsuallyAndRespectToggle(string source)
+    {
+        await using var fixture = await Fixture.Create();
+        var song = await fixture.Song("pop");
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            db.ListeningEvents.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = fixture.User,
+                Protocol = "jellyfin",
+                BackendInstanceId = "primary",
+                SourceKind = source,
+                OccurrenceKey = "past",
+                State = ListeningEventState.Completed,
+                CanonicalRecordingId = song.CanonicalRecordingId,
+                Artist = song.Artist,
+                ListenedAt = fixture.Clock.UtcNow.AddDays(-30),
+                UpdatedAt = fixture.Clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var profile = await fixture.Service.GetAsync(fixture.User);
+        Assert.Empty(profile.Lately.Tags);
+        Assert.Equal(Math.Pow(.5, 30d / 180), Assert.Single(profile.Usually.Tags).Value, 6);
+        Assert.Equal(Math.Pow(.5, 30d / 180), Assert.Single((await fixture.Service.GetAsync(fixture.User)).Usually.Tags).Value, 6);
+        await fixture.Service.SetUseImportedHistoryAsync(fixture.User, false);
+        Assert.Empty((await fixture.Service.GetAsync(fixture.User)).Usually.Tags);
+        await fixture.Service.SetUseImportedHistoryAsync(fixture.User, true);
+        Assert.Equal(Math.Pow(.5, 30d / 180), Assert.Single((await fixture.Service.GetAsync(fixture.User)).Usually.Tags).Value, 6);
+    }
+
+    [Fact]
+    public async Task PastLivePlay_UsesLateTagsWithoutCountingPlaybackTwice()
+    {
+        await using var fixture = await Fixture.Create();
+        var song = await fixture.Song("pop");
+        await fixture.Play(song);
+        var at = fixture.Clock.UtcNow;
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            db.ListeningEvents.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = fixture.User,
+                Protocol = "jellyfin",
+                BackendInstanceId = "primary",
+                SourceKind = "protocol",
+                OccurrenceKey = fixture.Session,
+                State = ListeningEventState.Completed,
+                CanonicalRecordingId = song.CanonicalRecordingId,
+                Artist = song.Artist,
+                ListenedAt = at,
+                UpdatedAt = at
+            });
+            await db.SaveChangesAsync();
+        }
+        await fixture.Tags.SaveAsync(SharedTagStore.RecordingKey(song.CanonicalRecordingId!.Value),
+            [new("lastfm-track", [new("rock")], at)], [], false, default);
+        var profile = await fixture.Service.GetAsync(fixture.User);
+        Assert.All(profile.Usually.Tags, tag => Assert.Equal(1, tag.Value, 6));
+        Assert.Equal(2, profile.Lately.Tags.Count);
+        fixture.Clock.UtcNow += TimeSpan.FromDays(30);
+        profile = await fixture.Service.GetAsync(fixture.User);
+        Assert.All(profile.Usually.Tags, tag => Assert.Equal(.5, tag.Value, 6));
+        Assert.Equal(2, profile.Usually.Tags.Count);
+        await fixture.Service.ResetAsync(fixture.User, false);
+        Assert.Empty((await fixture.Service.GetAsync(fixture.User)).Usually.Tags);
+    }
+
+    [Fact]
+    public async Task UnobservedPastLivePlay_BackfillsBothLayersAndIgnoresOtherScopes()
+    {
+        await using var fixture = await Fixture.Create();
+        var song = await fixture.Song("pop");
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            foreach (var backend in new[] { "primary", "other" }) db.ListeningEvents.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = fixture.User,
+                Protocol = "jellyfin",
+                BackendInstanceId = backend,
+                SourceKind = "protocol",
+                OccurrenceKey = backend,
+                State = ListeningEventState.Completed,
+                CanonicalRecordingId = song.CanonicalRecordingId,
+                Artist = song.Artist,
+                ListenedAt = fixture.Clock.UtcNow.AddHours(-6),
+                UpdatedAt = fixture.Clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var profile = await fixture.Service.GetAsync(fixture.User);
+        Assert.Equal(.5, Assert.Single(profile.Lately.Tags).Value, 6);
+        Assert.Equal(TasteService.Decay(1, TimeSpan.FromHours(6), TasteService.UsuallyHalfLife), Assert.Single(profile.Usually.Tags).Value, 6);
+    }
+
+    [Fact]
+    public async Task CompletedImport_RebasesOldStylesThenDecaysAndDeletionRemovesThem()
+    {
+        await using var fixture = await Fixture.Create();
+        var song = await fixture.Song("pop");
+        var importId = Guid.NewGuid();
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            db.ListeningHistoryImports.Add(new()
+            {
+                Id = importId,
+                OwnerUserId = fixture.User,
+                Protocol = "jellyfin",
+                BackendInstanceId = "primary",
+                State = ListeningHistoryImportState.Completed,
+                CompletedAt = fixture.Clock.UtcNow,
+                SizeBytes = 1
+            });
+            foreach (var age in new[] { 1000, 1030 }) db.ListeningEvents.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = fixture.User,
+                Protocol = "jellyfin",
+                BackendInstanceId = "primary",
+                SourceKind = "import",
+                OccurrenceKey = age.ToString(),
+                ImportProvenance = $"history-import:{importId:N}:spotify:{age}",
+                State = ListeningEventState.Completed,
+                CanonicalRecordingId = song.CanonicalRecordingId,
+                Artist = song.Artist,
+                ListenedAt = fixture.Clock.UtcNow.AddDays(-age),
+                UpdatedAt = fixture.Clock.UtcNow.AddDays(-age)
+            });
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(1 + Math.Pow(.5, 30d / 180), Assert.Single((await fixture.Service.GetAsync(fixture.User)).Usually.Tags).Value, 6);
+        fixture.Clock.UtcNow += TimeSpan.FromDays(30);
+        Assert.Equal(Math.Pow(.5, 30d / 180) + Math.Pow(.5, 60d / 180), Assert.Single((await fixture.Service.GetAsync(fixture.User)).Usually.Tags).Value, 6);
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            await db.ListeningEvents.ExecuteDeleteAsync();
+            await db.ListeningHistoryImports.ExecuteDeleteAsync();
+        }
+        Assert.Empty((await fixture.Service.GetAsync(fixture.User)).Usually.Tags);
+    }
+
     private sealed class Fixture(SqliteTestDatabase database, Factory factory, Clock clock, Guid user, Guid other) : IAsyncDisposable
     {
         public Factory Factory { get; } = factory;
@@ -421,6 +568,11 @@ public sealed class TasteServiceTests
         public async Task<Song> Song(string tag, string artist = "Singer")
         {
             var id = Guid.NewGuid();
+            await using (var db = Factory.CreateDbContext())
+            {
+                db.CanonicalRecordings.Add(new() { Id = id, CreatedByUserId = User, Title = "Song" });
+                await db.SaveChangesAsync();
+            }
             await Tags.SaveAsync(SharedTagStore.RecordingKey(id), [new("provider", [new(tag)], Clock.UtcNow)], [], false, default);
             return new() { Id = id.ToString(), CanonicalRecordingId = id, Title = "Song", Artist = artist };
         }

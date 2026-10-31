@@ -64,6 +64,32 @@ public sealed partial class ListeningHistoryImportIntegrationTests : IAsyncLifet
     }
 
     [Fact]
+    public async Task CompletedImportRecovery_AutomaticallyQueuesTagsWithoutDuplicates()
+    {
+        var service = new ListeningHistoryImportService(_factory, _importers, _artifacts, _importOptions, _clock, _jobs);
+        var preview = await PreviewAsync(service, "Song", "7777777777777777777777");
+        await service.ApplyAsync(_scope, preview.ImportId, preview.Revision, default);
+        var claim = await _jobs.ClaimNextAsync("history-recovery", [ListeningHistoryImportJobHandler.JobTypeName]);
+        var recording = Guid.NewGuid();
+        await using (var db = _factory.CreateDbContext())
+        {
+            (await db.ListeningHistoryImports.SingleAsync()).State = ListeningHistoryImportState.Completed;
+            db.CanonicalRecordings.Add(new() { Id = recording, CreatedByUserId = _scope.OwnerUserId });
+            var play = ImportedEvent(preview.ImportId, "tag-history");
+            play.CanonicalRecordingId = recording;
+            db.ListeningEvents.Add(play);
+            await db.SaveChangesAsync();
+        }
+        var handler = new ListeningHistoryImportJobHandler(_factory, _importers, _artifacts, _importOptions, _clock, _jobs,
+            new(_factory, _jobs, _clock));
+        using var services = new ServiceCollection().BuildServiceProvider();
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await handler.ExecuteAsync(new(claim!, services), default)).Kind);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await handler.ExecuteAsync(new(claim!, services), default)).Kind);
+        await using var read = _factory.CreateDbContext();
+        Assert.Single(await read.Jobs.Where(item => item.Type == allstarr.Core.Enrichment.SharedTagQueue.JobType).ToArrayAsync());
+    }
+
+    [Fact]
     public async Task ApplyCheckpointsExactScopeWithoutOutboundReplay()
     {
         var service = new ListeningHistoryImportService(
@@ -300,6 +326,19 @@ public sealed partial class ListeningHistoryImportIntegrationTests : IAsyncLifet
             db.PlaybackDeliveryCheckpoints.AddRange(
                 Checkpoint(removedOccurrence, new string('c', 64)),
                 Checkpoint(keptOccurrence, new string('d', 64)));
+            db.ExternalMetadataSnapshots.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = _scope.OwnerUserId,
+                Protocol = _scope.Protocol,
+                BackendInstanceId = _scope.BackendInstanceId,
+                ProviderId = "allstarr",
+                ResourceKind = "personal-mixes",
+                ExternalIdHash = new string('a', 64),
+                SnapshotVersion = 1,
+                PayloadJson = "{}",
+                PayloadSha256 = new string('b', 64)
+            });
             await db.SaveChangesAsync();
         }
 
@@ -311,6 +350,8 @@ public sealed partial class ListeningHistoryImportIntegrationTests : IAsyncLifet
         Assert.False(File.Exists(Path.Combine(_root, $"{preview.ImportId:N}.json")));
         await using var verify = await _factory.CreateDbContextAsync();
         Assert.Equal(keptOccurrence, Assert.Single(await verify.ListeningEvents.ToListAsync()).OccurrenceKey);
+        var refresh = Assert.Single(await verify.Jobs.Where(item => item.Type == allstarr.Core.Music.PersonalMixService.JobType).ToArrayAsync());
+        Assert.Equal(_scope.OwnerUserId, refresh.OwnerUserId);
         Assert.Equal(keptOccurrence, Assert.Single(await verify.PlaybackDeliveryCheckpoints.ToListAsync()).OccurrenceKey);
         Assert.Single(await verify.AuditEvents.Where(item =>
             item.Category == "listening-history-import" && item.Action == "removed" &&

@@ -170,6 +170,66 @@ public sealed class SharedTagsTests
     }
 
     [Fact]
+    public async Task Discovery_KnownTagsAreNotFetchedAgainAfterExpiry()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var clock = new Clock();
+        var owner = Guid.NewGuid();
+        var recording = Guid.NewGuid();
+        await using (var db = factory.CreateDbContext())
+        {
+            db.Users.Add(new() { Id = owner, Enabled = true });
+            db.CanonicalRecordings.Add(new() { Id = recording, CreatedByUserId = owner });
+            await db.SaveChangesAsync();
+        }
+        var store = new SharedTagStore(factory, clock);
+        await store.SaveAsync(SharedTagStore.RecordingKey(recording), [new("provider", [new("pop")], clock.UtcNow)], [], true, default,
+            capturedAt: clock.UtcNow);
+        clock.UtcNow += TimeSpan.FromDays(60);
+        var jobs = new DurableJobQueue(factory, new(), new(new()), clock);
+        Assert.Equal(0, await new SharedTagQueue(factory, jobs, clock).EnqueuePendingAsync(default));
+    }
+
+    [Fact]
+    public async Task HistoryDiscovery_RevisitsFreshEmptyCacheOnceAndResumesWithoutDuplicates()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var clock = new Clock();
+        var owner = Guid.NewGuid();
+        var recording = Guid.NewGuid();
+        await using (var db = factory.CreateDbContext())
+        {
+            db.Users.Add(new() { Id = owner, Enabled = true, BackendType = "jellyfin", BackendInstanceId = "primary" });
+            db.CanonicalRecordings.Add(new() { Id = recording, CreatedByUserId = owner });
+            db.ListeningEvents.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = owner,
+                Protocol = "jellyfin",
+                BackendInstanceId = "primary",
+                SourceKind = "import",
+                OccurrenceKey = "past",
+                CanonicalRecordingId = recording,
+                State = allstarr.Core.Intelligence.ListeningEventState.Completed,
+                Artist = "Singer",
+                Title = "Song"
+            });
+            await db.SaveChangesAsync();
+        }
+        var store = new SharedTagStore(factory, clock);
+        await store.SaveAsync(SharedTagStore.RecordingKey(recording), [], [], true, default, capturedAt: clock.UtcNow);
+        var jobs = new DurableJobQueue(factory, new(), new(new()), clock);
+        Assert.Equal(1, await new SharedTagQueue(factory, jobs, clock).EnqueuePendingAsync(default));
+        Assert.Equal(0, await new SharedTagQueue(factory, jobs, clock).EnqueuePendingAsync(default));
+        var claim = await jobs.ClaimNextAsync("history-tags", [SharedTagQueue.JobType]);
+        await store.SaveAsync(SharedTagStore.RecordingKey(recording), [], [], true, default, historyCaptured: true);
+        await jobs.CompleteAsync(claim!, DurableJobCompletion.Success());
+        Assert.Equal(0, await new SharedTagQueue(factory, jobs, clock).EnqueuePendingAsync(default));
+    }
+
+    [Fact]
     public void ArtistGenres_SurviveExistingMetadataMapping()
     {
         var metadata = new ProviderArtistMetadata(new("spotify", ProviderResourceKind.Artist, "17"), "Singer",

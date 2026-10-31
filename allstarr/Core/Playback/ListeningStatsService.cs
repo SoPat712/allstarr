@@ -97,8 +97,8 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
         var selected = qualified.Where(item => item.ListenedAt < period.To);
         if (period.From is { } from) selected = selected.Where(item => item.ListenedAt >= from);
         var imported = await selected.LongCountAsync(item => item.SourceKind == "import" || item.ImportProvenance != null, token);
-        var plays = await selected.Where(item => item.ImportProvenance == null &&
-                (item.SourceKind == "protocol" || item.SourceKind == "listenbrainz-api"))
+        var plays = await selected.Where(item => item.SourceKind == "protocol" || item.SourceKind == "listenbrainz-api" ||
+                item.SourceKind == "import" || item.ImportProvenance != null)
             .Select(item => new StatsPlay(item.ListenedAt!.Value, item.TrackReference, item.CanonicalRecordingId,
                 item.RecordingMusicBrainzId, item.Title, item.Artist, item.Album, item.AlbumArtist, item.DurationMilliseconds))
             .ToListAsync(token);

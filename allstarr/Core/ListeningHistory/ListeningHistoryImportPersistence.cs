@@ -542,6 +542,10 @@ public sealed class ListeningHistoryImportService(
         var now = clock.UtcNow;
         db.AuditEvents.Add(Audit(record, "removed", "success", now));
         db.ListeningHistoryImports.Remove(record);
+        if (await db.ExternalMetadataSnapshots.AnyAsync(item => item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
+            item.BackendInstanceId == scope.BackendInstanceId && item.ResourceKind == "personal-mixes", cancellationToken))
+            await jobs.EnqueueInExistingTransactionAsync(db, new DurableJobEnqueueRequest<Guid>(Music.PersonalMixService.JobType,
+                $"history-removed:{importId:N}", Guid.Empty, scope.OwnerUserId, Priority: -100), cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         artifacts.Delete(importId);

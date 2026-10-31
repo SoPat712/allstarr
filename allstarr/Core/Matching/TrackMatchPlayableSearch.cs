@@ -105,7 +105,21 @@ public sealed class TrackMatchPlayableSearch(
         {
             foreach (var query in queries)
             {
-                var result = await gateway.SearchAutomaticProviderSongsAsync(context, provider, query, 15);
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                deadline.CancelAfter(TimeSpan.FromSeconds(10));
+                ProviderOutcome<IReadOnlyList<Song>> result;
+                try
+                {
+                    result = await gateway.SearchAutomaticProviderSongsAsync(new ProtocolExecutionContext(context.Protocol, context.BackendInstanceId, context.VerifiedBackendPrincipalId,
+                        context.Principal, context.CorrelationId, context.Deadline, deadline.Token, context.Client)
+                    { Policy = context.Policy, IsReadOnly = context.IsReadOnly }, provider, query, 15)
+                        .WaitAsync(deadline.Token);
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    failure ??= new(ProviderErrorKind.TransientFailure, TimeSpan.FromMinutes(1));
+                    break;
+                }
                 if (!result.IsSuccess)
                 {
                     if (failure == null || result.Error!.RetryAfter > failure.RetryAfter.GetValueOrDefault()) failure = result.Error;

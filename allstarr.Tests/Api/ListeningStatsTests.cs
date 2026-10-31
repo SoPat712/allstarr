@@ -58,7 +58,7 @@ public sealed class ListeningStatsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ImportsAndUnknownCoverageAreSeparateFromObservedTops()
+    public async Task ImportsContributeToTotalsAndTopsAlongsideObservedPlays()
     {
         var first = Play("2026-10-01T12:00:00Z");
         var repeat = Play("2026-10-02T12:00:00Z");
@@ -71,23 +71,78 @@ public sealed class ListeningStatsTests : IAsyncLifetime
         var import = Play("2020-01-01T12:00:00Z");
         import.SourceKind = "import";
         import.ImportProvenance = "fixture";
+        import.TrackReference = "imported-track";
         import.Title = "Imported song";
+        import.Artist = "Imported artist";
+        import.Album = "Imported album";
         var provenance = Play("2026-10-04T12:00:00Z");
         provenance.ImportProvenance = "fixture";
         await Add(first, repeat, unknown, import, provenance);
 
         var result = await stats.GetAsync(Session(), "all", null, default);
 
-        Assert.Equal(3, result.PlayCount);
-        Assert.Equal(3, result.ActiveDays);
+        Assert.Equal(5, result.PlayCount);
+        Assert.Equal(5, result.ActiveDays);
         Assert.Equal(2, result.ImportedCount);
         Assert.Equal(first.ListenedAt, result.ObservedSince);
-        Assert.Equal(240000, result.EstimatedTimeFromSongLengthsMilliseconds);
+        Assert.Equal(480000, result.EstimatedTimeFromSongLengthsMilliseconds);
         Assert.Equal(1, result.Coverage.UnknownSongIdentityCount);
         Assert.Equal(1, result.Coverage.UnknownDurationCount);
-        Assert.Equal(2, Assert.Single(result.TopSongs).PlayCount);
-        Assert.Equal(2, Assert.Single(result.TopArtists).PlayCount);
-        Assert.Equal(2, Assert.Single(result.TopAlbums).PlayCount);
+        Assert.Collection(result.TopSongs,
+            song => { Assert.Equal("Song", song.Title); Assert.Equal(3, song.PlayCount); },
+            song => { Assert.Equal("Imported song", song.Title); Assert.Equal(1, song.PlayCount); });
+        Assert.Collection(result.TopArtists,
+            artist => { Assert.Equal("Artist", artist.Artist); Assert.Equal(3, artist.PlayCount); },
+            artist => { Assert.Equal("Imported artist", artist.Artist); Assert.Equal(1, artist.PlayCount); });
+        Assert.Collection(result.TopAlbums,
+            album => { Assert.Equal("Album", album.Album); Assert.Equal(3, album.PlayCount); },
+            album => { Assert.Equal("Imported album", album.Album); Assert.Equal(1, album.PlayCount); });
+    }
+
+    [Fact]
+    public async Task ImportedPlaysUseOriginalDatesAndDisappearAfterRemovalAndCacheExpiry()
+    {
+        var import = Play("2020-01-01T12:00:00Z");
+        import.SourceKind = "import";
+        import.TrackReference = "imported-track";
+        import.Title = "Imported song";
+        import.Artist = "Imported artist";
+        import.Album = "Imported album";
+        var observed = Play("2026-10-01T12:00:00Z");
+        await Add(import, observed);
+
+        var historical = await stats.GetAsync(Session(), null, 2020, default);
+        Assert.Equal(1, historical.PlayCount);
+        Assert.Equal(1, historical.ActiveDays);
+        Assert.Equal(1, historical.ImportedCount);
+        Assert.Equal("Imported song", Assert.Single(historical.TopSongs).Title);
+        Assert.Equal("Imported artist", Assert.Single(historical.TopArtists).Artist);
+        Assert.Equal(observed.ListenedAt, historical.ObservedSince);
+        var current = await stats.GetAsync(Session(), "year", null, default);
+        Assert.Equal(1, current.PlayCount);
+        Assert.Equal(0, current.ImportedCount);
+        Assert.Equal("Song", Assert.Single(current.TopSongs).Title);
+        Assert.Equal(2, (await stats.GetAsync(Session(), "all", null, default)).PlayCount);
+
+        await using (var db = factory.CreateDbContext())
+        {
+            db.ListeningEvents.Remove(await db.ListeningEvents.SingleAsync(item => item.Id == import.Id));
+            await db.SaveChangesAsync();
+        }
+        clock.UtcNow = clock.UtcNow.AddSeconds(31);
+
+        var removed = await stats.GetAsync(Session(), null, 2020, default);
+        Assert.Equal(0, removed.PlayCount);
+        Assert.Equal(0, removed.ActiveDays);
+        Assert.Equal(0, removed.ImportedCount);
+        Assert.Equal(0, removed.EstimatedTimeFromSongLengthsMilliseconds);
+        Assert.Empty(removed.TopSongs);
+        Assert.Empty(removed.TopArtists);
+        Assert.Empty(removed.TopAlbums);
+        var remaining = await stats.GetAsync(Session(), "all", null, default);
+        Assert.Equal(1, remaining.PlayCount);
+        Assert.Equal("Song", Assert.Single(remaining.TopSongs).Title);
+        Assert.Equal("Artist", Assert.Single(remaining.TopArtists).Artist);
     }
 
     [Theory]

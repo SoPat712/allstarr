@@ -27,7 +27,23 @@ public sealed class SharedTagQueue(IDbContextFactory<AllstarrDbContext> factory,
         return jobs.EnqueueAsync(new DurableJobEnqueueRequest<SharedTagPayload>(JobType, key, payload, owner, Priority: -100), token);
     }
 
-    public async Task<int> EnqueuePendingAsync(CancellationToken token)
+    internal async Task RefreshListenersAsync(Guid recording, CancellationToken token)
+    {
+        await using var db = await factory.CreateDbContextAsync(token);
+        var owners = await db.Users.AsNoTracking().Where(user => user.Enabled && !user.IsSynthetic &&
+            db.ListeningEvents.Any(play => play.OwnerUserId == user.Id && play.Protocol == user.BackendType &&
+                play.BackendInstanceId == user.BackendInstanceId && play.CanonicalRecordingId == recording) &&
+            db.ExternalMetadataSnapshots.Any(item => item.OwnerUserId == user.Id && item.Protocol == user.BackendType &&
+                item.BackendInstanceId == user.BackendInstanceId && item.ResourceKind == "personal-mixes"))
+            .Select(user => user.Id).Take(100).ToArrayAsync(token);
+        var batch = clock.UtcNow.ToUnixTimeSeconds() / 300;
+        foreach (var owner in owners)
+            await jobs.EnqueueAsync(new DurableJobEnqueueRequest<Guid>(Music.PersonalMixService.JobType,
+                $"history-tags:{owner:N}:{batch}", Guid.Empty, owner,
+                Priority: -100, AvailableAt: DateTimeOffset.FromUnixTimeSeconds((batch + 1) * 300)), token);
+    }
+
+    public async Task<int> EnqueuePendingAsync(CancellationToken token, IReadOnlyCollection<Guid>? onlyRecordings = null)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         var owner = await db.Users.Where(item => item.Enabled).OrderBy(item => item.Id).Select(item => (Guid?)item.Id).FirstOrDefaultAsync(token);
@@ -36,18 +52,26 @@ public sealed class SharedTagQueue(IDbContextFactory<AllstarrDbContext> factory,
             (item.State == DurableJobState.Pending || item.State == DurableJobState.Running || item.State == DurableJobState.RetryScheduled))
             .Select(item => item.IdempotencyKey).ToArrayAsync(token)).Select(key => key.Split(':')[0]).ToHashSet();
         var queued = 0;
+        var pending = db.CanonicalRecordings.AsNoTracking().Where(item => item.MergedIntoId == null);
+        if (onlyRecordings != null) pending = pending.Where(item => onlyRecordings.Contains(item.Id));
         for (var offset = 0; ; offset += 100)
         {
-            var recordings = await db.CanonicalRecordings.AsNoTracking().Where(item => item.MergedIntoId == null)
+            var recordings = await pending
                 .OrderBy(item => item.Id).Skip(offset).Take(100).Select(item => new { item.Id, item.UpdatedAt }).ToArrayAsync(token);
             var ids = recordings.Select(item => item.Id).ToArray();
             if (ids.Length == 0) return queued;
+            var historical = await db.ListeningEvents.AsNoTracking().Where(item => item.CanonicalRecordingId != null &&
+                ids.Contains(item.CanonicalRecordingId.Value) && (item.SourceKind == "import" || item.SourceKind == "protocol" || item.SourceKind == "listenbrainz-api"))
+                .Select(item => item.CanonicalRecordingId!.Value).Distinct().ToHashSetAsync(token);
             var keys = ids.Select(SharedTagStore.RecordingKey).ToArray();
             var profiles = (await db.SharedTagProfiles.AsNoTracking().Where(item => keys.Contains(item.Key)).ToArrayAsync(token))
                 .ToDictionary(item => item.Key);
             var snapshots = await (from snapshot in db.ExternalMetadataSnapshots.AsNoTracking()
                                    join identity in db.ProviderTrackIdentities on snapshot.ProviderTrackIdentityId equals identity.Id
-                                   where ids.Contains(identity.CanonicalRecordingId) && (snapshot.ResourceKind == "track" || snapshot.ResourceKind == "playback-metadata")
+                                   where ids.Contains(identity.CanonicalRecordingId) && identity.Verification == ProviderIdentityVerification.Verified &&
+                                       identity.VerificationMethod != "automatic-suggestion" && identity.VerificationMethod != "manual-released" &&
+                                       identity.VerificationMethod != "manual-replaced" && identity.VerificationMethod != "superseded" &&
+                                       (snapshot.ResourceKind == "track" || snapshot.ResourceKind == "playback-metadata")
                                    group snapshot by identity.CanonicalRecordingId into grouped
                                    select new { Id = grouped.Key, At = grouped.Max(item => item.RetrievedAt) }).ToArrayAsync(token);
             var changes = snapshots.Concat(await db.LibraryTracks.AsNoTracking().Where(item => item.CanonicalRecordingId != null &&
@@ -59,11 +83,14 @@ public sealed class SharedTagQueue(IDbContextFactory<AllstarrDbContext> factory,
                 var id = recording.Id;
                 if (active.Contains(id.ToString("D"))) continue;
                 var profile = profiles.GetValueOrDefault(SharedTagStore.RecordingKey(id));
+                var document = SharedTagStore.Read(profile);
+                var needsHistory = historical.Contains(id) && !document.HistoryCaptured && !document.Evidence.Any(item => item.CanonicalTag != null);
                 var latest = changes.Where(item => item.Id == id).Select(item => item.At).Append(recording.UpdatedAt).Max();
-                if (profile != null && profile.RefreshedAt > clock.UtcNow - RefreshAge && profile.CapturedAt >= latest) continue;
-                var key = $"{id:D}:{profile?.RefreshedAt.UtcTicks ?? 0}:{latest.UtcTicks}:{clock.UtcNow.ToUnixTimeSeconds() / 2592000}";
+                if (profile != null && !needsHistory && profile.CapturedAt >= latest &&
+                    (profile.RefreshedAt > clock.UtcNow - RefreshAge || document.Evidence.Any(item => item.CanonicalTag != null))) continue;
+                var key = $"{id:D}:{profile?.RefreshedAt.UtcTicks ?? 0}:{latest.UtcTicks}:{clock.UtcNow.ToUnixTimeSeconds() / 2592000}{(needsHistory ? ":history" : "")}";
                 if ((await jobs.EnqueueAsync(new DurableJobEnqueueRequest<SharedTagPayload>(JobType, key, new(id),
-                        owner, Priority: -100, MaxAttempts: 3), token)).Created) queued++;
+                        owner, Priority: -100, MaxAttempts: 3), token)).Created && ++queued >= 100) return queued;
             }
             if (ids.Length < 100) return queued;
         }
@@ -71,7 +98,7 @@ public sealed class SharedTagQueue(IDbContextFactory<AllstarrDbContext> factory,
 }
 
 public sealed class SharedTagJobHandler(IDbContextFactory<AllstarrDbContext> factory, SharedTagStore store,
-    SharedTagSources sources, IPlatformClock clock) : IDurableJobHandler
+    SharedTagSources sources, IPlatformClock clock, SharedTagQueue? queue = null) : IDurableJobHandler
 {
     private readonly SemaphoreSlim collection = new(1, 1);
     public string JobType => SharedTagQueue.JobType;
@@ -119,9 +146,11 @@ public sealed class SharedTagJobHandler(IDbContextFactory<AllstarrDbContext> fac
             var kept = await db.Set<RecordingKeptRouteEntity>().AsNoTracking().FirstOrDefaultAsync(item => item.CanonicalRecordingId == recording.Id, token);
             if (kept?.DisplayMetadataJson is { } metadata)
                 captured.Add(SharedTagMetadata.Read("library", metadata, kept.CreatedAt));
-            var artist = captured.Select(item => item.Artist).FirstOrDefault(item => item.Length > 0) ?? library?.Artist ?? "";
+            var history = await db.ListeningEvents.AsNoTracking().Where(item => item.CanonicalRecordingId == recording.Id &&
+                item.Artist != null && item.Artist != "").Select(item => new { item.Artist, item.Title }).FirstOrDefaultAsync(token);
+            var artist = captured.Select(item => item.Artist).FirstOrDefault(item => item.Length > 0) ?? library?.Artist ?? history?.Artist ?? "";
             var artistNames = captured.SelectMany(item => item.ArtistNames).Append(artist).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            var title = captured.Select(item => item.Title).FirstOrDefault(item => item.Length > 0) ?? library?.Title ?? recording.Title;
+            var title = captured.Select(item => item.Title).FirstOrDefault(item => item.Length > 0) ?? library?.Title ?? history?.Title ?? recording.Title;
             var artistKeys = captured.SelectMany(item => item.ArtistKeys).Distinct().ToList();
             var batches = captured.SelectMany(item => item.Batches).GroupBy(item => item.Source)
                 .Select(group => group.FirstOrDefault(batch => batch.Tags.Count > 0) ?? group.First()).ToList();
@@ -129,9 +158,10 @@ public sealed class SharedTagJobHandler(IDbContextFactory<AllstarrDbContext> fac
             var mbid = recording.Identifiers.FirstOrDefault(item => item.Kind == RecordingIdentifierKinds.MusicBrainz)?.Value ?? library?.MusicBrainzRecordingId;
             var isrc = recording.Identifiers.FirstOrDefault(item => item.Kind == RecordingIdentifierKinds.Isrc)?.Value ??
                 captured.Select(item => item.Isrc).FirstOrDefault(item => !string.IsNullOrWhiteSpace(item)) ?? library?.Isrc;
-            var refreshed = (profile == null || profile.RefreshedAt <= clock.UtcNow - SharedTagQueue.RefreshAge) &&
-                (mbid != null || isrc != null || artist.Length > 0 && title.Length > 0);
-            if (refreshed)
+            var knownTags = (await store.GetTags(recording.Id, token)).Tags.Count > 0;
+            var refreshed = !knownTags && (profile == null || profile.RefreshedAt <= clock.UtcNow - SharedTagQueue.RefreshAge ||
+                history != null && !SharedTagStore.Read(profile).HistoryCaptured);
+            if (refreshed && (mbid != null || isrc != null || artist.Length > 0 && title.Length > 0))
             {
                 var collected = await sources.CollectRecordingAsync(mbid, isrc, artist, title, token);
                 batches.AddRange(collected.Batches);
@@ -141,14 +171,18 @@ public sealed class SharedTagJobHandler(IDbContextFactory<AllstarrDbContext> fac
                 if (artistKey != null)
                 {
                     var artistProfile = await db.SharedTagProfiles.AsNoTracking().SingleOrDefaultAsync(item => item.Key == SharedTagStore.ArtistKey(artistKey), token);
-                    if (artistProfile == null || artistProfile.RefreshedAt <= clock.UtcNow - SharedTagQueue.RefreshAge)
+                    if (artistProfile == null || artistProfile.RefreshedAt <= clock.UtcNow - SharedTagQueue.RefreshAge &&
+                        !SharedTagStore.Read(artistProfile).Evidence.Any(item => item.CanonicalTag != null))
                         await store.SaveAsync(SharedTagStore.ArtistKey(artistKey),
                             await sources.CollectArtistAsync(mbArtist, artist, token), [], true, token, artistNames);
                 }
             }
             await store.SaveAsync(key, batches, artistKeys, refreshed, token, artistNames,
                 snapshots.Select(item => item.RetrievedAt).Append(recording.UpdatedAt)
-                    .Append(library?.UpdatedAt ?? DateTimeOffset.MinValue).Append(kept?.UpdatedAt ?? DateTimeOffset.MinValue).Max());
+                    .Append(library?.UpdatedAt ?? DateTimeOffset.MinValue).Append(kept?.UpdatedAt ?? DateTimeOffset.MinValue).Max(),
+                historyCaptured: history != null && (refreshed || knownTags));
+            if (queue != null) await queue.RefreshListenersAsync(recording.Id, token);
+            await execution.ReportProgressAsync(new("recording-tags", "Styles collected for this song.", 1, 1), token);
             return DurableJobCompletion.Success();
         }
         catch (MusicBrainzLookupException error)

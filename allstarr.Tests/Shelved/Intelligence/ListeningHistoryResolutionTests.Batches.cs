@@ -55,8 +55,8 @@ public sealed partial class ListeningHistoryResolutionTests
                 Assert.Null(item.ProviderTrackIdentityId);
             });
             var live = await db.ListeningEvents.SingleAsync(item => item.SourceKind == "protocol");
-            Assert.Null(live.CanonicalRecordingId);
-            Assert.Equal(0, live.Revision);
+            Assert.Equal(tracks["Song 0"].CanonicalRecordingId, live.CanonicalRecordingId);
+            Assert.Equal(1, live.Revision);
         }
         finally
         {
@@ -79,7 +79,7 @@ public sealed partial class ListeningHistoryResolutionTests
             cancellation.Token.ThrowIfCancellationRequested();
         };
         var claim = Assert.IsType<DurableJobClaim>(await jobs.ClaimNextAsync("history-test", [ListeningHistoryResolution.JobTypeName]));
-        var running = Handler().ExecuteAsync(new(claim, services), cancellation.Token);
+        var running = Handler(collectTags: true).ExecuteAsync(new(claim, services), cancellation.Token);
         await AwaitLocalPause(running);
         time.Advance(TimeSpan.FromMilliseconds(250));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => running);
@@ -92,9 +92,13 @@ public sealed partial class ListeningHistoryResolutionTests
         clock.UtcNow += TimeSpan.FromHours(1);
         Assert.Equal(1, await jobs.RecoverInterruptedAsync());
         probe.AfterEventWrite = null;
-        Assert.Equal(DurableJobCompletionKind.Succeeded, (await Run()).Kind);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await Run(collectTags: true)).Kind);
         await AssertSavedProgress(225, 900, 900);
+        Assert.Equal(0, await new allstarr.Core.Enrichment.SharedTagQueue(factory, jobs, clock).EnqueuePendingAsync(default));
         await using var read = factory.CreateDbContext();
+        var tagJobs = await read.Jobs.Where(item => item.Type == allstarr.Core.Enrichment.SharedTagQueue.JobType).ToArrayAsync();
+        Assert.Equal(225, tagJobs.Length);
+        Assert.Equal(225, tagJobs.Select(item => item.IdempotencyKey.Split(':')[0]).Distinct().Count());
         Assert.All(await read.ListeningEvents.ToArrayAsync(), item => Assert.Equal(1, item.Revision));
     }
 

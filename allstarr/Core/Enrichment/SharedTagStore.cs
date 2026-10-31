@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Enrichment;
 
-internal sealed record SharedTagDocument(IReadOnlyList<SharedTagEvidence> Evidence, IReadOnlyList<string> ArtistKeys);
+internal sealed record SharedTagDocument(IReadOnlyList<SharedTagEvidence> Evidence, IReadOnlyList<string> ArtistKeys, bool HistoryCaptured = false);
 
 public sealed class SharedTagStore(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock)
 {
@@ -38,7 +38,7 @@ public sealed class SharedTagStore(IDbContextFactory<AllstarrDbContext> factory,
     }
 
     public async Task SaveAsync(string key, IReadOnlyList<SharedTagBatch> batches, IReadOnlyList<string> artistKeys,
-        bool refreshed, CancellationToken token, IReadOnlyList<string>? artistNames = null, DateTimeOffset? capturedAt = null)
+        bool refreshed, CancellationToken token, IReadOnlyList<string>? artistNames = null, DateTimeOffset? capturedAt = null, bool historyCaptured = false)
     {
         await writes.WaitAsync(token);
         try
@@ -52,7 +52,7 @@ public sealed class SharedTagStore(IDbContextFactory<AllstarrDbContext> factory,
             row ??= new() { Key = key };
             if (db.Entry(row).State == EntityState.Detached) db.SharedTagProfiles.Add(row);
             row.PayloadJson = JsonSerializer.Serialize(new SharedTagDocument(evidence,
-                document.ArtistKeys.Concat(artistKeys).Distinct(StringComparer.Ordinal).Take(10).ToArray()));
+                document.ArtistKeys.Concat(artistKeys).Distinct(StringComparer.Ordinal).Take(10).ToArray(), document.HistoryCaptured || historyCaptured));
             if (capturedAt != null) row.CapturedAt = capturedAt.Value;
             if (refreshed) row.RefreshedAt = clock.UtcNow;
             await db.SaveChangesAsync(token);

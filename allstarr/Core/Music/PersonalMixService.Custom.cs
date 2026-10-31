@@ -28,7 +28,7 @@ public sealed partial class PersonalMixService
             await using var db = await factory.CreateDbContextAsync(token);
             var user = await UserAsync(db, owner, token);
             var document = await LoadAsync(db, user, token);
-            var events = await Events(db, user).Where(item => item.UpdatedAt <= clock.UtcNow &&
+            var events = await Events(db, user, await taste.UseImportedHistoryAsync(user.Id, token)).Where(item => item.UpdatedAt <= clock.UtcNow &&
                 (item.ListenedAt == null || item.ListenedAt <= clock.UtcNow)).ToArrayAsync(token);
             var (candidates, seedName) = await CandidatesAsync(db, user, events, token, request);
             var selected = PersonalMixRules.Select("custom", candidates, clock.UtcNow, [], request.Length);

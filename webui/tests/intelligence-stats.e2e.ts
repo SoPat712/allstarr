@@ -33,7 +33,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(page.getByRole("region", { name: "Top songs", exact: true })).toContainText("Evening light");
     await expect(page.getByRole("region", { name: "Top artists", exact: true })).toContainText("57 plays");
     await expect(page.getByRole("region", { name: "Top albums", exact: true })).toContainText("Open water");
-    await expect(page.getByText("Imported from other services: 450 plays (not in these charts)", { exact: true })).toBeVisible();
+    await expect(page.getByText("Imported from other services: 450 plays", { exact: true })).toBeVisible();
     await expect(page.getByText(/7 plays couldn't be identified/)).toBeVisible();
     await expect(page.getByRole("button", { name: /Share/ })).toHaveCount(0);
     await capture(page, "recap-listening-details", width, theme);
@@ -68,13 +68,29 @@ test("Recap periods and past years send separate exact selections", async ({ pag
   await expect.poll(() => calls.at(-1)).toBe("?period=7d");
 });
 
-test("Empty and imported-only stats explain what is counted", async ({ page }) => {
-  await mockStats(page, { ...stats, playCount: 0, activeDays: 0, estimatedTimeFromSongLengthsMilliseconds: 0, observedSince: null, coverage: { unknownSongIdentityCount: 0, unknownDurationCount: 0 }, topSongs: [], topArtists: [], topAlbums: [] });
+test("Empty stats explain what is counted", async ({ page }) => {
+  await mockStats(page, { ...stats, playCount: 0, importedCount: 0, activeDays: 0, estimatedTimeFromSongLengthsMilliseconds: 0, observedSince: null, coverage: { unknownSongIdentityCount: 0, unknownDurationCount: 0 }, topSongs: [], topArtists: [], topAlbums: [] });
   await page.goto("/#/for-you?section=recap");
   await expect(page.getByText("No plays in this period.", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Top songs", exact: true })).toContainText("No songs yet.");
   await expect(page.getByText(/Counting starts with your first listen\./)).toBeVisible();
-  await expect(page.getByText("Imported from other services: 450 plays (not in these charts)", { exact: true })).toBeVisible();
+  await expect(page.getByText("Imported from other services: 0 plays", { exact: true })).toBeVisible();
+});
+
+test("Completed imported-only plays populate their original year", async ({ page }) => {
+  const historical = { ...stats, period: { ...stats.period, from: "2015-01-01T05:00:00Z", to: "2016-01-01T05:00:00Z" }, playCount: 450, importedCount: 450, observedSince: "2015-10-16T23:45:56Z" };
+  const calls = await mockStats(page, historical);
+  await page.goto("/#/for-you?section=recap");
+  await page.getByRole("button", { name: "Year in review", exact: true }).click();
+  await page.getByRole("option", { name: "2015", exact: true }).click();
+  await expect.poll(() => calls.at(-1)).toBe("?year=2015");
+  await expect(page.locator(".stats-numbers").getByText("450", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Top songs", exact: true })).toContainText("Evening light");
+  await expect(page.getByRole("region", { name: "Top artists", exact: true })).toContainText("The Coast");
+  await expect(page.getByRole("region", { name: "Top albums", exact: true })).toContainText("Open water");
+  await expect(page.getByText("Imported from other services: 450 plays", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "2015 · Year in music", exact: true })).toBeVisible();
+  await expect(page.getByText("No plays in this period.", { exact: true })).toHaveCount(0);
 });
 
 test("A failed period change does not label the previous totals as the new period", async ({ page }) => {

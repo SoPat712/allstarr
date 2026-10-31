@@ -46,7 +46,8 @@ public sealed partial class PersonalMixService
         var history = events.Where(item => item.State == ListeningEventState.Completed)
             .GroupBy(item => item.CanonicalRecordingId?.ToString("D") ?? item.TrackReference).ToArray();
         var top = history.OrderByDescending(group => group.Count()).ThenBy(group => group.Key, StringComparer.Ordinal).Take(PersonalMixRules.TopSongs);
-        var recent = history.OrderByDescending(group => group.Count(item => item.ListenedAt >= clock.UtcNow.AddDays(-30)))
+        var recentIds = RecentHistory(events);
+        var recent = history.OrderByDescending(group => group.Count(item => recentIds.Contains(item.Id)))
             .ThenBy(group => group.Key, StringComparer.Ordinal).Take(30);
         foreach (var group in recent.Concat(top).DistinctBy(group => group.Key))
         {
@@ -79,7 +80,10 @@ public sealed partial class PersonalMixService
             catch (Exception) when (!token.IsCancellationRequested) { }
         }
         // Three familiar seeds bound source work; reuse radio's provider and similar-track fallbacks.
-        foreach (var seed in rows.Where(item => !item.Song.IsLocal).Take(3).ToArray())
+        var seedPlays = history.ToDictionary(group => group.Key, group => group.Count());
+        foreach (var seed in rows.Where(item => !item.Song.IsLocal)
+            .OrderByDescending(item => seedPlays.GetValueOrDefault(item.Song.CanonicalRecordingId?.ToString("D") ?? item.Song.Id))
+            .ThenBy(item => item.Song.Id, StringComparer.Ordinal).Take(3).ToArray())
         {
             if (string.IsNullOrWhiteSpace(seed.Song.ExternalProvider) || string.IsNullOrWhiteSpace(seed.Song.ExternalId)) continue;
             try
@@ -145,6 +149,7 @@ public sealed partial class PersonalMixService
         })
             .Select(key => (Key: key, Play: play))).GroupBy(item => item.Key)
             .ToDictionary(group => group.Key, group => group.Select(item => item.Play).ToArray());
+        var recentIds = RecentHistory(events);
         var result = new List<MixCandidate>();
         foreach (var row in songs)
         {
@@ -161,7 +166,7 @@ public sealed partial class PersonalMixService
             var features = row.Song.CanonicalRecordingId is { } id && profiles.TryGetValue(id, out var profile)
                 ? profile.Tags.Where(item => item.Score > 0).ToDictionary(item => item.Tag, item => item.Score) : new Dictionary<string, double>();
             result.Add(new(row.Song.WithTasteReason(row.Song.TasteReason ?? score.Reasons.FirstOrDefault()), features,
-                played.Length, played.Count(play => play.ListenedAt >= clock.UtcNow.AddDays(-30)),
+                played.Length, played.Count(play => recentIds.Contains(play.Id)),
                 matched.Select(play => (DateTimeOffset?)(play.ListenedAt ?? play.UpdatedAt)).DefaultIfEmpty(hearts.FirstOrDefault(item => item.ItemId == row.Song.Id)?.FavoritedAt).Max(),
                 skipped, row.Source, score.Score, row.Release, matched.Length > 0, hearts.Any(item => item.ItemId == row.Song.Id)));
         }

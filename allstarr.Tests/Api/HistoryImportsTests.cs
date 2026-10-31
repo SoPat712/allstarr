@@ -105,8 +105,9 @@ public sealed partial class ListeningHistoryImportIntegrationTests
         await db.SaveChangesAsync();
         var stats = await ListeningStatsService.ReadAsync(db, _scope, new(null, _clock.UtcNow.AddDays(1), "UTC"), TimeZoneInfo.Utc, default);
         Assert.Equal(1, stats.ImportedCount);
-        Assert.Equal(1, stats.PlayCount);
-        Assert.Equal("Observed", Assert.Single(stats.TopSongs).Title);
+        Assert.Equal(2, stats.PlayCount);
+        Assert.Contains(stats.TopSongs, item => item.Title == "Observed");
+        Assert.Equal(2, stats.TopSongs.Count);
         Assert.Empty(await db.PlaybackDeliveryCheckpoints.ToListAsync());
         Assert.Empty(await db.ListeningSignals.ToListAsync());
         Assert.Empty(await db.FavoriteActions.ToListAsync());
@@ -151,8 +152,8 @@ public sealed partial class ListeningHistoryImportIntegrationTests
         var taste = Taste();
         var profile = await taste.GetAsync(_scope.OwnerUserId);
         Assert.True(profile.UseImportedHistory);
-        Assert.Equal(.5, Assert.Single(profile.Usually.Tags).Value, 6);
-        Assert.Equal(.5, profile.Usually.Artists.Single(item => item.Name == "Finished artist").Value, 6);
+        Assert.Equal(Math.Pow(.5, 30d / 180), Assert.Single(profile.Usually.Tags).Value, 6);
+        Assert.Equal(Math.Pow(.5, 30d / 180), profile.Usually.Artists.Single(item => item.Name == "Finished artist").Value, 6);
         Assert.Equal(-1, profile.Usually.Artists.Single(item => item.Name == "Skipped artist").Value);
         Assert.Equal(2, profile.Usually.Artists.Count);
         Assert.Empty(profile.Lately.Artists);
