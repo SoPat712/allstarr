@@ -187,7 +187,18 @@ public sealed class PlaylistVirtualizationService(
             var snapshot = snapshots.SingleOrDefault(item => item.PlaylistLinkId == link.Id);
             if (snapshot == null) continue;
             var external = allstarr.Core.Music.PersonalMixService.IsExternalLink(link);
-            if (external && (personalMixes == null || !await personalMixes.IsExternalVisibleAsync(context, link, token))) continue;
+            if (external)
+            {
+                var playlist = await ReadAsync(context, CreateProtocolId(link.Id), token);
+                if (playlist != null)
+                    result.Add(playlist with
+                    {
+                        SummaryTrackCount = playlist.TrackCount,
+                        SummaryDurationMilliseconds = playlist.DurationMilliseconds,
+                        Tracks = []
+                    });
+                continue;
+            }
             var count = await db.PlaylistSourceEntries.CountAsync(entry => entry.PlaylistSourceSnapshotId == snapshot.Id, token);
             var snapshotKey = snapshot.Id.ToString().ToUpperInvariant();
             var duration = await db.Database.SqlQuery<long>($"""
@@ -209,9 +220,7 @@ public sealed class PlaylistVirtualizationService(
                 CreatedAt = link.CreatedAt,
                 UpdatedAt = snapshot.PublishedAt,
                 SummaryTrackCount = count,
-                SummaryDurationMilliseconds = duration,
-                MixCover = external ? new(link.Id.ToString(), snapshot.SnapshotVersion, "external", Source: link.SourceProviderId,
-                    SourcePlaylistId: link.SourcePlaylistId, Name: DisplayName(link.SourceProviderId, snapshot.Name), Count: count) : null
+                SummaryDurationMilliseconds = duration
             });
         }
         if (personalMixes != null) result.AddRange(await personalMixes.PublishedAsync(context, token, summariesOnly: true));
@@ -371,8 +380,21 @@ public sealed class PlaylistVirtualizationService(
                 ? new(link.Id.ToString(), snapshot.SnapshotVersion, "external", Source: link.SourceProviderId,
                     SourcePlaylistId: link.SourcePlaylistId, Name: DisplayName(link.SourceProviderId, name), Count: tracks.Count) : null
         };
-        return allstarr.Core.Music.PersonalMixService.IsExternalLink(link) && personalMixes != null
-            ? await personalMixes.FilterExternalTracksAsync(context, result, cancellationToken) : result;
+        if (!allstarr.Core.Music.PersonalMixService.IsExternalLink(link) || personalMixes == null) return result;
+        result = await personalMixes.FilterExternalTracksAsync(context, result, cancellationToken);
+        var seen = new HashSet<(TrackRouteKind Kind, string? Provider, string Id)>();
+        var uniqueTracks = result.Tracks.Where(track => track.RouteKind switch
+        {
+            TrackRouteKind.Local => seen.Add((track.RouteKind, null, track.BackendItemId)),
+            TrackRouteKind.External when track.RouteProviderId != null && track.RouteExternalId != null =>
+                seen.Add((track.RouteKind, track.RouteProviderId, track.RouteExternalId)),
+            _ => true
+        }).ToArray();
+        return result with
+        {
+            Tracks = uniqueTracks,
+            MixCover = result.MixCover is { } cover ? cover with { Count = uniqueTracks.Length } : null
+        };
     }
 
     public async Task<VirtualPlaylistReadModel?> ReadBySourceAsync(

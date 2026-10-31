@@ -97,10 +97,16 @@ public partial class JellyfinController
         var mediaTypes = JellyfinProviderQuery.Values(Request.Query["MediaTypes"].ToString());
         var parentId = Request.Query["ParentId"].ToString();
         var playlistsOnly = Request.Path.Value?.TrimEnd('/').Equals("/Playlists", StringComparison.OrdinalIgnoreCase) == true;
-        var ordered = requested.Where(items.ContainsKey).Where(id => !playlistsOnly || items[id]["Type"]?.ToString() == "Playlist").Where(id => !synthesizedIds.Contains(id) ||
+        var candidates = requested.Where(items.ContainsKey).Where(id => !playlistsOnly || items[id]["Type"]?.ToString() == "Playlist").Where(id => !synthesizedIds.Contains(id) ||
             filter.Matches(JsonSerializer.Deserialize<Dictionary<string, object?>>(items[id].ToJsonString())!) &&
-            (parentId.Length == 0 || parentId.Equals(items[id]["ParentId"]?.ToString(), StringComparison.OrdinalIgnoreCase)) &&
             (mediaTypes.Length == 0 || mediaTypes.Contains("Audio", StringComparer.OrdinalIgnoreCase)))
+            .ToArray();
+        var musicParent = parentId.Length > 0 && candidates.Any(id => synthesizedIds.Contains(id) &&
+            !parentId.Equals(items[id]["ParentId"]?.ToString(), StringComparison.OrdinalIgnoreCase)) &&
+            await _virtualPlaylistProtocolAdapter.IsMusicLibraryAsync(
+                HttpContext.RequireProtocolExecutionContext(), parentId, HttpContext.RequestAborted);
+        var ordered = candidates.Where(id => !synthesizedIds.Contains(id) || parentId.Length == 0 || musicParent ||
+                parentId.Equals(items[id]["ParentId"]?.ToString(), StringComparison.OrdinalIgnoreCase))
             .Select(id => items[id]).ToArray();
         envelope["Items"] = new JsonArray(ordered.Skip(Math.Max(0, startIndex)).Take(Math.Max(0, limit))
             .Select(item => item.DeepClone()).ToArray());

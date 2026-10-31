@@ -259,6 +259,48 @@ public sealed partial class ProtocolRouteFixtureTests
             row => Assert.Equal(1d, row.GetProperty("PrimaryImageAspectRatio").GetDouble()));
     }
 
+    [Theory]
+    [InlineData("music-library", 1, 1)]
+    [InlineData("playlists-folder", 1, 0)]
+    [InlineData("other-folder", 0, 1)]
+    public async Task JellyfinVirtualPlaylist_IdsLookupAcceptsMusicLibraryWithColdViews(string parent, int expected, int views)
+    {
+        var requests = new List<string>();
+        using var factory = PlaylistBrowseFactory(requests);
+        using var client = factory.CreateClient();
+        const string id = "allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0";
+        using var response = await client.GetAsync($"/Users/user-1/Items?MediaTypes=Audio&ParentId={parent}&Recursive=true&SortBy=SortName&SortOrder=Ascending&StartIndex=0&IncludeItemTypes=Playlist&Fields=PrimaryImageAspectRatio,BasicSyncInfo,DateCreated,DateLastMediaAdded&Ids={id}&api_key=fixture-key");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(expected, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.Equal(expected, body.RootElement.GetProperty("Items").GetArrayLength());
+        if (expected == 1)
+        {
+            var row = body.RootElement.GetProperty("Items")[0];
+            Assert.Equal(id, row.GetProperty("Id").GetString());
+        }
+        Assert.Equal(views, requests.Count(request => request.StartsWith("/Users/user-1/Views", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task JellyfinPlaylist_IdsLookupPreservesNativeParentQueryWithoutViews()
+    {
+        var requests = new List<string>();
+        using var factory = PlaylistBrowseFactory(requests);
+        using var client = factory.CreateClient();
+        const string id = "00112233445566778899aabbccddeeff";
+        using var response = await client.GetAsync($"/Users/user-1/Items?MediaTypes=Audio&ParentId=music-library&Recursive=true&SortBy=SortName&SortOrder=Ascending&StartIndex=0&IncludeItemTypes=Playlist&Fields=PrimaryImageAspectRatio,BasicSyncInfo,DateCreated,DateLastMediaAdded&Ids={id}&api_key=fixture-key");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(id, Assert.Single(body.RootElement.GetProperty("Items").EnumerateArray()).GetProperty("Id").GetString());
+        Assert.Equal(1, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        var native = Assert.Single(requests, request => request.StartsWith("/Users/user-1/Items?", StringComparison.Ordinal));
+        var query = QueryHelpers.ParseQuery(new Uri("http://fixture" + native).Query);
+        Assert.Equal("music-library", query["ParentId"].ToString());
+        Assert.Equal(id, query["Ids"].ToString());
+        Assert.DoesNotContain(requests, request => request.Contains("/Views", StringComparison.Ordinal));
+    }
+
     private static ProtocolFactory PlaylistBrowseFactory(List<string>? requests = null)
     {
         var playlists = Enumerable.Range(0, 4).Select(index =>
@@ -308,7 +350,10 @@ public sealed partial class ProtocolRouteFixtureTests
                 return Json(200, JsonSerializer.Serialize(native[0]));
             }
             if (query.GetValueOrDefault("ids") == "00112233445566778899aabbccddeeff")
+            {
+                native[0]["Id"] = "00112233445566778899aabbccddeeff";
                 return Json(200, JsonSerializer.Serialize(new { Items = new[] { native[0] }, TotalRecordCount = 1 }));
+            }
             IEnumerable<Dictionary<string, object?>> filtered = native;
             if (query.GetValueOrDefault("SearchTerm").ToString().Length > 0) filtered = filtered.Where(row => row["Name"]!.ToString()!.Contains(query.GetValueOrDefault("SearchTerm").ToString(), StringComparison.OrdinalIgnoreCase));
             if (query.GetValueOrDefault("NameStartsWith").ToString().Length > 0) filtered = filtered.Where(row => row["Name"]!.ToString()!.StartsWith(query.GetValueOrDefault("NameStartsWith").ToString(), StringComparison.OrdinalIgnoreCase));
