@@ -1,6 +1,6 @@
 import type { CoverDescription } from "./cover-for";
 import { drawCover } from "./draw";
-import { shouldAnimate } from "./motion";
+import { flowTime, shouldAnimate } from "./motion";
 import { retainWater } from "./water";
 
 let fonts: Promise<unknown> | undefined;
@@ -10,8 +10,9 @@ export function mountCover(canvas: HTMLCanvasElement, getMix: () => CoverDescrip
   const release = retainWater(), preference = matchMedia("(prefers-reduced-motion: reduce)");
   const host = canvas.closest<HTMLElement>("button, a, [tabindex]") ?? canvas.parentElement!;
   let disposed = false, ready = false, onScreen = false, hovering = false, focused = host.matches(":focus-within");
-  let raf = 0, start = 0, lastDraw = -Infinity, lastFrame = -1;
-  function draw(t = 0) { if (ready && canvas.width > 0) drawCover(ctx!, canvas.width, getMix(), t); }
+  let raf = 0, lastDraw = -Infinity, lastFrame = -1;
+  function restingTime() { return getMix().style === "liquid" && !preference.matches ? flowTime(performance.now()) : 0; }
+  function draw(t = restingTime()) { if (ready && canvas.width > 0) drawCover(ctx!, canvas.width, getMix(), t); }
   function enabled() {
     return ready && shouldAnimate({ reduced: preference.matches, onScreen, pageVisible: !document.hidden, liquid: getMix().style === "liquid", engaged: hovering || focused });
   }
@@ -19,7 +20,7 @@ export function mountCover(canvas: HTMLCanvasElement, getMix: () => CoverDescrip
   function step(now: number) {
     raf = 0;
     if (disposed || !enabled()) return;
-    const t = (now - start) / 1000 + 0.2, frame = Math.floor(t * 6) % 3;
+    const t = flowTime(now), frame = Math.floor(t * 6) % 3;
     if (getMix().style === "liquid" ? now - lastDraw >= 1000 / 30 : frame !== lastFrame) {
       draw(t); lastDraw = now; lastFrame = frame;
     }
@@ -28,7 +29,7 @@ export function mountCover(canvas: HTMLCanvasElement, getMix: () => CoverDescrip
   function sync() {
     if (disposed) return;
     if (enabled()) {
-      if (!raf) { start = performance.now(); lastDraw = -Infinity; lastFrame = -1; raf = requestAnimationFrame(step); }
+      if (!raf) { lastDraw = -Infinity; lastFrame = -1; raf = requestAnimationFrame(step); }
     } else { stop(); draw(); }
   }
   function resize() {
