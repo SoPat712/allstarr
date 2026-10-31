@@ -42,6 +42,7 @@ public sealed partial class PersonalMixService
             var seed = await SeedRowsAsync(context, library, start, token);
             return (await RankCandidatesAsync(seed.Rows, context, user, events, hearts, token), seed.Name);
         }
+        var failed = false;
         var lookups = 0;
         var history = events.Where(item => item.State == ListeningEventState.Completed)
             .GroupBy(item => item.CanonicalRecordingId?.ToString("D") ?? item.TrackReference).ToArray();
@@ -77,7 +78,7 @@ public sealed partial class PersonalMixService
                 }
                 if (song != null) { song.CanonicalRecordingId ??= play.CanonicalRecordingId; rows.Add((song, "history", null)); }
             }
-            catch (Exception) when (!token.IsCancellationRequested) { }
+            catch (Exception) when (!token.IsCancellationRequested) { failed = true; }
         }
         // Three familiar seeds bound source work; reuse radio's provider and similar-track fallbacks.
         var seedPlays = history.ToDictionary(group => group.Key, group => group.Count());
@@ -91,7 +92,7 @@ public sealed partial class PersonalMixService
                 var found = await radio.SimilarSongsAsync(context, seed.Song.ExternalProvider, seed.Song.ExternalId, seed.Song.Id, 50);
                 rows.AddRange(found.Select(song => (song, "radio", (DateTimeOffset?)null)));
             }
-            catch (Exception) when (!token.IsCancellationRequested) { }
+            catch (Exception) when (!token.IsCancellationRequested) { failed = true; }
         }
         var albums = new List<(string Provider, string Id, DateTimeOffset At)>();
         foreach (var entry in (await releases.ReadAsync(user.Id, token)).Entries)
@@ -116,7 +117,7 @@ public sealed partial class PersonalMixService
                         album.ExclusionReason == null && album.ReleaseType is not ("compilation" or "reissue" or "remaster"))
                         albums.Add((album.ExternalProvider ?? provider, album.ExternalId ?? album.Id, at));
             }
-            catch (Exception) when (!token.IsCancellationRequested) { }
+            catch (Exception) when (!token.IsCancellationRequested) { failed = true; }
         }
         foreach (var album in albums.Distinct().OrderBy(item => item.Provider, StringComparer.Ordinal).ThenBy(item => item.Id, StringComparer.Ordinal).Take(20))
         {
@@ -125,9 +126,11 @@ public sealed partial class PersonalMixService
                 var found = await providers.GetAlbumAsync(context, album.Provider, album.Id);
                 if (found != null) rows.AddRange(found.Songs.Select(song => (song, "release", (DateTimeOffset?)album.At)));
             }
-            catch (Exception) when (!token.IsCancellationRequested) { }
+            catch (Exception) when (!token.IsCancellationRequested) { failed = true; }
         }
-        return (await RankCandidatesAsync(rows, context, user, events, hearts, token), null);
+        var candidates = await RankCandidatesAsync(rows, context, user, events, hearts, token);
+        if (candidates.Count == 0 && failed) throw new InvalidOperationException("Mix sources are unavailable. Try again later.");
+        return (candidates, null);
     }
 
     private async Task<IReadOnlyList<MixCandidate>> RankCandidatesAsync(List<(Song Song, string Source, DateTimeOffset? Release)> rows,
@@ -151,13 +154,14 @@ public sealed partial class PersonalMixService
             .ToDictionary(group => group.Key, group => group.Select(item => item.Play).ToArray());
         var recentIds = RecentHistory(events);
         var result = new List<MixCandidate>();
+        var failed = false;
         foreach (var row in songs)
         {
             var score = scores[row.Song];
             if (score.Blocked || context.Policy?.Includes(row.Song) == false || string.IsNullOrWhiteSpace(row.Song.Id) ||
                 string.IsNullOrWhiteSpace(row.Song.Title) || string.IsNullOrWhiteSpace(row.Song.Artist)) continue;
             try { if (!row.Song.IsLocal && !await providers.CanPlaySongAsync(context, row.Song)) continue; }
-            catch (Exception) when (!token.IsCancellationRequested) { continue; }
+            catch (Exception) when (!token.IsCancellationRequested) { failed = true; continue; }
             var matched = PersonalMixRules.IdentityKeys(row.Song).SelectMany(key => listening.GetValueOrDefault(key) ?? [])
                 .DistinctBy(play => play.Id).ToArray();
             var played = matched.Where(play => play.State == ListeningEventState.Completed).ToArray();
@@ -170,6 +174,7 @@ public sealed partial class PersonalMixService
                 matched.Select(play => (DateTimeOffset?)(play.ListenedAt ?? play.UpdatedAt)).DefaultIfEmpty(hearts.FirstOrDefault(item => item.ItemId == row.Song.Id)?.FavoritedAt).Max(),
                 skipped, row.Source, score.Score, row.Release, matched.Length > 0, hearts.Any(item => item.ItemId == row.Song.Id)));
         }
+        if (result.Count == 0 && failed) throw new InvalidOperationException("Mix sources are unavailable. Try again later.");
         return result;
     }
 

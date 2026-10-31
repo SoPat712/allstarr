@@ -124,18 +124,12 @@ public sealed partial class PersonalMixService
         if (!IsExternalLink(link)) return true;
         if (context.Actor?.EffectiveUserId is not { } owner || link.OwnerUserId != owner ||
             !(bool)(await settings.GetAsync(PublishKey, token)).Value) return false;
-        await writes.WaitAsync(token);
-        try
-        {
-            await using var db = await factory.CreateDbContextAsync(token);
-            var user = await UserAsync(db, owner, token);
-            await LoadAsync(db, user, token);
-            var enabled = await db.PlaylistLinks.AsNoTracking().AnyAsync(item => item.Id == link.Id && item.Enabled, token);
-            return enabled &&
-                await db.ProviderAccounts.AsNoTracking().AnyAsync(account => account.Id == link.ProviderAccountId &&
-                    account.ProviderId == link.SourceProviderId && account.OwnerUserId == owner && account.Enabled, token);
-        }
-        finally { writes.Release(); }
+        await SnapshotAsync(owner, token);
+        await using var db = await factory.CreateDbContextAsync(token);
+        var enabled = await db.PlaylistLinks.AsNoTracking().AnyAsync(item => item.Id == link.Id && item.Enabled, token);
+        return enabled &&
+            await db.ProviderAccounts.AsNoTracking().AnyAsync(account => account.Id == link.ProviderAccountId &&
+                account.ProviderId == link.SourceProviderId && account.OwnerUserId == owner && account.Enabled, token);
     }
 
     internal async Task<VirtualPlaylistReadModel> FilterExternalTracksAsync(ProtocolExecutionContext context,
