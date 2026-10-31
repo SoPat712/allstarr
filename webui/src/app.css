@@ -1683,81 +1683,11 @@
 
   .playlist-overview {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(15rem, 21rem);
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
     gap: var(--space-4) var(--space-8, 2rem);
     border-bottom: 1px solid var(--color-edge);
     padding: var(--space-5) var(--detail-gutter);
-  }
-
-  .playlist-composition {
-    display: grid;
-    min-width: 0;
-    gap: var(--space-3);
-  }
-
-  .composition-heading {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-2) var(--space-4);
-  }
-
-  .composition-heading h3 {
-    margin: 0;
-    color: var(--color-ink);
-    font-size: var(--text-sm);
-    font-weight: 600;
-  }
-
-  .composition-heading span {
-    color: var(--color-ink-muted);
-    font-size: var(--text-sm);
-  }
-
-  .playlist-composition .coverage-bar {
-    gap: 3px;
-    height: 0.875rem;
-    margin: 0;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--color-ink) 8%, transparent);
-  }
-
-  .playlist-composition .coverage-bar > span {
-    min-width: 0.375rem;
-  }
-
-  .composition-legend {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2) var(--space-5);
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    color: var(--color-ink-muted);
-    font-size: var(--text-sm);
-  }
-
-  .composition-legend li {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  .composition-legend strong {
-    color: var(--color-ink);
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-  }
-
-  .legend-swatch {
-    width: 0.625rem;
-    height: 0.625rem;
-    flex: none;
-    border-radius: 999px;
-    background: var(--route-color);
   }
 
   .review-filter-button {
@@ -1775,14 +1705,6 @@
 
   .review-filter-button:is(:hover, .active) {
     background: color-mix(in srgb, var(--color-warning) 18%, transparent);
-  }
-
-  .composition-note {
-    max-width: 62ch;
-    margin: 0;
-    color: var(--color-ink-muted);
-    font-size: var(--text-xs);
-    line-height: 1.5;
   }
 
   .playlist-facts {

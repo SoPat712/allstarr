@@ -1,27 +1,22 @@
 <script lang="ts">
-  import { providerColor } from "$lib/playlists";
-
   let {
-    routes,
-    total,
-    unresolved = 0,
+    matched,
+    review,
+    unmatched,
     compact = false,
-    providerName,
   }: {
-    routes: Array<{ providerId: string; count: number }>;
-    total: number;
-    unresolved?: number;
+    matched: number;
+    review: number;
+    unmatched: number;
     compact?: boolean;
-    providerName: (providerId: string) => string;
   } = $props();
 
-  const width = (count: number) => total ? Math.round((count / total) * 100) : 0;
-  const playable = () => Math.max(0, total - unresolved);
-  const routed = () => routes
-    .filter((route) => route.providerId !== "unresolved")
-    .reduce((sum, route) => sum + route.count, 0);
-  const routeWidth = (count: number) =>
-    width(count * Math.min(1, playable() / Math.max(1, routed())));
+  const total = $derived(matched + review + unmatched);
+  const segments = $derived([
+    { label: "Matched", count: matched, color: "var(--color-success)" },
+    { label: "Needs review", count: review, color: "var(--color-warning)" },
+    { label: "Not matched", count: unmatched, color: "var(--color-danger)" },
+  ]);
   const songs = (count: number) => `${count} ${count === 1 ? "song" : "songs"}`;
   let tip = $state<{ label: string; x: number; y: number } | null>(null);
   function point(event: PointerEvent) {
@@ -35,31 +30,16 @@
   class:compact
   class="coverage-bar"
   role="img"
-  aria-label={`${width(total - unresolved)} percent playable. ${routes
-    .filter((route) => route.providerId !== "unresolved")
-    .map((route) => `${providerName(route.providerId)}: ${songs(route.count)}`)
-    .concat(unresolved ? [`Unresolved: ${songs(unresolved)}`] : []).join(", ")}`}
+  aria-label={`${matched} matched, ${review} needs review, ${unmatched} not matched`}
   onpointermove={point}
   onpointerleave={() => tip = null}
 >
-  <span class="sr-only">{routes
-    .filter((route) => route.providerId !== "unresolved")
-    .map((route) => `${providerName(route.providerId)}: ${route.count}`)
-    .concat(unresolved ? [`Unresolved: ${unresolved}`] : [])
-    .join(", ")}</span>
-  {#each routes.filter((route) => route.providerId !== "unresolved") as route}
-    {@const label = `${providerName(route.providerId)} · ${songs(route.count)}`}
+  {#each segments.filter((segment) => segment.count > 0) as segment}
     <span
-      style={`width:${routeWidth(route.count)}%;--route-color:${providerColor(route.providerId)}`}
-      data-label={label}
+      style={`width:${segment.count / total * 100}%;--route-color:${segment.color}`}
+      data-label={`${segment.label} · ${songs(segment.count)}`}
     ></span>
   {/each}
-  {#if unresolved}
-    <span
-      style={`width:${width(unresolved)}%;--route-color:${providerColor("unresolved")}`}
-      data-label={`Unresolved · ${songs(unresolved)}`}
-    ></span>
-  {/if}
 </span>
 {#if tip}<span class="coverage-tip" aria-hidden="true" style={`left:${tip.x}px;top:${tip.y}px`}>{tip.label}</span>{/if}
 
@@ -72,7 +52,7 @@
     height: .9rem;
     background: linear-gradient(color-mix(in srgb, var(--color-ink) 10%, transparent) 0 0) bottom / 100% var(--strip) no-repeat;
   }
-  :global(.playlist-row) > .coverage-bar > span { background: linear-gradient(var(--route-color) 0 0) bottom / 100% var(--strip) no-repeat; }
+  :global(.playlist-row) > .coverage-bar > span { min-width: 0; background: linear-gradient(var(--route-color) 0 0) bottom / 100% var(--strip) no-repeat; }
   .coverage-tip {
     position: fixed; z-index: 130; transform: translate(-50%, calc(-100% - .75rem)); pointer-events: none; white-space: nowrap;
     padding: .375rem .625rem; border-radius: .5rem; background: var(--md-sys-color-inverse-surface);

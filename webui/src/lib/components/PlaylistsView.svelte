@@ -47,7 +47,7 @@
     isServiceMix,
     playlistOutcomeLabel,
     runBounded,
-    providerColor,
+    playlistMatchCounts,
     scheduleCadence,
     scheduleZoneLabel,
     type PlaylistMix,
@@ -162,15 +162,6 @@
     });
   });
   const targetName = $derived(details ? providerName(details.targetProtocol) : "");
-  const compositionLegend = $derived.by(() => {
-    if (!details) return [];
-    const routes = details.routeCoverage
-      .filter((route) => route.providerId !== "unresolved" && route.count > 0)
-      .map((route) => ({ id: route.providerId, name: providerName(route.providerId), count: route.count }));
-    return details.unresolvedCount
-      ? [...routes, { id: "unresolved", name: "Not found", count: details.unresolvedCount }]
-      : routes;
-  });
   const sourceChanges = $derived.by(() => {
     const changes = details?.reconciliation;
     if (!changes) return "";
@@ -659,13 +650,7 @@
                 {#if !playlist.enabled}<Badge state="suggested">Paused</Badge>{/if}
                 {#if isServiceMix(playlist)}<span class="mix-remove"><Button variant="ghost" aria-label={`Remove ${playlist.name} from my apps`} onclick={() => { removeError = ""; removingMix = playlist; }}>Remove from my apps</Button></span>{/if}
               </span>
-              <CoverageBar
-                routes={playlist.routeCoverage}
-                total={playlist.trackCount}
-                unresolved={playlist.unmatchedCount}
-                {providerName}
-                compact
-              />
+              <CoverageBar {...playlistMatchCounts(playlist.metrics)} compact />
             </div>
           {/if}
         {:else}
@@ -742,38 +727,17 @@
         {#if exportError}<p class="field-error" role="alert">{exportError}</p>{/if}
 
         <section class="playlist-overview" aria-label="Playlist summary">
-          <div class="playlist-composition">
-            <div class="composition-heading">
-              <h3>Where songs play from</h3>
-              <span>{Math.max(0, details.trackCount - details.unresolvedCount)} of {details.trackCount} play</span>
+          {#if details.reviewCount > 0}
+            <div>
+              <button
+                type="button"
+                class="review-filter-button"
+                class:active={routeFilter === "review"}
+                aria-label={`Show ${details.reviewCount} ${details.reviewCount === 1 ? "track" : "tracks"} needing review`}
+                onclick={() => routeFilter = "review"}
+              >{details.reviewCount} to review</button>
             </div>
-            <CoverageBar
-              routes={details.routeCoverage}
-              total={details.trackCount}
-              unresolved={details.unresolvedCount}
-              {providerName}
-            />
-            <ul class="composition-legend">
-              {#each compositionLegend as item (item.id)}
-                <li class:attention={item.id === "unresolved"}>
-                  <span class="legend-swatch" style={`--route-color:${providerColor(item.id)}`} aria-hidden="true"></span>
-                  {item.name}<strong>{item.count}</strong>
-                </li>
-              {/each}
-              {#if details.reviewCount > 0}
-                <li>
-                  <button
-                    type="button"
-                    class="review-filter-button"
-                    class:active={routeFilter === "review"}
-                    aria-label={`Show ${details.reviewCount} ${details.reviewCount === 1 ? "track" : "tracks"} needing review`}
-                    onclick={() => routeFilter = "review"}
-                  >{details.reviewCount} to review</button>
-                </li>
-              {/if}
-            </ul>
-            <p class="composition-note">Songs keep their original order. Each one plays from {targetName} when it's in your library and streams through Allstarr when it isn't.</p>
-          </div>
+          {/if}
 
           <dl class="playlist-facts">
             <div>

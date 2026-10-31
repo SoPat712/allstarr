@@ -58,6 +58,15 @@ export function isReviewTrack(track: Pick<PlaylistTrack, "matchState">) {
   return track.matchState === "suggested" || track.matchState === "ambiguous";
 }
 
+export function playlistMatchCounts(metrics: PlaylistLink["metrics"]) {
+  // Missing playback routes can overlap match states; the remainder includes rejected songs.
+  return {
+    matched: metrics.matched,
+    review: metrics.review,
+    unmatched: metrics.total - metrics.matched - metrics.review,
+  };
+}
+
 export function confirmationCoverage(
   playlist: Pick<PlaylistLink, "trackCount" | "matchedCount">,
 ) {

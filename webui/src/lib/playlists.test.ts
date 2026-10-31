@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MixCard, PlaylistLink, PlaylistSourceAccount, PlaylistTrack } from "./api";
 import {
+  playlistMatchCounts,
   filterPlaylists,
   filterTracks,
   formatDuration,
@@ -50,6 +51,15 @@ const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
 });
 
 describe("playlist presentation", () => {
+  it("partitions match states without adding overlapping missing routes or rejected songs twice", () => {
+    const metrics = { total: 10, matched: 4, review: 2, unresolved: 5, rejected: 3, playable: 5, materialized: 0 };
+    expect(playlistMatchCounts(metrics)).toEqual({ matched: 4, review: 2, unmatched: 4 });
+    const counts = playlistMatchCounts(metrics);
+    expect(counts.matched + counts.review + counts.unmatched).toBe(metrics.total);
+    expect(playlistMatchCounts({ ...metrics, total: 0, matched: 0, review: 0, unresolved: 0, rejected: 0, playable: 0 }))
+      .toEqual({ matched: 0, review: 0, unmatched: 0 });
+  });
+
   it("distinguishes streamed, local, duplicate, and unresolved outcomes in plain words", () => {
     expect(playlistOutcomeLabel("streamed_through_allstarr")).toBe("Streams through Allstarr");
     expect(playlistOutcomeLabel("included_native_backend_item", "Jellyfin playlist"))

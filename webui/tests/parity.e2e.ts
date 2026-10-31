@@ -4127,7 +4127,8 @@ test("Contextual dialog tabs scroll inside their panels at narrow widths", async
   await page.goto("#/library/playlists");
   await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
   const playlist = page.getByRole("dialog", { name: "Test playlist" });
-  await expect(playlist.locator(".playlist-overview")).toContainText("Where songs play from");
+  await expect(playlist).not.toContainText("Where songs play from");
+  await expect(playlist.locator(".playlist-facts")).toBeVisible();
   await expect(playlist.locator(".playlist-overview .contextual-tabs")).toHaveCount(0);
   expect(await playlist.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
@@ -4926,8 +4927,9 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await refresh;
   await expect(page.getByText(/1 playlists refreshed in/)).toBeVisible();
   const coverage = page.locator(".playlist-row .coverage-bar > span[style]");
-  await expect(coverage.nth(0)).toHaveAttribute("style", /width:\s*50%/);
-  await expect(coverage.nth(1)).toHaveAttribute("style", /width:\s*50%; --route-color:\s*var\(--color-ink-muted\)/);
+  await expect(coverage).toHaveCount(2);
+  await expect(coverage.nth(0)).toHaveAttribute("style", /width:\s*50%;.*var\(--color-warning\)/);
+  await expect(coverage.nth(1)).toHaveAttribute("style", /width:\s*50%;.*var\(--color-danger\)/);
   const [playlistRow, playlistBar] = await Promise.all([
     page.locator(".playlist-row").boundingBox(),
     page.locator(".playlist-row .coverage-bar").boundingBox(),
@@ -4936,9 +4938,9 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
     .toBeLessThanOrEqual(1);
   expect(playlistBar!.height).toBeGreaterThanOrEqual(6);
   await coverage.nth(0).hover();
-  await expect(page.locator(".coverage-tip")).toHaveText("Lumen Audio · 1 song");
+  await expect(page.locator(".coverage-tip")).toHaveText("Needs review · 1 song");
   await coverage.nth(1).hover();
-  await expect(page.locator(".coverage-tip")).toHaveText("Unresolved · 1 song");
+  await expect(page.locator(".coverage-tip")).toHaveText("Not matched · 1 song");
   const rematchPreview = page.waitForRequest((item) =>
     item.method() === "GET" && item.url().endsWith("/api/admin/playlist-links/rematch/preview"));
   await page.getByRole("button", { name: "Review rematch" }).click();
@@ -4953,7 +4955,7 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await rematchApply;
   await expect(page.getByText("Controlled rematch queued.")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator(".playlist-row .coverage-bar")).toContainText("Lumen Audio: 1, Unresolved: 1");
+  await expect(page.locator(".playlist-row .coverage-bar")).toHaveAttribute("aria-label", "0 matched, 1 needs review, 1 not matched");
   await expect(page.locator(".playlist-row .playlist-art > span")).toBeVisible();
   const openPlaylist = page.getByRole("button", { name: "Open Test playlist playlist details", exact: true });
   await expect(openPlaylist).toBeVisible();
@@ -4979,7 +4981,9 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(dialog.locator(".hero-art > span")).toBeVisible();
   await expect(dialog.locator(".track-art > span")).toBeVisible();
   await expect(dialog.getByRole("table", { name: "Test playlist tracks" })).toBeVisible();
-  await expect(dialog.locator(".coverage-bar")).toContainText("Lumen Audio: 1, Unresolved: 1");
+  await expect(dialog.locator(".coverage-bar")).toHaveCount(0);
+  await expect(dialog).not.toContainText("Where songs play from");
+  await expect(dialog).not.toContainText("Songs keep their original order.");
   await expect(dialog.getByText("Needs review", { exact: true })).toBeVisible();
   await expect(dialog.getByText("No automatic updates", { exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "Show 1 track needing review" }).click();
@@ -5020,7 +5024,7 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
     const overviewBounds = overview.getBoundingClientRect();
     const trackScroll = element.querySelector(".track-scroll")!.getBoundingClientRect();
     const table = element.querySelector(".track-data-table")!.getBoundingClientRect();
-    const facts = [...overview.querySelectorAll(".playlist-facts > div, .composition-legend > li")]
+    const facts = [...overview.querySelectorAll(".playlist-facts > div")]
       .map((child) => child.getBoundingClientRect());
     return {
       dialogHeight: bounds.height,
@@ -7361,11 +7365,32 @@ test("Media-server administrator access keeps the connected card concise", async
   await expect(access.getByLabel("Jellyfin administrator password")).toBeVisible();
 });
 
+test("Empty playlists keep an empty match bar", async ({ page }) => {
+  await mockApi(page);
+  const fixture = responses["/api/admin/playlist-links"] as { playlistLinks: Record<string, unknown>[] };
+  await page.route((url) => url.pathname === "/api/admin/playlist-links", route => route.fulfill({ json: {
+    playlistLinks: [{ ...fixture.playlistLinks[0], trackCount: 0, matchedCount: 0, unmatchedCount: 0, playableCount: 0,
+      metrics: { total: 0, matched: 0, review: 0, unresolved: 0, rejected: 0, playable: 0, materialized: 0 } }],
+  } }));
+  await page.goto("#/library/playlists");
+  const bar = page.locator(".playlist-row .coverage-bar");
+  await expect(bar).toBeVisible();
+  await expect(bar).toHaveAttribute("aria-label", "0 matched, 0 needs review, 0 not matched");
+  await expect(bar.locator(":scope > span")).toHaveCount(0);
+  await bar.hover();
+  await expect(page.locator(".coverage-tip")).toHaveCount(0);
+});
+
 for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
   test(`Playlist written into the media server shows its songs and readable status — ${width} ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.addInitScript((value) => localStorage.setItem("allstarr.theme", value), theme);
     await mockApi(page);
+    const listFixture = responses["/api/admin/playlist-links"] as { playlistLinks: Record<string, unknown>[] };
+    await page.route((url) => url.pathname === "/api/admin/playlist-links", route => route.fulfill({ json: {
+      playlistLinks: [{ ...listFixture.playlistLinks[0], trackCount: 30, matchedCount: 28, unmatchedCount: 1, playableCount: 29,
+        metrics: { total: 30, matched: 28, review: 1, unresolved: 1, rejected: 1, playable: 29, materialized: 0 } }],
+    } }));
     const track = (position: number, title: string, routeKind: "local" | "external", routeProviderId: string) => ({
       sourcePosition: position - 1, position, externalSnapshotId: `snapshot-${position}`, title,
       artists: ["Artist"], album: "Album", durationMs: 200_000, routeKind, routeProviderId,
@@ -7392,6 +7417,24 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
         track(3, "Streamed song", "external", "lumen-audio")],
     } }));
     await page.goto("#/library/playlists");
+    const bar = page.locator(".playlist-row .coverage-bar");
+    await expect(bar).toHaveAttribute("aria-label", "28 matched, 1 needs review, 1 not matched");
+    await expect(page.getByRole("group", { name: "93% confirmed, 29 of 30 playable" })).toBeVisible();
+    const segments = bar.locator(":scope > span");
+    await expect(segments).toHaveCount(3);
+    const labels = ["Matched · 28 songs", "Needs review · 1 song", "Not matched · 1 song"];
+    const colors = ["success", "warning", "danger"];
+    for (let index = 0; index < 3; index++) {
+      await expect(segments.nth(index)).toHaveAttribute("data-label", labels[index]);
+      const widthPercent = await segments.nth(index).evaluate(element => parseFloat((element as HTMLElement).style.width));
+      expect(widthPercent).toBeCloseTo([28, 1, 1][index] / 30 * 100, 3);
+      await expect(segments.nth(index)).toHaveAttribute("style", new RegExp(`var\\(--color-${colors[index]}\\)`));
+      await segments.nth(index).hover();
+      await expect(page.locator(".coverage-tip")).toHaveText(labels[index]);
+    }
+    await page.mouse.move(0, 0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: `test-results/playlist-list-${width}-${theme}.png`, fullPage: true });
     await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
     const dialog = page.getByRole("dialog", { name: "Test playlist" });
     const table = dialog.getByRole("table", { name: "Test playlist tracks" });
@@ -7402,8 +7445,11 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(dialog.locator(".hero-route")).toContainText("Jellyfin");
     await expect(dialog.locator(".playlist-hero-summary")).toContainText("3 songs, 2 hr 15 min");
     const overview = dialog.locator(".playlist-overview");
-    await expect(overview.locator(".composition-legend")).toContainText("Jellyfin2");
-    await expect(overview).toContainText("3 of 3 play");
+    await expect(dialog).not.toContainText("Where songs play from");
+    await expect(dialog).not.toContainText("3 of 3 play");
+    await expect(dialog).not.toContainText("Songs keep their original order.");
+    await expect(overview.locator(".review-filter-button")).toHaveCount(0);
+    await expect(overview.locator(".coverage-bar, .composition-legend")).toHaveCount(0);
     await expect(overview).toContainText(/Every Monday at 8:00\sAM/);
     await expect(overview).not.toContainText("Cron");
     await expect(overview).toContainText("3 added");
@@ -7412,12 +7458,19 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
       .every((part) => part.scrollWidth <= part.clientWidth + 1))).toBe(true);
     const gutters = await dialog.evaluate((element) => {
       const dialogLeft = element.getBoundingClientRect().left;
-      return [".hero-art", ".composition-heading", ".track-toolbar > :first-child"]
+      return [".hero-art", ".playlist-facts", ".track-toolbar > :first-child"]
         .map((selector) => Math.round(element.querySelector(selector)!.getBoundingClientRect().left - dialogLeft));
     });
     expect(new Set(gutters).size).toBe(1);
     expect(gutters[0]).toBeGreaterThanOrEqual(16);
-    await page.screenshot({ path: `test-results/playlist-detail-${width}-${theme}.png` });
+    const factsFill = await overview.evaluate(element => {
+      const style = getComputedStyle(element);
+      const bounds = element.getBoundingClientRect();
+      const facts = element.querySelector(".playlist-facts")!.getBoundingClientRect();
+      return Math.abs(facts.width - (bounds.width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight))) < 2;
+    });
+    expect(factsFill).toBe(true);
+    await page.screenshot({ path: `test-results/playlist-detail-${width}-${theme}.png`, fullPage: true });
   });
 }
 
