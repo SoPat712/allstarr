@@ -116,7 +116,7 @@ public sealed partial class PersonalMixService
                 if (item.Song.IsLocal ? local.Contains(item.Song.Id) : await providers.CanPlaySongAsync(context, item.Song))
                     items.Add(item with { Generation = 1 });
             if (items.Count == 0) throw new ArgumentException("No eligible playable songs remain. Start another mix.");
-            saved = preview with { Name = name.Trim(), Generation = 1, UpdatedAt = clock.UtcNow, Readiness = new(true, "Ready"), ShowInApps = true, Songs = items };
+            saved = preview with { Name = name.Trim(), Generation = 1, UpdatedAt = clock.UtcNow, Readiness = new(true, "Ready"), Added = true, Songs = items };
             document.Mixes[key] = saved;
             await SaveAsync(db, user, document, token);
             return saved;

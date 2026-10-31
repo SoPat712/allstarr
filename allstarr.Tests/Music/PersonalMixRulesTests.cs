@@ -11,6 +11,21 @@ public sealed class PersonalMixRulesTests
         { Id = id.ToString("D4"), Title = "Song " + id, Artist = artist ?? "Artist " + id },
         new Dictionary<string, double> { [tag] = 1 }, plays, recent, Now.AddDays(-age), false, "history", score);
 
+    [Theory]
+    [InlineData("discover-weekly", "Uncharted")]
+    [InlineData("release-radar", "Just Dropped")]
+    [InlineData("on-repeat", "Heavy Rotation")]
+    [InlineData("rewind", "Long Lost")]
+    public void GeneratedMixes_UseTheirOwnNames(string kind, string name) => Assert.Equal(name, PersonalMixRules.Name(kind));
+
+    [Theory]
+    [InlineData("daily-1", null, "Blend 1")]
+    [InlineData("daily-2", "r&b", "R&B Blend")]
+    [InlineData("daily-3", "hip-hop", "Hip-Hop Blend")]
+    [InlineData("daily-4", "edm", "EDM Blend")]
+    [InlineData("daily-1", "uk garage", "UK Garage Blend")]
+    public void DailyNames_UseStyleOrStableSlot(string kind, string? style, string name) => Assert.Equal(name, PersonalMixRules.Name(kind, style));
+
     [Fact]
     public void Repeat_UsesRecentCountsAndCapsArtists()
     {

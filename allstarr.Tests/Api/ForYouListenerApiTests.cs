@@ -104,6 +104,7 @@ public sealed partial class PersonalMixServiceTests
     [Fact]
     public async Task ListenerHttp_MixActionsUseOwnDataAndRejectOtherListenersIds()
     {
+        publish = true;
         await Seed(user: other);
         gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", It.IsAny<int>()))
             .ReturnsAsync(songs.Values.ToList());
@@ -121,8 +122,8 @@ public sealed partial class PersonalMixServiceTests
         await ReadSuccess(await client.GetAsync("/API/ADMIN/MIXES/"));
         await ReadSuccess(await client.GetAsync($"/api/admin/mixes/{own.Id}"));
         await ReadSuccess(await client.PostAsync($"/api/admin/mixes/{own.Id}/refresh", null));
-        await ReadSuccess(await client.PutAsJsonAsync($"/api/admin/mixes/{own.Id}/in-apps", new { enabled = true }));
-        Assert.True((await service.ListAsync(other)).Single(mix => mix.Id == own.Id).ShowInApps);
+        await ReadSuccess(await client.PostAsync($"/api/admin/mixes/{own.Id}/in-apps", null));
+        Assert.True((await service.ListAsync(other)).Single(mix => mix.Id == own.Id).Added);
         var songId = (await service.ListAsync(other)).Single(mix => mix.Id == own.Id).Songs[0].Song.Id;
         await ReadSuccess(await client.PostAsJsonAsync($"/api/admin/mixes/{own.Id}/feedback", new { songId, kind = "notForMe", todayOnly = true }));
         var preview = await ReadSuccess(await client.PostAsJsonAsync("/api/admin/mixes/start", new { seedKind = "song", seedId = songs["0"].Id, length = 25 }));
@@ -132,17 +133,18 @@ public sealed partial class PersonalMixServiceTests
 
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/admin/mixes/{foreign.Id}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsync($"/api/admin/mixes/{foreign.Id}/refresh", null)).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await client.PutAsJsonAsync($"/api/admin/mixes/{foreign.Id}/in-apps", new { enabled = true })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsync($"/api/admin/mixes/{foreign.Id}/in-apps", null)).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsJsonAsync($"/api/admin/mixes/{foreign.Id}/feedback", new { songId, kind = "notForMe" })).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.PostAsJsonAsync($"/api/admin/mixes/start/{foreignPreview.Id}/save", new { name = "Stolen" })).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync($"/api/admin/mixes/{foreignCustom.Id}")).StatusCode);
         Assert.Contains(await service.ListAsync(owner), mix => mix.Id == foreignCustom.Id);
-        Assert.False((await service.ListAsync(owner)).Single(mix => mix.Id == foreign.Id).ShowInApps);
+        Assert.False((await service.ListAsync(owner)).Single(mix => mix.Id == foreign.Id).Added);
     }
 
     [Fact]
     public async Task ListenerHttp_ExternalMixUsesPersonalAccountAndOwnJobsAndLinks()
     {
+        publish = true;
         var ownLink = await ExternalLink(listener: other);
         var foreignLink = await ExternalLink();
         using var host = await ForYouHost();
@@ -157,10 +159,10 @@ public sealed partial class PersonalMixServiceTests
         Assert.DoesNotContain(links.GetProperty("playlistLinks").EnumerateArray(), link => link.GetProperty("id").GetGuid() == foreignLink.Id);
         await ReadSuccess(await client.GetAsync($"/api/admin/playlist-links/{ownLink.Id}"));
         await ReadSuccess(await client.GetAsync($"/api/admin/mixes/{id}"));
-        await ReadSuccess(await client.PutAsJsonAsync($"/api/admin/mixes/{id}/in-apps", new { enabled = false }));
+        await ReadSuccess(await client.DeleteAsync($"/api/admin/mixes/{id}/in-apps"));
         Assert.Equal(HttpStatusCode.Forbidden, (await client.GetAsync($"/api/admin/playlist-links/{foreignLink.Id}")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync($"/api/admin/mixes/{foreignLink.Id}")).StatusCode);
-        Assert.Equal(HttpStatusCode.NotFound, (await client.PutAsJsonAsync($"/api/admin/mixes/{foreignLink.Id}/in-apps", new { enabled = false })).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync($"/api/admin/mixes/{foreignLink.Id}/in-apps")).StatusCode);
         await using var db = factory.CreateDbContext();
         var created = await db.PlaylistLinks.SingleAsync(link => link.Id == id);
         Assert.Equal(other, created.OwnerUserId);

@@ -95,7 +95,7 @@
 
 <div class="releases-inbox">
   <div class="section-heading">
-    <p>{#if radar}<a href={`#/for-you?mix=${encodeURIComponent(radar)}`}>Release Radar collects these every Friday.</a>{:else}Release Radar collects these every Friday.{/if}</p>
+    <p>{#if radar}<a href={`#/for-you?mix=${encodeURIComponent(radar)}`}>Just Dropped collects these every Friday.</a>{:else}Just Dropped collects these every Friday.{/if}</p>
     <div class="release-actions">
       <Button variant="secondary" onclick={() => artistsOpen = true}>Following ({artists.length})</Button>
       <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label="Release actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu release-menu" align="end"><DropdownMenu.Item class="bits-menu-item" onSelect={() => { followError = ""; followOpen = true; }}>Follow artists you play a lot</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>

@@ -11,7 +11,7 @@ function liquid(ctx: CanvasRenderingContext2D, S: number, L: Random, m: CoverDes
   if (image) ctx.drawImage(image, 0, 0);
   else { ctx.fillStyle = colours[0]; ctx.fillRect(0, 0, S, S); colours.slice(1).forEach((c, i) => { const g = ctx.createRadialGradient(S * (0.3 + i * 0.25), S * (0.3 + (i % 2) * 0.4), 0, S * (0.3 + i * 0.25), S * (0.3 + (i % 2) * 0.4), S * 0.5); g.addColorStop(0, c); g.addColorStop(1, alpha(c, 0)); ctx.fillStyle = g; ctx.fillRect(0, 0, S, S); }); }
   const steady = rng(hash(m.id + "label"));
-  label(ctx, S, steady, L, S * 0.06, S * 0.72, S * 0.6, [`daily mix ${m.number}`, m.tag.toLowerCase(), ...(m.artists ? [m.artists.toLowerCase()] : [])]);
+  label(ctx, S, steady, L, S * 0.06, S * 0.72, S * 0.6, [...m.lines.map(line => line.toLowerCase()), ...(m.artists ? [m.artists.toLowerCase()] : [])]);
 }
 
 export function drawCover(ctx: CanvasRenderingContext2D, S: number, mix: CoverDescription, t = 0) {

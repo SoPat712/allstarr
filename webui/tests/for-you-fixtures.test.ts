@@ -26,4 +26,11 @@ it("serves external mix details without creating another playlist", async () => 
   expect(await request("GET", null)).toMatchObject({ json: { mix: created.json, songs } });
   expect(state.cards).toHaveLength(count);
   expect(await request("GET", null, "/api/admin/playlist-links")).toMatchObject({ json: { playlistLinks: [expect.objectContaining({ id: created.json.id, name: "Loved on Last.fm" })] } });
+  expect(await request("DELETE", null, "/api/admin/mixes/external/in-apps")).toMatchObject({ json: { inApps: false } });
+  expect(await request("GET", null, "/api/admin/playlist-links")).toMatchObject({ json: { playlistLinks: [expect.objectContaining({ enabled: false })] } });
+  expect(await request("POST", { source: "lastfm", kind: "loved" })).toMatchObject({ json: { id: created.json.id, inApps: true } });
+  expect(state.cards).toHaveLength(count);
+  state.publish = false;
+  expect(await request("GET", null)).toMatchObject({ json: { mix: { inApps: true, appsAllowed: false } } });
+  expect(await request("POST", null, "/api/admin/mixes/external/in-apps")).toMatchObject({ status: 403 });
 });

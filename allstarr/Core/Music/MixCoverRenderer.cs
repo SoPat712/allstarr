@@ -269,7 +269,7 @@ public sealed class MixCoverRenderer
         if (mix.Kind.StartsWith("daily-", StringComparison.Ordinal))
         {
             Liquid(palette);
-            Label(.06, .72, .6, ["daily mix " + mix.Kind[6..], mix.Tag.ToLowerInvariant(), mix.Artists.ToLowerInvariant()], random: new(Hash(mix.Id + "label")));
+            Label(.06, .72, .6, [PersonalMixRules.Name(mix.Kind, mix.Tag).ToLowerInvariant(), mix.Tag.ToLowerInvariant(), mix.Artists.ToLowerInvariant()], random: new(Hash(mix.Id + "label")));
             return;
         }
         switch (mix.Kind)
@@ -291,8 +291,8 @@ public sealed class MixCoverRenderer
                 Ink(Yellow, (g, paint) => { Blob(g, paint, nx, ny, .022, .1); PenCircle(g, paint, nx, ny, .07, .006); }, over: true);
                 using (var paint = Paint("#e9e2d0"))
                 {
-                    var size = Fit("Discover Weekly", Display, .86, .15) * 1.1;
-                    Pasted(canvas, paint, "Discover", .07, .8, size); Pasted(canvas, paint, "Weekly", .07, .93, size);
+                    var size = Fit("Uncharted", Display, .86, .15) * 1.1;
+                    Pasted(canvas, paint, "Uncharted", .07, .9, size);
                 }
                 break;
             case "release-radar":
@@ -312,14 +312,14 @@ public sealed class MixCoverRenderer
                 });
                 Ink(Black, (g, paint) =>
                 {
-                    var size = Fit("Release Radar", Display, .86, .16) * 1.15;
-                    Pasted(g, paint, "Release", .07, .8, size); Pasted(g, paint, "Radar", .07, .93, size);
+                    var size = Fit("Just Dropped", Display, .86, .16) * 1.15;
+                    Pasted(g, paint, "Just", .07, .8, size); Pasted(g, paint, "Dropped", .07, .93, size);
                 });
                 Stamp(.76, .84, "NEW", Red, -.25);
                 break;
             case "on-repeat":
                 Paper(PaperWhite);
-                for (var i = 0; i < 9; i++) Stamp(Between(layout, .2, .8), Between(layout, .12, .88), "ON REPEAT",
+                for (var i = 0; i < 9; i++) Stamp(Between(layout, .2, .8), Between(layout, .12, .88), "HEAVY ROTATION",
                     i % 3 == 0 ? Red : Navy, Between(layout, -.5, .5), Between(layout, .6, 1));
                 break;
             case "rewind":
@@ -329,7 +329,7 @@ public sealed class MixCoverRenderer
                 {
                     for (var i = 0; i < 6; i++) Cut(g, paint, [(0, .56 + i * .05), (1, .55 + i * .05), (1, .575 + i * .05), (0, .58 + i * .05)], .004);
                 }, alpha: .8);
-                Label(.08, .08, .44, ["rewind", "side b"], -.04);
+                Label(.08, .08, .44, ["long lost", "side b"], -.04);
                 break;
             case "chill":
                 Paper(PaperWhite);

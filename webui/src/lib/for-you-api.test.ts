@@ -1,7 +1,34 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { activityWork, mixes, playlistLinks, taste } from "./api";
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe("mix requests", () => {
+  it("times out a stalled mix detail and allows a fresh retry", async () => {
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(new AbortController().signal).mockReturnValueOnce(controller.signal);
+    const fetch = vi.fn((_path: string, options?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      options?.signal?.addEventListener("abort", () => reject(options.signal?.reason), { once: true });
+    })).mockResolvedValueOnce(Response.json({ mix: {}, songs: [] }));
+    vi.stubGlobal("fetch", fetch);
+    await mixes.get("ready");
+    const stalled = mixes.get("waiting");
+    const rejected = expect(stalled).rejects.toMatchObject({ name: "AbortError" });
+    controller.abort();
+    await rejected;
+    fetch.mockResolvedValueOnce(Response.json({ mix: { id: "waiting" }, songs: [] }));
+    expect(await mixes.get("waiting")).toMatchObject({ mix: { id: "waiting" } });
+    expect(timeout).toHaveBeenCalledWith(20_000);
+    expect(fetch.mock.calls.every(([, options]) => options?.signal instanceof AbortSignal)).toBe(true);
+  });
+  it("adds and removes app membership separately from deleting a custom mix", async () => {
+    const fetch = vi.fn(async (_path: string, _options?: RequestInit) => Response.json({})); vi.stubGlobal("fetch", fetch);
+    await mixes.add("daily/1"); await mixes.remove("daily/1"); await mixes.delete("custom/1");
+    expect(fetch.mock.calls).toEqual([
+      ["/api/admin/mixes/daily%2F1/in-apps", expect.objectContaining({ method: "POST" })],
+      ["/api/admin/mixes/daily%2F1/in-apps", expect.objectContaining({ method: "DELETE" })],
+      ["/api/admin/mixes/custom%2F1", expect.objectContaining({ method: "DELETE" })],
+    ]);
+    expect(fetch.mock.calls.every(([, options]) => !(options as RequestInit).body)).toBe(true);
+  });
   it("keeps playable seed identities from local and external searches", async () => {
     const fetch = vi.fn(async (path: string) => Response.json({ tracks: path.includes("/local?")
       ? [{ id: "row", backendItemId: "local/song", title: "Home", artist: "North", artworkUrl: null }]

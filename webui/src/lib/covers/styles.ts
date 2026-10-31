@@ -7,7 +7,7 @@ const LASTFM = ("M10.584 17.21l-.88-2.392s-1.43 1.594-3.573 1.594c-1.897 0-3.244
 let lastfmPath: Path2D | undefined;
 
 export const STYLES: Record<Exclude<CoverStyle, "liquid">, CoverDrawer> = {
-  stars(ctx, S, L, J, m) { // Discover Weekly: a star chart drawn in pen, one new star circled.
+  stars(ctx, S, L, J, m) { // Uncharted: a star chart drawn in pen, one new star circled.
     paper(ctx, S, PAPER.blue, L, true);
     const pts: Point[] = Array.from({ length: 14 }, () => [S * between(L, 0.1, 0.9), S * between(L, 0.08, 0.62)]);
     ink(ctx, S, "#e9e2d0", J, g => {
@@ -16,26 +16,26 @@ export const STYLES: Record<Exclude<CoverStyle, "liquid">, CoverDrawer> = {
     }, { blend: "source-over", specks: 500 });
     const [nx, ny] = pts[11];
     ink(ctx, S, INK.yellow, J, g => { blob(g, nx, ny, S * 0.022, J, 0.1); penCircle(g, nx, ny, S * 0.07, S * 0.006, J, S); }, { blend: "source-over" });
-    ctx.fillStyle = "#e9e2d0"; const size = fitSize(ctx, "Discover Weekly", "700 " + DISPLAY, S * 0.86, S * 0.15);
-    pasted(ctx, "Discover", S * 0.07, S * 0.8, size * 1.1, "700 " + DISPLAY, J); pasted(ctx, "Weekly", S * 0.07, S * 0.93, size * 1.1, "700 " + DISPLAY, J);
+    ctx.fillStyle = "#e9e2d0"; const size = fitSize(ctx, m.lines[0], "700 " + DISPLAY, S * 0.86, S * 0.15);
+    pasted(ctx, m.lines[0], S * 0.07, S * 0.9, size * 1.1, "700 " + DISPLAY, J);
   },
-  radar(ctx, S, L, J, m) { // Release Radar: hand-drawn rings, a stamp for each new release.
+  radar(ctx, S, L, J, m) { // Just Dropped: hand-drawn rings, a stamp for each new release.
     paper(ctx, S, PAPER.cream, L);
     const cx = S * 0.58, cy = S * 0.42;
     ink(ctx, S, INK.green, J, g => { for (let i = 1; i <= 4; i++) penCircle(g, cx, cy, S * 0.09 * i, S * 0.005, J, S); pen(g, [[cx, cy], [cx + S * 0.36, cy - S * 0.2]], S * 0.006, J, S); });
     ink(ctx, S, INK.pink, J, g => { for (let i = 0; i < m.count; i++) { const a = L() * 6.283, d = S * between(L, 0.06, 0.36); blob(g, cx + Math.cos(a) * d, cy + Math.sin(a) * d, S * 0.017, J, 0.15); } });
-    ink(ctx, S, INK.black, J, g => { const s = fitSize(g, "Release Radar", "700 " + DISPLAY, S * 0.86, S * 0.16); pasted(g, "Release", S * 0.07, S * 0.8, s * 1.15, "700 " + DISPLAY, J); pasted(g, "Radar", S * 0.07, S * 0.93, s * 1.15, "700 " + DISPLAY, J); });
+    ink(ctx, S, INK.black, J, g => { const s = fitSize(g, m.lines.join(" "), "700 " + DISPLAY, S * 0.86, S * 0.16); pasted(g, m.lines[0], S * 0.07, S * 0.8, s * 1.15, "700 " + DISPLAY, J); pasted(g, m.lines[1], S * 0.07, S * 0.93, s * 1.15, "700 " + DISPLAY, J); });
     stamp(ctx, S, J, S * 0.76, S * 0.84, "NEW", INK.red, -0.25);
   },
-  stamped(ctx, S, L, J, m) { // On Repeat: the same rubber stamp, pressed over and over.
+  stamped(ctx, S, L, J, m) { // Heavy Rotation: the same rubber stamp, pressed over and over.
     paper(ctx, S, PAPER.white, L);
-    for (let i = 0; i < 9; i++) stamp(ctx, S, J, S * between(L, 0.2, 0.8), S * between(L, 0.12, 0.88), "ON REPEAT", i % 3 === 0 ? INK.red : INK.navy, between(L, -0.5, 0.5), between(L, 0.6, 1));
+    for (let i = 0; i < 9; i++) stamp(ctx, S, J, S * between(L, 0.2, 0.8), S * between(L, 0.12, 0.88), m.lines.join(" ").toUpperCase(), i % 3 === 0 ? INK.red : INK.navy, between(L, -0.5, 0.5), between(L, 0.6, 1));
   },
-  sun(ctx, S, L, J, m) { // Rewind: a two-ink print of an old sunset, a bit faded.
+  sun(ctx, S, L, J, m) { // Long Lost: a two-ink print of an old sunset, a bit faded.
     paper(ctx, S, PAPER.cream, L);
     ink(ctx, S, INK.orange, J, g => halftone(g, S, S * 0.03, 0.4, (x, y) => Math.max(0, Math.min(1, 1.15 - Math.hypot(x - S * 0.5, y - S * 0.52) / (S * 0.3)))), { alpha: 0.85 });
     ink(ctx, S, INK.pink, J, g => { for (let i = 0; i < 6; i++) cut(g, [[0, S * (0.56 + i * 0.05)], [S, S * (0.55 + i * 0.05)], [S, S * (0.575 + i * 0.05)], [0, S * (0.58 + i * 0.05)]], J, S, 0.004); }, { alpha: 0.8 });
-    label(ctx, S, J, L, S * 0.08, S * 0.08, S * 0.44, ["rewind", "side b"], { rot: -0.04 });
+    label(ctx, S, J, L, S * 0.08, S * 0.08, S * 0.44, [m.lines.join(" ").toLowerCase(), "side b"], { rot: -0.04 });
   },
   waves(ctx, S, L, J, m) { // Chill: wavy lines in one blue pen.
     paper(ctx, S, PAPER.white, L);

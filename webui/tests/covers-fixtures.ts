@@ -4,8 +4,8 @@ import { mockForYou } from "./for-you-fixtures";
 export { appearance, capture, openHome } from "./for-you-fixtures";
 export async function mockCovers(page: Page) {
   const state = await mockForYou(page, { custom: true });
-  const tags = ["R&B", "Indie rock", "Electronic", "Hip-hop"];
-  state.cards.slice(0, 4).forEach((card, i) => { card.name = `Daily Mix ${i + 1} · ${tags[i]} · North, Cedar, Willow`; });
+  const tags = ["R&B", "Indie Rock", "Electronic", "Hip-Hop"];
+  state.cards.slice(0, 4).forEach((card, i) => { card.name = `${tags[i]} Blend`; card.description = `Made for you · ${tags[i].toLowerCase()} · North, Cedar, Willow`; });
   state.cards.find(card => card.kind === "custom")!.name = "Evening Mix";
   await page.route("**/fonts/*.woff2", route => route.continue());
   await page.route("**/api/admin/playlist-sources", route => route.fulfill({ json: { accounts: [
