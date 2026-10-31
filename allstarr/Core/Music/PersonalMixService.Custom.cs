@@ -22,35 +22,39 @@ public sealed partial class PersonalMixService
     {
         if (request.SeedKind is not ("song" or "artist") || string.IsNullOrWhiteSpace(request.SeedId) || request.SeedId.Length > 200 || request.Length is < 25 or > 50)
             throw new ArgumentException("Choose a song or artist and 25–50 songs.");
-        await writes.WaitAsync(token);
+        await generations.WaitAsync(token);
         try
         {
+            var (user, _, _) = await SnapshotAsync(owner, token);
             await using var db = await factory.CreateDbContextAsync(token);
-            var user = await UserAsync(db, owner, token);
-            var document = await LoadAsync(db, user, token);
-            var events = await Events(db, user, await taste.UseImportedHistoryAsync(user.Id, token)).Where(item => item.UpdatedAt <= clock.UtcNow &&
-                (item.ListenedAt == null || item.ListenedAt <= clock.UtcNow)).ToArrayAsync(token);
-            var (candidates, seedName) = await CandidatesAsync(db, user, events, token, request);
-            var selected = PersonalMixRules.Select("custom", candidates, clock.UtcNow, [], request.Length);
+            var (events, history) = await HistoryAsync(db, user, token);
+            var (fetched, seedName) = await CandidatesAsync(db, user, events, token, request);
             var id = Guid.CreateVersion7();
-            var preview = new PersonalMix(id, "custom", "Your mix", "Songs like your seed", 0, clock.UtcNow,
-                new(selected.Count > 0, selected.Count > 0 ? "Ready" : "No eligible playable songs found."), false,
-                selected.Select(row => new PersonalMixItem(id, 0, SafeSong(row.Song), row.Source,
-                    row.Source == "audiomuse" ? "Similar sound" : row.Song.TasteReason ?? "Like your seed", row.Score)).ToArray())
+            for (var attempt = 0; attempt < 3; attempt++)
             {
-                SeedName = seedName,
-                CoverTag = selected.SelectMany(row => row.Tags).GroupBy(tag => tag.Key)
-                    .OrderByDescending(group => group.Sum(tag => tag.Value)).ThenBy(group => group.Key, StringComparer.Ordinal)
-                    .Select(group => group.Key).FirstOrDefault()
-            };
-            foreach (var key in document.Previews.Where(item => item.Value.UpdatedAt < clock.UtcNow.AddMinutes(-30))
-                .Select(item => item.Key).ToArray()) document.Previews.Remove(key);
-            if (document.Previews.Count >= 10) document.Previews.Remove(document.Previews.MinBy(item => item.Value.UpdatedAt).Key);
-            document.Previews[id] = preview;
-            await SaveAsync(db, user, document, token);
-            return preview;
+                var (_, document, version) = await SnapshotAsync(owner, token);
+                var revision = await InputRevisionAsync(db, owner, token);
+                var candidates = await RevalidateAsync(user, fetched, token);
+                var selected = PersonalMixRules.Select("custom", candidates, clock.UtcNow, [], request.Length);
+                var preview = new PersonalMix(id, "custom", "Your mix", "Songs like your seed", 0, clock.UtcNow,
+                    new(selected.Count > 0, selected.Count > 0 ? "Ready" : "No eligible playable songs found."), false,
+                    selected.Select(row => new PersonalMixItem(id, 0, SafeSong(row.Song), row.Source,
+                        row.Source == "audiomuse" ? "Similar sound" : row.Song.TasteReason ?? "Like your seed", row.Score)).ToArray())
+                {
+                    SeedName = seedName,
+                    CoverTag = selected.SelectMany(row => row.Tags).GroupBy(tag => tag.Key)
+                        .OrderByDescending(group => group.Sum(tag => tag.Value)).ThenBy(group => group.Key, StringComparer.Ordinal)
+                        .Select(group => group.Key).FirstOrDefault()
+                };
+                foreach (var key in document.Previews.Where(item => item.Value.UpdatedAt < clock.UtcNow.AddMinutes(-30))
+                    .Select(item => item.Key).ToArray()) document.Previews.Remove(key);
+                if (document.Previews.Count >= 10) document.Previews.Remove(document.Previews.MinBy(item => item.Value.UpdatedAt).Key);
+                document.Previews[id] = preview;
+                if (await TrySaveAsync(user, document, version, revision, history, token)) return preview;
+            }
+            throw new InvalidOperationException("Listener choices changed while building this mix. Start again.");
         }
-        finally { writes.Release(); }
+        finally { generations.Release(); }
     }
 
     private async Task<(List<(Song Song, string Source, DateTimeOffset? Release)> Rows, string Name)> SeedRowsAsync(ProtocolExecutionContext context,
@@ -95,33 +99,36 @@ public sealed partial class PersonalMixService
     public async Task<PersonalMix> SaveCustomAsync(Guid owner, Guid previewId, string name, CancellationToken token = default)
     {
         if (string.IsNullOrWhiteSpace(name) || name.Length > 200 || name.Any(char.IsControl)) throw new ArgumentException("Supply a name of 1–200 characters.");
-        await writes.WaitAsync(token);
-        try
+        var (user, captured, _) = await SnapshotAsync(owner, token);
+        var key = "custom:" + previewId.ToString("N");
+        if (captured.Mixes.TryGetValue(key, out var saved))
+            return (await VisibleAsync(owner, new() { Mixes = new() { [key] = saved } }, token)).Single();
+        if (!captured.Previews.TryGetValue(previewId, out var preview)) throw new KeyNotFoundException();
+        if (preview.UpdatedAt < clock.UtcNow.AddMinutes(-30)) throw new ArgumentException("Preview expired. Start another mix.");
+        await using var db = await factory.CreateDbContextAsync(token);
+        var (_, history) = await HistoryAsync(db, user, token);
+        var context = await ContextAsync(user, token);
+        var candidates = preview.Songs.Select(item => new MixCandidate(item.Song, new Dictionary<string, double>(),
+            0, 0, null, false, item.Source, item.Score)).ToArray();
+        var playable = new List<MixCandidate>();
+        foreach (var item in await RevalidateAsync(user, candidates, token))
+            if (item.Song.IsLocal || await providers.CanPlaySongAsync(context, item.Song)) playable.Add(item);
+        for (var attempt = 0; attempt < 3; attempt++)
         {
-            await using var db = await factory.CreateDbContextAsync(token);
-            var user = await UserAsync(db, owner, token);
-            var document = await LoadAsync(db, user, token);
-            var key = "custom:" + previewId.ToString("N");
-            if (document.Mixes.TryGetValue(key, out var saved)) return (await VisibleAsync(owner, document, token)).Single(item => item.Id == saved.Id);
-            if (!document.Previews.TryGetValue(previewId, out var preview)) throw new KeyNotFoundException();
+            var (_, document, version) = await SnapshotAsync(owner, token);
+            if (document.Mixes.TryGetValue(key, out saved))
+                return (await VisibleAsync(owner, new() { Mixes = new() { [key] = saved } }, token)).Single();
+            if (!document.Previews.ContainsKey(previewId)) throw new KeyNotFoundException();
             if (preview.UpdatedAt < clock.UtcNow.AddMinutes(-30)) throw new ArgumentException("Preview expired. Start another mix.");
-            var context = await ContextAsync(user, token);
-            var allowed = await libraryAccess.ResolveAsync(context, token);
-            var ids = preview.Songs.Where(item => item.Song.IsLocal).Select(item => item.Song.Id).ToArray();
-            var local = await LibraryTrackAccess.Query(db, context, allowed).Where(item => ids.Contains(item.BackendItemId))
-                .Select(item => item.BackendItemId).ToArrayAsync(token);
-            var visible = (await VisibleAsync(owner, new() { Mixes = new() { [key] = preview } }, token)).Single();
-            var items = new List<PersonalMixItem>();
-            foreach (var item in visible.Songs)
-                if (item.Song.IsLocal ? local.Contains(item.Song.Id) : await providers.CanPlaySongAsync(context, item.Song))
-                    items.Add(item with { Generation = 1 });
-            if (items.Count == 0) throw new ArgumentException("No eligible playable songs remain. Start another mix.");
+            var revision = await InputRevisionAsync(db, owner, token);
+            var eligible = (await RevalidateAsync(user, playable, token)).Select(item => item.Song.Id).ToHashSet(StringComparer.Ordinal);
+            var items = preview.Songs.Where(item => eligible.Contains(item.Song.Id)).Select(item => item with { Generation = 1 }).ToArray();
+            if (items.Length == 0) throw new ArgumentException("No eligible playable songs remain. Start another mix.");
             saved = preview with { Name = name.Trim(), Generation = 1, UpdatedAt = clock.UtcNow, Readiness = new(true, "Ready"), Added = true, Songs = items };
             document.Mixes[key] = saved;
-            await SaveAsync(db, user, document, token);
-            return saved;
+            if (await TrySaveAsync(user, document, version, revision, history, token)) return saved;
         }
-        finally { writes.Release(); }
+        throw new InvalidOperationException("Listener choices changed while saving this mix. Save again.");
     }
 
     public async Task DeleteCustomAsync(Guid owner, Guid id, CancellationToken token = default)
