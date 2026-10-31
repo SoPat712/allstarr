@@ -106,6 +106,44 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             _playlistFolders[context.BackendInstanceId + ":" + context.VerifiedBackendPrincipalId] = id;
     }
 
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string[] Ids, DateTimeOffset Expires)> _musicLibraries = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _viewsLock = new(1, 1);
+
+    internal void RememberLibraryViews(ProtocolExecutionContext context, JsonElement views)
+    {
+        var ids = BackendMusicLibraries.Read(ProtocolKind.Jellyfin, views);
+        _musicLibraries[context.BackendInstanceId + ":" + context.VerifiedBackendPrincipalId] = (ids, DateTimeOffset.UtcNow.AddSeconds(30));
+        foreach (var item in views.GetProperty("Items").EnumerateArray())
+            if (item.TryGetProperty("Type", out var type) && type.GetString() is "ManualPlaylistsFolder" or "PlaylistsFolder")
+                RememberPlaylistsFolderId(context, item.GetProperty("Id").GetString());
+    }
+
+    internal async Task<bool> IsMusicLibraryAsync(ProtocolExecutionContext context, string? parentId, CancellationToken token)
+    {
+        if (string.IsNullOrWhiteSpace(parentId) || proxyService == null) return false;
+        var key = context.BackendInstanceId + ":" + context.VerifiedBackendPrincipalId;
+        if (_musicLibraries.TryGetValue(key, out var cached) && cached.Expires > DateTimeOffset.UtcNow)
+            return cached.Ids.Contains(parentId, StringComparer.OrdinalIgnoreCase);
+        await _viewsLock.WaitAsync(token);
+        try
+        {
+            if (!_musicLibraries.TryGetValue(key, out cached) || cached.Expires <= DateTimeOffset.UtcNow)
+            {
+                var (body, status) = await proxyService.GetJsonAsync(
+                    $"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Views",
+                    clientHeaders: httpContexts?.HttpContext?.Request.Headers, cancellationToken: token);
+                using (body)
+                {
+                    if (status != 200 || body == null) return false;
+                    RememberLibraryViews(context, body.RootElement);
+                }
+                cached = _musicLibraries[key];
+            }
+            return cached.Ids.Contains(parentId, StringComparer.OrdinalIgnoreCase);
+        }
+        finally { _viewsLock.Release(); }
+    }
+
     private readonly JellyfinResponseBuilder _builder = responseBuilder ?? new JellyfinResponseBuilder(httpContexts: httpContexts);
 
     public bool IsVirtualPlaylistId(string? value) =>
@@ -318,6 +356,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         item["ImageTags"] = imageTag == null
             ? new Dictionary<string, string>()
             : new Dictionary<string, string> { ["Primary"] = imageTag };
+        if (playlist.MixCover != null && new JellyfinItemFields(httpContexts?.HttpContext?.Request.Query, includeAllFields).Includes("PrimaryImageAspectRatio"))
+            item["PrimaryImageAspectRatio"] = 1d;
         return item;
     }
 

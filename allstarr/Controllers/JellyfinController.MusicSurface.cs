@@ -61,14 +61,11 @@ public partial class JellyfinController
             if (statusCode != StatusCodes.Status200OK)
                 return HandleProxyResponse(body, statusCode);
 
+            _virtualPlaylistProtocolAdapter.RememberLibraryViews(HttpContext.RequireProtocolExecutionContext(), body.RootElement);
             var original = body.RootElement.GetRawText();
             var root = JsonNode.Parse(original) as JsonObject;
             if (root?["Items"] is not JsonArray items)
                 return Content(original, "application/json");
-
-            foreach (var folder in items.OfType<JsonObject>().Where(item =>
-                item["Type"]?.ToString() is "ManualPlaylistsFolder" or "PlaylistsFolder"))
-                _virtualPlaylistProtocolAdapter.RememberPlaylistsFolderId(HttpContext.RequireProtocolExecutionContext(), folder["Id"]?.ToString());
 
             var filtered = items
                 .Where(item => item is JsonObject candidate && IsMusicLibraryView(candidate, rootFoldersOnly))

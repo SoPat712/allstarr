@@ -72,6 +72,21 @@ public sealed class SpotifyPlaylistArtworkTests
             handler.ThumbnailRequestUri!.AbsoluteUri);
     }
 
+    [Fact]
+    public async Task Spotify_owned_playlist_refreshes_an_existing_personalized_cover_from_public_thumbnail()
+    {
+        var handler = new ArtworkHandler
+        {
+            OwnerUsername = "spotify",
+            ThumbnailResponse = """{"thumbnail_url":"https://pickasso.spotifycdn.com/image/current-cover"}""",
+            ImageItems = [new { url = "https://pickasso.spotifycdn.com/image/old-cover", width = 640, height = 640 }]
+        };
+        var client = new SpotifyPathfinderPlaylistClient(new HttpClient(handler), new TestMemoryApplicationCache());
+        var artwork = await client.GetPlaylistArtworkUriAsync("token", new ProviderArtworkReference(TracksRequest().PlaylistId), default);
+        Assert.Equal("https://pickasso.spotifycdn.com/image/current-cover", artwork.RequireValue().AbsoluteUri);
+        Assert.Equal(1, handler.ThumbnailRequestCount);
+    }
+
     [Theory]
     [InlineData("failure")]
     [InlineData("malformed")]

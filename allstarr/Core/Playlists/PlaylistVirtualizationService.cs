@@ -191,9 +191,15 @@ public sealed class PlaylistVirtualizationService(
             var count = await db.PlaylistSourceEntries.CountAsync(entry => entry.PlaylistSourceSnapshotId == snapshot.Id, token);
             var snapshotKey = snapshot.Id.ToString().ToUpperInvariant();
             var duration = await db.Database.SqlQuery<long>($"""
-                SELECT CAST(COALESCE(SUM(COALESCE(json_extract(m."PayloadJson", '$.DurationMilliseconds'),
-                    json_extract(m."PayloadJson", '$.durationMilliseconds'), json_extract(m."PayloadJson", '$.durationSeconds') * 1000)), 0) AS INTEGER) AS "Value"
+                SELECT CAST(COALESCE(SUM(COALESCE(CASE WHEN {link.ProjectionMode == PlaylistProjectionMode.Source} THEN NULL ELSE l."DurationMilliseconds" END,
+                    NULLIF(json_extract(m."PayloadJson", '$.DurationMilliseconds'), 0),
+                    NULLIF(json_extract(m."PayloadJson", '$.durationMilliseconds'), 0),
+                    NULLIF(json_extract(m."PayloadJson", '$.durationSeconds'), 0) * 1000, l."DurationMilliseconds", r."DurationMilliseconds")), 0) AS INTEGER) AS "Value"
                 FROM playlist_source_entries e JOIN external_metadata_snapshots m ON m."Id" = e."ExternalMetadataSnapshotId"
+                LEFT JOIN track_matches t ON t."Id" = e."PublishedTrackMatchId"
+                LEFT JOIN library_tracks l ON l."Id" = t."LibraryTrackId"
+                LEFT JOIN provider_track_identities i ON i."Id" = m."ProviderTrackIdentityId"
+                LEFT JOIN canonical_recordings r ON r."Id" = COALESCE(t."CanonicalRecordingId", i."CanonicalRecordingId", l."CanonicalRecordingId")
                 WHERE e."PlaylistSourceSnapshotId" = {snapshotKey}
                 """).SingleAsync(token);
             result.Add(new(CreateProtocolId(link.Id), link.Id, snapshot.Id,
@@ -426,7 +432,7 @@ public sealed class PlaylistVirtualizationService(
         if (entry.BackendItemId != null &&
             libraryTracks.TryGetValue(entry.BackendItemId, out var local))
             return new(entry.Position, local.BackendItemId, local.Title, local.Artist,
-                local.Album, local.AlbumArtist, local.DurationMilliseconds,
+                local.Album, local.AlbumArtist, local.DurationMilliseconds ?? entry.DurationMilliseconds,
                 local.CoverArtReference, entry.MatchState ?? TrackMatchState.Unresolved,
                 sourceProviderId, null, TrackRouteKind.Local,
                 SourceMetadata: sourceMetadata,
@@ -491,7 +497,7 @@ public sealed class PlaylistVirtualizationService(
             sourceArtist,
             metadata.Album,
             null,
-            metadata.DurationMilliseconds,
+            metadata.DurationMilliseconds ?? resolved?.DurationMilliseconds,
             identity.ExternalId == null
                 ? null
                 : $"ext-{identity.ProviderId}-song-{identity.ExternalId}",

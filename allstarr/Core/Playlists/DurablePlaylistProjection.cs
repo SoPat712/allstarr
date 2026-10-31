@@ -687,6 +687,9 @@ public sealed class DurablePlaylistProjectionReader(
                                  item.Protocol == "opensubsonic" ||
                                  item.Protocol == "navidrome"))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var recordingDurations = await database.CanonicalRecordings.AsNoTracking()
+            .Where(item => matchedCanonicalIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, item => item.DurationMilliseconds, cancellationToken);
         var projectedEntries = entries.Select(entry => ProjectEntry(
                 entry,
                 external[entry.ExternalMetadataSnapshotId],
@@ -697,7 +700,7 @@ public sealed class DurablePlaylistProjectionReader(
                     ? publishedMatches.GetValueOrDefault(matchId)
                     : null,
                 overrides,
-                library, providerPolicy))
+                library, providerPolicy, recordingDurations))
             .ToArray();
         if (!includeHistory)
             return new(link.Id, snapshot.Id, snapshot.SnapshotVersion, snapshot.Name,
@@ -939,7 +942,8 @@ public sealed class DurablePlaylistProjectionReader(
         TrackMatchRecord? match,
         IReadOnlyDictionary<Guid, ManualTrackOverrideLayers> overrides,
         IReadOnlyDictionary<Guid, LibraryTrackRecord> library,
-        EffectiveProviderPolicySnapshot? providerPolicy = null)
+        EffectiveProviderPolicySnapshot? providerPolicy = null,
+        IReadOnlyDictionary<Guid, long?>? recordingDurations = null)
     {
         var manual = overrides.GetValueOrDefault(external.Id)?.Effective;
         var identity = sourceIdentities.GetValueOrDefault(external.Id);
@@ -949,6 +953,8 @@ public sealed class DurablePlaylistProjectionReader(
         var local = route.LibraryTrack;
         var backendItemId = local?.BackendItemId;
         var metadata = ReadMetadata(external.PayloadJson);
+        var recordingDuration = route.CanonicalRecordingId is { } recordingId
+            ? recordingDurations?.GetValueOrDefault(recordingId) : null;
         var primaryRoute = classification.PrimaryProviderRoute;
         var hasExternal = classification.RouteKind == TrackRouteKind.External;
         var externalId = hasExternal
@@ -968,7 +974,7 @@ public sealed class DurablePlaylistProjectionReader(
             metadata.Artists,
             metadata.Album,
             metadata.Isrc,
-            local?.DurationMilliseconds ?? metadata.DurationMilliseconds,
+            local?.DurationMilliseconds ?? metadata.DurationMilliseconds ?? recordingDuration,
             local?.DurationMilliseconds.HasValue == true
                 ? local.DurationProvenance ?? local.Protocol
                 : metadata.DurationMilliseconds.HasValue ? external.ProviderId : null,

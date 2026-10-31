@@ -49,12 +49,13 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
         CancellationToken cancellationToken) =>
         await ListPageAsync(context, query, 0, limit, cancellationToken);
 
-    public async Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>> ListPageAsync(
-        BackendPlaylistTargetContext context,
-        string? query,
-        int offset,
-        int limit,
-        CancellationToken cancellationToken)
+    public Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>> ListPageAsync(
+        BackendPlaylistTargetContext context, string? query, int offset, int limit, CancellationToken cancellationToken) =>
+        ListPageAsync(context, query, offset, limit, cancellationToken, includeWriteAccess: true);
+
+    internal async Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>> ListPageAsync(
+        BackendPlaylistTargetContext context, string? query, int offset, int limit, CancellationToken cancellationToken,
+        bool includeWriteAccess)
     {
         offset = Math.Max(0, offset);
         limit = Math.Clamp(limit, 1, 200);
@@ -82,7 +83,7 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
                 trackCount,
                 item.StringOrNull("Overview"),
                 string.IsNullOrWhiteSpace(imageTag) ? null : $"jellyfin:{id}:{imageTag}",
-                await CanWriteAsync(context, id, cancellationToken),
+                includeWriteAccess && await CanWriteAsync(context, id, cancellationToken),
                 DateTimeOffset.TryParse(item.StringOrNull("DateCreated"), out var created) ? created : null));
         }
 
@@ -343,14 +344,21 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
     public async Task<BackendPlaylistTargetResult<bool>> WriteArtworkOnlyAsync(BackendPlaylistTargetContext context,
         string id, BackendPlaylistArtwork image, CancellationToken cancellationToken)
     {
+        if (image.Bytes.Length == 0)
+            return new(BackendPlaylistTargetStatus.BackendFailure, ErrorCode: "playlist-artwork-empty");
         var currentArtwork = await ReadArtworkAsync(context, id, null, cancellationToken);
         if (currentArtwork.IsSuccess && currentArtwork.Value is { } existingArtwork &&
             existingArtwork.Bytes.AsSpan().SequenceEqual(image.Bytes))
             return new(BackendPlaylistTargetStatus.Success, false);
-        using var artwork = new ByteArrayContent(image.Bytes);
+        using var artwork = new StringContent(Convert.ToBase64String(image.Bytes));
         artwork.Headers.ContentType = new(image.ContentType);
         var response = await SendAsync(context, HttpMethod.Post, $"Items/{Escape(id)}/Images/Primary", artwork, cancellationToken);
-        return response.IsSuccess ? new(BackendPlaylistTargetStatus.Success, true) : ConvertFailure<bool>(response);
+        if (!response.IsSuccess) return ConvertFailure<bool>(response);
+        var saved = await ReadArtworkAsync(context, id, null, cancellationToken);
+        return saved.IsSuccess && saved.Value?.Bytes.Length > 0
+            ? new(BackendPlaylistTargetStatus.Success, true)
+            : new(BackendPlaylistTargetStatus.BackendFailure, UpstreamStatus: HttpStatusCode.ServiceUnavailable,
+                ErrorCode: "playlist-artwork-readback-empty");
     }
 
     private async Task<HttpResult> SendAsync(

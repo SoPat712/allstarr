@@ -20,6 +20,24 @@ namespace allstarr.Tests;
 
 public class JellyfinProxyServiceTests
 {
+    [Fact]
+    public async Task PlaylistResponses_DoNotRebuildSongMembershipDates()
+    {
+        _service.RememberServerId("primary", "library-server");
+        var storage = new Mock<Microsoft.EntityFrameworkCore.IDbContextFactory<allstarr.Core.Storage.AllstarrDbContext>>(MockBehavior.Strict);
+        using var services = new ServiceCollection()
+            .AddSingleton(new allstarr.Core.Music.SavedLibraryReader(storage.Object)).BuildServiceProvider();
+        var http = new DefaultHttpContext { RequestServices = services };
+        http.Request.Path = "/Items/allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0";
+        http.Items[ProtocolExecutionContextFactory.HttpContextItemKey] = new ProtocolExecutionContext(
+            ProtocolKind.Jellyfin, "primary", "listener",
+            new allstarr.Core.Identity.AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "primary", "listener", "Listener", false),
+            "test", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var result = new JsonResult(new { Id = "allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0", Type = "Playlist" });
+        await new JellyfinItemResponseFilter(_service).PrepareAsync(result, http);
+        storage.VerifyNoOtherCalls();
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

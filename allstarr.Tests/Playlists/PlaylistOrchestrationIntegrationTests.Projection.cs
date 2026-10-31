@@ -1,6 +1,8 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Playlists;
+using allstarr.Core.Playlists.Targets;
+using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -10,6 +12,46 @@ namespace allstarr.Tests;
 
 public sealed partial class PlaylistOrchestrationIntegrationTests
 {
+    [Fact]
+    public async Task PlaylistResponseMembership_UsesOneVisibleListInsteadOfReadingEveryNativePlaylist()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.PlaylistLinks.SingleAsync()).TargetPlaylistId = "native-0";
+            for (var index = 1; index < 18; index++)
+            {
+                var link = Link();
+                link.Id = Guid.CreateVersion7();
+                link.SourcePlaylistId = "playlist-" + index;
+                link.SourcePlaylistIdHash = Hash(link.SourcePlaylistId);
+                link.TargetPlaylistId = "native-" + index;
+                db.PlaylistLinks.Add(link);
+            }
+            await db.SaveChangesAsync();
+        }
+        var reads = 0;
+        var target = new Mock<IBackendPlaylistTarget>();
+        target.Setup(item => item.ReadAsync(It.IsAny<BackendPlaylistTargetContext>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (BackendPlaylistTargetContext _, string id, CancellationToken token) =>
+            {
+                reads++;
+                await Task.Delay(160, token);
+                return new BackendPlaylistTargetResult<BackendPlaylistSnapshot>(BackendPlaylistTargetStatus.Success,
+                    new(id, "Native", [], "fingerprint"));
+            });
+        target.Setup(item => item.ListPageAsync(It.IsAny<BackendPlaylistTargetContext>(), null, 0, 200, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>(BackendPlaylistTargetStatus.Success,
+                Enumerable.Range(0, 18).Select(index => new BackendPlaylistSummary("native-" + index, "Native")).ToArray()));
+        var targets = new Mock<IBackendPlaylistTargetResolver>();
+        targets.Setup(item => item.Resolve("jellyfin")).Returns(target.Object);
+        var reader = new SavedLibraryReader(_factory, targets.Object);
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        Assert.Empty(await reader.ReadAsync(Context()));
+        timer.Stop();
+        Assert.True(reads == 0, $"Membership reconstruction read {reads} full native playlists in {timer.ElapsedMilliseconds} ms.");
+        target.Verify(item => item.ListPageAsync(It.IsAny<BackendPlaylistTargetContext>(), null, 0, 200, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Theory]
     [InlineData(PlaylistLinkMode.Virtual, true)]
     [InlineData(PlaylistLinkMode.Hybrid, true)]
@@ -47,6 +89,28 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         Assert.True(row.DurationMilliseconds > 0);
         Assert.NotEqual(DateTimeOffset.UnixEpoch, row.CreatedAt);
         access.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task VirtualPlaylistDurations_UseMatchedRecordingWhenSnapshotHasNoDuration()
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot("duration-summary", Entry(0, "one", "source-1", "One") with { DurationMilliseconds = null });
+        await _service.RunAsync(Context(), new(_link, 1));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.CanonicalRecordings.SingleAsync(item => item.Id == _canonical)).DurationMilliseconds = 187654;
+            foreach (var track in await db.LibraryTracks.ToListAsync()) track.DurationMilliseconds = null;
+            await db.SaveChangesAsync();
+        }
+        var access = new TestBackendLibraryAccess(_factory, "music");
+        var service = new PlaylistVirtualizationService(_factory, new(_factory, access), access);
+        var summary = Assert.Single(await service.ListAsync(Context()));
+        Assert.Empty(summary.Tracks);
+        var detail = Assert.IsType<VirtualPlaylistReadModel>(await service.ReadAsync(Context(), summary.ProtocolId));
+        Assert.Equal(187654, summary.DurationMilliseconds);
+        Assert.Equal(summary.DurationMilliseconds, detail.DurationMilliseconds);
+        Assert.Equal(detail.DurationMilliseconds, detail.Tracks.Sum(track => track.DurationMilliseconds ?? 0));
     }
 
     [Fact]

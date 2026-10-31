@@ -12,7 +12,7 @@ public sealed partial class PlaylistOrchestrationService
 {
     public async Task EnsureSpotifyArtworkRepairsAsync(CancellationToken cancellationToken = default)
     {
-        const string prefix = "spotify-artwork-repair:v1:";
+        const string prefix = "spotify-artwork-repair:v2:";
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var keys = await db.Jobs.AsNoTracking().Where(item => item.Type == "playlist.materialize" &&
             item.IdempotencyKey.StartsWith(prefix)).Select(item => item.IdempotencyKey).ToListAsync(cancellationToken);

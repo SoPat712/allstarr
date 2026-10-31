@@ -46,12 +46,22 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
 
         var options = new DurableJobOptions();
         var queue = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), new Clock(_now));
+        var old = await queue.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMaterializationJobPayload>(
+            "playlist.materialize", "spotify-artwork-repair:v1:" + _link, new(_link, 1, ArtworkOnly: true), _user,
+            ProviderAccountId: _spotifyArtworkAccount, Capability: "playlist"));
+        await using (var previous = await _factory.CreateDbContextAsync())
+        {
+            var failed = await previous.Jobs.SingleAsync(item => item.Id == old.JobId);
+            failed.State = DurableJobState.Failed;
+            await previous.SaveChangesAsync();
+        }
         var scheduler = new DurableScheduleEngine(_factory, queue, new Clock(_now), ReleaseComposition.Development,
             playlists: _service);
         await scheduler.TickAsync();
         await scheduler.TickAsync();
         await using var jobs = await _factory.CreateDbContextAsync();
-        var job = Assert.Single(await jobs.Jobs.ToListAsync());
+        Assert.Equal(2, await jobs.Jobs.CountAsync());
+        var job = Assert.Single(await jobs.Jobs.Where(item => item.IdempotencyKey.StartsWith("spotify-artwork-repair:v2:")).ToListAsync());
         var payload = System.Text.Json.JsonSerializer.Deserialize<PlaylistMaterializationJobPayload>(job.PayloadJson)!;
         Assert.True(payload.ArtworkOnly);
         var claim = Assert.IsType<DurableJobClaim>(await queue.ClaimNextAsync("cover-repair"));

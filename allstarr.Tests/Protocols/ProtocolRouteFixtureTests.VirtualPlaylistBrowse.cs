@@ -170,13 +170,15 @@ public sealed partial class ProtocolRouteFixtureTests
             request => Assert.False(QueryHelpers.ParseQuery(new Uri("http://fixture" + request).Query).ContainsKey("ParentId")));
     }
 
-    [Fact]
-    public async Task JellyfinPlaylistBrowse_MusiverMusicParentMeansAllPlaylists()
+    [Theory]
+    [InlineData("SortName&SortOrder=Ascending&Limit=100")]
+    [InlineData("DateModified&SortOrder=Descending&Recursive=true&StartIndex=0&Limit=100")]
+    public async Task JellyfinPlaylistBrowse_MusiverMusicParentMeansAllPlaylists(string sort)
     {
         var requests = new List<string>();
         using var factory = PlaylistBrowseFactory(requests);
         using var client = factory.CreateClient();
-        using var response = await client.GetAsync("/Users/user-1/Items?ParentId=music-library&IncludeItemTypes=Playlist&MediaTypes=Audio&SortBy=SortName&SortOrder=Ascending&Fields=ChildCount,Overview&api_key=fixture-key");
+        using var response = await client.GetAsync($"/Users/user-1/Items?ParentId=music-library&IncludeItemTypes=Playlist&MediaTypes=Audio&SortBy={sort}&Fields=ChildCount,Overview&api_key=fixture-key");
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var rows = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
         Assert.Equal(24, rows.Length);
@@ -184,6 +186,8 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Contains(rows, row => row.GetProperty("Id").GetString() == "native-01");
         Assert.Equal(4, rows.Count(row => row.GetProperty("Id").GetString()!.StartsWith("allstarr-vpl-", StringComparison.Ordinal)));
         Assert.DoesNotContain(requests, request => QueryHelpers.ParseQuery(new Uri("http://fixture" + request).Query).ContainsKey("ParentId"));
+        using var repeat = await client.GetAsync($"/Users/user-1/Items?ParentId=music-library&IncludeItemTypes=Playlist&SortBy={sort}&api_key=fixture-key");
+        Assert.Single(requests, request => request.StartsWith("/Users/user-1/Views", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -196,6 +200,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Single(requests, request => request.StartsWith("/Items?", StringComparison.Ordinal));
         Assert.DoesNotContain(requests, request => request.Contains("Fields=ParentId", StringComparison.Ordinal));
+        Assert.DoesNotContain(requests, request => request.Contains("/Views", StringComparison.Ordinal) || request.StartsWith("/UserViews", StringComparison.Ordinal));
     }
 
     [Theory]
@@ -236,6 +241,24 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(60000 * TimeSpan.TicksPerMillisecond, virtualItem.RootElement.GetProperty("RunTimeTicks").GetInt64());
     }
 
+    [Theory]
+    [InlineData("Audio,Unknown")]
+    [InlineData("Audio%2C%20Unknown")]
+    public async Task JellyfinPlaylistBrowse_RequestedCoverRatioMatchesNativeKeys(string mediaTypes)
+    {
+        using var factory = PlaylistBrowseFactory();
+        using var client = factory.CreateClient();
+        using var warm = await client.GetAsync("/Users/user-1/Views?api_key=fixture-key");
+        using var response = await client.GetAsync($"/Items?Fields=PrimaryImageAspectRatio,SortName,Path,ChildCount,MediaSourceCount,PrimaryImageAspectRatio&ImageTypeLimit=1&Limit=100&MediaTypes={mediaTypes}&ParentId=playlists-folder&SortBy=SortName&SortOrder=Ascending&StartIndex=0&userId=user-1&api_key=fixture-key");
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var rows = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
+        Assert.Equal(24, rows.Length);
+        var keys = rows.First(row => row.GetProperty("Id").GetString() == "native-00").EnumerateObject().Select(property => property.Name).Order().ToArray();
+        Assert.All(rows, row => Assert.Equal(keys, row.EnumerateObject().Select(property => property.Name).Order()));
+        Assert.All(rows.Where(row => row.GetProperty("Id").GetString()!.StartsWith("allstarr-vpl-", StringComparison.Ordinal)),
+            row => Assert.Equal(1d, row.GetProperty("PrimaryImageAspectRatio").GetDouble()));
+    }
+
     private static ProtocolFactory PlaylistBrowseFactory(List<string>? requests = null)
     {
         var playlists = Enumerable.Range(0, 4).Select(index =>
@@ -243,7 +266,7 @@ public sealed partial class ProtocolRouteFixtureTests
             var id = Guid.Parse($"0198a537-719c-7ea8-9e5a-17e1f2f963f{index}");
             return new VirtualPlaylistReadModel(PlaylistVirtualizationService.CreateProtocolId(id), id, id,
                 $"Added virtual {index}", null, null, "listenbrainz", "createdfor:weekly-jams", "1", PlaylistLinkMode.Virtual, [])
-            { SummaryTrackCount = 2, SummaryDurationMilliseconds = 60000 };
+            { SummaryTrackCount = 2, SummaryDurationMilliseconds = 60000, MixCover = new(id.ToString(), 1, "external", Name: "Added virtual") };
         }).ToArray();
         var service = new Mock<IPlaylistVirtualizationService>();
         service.Setup(item => item.ReadAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
@@ -253,12 +276,15 @@ public sealed partial class ProtocolRouteFixtureTests
         {
             requests?.Add(request.RequestUri!.PathAndQuery);
             if (request.RequestUri!.AbsolutePath == "/Users/Me") return Json(200, """{"Id":"user-1"}""");
+            if (request.RequestUri.AbsolutePath is "/Users/user-1/Views" or "/UserViews")
+                return Json(200, """{"Items":[{"Id":"music-library","CollectionType":"music","Name":"Music"},{"Id":"playlists-folder","CollectionType":"playlists","Type":"PlaylistsFolder","Name":"Playlists"}],"TotalRecordCount":2}""");
             var query = QueryHelpers.ParseQuery(request.RequestUri.Query);
             if (query.GetValueOrDefault("SortBy") == "Unrecognized") return Json(400, """{"Message":"Unknown sort"}""");
             var fixture = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Jellyfin", "native-playlist-summary.json"));
             var native = Enumerable.Range(0, 20).Select(index =>
             {
                 var row = JsonSerializer.Deserialize<Dictionary<string, object?>>(fixture)!;
+                if (query.GetValueOrDefault("Fields").ToString().Contains("PrimaryImageAspectRatio", StringComparison.Ordinal)) row["PrimaryImageAspectRatio"] = 1d;
                 row["Id"] = $"native-{index:00}";
                 row["Name"] = $"Native {index:00}";
                 row["SortName"] = $"native {index:0000000000}";
@@ -276,6 +302,7 @@ public sealed partial class ProtocolRouteFixtureTests
             if (request.RequestUri.AbsolutePath.EndsWith("/Items/00112233445566778899aabbccddeeff", StringComparison.OrdinalIgnoreCase))
             {
                 native[0]["Id"] = "00112233445566778899aabbccddeeff";
+                native[0]["PrimaryImageAspectRatio"] = 1d;
                 native[0]["Genres"] = Array.Empty<string>();
                 native[0]["GenreItems"] = Array.Empty<object>();
                 return Json(200, JsonSerializer.Serialize(native[0]));
@@ -296,6 +323,6 @@ public sealed partial class ProtocolRouteFixtureTests
         {
             services.RemoveAll<IPlaylistVirtualizationService>();
             services.AddSingleton(service.Object);
-        }, new Dictionary<string, string?> { ["Jellyfin:LibraryId"] = "music-library" });
+        }, new Dictionary<string, string?> { ["Jellyfin:LibraryId"] = null });
     }
 }

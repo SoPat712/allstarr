@@ -63,13 +63,13 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
             item.Protocol == principal.BackendType && item.BackendInstanceId == execution.BackendInstanceId &&
             item.ResourceKind == "playlist-membership" &&
             item.ProviderId == "allstarr").ToArrayAsync(cancellationToken);
-        var visible = snapshots.Length == 0 ? new HashSet<string>(StringComparer.Ordinal) :
+        var visible = snapshots.Length == 0 ? null :
             await VisiblePlaylistKeysAsync(execution, cancellationToken);
         var excludedSources = new HashSet<string>(StringComparer.Ordinal);
         foreach (var snapshot in snapshots)
         {
             var owned = snapshot.OwnerUserId == owner && snapshot.BackendPrincipalId == execution.VerifiedBackendPrincipalId;
-            var accessible = targets == null ? owned : visible.Contains(snapshot.ExternalIdHash);
+            var accessible = targets == null ? owned : visible!.Contains(snapshot.ExternalIdHash);
             if (!owned && !accessible) continue;
             if (!accessible) excludedSources.Add("playlist:" + snapshot.ExternalIdHash);
             try
@@ -80,7 +80,7 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
             }
             catch (JsonException) { }
         }
-        await ReadSourceChangesAsync(db, execution, owner, changes, excludedSources, cancellationToken);
+        await ReadSourceChangesAsync(db, execution, owner, changes, excludedSources, visible, cancellationToken);
         var archives = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == owner &&
             item.Protocol == principal.BackendType && item.BackendInstanceId == execution.BackendInstanceId &&
             item.BackendPrincipalId == execution.VerifiedBackendPrincipalId && item.ProviderId == "allstarr" &&
@@ -323,7 +323,9 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
         var context = new BackendPlaylistTargetContext(execution.BackendInstanceId, execution.VerifiedBackendPrincipalId);
         for (var offset = 0; ; offset += 200)
         {
-            var page = await target.ListPageAsync(context, null, offset, 200, cancellationToken);
+            var page = target is JellyfinPlaylistTarget jellyfin
+                ? await jellyfin.ListPageAsync(context, null, offset, 200, cancellationToken, includeWriteAccess: false)
+                : await target.ListPageAsync(context, null, offset, 200, cancellationToken);
             if (!page.IsSuccess || page.Value == null) return [];
             foreach (var playlist in page.Value) keys.Add(WritablePlaylistMembership.Key(execution, playlist.BackendPlaylistId));
             if (page.Value.Count < 200) return keys;
@@ -331,13 +333,17 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
     }
 
     private async Task ReadSourceChangesAsync(AllstarrDbContext db, ProtocolExecutionContext execution,
-        Guid owner, List<MembershipChange> changes, HashSet<string> excludedSources, CancellationToken cancellationToken)
+        Guid owner, List<MembershipChange> changes, HashSet<string> excludedSources, HashSet<string>? visible,
+        CancellationToken cancellationToken)
     {
         var candidates = await db.PlaylistLinks.AsNoTracking().Where(link =>
             link.TargetBackendInstanceId == execution.BackendInstanceId &&
             (execution.Protocol == ProtocolKind.Jellyfin ? link.TargetProtocol == "jellyfin" :
                 link.TargetProtocol == "subsonic" || link.TargetProtocol == "opensubsonic" || link.TargetProtocol == "navidrome"))
             .ToArrayAsync(cancellationToken);
+        if (execution.Protocol == ProtocolKind.Jellyfin && visible == null && targets != null &&
+            candidates.Any(link => link.Enabled && link.TargetPlaylistId != null))
+            visible = await VisiblePlaylistKeysAsync(execution, cancellationToken);
         var links = new List<PlaylistLinkRecord>();
         foreach (var link in candidates)
         {
@@ -351,7 +357,9 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
                 continue;
             }
             var accessible = false;
-            if (targets != null && link.Enabled)
+            if (visible != null && execution.Protocol == ProtocolKind.Jellyfin)
+                accessible = link.Enabled && visible.Contains(WritablePlaylistMembership.Key(execution, link.TargetPlaylistId));
+            else if (targets != null && link.Enabled)
             {
                 var authorized = await targets.Resolve(link.TargetProtocol).ReadAsync(
                     new BackendPlaylistTargetContext(execution.BackendInstanceId, execution.VerifiedBackendPrincipalId),

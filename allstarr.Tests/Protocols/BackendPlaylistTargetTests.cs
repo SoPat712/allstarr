@@ -12,6 +12,17 @@ namespace allstarr.Tests;
 public sealed class BackendPlaylistTargetTests
 {
     [Fact]
+    public async Task Jellyfin_visible_playlist_summary_does_not_probe_write_permissions()
+    {
+        var backend = new JellyfinFakeBackend("p1", "Mix", []);
+        var target = new JellyfinPlaylistTarget(new HttpClient(backend), new Uri("https://jellyfin.test/"), new FakeAuthenticationResolver());
+        var result = await target.ListPageAsync(Context(), null, 0, 200, default, includeWriteAccess: false);
+        Assert.Equal("p1", Assert.Single(result.Value!).BackendPlaylistId);
+        Assert.Equal(0, backend.MutationCount);
+        Assert.Single(backend.Requests);
+    }
+
+    [Fact]
     public async Task Playlist_artwork_only_repair_changes_the_same_list_and_detail_image_tag()
     {
         var backend = new JellyfinFakeBackend("p1", "Release Radar", [])
@@ -35,6 +46,46 @@ public sealed class BackendPlaylistTargetTests
             Assert.Equal("jellyfin:p1:" + detail.ArtworkReference, summary.ArtworkReference);
             return detail.ArtworkReference!;
         }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Jellyfin_artwork_upload_repairs_empty_images_and_verifies_readback(bool discardUpload)
+    {
+        var backend = new JellyfinFakeBackend("p1", "Release Radar", [])
+        {
+            ExistingArtwork = [],
+            DiscardArtworkUpload = discardUpload
+        };
+        var target = new JellyfinPlaylistTarget(new HttpClient(backend), new Uri("https://jellyfin.test/"), new FakeAuthenticationResolver());
+        var result = await target.WriteArtworkOnlyAsync(Context(), "p1", new([255, 216, 255, 224], "image/jpeg"), default);
+        Assert.Equal(!discardUpload, result.IsSuccess);
+        Assert.Equal(1, backend.MutationCount);
+        Assert.Equal("image/jpeg", backend.UploadContentType);
+        Assert.Equal(3, backend.Requests.Count);
+        if (discardUpload) Assert.Equal(BackendPlaylistTargetStatus.BackendFailure, result.Status);
+        else Assert.Equal(new byte[] { 255, 216, 255, 224 }, backend.ExistingArtwork);
+    }
+
+    [Fact]
+    public async Task Jellyfin_playlist_write_retries_when_uploaded_artwork_reads_back_empty()
+    {
+        var backend = new JellyfinFakeBackend("p1", "Mix", []) { DiscardArtworkUpload = true };
+        var target = new JellyfinPlaylistTarget(new HttpClient(backend), new Uri("https://jellyfin.test/"), new FakeAuthenticationResolver());
+        var result = await target.WriteAsync(Context(), new BackendPlaylistWriteRequest(
+            BackendPlaylistWriteMode.Reconcile, new BackendPlaylistMetadata("Mix", Artwork: [1, 2, 3]), [], "empty-readback", "p1"), default);
+        Assert.False(result.IsSuccess);
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, result.UpstreamStatus);
+    }
+
+    [Fact]
+    public async Task Jellyfin_artwork_upload_rejects_empty_source_without_touching_backend()
+    {
+        var backend = new JellyfinFakeBackend("p1", "Mix", []) { ExistingArtwork = [] };
+        var target = new JellyfinPlaylistTarget(new HttpClient(backend), new Uri("https://jellyfin.test/"), new FakeAuthenticationResolver());
+        Assert.False((await target.WriteArtworkOnlyAsync(Context(), "p1", new([], "image/png"), default)).IsSuccess);
+        Assert.Empty(backend.Requests);
     }
 
     [Theory]
@@ -811,6 +862,8 @@ public sealed class BackendPlaylistTargetTests
         public int MutationCount { get; private set; }
         public bool ArtworkWritten { get; private set; }
         public byte[]? ExistingArtwork { get; set; }
+        public bool DiscardArtworkUpload { get; set; }
+        public string? UploadContentType { get; private set; }
         public bool UseArtworkHashTag { get; set; }
         private string? ArtworkTag => UseArtworkHashTag && ExistingArtwork != null
             ? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(ExistingArtwork)) : null;
@@ -907,7 +960,11 @@ public sealed class BackendPlaylistTargetTests
             {
                 MutationCount++;
                 Playlists[path.Split('/')[1]].Artwork = ArtworkWritten = true;
-                ExistingArtwork = await request.Content!.ReadAsByteArrayAsync(cancellationToken);
+                UploadContentType = request.Content!.Headers.ContentType?.MediaType;
+                byte[] decoded;
+                try { decoded = Convert.FromBase64String(await request.Content.ReadAsStringAsync(cancellationToken)); }
+                catch (FormatException) { return new(HttpStatusCode.InternalServerError); }
+                ExistingArtwork = DiscardArtworkUpload ? [] : decoded;
                 return new(HttpStatusCode.NoContent);
             }
             if (request.Method == HttpMethod.Post && path.StartsWith("Items/", StringComparison.Ordinal))

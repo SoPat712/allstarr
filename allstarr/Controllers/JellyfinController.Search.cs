@@ -947,7 +947,8 @@ public partial class JellyfinController
         JsonDocument backendResult,
         int limit,
         int startIndex,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool musicLibraryParent = false)
     {
         var root = JsonNode.Parse(backendResult.RootElement.GetRawText()) as JsonObject ?? new JsonObject();
         var items = root["Items"] as JsonArray;
@@ -1032,7 +1033,7 @@ public partial class JellyfinController
             var row = _virtualPlaylistProtocolAdapter.ToItem(playlist, serverId: serverId);
             row["ParentId"] = folderId;
             if (parentId.Length > 0 && !parentId.Equals(folderId, StringComparison.OrdinalIgnoreCase) &&
-                !parentId.Equals(_settings.LibraryId, StringComparison.OrdinalIgnoreCase) ||
+                !musicLibraryParent ||
                 mediaTypes.Length > 0 && !mediaTypes.Contains("Audio", StringComparer.OrdinalIgnoreCase) || !query.Matches(row)) continue;
             items.Add(JsonSerializer.SerializeToNode(row));
         }
@@ -1096,8 +1097,10 @@ public partial class JellyfinController
         var parentId = parameters.GetValueOrDefault("ParentId");
         var context = HttpContext.RequireProtocolExecutionContext();
         var folderId = _virtualPlaylistProtocolAdapter.CachedPlaylistsFolderId(context);
-        if (!string.IsNullOrWhiteSpace(parentId) && (parentId.Equals(_settings.LibraryId, StringComparison.OrdinalIgnoreCase) ||
-            parentId.Equals(folderId, StringComparison.OrdinalIgnoreCase)))
+        var musicLibraryParent = !Request.Query["Recursive"].ToString().Equals("false", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(parentId) && !parentId.Equals(folderId, StringComparison.OrdinalIgnoreCase) &&
+            await _virtualPlaylistProtocolAdapter.IsMusicLibraryAsync(context, parentId, token);
+        if (!string.IsNullOrWhiteSpace(parentId) && (musicLibraryParent || parentId.Equals(folderId, StringComparison.OrdinalIgnoreCase)))
             parameters.Remove("ParentId");
         if (Request.Path.Value?.TrimEnd('/').Equals("/Playlists", StringComparison.OrdinalIgnoreCase) == true ||
             string.IsNullOrWhiteSpace(parameters.GetValueOrDefault("IncludeItemTypes")))
@@ -1148,7 +1151,7 @@ public partial class JellyfinController
         root["Items"] = rows;
         root["TotalRecordCount"] = rows.Count;
         using var native = JsonDocument.Parse(root.ToJsonString());
-        return await MergeVirtualPlaylistBrowseAsync(native, limit, startIndex, token);
+        return await MergeVirtualPlaylistBrowseAsync(native, limit, startIndex, token, musicLibraryParent);
     }
 
     #endregion
