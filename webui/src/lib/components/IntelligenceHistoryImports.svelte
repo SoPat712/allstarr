@@ -179,7 +179,7 @@
 </script>
 
 <section class="settings-card history-imports" aria-labelledby="history-imports-heading">
-  <header><div><h3 id="history-imports-heading">Listening history from other services</h3><small>Bring in your history from Spotify, Last.fm, ListenBrainz, Maloja or Koito. Imported plays show separately and never scrobble.</small></div></header>
+  <header><div><h3 id="history-imports-heading">Listening history from other services</h3><small>Bring in your history from Spotify, Last.fm, ListenBrainz, Maloja or Koito. Completed imported plays appear in Recap at their original dates and never scrobble.</small></div></header>
   <div class="settings-row">
     <div><a class="spotify-hint" href="https://www.spotify.com/account/privacy/" target="_blank" rel="noreferrer">From Spotify, request 'Extended streaming history' in your privacy settings.</a></div>
     <Button disabled={uploading || action} onclick={() => picker.click()}>Import history</Button>
@@ -221,7 +221,7 @@
 
 <Dialog.Root bind:open={previewOpen}>
   <Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog" onEscapeKeydown={event => { event.preventDefault(); void cancel(); }} onInteractOutside={event => { event.preventDefault(); void cancel(); }}>
-    <header><div><Dialog.Title>Import history</Dialog.Title><Dialog.Description>Review your history before importing. Imported plays show separately and never scrobble.</Dialog.Description></div></header>
+    <header><div><Dialog.Title>Import history</Dialog.Title><Dialog.Description>Review your history before importing. Completed imported plays appear in Recap at their original dates and never scrobble.</Dialog.Description></div></header>
     <form onsubmit={event => { event.preventDefault(); void confirm(); }}>
       <div class="history-preview">
         {#if previews.length}
