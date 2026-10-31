@@ -119,10 +119,11 @@
   .mix-heading { display: flex; align-items: center; gap: var(--space-4); margin-bottom: var(--space-4); }
   .mix-cover { width: 160px; flex: 0 0 160px; }
   .mix-heading p, .muted { font-size: var(--text-sm); color: var(--color-ink-muted); }
-  .mix-actions { display: flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: var(--space-2); }
-  .mix-actions > span { display: flex; align-items: center; }
-  .mix-actions :global(.app-state) { inline-size: calc(var(--control-lg) * 3); }
-  .mix-actions :global([data-slot="button"]) { padding-inline: var(--space-3); }
+  .mix-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--control-md); align-items: center; gap: var(--space-2); max-inline-size: calc(var(--control-lg) * 6 + var(--control-md) + var(--space-2) * 2); }
+  .mix-actions > span { display: flex; align-items: center; min-inline-size: 0; }
+  .mix-actions > :global(.icon-button) { grid-column: 3; }
+  .mix-actions :global(.app-state) { inline-size: auto; min-inline-size: 0; }
+  .mix-actions :global([data-slot="button"]) { inline-size: 100%; padding-inline: var(--space-2); white-space: normal; overflow-wrap: anywhere; }
   .mix-management { min-block-size: var(--control-md); font-size: var(--text-xs); }
   .mix-management a { display: inline-flex; align-items: center; min-block-size: var(--control-md); }
   .explanation { padding: var(--surface-gutter); display: grid; gap: var(--space-3); margin-top: var(--space-4); }
