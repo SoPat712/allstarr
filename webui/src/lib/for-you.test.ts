@@ -35,9 +35,13 @@ describe("personal mix presentation", () => {
     expect(reasonLabel("internal_reason")).toBe("Picked for you");
   });
   it("shortens readiness without replacing the detailed explanation", () => {
-    expect(shortReadiness("Play about 80 more songs, or import your listening history.")).toBe("Needs more listening");
+    expect(shortReadiness("Play about 80 more songs, or import your listening history.")).toBe("Play about 80 more songs");
     expect(shortReadiness("Follow artists, or play an artist at least five times.")).toBe("Follow more artists");
-    expect(shortReadiness("Connect a service with recommendations, or add unheard tagged songs to your library.")).toBe("Connect a music service");
+    expect(shortReadiness("Connect a service with recommendations, or add unheard tagged songs to your library.")).toBe("No new songs to suggest yet");
+    expect(shortReadiness("Add about 25 more qualifying analyzed or tagged songs.")).toBe("Needs about 25 more songs");
+    expect(shortReadiness("Add about 7 more qualifying analyzed or tagged songs.")).toBe("Needs about 7 more songs");
+    expect(shortReadiness("No playable songs are available for this mix yet. Refresh after more listening or new releases.")).toBe("No songs yet");
+    expect(shortReadiness("Play about 26 more songs in 30 days.")).toBe("Play about 26 more songs");
     expect(shortReadiness("No eligible playable songs found.")).toBe("Needs more music");
   });
   it("summarizes both taste layers and every empty fallback", () => {

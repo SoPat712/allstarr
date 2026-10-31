@@ -195,12 +195,152 @@ public sealed class DurablePlaylistProjectionReader(
         Guid? viewerUserId = null)
     {
         var result = new Dictionary<Guid, DurablePlaylistProjection>();
-        // ponytail: project sequentially; bulk-load only if measured list latency requires it.
-        foreach (var playlistLinkId in playlistLinkIds)
+        if (playlistLinkIds.Count == 0) return result;
+        await using var database = await factory.CreateDbContextAsync(cancellationToken);
+        var requestedIds = playlistLinkIds.Distinct().ToArray();
+        var query = database.PlaylistSourceSnapshots.AsNoTracking().Where(item =>
+            EF.Parameter(requestedIds).Contains(item.PlaylistLinkId) && item.PublishedAt.HasValue);
+        if (ownerUserId.HasValue) query = query.Where(item => item.OwnerUserId == ownerUserId.Value);
+        var snapshots = await query.GroupBy(item => item.PlaylistLinkId)
+            .Select(group => group.OrderByDescending(item => item.SnapshotVersion)
+                .ThenByDescending(item => item.RetrievedAt).First()).ToArrayAsync(cancellationToken);
+        if (snapshots.Length == 0) return result;
+        var linkIds = snapshots.Select(item => item.PlaylistLinkId).ToArray();
+        var snapshotIds = snapshots.Select(item => item.Id).ToArray();
+        var links = await database.PlaylistLinks.AsNoTracking()
+            .Where(item => EF.Parameter(linkIds).Contains(item.Id)).ToDictionaryAsync(item => item.Id, cancellationToken);
+        var entries = await database.PlaylistSourceEntries.AsNoTracking()
+            .Where(item => EF.Parameter(snapshotIds).Contains(item.PlaylistSourceSnapshotId))
+            .OrderBy(item => item.SourcePosition).ToArrayAsync(cancellationToken);
+        var entriesBySnapshot = entries.ToLookup(item => item.PlaylistSourceSnapshotId);
+        var externalIds = entries.Select(item => item.ExternalMetadataSnapshotId).Distinct().ToArray();
+        var external = await database.ExternalMetadataSnapshots.AsNoTracking()
+            .Where(item => EF.Parameter(externalIds).Contains(item.Id)).ToArrayAsync(cancellationToken);
+        var identityIds = external.Where(item => item.ProviderTrackIdentityId.HasValue)
+            .Select(item => item.ProviderTrackIdentityId!.Value).Distinct().ToArray();
+        var externalHashes = external.Select(item => item.ExternalIdHash).Distinct(StringComparer.Ordinal).ToArray();
+        var sourceIdentities = await database.ProviderTrackIdentities.AsNoTracking()
+            .Where(item => item.ResourceKind == ProviderResourceKind.Track &&
+                (EF.Parameter(identityIds).Contains(item.Id) || EF.Parameter(externalHashes).Contains(item.ExternalIdHash)))
+            .ToArrayAsync(cancellationToken);
+        var sourceIndex = BuildRetentionSourceIdentityIndex(sourceIdentities);
+        var scopedSources = external.Select(item => (item.Id, Identity: SelectRetentionSourceIdentity(item, sourceIndex)))
+            .Where(item => item.Identity != null).ToDictionary(item => item.Id, item => item.Identity!);
+        var linkedSources = external.Where(item => item.ProviderTrackIdentityId is { } id &&
+                sourceIndex.ById.TryGetValue(id, out var identity) && MatchesSourceIdentity(item, identity))
+            .ToDictionary(item => item.Id, item => sourceIndex.ById[item.ProviderTrackIdentityId!.Value]);
+        var matchIds = entries.Where(item => item.PublishedTrackMatchId.HasValue)
+            .Select(item => item.PublishedTrackMatchId!.Value).Distinct().ToArray();
+        var matches = await database.TrackMatches.AsNoTracking()
+            .Where(item => EF.Parameter(matchIds).Contains(item.Id)).ToArrayAsync(cancellationToken);
+        var canonicalIds = scopedSources.Values.Select(item => item.CanonicalRecordingId)
+            .Concat(matches.Where(item => item.CanonicalRecordingId.HasValue).Select(item => item.CanonicalRecordingId!.Value))
+            .Distinct().ToArray();
+        var identities = await database.ProviderTrackIdentities.AsNoTracking()
+            .Where(item => EF.Parameter(canonicalIds).Contains(item.CanonicalRecordingId) &&
+                item.ResourceKind == ProviderResourceKind.Track &&
+                (item.Verification == ProviderIdentityVerification.Verified || item.Verification == ProviderIdentityVerification.Pinned))
+            .ToArrayAsync(cancellationToken);
+        var durations = await database.CanonicalRecordings.AsNoTracking()
+            .Where(item => EF.Parameter(canonicalIds).Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, item => item.DurationMilliseconds, cancellationToken);
+        // Only current-generation terminal runs and aggregate summary metadata are needed by list callers.
+        var runs = await database.PlaylistSyncRuns.AsNoTracking()
+            .Where(item => EF.Parameter(snapshotIds).Contains(item.PlaylistSourceSnapshotId) &&
+                item.State != PlaylistSyncState.Pending && item.State != PlaylistSyncState.Running)
+            .GroupBy(item => new { item.PlaylistSourceSnapshotId, item.PlaylistLinkId, item.OwnerUserId })
+            .Select(group => group.OrderByDescending(item => item.Generation).First()).ToArrayAsync(cancellationToken);
+        var runIds = runs.Select(item => item.Id).ToArray();
+        var materialized = await database.PlaylistSyncEntryResults.AsNoTracking()
+            .Where(item => EF.Parameter(runIds).Contains(item.PlaylistSyncRunId) &&
+                (item.Outcome == PlaylistEntryOutcome.Reused || item.Outcome == PlaylistEntryOutcome.Added ||
+                 item.Outcome == PlaylistEntryOutcome.Reordered))
+            .GroupBy(item => item.PlaylistSyncRunId)
+            .Select(group => new { Id = group.Key, Count = group.Select(item => item.PlaylistSourceEntryId).Distinct().Count() })
+            .ToDictionaryAsync(item => item.Id, item => item.Count, cancellationToken);
+        var completed = await database.PlaylistSyncRuns.AsNoTracking()
+            .Where(item => EF.Parameter(linkIds).Contains(item.PlaylistLinkId) &&
+                (item.State == PlaylistSyncState.Succeeded || item.State == PlaylistSyncState.PartiallySucceeded))
+            .GroupBy(item => new { item.PlaylistLinkId, item.OwnerUserId })
+            .Select(group => new { group.Key.PlaylistLinkId, group.Key.OwnerUserId, CompletedAt = group.Max(item => item.CompletedAt) })
+            .ToArrayAsync(cancellationToken);
+        var versions = await database.PlaylistSourceSnapshots.AsNoTracking()
+            .Where(item => EF.Parameter(linkIds).Contains(item.PlaylistLinkId))
+            .GroupBy(item => new { item.PlaylistLinkId, item.OwnerUserId })
+            .Select(group => new { group.Key.PlaylistLinkId, group.Key.OwnerUserId, Version = group.Max(item => item.SnapshotVersion) })
+            .ToArrayAsync(cancellationToken);
+        foreach (var viewerSnapshots in snapshots.GroupBy(item => viewerUserId ?? ownerUserId ?? item.OwnerUserId))
         {
-            var projection = await ReadByLinkIdAsync(
-                ownerUserId, playlistLinkId, cancellationToken, viewerUserId);
-            if (projection != null) result[playlistLinkId] = projection;
+            var viewer = viewerSnapshots.Key;
+            var access = await libraryAccess.ResolveUserAsync(viewer, cancellationToken);
+            var policy = effectivePolicies == null ? null : await effectivePolicies.ResolveForUserAsync(viewer, cancellationToken);
+            var providerOrder = providerGateway == null ? null : access.Context?.Actor is { } actor
+                ? await providerGateway.GetPlayableProviderOrderAsync(actor, cancellationToken) : [];
+            var overrideRecords = await ManualTrackOverrides.LoadAsync(database, viewer, external, cancellationToken);
+            var overrides = ManualTrackOverrides.Index(external, overrideRecords, viewer);
+            var libraryIds = matches.Where(item => item.LibraryTrackId.HasValue).Select(item => item.LibraryTrackId!.Value)
+                .Concat(overrides.Values.Select(item => item.Effective?.LibraryTrackId).OfType<Guid>()).Distinct().ToArray();
+            var library = await LibraryTrackAccess.Query(database, access)
+                .Where(item => EF.Parameter(libraryIds).Contains(item.Id) || item.CanonicalRecordingId.HasValue &&
+                    EF.Parameter(canonicalIds).Contains(item.CanonicalRecordingId.Value)).ToArrayAsync(cancellationToken);
+            foreach (var snapshot in viewerSnapshots)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var link = links[snapshot.PlaylistLinkId];
+                if (link.OwnerUserId != snapshot.OwnerUserId || link.ProviderAccountId != snapshot.ProviderAccountId)
+                    throw new InvalidOperationException("The published playlist source does not match its link.");
+                var currentEntries = entriesBySnapshot[snapshot.Id].ToArray();
+                var currentExternalIds = currentEntries.Select(item => item.ExternalMetadataSnapshotId).ToHashSet();
+                var currentExternal = external.Where(item => currentExternalIds.Contains(item.Id) &&
+                    item.OwnerUserId == snapshot.OwnerUserId && item.ProviderAccountId == link.ProviderAccountId &&
+                    item.BackendInstanceId == link.TargetBackendInstanceId).ToDictionary(item => item.Id);
+                var currentMatchIds = currentEntries.Select(item => item.PublishedTrackMatchId).ToHashSet();
+                var currentMatches = matches.Where(item => currentMatchIds.Contains(item.Id) && item.OwnerUserId == snapshot.OwnerUserId)
+                    .ToDictionary(item => item.Id);
+                var currentSources = scopedSources.Where(item => currentExternal.ContainsKey(item.Key)).ToDictionary();
+                var currentCanonicalIds = currentSources.Values.Select(item => item.CanonicalRecordingId)
+                    .Concat(currentMatches.Values.Where(item => item.CanonicalRecordingId.HasValue)
+                        .Select(item => item.CanonicalRecordingId!.Value)).ToHashSet();
+                var currentIdentities = identities.Where(item => currentCanonicalIds.Contains(item.CanonicalRecordingId)).ToArray();
+                var currentOverrides = overrides.Where(item => currentExternal.ContainsKey(item.Key)).ToDictionary();
+                IReadOnlyList<string> currentOrder = providerOrder ?? new[] { link.SourceProviderId }
+                    .Concat(currentIdentities.Select(item => item.ProviderId))
+                    .Concat(currentOverrides.Values.Select(item => item.Effective?.TargetProviderId).OfType<string>())
+                    .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+                if (providerOrder == null && policy != null)
+                    currentOrder = policy.ApplyProviderAvailability(ProviderCapabilityKind.Streaming, currentOrder);
+                var currentLibraryIds = currentMatches.Values.Select(item => item.LibraryTrackId)
+                    .Concat(currentOverrides.Values.Select(item => item.Effective?.LibraryTrackId)).OfType<Guid>().ToHashSet();
+                var currentLibrary = library.Where(item =>
+                    (currentLibraryIds.Contains(item.Id) || item.CanonicalRecordingId is { } id && currentCanonicalIds.Contains(id)) &&
+                    item.BackendInstanceId == link.TargetBackendInstanceId &&
+                    (link.TargetProtocol == "jellyfin" ? item.Protocol == "jellyfin" :
+                        item.Protocol is "subsonic" or "opensubsonic" or "navidrome")).ToDictionary(item => item.Id);
+                var projected = currentEntries.Select(entry => ProjectEntry(entry, currentExternal[entry.ExternalMetadataSnapshotId],
+                    currentSources, currentIdentities, currentOrder,
+                    entry.PublishedTrackMatchId is { } id ? currentMatches.GetValueOrDefault(id) : null,
+                    currentOverrides, currentLibrary, policy, durations)).ToArray();
+                var run = runs.SingleOrDefault(item => item.PlaylistSourceSnapshotId == snapshot.Id &&
+                    item.PlaylistLinkId == link.Id && item.OwnerUserId == snapshot.OwnerUserId);
+                result[link.Id] = new(link.Id, snapshot.Id, snapshot.SnapshotVersion, snapshot.Name,
+                    link.SourceProviderId, link.SourcePlaylistId, link.ProviderAccountId, link.TargetProtocol,
+                    link.TargetPlaylistId, snapshot.ArtworkReferenceKey, snapshot.RetrievedAt,
+                    completed.SingleOrDefault(item => item.PlaylistLinkId == link.Id && item.OwnerUserId == snapshot.OwnerUserId)?.CompletedAt,
+                    run?.State, projected, run?.PlannedTargetTrackCount, run?.PlannedTargetDurationMilliseconds,
+                    run?.VerifiedTargetTrackCount, run?.VerifiedTargetDurationMilliseconds, run?.VerificationCode, run?.VerifiedAt)
+                {
+                    SyncFailureCode = run?.ConflictCode,
+                    Description = snapshot.Description,
+                    LastMatchedAt = currentMatches.Count == 0 ? null : currentMatches.Values.Max(item => item.DecidedAt),
+                    RunId = run?.Id,
+                    Generation = run?.Generation,
+                    MaterializedCount = run == null ? 0 : materialized.GetValueOrDefault(run.Id),
+                    ProjectionMode = link.ProjectionMode,
+                    LatestSourceSnapshotVersion = versions.Single(item => item.PlaylistLinkId == link.Id && item.OwnerUserId == snapshot.OwnerUserId).Version,
+                    SourceEntries = currentEntries.Select(entry => ProjectSourceEntry(entry,
+                        currentExternal[entry.ExternalMetadataSnapshotId], linkedSources)).ToArray()
+                };
+            }
         }
         return result;
     }

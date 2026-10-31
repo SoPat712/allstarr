@@ -4,6 +4,7 @@ using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
+using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 using Moq;
@@ -12,6 +13,126 @@ namespace allstarr.Tests;
 
 public sealed partial class PlaylistOrchestrationIntegrationTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BulkPlaylistProjection_HasBoundedReadsAndMatchesDetailSummaries(bool useGateway)
+    {
+        _source.Snapshot = Snapshot("bulk-list",
+            Entry(0, "one", "source-1", "One"),
+            Entry(1, "external", "source-external", "External"),
+            Entry(2, "missing", "missing", "Missing"));
+        var refresh = await _service.RefreshAsync(Context(), _link);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var external = await db.ExternalMetadataSnapshots.SingleAsync(item => item.ExternalIdHash == Hash("source-external"));
+            var pin = Override(external.Id, ManualOverrideDecision.Pin, null);
+            pin.TargetProviderId = "deezer";
+            pin.TargetExternalId = "external-song";
+            db.ManualTrackOverrides.Add(pin);
+            await db.SaveChangesAsync();
+        }
+        await _service.RunAsync(Context(), new(_link, 1, refresh.SnapshotId));
+        var links = new List<Guid> { _link };
+        for (var index = 1; index < 4; index++)
+        {
+            var link = Link();
+            link.Id = Guid.CreateVersion7();
+            link.SourcePlaylistId = "bulk-" + index;
+            link.SourcePlaylistIdHash = Hash(link.SourcePlaylistId);
+            await using (var db = await _factory.CreateDbContextAsync())
+            {
+                db.PlaylistLinks.Add(link);
+                await db.SaveChangesAsync();
+            }
+            await _service.RunAsync(Context(), new(link.Id, 1));
+            links.Add(link.Id);
+        }
+        _source.Snapshot = Snapshot("bulk-list-next", Entry(0, "next", "source-1", "Next"));
+        await _service.RunAsync(Context(), new(_link, 2));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var latest = await db.PlaylistSourceSnapshots.Where(item => item.PlaylistLinkId == _link)
+                .OrderByDescending(item => item.SnapshotVersion).FirstAsync();
+            db.PlaylistSourceSnapshots.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = _user,
+                PlaylistLinkId = _link,
+                ProviderAccountId = _account,
+                SnapshotVersion = latest.SnapshotVersion + 1,
+                ProviderRevision = "bulk-list-unpublished",
+                Name = "Building",
+                PayloadSha256 = Hash("bulk-list-unpublished"),
+                CorrelationId = "bulk-list",
+                RetrievedAt = _now.AddMinutes(1)
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var commands = new CommandCounter();
+        var factory = new DbFactory(new DbContextOptionsBuilder<AllstarrDbContext>()
+            .UseSqlite(_database.ConnectionString)
+            .AddInterceptors(new SqlitePragmaInterceptor(), commands).Options);
+        var realAccess = new TestBackendLibraryAccess(factory, "music");
+        var access = new Mock<IBackendLibraryAccessResolver>();
+        access.Setup(item => item.ResolveUserAsync(_user, It.IsAny<CancellationToken>()))
+            .Returns((Guid user, CancellationToken token) => realAccess.ResolveUserAsync(user, token));
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["deezer", "fixture"]);
+        var policies = new Mock<IEffectiveProviderPolicyResolver>();
+        policies.Setup(item => item.ResolveForUserAsync(_user, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EffectiveProviderPolicySnapshot(
+                System.Collections.Immutable.ImmutableDictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>.Empty,
+                System.Collections.Immutable.ImmutableHashSet<string>.Empty, "Lossless", 0));
+        var reader = new DurablePlaylistProjectionReader(factory, access.Object, useGateway ? gateway.Object : null, policies.Object);
+        commands.Reset();
+        await reader.ReadByLinkIdsAsync(_user, [_link], viewerUserId: _user);
+        var singleReads = commands.ReadCount;
+        commands.Reset();
+        access.Invocations.Clear();
+        gateway.Invocations.Clear();
+        policies.Invocations.Clear();
+        var bulk = await reader.ReadByLinkIdsAsync(_user, [.. links, Guid.CreateVersion7(), _link], viewerUserId: _user);
+        var bulkReads = commands.ReadCount;
+        output.WriteLine($"Bulk projection gateway={useGateway}: one link={singleReads} reads, four links={bulkReads} reads.");
+        Assert.Equal(singleReads, bulkReads);
+        Assert.Equal(15, bulkReads);
+        Assert.Equal(4, bulk.Count);
+        access.Verify(item => item.ResolveUserAsync(_user, It.IsAny<CancellationToken>()), Times.Once);
+        policies.Verify(item => item.ResolveForUserAsync(_user, It.IsAny<CancellationToken>()), Times.Once);
+        if (useGateway)
+            gateway.Verify(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()), Times.Once);
+        commands.Reset();
+        foreach (var id in links)
+        {
+            var detail = Assert.IsType<DurablePlaylistProjection>(await reader.ReadByLinkIdAsync(_user, id, viewerUserId: _user));
+            var summary = bulk[id];
+            Assert.Null(summary.Reconciliation);
+            Assert.Equal(System.Text.Json.JsonSerializer.Serialize(detail with { Reconciliation = null }),
+                System.Text.Json.JsonSerializer.Serialize(summary));
+        }
+        output.WriteLine($"Sequential detail projection: {commands.ReadCount} reads for four links; bulk list: {bulkReads}.");
+        Assert.True(commands.ReadCount > bulkReads);
+        Assert.True(bulk[_link].HasNewerSourceGeneration);
+        Assert.Contains(bulk.Values.SelectMany(item => item.Entries), item => item.RouteKind == "external");
+        Assert.Contains(bulk.Values.SelectMany(item => item.Entries), item => item.RouteKind == "unmatched");
+        realAccess.Permissions[_user] = new(true, []);
+        var restricted = await reader.ReadByLinkIdsAsync(_user, links, viewerUserId: _user);
+        Assert.DoesNotContain(restricted.Values.SelectMany(item => item.Entries), item => item.RouteKind == "local");
+        foreach (var id in links)
+        {
+            var detail = Assert.IsType<DurablePlaylistProjection>(await reader.ReadByLinkIdAsync(_user, id, viewerUserId: _user));
+            Assert.Equal(System.Text.Json.JsonSerializer.Serialize(detail with { Reconciliation = null }),
+                System.Text.Json.JsonSerializer.Serialize(restricted[id]));
+        }
+        Assert.Empty(await reader.ReadByLinkIdsAsync(Guid.CreateVersion7(), links, viewerUserId: _user));
+        commands.Reset();
+        Assert.Empty(await reader.ReadByLinkIdsAsync(_user, [], viewerUserId: _user));
+        Assert.Equal(0, commands.ReadCount);
+    }
+
     [Fact]
     public async Task PlaylistResponseMembership_UsesOneVisibleListInsteadOfReadingEveryNativePlaylist()
     {

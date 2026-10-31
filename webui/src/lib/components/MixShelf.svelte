@@ -6,7 +6,7 @@
   let { title, cards, onopen, seeAll = "", additions = [], albumArt = false, busy = "", onadd }: { title: string; cards: MixCard[]; onopen: (card: MixCard) => void; seeAll?: string; additions?: string[]; albumArt?: boolean; busy?: string; onadd?: (card: MixCard) => void } = $props();
 </script>
 {#snippet content(card: MixCard)}
-  <span class="artwork">{#if albumArt}<MixArtwork references={card.coverArtwork} />{:else}<MixCover mix={card} />{/if}</span>
+  <span class="artwork" class:unready={!card.readiness.ready}>{#if albumArt}<MixArtwork references={card.coverArtwork} />{:else}<MixCover mix={card} />{/if}</span>
   <strong>{mixName(card.name)}</strong><span class="description">{card.readiness.ready ? mixDescription(card.description, card.kind) : shortReadiness(card.readiness.message)}</span>
   <small>{card.inApps ? "✓ In your apps" : ""}</small>
 {/snippet}
@@ -37,6 +37,7 @@
   .mix-open:focus-visible { outline: 2px solid var(--color-signal); outline-offset: -2px; }
   .cover { width: 100%; position: relative; border-radius: inherit; }
   .artwork { display: block; width: 100%; }
+  .artwork.unready { opacity: 0.6; }
   small { min-height: 1.4em; font-size: var(--text-xs); color: var(--color-ink-muted); }
   .add-chip { position: absolute; top: var(--space-2); right: var(--space-2); background: var(--color-panel); border-radius: var(--radius-md); padding: var(--space-1) var(--space-2); font-size: var(--text-sm); cursor: pointer; }
   .add-chip:hover { background: color-mix(in srgb, var(--color-ink) 8%, var(--color-panel)); }

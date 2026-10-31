@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { X } from "@lucide/svelte";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { ApiError, activityWork, audioMuse, historyImports, mixes, playlistLinks, releaseInbox, type AudioMuseStatus, type MixCard, type PlaylistLink, type PlaylistSourceAccount } from "$lib/api";
@@ -30,7 +31,7 @@
   const dailyReady = $derived(imported || daily.length > 0 && daily.every(item => item.readiness.ready));
   const remaining = $derived(daily.find(item => !item.readiness.ready)?.readiness.message.match(/about (\d+) more/)?.[1]);
   const soundReady = $derived(status?.reason === null && status.analyzedSongs > 0);
-  const checklist = $derived(!hidden && (!made.length || made.some(item => !item.readiness.ready) || !connected || administrator && !soundReady));
+  const checklist = $derived(!hidden && (!dailyReady || !connected || administrator && !soundReady));
   const recipes = [
     { source: "listenbrainz", kind: "weekly-jams", name: "Weekly Jams", label: "ListenBrainz" },
     { source: "listenbrainz", kind: "weekly-exploration", name: "Weekly Exploration", label: "ListenBrainz" },
@@ -127,12 +128,11 @@
   <div class="section-heading"><div><h2>{greeting(new Date().getHours(), listenerName)}</h2><p>Mixes refresh every morning.</p></div><RefreshButton variant="secondary" label="Refresh page" onrefresh={async () => { await pending; await load(); }} /></div>
   {#if loading}{#each ["Made for you", "Moods"] as title}<section aria-label={`Loading ${title}`}><h2>{title}</h2><div class="loading-shelf">{#each [1, 2, 3, 4, 5, 6] as i}<Skeleton class="mix-skeleton" />{/each}</div></section>{/each}
   {:else}
-    {#if checklist}<section class="settings-card checklist" aria-label="Make your mixes better">
-      <header><h2>Make your mixes better</h2><Button variant="ghost" onclick={hide}>Hide</Button></header>
-      <div class="check-row"><span aria-label={dailyReady ? "Done" : "To do"}>{dailyReady ? "✓" : "○"}</span><span>{dailyReady ? "Enough listening for blends" : `Listen to ${remaining ? `about ${remaining} more` : "more"} songs — or import your history`}</span>{#if !dailyReady}<Button variant="secondary" onclick={() => importOpen = true}>Import history</Button>{/if}</div>
-      <div class="check-row"><span aria-label={connected ? "Done" : "To do"}>{connected ? "✓" : "○"}</span><span>Connect Last.fm or ListenBrainz for more discoveries</span>{#if !connected}<Button variant="secondary" href="#/sources">Connect</Button>{/if}</div>
-      {#if administrator}<div class="check-row"><span aria-label={soundReady ? "Done" : "To do"}>{soundReady ? "✓" : "○"}</span><span>Turn on sound analysis for mood mixes</span>{#if !soundReady}<Button variant="secondary" href="#/settings/sound-analysis">Set up</Button>{/if}</div>
-      {/if}
+    {#if checklist}<section class="settings-card checklist" aria-label="Get more from your mixes">
+      <header><h2>Get more from your mixes</h2><button type="button" class="icon-button" aria-label="Hide tips" onclick={hide}><X size={18} aria-hidden="true" /></button></header>
+      {#if !dailyReady}<div class="check-row"><span>Listen to {remaining ? `about ${remaining} more` : "more"} songs — or import your history</span><Button variant="secondary" size="sm" onclick={() => importOpen = true}>Import history</Button></div>{/if}
+      {#if !connected}<div class="check-row"><span>Connect Last.fm or ListenBrainz for more discoveries</span><Button variant="secondary" size="sm" href="#/sources">Connect</Button></div>{/if}
+      {#if administrator && !soundReady}<div class="check-row"><span>Turn on sound analysis for mood mixes</span><Button variant="secondary" size="sm" href="#/settings/sound-analysis">Set up</Button></div>{/if}
     </section>{/if}
     {#if error}<p class="muted" role="alert">{error} <Button variant="secondary" onclick={load}>Try again</Button></p>{/if}
     {#if !error && !made.some(item => item.readiness.ready)}<div class="settings-card empty"><p>Your mixes will appear here. Play some music, or import your history to start right away.</p></div>{/if}
@@ -157,10 +157,13 @@
   .section-heading p, .muted, .empty { color: var(--color-ink-muted); }
   .apps-hint { font-size: var(--text-xs); }
   .checklist, .empty { padding: var(--surface-gutter); }
-  .check-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); min-height: 64px; padding-block: var(--space-2); }
+  .checklist header { flex-wrap: nowrap; padding: 0; }
+  .checklist h2 { font-size: var(--text-sm); }
+  .check-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); min-height: 48px; padding-block: var(--space-2); }
+  .check-row :global([data-slot="button"]) { min-height: var(--control-md); }
   .check-row + .check-row { border-top: 1px solid var(--color-edge); }
   .loading-shelf { display: grid; grid-auto-flow: column; grid-auto-columns: 160px; overflow: hidden; gap: 12px; margin-top: var(--space-3); }
   .loading-shelf :global(.mix-skeleton) { height: 263px; border-radius: var(--radius-md); }
   @media (min-width: 900px) { .loading-shelf { grid-auto-columns: 184px; } .loading-shelf :global(.mix-skeleton) { height: 287px; } }
-  @media (max-width: 600px) { .check-row { grid-template-columns: 24px minmax(0, 1fr); } .check-row :global([data-slot="button"]) { grid-column: 2; justify-self: start; } }
+  @media (max-width: 600px) { .check-row { grid-template-columns: minmax(0, 1fr); } .check-row :global([data-slot="button"]) { grid-column: 1; justify-self: start; } }
 </style>

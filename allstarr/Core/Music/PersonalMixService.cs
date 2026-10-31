@@ -73,13 +73,14 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     private static Task<ExternalMetadataSnapshotRecord?> RowAsync(AllstarrDbContext db, UserRecord user, CancellationToken token, string kind = ResourceKind) =>
         db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == user.Id && item.Protocol == user.BackendType &&
             item.BackendInstanceId == user.BackendInstanceId && item.BackendPrincipalId == user.BackendPrincipalId &&
-            item.ProviderId == "allstarr" && item.ResourceKind == kind && item.ExternalIdHash == Scope(user))
+            item.ProviderId == "allstarr" && item.ProviderAccountId == null && item.ResourceKind == kind && item.ExternalIdHash == Scope(user))
             .OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(token);
 
-    private async Task<PersonalMixDocument> LoadAsync(AllstarrDbContext db, UserRecord user, CancellationToken token, bool publishedOnly = false)
+    private async Task<PersonalMixDocument> LoadAsync(AllstarrDbContext db, UserRecord user, CancellationToken token, bool publishedOnly = false,
+        ExternalMetadataSnapshotRecord? saved = null, PersonalMixDocument? document = null)
     {
-        var row = await RowAsync(db, user, token);
-        var document = row == null ? new() { AppsOptInVersion = 3 } : JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!;
+        var row = saved ?? await RowAsync(db, user, token);
+        document ??= row == null ? new() { AppsOptInVersion = 3 } : JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!;
         if (document.AppsOptInVersion < 3)
         {
             var payload = JsonNode.Parse(row!.PayloadJson)!;
@@ -119,7 +120,15 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             .Select(mix => mix.Kind).ToArray();
         if (missing.Length == 0 && stale.Length == 0) return document;
         var events = await Events(db, user, await taste.UseImportedHistoryAsync(user.Id, token)).Where(item => item.State == ListeningEventState.Completed && item.ListenedAt <= clock.UtcNow)
-            .ToArrayAsync(token);
+            .Select(item => new ListeningEventRecord
+            {
+                Id = item.Id,
+                Artist = item.Artist,
+                TrackReference = item.TrackReference,
+                ListenedAt = item.ListenedAt,
+                SourceKind = item.SourceKind,
+                State = item.State
+            }).ToArrayAsync(token);
         var follows = await releases.ListAsync(user.Id, token);
         var loved = (await db.FavoriteStates.AsNoTracking().Where(item => item.OwnerUserId == user.Id &&
             item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId && item.IsFavorite)
@@ -280,7 +289,17 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
 
     public async Task<IReadOnlyList<PersonalMix>> ListAsync(Guid owner, string? timeZoneId = null, CancellationToken token = default)
     {
-        var (user, document, _) = await SnapshotAsync(owner, token, timeZoneId);
+        await using var db = await factory.CreateDbContextAsync(token);
+        var user = await UserAsync(db, owner, token);
+        var row = await RowAsync(db, user, token);
+        if (timeZoneId != null) DurableScheduleEngine.Validate("0 4 * * *", timeZoneId);
+        var saved = row == null ? null : JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!;
+        PersonalMixDocument document;
+        if (saved != null && (saved.AppsOptInVersion < 3 || timeZoneId != null && saved.TimeZoneId != timeZoneId.Trim()) ||
+            saved == null && timeZoneId != null)
+            document = (await SnapshotAsync(owner, token, timeZoneId)).Document;
+        else
+            document = await LoadAsync(db, user, token, saved: row, document: saved);
         return (await VisibleAsync(owner, document, token)).Concat(await ExternalMixesAsync(user, token)).ToArray();
     }
 

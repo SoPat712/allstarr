@@ -18,6 +18,12 @@ export function reasonLabel(reason: string) {
   return "Picked for you";
 }
 export function shortReadiness(message: string) {
+  const plays = message.match(/^Play about (\d+) more songs/i);
+  if (plays) return `Play about ${plays[1]} more songs`;
+  const songs = message.match(/^Add about (\d+) more qualifying analyzed or tagged songs/i);
+  if (songs) return `Needs about ${songs[1]} more songs`;
+  if (/^No playable songs are available/i.test(message)) return "No songs yet";
+  if (message === "Connect a service with recommendations, or add unheard tagged songs to your library.") return "No new songs to suggest yet";
   if (/play about|listening|history/i.test(message)) return "Needs more listening";
   if (/^Follow/i.test(message)) return "Follow more artists";
   if (/^Connect/i.test(message)) return "Connect a music service";

@@ -27,10 +27,15 @@ public sealed partial class PersonalMixService
             .Where(IsExternalLink).ToArray();
         var reader = new DurablePlaylistProjectionReader(factory, libraryAccess, providers, policies);
         var policy = await policies.ResolveForUserAsync(user.Id, token);
+        var projections = id.HasValue
+            ? new Dictionary<Guid, DurablePlaylistProjection>()
+            : await reader.ReadByLinkIdsAsync(user.Id, links.Select(link => link.Id).ToArray(), token, user.Id);
         var result = new List<PersonalMix>(links.Length);
         foreach (var link in links)
         {
-            var projection = await reader.ReadByLinkIdAsync(user.Id, link.Id, token, user.Id);
+            var projection = id.HasValue
+                ? await reader.ReadByLinkIdAsync(user.Id, link.Id, token, user.Id)
+                : projections.GetValueOrDefault(link.Id);
             var songs = projection?.Entries.Where(entry => entry.RouteKind is "local" or "external").Select(entry =>
             {
                 var metadata = projection.SourceEntries.FirstOrDefault(item => item.Position == entry.Position)?.Metadata;
@@ -50,8 +55,8 @@ public sealed partial class PersonalMixService
                     ExplicitContentLyrics = metadata?.IsExplicit is { } explicitContent ? explicitContent ? 1 : 0 : null
                 };
             }).ToArray() ?? [];
-            var scores = await taste.ScoreManyAsync(user.Id, songs, token);
-            var items = songs.Where(song => !scores[song].Blocked && policy.Includes(song))
+            var blocked = await taste.BlockedSongsAsync(user.Id, songs, token);
+            var items = songs.Where(song => !blocked.Contains(song) && policy.Includes(song))
                 .Select(song => new PersonalMixItem(link.Id, projection!.SnapshotVersion, SafeSong(song),
                     link.SourceProviderId, "From your linked playlist", 0)).ToArray();
             result.Add(new(link.Id, "external", PlaylistVirtualizationService.DisplayName(link.SourceProviderId, projection?.Name ?? ExternalName(link)),

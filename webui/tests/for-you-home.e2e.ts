@@ -22,7 +22,9 @@ test("Checklist keeps history and dismissal without an admin publishing action",
   await page.getByRole("button", { name: "Import history", exact: true }).click(); await expect(page.getByRole("dialog", { name: "Bring in your history" })).toBeVisible();
   await expect(page.getByLabel("History file")).toHaveAttribute("multiple", "");
   await page.getByRole("button", { name: "Close history" }).click();
-  await page.getByRole("button", { name: "Hide", exact: true }).click(); await page.reload(); await expect(page.getByRole("heading", { name: "Make your mixes better" })).toHaveCount(0);
+  await page.getByRole("button", { name: "Hide tips", exact: true }).click(); await page.reload();
+  await expect(page.getByRole("heading", { name: "Made for you", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Get more from your mixes" })).toHaveCount(0);
 });
 test("Legacy section routes redirect and listeners never see administrative setup", async ({ page }) => {
   await mockForYou(page, { brandNew: true }); await page.goto("/#/intelligence?section=sounds");
@@ -35,7 +37,7 @@ test("External mix opt-in stays on one artwork card", async ({ page }) => {
   await expect.poll(() => state.calls.some(call => call.path === "/api/admin/mixes/external" && call.body?.kind === "loved")).toBe(true);
 });
 test("Ready listeners see music without the completed checklist", async ({ page }) => {
-  await mockForYou(page); await openHome(page); await expect(page.getByRole("heading", { name: "Make your mixes better" })).toHaveCount(0);
+  await mockForYou(page); await openHome(page); await expect(page.getByRole("heading", { name: "Get more from your mixes" })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Moods", exact: true }).locator(".mix-open")).toHaveCount(5);
 });
 test("A failed mix request can retry in place and background reads stay silent", async ({ page }) => {
@@ -55,11 +57,15 @@ test("Loading shelves never push the page wider than the window", async ({ page 
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1000);
 });
 
-test("Not-ready shelf artwork stays visible with its readiness description", async ({ page }) => {
+test("Not-ready mixes are dimmed with a reason and open without an Add chip", async ({ page }) => {
   await mockForYou(page, { partial: true }); await openHome(page);
   const mix = page.getByRole("region", { name: "Made for you", exact: true }).getByRole("button", { name: /Blend 4/ });
-  await expect(mix.locator("canvas")).toHaveCSS("opacity", "1");
-  await expect(mix).toContainText("Needs more listening");
+  await expect(mix.locator(".artwork")).toHaveCSS("opacity", "0.6");
+  await expect(mix).toContainText("Play about 80 more songs");
+  await expect(page.getByRole("group", { name: "Blend 4", exact: true }).getByRole("button", { name: "Add Blend 4", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add Blend 2", exact: true })).toBeVisible();
+  await mix.click();
+  await expect(page.getByRole("dialog")).toBeVisible();
 });
 
 test("Cover Add is one click, keeps card height, and the card opens separately", async ({ page }) => {
@@ -79,12 +85,12 @@ test("Cover Add is one click, keeps card height, and the card opens separately",
   await expect(page.getByRole("dialog").getByRole("list", { name: "Songs", exact: true })).toBeVisible();
 });
 
-test("Completed history marks the listening checklist row done", async ({ page }) => {
+test("Completed history removes the listening tip even with an unready mix", async ({ page }) => {
   await mockForYou(page, { partial: true });
   await page.route("**/api/admin/history/imports", route => route.fulfill({ json: [{ state: 3, importedRows: 62000 }] }));
   await openHome(page);
-  const checklist = page.getByRole("region", { name: "Make your mixes better", exact: true });
-  await expect(checklist.getByText("Enough listening for blends", { exact: true })).toBeVisible();
+  const checklist = page.getByRole("region", { name: "Get more from your mixes", exact: true });
+  await expect(checklist).toHaveCount(0);
   await expect(checklist.getByRole("button", { name: "Import history", exact: true })).toHaveCount(0);
 });
 
@@ -112,4 +118,23 @@ test.describe("Cover touch targets", () => {
     release(); await expect(add).toHaveCount(0);
     expect(state.calls.filter(call => call.path === "/api/admin/mixes/daily-2/in-apps")).toHaveLength(1);
   });
+});
+
+test("Tips list only unfinished actions", async ({ page }) => {
+  await mockForYou(page, { partial: true, admin: true }); await openHome(page);
+  const tips = page.getByRole("region", { name: "Get more from your mixes", exact: true });
+  await expect(tips.locator(".check-row")).toHaveCount(1);
+  await expect(tips.getByRole("button", { name: "Import history", exact: true })).toBeVisible();
+  await expect(tips.getByText("Connect Last.fm or ListenBrainz for more discoveries")).toHaveCount(0);
+  await expect(tips.getByText("Turn on sound analysis for mood mixes")).toHaveCount(0);
+  const close = await tips.getByRole("button", { name: "Hide tips" }).boundingBox();
+  expect(close!.width).toBeGreaterThanOrEqual(44); expect(close!.height).toBeGreaterThanOrEqual(44);
+});
+
+test("Finished tips stay absent when another mix cannot be built", async ({ page }) => {
+  const state = await mockForYou(page, { admin: true });
+  state.cards.find(card => card.id === "discover-weekly")!.readiness = { ready: false, message: "Connect a service with recommendations, or add unheard tagged songs to your library." };
+  await openHome(page);
+  await expect(page.getByRole("region", { name: "Get more from your mixes", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "Uncharted", exact: true })).toContainText("No new songs to suggest yet");
 });
