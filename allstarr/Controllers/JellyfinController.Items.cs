@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Protocols;
+using allstarr.Services.Jellyfin;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
 
@@ -16,6 +17,7 @@ public partial class JellyfinController
 
         var items = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
         var nativeIds = new List<string>();
+        var synthesizedIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var itemId in requested.Distinct(StringComparer.Ordinal))
         {
             var execution = HttpContext.RequireProtocolExecutionContext();
@@ -24,6 +26,17 @@ public partial class JellyfinController
             {
                 items[itemId] = JsonSerializer.SerializeToNode(_virtualPlaylistProtocolAdapter.ToItem(
                     ExternalTrackPresentation.ApplyPreferences(fork.Playlist, execution.Policy), itemId))!.AsObject();
+                items[itemId]["ParentId"] = await _virtualPlaylistProtocolAdapter.PlaylistsFolderIdAsync(execution, HttpContext.RequestAborted);
+                synthesizedIds.Add(itemId);
+                continue;
+            }
+            if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(itemId))
+            {
+                if (await _virtualPlaylistProtocolAdapter.ReadItemAsync(execution, itemId, HttpContext.RequestAborted) is JsonResult view)
+                {
+                    items[itemId] = JsonSerializer.SerializeToNode(view.Value)!.AsObject();
+                    synthesizedIds.Add(itemId);
+                }
                 continue;
             }
             var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(itemId);
@@ -80,7 +93,15 @@ public partial class JellyfinController
             }
         }
 
-        var ordered = requested.Where(items.ContainsKey).Select(id => items[id]).ToArray();
+        var filter = new JellyfinProviderQuery(Request.Query);
+        var mediaTypes = JellyfinProviderQuery.Values(Request.Query["MediaTypes"].ToString());
+        var parentId = Request.Query["ParentId"].ToString();
+        var playlistsOnly = Request.Path.Value?.TrimEnd('/').Equals("/Playlists", StringComparison.OrdinalIgnoreCase) == true;
+        var ordered = requested.Where(items.ContainsKey).Where(id => !playlistsOnly || items[id]["Type"]?.ToString() == "Playlist").Where(id => !synthesizedIds.Contains(id) ||
+            filter.Matches(JsonSerializer.Deserialize<Dictionary<string, object?>>(items[id].ToJsonString())!) &&
+            (parentId.Length == 0 || parentId.Equals(items[id]["ParentId"]?.ToString(), StringComparison.OrdinalIgnoreCase)) &&
+            (mediaTypes.Length == 0 || mediaTypes.Contains("Audio", StringComparer.OrdinalIgnoreCase)))
+            .Select(id => items[id]).ToArray();
         envelope["Items"] = new JsonArray(ordered.Skip(Math.Max(0, startIndex)).Take(Math.Max(0, limit))
             .Select(item => item.DeepClone()).ToArray());
         envelope["TotalRecordCount"] = ordered.Length;

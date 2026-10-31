@@ -54,7 +54,7 @@ public sealed partial class PersonalMixService
             var items = songs.Where(song => !scores[song].Blocked && policy.Includes(song))
                 .Select(song => new PersonalMixItem(link.Id, projection!.SnapshotVersion, SafeSong(song),
                     link.SourceProviderId, "From your linked playlist", 0)).ToArray();
-            result.Add(new(link.Id, "external", projection?.Name ?? ExternalName(link),
+            result.Add(new(link.Id, "external", PlaylistVirtualizationService.DisplayName(link.SourceProviderId, projection?.Name ?? ExternalName(link)),
                 "Kept in sync · " + ExternalName(link), projection?.SnapshotVersion ?? 0,
                 projection?.RetrievedAt, new(items.Length > 0, items.Length > 0 ? "Your linked playlist is ready." : "Waiting for playable songs from your linked playlist."),
                 link.Enabled, items)
@@ -124,8 +124,11 @@ public sealed partial class PersonalMixService
         if (!IsExternalLink(link)) return true;
         if (context.Actor?.EffectiveUserId is not { } owner || link.OwnerUserId != owner ||
             !(bool)(await settings.GetAsync(PublishKey, token)).Value) return false;
-        await SnapshotAsync(owner, token);
         await using var db = await factory.CreateDbContextAsync(token);
+        var user = await UserAsync(db, owner, token);
+        var row = await RowAsync(db, user, token);
+        if (row != null && System.Text.Json.JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!.AppsOptInVersion < 3)
+            await SnapshotAsync(owner, token);
         var enabled = await db.PlaylistLinks.AsNoTracking().AnyAsync(item => item.Id == link.Id && item.Enabled, token);
         return enabled &&
             await db.ProviderAccounts.AsNoTracking().AnyAsync(account => account.Id == link.ProviderAccountId &&
@@ -150,12 +153,12 @@ public sealed partial class PersonalMixService
             ExplicitContentLyrics = track.SourceMetadata?.IsExplicit is { } explicitContent
                 ? explicitContent ? 1 : 0 : track.PlaybackExplicitContentLyrics
         }).ToArray();
-        var scores = await taste.ScoreManyAsync(owner, songs, token);
+        var blocked = await taste.BlockedSongsAsync(owner, songs, token);
         var policy = await policies.ResolveForUserAsync(owner, token);
         return playlist with
         {
             Tracks = playlist.Tracks.Where((_, index) =>
-                !scores[songs[index]].Blocked && policy.Includes(songs[index])).ToArray()
+                !blocked.Contains(songs[index]) && policy.Includes(songs[index])).ToArray()
         };
     }
 }

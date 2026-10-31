@@ -1353,7 +1353,7 @@ public sealed partial class PlaylistLinksController(
         id = value.Id,
         providerId = value.ProviderId,
         catalog = value.Catalog,
-        name = value.Name,
+        name = PlaylistVirtualizationService.DisplayName(value.ProviderId, value.Name),
         description = value.Description,
         owner = value.Owner,
         trackCount = value.TrackCount,
@@ -1399,7 +1399,7 @@ public sealed partial class PlaylistLinksController(
     {
         id = value.Id,
         enabled = value.Enabled,
-        name = projection?.Name ?? "Playlist",
+        name = PlaylistVirtualizationService.DisplayName(value.SourceProviderId, projection?.Name ?? "Playlist"),
         description = projection?.Description,
         artworkUrl = PersonalMixService.IsExternalLink(value) ? MixArtworkUrl(value.Id, projection?.SnapshotVersion ?? 0) :
             projection?.ArtworkReferenceKey == null ? null :
@@ -1472,7 +1472,7 @@ public sealed partial class PlaylistLinksController(
         snapshotVersion = value.SnapshotVersion,
         latestSourceSnapshotVersion = value.LatestSourceSnapshotVersion,
         hasNewerSourceGeneration = value.HasNewerSourceGeneration,
-        name = value.Name,
+        name = PlaylistVirtualizationService.DisplayName(value.SourceProviderId, value.Name),
         sourceProviderId = value.SourceProviderId,
         projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(),
         targetProtocol = value.TargetProtocol,

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Jobs;
@@ -36,6 +37,9 @@ public sealed record PlaylistRefreshResult(Guid SnapshotId, int SnapshotVersion,
 
 public interface IPlaylistOrchestrationService
 {
+    Task<DurableJobCompletion> RepairSpotifyArtworkAsync(ProtocolExecutionContext execution, Guid playlistLinkId,
+        CancellationToken cancellationToken = default) => Task.FromResult(
+            DurableJobCompletion.Failure("playlist_artwork_unsupported", "Playlist cover repair is unavailable."));
     Task<PlaylistOrchestrationResult> RunAsync(ProtocolExecutionContext execution,
         PlaylistOrchestrationRequest request, CancellationToken cancellationToken = default);
     Task<PlaylistRefreshResult> RefreshAsync(ProtocolExecutionContext execution, Guid playlistLinkId,
@@ -44,6 +48,8 @@ public interface IPlaylistOrchestrationService
 
 public interface IProviderPlaylistSourceGateway
 {
+    Task<CollectedPlaylistSourceSnapshot> CollectArtworkSummaryAsync(ProtocolExecutionContext context,
+        PlaylistLinkRecord link, CancellationToken cancellationToken) => CollectAsync(context, link, cancellationToken);
     Task<CollectedPlaylistSourceSnapshot> CollectAsync(
         ProtocolExecutionContext context,
         PlaylistLinkRecord link,
@@ -65,6 +71,25 @@ public sealed class ProviderPlaylistSourceGateway(
     IPlatformClock clock,
     ITrackIdentityService? identities = null) : IProviderPlaylistSourceGateway
 {
+    public async Task<CollectedPlaylistSourceSnapshot> CollectArtworkSummaryAsync(ProtocolExecutionContext context,
+        PlaylistLinkRecord link, CancellationToken cancellationToken)
+    {
+        var actor = context.RequireActor();
+        RequireLinkExecutionContext(context, actor, link);
+        var sourceContext = await SourceContextAsync(context, actor, link, "playlist-artwork-summary", cancellationToken)
+            ?? throw new PlaylistSourceUnavailableException("source_unavailable");
+        var capability = registry.GetRequiredCapability<IProviderPlaylistCapability>(link.SourceProviderId, ProviderCapabilityKind.Playlist);
+        var resource = new ProviderExternalResourceId(link.SourceProviderId, ProviderResourceKind.Playlist, link.SourcePlaylistId);
+        var outcome = await capability.GetPlaylistTracksAsync(sourceContext, new(resource, new ProviderPageRequest(1)));
+        if (!outcome.IsSuccess) throw new PlaylistSourceUnavailableException("source_unavailable", outcome.Error, link.SourceProviderId);
+        var summary = outcome.RequireValue().Playlist;
+        if (summary.Id != resource) throw new UnauthorizedAccessException("The artwork summary is outside the playlist scope.");
+        return new(link.SourceProviderId, link.ProviderAccountId, ProviderPlaylistSnapshotCollector.HashResource(resource),
+            summary.SourceRevision, summary.SourceETag, summary.Name, summary.Description,
+            ProviderPlaylistSnapshotCollector.StableArtworkReference(summary.Artwork), [])
+        { SourceOwnerId = summary.Owner.ProviderUserId };
+    }
+
     public async Task<CollectedPlaylistSourceSnapshot> CollectAsync(
         ProtocolExecutionContext context,
         PlaylistLinkRecord link,
@@ -209,7 +234,7 @@ public sealed class BackendPlaylistTargetResolver(IEnumerable<IBackendPlaylistTa
     }
 }
 
-public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
+public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestrationService
 {
     private readonly IDbContextFactory<AllstarrDbContext> _factory;
     private readonly IProviderPlaylistSourceGateway _source;
@@ -686,6 +711,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             throw new UnauthorizedAccessException("The collected playlist is outside the selected source scope.");
         await using var accountLock = await _locks.AcquireAsync(
             link.ProviderAccountId.HasValue ? $"playlist-account:{link.ProviderAccountId:N}" : $"playlist-public:{link.OwnerUserId:N}:{link.SourceProviderId}", cancellationToken);
+        await CheckSpotifyArtworkSyncAsync(execution, link, collected, cancellationToken);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var now = _clock.UtcNow;
@@ -1640,7 +1666,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     private static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
 }
 
-public sealed record PlaylistMaterializationJobPayload(Guid PlaylistLinkId, long Generation, Guid? SourceSnapshotId = null);
+public sealed record PlaylistMaterializationJobPayload(Guid PlaylistLinkId, long Generation, Guid? SourceSnapshotId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool ArtworkOnly = false);
 
 public sealed class PlaylistMaterializationJobHandler(
     IDbContextFactory<AllstarrDbContext> factory,
@@ -1701,6 +1728,8 @@ public sealed class PlaylistMaterializationJobHandler(
             context.Claim.CorrelationId, clock.UtcNow.AddMinutes(10), cancellationToken);
         try
         {
+            if (payload.ArtworkOnly)
+                return await orchestration.RepairSpotifyArtworkAsync(execution, link.Id, cancellationToken);
             await context.ReportProgressAsync(
                 new("playlist.match", "Matching and materializing playlist tracks.",
                     Provider: link.SourceProviderId, Playlist: playlistName), cancellationToken);
@@ -1743,6 +1772,8 @@ public sealed class PlaylistMaterializationJobHandler(
         }
         catch (PlaylistSourceUnavailableException exception)
         {
+            if (payload.ArtworkOnly)
+                return DurableJobCompletion.Retry(exception.Code, exception.Message, exception.Error?.RetryAfter ?? TimeSpan.FromMinutes(2));
             if (link.SourceProviderId == "listenbrainz" && exception.Error is { } error)
                 return error.Kind is ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.AccountNeedsConfiguration or ProviderErrorKind.Forbidden
                     ? DurableJobCompletion.Failure(error.Code, error.SafeMessage)

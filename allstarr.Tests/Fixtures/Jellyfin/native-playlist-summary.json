@@ -1,0 +1,36 @@
+{
+  "Name": "Release Radar",
+  "ServerId": "c17d351d3af24c678a6d8049c212d522",
+  "Id": "ba50e26c867ec9d57ab2f7bf24cfd6b0",
+  "Etag": "46d98455f896b901b6e15990e4039558",
+  "DateCreated": "2026-10-31T08:45:04.0000000Z",
+  "SortName": "release radar",
+  "Path": "/var/lib/jellyfin/data/playlists/Release Radar",
+  "ChannelId": null,
+  "Overview": "Catch all the latest music from artists you follow, plus new singles picked for you. Updates every Friday.",
+  "RunTimeTicks": 58604120000,
+  "ProviderIds": {},
+  "IsFolder": true,
+  "ParentId": "1071671e7bffa0532e930debee501d2e",
+  "Type": "Playlist",
+  "UserData": {
+    "PlaybackPositionTicks": 0,
+    "PlayCount": 0,
+    "IsFavorite": false,
+    "Played": false,
+    "Key": "ba50e26c-867e-c9d5-7ab2-f7bf24cfd6b0",
+    "ItemId": "ba50e26c867ec9d57ab2f7bf24cfd6b0"
+  },
+  "ChildCount": 30,
+  "ImageTags": {
+    "Primary": "5c3ad11e91cffd9e99a72d8a969705c0"
+  },
+  "BackdropImageTags": [],
+  "ImageBlurHashes": {
+    "Primary": {
+      "5c3ad11e91cffd9e99a72d8a969705c0": "eQQq,o=en5;gRP{JR+O=X9gNKjWBjFbaV@=eXSS4V@j]vgV@XRozbb"
+    }
+  },
+  "LocationType": "FileSystem",
+  "MediaType": "Audio"
+}

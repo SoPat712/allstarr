@@ -22,6 +22,19 @@ namespace allstarr.Tests;
 public sealed partial class PlaylistLinksControllerContractTests
 {
     [Theory]
+    [InlineData("Weekly Jams for treeman183, week of 2026-10-12 Mon", "Weekly Jams")]
+    [InlineData("Weekly Exploration for treeman183, week of 2026-10-12 Mon", "Weekly Exploration")]
+    public void PlaylistDetails_ExposeFriendlyNamesWithoutChangingTheSourceTitle(string raw, string expected)
+    {
+        var projection = new DurablePlaylistProjection(Guid.NewGuid(), Guid.NewGuid(), 1, raw, "listenbrainz",
+            "createdfor:weekly-jams", null, "jellyfin", null, null, DateTimeOffset.UtcNow, null, null, []);
+        var method = typeof(PlaylistLinksController).GetMethod("ToProjectionDto", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var value = JsonSerializer.SerializeToElement(method.Invoke(null, new object?[] { projection, null, null, null, null }));
+        Assert.Equal(expected, value.GetProperty("name").GetString());
+        Assert.Equal(raw, projection.Name);
+    }
+
+    [Theory]
     [InlineData("csv")]
     [InlineData("json")]
     public async Task MissingSongExportUsesThePublishedOwnerSnapshotAndRejectsOtherListeners(string format)

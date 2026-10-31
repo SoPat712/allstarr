@@ -82,7 +82,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     IProtocolProviderGateway? providerGateway = null,
     IHttpContextAccessor? httpContexts = null,
     WritablePlaylistMembership? writablePlaylists = null,
-    CleanOnlyProtocolContent? cleanContent = null)
+    CleanOnlyProtocolContent? cleanContent = null,
+    PersonalMixService? personalMixes = null)
 {
     private const string FullItemFields =
         "AirTime,CanDelete,CanDownload,ChannelInfo,Chapters,Trickplay,ChildCount," +
@@ -93,6 +94,17 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         "Tags,RemoteTrailers,MediaStreams,SeasonUserData,DateLastRefreshed,DateLastSaved,RefreshState," +
         "ChannelImage,EnableMediaSourceDisplay,Width,Height,ExtraIds,LocalTrailerCount,IsHD," +
         "SpecialFeatureCount";
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _playlistFolders = new(StringComparer.Ordinal);
+
+    internal string? CachedPlaylistsFolderId(ProtocolExecutionContext context) =>
+        _playlistFolders.GetValueOrDefault(context.BackendInstanceId + ":" + context.VerifiedBackendPrincipalId);
+
+    internal void RememberPlaylistsFolderId(ProtocolExecutionContext context, string? id)
+    {
+        if (!string.IsNullOrWhiteSpace(id))
+            _playlistFolders[context.BackendInstanceId + ":" + context.VerifiedBackendPrincipalId] = id;
+    }
 
     private readonly JellyfinResponseBuilder _builder = responseBuilder ?? new JellyfinResponseBuilder(httpContexts: httpContexts);
 
@@ -122,18 +134,30 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         mutationResolver.ResolveAsync(context, id, cancellationToken);
 
     public async Task<IReadOnlyList<VirtualPlaylistReadModel>> ListAsync(
-        ProtocolExecutionContext context, CancellationToken cancellationToken)
+        ProtocolExecutionContext context, CancellationToken cancellationToken, IReadOnlySet<string>? visibleTargetIds = null)
     {
         var result = new List<VirtualPlaylistReadModel>();
-        foreach (var original in await playlists.ListAsync(context, cancellationToken))
+        var originals = visibleTargetIds != null && playlists is PlaylistVirtualizationService service
+            ? await service.ListSummariesAsync(context, cancellationToken, visibleTargetIds)
+            : await playlists.ListAsync(context, cancellationToken);
+        IReadOnlyList<PlaylistForkState> forks = writablePlaylists != null && originals.Any(item => item.SummaryTrackCount.HasValue) &&
+            context.Actor?.EffectiveUserId is { } owner ? await writablePlaylists.ListForksAsync(owner, cancellationToken) : [];
+        foreach (var original in originals)
         {
-            var fork = writablePlaylists == null ? null : await writablePlaylists.ReadForkAsync(context, original.ProtocolId, cancellationToken);
+            var fork = original.SummaryTrackCount.HasValue
+                ? forks.FirstOrDefault(item => item.BackendInstanceId == context.BackendInstanceId &&
+                    (item.OriginalPlaylistId == original.ProtocolId || original.TargetPlaylistId != null && item.OriginalTargetPlaylistId == original.TargetPlaylistId))
+                : writablePlaylists == null ? null : await writablePlaylists.ReadForkAsync(context, original.ProtocolId, cancellationToken);
             var view = fork == null ? original : fork.Playlist with
             {
                 ProtocolId = original.ProtocolId,
-                TargetPlaylistId = original.TargetPlaylistId
+                TargetPlaylistId = original.TargetPlaylistId,
+                CreatedAt = original.CreatedAt,
+                SummaryTrackCount = original.SummaryTrackCount.HasValue ? fork.Playlist.TrackCount : null,
+                SummaryDurationMilliseconds = original.SummaryTrackCount.HasValue ? fork.Playlist.DurationMilliseconds : null,
+                Tracks = original.SummaryTrackCount.HasValue ? [] : fork.Playlist.Tracks
             };
-            result.Add(await ProjectAsync(view, context));
+            result.Add(view.SummaryTrackCount.HasValue ? view : await ProjectAsync(view, context));
         }
         return result;
     }
@@ -144,7 +168,13 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     {
         var visible = await ListAsync(context, cancellationToken);
         var serverId = visible.Count == 0 ? null : await ServerIdAsync(context);
-        return visible.Select(item => ToItem(item, serverId: serverId)).ToArray();
+        var folderId = visible.Count == 0 ? null : await PlaylistsFolderIdAsync(context, cancellationToken);
+        return visible.Select(item =>
+        {
+            var row = ToItem(item, serverId: serverId);
+            row["ParentId"] = folderId;
+            return row;
+        }).ToArray();
     }
 
     public async Task<IActionResult?> ReadItemAsync(
@@ -153,7 +183,9 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         var playlist = await ReadViewAsync(context, id, cancellationToken);
         if (playlist != null) playlist = await ProjectAsync(playlist, context);
         if (playlist == null) return null;
-        return new JsonResult(ToItem(playlist, id, await ServerIdAsync(context), includeAllFields: true));
+        var item = ToItem(playlist, id, await ServerIdAsync(context), includeAllFields: true);
+        item["ParentId"] = await PlaylistsFolderIdAsync(context, cancellationToken);
+        return new JsonResult(item);
     }
 
     public async Task<IActionResult?> ReadItemBySourceAsync(
@@ -168,7 +200,10 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         if (playlist != null && writablePlaylists != null)
             playlist = (await writablePlaylists.ReadForkAsync(context, playlist.ProtocolId, cancellationToken))?.Playlist ?? playlist;
         if (playlist != null) playlist = await ProjectAsync(playlist, context);
-        return playlist == null ? null : new JsonResult(ToItem(playlist, responsePlaylistId, await ServerIdAsync(context), includeAllFields: true));
+        if (playlist == null) return null;
+        var item = ToItem(playlist, responsePlaylistId, await ServerIdAsync(context), includeAllFields: true);
+        item["ParentId"] = await PlaylistsFolderIdAsync(context, cancellationToken);
+        return new JsonResult(item);
     }
 
     public async Task<IActionResult?> ReadDefinitionAsync(
@@ -232,7 +267,9 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     public async Task<MixCoverInput?> GetMixCoverAsync(
         ProtocolExecutionContext? context, string id, CancellationToken cancellationToken)
     {
-        if (context == null) return null;
+        if (context == null)
+            return personalMixes != null && PlaylistVirtualizationService.TryParseProtocolId(id, out var linkId)
+                ? await personalMixes.PublishedCoverAsync(linkId, cancellationToken) : null;
         var playlist = PlaylistIdHelper.IsExternalPlaylist(id)
             ? await ReadCoverBySourceAsync(context, id, cancellationToken)
             : await ReadViewAsync(context, id, cancellationToken);
@@ -256,19 +293,68 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         var item = _builder.ConvertPlaylistToJellyfinItem(new ExternalPlaylist
         {
             Id = id,
-            Name = playlist.Name,
+            Name = PlaylistVirtualizationService.DisplayName(playlist.SourceProviderId, playlist.Name),
             Description = playlist.Description,
             Provider = playlist.SourceProviderId,
             ExternalId = playlist.SourcePlaylistId,
-            TrackCount = playlist.Tracks.Count
+            TrackCount = playlist.TrackCount
         }, httpContexts?.HttpContext?.Request.Query, includeAllFields);
         if (serverId != null) item["ServerId"] = serverId;
-        item["RunTimeTicks"] = playlist.Tracks.Sum(track => track.DurationMilliseconds) * TimeSpan.TicksPerMillisecond;
+        item["RunTimeTicks"] = playlist.DurationMilliseconds * TimeSpan.TicksPerMillisecond;
+        item["ChildCount"] = playlist.TrackCount;
+        item["Overview"] = playlist.Description ?? "";
+        if (httpContexts?.HttpContext?.Request.Query["Fields"].ToString().Split(',', StringSplitOptions.TrimEntries)
+            .Contains("RecursiveItemCount", StringComparer.OrdinalIgnoreCase) == true)
+            item["RecursiveItemCount"] = playlist.TrackCount;
+        item["ProviderIds"] = new Dictionary<string, string> { [playlist.SourceProviderId] = playlist.SourcePlaylistId };
+        item["DateCreated"] = playlist.CreatedAt.UtcDateTime.ToString("O");
+        item["Etag"] = Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes($"{playlist.SnapshotId}:{playlist.SourceRevision}:{playlist.ArtworkReferenceKey}")));
+        item["SortName"] = PlaylistSortName(item["Name"]?.ToString() ?? playlist.Name);
+        item["ParentId"] = null;
+        item["Path"] = $"/virtual/playlists/{playlist.LinkId:N}/playlist.xml";
+        item["ImageBlurHashes"] = new Dictionary<string, object>();
         var imageTag = playlist.MixCover is { } cover ? MixCoverImageService.GetTag(cover) : playlist.ArtworkReferenceKey;
         item["ImageTags"] = imageTag == null
             ? new Dictionary<string, string>()
             : new Dictionary<string, string> { ["Primary"] = imageTag };
         return item;
+    }
+
+    internal async Task<string?> PlaylistsFolderIdAsync(ProtocolExecutionContext context, CancellationToken token)
+    {
+        if (CachedPlaylistsFolderId(context) is { } cached) return cached;
+        if (proxyService == null) return null;
+        var (body, status) = await proxyService.GetJsonAsync(
+            $"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items?IncludeItemTypes=Playlist&Recursive=true&Limit=1&Fields=ParentId",
+            clientHeaders: httpContexts?.HttpContext?.Request.Headers, cancellationToken: token);
+        using (body)
+        {
+            if (status == 200 && body?.RootElement.TryGetProperty("Items", out var items) == true)
+                foreach (var item in items.EnumerateArray())
+                    if (item.TryGetProperty("ParentId", out var parent))
+                    {
+                        RememberPlaylistsFolderId(context, parent.GetString());
+                        return parent.GetString();
+                    }
+        }
+        return null;
+    }
+
+    private static string PlaylistSortName(string name)
+    {
+        var sortable = name.Trim().ToLowerInvariant();
+        foreach (var word in new[] { "the", "a", "an" })
+        {
+            if (sortable.StartsWith(word + " ", StringComparison.Ordinal)) sortable = sortable[(word.Length + 1)..];
+            sortable = sortable.Replace(" " + word + " ", " ", StringComparison.Ordinal);
+            if (sortable.EndsWith(" " + word, StringComparison.Ordinal)) sortable = sortable[..^(word.Length + 1)];
+        }
+        foreach (var character in new[] { ",", "&", "-", "{", "}", "'" }) sortable = sortable.Replace(character, "", StringComparison.Ordinal);
+        foreach (var character in new[] { ".", "+", "%" }) sortable = sortable.Replace(character, " ", StringComparison.Ordinal);
+        sortable = System.Text.RegularExpressions.Regex.Replace(sortable, "[0-9]+", match => match.Value.PadLeft(10, '0'));
+        return new string(sortable.Normalize(System.Text.NormalizationForm.FormD)
+            .Where(character => System.Globalization.CharUnicodeInfo.GetUnicodeCategory(character) != System.Globalization.UnicodeCategory.NonSpacingMark).ToArray());
     }
 
     private async Task<string?> ServerIdAsync(ProtocolExecutionContext context) =>

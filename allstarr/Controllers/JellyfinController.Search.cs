@@ -17,6 +17,7 @@ public partial class JellyfinController
 {
     #region Search
 
+    [HttpGet("Playlists", Order = 1)]
     [HttpGet("Items", Order = 1)]
     [HttpGet("Users/{userId}/Items", Order = 1)]
     public async Task<IActionResult> SearchItems(
@@ -33,13 +34,27 @@ public partial class JellyfinController
         [FromQuery] bool recursive = true,
         string? userId = null)
     {
+        if (Request.Path.Value?.TrimEnd('/').Equals("/Playlists", StringComparison.OrdinalIgnoreCase) == true)
+            includeItemTypes = "Playlist";
+
+        var playlistRequest = ParseItemTypes(includeItemTypes)?.Contains("Playlist", StringComparer.OrdinalIgnoreCase) == true;
+        var cachedFolderId = HttpContext.GetProtocolExecutionContext() is { } browseContext
+            ? _virtualPlaylistProtocolAdapter.CachedPlaylistsFolderId(browseContext) : null;
+        if (string.IsNullOrWhiteSpace(includeItemTypes) && !string.IsNullOrWhiteSpace(parentId) &&
+            parentId.Equals(cachedFolderId, StringComparison.OrdinalIgnoreCase))
+            playlistRequest = true;
+        var playlistLimit = Request.Query.ContainsKey("Limit") ? limit : int.MaxValue;
         if (IsFavoritesOnlyRequest())
             return await ReadFavoriteItemsAsync(GetEffectiveSearchTerm(searchTerm, Request.QueryString.Value),
-                includeItemTypes, startIndex, limit, userId);
+                includeItemTypes, startIndex, playlistRequest ? playlistLimit : limit, userId);
 
         if (Request.Query.TryGetValue("Ids", out var requestedIds))
             return await ReadItemsByIdsAsync(requestedIds.ToString(), startIndex,
                 Request.Query.ContainsKey("Limit") ? limit : int.MaxValue, userId);
+
+        if (Request.Path.Value?.TrimEnd('/').Equals("/Playlists", StringComparison.OrdinalIgnoreCase) == true ||
+            playlistRequest)
+            return await ReadPlaylistBrowseAsync(userId, startIndex, playlistLimit, HttpContext.RequestAborted);
 
         var boundSearchTerm = searchTerm;
         searchTerm = GetEffectiveSearchTerm(searchTerm, Request.QueryString.Value);
@@ -215,10 +230,13 @@ public partial class JellyfinController
                 _logger.LogDebug("Browse result has Items, checking for Spotify playlists to update counts");
             }
 
-            if (requestedTypes?.Contains("Playlist", StringComparer.OrdinalIgnoreCase) == true)
+            if (browseResult.RootElement.TryGetProperty("Items", out var browseItems) && browseItems.EnumerateArray().Any(item =>
+                    item.TryGetProperty("Type", out var type) && type.GetString() == "Playlist"))
             {
-                return await MergeVirtualPlaylistBrowseAsync(
-                    browseResult, limit, startIndex, HttpContext.RequestAborted);
+                if (startIndex == 0 && browseResult.RootElement.TryGetProperty("TotalRecordCount", out var total) &&
+                    browseItems.GetArrayLength() >= total.GetInt32())
+                    return await MergeVirtualPlaylistBrowseAsync(browseResult, playlistLimit, startIndex, HttpContext.RequestAborted);
+                return await ReadPlaylistBrowseAsync(userId, startIndex, playlistLimit, HttpContext.RequestAborted);
             }
 
             var result = JsonSerializer.Deserialize<object>(browseResult.RootElement.GetRawText());
@@ -938,9 +956,10 @@ public partial class JellyfinController
             items = [];
             root["Items"] = items;
         }
-        var backendTotal = root["TotalRecordCount"]?.GetValue<int>() ?? items.Count;
         var context = HttpContext.RequireProtocolExecutionContext();
-        var virtualPlaylists = await _virtualPlaylistProtocolAdapter.ListAsync(context, cancellationToken);
+        var visibleTargetIds = items.OfType<JsonObject>().Where(item => item["Type"]?.ToString() == "Playlist")
+            .Select(item => item["Id"]?.ToString() ?? "").ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var virtualPlaylists = await _virtualPlaylistProtocolAdapter.ListAsync(context, cancellationToken, visibleTargetIds);
         var aliasedProtocolIds = new HashSet<string>(StringComparer.Ordinal);
         var byTargetId = virtualPlaylists
             .Where(item => !string.IsNullOrWhiteSpace(item.TargetPlaylistId))
@@ -955,9 +974,8 @@ public partial class JellyfinController
                 !byTargetId.TryGetValue(id, out var playlist)) continue;
             item["Name"] = playlist.Name;
             item["Overview"] = playlist.Description;
-            item["ChildCount"] = playlist.Tracks.Count;
-            item["RunTimeTicks"] = playlist.Tracks.Sum(track => track.DurationMilliseconds) *
-                                   TimeSpan.TicksPerMillisecond;
+            item["ChildCount"] = playlist.TrackCount;
+            item["RunTimeTicks"] = playlist.DurationMilliseconds * TimeSpan.TicksPerMillisecond;
         }
         if (_spotifySettings.Enabled)
         {
@@ -991,42 +1009,146 @@ public partial class JellyfinController
 
                 item["Name"] = playlist.Name;
                 item["Overview"] = playlist.Description;
-                item["ChildCount"] = playlist.Tracks.Count;
-                item["RunTimeTicks"] = playlist.Tracks.Sum(track => track.DurationMilliseconds) *
-                                       TimeSpan.TicksPerMillisecond;
+                item["ChildCount"] = playlist.TrackCount;
+                item["RunTimeTicks"] = playlist.DurationMilliseconds * TimeSpan.TicksPerMillisecond;
                 var providerIds = item["ProviderIds"] as JsonObject ?? [];
                 item["ProviderIds"] = providerIds;
                 providerIds["AllstarrSource"] = playlist.SourceProviderId;
             }
         }
 
-        var appendable = virtualPlaylists
-            .Where(item => !aliasedProtocolIds.Contains(item.ProtocolId))
-            .ToArray();
-        var virtualPage = GetVirtualPlaylistPage(backendTotal, items.Count, startIndex, limit);
-        foreach (var playlist in appendable.Skip(virtualPage.Start).Take(virtualPage.Take))
-            items.Add(JsonSerializer.SerializeToNode(
-                _virtualPlaylistProtocolAdapter.ToItem(playlist)));
-        root["TotalRecordCount"] = virtualPage.BackendTotal + appendable.Length;
+        var folderId = items.OfType<JsonObject>().FirstOrDefault(item => item["Type"]?.ToString() == "Playlist")?["ParentId"]?.ToString();
+        if (virtualPlaylists.Count > 0 && folderId == null)
+            folderId = await _virtualPlaylistProtocolAdapter.PlaylistsFolderIdAsync(context, cancellationToken);
+        _virtualPlaylistProtocolAdapter.RememberPlaylistsFolderId(context, folderId);
+        var serverId = items.OfType<JsonObject>().Select(item => item["ServerId"]?.ToString()).FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+        if (serverId == null && virtualPlaylists.Count > 0)
+            serverId = await _proxyService.GetServerIdAsync(context.BackendInstanceId, cancellationToken);
+        var query = new JellyfinProviderQuery(Request.Query);
+        var parentId = Request.Query["ParentId"].ToString();
+        var mediaTypes = JellyfinProviderQuery.Values(Request.Query["MediaTypes"].ToString());
+        foreach (var playlist in virtualPlaylists.Where(item => !aliasedProtocolIds.Contains(item.ProtocolId)))
+        {
+            var row = _virtualPlaylistProtocolAdapter.ToItem(playlist, serverId: serverId);
+            row["ParentId"] = folderId;
+            if (parentId.Length > 0 && !parentId.Equals(folderId, StringComparison.OrdinalIgnoreCase) &&
+                !parentId.Equals(_settings.LibraryId, StringComparison.OrdinalIgnoreCase) ||
+                mediaTypes.Length > 0 && !mediaTypes.Contains("Audio", StringComparer.OrdinalIgnoreCase) || !query.Matches(row)) continue;
+            items.Add(JsonSerializer.SerializeToNode(row));
+        }
+        var rows = items.OfType<JsonObject>().ToList();
+        var sort = Request.Query["SortBy"].ToString();
+        var fields = JellyfinProviderQuery.Values(sort.Length == 0 ? "SortName" : sort);
+        var orders = JellyfinProviderQuery.Values(Request.Query["SortOrder"].ToString());
+        string Name(JsonObject item) => item["SortName"]?.ToString() ?? item["Name"]?.ToString() ?? "";
+        var updated = virtualPlaylists.ToDictionary(item => item.ProtocolId, item => item.UpdatedAt);
+        var knownSort = fields.All(field => field.ToLowerInvariant() is "sortname" or "name" or "datecreated" or "datelastcontentadded" or "random");
+        if (knownSort)
+        {
+            rows = rows.OrderBy(item => item, Comparer<JsonObject>.Create((left, right) =>
+            {
+                for (var index = 0; index < fields.Length; index++)
+                {
+                    var field = fields[index].ToLowerInvariant();
+                    var key = field switch { "datecreated" => "DateCreated", "datelastcontentadded" => "DateLastMediaAdded", _ => "" };
+                    var comparison = field == "random"
+                        ? StringComparer.Ordinal.Compare(RandomKey(left), RandomKey(right))
+                        : key.Length > 0
+                            ? Nullable.Compare(Date(left, key), Date(right, key))
+                            : StringComparer.OrdinalIgnoreCase.Compare(field == "name" ? left["Name"]?.ToString() : Name(left),
+                                field == "name" ? right["Name"]?.ToString() : Name(right));
+                    if (comparison != 0)
+                        return orders.ElementAtOrDefault(index < orders.Length ? index : 0)?.Equals("Descending", StringComparison.OrdinalIgnoreCase) == true ? -comparison : comparison;
+                }
+                return StringComparer.Ordinal.Compare(left["Id"]?.ToString(), right["Id"]?.ToString());
+            })).ToList();
+        }
+        else
+        {
+            var virtualIds = virtualPlaylists.Select(item => item.ProtocolId).ToHashSet(StringComparer.Ordinal);
+            var added = rows.Where(item => virtualIds.Contains(item["Id"]?.ToString() ?? "")).OrderBy(Name, StringComparer.OrdinalIgnoreCase).ToArray();
+            rows.RemoveAll(item => virtualIds.Contains(item["Id"]?.ToString() ?? ""));
+            foreach (var row in added)
+            {
+                var index = rows.FindIndex(item => StringComparer.OrdinalIgnoreCase.Compare(Name(item), Name(row)) > 0);
+                rows.Insert(index < 0 ? rows.Count : index, row);
+            }
+        }
+        foreach (var row in rows.Where(item => item["Type"]?.ToString() == "Playlist"))
+            new JellyfinItemFields(Request.Query).Apply(row);
+        root["TotalRecordCount"] = rows.Count;
+        root["Items"] = new JsonArray(rows.Skip(Math.Max(0, startIndex)).Take(Math.Max(0, limit)).Select(item => item.DeepClone()).ToArray());
         root["StartIndex"] = startIndex;
         return Content(root.ToJsonString(), "application/json");
+
+        DateTimeOffset? Date(JsonObject item, string key) => JellyfinProviderQuery.Date(item[key]?.ToString() ?? "") ??
+            (key == "DateLastMediaAdded" ? updated.GetValueOrDefault(item["Id"]?.ToString() ?? "") : null);
+
+        string RandomKey(JsonObject item) => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            Encoding.UTF8.GetBytes(context.VerifiedBackendPrincipalId + ":" + item["Id"]?.ToString())));
     }
 
-    internal static (int BackendTotal, int Start, int Take) GetVirtualPlaylistPage(
-        int backendTotal,
-        int backendReturned,
-        int startIndex,
-        int limit)
+    private async Task<IActionResult> ReadPlaylistBrowseAsync(string? userId, int startIndex, int limit, CancellationToken token)
     {
-        var requestedLimit = Math.Max(0, limit);
-        var backendEnd = startIndex + backendReturned;
-        var effectiveBackendTotal = backendReturned < requestedLimit
-            ? Math.Min(backendTotal, backendEnd)
-            : backendTotal;
-        return backendEnd < effectiveBackendTotal || backendReturned >= requestedLimit
-            ? (effectiveBackendTotal, 0, 0)
-            : (effectiveBackendTotal, Math.Max(0, backendEnd - effectiveBackendTotal),
-                requestedLimit - backendReturned);
+        userId ??= Request.Query["UserId"].FirstOrDefault();
+        var endpoint = userId == null ? "Items" : $"Users/{Uri.EscapeDataString(userId)}/Items";
+        var parameters = Request.Query.ToDictionary(pair => pair.Key, pair => pair.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+        var parentId = parameters.GetValueOrDefault("ParentId");
+        var context = HttpContext.RequireProtocolExecutionContext();
+        var folderId = _virtualPlaylistProtocolAdapter.CachedPlaylistsFolderId(context);
+        if (!string.IsNullOrWhiteSpace(parentId) && (parentId.Equals(_settings.LibraryId, StringComparison.OrdinalIgnoreCase) ||
+            parentId.Equals(folderId, StringComparison.OrdinalIgnoreCase)))
+            parameters.Remove("ParentId");
+        if (Request.Path.Value?.TrimEnd('/').Equals("/Playlists", StringComparison.OrdinalIgnoreCase) == true ||
+            string.IsNullOrWhiteSpace(parameters.GetValueOrDefault("IncludeItemTypes")))
+        {
+            parameters["IncludeItemTypes"] = "Playlist";
+            parameters.TryAdd("Recursive", "true");
+        }
+        parameters["Limit"] = "500";
+        parameters["Fields"] = string.Join(',', new[] { parameters.GetValueOrDefault("Fields"), "DateCreated,Etag,ParentId,Path,SortName,ProviderIds,ChildCount,Overview" }.Where(value => !string.IsNullOrEmpty(value)));
+        if (parameters.GetValueOrDefault("SortBy")?.Contains("DateLastContentAdded", StringComparison.OrdinalIgnoreCase) == true)
+            parameters["Fields"] += ",DateLastMediaAdded";
+        // A random upstream page cannot be walked consistently; randomize the complete visible set below.
+        if (parameters.GetValueOrDefault("SortBy")?.Contains("Random", StringComparison.OrdinalIgnoreCase) == true)
+            parameters["SortBy"] = "SortName";
+        JsonObject? root = null;
+        var rows = new JsonArray();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (var offset = 0; offset < 10000;)
+        {
+            parameters["StartIndex"] = offset.ToString(CultureInfo.InvariantCulture);
+            var path = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(endpoint, parameters!);
+            var (body, status) = await _proxyService.GetJsonAsync(path, null, Request.Headers, cancellationToken: token);
+            using (body)
+            {
+                if (status == 400 && parameters.TryGetValue("SortBy", out var sort) &&
+                    JellyfinProviderQuery.Values(sort).Any(field => field.ToLowerInvariant() is not ("sortname" or "name" or "datecreated" or "datelastcontentadded" or "random")))
+                {
+                    parameters.Remove("SortBy");
+                    continue;
+                }
+                if (status != 200 || body == null) return HandleProxyResponse(body, status);
+                await RememberNativeCatalogTypesAsync(body.RootElement);
+                var page = JsonNode.Parse(body.RootElement.GetRawText())?.AsObject();
+                if (page?["Items"] is not JsonArray items) return HandleProxyResponse(body, status);
+                root ??= (JsonObject)page.DeepClone();
+                var added = 0;
+                foreach (var row in items.OfType<JsonObject>())
+                {
+                    if (!seen.Add(row["Id"]?.ToString() ?? "")) continue;
+                    rows.Add(row.DeepClone());
+                    added++;
+                }
+                offset += items.Count;
+                if (items.Count == 0 || added == 0 || offset >= (page["TotalRecordCount"]?.GetValue<int>() ?? offset)) break;
+            }
+        }
+        root ??= new JsonObject();
+        root["Items"] = rows;
+        root["TotalRecordCount"] = rows.Count;
+        using var native = JsonDocument.Parse(root.ToJsonString());
+        return await MergeVirtualPlaylistBrowseAsync(native, limit, startIndex, token);
     }
 
     #endregion

@@ -46,6 +46,12 @@ public sealed record VirtualPlaylistReadModel(
     PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved,
     string? TargetPlaylistId = null)
 {
+    public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UnixEpoch;
+    public DateTimeOffset? UpdatedAt { get; init; }
+    public int? SummaryTrackCount { get; init; }
+    public long? SummaryDurationMilliseconds { get; init; }
+    public int TrackCount => SummaryTrackCount ?? Tracks.Count;
+    public long DurationMilliseconds => SummaryDurationMilliseconds ?? Tracks.Sum(track => track.DurationMilliseconds ?? 0);
     public string? BackendOwner { get; init; }
     public bool? BackendPublic { get; init; }
     public allstarr.Core.Music.MixCoverInput? MixCover { get; init; }
@@ -76,7 +82,7 @@ public interface IPlaylistVirtualizationService
 }
 
 /// <summary>
-/// Projects every row of an immutable provider playlist snapshot for protocol reads.
+/// Reads immutable provider playlist summaries and projects tracks for individual protocol reads.
 /// This is deliberately read-only: virtual and hybrid reads never create or mutate a backend playlist.
 /// </summary>
 public sealed class PlaylistVirtualizationService(
@@ -108,6 +114,8 @@ public sealed class PlaylistVirtualizationService(
         ArgumentNullException.ThrowIfNull(context);
         if (context.Actor == null) return [];
 
+        if (context.Protocol == ProtocolKind.Jellyfin)
+            return await ListSummariesAsync(context, cancellationToken);
         var actor = context.Actor;
         Guid[] linkIds;
         await using (var db = await contextFactory.CreateDbContextAsync(cancellationToken))
@@ -138,6 +146,78 @@ public sealed class PlaylistVirtualizationService(
         }
         if (personalMixes != null) result.AddRange(await personalMixes.PublishedAsync(context, cancellationToken));
         return result;
+    }
+
+    internal async Task<IReadOnlyList<VirtualPlaylistReadModel>> ListSummariesAsync(
+        ProtocolExecutionContext context, CancellationToken token, IReadOnlySet<string>? visibleTargetIds = null)
+    {
+        if (context.Actor?.EffectiveUserId is not { } owner) return [];
+        await using var db = await contextFactory.CreateDbContextAsync(token);
+        if (!await db.Users.AsNoTracking().AnyAsync(user => user.Id == owner && user.Enabled &&
+            user.BackendType == "jellyfin" && user.BackendInstanceId == context.BackendInstanceId &&
+            user.BackendPrincipalId == context.VerifiedBackendPrincipalId, token)) return [];
+        var links = await db.PlaylistLinks.AsNoTracking().Where(link => (link.OwnerUserId == owner || link.TargetPlaylistId != null) &&
+            link.TargetBackendInstanceId == context.BackendInstanceId && link.TargetProtocol == "jellyfin" && link.Enabled &&
+            (link.Mode == PlaylistLinkMode.Virtual || link.Mode == PlaylistLinkMode.Hybrid ||
+             link.Mode == PlaylistLinkMode.Materialized && link.TargetPlaylistId != null))
+            .OrderBy(link => link.CreatedAt).ToArrayAsync(token);
+        var linkIds = links.Select(link => link.Id).ToArray();
+        var snapshots = await db.PlaylistSourceSnapshots.AsNoTracking().Where(snapshot =>
+            linkIds.Contains(snapshot.PlaylistLinkId) && snapshot.PublishedAt.HasValue)
+            .GroupBy(snapshot => snapshot.PlaylistLinkId).Select(group => group.OrderByDescending(snapshot => snapshot.SnapshotVersion)
+                .ThenByDescending(snapshot => snapshot.RetrievedAt).First()).ToArrayAsync(token);
+        var result = new List<VirtualPlaylistReadModel>();
+        foreach (var link in links)
+        {
+            if (link.TargetPlaylistId != null)
+            {
+                if (visibleTargetIds != null)
+                {
+                    if (!visibleTargetIds.Contains(link.TargetPlaylistId)) continue;
+                }
+                else
+                {
+                    if (targets == null) continue;
+                    var read = await targets.Resolve(link.TargetProtocol).ReadAsync(new(link.TargetBackendInstanceId,
+                        context.VerifiedBackendPrincipalId, link.OwnerUserId == owner ? link.TargetCredentialReferenceId?.ToString() : null),
+                        link.TargetPlaylistId, token);
+                    if (!read.IsSuccess || read.Value == null) continue;
+                }
+            }
+            var snapshot = snapshots.SingleOrDefault(item => item.PlaylistLinkId == link.Id);
+            if (snapshot == null) continue;
+            var external = allstarr.Core.Music.PersonalMixService.IsExternalLink(link);
+            if (external && (personalMixes == null || !await personalMixes.IsExternalVisibleAsync(context, link, token))) continue;
+            var count = await db.PlaylistSourceEntries.CountAsync(entry => entry.PlaylistSourceSnapshotId == snapshot.Id, token);
+            var snapshotKey = snapshot.Id.ToString().ToUpperInvariant();
+            var duration = await db.Database.SqlQuery<long>($"""
+                SELECT CAST(COALESCE(SUM(COALESCE(json_extract(m."PayloadJson", '$.DurationMilliseconds'),
+                    json_extract(m."PayloadJson", '$.durationMilliseconds'), json_extract(m."PayloadJson", '$.durationSeconds') * 1000)), 0) AS INTEGER) AS "Value"
+                FROM playlist_source_entries e JOIN external_metadata_snapshots m ON m."Id" = e."ExternalMetadataSnapshotId"
+                WHERE e."PlaylistSourceSnapshotId" = {snapshotKey}
+                """).SingleAsync(token);
+            result.Add(new(CreateProtocolId(link.Id), link.Id, snapshot.Id,
+                DisplayName(link.SourceProviderId, snapshot.Name), snapshot.Description, snapshot.ArtworkReferenceKey,
+                link.SourceProviderId, link.SourcePlaylistId, snapshot.ProviderRevision, link.Mode, [], link.ProjectionMode, link.TargetPlaylistId)
+            {
+                CreatedAt = link.CreatedAt,
+                UpdatedAt = snapshot.PublishedAt,
+                SummaryTrackCount = count,
+                SummaryDurationMilliseconds = duration,
+                MixCover = external ? new(link.Id.ToString(), snapshot.SnapshotVersion, "external", Source: link.SourceProviderId,
+                    SourcePlaylistId: link.SourcePlaylistId, Name: DisplayName(link.SourceProviderId, snapshot.Name), Count: count) : null
+            });
+        }
+        if (personalMixes != null) result.AddRange(await personalMixes.PublishedAsync(context, token, summariesOnly: true));
+        return result;
+    }
+
+    public static string DisplayName(string provider, string name)
+    {
+        if (provider.Equals("listenbrainz", StringComparison.OrdinalIgnoreCase))
+            foreach (var title in new[] { "Weekly Jams", "Weekly Exploration" })
+                if (name.Equals(title, StringComparison.OrdinalIgnoreCase) || name.StartsWith(title + " for ", StringComparison.OrdinalIgnoreCase)) return title;
+        return name;
     }
 
     public Task<VirtualPlaylistReadModel?> ReadAsync(
@@ -184,7 +264,7 @@ public sealed class PlaylistVirtualizationService(
         var owned = links.Where(item => item.OwnerUserId == actor.EffectiveUserId).ToArray();
         var selected = owned.Length > 0 ? owned : links;
         if (selected.Length == 0 && virtualId && personalMixes != null)
-            return (await personalMixes.PublishedAsync(context, cancellationToken)).SingleOrDefault(item => item.LinkId == linkId);
+            return (await personalMixes.PublishedAsync(context, cancellationToken, linkId)).SingleOrDefault(item => item.LinkId == linkId);
         if (selected.Length != 1) return null;
         var link = selected[0];
         if (allstarr.Core.Music.PersonalMixService.IsExternalLink(link) &&
@@ -202,7 +282,7 @@ public sealed class PlaylistVirtualizationService(
         else if (link.OwnerUserId != actor.EffectiveUserId) return null;
 
         var projection = await projections.ReadByLinkIdAsync(
-            link.OwnerUserId, link.Id, cancellationToken, actor.EffectiveUserId);
+            link.OwnerUserId, link.Id, cancellationToken, actor.EffectiveUserId, includeHistory: false);
         if (projection == null) return null;
         var selectedMode = projectionMode ?? link.ProjectionMode;
         var snapshot = await db.PlaylistSourceSnapshots.AsNoTracking()
@@ -270,16 +350,20 @@ public sealed class PlaylistVirtualizationService(
         var artwork = targetSnapshot == null
             ? projection.ArtworkReferenceKey
             : targetSnapshot.ArtworkReference;
+        if (context.Protocol == ProtocolKind.Jellyfin && authorizedTarget?.ArtworkReference is { } nativeArtwork)
+            artwork = nativeArtwork;
         var result = new VirtualPlaylistReadModel(CreateProtocolId(link.Id), link.Id, projection.SnapshotId,
-            name, description, artwork, link.SourceProviderId,
+            DisplayName(link.SourceProviderId, name), description, artwork, link.SourceProviderId,
             link.SourcePlaylistId, snapshot.ProviderRevision, link.Mode, tracks, selectedMode,
             link.TargetPlaylistId)
         {
+            CreatedAt = link.CreatedAt,
+            UpdatedAt = snapshot.PublishedAt,
             BackendOwner = link.Mode == PlaylistLinkMode.Virtual ? null : authorizedTarget?.Owner,
             BackendPublic = link.Mode == PlaylistLinkMode.Virtual ? null : authorizedTarget?.IsPublic,
             MixCover = allstarr.Core.Music.PersonalMixService.IsExternalLink(link)
                 ? new(link.Id.ToString(), snapshot.SnapshotVersion, "external", Source: link.SourceProviderId,
-                    SourcePlaylistId: link.SourcePlaylistId, Name: name, Count: tracks.Count) : null
+                    SourcePlaylistId: link.SourcePlaylistId, Name: DisplayName(link.SourceProviderId, name), Count: tracks.Count) : null
         };
         return allstarr.Core.Music.PersonalMixService.IsExternalLink(link) && personalMixes != null
             ? await personalMixes.FilterExternalTracksAsync(context, result, cancellationToken) : result;

@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Playlists.Sources;
@@ -203,11 +205,15 @@ public sealed partial class SpotifyPathfinderPlaylistClient
                     continue;
                 try
                 {
-                    if (MapSummary(playlist, playlistId, entry.Wrapper, entry.Entry) is { } summary)
+                    var artwork = await PlaylistArtworkUriAsync(playlist, playlistId, cancellationToken);
+                    if (MapSummary(playlist, playlistId, artwork, entry.Wrapper, entry.Entry) is { } summary)
                     {
                         summaries.Add(summary);
-                        if (ArtworkUri(playlist) is { } artwork)
+                        if (artwork != null)
+                        {
                             await CacheArtworkAsync(playlistId, summary.SourceRevision, artwork);
+                            await CacheArtworkAsync(playlistId, summary.Artwork?.Revision, artwork);
+                        }
                     }
                 }
                 catch (Exception exception) when (exception is ArgumentException or
@@ -308,9 +314,13 @@ public sealed partial class SpotifyPathfinderPlaylistClient
                 if (!TryPath(document.RootElement, out var playlist, "data", "playlistV2") ||
                     !TryPath(playlist, out content, "content"))
                     return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(ProviderError.CompatibilityContractChanged());
-                summary = MapSummary(playlist, playlistId);
-                if (summary != null && ArtworkUri(playlist) is { } artwork)
+                var artwork = await PlaylistArtworkUriAsync(playlist, playlistId, cancellationToken);
+                summary = MapSummary(playlist, playlistId, artwork);
+                if (summary != null && artwork != null)
+                {
                     await CacheArtworkAsync(playlistId, summary.SourceRevision, artwork);
+                    await CacheArtworkAsync(playlistId, summary.Artwork?.Revision, artwork);
+                }
             }
             if (summary == null)
                 return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(ProviderError.CompatibilityContractChanged());
@@ -437,7 +447,7 @@ public sealed partial class SpotifyPathfinderPlaylistClient
             if (GraphQlFailure(document.RootElement, PlaylistOperation) is { } failure)
                 return ProviderOutcome<Uri>.Failure(failure);
             if (!TryPath(document.RootElement, out var playlist, "data", "playlistV2") ||
-                ArtworkUri(playlist) is not { } resolvedArtwork)
+                await PlaylistArtworkUriAsync(playlist, playlistId.Value, cancellationToken) is not { } resolvedArtwork)
                 return ProviderOutcome<Uri>.Failure(new ProviderError(ProviderErrorKind.NotFound));
             await CacheArtworkAsync(playlistId.Value, artwork.Revision, resolvedArtwork);
             return ProviderOutcome<Uri>.Success(resolvedArtwork);
@@ -542,6 +552,7 @@ public sealed partial class SpotifyPathfinderPlaylistClient
     private ProviderPlaylistSummary? MapSummary(
         JsonElement value,
         string id,
+        Uri? artwork,
         JsonElement wrapper = default,
         JsonElement entry = default)
     {
@@ -561,13 +572,16 @@ public sealed partial class SpotifyPathfinderPlaylistClient
                          PlaylistItemCount(entry);
         var revision = ContractText(String(value, "revisionId"), 300) ??
                        $"pathfinder:{ProviderPlaylistSnapshotCollector.HashResource(resource)}:{trackCount ?? -1}";
+        var artworkRevision = artwork != null
+            ? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(artwork.AbsoluteUri))).ToLowerInvariant()
+            : revision;
         var summary = new ProviderPlaylistSummary(
             resource,
             name,
             new ProviderPlaylistOwner(ownerId, ownerName),
             revision,
             ContractText(Text(value, "description"), 4000),
-            new ProviderArtworkReference(resource, revision: revision),
+            artwork == null ? null : new ProviderArtworkReference(resource, revision: artworkRevision),
             trackCount);
         return summary;
     }
@@ -754,26 +768,28 @@ public sealed partial class SpotifyPathfinderPlaylistClient
 
     private static Uri? ArtworkUri(JsonElement value)
     {
-        JsonElement sources;
         if (TryPath(value, out var imageItems, "images", "items") &&
-            imageItems.ValueKind == JsonValueKind.Array &&
-            imageItems.GetArrayLength() > 0 &&
-            TryPath(imageItems[0], out sources, "sources"))
+            imageItems.ValueKind == JsonValueKind.Array)
         {
-            return LargestArtwork(sources);
+            var personalized = LargestArtwork(
+                imageItems.EnumerateArray().SelectMany(image => Array(image, "sources")),
+                personalizedOnly: true);
+            if (personalized != null)
+                return personalized;
+            foreach (var image in imageItems.EnumerateArray())
+                if (LargestArtwork(Array(image, "sources")) is { } artwork)
+                    return artwork;
         }
-        if (TryPath(value, out sources, "coverArt", "sources"))
-            return LargestArtwork(sources);
-        if (TryPath(value, out sources, "visuals", "avatarImage", "sources"))
-            return LargestArtwork(sources);
+        if (TryPath(value, out var cover, "coverArt"))
+            return LargestArtwork(Array(cover, "sources"));
+        if (TryPath(value, out var avatar, "visuals", "avatarImage"))
+            return LargestArtwork(Array(avatar, "sources"));
         return null;
     }
 
-    private static Uri? LargestArtwork(JsonElement sources)
+    private static Uri? LargestArtwork(IEnumerable<JsonElement> sources, bool personalizedOnly = false)
     {
-        if (sources.ValueKind != JsonValueKind.Array)
-            return null;
-        return sources.EnumerateArray()
+        return sources
             .Select(source => new
             {
                 Url = String(source, "url"),
@@ -781,7 +797,8 @@ public sealed partial class SpotifyPathfinderPlaylistClient
             })
             .Where(source => Uri.TryCreate(source.Url, UriKind.Absolute, out var uri) &&
                              uri.Scheme == Uri.UriSchemeHttps &&
-                             IsAllowedArtworkHost(uri.Host))
+                             IsAllowedArtworkHost(uri.Host) &&
+                             (!personalizedOnly || IsPersonalizedArtworkHost(uri.Host)))
             .OrderByDescending(source => source.Width)
             .Select(source => new Uri(source.Url!))
             .FirstOrDefault();
@@ -791,6 +808,10 @@ public sealed partial class SpotifyPathfinderPlaylistClient
         host.Equals("i.scdn.co", StringComparison.OrdinalIgnoreCase) ||
         host.EndsWith(".scdn.co", StringComparison.OrdinalIgnoreCase) ||
         host.EndsWith(".spotifycdn.com", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsPersonalizedArtworkHost(string host) =>
+        host.Equals("newjams-images.scdn.co", StringComparison.OrdinalIgnoreCase) ||
+        host.Equals("pickasso.spotifycdn.com", StringComparison.OrdinalIgnoreCase);
 
     private static TimeSpan RetryAfter(HttpResponseMessage response)
     {

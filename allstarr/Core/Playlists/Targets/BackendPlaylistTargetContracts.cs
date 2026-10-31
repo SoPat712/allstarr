@@ -224,6 +224,9 @@ public sealed record BackendPlaylistWriteReceipt(
 
 public interface IBackendPlaylistTarget
 {
+    Task<BackendPlaylistTargetResult<bool>> WriteArtworkOnlyAsync(BackendPlaylistTargetContext context,
+        string backendPlaylistId, BackendPlaylistArtwork artwork, CancellationToken cancellationToken) =>
+        Task.FromResult(new BackendPlaylistTargetResult<bool>(BackendPlaylistTargetStatus.Unsupported));
     BackendPlaylistFamily Family { get; }
     BackendPlaylistTargetCapabilities Capabilities { get; }
 

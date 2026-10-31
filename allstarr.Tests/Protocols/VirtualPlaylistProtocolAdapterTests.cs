@@ -163,6 +163,46 @@ public sealed class VirtualPlaylistProtocolAdapterTests
     }
 
     [Fact]
+    public void JellyfinVirtualPlaylist_HasTheSameKeysAsNativeSummary()
+    {
+        var http = new DefaultHttpContext();
+        http.Request.Path = "/Items";
+        http.Request.QueryString = new QueryString("?Fields=DateCreated,Etag,ParentId,Path,SortName,ProviderIds,ChildCount,Overview");
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(new StubVirtualizationService(Model()),
+            new StubJellyfinMutationResolver(null), httpContexts: new HttpContextAccessor { HttpContext = http });
+        var created = DateTimeOffset.Parse("2026-10-01T00:00:00Z");
+        var model = Model() with { CreatedAt = created };
+        var item = adapter.ToItem(model, serverId: "fixture-server");
+        using var native = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Jellyfin", "native-playlist-summary.json")));
+        Assert.Equal(native.RootElement.EnumerateObject().Select(property => property.Name).Order(), item.Keys.Order());
+        Assert.IsType<Dictionary<string, object>>(item["ImageBlurHashes"]);
+        Assert.Equal(created.UtcDateTime.ToString("O"), item["DateCreated"]);
+        Assert.NotEqual(item["Etag"], adapter.ToItem(model with { SnapshotId = Guid.NewGuid() })["Etag"]);
+    }
+
+    [Theory]
+    [InlineData("The Classics", "classics")]
+    [InlineData("For the Fam", "for fam")]
+    [InlineData("The B-Side 2", "bside 0000000002")]
+    public void JellyfinPlaylistSortName_UsesNativeDefaultNormalization(string name, string expected)
+    {
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(new StubVirtualizationService(Model()), new StubJellyfinMutationResolver(null));
+        Assert.Equal(expected, adapter.ToItem(Model() with { Name = name })["SortName"]);
+    }
+
+    [Theory]
+    [InlineData("Weekly Jams for treeman183, week of 2026-10-12 Mon", "Weekly Jams")]
+    [InlineData("Weekly Exploration for treeman183, week of 2026-10-12 Mon", "Weekly Exploration")]
+    [InlineData("Other playlist", "Other playlist")]
+    public void JellyfinPlaylistDisplayName_PreservesRawTitle(string raw, string expected)
+    {
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(new StubVirtualizationService(Model()), new StubJellyfinMutationResolver(null));
+        var model = Model() with { SourceProviderId = "listenbrainz", Name = raw };
+        Assert.Equal(expected, adapter.ToItem(model)["Name"]);
+        Assert.Equal(raw, model.Name);
+    }
+
+    [Fact]
     public async Task JellyfinRead_PreservesEverySourceRowWithoutInventingPlayback()
     {
         var adapter = new JellyfinVirtualPlaylistProtocolAdapter(
@@ -215,12 +255,12 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         Assert.Equal("Road Trip", item["Name"]);
         Assert.Equal("Playlist", item["Type"]);
         Assert.Equal("Audio", item["MediaType"]);
-        Assert.False(item.ContainsKey("ChildCount"));
+        Assert.Equal(3, item["ChildCount"]);
         Assert.True((long)item["RunTimeTicks"]! > 0);
         var userData = Assert.IsType<Dictionary<string, object>>(item["UserData"]);
         Assert.Equal(ProtocolId, userData["ItemId"]);
         Assert.Equal(ProtocolId, userData["Key"]);
-        Assert.False(item.ContainsKey("ProviderIds"));
+        Assert.True(item.ContainsKey("ProviderIds"));
         var definitionResult = Assert.IsType<JsonResult>(await adapter.ReadDefinitionAsync(
             Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
         using var definition = JsonDocument.Parse(JsonSerializer.Serialize(definitionResult.Value));
@@ -500,6 +540,23 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         Assert.False(entry.TryGetProperty("duration", out _));
         Assert.False(entry.TryGetProperty("album", out _));
         Assert.False(entry.TryGetProperty("coverArt", out _));
+    }
+
+    [Fact]
+    public async Task SubsonicPlaylistList_HasNoTwentyItemCap()
+    {
+        var models = Enumerable.Range(0, 4).Select(_ => Model() with { ProtocolId = PlaylistVirtualizationService.CreateProtocolId(Guid.NewGuid()) }).ToArray();
+        var service = new Mock<IPlaylistVirtualizationService>();
+        service.Setup(item => item.ListAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>())).ReturnsAsync(models);
+        var adapter = new SubsonicVirtualPlaylistProtocolAdapter(service.Object, new StubMutationResolver(null));
+        var payload = new Dictionary<string, object>
+        {
+            ["subsonic-response"] = new { status = "ok", playlists = new { playlist = Enumerable.Range(0, 20).Select(index => new { id = $"native-{index}", name = $"Native {index}" }) } }
+        };
+        var native = new SubsonicProxyResponse(JsonSerializer.SerializeToUtf8Bytes(payload), "application/json", System.Net.HttpStatusCode.OK, new Dictionary<string, string[]>());
+        var merged = await adapter.ListAsync(Context(ProtocolKind.Subsonic), "json", native, default);
+        using var json = JsonDocument.Parse(merged.Body);
+        Assert.Equal(24, json.RootElement.GetProperty("subsonic-response").GetProperty("playlists").GetProperty("playlist").GetArrayLength());
     }
 
     [Fact]

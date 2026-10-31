@@ -42,6 +42,7 @@ public sealed class ProviderPlaylistSnapshotCollectorTests
         Assert.Equal("revision-17", snapshot.SourceRevision);
         Assert.Equal("etag-17", snapshot.SourceETag);
         Assert.Equal("Road Mix", snapshot.Name);
+        Assert.Equal("owner", snapshot.SourceOwnerId);
         Assert.Equal("Source description", snapshot.Description);
         Assert.StartsWith("provider-artwork:", snapshot.ArtworkReferenceKey, StringComparison.Ordinal);
         Assert.Equal([0, 1, 2], snapshot.Entries.Select(entry => entry.SourcePosition));

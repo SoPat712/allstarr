@@ -5,6 +5,15 @@ namespace allstarr.Tests;
 
 public sealed class JellyfinMusicEndpointPolicyTests
 {
+    [Fact]
+    public void PlaylistList_IsAReadOnlyMusicRoute()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Method = "GET";
+        context.Request.Path = "/Playlists";
+        Assert.Equal(JellyfinEndpointAccess.Music, JellyfinMusicEndpointPolicy.Evaluate(context.Request).Access);
+    }
+
     [Theory]
     [InlineData("GET", "/Artists")]
     [InlineData("GET", "/MusicGenres/Rock")]

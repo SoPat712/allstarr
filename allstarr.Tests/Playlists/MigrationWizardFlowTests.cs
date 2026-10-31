@@ -319,6 +319,7 @@ public sealed partial class MigrationWizardFlowTests : IAsyncLifetime
         Assert.Equal(keepInSync ? PlaylistImportMode.Linked : PlaylistImportMode.OneTime, link.ImportMode);
         Assert.Equal(PlaylistTrackRetention.OnDemand, link.TrackRetention);
         Assert.Equal(PlaylistLinkMode.Hybrid, link.Mode);
+        Assert.True(link.SyncArtwork);
         Assert.Equal(keepInSync, link.ScheduleId.HasValue);
         if (keepInSync) Assert.True((await db.JobSchedules.SingleAsync()).Enabled);
         else Assert.Empty(await db.JobSchedules.ToArrayAsync());

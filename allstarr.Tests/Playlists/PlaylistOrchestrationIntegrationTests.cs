@@ -2831,6 +2831,13 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         public CollectedPlaylistSourceSnapshot Snapshot { get; set; } = null!;
         public string? FailureCode { get; set; }
         public int CollectCalls { get; private set; }
+        public int SummaryCalls { get; private set; }
+        public Task<CollectedPlaylistSourceSnapshot> CollectArtworkSummaryAsync(ProtocolExecutionContext context,
+            PlaylistLinkRecord link, CancellationToken cancellationToken)
+        {
+            SummaryCalls++;
+            return Task.FromResult(Snapshot);
+        }
         public int ArtworkCalls { get; private set; }
         public ProviderOutcome<ProviderPlaylistArtwork> Artwork { get; set; } =
             ProviderOutcome<ProviderPlaylistArtwork>.Failure(new ProviderError(ProviderErrorKind.CapabilityUnavailable));
@@ -2870,12 +2877,20 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
     {
         public BackendPlaylistFamily Family => BackendPlaylistFamily.Jellyfin;
         public bool CanWriteArtwork { get; set; }
+        public byte[]? ArtworkOnlyBytes { get; private set; }
+        public Task<BackendPlaylistTargetResult<bool>> WriteArtworkOnlyAsync(BackendPlaylistTargetContext context,
+            string backendPlaylistId, BackendPlaylistArtwork artwork, CancellationToken cancellationToken)
+        {
+            ArtworkOnlyBytes = artwork.Bytes;
+            return Task.FromResult(new BackendPlaylistTargetResult<bool>(BackendPlaylistTargetStatus.Success, true));
+        }
         public bool IgnoreRemovals { get; set; }
         public bool FindSeededPlaylist { get; set; }
         public BackendPlaylistTargetCapabilities Capabilities => new(true, true, true, true, true, true, CanWriteArtwork, true, true);
         public BackendPlaylistTargetStatus ReadStatus { get; set; } = BackendPlaylistTargetStatus.Success;
         public BackendPlaylistTargetStatus WriteStatus { get; set; } = BackendPlaylistTargetStatus.Success;
         public string? ErrorCode { get; set; }
+        public string? ArtworkReference { get; set; }
         public int FindCalls { get; private set; }
         public int ReadCalls { get; private set; }
         public int WriteCalls { get; private set; }
@@ -2921,6 +2936,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
                     ? last
                     : Backend(backendPlaylistId)
                 : null;
+            if (snapshot != null && ArtworkReference != null) snapshot = snapshot with { ArtworkReference = ArtworkReference };
             if (snapshot != null && ReadReturnedPlaylistId != null)
                 snapshot = snapshot with { BackendPlaylistId = ReadReturnedPlaylistId };
             return Task.FromResult(new BackendPlaylistTargetResult<BackendPlaylistSnapshot>(ReadStatus, snapshot, ErrorCode: ErrorCode));

@@ -337,6 +337,16 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
         return features.ToDictionary(item => item.Key, item => Score(document, item.Value, null, false));
     }
 
+    internal async Task<IReadOnlySet<Song>> BlockedSongsAsync(Guid user, IReadOnlyList<Song> songs, CancellationToken token)
+    {
+        await using var db = await factory.CreateDbContextAsync(token);
+        await RequireUser(db, user, token);
+        var document = Read(await db.TasteProfiles.AsNoTracking().SingleOrDefaultAsync(item => item.OwnerUserId == user, token));
+        Prune(document);
+        var features = await FeaturesAsync(songs, token);
+        return features.Where(item => Score(document, item.Value, null, false).Blocked).Select(item => item.Key).ToHashSet();
+    }
+
     public async Task<IReadOnlyList<Song>> RankAsync(Guid user, IReadOnlyList<Song> songs, string? seed = null, CancellationToken token = default)
     {
         var document = await LoadAsync(user, token);

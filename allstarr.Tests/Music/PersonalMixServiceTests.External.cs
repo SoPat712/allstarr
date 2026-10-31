@@ -25,7 +25,7 @@ public sealed partial class PersonalMixServiceTests
     public PersonalMixServiceTests(ITestOutputHelper output) => this.output = output;
 
     private async Task<PlaylistLinkRecord> ExternalLink(string source = "lastfm", string selection = "loved",
-        Guid? listener = null, bool schedule = true, string? artwork = null)
+        Guid? listener = null, bool schedule = true, string? artwork = null, string? name = null)
     {
         var user = listener ?? owner;
         access.Setup(item => item.ResolveUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
@@ -83,7 +83,7 @@ public sealed partial class PersonalMixServiceTests
             OwnerUserId = user,
             PlaylistLinkId = link.Id,
             ProviderAccountId = account.Id,
-            Name = "External favourite songs",
+            Name = name ?? "External favourite songs",
             ArtworkReferenceKey = artwork,
             SnapshotVersion = 1,
             ProviderRevision = "1",
@@ -94,6 +94,41 @@ public sealed partial class PersonalMixServiceTests
         });
         await db.SaveChangesAsync();
         return link;
+    }
+
+    [Fact]
+    public async Task LinkedPlaylistSummaryAndDetail_UseTheSameFriendlyCoverIdentity()
+    {
+        protocol = "jellyfin";
+        publish = true;
+        await using (var db = factory.CreateDbContext())
+        {
+            (await db.Users.SingleAsync(item => item.Id == owner)).BackendType = protocol;
+            await db.SaveChangesAsync();
+        }
+        const string raw = "Weekly Jams for treeman183, week of 2026-10-12 Mon";
+        var link = await ExternalLink("listenbrainz", "createdfor:weekly-jams", name: raw);
+        var virtualization = new PlaylistVirtualizationService(factory, new(factory, access.Object), access.Object, personalMixes: service);
+        var summary = Assert.Single(await virtualization.ListAsync(Context(owner)));
+        var detail = await virtualization.ReadAsync(Context(owner), PlaylistVirtualizationService.CreateProtocolId(link.Id));
+        Assert.Equal("Weekly Jams", summary.Name);
+        Assert.Equal(summary.MixCover, detail!.MixCover);
+        await using var read = factory.CreateDbContext();
+        Assert.Equal(raw, (await read.PlaylistSourceSnapshots.SingleAsync()).Name);
+    }
+
+    [Fact]
+    public async Task PublishedPlaylistSummary_DoesNotResolveTracksOrHistoryReadiness()
+    {
+        await Seed();
+        var mix = (await service.GenerateAsync(owner)).Single(item => item.Kind == "on-repeat");
+        await service.SetInAppsAsync(owner, mix.Id, true, default);
+        access.Invocations.Clear();
+        publish = true;
+        var summary = Assert.Single(await service.PublishedAsync(Context(owner), default, mix.Id, summariesOnly: true));
+        Assert.Empty(summary.Tracks);
+        Assert.Equal(mix.Songs.Count, summary.TrackCount);
+        access.VerifyNoOtherCalls();
     }
 
     [Fact]

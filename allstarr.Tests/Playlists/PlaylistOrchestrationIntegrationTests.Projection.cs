@@ -10,6 +10,45 @@ namespace allstarr.Tests;
 
 public sealed partial class PlaylistOrchestrationIntegrationTests
 {
+    [Theory]
+    [InlineData(PlaylistLinkMode.Virtual, true)]
+    [InlineData(PlaylistLinkMode.Hybrid, true)]
+    [InlineData(PlaylistLinkMode.Materialized, false)]
+    public async Task VirtualPlaylistSummaries_PreserveModeVisibilityWithoutATarget(PlaylistLinkMode mode, bool visible)
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot("mode-summary", Entry(0, "one", "source-1", "One"));
+        await _service.RunAsync(Context(), new(_link, 1));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var link = await db.PlaylistLinks.SingleAsync();
+            link.Mode = mode;
+            link.TargetPlaylistId = null;
+            await db.SaveChangesAsync();
+        }
+        var access = new Mock<IBackendLibraryAccessResolver>(MockBehavior.Strict);
+        var service = new PlaylistVirtualizationService(_factory, new(_factory, access.Object), access.Object);
+        Assert.Equal(visible ? 1 : 0, (await service.ListAsync(Context())).Count);
+        access.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task VirtualPlaylistList_ReadsSummariesWithoutTrackProjection()
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot("summary", Entry(0, "one", "source-1", "One"), Entry(1, "two", "missing", "Two"));
+        await _service.RunAsync(Context(), new(_link, 1));
+        var access = new Mock<IBackendLibraryAccessResolver>(MockBehavior.Strict);
+        var service = new PlaylistVirtualizationService(_factory, new(_factory, access.Object), access.Object);
+        var rows = await service.ListAsync(Context());
+        var row = Assert.Single(rows);
+        Assert.Empty(row.Tracks);
+        Assert.Equal(2, row.TrackCount);
+        Assert.True(row.DurationMilliseconds > 0);
+        Assert.NotEqual(DateTimeOffset.UnixEpoch, row.CreatedAt);
+        access.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task HomePlaylistCountsMatchPublishedProjectionsAndResolveViewerAccessOnce()
     {
@@ -87,14 +126,18 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         var service = new PlaylistVirtualizationService(_factory,
             new DurablePlaylistProjectionReader(_factory, access, gateway.Object), access, new FakeTargetResolver(_target));
 
+        _target.ArtworkReference = "current-native-cover";
         var native = await service.ReadAsync(Context(), targetId);
         Assert.NotNull(native);
+        Assert.Equal("current-native-cover", native.ArtworkReferenceKey);
         Assert.Equal(["ext-deezer-song-external-song", "local-1"], native.Tracks
             .Where(item => item.RouteKind != TrackRouteKind.Unresolved).Select(item => item.BackendItemId));
         Assert.DoesNotContain(native.Tracks, item => item.BackendItemId == "local-2");
         Assert.Equal([0, 1, 2], native.Tracks.Select(item => item.SourcePosition));
         Assert.Equal(targetId, native.TargetPlaylistId);
-        Assert.NotNull(await service.ReadAsync(Context(), PlaylistVirtualizationService.CreateProtocolId(_link)));
+        var virtualDetail = await service.ReadAsync(Context(), PlaylistVirtualizationService.CreateProtocolId(_link));
+        Assert.NotNull(virtualDetail);
+        Assert.Equal(native.ArtworkReferenceKey, virtualDetail.ArtworkReferenceKey);
         Assert.Equal(targetId, Assert.Single(await service.ListAsync(Context())).TargetPlaylistId);
 
         _target.ReadStatus = allstarr.Core.Playlists.Targets.BackendPlaylistTargetStatus.Unauthorized;

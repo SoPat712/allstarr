@@ -335,9 +335,22 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
         var update = await SendAsync(context, HttpMethod.Post, $"Items/{Escape(id)}",
             JsonContent.Create(new { metadata.Name, Overview = metadata.Description }), cancellationToken);
         if (!update.IsSuccess || metadata.Artwork == null) return update;
-        using var artwork = new ByteArrayContent(metadata.Artwork);
-        artwork.Headers.ContentType = new(metadata.ArtworkContentType ?? "image/jpeg");
-        return await SendAsync(context, HttpMethod.Post, $"Items/{Escape(id)}/Images/Primary", artwork, cancellationToken);
+        var result = await WriteArtworkOnlyAsync(context, id,
+            new(metadata.Artwork, metadata.ArtworkContentType ?? "image/jpeg"), cancellationToken);
+        return result.IsSuccess ? update : new(result.UpstreamStatus ?? HttpStatusCode.ServiceUnavailable, null, result.ErrorCode);
+    }
+
+    public async Task<BackendPlaylistTargetResult<bool>> WriteArtworkOnlyAsync(BackendPlaylistTargetContext context,
+        string id, BackendPlaylistArtwork image, CancellationToken cancellationToken)
+    {
+        var currentArtwork = await ReadArtworkAsync(context, id, null, cancellationToken);
+        if (currentArtwork.IsSuccess && currentArtwork.Value is { } existingArtwork &&
+            existingArtwork.Bytes.AsSpan().SequenceEqual(image.Bytes))
+            return new(BackendPlaylistTargetStatus.Success, false);
+        using var artwork = new ByteArrayContent(image.Bytes);
+        artwork.Headers.ContentType = new(image.ContentType);
+        var response = await SendAsync(context, HttpMethod.Post, $"Items/{Escape(id)}/Images/Primary", artwork, cancellationToken);
+        return response.IsSuccess ? new(BackendPlaylistTargetStatus.Success, true) : ConvertFailure<bool>(response);
     }
 
     private async Task<HttpResult> SendAsync(

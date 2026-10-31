@@ -76,7 +76,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             item.ProviderId == "allstarr" && item.ResourceKind == kind && item.ExternalIdHash == Scope(user))
             .OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(token);
 
-    private async Task<PersonalMixDocument> LoadAsync(AllstarrDbContext db, UserRecord user, CancellationToken token)
+    private async Task<PersonalMixDocument> LoadAsync(AllstarrDbContext db, UserRecord user, CancellationToken token, bool publishedOnly = false)
     {
         var row = await RowAsync(db, user, token);
         var document = row == null ? new() { AppsOptInVersion = 3 } : JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!;
@@ -113,6 +113,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                         : blend.Description.Contains("Daily Mix", StringComparison.Ordinal) ? "Made for you" : blend.Description
                 };
             }
+        if (publishedOnly) return document;
         var missing = PersonalMixRules.Kinds.Where(kind => !document.Mixes.ContainsKey(kind)).ToArray();
         var stale = document.Mixes.Values.Where(mix => PersonalMixRules.Kinds.Contains(mix.Kind) && !PersonalMixMoods.Kinds.Contains(mix.Kind) && !mix.Readiness.Ready)
             .Select(mix => mix.Kind).ToArray();
@@ -414,11 +415,11 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     private async Task<IReadOnlyList<PersonalMix>> VisibleAsync(Guid owner, PersonalMixDocument document, CancellationToken token)
     {
         var songs = document.Mixes.Values.SelectMany(mix => mix.Songs).Select(item => item.Song).ToArray();
-        var scores = await taste.ScoreManyAsync(owner, songs, token);
+        var blocked = await taste.BlockedSongsAsync(owner, songs, token);
         var policy = await policies.ResolveForUserAsync(owner, token);
         return document.Mixes.Values.Select(mix =>
         {
-            var visible = mix.Songs.Where(item => !scores[item.Song].Blocked && policy.Includes(item.Song)).ToArray();
+            var visible = mix.Songs.Where(item => !blocked.Contains(item.Song) && policy.Includes(item.Song)).ToArray();
             var readiness = PersonalMixMoods.Kinds.Contains(mix.Kind) && mix.Generation > 0
                 ? PersonalMixMoods.Readiness(visible.Length) : mix.Readiness;
             if (readiness.Ready && visible.Length == 0)
@@ -472,7 +473,8 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         finally { writes.Release(); }
     }
 
-    public async Task<IReadOnlyList<VirtualPlaylistReadModel>> PublishedAsync(ProtocolExecutionContext context, CancellationToken token)
+    public async Task<IReadOnlyList<VirtualPlaylistReadModel>> PublishedAsync(ProtocolExecutionContext context, CancellationToken token,
+        Guid? playlistId = null, bool summariesOnly = false)
     {
         if (context.Actor?.EffectiveUserId is not { } owner || !(bool)(await settings.GetAsync(PublishKey, token)).Value) return [];
         PersonalMixDocument document;
@@ -483,22 +485,30 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             var user = await UserAsync(db, owner, token);
             if (user.BackendType != context.Protocol.ToString().ToLowerInvariant() || user.BackendInstanceId != context.BackendInstanceId ||
                 user.BackendPrincipalId != context.VerifiedBackendPrincipalId) return [];
-            document = await LoadAsync(db, user, token);
+            document = await LoadAsync(db, user, token, publishedOnly: true);
         }
         finally { writes.Release(); }
+        document.Mixes = document.Mixes.Where(pair => pair.Value.Added &&
+            (playlistId == null || pair.Value.Id == playlistId)).ToDictionary(pair => pair.Key, pair => pair.Value);
+        var visible = summariesOnly ? document.Mixes.Values.ToArray() : await VisibleAsync(owner, document, token);
         var localIds = document.Mixes.Values.SelectMany(mix => mix.Songs).Where(item => item.Song.IsLocal).Select(item => item.Song.Id).ToArray();
-        var allowed = localIds.Length == 0 ? [] : await LibraryTrackAccess.Query(db, context, await libraryAccess.ResolveAsync(context, token))
+        var allowed = summariesOnly || localIds.Length == 0 ? [] : await LibraryTrackAccess.Query(db, context, await libraryAccess.ResolveAsync(context, token))
             .Where(item => localIds.Contains(item.BackendItemId)).Select(item => item.BackendItemId).ToArrayAsync(token);
-        return (await VisibleAsync(owner, document, token)).Where(mix => mix.Generation > 0 && mix.Songs.Count > 0 && mix.Added && mix.Readiness.Ready &&
-            (!PersonalMixMoods.Kinds.Contains(mix.Kind) || mix.Songs.Count(item => !item.Song.IsLocal || allowed.Contains(item.Song.Id)) >= 25)).Select(mix =>
+        return visible.Where(mix => mix.Generation > 0 && mix.Songs.Count > 0 && mix.Added && mix.Readiness.Ready &&
+            (summariesOnly || !PersonalMixMoods.Kinds.Contains(mix.Kind) || mix.Songs.Count(item => !item.Song.IsLocal || allowed.Contains(item.Song.Id)) >= 25)).Select(mix =>
             new VirtualPlaylistReadModel(PlaylistVirtualizationService.CreateProtocolId(mix.Id), mix.Id, mix.Id, mix.Name, mix.Description,
                 null, "allstarr", mix.Kind, mix.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture), PlaylistLinkMode.Virtual,
-                mix.Songs.Where(item => !item.Song.IsLocal || allowed.Contains(item.Song.Id)).Select((item, index) => new VirtualPlaylistTrack(index, item.Song.Id, item.Song.Title, item.Song.Artist,
+                summariesOnly ? [] : mix.Songs.Where(item => !item.Song.IsLocal || allowed.Contains(item.Song.Id)).Select((item, index) => new VirtualPlaylistTrack(index, item.Song.Id, item.Song.Title, item.Song.Artist,
                     item.Song.Album, null, item.Song.Duration * 1000L, null, TrackMatchState.Accepted,
                     item.Song.ExternalProvider, item.Song.ExternalId, item.Song.IsLocal ? TrackRouteKind.Local : TrackRouteKind.External,
                     item.Song.ExternalProvider, item.Song.ExternalId)
                 { PlaybackExplicitContentLyrics = item.Song.ExplicitContentLyrics }).ToArray())
-            { BackendPublic = false, MixCover = MixCoverInput.From(mix) }).ToArray();
+            {
+                BackendPublic = false,
+                MixCover = MixCoverInput.From(mix),
+                SummaryTrackCount = summariesOnly ? mix.Songs.Count : null,
+                SummaryDurationMilliseconds = summariesOnly ? mix.Songs.Sum(item => item.Song.Duration * 1000L) : null
+            }).ToArray();
     }
 
     public async Task EnsureSchedulesAsync(CancellationToken token)

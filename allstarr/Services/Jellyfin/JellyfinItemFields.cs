@@ -26,7 +26,7 @@ internal sealed class JellyfinItemFields(IQueryCollection? query, bool includeAl
     {
         foreach (var key in item.Keys.ToArray())
         {
-            if (ShouldOmit(key, item[key] == null))
+            if (ShouldOmit(key, item[key] == null, item.GetValueOrDefault("Type")?.ToString() == "Playlist"))
                 item.Remove(key);
         }
         return item;
@@ -36,13 +36,15 @@ internal sealed class JellyfinItemFields(IQueryCollection? query, bool includeAl
     {
         foreach (var key in item.Select(pair => pair.Key).ToArray())
         {
-            if (ShouldOmit(key, item[key] == null))
+            if (ShouldOmit(key, item[key] == null, item["Type"]?.ToString() == "Playlist"))
                 item.Remove(key);
         }
     }
 
-    private bool ShouldOmit(string key, bool isNull)
+    private bool ShouldOmit(string key, bool isNull, bool playlist)
     {
+        if (playlist && key is "ChildCount" or "Overview") return false;
+        if (playlist && key is "Etag" or "RecursiveItemCount") return !Includes(key);
         var field = key switch { "GenreItems" => "Genres", "AlbumCount" => "ItemCounts", _ => key };
         return OptionalFields.Contains(field) && !Includes(field) ||
             UnsupportedFields.Contains(key) || isNull && key != "ChannelId";
@@ -52,7 +54,7 @@ internal sealed class JellyfinItemFields(IQueryCollection? query, bool includeAl
     {
         "Items", "Albums", "Artists", "AlbumArtists", "Latest", "Resume", "Suggestions",
         "Similar", "InstantMix", "Search", "Episodes", "Seasons", "NextUp", "Upcoming",
-        "Recommendations", "Views", "UserViews", "MediaFolders"
+        "Recommendations", "Views", "UserViews", "MediaFolders", "Playlists"
     };
 
     private static readonly HashSet<string> OptionalFields = new(StringComparer.Ordinal)

@@ -49,7 +49,11 @@ public sealed record CollectedPlaylistSourceSnapshot(
     string Name,
     string? Description,
     string? ArtworkReferenceKey,
-    IReadOnlyList<CollectedPlaylistSourceEntry> Entries);
+    IReadOnlyList<CollectedPlaylistSourceEntry> Entries)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SourceOwnerId { get; init; }
+}
 
 public sealed record PlaylistSnapshotCollectionResult(
     PlaylistSnapshotCollectionStatus Status,
@@ -89,7 +93,8 @@ public sealed class ProviderPlaylistSnapshotCollector
             throw new InvalidDataException("The source changed or returned an incomplete page.");
         return (new(capability.ProviderId, context.Account.AccountId, HashResource(request.PlaylistId),
             page.Playlist.SourceRevision, page.Playlist.SourceETag, page.Playlist.Name, page.Playlist.Description,
-            StableArtworkReference(page.Playlist.Artwork), page.Tracks.Items.Select(item => ToCollectedEntry(request.PlaylistId, item)).ToArray()),
+            StableArtworkReference(page.Playlist.Artwork), page.Tracks.Items.Select(item => ToCollectedEntry(request.PlaylistId, item)).ToArray())
+        { SourceOwnerId = page.Playlist.Owner.ProviderUserId },
             page.Tracks.NextCursor, page.Playlist.TrackCount!.Value);
     }
 
@@ -186,7 +191,8 @@ public sealed class ProviderPlaylistSnapshotCollector
             summary.Name,
             summary.Description,
             artwork,
-            entries.ToArray());
+            entries.ToArray())
+        { SourceOwnerId = summary.Owner.ProviderUserId };
         return new(PlaylistSnapshotCollectionStatus.Fresh, snapshot, null, pagesRead);
     }
 
@@ -260,7 +266,7 @@ public sealed class ProviderPlaylistSnapshotCollector
         };
     }
 
-    private static string? StableArtworkReference(ProviderArtworkReference? artwork)
+    internal static string? StableArtworkReference(ProviderArtworkReference? artwork)
     {
         if (artwork?.ResourceId != null)
             return $"provider-artwork:{HashResource(artwork.ResourceId)}:{HashText(artwork.Revision ?? "unversioned")}";

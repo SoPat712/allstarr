@@ -472,6 +472,9 @@ public static class JellyfinMusicEndpointPolicy
             segments[1].Equals("lyrics", StringComparison.OrdinalIgnoreCase))
             return true;
 
+        if (HttpMethods.IsGet(method) && path.Equals("playlists", StringComparison.OrdinalIgnoreCase))
+            return true;
+
         if (isRead && segments.Length >= 2 &&
             segments[0].Equals("playlists", StringComparison.OrdinalIgnoreCase) &&
             (segments.Length == 2 ||

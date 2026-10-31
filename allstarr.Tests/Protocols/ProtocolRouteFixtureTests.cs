@@ -1378,7 +1378,7 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task JellyfinVirtualPlaylistImage_WithoutPlayerToken_DoesNotRevealPrivateSource()
+    public async Task JellyfinVirtualPlaylistImage_WithoutStoredCover_ReturnsNotFound()
     {
         const string virtualId = "allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0";
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
@@ -3314,6 +3314,7 @@ public sealed partial class ProtocolRouteFixtureTests
                     "/Users/Me" => Json(
                         StatusCodes.Status200OK,
                         """{"Id":"user-1","Name":"Fixture User"}"""),
+                    "/Users/user-1/Items" => Json(200, """{"Items":[{"Id":"backend-target","Type":"Playlist","ParentId":"playlists-folder"}],"TotalRecordCount":1}"""),
                     "/Items" => Json(
                         StatusCodes.Status200OK,
                         $$"""{"Items":[{{originalItem}}],"TotalRecordCount":1,"StartIndex":0}"""),

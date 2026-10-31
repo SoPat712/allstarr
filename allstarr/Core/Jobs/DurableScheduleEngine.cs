@@ -41,6 +41,7 @@ public sealed class DurableScheduleEngine
     private readonly ReleaseComposition _releaseComposition;
     private readonly DurableBackupService? _backups;
     private readonly allstarr.Core.Music.PersonalMixService? _mixes;
+    private readonly allstarr.Core.Playlists.PlaylistOrchestrationService? _playlists;
 
     public DurableScheduleEngine(
         IDbContextFactory<AllstarrDbContext> contextFactory,
@@ -48,7 +49,8 @@ public sealed class DurableScheduleEngine
         IPlatformClock clock,
         ReleaseComposition releaseComposition,
         DurableBackupService? backups = null,
-        allstarr.Core.Music.PersonalMixService? mixes = null)
+        allstarr.Core.Music.PersonalMixService? mixes = null,
+        allstarr.Core.Playlists.PlaylistOrchestrationService? playlists = null)
     {
         _contextFactory = contextFactory;
         _queue = queue;
@@ -56,6 +58,7 @@ public sealed class DurableScheduleEngine
         _releaseComposition = releaseComposition;
         _backups = backups;
         _mixes = mixes;
+        _playlists = playlists;
     }
 
     public DurableScheduleEngine(
@@ -84,6 +87,7 @@ public sealed class DurableScheduleEngine
         var now = _clock.UtcNow;
         if (_backups != null) await _backups.ReconcileScheduleAsync(cancellationToken);
         if (_mixes != null) await _mixes.EnsureSchedulesAsync(cancellationToken);
+        if (_playlists != null) await _playlists.EnsureSpotifyArtworkRepairsAsync(cancellationToken);
         await using var scan = await _contextFactory.CreateDbContextAsync(cancellationToken);
         var dueSchedules = scan.JobSchedules.AsNoTracking()
             .Where(item => item.Enabled && item.NextRunAt != null && item.NextRunAt <= now)

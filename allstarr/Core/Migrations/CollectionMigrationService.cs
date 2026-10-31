@@ -443,8 +443,8 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
             collection.Name = page.Snapshot.Name;
             var link = await playlists.CreateLinkAsync(execution, new(run.ProviderAccountId, "spotify", row.SourceId, Hash(row.SourceId),
                 run.Protocol, run.BackendInstanceId, PlaylistLinkMode.Hybrid, PlaylistMaterializationMode.Reconcile,
-                "playlist-rules-v1", "playlist-policy-v1", MirrorStaleEntries: true, ImportMode: collection.KeepInSync ? PlaylistImportMode.Linked : PlaylistImportMode.OneTime,
-                SyncArtwork: false), token);
+                "playlist-rules-v1", "playlist-policy-v1", MirrorStaleEntries: true,
+                ImportMode: collection.KeepInSync ? PlaylistImportMode.Linked : PlaylistImportMode.OneTime), token);
             collection.LinkId = link.Id;
             var version = (await db.PlaylistSourceSnapshots.Where(item => item.PlaylistLinkId == link.Id).MaxAsync(item => (int?)item.SnapshotVersion, token) ?? 0) + 1;
             var snapshot = await playlists.CaptureSourceSnapshotAsync(execution, link.Id, new(version, page.Snapshot.SourceRevision,

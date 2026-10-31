@@ -11,6 +11,82 @@ namespace allstarr.Tests;
 
 public sealed class BackendPlaylistTargetTests
 {
+    [Fact]
+    public async Task Playlist_artwork_only_repair_changes_the_same_list_and_detail_image_tag()
+    {
+        var backend = new JellyfinFakeBackend("p1", "Release Radar", [])
+        {
+            ExistingArtwork = [1, 2, 3],
+            UseArtworkHashTag = true
+        };
+        var target = new JellyfinPlaylistTarget(new HttpClient(backend), new Uri("https://jellyfin.test/"), new FakeAuthenticationResolver());
+        var before = await TagAsync();
+        Assert.True((await target.WriteArtworkOnlyAsync(Context(), "p1", new([4, 5, 6], "image/png"), default)).IsSuccess);
+        var after = await TagAsync();
+        Assert.NotEqual(before, after);
+        Assert.True((await target.WriteArtworkOnlyAsync(Context(), "p1", new([4, 5, 6], "image/png"), default)).IsSuccess);
+        Assert.Equal(after, await TagAsync());
+        Assert.Equal(1, backend.MutationCount);
+
+        async Task<string> TagAsync()
+        {
+            var summary = Assert.Single((await target.ListPageAsync(Context(), null, 0, 10, default)).Value!);
+            var detail = (await target.ReadAsync(Context(), "p1", default)).Value!;
+            Assert.Equal("jellyfin:p1:" + detail.ArtworkReference, summary.ArtworkReference);
+            return detail.ArtworkReference!;
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Artwork_only_repair_never_writes_playlist_metadata_or_membership(bool unchanged)
+    {
+        var backend = new JellyfinFakeBackend("p1", "Listener name", ["manual"]) { ExistingArtwork = [1, 2, 3] };
+        var target = new JellyfinPlaylistTarget(new HttpClient(backend), new Uri("https://jellyfin.test/"), new FakeAuthenticationResolver());
+        var artwork = unchanged ? new byte[] { 1, 2, 3 } : new byte[] { 4, 5, 6 };
+
+        var result = await target.WriteArtworkOnlyAsync(Context(), "p1", new(artwork, "image/jpeg"), default);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(!unchanged, result.Value);
+        Assert.Equal(unchanged ? 0 : 1, backend.MutationCount);
+        Assert.All(backend.Requests, request => Assert.Equal("Items/p1/Images/Primary", request.Path));
+        Assert.Equal("Listener name", backend.Playlists["p1"].Name);
+        Assert.Equal(["manual"], backend.Playlists["p1"].Members);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Jellyfin_uploads_primary_artwork_only_when_bytes_change(bool unchanged)
+    {
+        var backend = new JellyfinFakeBackend("p1", "Mix", []) { ExistingArtwork = [1, 2, 3] };
+        var target = new JellyfinPlaylistTarget(new HttpClient(backend), new Uri("https://jellyfin.test/"), new FakeAuthenticationResolver());
+        var artwork = unchanged ? new byte[] { 1, 2, 3 } : new byte[] { 4, 5, 6 };
+
+        var result = await target.WriteAsync(Context(), new BackendPlaylistWriteRequest(
+            BackendPlaylistWriteMode.Reconcile, new BackendPlaylistMetadata("Mix", Artwork: artwork), [], "cover-sync", "p1"), default);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(!unchanged, backend.ArtworkWritten);
+        Assert.Contains(backend.Requests, request => request.Path == "Items/p1/Images/Primary");
+    }
+
+    [Fact]
+    public async Task Jellyfin_preserves_existing_primary_artwork_when_source_artwork_is_absent()
+    {
+        var backend = new JellyfinFakeBackend("p1", "Mix", []) { ExistingArtwork = [1, 2, 3] };
+        var target = new JellyfinPlaylistTarget(new HttpClient(backend), new Uri("https://jellyfin.test/"), new FakeAuthenticationResolver());
+
+        var result = await target.WriteAsync(Context(), new BackendPlaylistWriteRequest(
+            BackendPlaylistWriteMode.Reconcile, new BackendPlaylistMetadata("Mix"), [], "cover-absent", "p1"), default);
+
+        Assert.True(result.IsSuccess);
+        Assert.False(backend.ArtworkWritten);
+        Assert.Equal([1, 2, 3], backend.ExistingArtwork);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -734,6 +810,10 @@ public sealed class BackendPlaylistTargetTests
         public HttpStatusCode? ForcedStatus { get; set; }
         public int MutationCount { get; private set; }
         public bool ArtworkWritten { get; private set; }
+        public byte[]? ExistingArtwork { get; set; }
+        public bool UseArtworkHashTag { get; set; }
+        private string? ArtworkTag => UseArtworkHashTag && ExistingArtwork != null
+            ? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(ExistingArtwork)) : null;
         public bool ListArtwork { get; set; }
         public bool FailNextMetadata { get; set; }
         public HttpStatusCode EditProbeStatus { get; set; } = HttpStatusCode.NoContent;
@@ -748,13 +828,17 @@ public sealed class BackendPlaylistTargetTests
             Requests.Enqueue(new(path, request.Headers.TryGetValues("X-Emby-Token", out var values) ? values.Single() : null, query, request.Headers.Authorization?.ToString()));
             if (ForcedStatus != null) return new(ForcedStatus.Value);
 
+            if (request.Method == HttpMethod.Get && path.EndsWith("/Images/Primary", StringComparison.Ordinal))
+                return ExistingArtwork == null ? new(HttpStatusCode.NotFound) :
+                    new(HttpStatusCode.OK) { Content = new ByteArrayContent(ExistingArtwork) };
+
             if (request.Method == HttpMethod.Get && path.StartsWith("Users/user-1/Items", StringComparison.Ordinal))
             {
                 var parts = path.Split('/');
                 if (parts.Length == 4)
                 {
                     var id = parts[3];
-                    return Json(new { Id = id, Name = Playlists[id].Name, Overview = Playlists[id].Description, ImageTags = new { Primary = Playlists[id].Artwork ? "art" : null } });
+                    return Json(new { Id = id, Name = Playlists[id].Name, Overview = Playlists[id].Description, ImageTags = new { Primary = UseArtworkHashTag ? ArtworkTag : Playlists[id].Artwork ? "art" : null } });
                 }
                 return Json(new
                 {
@@ -763,7 +847,7 @@ public sealed class BackendPlaylistTargetTests
                         Id = pair.Key,
                         Name = pair.Value.Name,
                         ChildCount = pair.Value.Members.Count,
-                        ImageTags = new { Primary = ListArtwork ? "art" : null }
+                        ImageTags = new { Primary = UseArtworkHashTag ? ArtworkTag : ListArtwork ? "art" : null }
                     }).ToArray()
                 });
             }
@@ -823,6 +907,7 @@ public sealed class BackendPlaylistTargetTests
             {
                 MutationCount++;
                 Playlists[path.Split('/')[1]].Artwork = ArtworkWritten = true;
+                ExistingArtwork = await request.Content!.ReadAsByteArrayAsync(cancellationToken);
                 return new(HttpStatusCode.NoContent);
             }
             if (request.Method == HttpMethod.Post && path.StartsWith("Items/", StringComparison.Ordinal))

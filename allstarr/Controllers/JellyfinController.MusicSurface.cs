@@ -66,6 +66,10 @@ public partial class JellyfinController
             if (root?["Items"] is not JsonArray items)
                 return Content(original, "application/json");
 
+            foreach (var folder in items.OfType<JsonObject>().Where(item =>
+                item["Type"]?.ToString() is "ManualPlaylistsFolder" or "PlaylistsFolder"))
+                _virtualPlaylistProtocolAdapter.RememberPlaylistsFolderId(HttpContext.RequireProtocolExecutionContext(), folder["Id"]?.ToString());
+
             var filtered = items
                 .Where(item => item is JsonObject candidate && IsMusicLibraryView(candidate, rootFoldersOnly))
                 .Select(item => item!.DeepClone())
