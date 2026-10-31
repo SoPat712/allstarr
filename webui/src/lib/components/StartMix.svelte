@@ -50,7 +50,7 @@
 <section aria-label="Start a mix">
   <h2>Start a mix</h2><SearchField bind:value={query} label="Start a mix from a song or artist" placeholder="Start a mix from a song or artist" hiddenLabel />
   {#if searching}<p role="status">Searching…</p>{/if}{#if searchError}<p role="status">{searchError}</p>{/if}
-  {#if results.length}<div class="settings-card seed-results">{#each results.slice(0, 8) as row (row.id)}<button type="button" onclick={() => choose(row)} aria-label={`${row.title} by ${row.artist}`}><MediaArtwork url={row.artworkUrl} /><span><strong>{row.title}</strong><small>{row.artist}</small></span></button>{/each}</div>{/if}
+  {#if results.length}<div class="settings-card seed-results">{#each results.slice(0, 8) as row, index (`${index}:${row.id}`)}<button type="button" onclick={() => choose(row)} aria-label={`${row.title} by ${row.artist}`}><MediaArtwork url={row.artworkUrl} /><span><strong>{row.title}</strong><small>{row.artist}</small></span></button>{/each}</div>{/if}
 </section>
 <Dialog.Root bind:open={() => open, value => { if (!saving) open = value; }}><Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog mix-preview">
   <header><div><Dialog.Title>Mix from {seed?.title}</Dialog.Title><Dialog.Description>Songs that fit with {seed?.title}</Dialog.Description></div><Dialog.Close type="button" class="icon-button" aria-label="Close preview" disabled={saving}>×</Dialog.Close></header>

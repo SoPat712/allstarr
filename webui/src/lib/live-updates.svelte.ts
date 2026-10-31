@@ -59,15 +59,22 @@ export function acceptUpdate(
 export function createRefreshScheduler(
   refresh: () => void | Promise<void>,
   delay = 250,
+  minimumInterval = 0,
 ) {
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let refreshing = false, lastRefresh = -Infinity;
+  const hidden = () => minimumInterval > 0 && typeof document !== "undefined" && document.visibilityState === "hidden";
   return {
     schedule() {
-      if (timer) return;
-      timer = setTimeout(() => {
+      if (timer || minimumInterval > 0 && refreshing || hidden()) return;
+      timer = setTimeout(async () => {
         timer = null;
-        void refresh();
-      }, delay);
+        if (hidden()) return;
+        lastRefresh = Date.now();
+        refreshing = true;
+        try { await refresh(); }
+        finally { refreshing = false; }
+      }, Math.max(delay, minimumInterval - (Date.now() - lastRefresh)));
     },
     cancel() {
       if (timer) clearTimeout(timer);

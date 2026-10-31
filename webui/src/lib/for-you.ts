@@ -37,7 +37,7 @@ export function mixExplanation(kind: string) {
 
 export function mixName(name: string) {
   const periods: Record<string, string> = { "7day": "Last 7 days", "1month": "Last month", "3month": "Last 3 months", "12month": "Last year", overall: "All time" };
-  return name.replace(/^Created for you · (weekly jams|weekly exploration)$/i, (_, value: string) => value.replace(/\b\w/g, letter => letter.toUpperCase()))
+  return name.replace(/^(Chill|Focus|Workout|Party|Sleep) Mix$/i, "$1").replace(/^Created for you · (weekly jams|weekly exploration)$/i, (_, value: string) => value.replace(/\b\w/g, letter => letter.toUpperCase()))
     .replace(/· (7day|1month|3month|12month|overall)$/, (_, value: string) => `· ${periods[value]}`);
 }
 
@@ -51,12 +51,14 @@ export function mixNextStep(kind: string, message: string, administrator: boolea
 }
 
 export function mixDescription(description: string, kind: string) {
-  if (!kind.startsWith("daily-")) return description;
-  return description.replace(/^(Made for you · )([^·]+)(.*)$/, (match: string, prefix: string, style: string, rest: string) => {
-    if (!style.trim()) return match;
-    const words = style.trim().toLowerCase().split(/\s+/);
-    const acronyms: Record<string, string> = { "r&b": "R&B", edm: "EDM", uk: "UK" };
-    const label = words.map((word, index) => Object.hasOwn(acronyms, word) ? acronyms[word] : (index ? word : word[0].toUpperCase() + word.slice(1))).join(" ");
-    return prefix + label + (rest ? " " + rest.trimStart() : "");
-  });
+  const descriptions: Record<string, string> = {
+    "discover-weekly": "New to you, based on your taste",
+    rewind: "Songs you loved and haven't played lately",
+    "on-repeat": "What you're playing most right now",
+    "release-radar": "New from artists you play",
+  };
+  if (descriptions[kind]) return descriptions[kind];
+  if (kind.startsWith("daily-")) return description.replace(/^Made for you\s*·\s*[^·]*·?\s*/, "");
+  if (["chill", "focus", "workout", "party", "sleep"].includes(kind)) return "Updated Monday";
+  return description;
 }

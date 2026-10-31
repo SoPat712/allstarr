@@ -119,7 +119,7 @@
         <section aria-label={group.label}>
           <h2>{group.label}</h2>
           <div class="release-cards">
-            {#each group.items as entry (entry.id)}
+            {#each group.items as entry, index (`${index}:${entry.id}`)}
               <article id={`release-${entry.id}`} class="settings-card release-card" aria-label={`${entry.title} by ${entry.artist}`}>
                 <MediaArtwork class="release-art" fallback="♫" />
                 <div class="release-info">
@@ -153,7 +153,7 @@
       </header>
       <div class="artists-body">
         {#if artists.length}
-          <ul class="followed-artists">{#each artists as artist (`${artist.providerId}:${artist.artistId}`)}
+          <ul class="followed-artists">{#each artists as artist, index (`${index}:${artist.providerId}:${artist.artistId}`)}
             <li><strong>{artist.displayName}</strong><Button variant="secondary" disabled={Boolean(action)} aria-label={`Unfollow ${artist.displayName}`} onclick={() => void unfollow(artist)}>Unfollow</Button></li>
           {/each}</ul>
         {:else}<p>You aren't following any artists yet.</p>{/if}

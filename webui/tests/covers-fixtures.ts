@@ -3,7 +3,9 @@ import { mockForYou } from "./for-you-fixtures";
 
 export { appearance, capture, openHome } from "./for-you-fixtures";
 export async function mockCovers(page: Page) {
-  const state = await mockForYou(page, { custom: true });
+  const state = await mockForYou(page, { custom: true, partial: true });
+  state.cards.push({ ...state.cards[0], id: "similar", kind: "external", name: "Similar to your top tracks", section: "yourServices", sourceLabel: "Last.fm", description: "From Last.fm · kept in sync", inApps: true });
+  await page.route("**/api/admin/playlist-links", route => route.fulfill({ json: { playlistLinks: [{ id: "similar", sourceProviderId: "lastfm", sourcePlaylistId: "similar", enabled: true }] } }));
   const tags = ["R&B", "Indie Rock", "Electronic", "Hip-Hop"];
   state.cards.slice(0, 4).forEach((card, i) => { card.name = `${tags[i]} Blend`; card.description = `Made for you · ${tags[i].toLowerCase()} · North, Cedar, Willow`; });
   state.cards.find(card => card.kind === "custom")!.name = "Evening Mix";

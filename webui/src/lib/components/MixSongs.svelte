@@ -9,7 +9,7 @@
   let { songs, busy = false, onfeedback }: { songs: MixSong[]; busy?: boolean; onfeedback?: (row: MixSong, kind: "moreLikeThis" | "notForMe" | "neverArtist", today?: boolean) => void } = $props();
 </script>
 <ol class="mix-songs" aria-label="Songs">
-  {#each songs as row (row.song.id)}
+  {#each songs as row, index (`${index}:${row.song.id}`)}
     <li out:fade={{ duration: typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 160 }}>
       <MediaArtwork url={artworkUrl(row.song.id)} />
       <div class="song-info"><strong>{row.song.title}</strong><small>{row.song.artist}{row.song.album ? ` · ${row.song.album}` : ""}</small><Badge tone="neutral" class="reason-chip">{reasonLabel(row.reason)}</Badge></div>

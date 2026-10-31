@@ -4,6 +4,8 @@ import type { MixCard } from "../src/lib/api";
 import { capture } from "./for-you-fixtures";
 import { expectContainedMobileGeometry } from "./mobile-geometry";
 
+test.afterEach(async ({ page }) => { expect(await page.pageErrors()).toEqual([]); });
+
 const listener = "11111111-1111-4111-8111-111111111111";
 const id = "22222222-2222-4222-8222-222222222222";
 const virtualPlaylistId = `allstarr-vpl-${id.replaceAll("-", "")}`;
@@ -23,6 +25,7 @@ async function mockCopies(page: Page, copies = true, byTarget = false, items?: A
     if (path === "/api/admin/auth/oidc/status") return reply({ enabled: false });
     if (path === "/api/admin/ui/schema") return reply({ providers: [{ id: "spotify", name: "Spotify" }, { id: "lastfm", name: "Last.fm" }, { id: "jellyfin", name: "Jellyfin" }], configSections: [] });
     if (path.startsWith("/api/admin/mixes/") && path.endsWith("/cover")) return route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400" viewBox="0 0 400 400"><rect width="400" height="400" fill="#163c45"/><circle cx="200" cy="200" r="150" fill="#dcae62"/><circle cx="200" cy="200" r="95" fill="#163c45"/><circle cx="200" cy="200" r="24" fill="#e5d8bf"/></svg>' });
+    if (path === "/api/admin/history/imports") return reply([]);
     if (path === "/api/admin/mixes") return reply(cards);
     if (path.endsWith("/in-apps")) {
       reads.push(`${route.request().method()} ${path}`);
@@ -195,7 +198,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(rows.filter({ hasText: keptMix.name })).toHaveCount(0);
     await capture(page, "playlist-after-remove", width, theme);
     await page.goto(`/#/for-you?mix=${keptMix.id}`);
-    await page.getByRole("dialog").getByRole("button", { name: "Add to my apps", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Add", exact: true }).click();
     await page.getByRole("dialog").getByRole("link", { name: "Manage in Playlists", exact: true }).click();
     await expect(rows.filter({ hasText: keptMix.name })).toHaveCount(1);
     await capture(page, "playlist-after-readd", width, theme);
@@ -220,8 +223,8 @@ test("Removing a mix from playlists keeps it available to add again", async ({ p
   await expect(page.locator(".playlist-row")).toHaveCount(0);
   expect(reads).toContain(`DELETE /api/admin/mixes/${keptMix.id}/in-apps`);
   await page.goto(`/#/for-you?mix=${keptMix.id}`);
-  await page.getByRole("dialog").getByRole("button", { name: "Add to my apps", exact: true }).click();
-  await expect(page.getByRole("dialog").getByText("In your apps", { exact: true })).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByRole("dialog").getByText("✓ In your apps", { exact: true })).toBeVisible();
   await page.getByRole("dialog").getByRole("link", { name: "Manage in Playlists", exact: true }).click();
   await expect(page.locator(".playlist-row")).toHaveCount(1);
 });

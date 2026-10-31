@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { appearance, capture, mockForYou, openHome } from "./for-you-fixtures";
+
+test.afterEach(async ({ page }) => { expect(await page.pageErrors()).toEqual([]); });
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
   test(`Mix shelves at ${width}px ${theme}`, async ({ page }) => {
     await appearance(page, width, theme); await mockForYou(page, { partial: true, custom: true }); await openHome(page);
@@ -29,7 +31,7 @@ test("Legacy section routes redirect and listeners never see administrative setu
   await page.goto("/#/intelligence?section=stats"); await expect(page.getByRole("tab", { name: "Recap", exact: true })).toHaveAttribute("aria-selected", "true");
 });
 test("External mix opt-in stays on one artwork card", async ({ page }) => {
-  const state = await mockForYou(page); await openHome(page); await page.getByRole("region", { name: "From your services", exact: true }).locator(".mix-card").filter({ hasText: "Loved on Last.fm" }).getByRole("button", { name: "Add to my apps", exact: true }).click();
+  const state = await mockForYou(page); await openHome(page); await page.getByRole("region", { name: "From your services", exact: true }).locator(".mix-card").filter({ hasText: "Loved on Last.fm" }).getByRole("button", { name: "Add Loved on Last.fm", exact: true }).last().click();
   await expect.poll(() => state.calls.some(call => call.path === "/api/admin/mixes/external" && call.body?.kind === "loved")).toBe(true);
 });
 test("Ready listeners see music without the completed checklist", async ({ page }) => {
@@ -58,4 +60,56 @@ test("Not-ready shelf artwork stays visible with its readiness description", asy
   const mix = page.getByRole("region", { name: "Made for you", exact: true }).getByRole("button", { name: /Blend 4/ });
   await expect(mix.locator("canvas")).toHaveCSS("opacity", "1");
   await expect(mix).toContainText("Needs more listening");
+});
+
+test("Cover Add is one click, keeps card height, and the card opens separately", async ({ page }) => {
+  const state = await mockForYou(page, { partial: true }); await openHome(page);
+  const card = page.getByRole("group", { name: "Blend 2", exact: true });
+  const add = card.getByRole("button", { name: "Add Blend 2", exact: true });
+  await expect(add).toHaveText("Add");
+  expect(await add.evaluate(button => button.parentElement === button.parentElement?.querySelector(".mix-open")?.parentElement)).toBe(true);
+  const height = (await card.boundingBox())!.height;
+  await add.click();
+  await expect(card.getByText("✓ In your apps", { exact: true })).toBeVisible();
+  await expect(add).toHaveCount(0);
+  expect((await card.boundingBox())!.height).toBe(height);
+  expect(state.calls.filter(call => call.path === "/api/admin/mixes/daily-2/in-apps")).toHaveLength(1);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await card.getByRole("button", { name: "Open Blend 2", exact: true }).click();
+  await expect(page.getByRole("dialog").getByRole("list", { name: "Songs", exact: true })).toBeVisible();
+});
+
+test("Completed history marks the listening checklist row done", async ({ page }) => {
+  await mockForYou(page, { partial: true });
+  await page.route("**/api/admin/history/imports", route => route.fulfill({ json: [{ state: 3, importedRows: 62000 }] }));
+  await openHome(page);
+  const checklist = page.getByRole("region", { name: "Make your mixes better", exact: true });
+  await expect(checklist.getByText("Enough listening for blends", { exact: true })).toBeVisible();
+  await expect(checklist.getByRole("button", { name: "Import history", exact: true })).toHaveCount(0);
+});
+
+test("Service suggestion artwork also adds without opening a panel", async ({ page }) => {
+  const state = await mockForYou(page); await openHome(page);
+  await page.getByRole("group", { name: "Similar to your top tracks", exact: true }).getByRole("button", { name: "Add Similar to your top tracks", exact: true }).first().click();
+  await expect.poll(() => state.calls.filter(call => call.path === "/api/admin/mixes/external" && call.body?.kind === "similar").length).toBe(1);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test.describe("Cover touch targets", () => {
+  test.use({ hasTouch: true });
+  test("A compact Add chip has an invisible forty-four pixel target while adding", async ({ page }) => {
+    await appearance(page, 390, "light"); const state = await mockForYou(page); await openHome(page);
+    let release!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    await page.route("**/api/admin/mixes/daily-2/in-apps", async route => { await waiting; await route.fallback(); });
+    const add = page.getByRole("button", { name: "Add Blend 2", exact: true });
+    const target = await add.evaluate(button => {
+      const hit = getComputedStyle(button, "::after");
+      return { coarse: matchMedia("(pointer: coarse)").matches, width: parseFloat(hit.minWidth), height: parseFloat(hit.minHeight) };
+    });
+    expect(target).toEqual({ coarse: true, width: 44, height: 44 });
+    await add.click(); await expect(add).toHaveText("Adding…"); await expect(add).toBeDisabled();
+    release(); await expect(add).toHaveCount(0);
+    expect(state.calls.filter(call => call.path === "/api/admin/mixes/daily-2/in-apps")).toHaveLength(1);
+  });
 });

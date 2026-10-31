@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { appearance, capture, drawCount, expectPainted, mockCovers, openHome, pixels, trackDrawing } from "./covers-fixtures";
 
+test.afterEach(async ({ page }) => { expect(await page.pageErrors()).toEqual([]); });
+
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) test(`Drawn home covers at ${width}px ${theme}`, async ({ page }) => {
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
   await appearance(page, width, theme); await mockCovers(page); await openHome(page);

@@ -1,8 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { appearance, capture, mockForYou, openHome } from "./for-you-fixtures";
 
+test.afterEach(async ({ page }) => { expect(await page.pageErrors()).toEqual([]); });
+
 async function add(page: Page) {
-  await page.getByRole("region", { name: "From your services", exact: true }).locator(".mix-card").filter({ hasText: "Loved on Last.fm" }).getByRole("button", { name: "Add to my apps", exact: true }).click();
+  await page.getByRole("region", { name: "From your services", exact: true }).locator(".mix-card").filter({ hasText: "Loved on Last.fm" }).getByRole("button", { name: "Add Loved on Last.fm", exact: true }).last().click();
 }
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
@@ -17,7 +19,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await openHome(page);
     await capture(page, "external-before-add", width, theme);
     await add(page);
-    await expect(page.getByRole("region", { name: "From your services", exact: true }).locator(".mix-card").filter({ hasText: "Loved on Last.fm" }).getByText("In your apps", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "From your services", exact: true }).locator(".mix-card").filter({ hasText: "Loved on Last.fm" }).getByText("✓ In your apps", { exact: true })).toBeVisible();
     await capture(page, "external-after-add", width, theme);
     await expect(page.getByRole("alertdialog")).toHaveCount(0);
     const notifications = page.getByRole("region", { name: "Notifications" });
@@ -48,7 +50,7 @@ test("External matching closes before background refresh and stops when leaving"
   await page.route("**/api/admin/mixes?*", route => blockRefresh ? new Promise(() => {}) : route.fallback());
   await page.route("**/api/admin/jobs/external-job?*", route => {
     polls++;
-    return route.fulfill({ json: { job: { state: "Pending" }, attempts: [], progress: [] } });
+    return route.fulfill({ json: { job: { state: "Pending" }, attempts: [] } });
   });
   await page.route("**/api/admin/playlist-links/external?*", route => route.fulfill({ json: {
     id: "external", name: "Loved on Last.fm", sourceProviderId: "lastfm", targetProtocol: "jellyfin",
@@ -59,7 +61,8 @@ test("External matching closes before background refresh and stops when leaving"
   await add(page);
   await expect(page.getByRole("alertdialog")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Notifications" })).toContainText("Matching Loved on Last.fm · 0 of 0 songs");
-  await expect.poll(() => polls).toBeGreaterThan(0);
+  await expect.poll(() => polls).toBeGreaterThan(1);
+  await expect(page.getByRole("region", { name: "Notifications" })).toContainText("Matching Loved on Last.fm · 0 of 0 songs");
   await page.goto("/#/library/playlists");
   await expect(page.getByRole("button", { name: "Open Loved on Last.fm playlist details", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Open Loved on Last.fm mix", exact: true })).toHaveCount(0);
@@ -104,16 +107,17 @@ test("External matching stops after a bounded wait even when status hangs", asyn
 test("External add leaves a compact status on the card", async ({ page }) => {
   const state = await mockForYou(page); await openHome(page); await add(page);
   const card = page.getByRole("region", { name: "From your services", exact: true }).locator(".mix-card").filter({ hasText: "Loved on Last.fm" });
-  await expect(card.getByText("In your apps", { exact: true })).toBeVisible();
+  await expect(card.getByText("✓ In your apps", { exact: true })).toBeVisible();
   await expect(card.getByRole("link", { name: "Manage in Playlists", exact: true })).toHaveCount(0);
-  await expect(card.getByRole("button", { name: "Add to my apps" })).toHaveCount(0);
+  await expect(card.getByRole("button", { name: /^Add / })).toHaveCount(0);
   expect(state.calls.filter(call => call.path === "/api/admin/mixes/external" && call.method === "POST")).toHaveLength(1);
 });
 test("External suggestions respect household availability", async ({ page }) => {
   await mockForYou(page, { publish: false }); await openHome(page);
   const shelf = page.getByRole("region", { name: "From your services", exact: true });
-  for (const button of await shelf.getByRole("button", { name: "Add to my apps", exact: true }).all()) await expect(button).toBeDisabled();
-  await expect(page.getByText("Your admin hasn’t allowed adding mixes to apps.", { exact: true })).toBeVisible();
+  await expect(shelf.locator(".add-chip")).toHaveCount(0);
+  for (const button of await shelf.locator(".mix-open").all()) await expect(button).toBeDisabled();
+  await expect(page.getByText("Your admin hasn't allowed adding mixes.", { exact: true })).toBeVisible();
 });
 test("Removing an external playlist makes its recipe available again", async ({ page }) => {
   const state = await mockForYou(page); await openHome(page); await add(page);

@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
-  import { activityWork, audioMuse, mixes, playlistLinks, releaseInbox, type AudioMuseStatus, type MixCard, type PlaylistLink, type PlaylistSourceAccount } from "$lib/api";
+  import { ApiError, activityWork, audioMuse, historyImports, mixes, playlistLinks, releaseInbox, type AudioMuseStatus, type MixCard, type PlaylistLink, type PlaylistSourceAccount } from "$lib/api";
   import { greeting, mixOrder } from "$lib/for-you";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
+  import { importPhase } from "$lib/history-import";
   import { progressDetails } from "$lib/jobs";
   import { toast } from "$lib/toasts";
   import { Button, buttonVariants } from "$lib/components/ui/button";
@@ -17,7 +18,7 @@
   let cards = $state<MixCard[]>([]), releases = $state<MixCard[]>([]), accounts = $state<PlaylistSourceAccount[]>([]), links = $state<PlaylistLink[]>([]);
   let status = $state<AudioMuseStatus | null>(null), loading = $state(true), error = $state("");
   let hidden = $state(false), importOpen = $state(false), busy = $state("");
-  let addedSuggestions = $state<string[]>([]);
+  let addedSuggestions = $state<string[]>([]), imported = $state(false);
   let pending: Promise<void> | null = null, disposed = false;
   const matching = new Set<() => void>();
   const storageKey = $derived(`allstarr.mix-checklist.${listenerId}`);
@@ -26,28 +27,29 @@
   const custom = $derived(cards.filter(item => item.section === "custom"));
   const connected = $derived(accounts.some(item => item.scope === "personal" && ["lastfm", "listenbrainz"].includes(item.providerId)));
   const daily = $derived(cards.filter(item => item.kind.startsWith("daily-")));
-  const dailyReady = $derived(daily.length > 0 && daily.every(item => item.readiness.ready));
+  const dailyReady = $derived(imported || daily.length > 0 && daily.every(item => item.readiness.ready));
   const remaining = $derived(daily.find(item => !item.readiness.ready)?.readiness.message.match(/about (\d+) more/)?.[1]);
   const soundReady = $derived(status?.reason === null && status.analyzedSongs > 0);
   const checklist = $derived(!hidden && (!made.length || made.some(item => !item.readiness.ready) || !connected || administrator && !soundReady));
   const recipes = [
-    { source: "listenbrainz", kind: "weekly-jams", name: "Weekly Jams", label: "ListenBrainz", cadence: "weekly" },
-    { source: "listenbrainz", kind: "weekly-exploration", name: "Weekly Exploration", label: "ListenBrainz", cadence: "weekly" },
-    { source: "lastfm", kind: "loved", name: "Loved on Last.fm", label: "Last.fm", cadence: "daily" },
-    { source: "lastfm", kind: "top", name: "Your top tracks", label: "Last.fm", cadence: "daily" },
-    { source: "lastfm", kind: "similar", name: "Similar to your top tracks", label: "Last.fm", cadence: "daily" },
+    { source: "listenbrainz", kind: "weekly-jams", name: "Weekly Jams", label: "ListenBrainz" },
+    { source: "listenbrainz", kind: "weekly-exploration", name: "Weekly Exploration", label: "ListenBrainz" },
+    { source: "lastfm", kind: "loved", name: "Loved on Last.fm", label: "Last.fm" },
+    { source: "lastfm", kind: "top", name: "Your top tracks", label: "Last.fm" },
+    { source: "lastfm", kind: "similar", name: "Similar to your top tracks", label: "Last.fm" },
   ];
-  const suggestions = $derived(recipes.filter(recipe => !addedSuggestions.includes(`add:${recipe.source}:${recipe.kind}`) && accounts.some(account => account.scope === "personal" && account.providerId === recipe.source) && !links.some(link => link.enabled && link.sourceProviderId === recipe.source && link.sourcePlaylistId === (recipe.source === "listenbrainz" ? `createdfor:${recipe.kind}` : recipe.kind === "top" ? "top:1month:50" : recipe.kind))).map(recipe => ({ id: `add:${recipe.source}:${recipe.kind}`, kind: "external", name: recipe.name, description: `From ${recipe.label} · ${recipe.cadence}`, section: "yourServices", sortOrder: 0, sourceLabel: recipe.label, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, inApps: false, appsAllowed: cards.some(card => card.appsAllowed), coverArtwork: [] }) satisfies MixCard));
+  const suggestions = $derived(recipes.filter(recipe => !addedSuggestions.includes(`add:${recipe.source}:${recipe.kind}`) && accounts.some(account => account.scope === "personal" && account.providerId === recipe.source) && !links.some(link => link.enabled && link.sourceProviderId === recipe.source && link.sourcePlaylistId === (recipe.source === "listenbrainz" ? `createdfor:${recipe.kind}` : recipe.kind === "top" ? "top:1month:50" : recipe.kind))).map(recipe => ({ id: `add:${recipe.source}:${recipe.kind}`, kind: "external", name: recipe.name, description: `From ${recipe.label} · kept in sync`, section: "yourServices", sortOrder: 0, sourceLabel: recipe.label, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, inApps: false, appsAllowed: cards.some(card => card.appsAllowed), coverArtwork: [] }) satisfies MixCard));
   const services = $derived([...cards.filter(item => item.section === "yourServices" && item.inApps).map(card => ({ ...card, description: card.sourceLabel ? `From ${card.sourceLabel} · kept in sync` : "From your connected service" })), ...suggestions]);
   async function load() {
     if (pending) return pending;
     pending = (async () => {
-      const results = await Promise.allSettled([mixes.list(), playlistLinks.sources(), playlistLinks.list(), releaseInbox.get(), administrator ? audioMuse.status() : Promise.resolve(null)] as const);
+      const results = await Promise.allSettled([mixes.list(), playlistLinks.sources(), playlistLinks.list(), releaseInbox.get(), administrator ? audioMuse.status() : Promise.resolve(null), historyImports.list()] as const);
       if (disposed) return;
-      const [mixResult, sourceResult, linkResult, releaseResult, soundResult] = results;
+      const [mixResult, sourceResult, linkResult, releaseResult, soundResult, importResult] = results;
       if (mixResult.status === "fulfilled") { cards = mixResult.value; error = ""; } else error = "Couldn't load your mixes. Try again.";
       if (sourceResult.status === "fulfilled") accounts = sourceResult.value.accounts ?? [];
       if (linkResult.status === "fulfilled") { links = linkResult.value.playlistLinks ?? []; addedSuggestions = []; }
+      if (importResult.status === "fulfilled") imported = importResult.value.some(item => importPhase(item) === "completed");
       if (soundResult.status === "fulfilled") status = soundResult.value;
       if (releaseResult.status === "fulfilled") releases = releaseResult.value.entries.slice(0, 8).map(entry => ({ id: entry.id, kind: "release", name: entry.title, description: `${entry.artist} · ${entry.type === "album" ? "Album" : entry.type === "single" ? "Single" : "Release"}${/^\d{4}-\d{2}-\d{2}$/.test(entry.releaseDate ?? "") ? ` · ${new Date(`${entry.releaseDate}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" })}` : ""}`, section: "madeForYou", sortOrder: 0, sourceLabel: null, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, inApps: false, appsAllowed: false, coverArtwork: [] }));
       loading = false;
@@ -81,7 +83,7 @@
           void load();
           return;
         }
-        const progress = status.progress.map(progressDetails).find(item => item.stage === "playlist.match" && item.total != null);
+        const progress = (status.progress ?? []).map(progressDetails).find(item => item.stage === "playlist.match" && item.total != null);
         if (progress) toast.update(notification, { message: `Matching ${card.name} · ${progress.completed ?? 0} of ${progress.total} songs` });
         timer = setTimeout(() => void poll(), 2000);
       } catch (cause) {
@@ -111,10 +113,10 @@
       await pending;
       if (!disposed) void load();
     }
-    catch (cause) { if (!disposed) toast.error(cause instanceof Error ? cause.message : "This mix could not be added. Try again later."); }
+    catch (cause) { if (!disposed) toast.error(cause instanceof ApiError && cause.status === 403 ? "Your admin hasn't allowed adding mixes." : cause instanceof Error ? cause.message : "This mix could not be added. Try again later."); }
     finally { busy = ""; }
   }
-  const scheduler = createRefreshScheduler(async () => { if (!busy) await load(); });
+  const scheduler = createRefreshScheduler(async () => { if (!busy) await load(); }, 250, 30_000);
   onMount(() => {
     try { hidden = localStorage.getItem(storageKey) === "hidden"; } catch { /* Browser storage is optional. */ }
     void load(); const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
@@ -122,7 +124,7 @@
   });
 </script>
 <div class="for-you">
-  <div class="section-heading"><div><h2>{greeting(new Date().getHours(), listenerName)}</h2><p>Mixes refresh every morning.</p></div><RefreshButton variant="secondary" label="Refresh page" onrefresh={load} /></div>
+  <div class="section-heading"><div><h2>{greeting(new Date().getHours(), listenerName)}</h2><p>Mixes refresh every morning.</p></div><RefreshButton variant="secondary" label="Refresh page" onrefresh={async () => { await pending; await load(); }} /></div>
   {#if loading}{#each ["Made for you", "Moods"] as title}<section aria-label={`Loading ${title}`}><h2>{title}</h2><div class="loading-shelf">{#each [1, 2, 3, 4, 5, 6] as i}<Skeleton class="mix-skeleton" />{/each}</div></section>{/each}
   {:else}
     {#if checklist}<section class="settings-card checklist" aria-label="Make your mixes better">
@@ -139,13 +141,13 @@
     <StartMix onsaved={async () => { await pending; await load(); }} />
     {#if custom.length}<MixShelf title="Your mixes" cards={custom} onopen={openMix} {busy} onadd={card => void add(card)} />{/if}
     {#if releases.length}<MixShelf title="New releases" cards={releases} albumArt seeAll="#/for-you?section=releases" onopen={card => { void goto(`#/for-you?section=releases&release=${encodeURIComponent(card.id)}`, { keepFocus: true, noScroll: true }); }} />{/if}
-    {#if cards.length && !cards.some(card => card.appsAllowed)}<p class="muted">Your admin hasn’t allowed adding mixes to apps.</p>{/if}
+    {#if cards.length && !cards.some(card => card.appsAllowed)}<p class="muted apps-hint">Your admin hasn't allowed adding mixes.</p>{/if}
     {#if services.length}<MixShelf title="From your services" cards={services} additions={suggestions.map(item => item.id)} onopen={openMix} {busy} onadd={card => void add(card)} />{/if}
   {/if}
 </div>
 <Dialog.Root bind:open={importOpen}><Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog">
   <header><div><Dialog.Title>Bring in your history</Dialog.Title><Dialog.Description>Start your mixes with the music you've already played.</Dialog.Description></div><Dialog.Close type="button" class="icon-button" aria-label="Close history">×</Dialog.Close></header>
-  <IntelligenceHistoryImports onchanged={() => void load()} /><footer class="dialog-actions"><Dialog.Close type="button" class={buttonVariants({ variant: "secondary" })}>Done</Dialog.Close></footer>
+  <IntelligenceHistoryImports onchanged={async () => { await pending; await load(); }} /><footer class="dialog-actions"><Dialog.Close type="button" class={buttonVariants({ variant: "secondary" })}>Done</Dialog.Close></footer>
 </Dialog.Content></Dialog.Portal></Dialog.Root>
 <style>
   .for-you { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-6); min-width: 0; }
@@ -153,6 +155,7 @@
   .section-heading, header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
   h2 { font-size: 1.125rem; font-weight: 600; }
   .section-heading p, .muted, .empty { color: var(--color-ink-muted); }
+  .apps-hint { font-size: var(--text-xs); }
   .checklist, .empty { padding: var(--surface-gutter); }
   .check-row { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); min-height: 64px; padding-block: var(--space-2); }
   .check-row + .check-row { border-top: 1px solid var(--color-edge); }

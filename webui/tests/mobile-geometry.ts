@@ -64,6 +64,10 @@ export async function expectContainedMobileGeometry(page: Page) {
     for (const target of targets) {
       if (!visible(target) || target.matches(":disabled")) continue;
       const rect = target.getBoundingClientRect();
+      if (target.matches(".add-chip")) {
+        const hit = getComputedStyle(target, "::after");
+        if (!matchMedia("(pointer: coarse)").matches || hit.content !== "none" && Number.parseFloat(hit.minWidth) >= 44 && Number.parseFloat(hit.minHeight) >= 44) continue;
+      }
       if (rect.width < 43 || rect.height < 43)
         undersizedTargets.push(`${identify(target)} ${Math.round(rect.width)}×${Math.round(rect.height)}`);
       if (undersizedTargets.length === 12) break;

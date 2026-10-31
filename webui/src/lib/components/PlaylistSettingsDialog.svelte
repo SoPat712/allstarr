@@ -104,7 +104,7 @@
     error = "";
     try {
       const targets = await playlistLinks.targets();
-      const target = targets.targets.find((item) =>
+      const target = (targets.targets ?? []).find((item) =>
         item.protocol === requestedLink.targetProtocol &&
         item.backendInstanceId === requestedLink.targetBackendInstanceId &&
         (item.credentialReferenceId ?? null) === (requestedLink.targetCredentialReferenceId ?? null));

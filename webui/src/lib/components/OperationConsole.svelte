@@ -28,8 +28,8 @@
   let observedState = "";
 
   function selectJob(next: JobResponse | null) {
-    return next?.jobs.find((item) => item.id === requestedJobId) ??
-      next?.jobs.find((item) =>
+    return next?.jobs?.find((item) => item.id === requestedJobId) ??
+      next?.jobs?.find((item) =>
         item.type === "playlist.materialize" &&
         next.progress.some((progress) =>
           progress.jobId === item.id && progressDetails(progress).playlist === playlistName));

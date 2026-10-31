@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 import { greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep } from "./for-you";
 
 describe("personal mix presentation", () => {
-  it.each([["r&b", "R&B"], ["indie rock", "Indie rock"], ["edm", "EDM"], ["uk garage", "UK garage"]])("shows the %s style in plain display case", (raw, label) => {
-    expect(mixDescription(`Made for you · ${raw} · North, Cedar`, "daily-1")).toBe(`Made for you · ${label} · North, Cedar`);
-    expect(mixDescription("Made for you · · North", "daily-1")).toBe("Made for you · · North");
-    expect(mixDescription("Made for you · Just Dropped", "release-radar")).toBe("Made for you · Just Dropped");
+  it("describes each mix without repeating its name", () => {
+    expect(mixDescription("Made for you · Uncharted", "discover-weekly")).toBe("New to you, based on your taste");
+    expect(mixDescription("Made for you · Long Lost", "rewind")).toBe("Songs you loved and haven't played lately");
+    expect(mixDescription("Made for you · Heavy Rotation", "on-repeat")).toBe("What you're playing most right now");
+    expect(mixDescription("Made for you · Just Dropped", "release-radar")).toBe("New from artists you play");
+    expect(mixDescription("Made for you · hip-hop · Juice WRLD, XXXTENTACION, Post Malone", "daily-1")).toBe("Juice WRLD, XXXTENTACION, Post Malone");
+    expect(mixDescription("Updated Monday · Music for focus", "focus")).toBe("Updated Monday");
+    expect(mixDescription("From Last.fm · kept in sync", "external")).toBe("From Last.fm · kept in sync");
+    expect(mixName("Chill Mix")).toBe("Chill");
   });
   it("greets by local hour with an optional first name", () => {
     expect(greeting(5, "Josh Patra")).toBe("Good morning, Josh");

@@ -2,6 +2,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { expectContainedMobileGeometry } from "./mobile-geometry";
 
+test.afterEach(async ({ page }) => { expect(await page.pageErrors()).toEqual([]); });
+
 for (const width of [390, 1280]) {
   test(`Spotify Advanced settings reset individual fields at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
@@ -496,6 +498,7 @@ const responses: Record<string, unknown> = {
     provenance: { source: "import", client: "ios", device: null, provider: "spotify", imported: true },
   },
   "/api/admin/intelligence/history/imports": { items: [] },
+  "/api/admin/history/imports": [],
 };
 
 function routeRelease() {

@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { appearance, capture, mockForYou, openHome, songs } from "./for-you-fixtures";
+
+test.afterEach(async ({ page }) => { expect(await page.pageErrors()).toEqual([]); });
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) test(`Mix sheet at ${width}px ${theme}`, async ({ page }) => {
   await appearance(page, width, theme); await mockForYou(page); await openHome(page);
   await page.getByRole("region", { name: "Made for you", exact: true }).getByRole("button").first().click();
@@ -28,8 +30,8 @@ test("Song feedback and preference undo", async ({ page }) => {
 test("Adding a mix is one click and playlists is the place to manage it", async ({ page }) => {
   const state = await mockForYou(page); state.cards[0].inApps = false;
   await page.goto("/#/for-you?mix=daily-1");
-  await page.getByRole("dialog").getByRole("button", { name: "Add to my apps", exact: true }).click();
-  await expect(page.getByRole("dialog").getByText("In your apps", { exact: true })).toBeVisible();
+  await page.getByRole("dialog").getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByRole("dialog").getByText("✓ In your apps", { exact: true })).toBeVisible();
   await expect(page.getByRole("dialog").getByRole("link", { name: "Manage in Playlists", exact: true })).toHaveAttribute("href", "#/library/playlists");
   expect(state.calls.filter(call => call.path.endsWith("/in-apps"))).toEqual([{ path: "/api/admin/mixes/daily-1/in-apps", method: "POST", body: null }]);
   await expect(page.getByRole("button", { name: /Remove from|In your apps/ })).toHaveCount(0);
@@ -37,26 +39,26 @@ test("Adding a mix is one click and playlists is the place to manage it", async 
 for (const admin of [false, true]) test(`Household availability gates adding for ${admin ? "administrators" : "listeners"}`, async ({ page }) => {
   const state = await mockForYou(page, { admin, publish: false }); state.cards[0].inApps = false;
   await page.goto("/#/for-you?mix=daily-1");
-  await expect(page.getByRole("dialog").getByRole("button", { name: "Add to my apps", exact: true })).toBeDisabled();
-  await expect(page.getByRole("dialog").getByText("Your admin hasn’t allowed adding mixes to apps.", { exact: true })).toBeVisible();
-  state.publish = true; await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await expect(page.getByRole("dialog").getByRole("button", { name: "Add to my apps", exact: true })).toBeEnabled();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Add", exact: true })).toBeDisabled();
+  await expect(page.getByRole("dialog").getByText("Your admin hasn't allowed adding mixes.", { exact: true })).toBeVisible();
+  state.publish = true; await page.getByRole("button", { name: "Refresh mix", exact: true }).click();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Add", exact: true })).toBeEnabled();
   expect(state.calls.some(call => call.path === "/api/admin/mixes/publish-setting")).toBe(false);
 });
 test("Added state survives the household gate and readiness", async ({ page }) => {
   const state = await mockForYou(page, { publish: false }); state.cards[0].readiness.ready = false;
   await page.goto("/#/for-you?mix=daily-1");
-  await expect(page.getByRole("dialog").getByText("In your apps", { exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog").getByText("✓ In your apps", { exact: true })).toBeVisible();
   await expect(page.getByRole("dialog").getByRole("link", { name: "Manage in Playlists" })).toBeVisible();
 });
 test("An add failure leaves the action available for retry", async ({ page }) => {
   const state = await mockForYou(page); state.cards[0].inApps = false; let failing = true;
   await page.route("**/api/admin/mixes/daily-1/in-apps", route => failing ? route.fulfill({ status: 503, json: {} }) : route.fallback());
   await page.goto("/#/for-you?mix=daily-1");
-  const add = page.getByRole("dialog").getByRole("button", { name: "Add to my apps", exact: true }); await add.click();
+  const add = page.getByRole("dialog").getByRole("button", { name: "Add", exact: true }); await add.click();
   await expect(page.getByRole("alert")).toContainText("Your mix could not be updated. Try again.");
   await expect(add).toBeEnabled(); failing = false; await add.click();
-  await expect(page.getByRole("dialog").getByText("In your apps", { exact: true })).toBeVisible();
+  await expect(page.getByRole("dialog").getByText("✓ In your apps", { exact: true })).toBeVisible();
 });
 test("Mix detail can retry after the first load fails", async ({ page }) => {
   await mockForYou(page); let failing = true;
@@ -70,7 +72,7 @@ test("Not-ready mix artwork keeps its colour and explanation", async ({ page }) 
   const state = await mockForYou(page, { partial: true }); state.cards.find(card => card.id === "daily-4")!.inApps = false; await page.goto("/#/for-you?mix=daily-4");
   await expect(page.getByRole("dialog").locator("canvas")).toHaveCSS("opacity", "1");
   await expect(page.getByText("Play about 80 more songs, or import your listening history.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("dialog").getByRole("button", { name: "Add to my apps", exact: true })).toBeEnabled();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Add", exact: true })).toBeEnabled();
 });
 test("Refresh throttle stays in effect after a rejected request", async ({ page }) => {
   await mockForYou(page); await page.goto("/#/for-you?mix=daily-1");
@@ -85,11 +87,14 @@ test("Undo preserves other and subsequently edited preferences", async ({ page }
   expect(state.taste.nudges.map(item => item.mode)).toEqual(["never", "more"]);
 });
 test("More today and hiding an artist use song actions", async ({ page }) => {
-  const state = await mockForYou(page); await page.goto("/#/for-you?mix=daily-1");
+  const state = await mockForYou(page); state.songs.push(structuredClone(state.songs[1]));
+  await page.goto("/#/for-you?mix=daily-1");
   await page.getByRole("button", { name: "Actions for Blue morning", exact: true }).click(); await page.getByRole("menuitem", { name: "More like this", exact: true }).hover();
   await page.getByRole("menuitem", { name: "Today only", exact: true }).click();
   await expect.poll(() => state.calls.find(call => call.body?.kind === "moreLikeThis")?.body.todayOnly).toBe(true);
-  await page.getByRole("button", { name: "Actions for Quiet water", exact: true }).click(); await page.getByRole("menuitem", { name: "Don't play this artist", exact: true }).click();
+  const quietActions = page.getByRole("listitem").filter({ hasText: "Quiet water" }).first().getByRole("button", { name: "Actions for Quiet water", exact: true });
+  await expect(quietActions).toBeEnabled();
+  await quietActions.click(); await page.getByRole("menuitem", { name: "Don't play this artist", exact: true }).click();
   await expect.poll(() => state.calls.some(call => call.body?.kind === "neverArtist")).toBe(true);
 });
 
@@ -132,4 +137,58 @@ test("Available songs remain visible with a readiness warning", async ({ page })
   await page.goto("/#/for-you?mix=daily-1");
   await expect(page.getByRole("dialog").getByRole("list", { name: "Songs", exact: true }).getByRole("listitem")).toHaveCount(songs.length);
   await expect(page.getByRole("dialog").getByText("More listening will improve this mix.")).toBeVisible();
+});
+
+test("Repeated songs in a service mix render and unchanged refreshes retain rows and scroll", async ({ page }) => {
+  const state = await mockForYou(page);
+  state.cards.push({ ...state.cards[0], id: "similar", name: "Similar to your top tracks", kind: "external", section: "yourServices", sourceLabel: "Last.fm" });
+  await page.clock.install();
+  await page.goto("/#/for-you?mix=similar");
+  const dialog = page.getByRole("dialog"), rows = dialog.getByRole("list", { name: "Songs", exact: true }).getByRole("listitem");
+  await expect(rows).toHaveCount(9);
+  await expect(dialog.getByText("Blue morning", { exact: true })).toHaveCount(2);
+  await expect(page.locator(".for-you .mix-card").first()).toBeAttached();
+  await rows.first().evaluate(element => Reflect.set(element, "retainedRow", true));
+  await dialog.locator(".mix-body").evaluate(element => { element.scrollTop = 200; });
+  const scroll = await dialog.locator(".mix-body").evaluate(element => element.scrollTop);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.clock.runFor(300);
+  await expect.poll(() => state.calls.filter(call => call.path === "/api/admin/mixes/similar").length).toBe(2);
+  expect(await rows.first().evaluate(element => Reflect.get(element, "retainedRow"))).toBe(true);
+  expect(await dialog.locator(".mix-body").evaluate(element => element.scrollTop)).toBe(scroll);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.clock.runFor(10_000);
+  expect(state.calls.filter(call => call.path === "/api/admin/mixes/similar")).toHaveLength(2);
+  await expect.poll(() => state.calls.filter(call => call.path === "/api/admin/mixes").length).toBe(2);
+  await page.getByRole("button", { name: "Close mix", exact: true }).click();
+  await page.getByRole("button", { name: "Refresh page", exact: true }).click();
+  await expect.poll(() => state.calls.filter(call => call.path === "/api/admin/mixes").length).toBe(3);
+});
+
+test("Song actions stay enabled during a pending background refresh and its cooldown", async ({ page }) => {
+  const state = await mockForYou(page);
+  await page.clock.install();
+  await page.goto("/#/for-you?mix=daily-1");
+  const actions = page.getByRole("button", { name: "Actions for Blue morning", exact: true });
+  await expect(actions).toBeEnabled();
+  let refreshes = 0, release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  await page.route(/\/api\/admin\/mixes\/daily-1(\?.*)?$/, async route => {
+    refreshes++;
+    await pending;
+    await route.fallback();
+  });
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.clock.runFor(300);
+  await expect.poll(() => refreshes).toBe(1);
+  await expect(actions).toBeEnabled();
+  await actions.click();
+  await expect(page.getByRole("menuitem", { name: "Not for me", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  release();
+  await expect.poll(() => state.calls.filter(call => call.path === "/api/admin/mixes/daily-1").length).toBe(2);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.clock.runFor(1_000);
+  expect(refreshes).toBe(1);
+  await expect(actions).toBeEnabled();
 });
