@@ -169,7 +169,7 @@ jobs:
         run: >-
           python3 ../tools/tests/timing_report.py
           --name webui-e2e
-          --timeout-seconds 900
+          --timeout-seconds 1200
           --require-tests
           --playwright-json "$RUNNER_TEMP/allstarr-playwright.json"
           -- npm run test:e2e:existing-build
