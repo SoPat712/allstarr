@@ -186,7 +186,10 @@ public sealed partial class ProtocolRouteFixtureTests
                     return Json(200, """{"Items":[],"TotalRecordCount":0}""");
                 var rows = LinkedLookupPlaylists(playlistCount).Where(item => ids.Length == 0 || ids == item.Id).Select(item => new JsonObject
                 {
-                    ["Id"] = item.Id, ["Name"] = "Stale " + item.Name, ["Type"] = "Playlist", ["ParentId"] = "playlists-folder",
+                    ["Id"] = item.Id,
+                    ["Name"] = "Stale " + item.Name,
+                    ["Type"] = "Playlist",
+                    ["ParentId"] = "playlists-folder",
                     ["ChildCount"] = ids.Length == 0 ? item.Count : item.Name == "Adrenaline" ? 102 : item.Name == "On Repeat" ? 28 : 0,
                     ["RunTimeTicks"] = ids.Length == 0 ? item.Name == "Release Radar" ? 58604120000L : item.Name == "Adrenaline" ? 195840710000L : 54962460000L
                         : item.Name == "Adrenaline" ? 201981773730L : item.Name == "On Repeat" ? 50349724698L : 0L
@@ -225,17 +228,31 @@ public sealed partial class ProtocolRouteFixtureTests
         {
             var link = new PlaylistLinkRecord
             {
-                Id = Guid.NewGuid(), OwnerUserId = owner, ProviderAccountId = account.Id, SourceProviderId = "spotify",
-                SourcePlaylistId = name, SourcePlaylistIdHash = name.PadRight(64, 'a'), TargetProtocol = "jellyfin",
-                TargetBackendInstanceId = "primary", TargetPlaylistId = spotifyAlias ? null : id,
-                Mode = spotifyAlias ? PlaylistLinkMode.Virtual : PlaylistLinkMode.Materialized, Enabled = true
+                Id = Guid.NewGuid(),
+                OwnerUserId = owner,
+                ProviderAccountId = account.Id,
+                SourceProviderId = "spotify",
+                SourcePlaylistId = name,
+                SourcePlaylistIdHash = name.PadRight(64, 'a'),
+                TargetProtocol = "jellyfin",
+                TargetBackendInstanceId = "primary",
+                TargetPlaylistId = spotifyAlias ? null : id,
+                Mode = spotifyAlias ? PlaylistLinkMode.Virtual : PlaylistLinkMode.Materialized,
+                Enabled = true
             };
             db.PlaylistLinks.Add(link);
             var snapshot = new PlaylistSourceSnapshotRecord
             {
-                Id = Guid.NewGuid(), OwnerUserId = owner, PlaylistLinkId = link.Id, ProviderAccountId = account.Id,
-                Name = name, SnapshotVersion = 1, ProviderRevision = "1", PayloadSha256 = new string('a', 64),
-                RetrievedAt = DateTimeOffset.UtcNow, PublishedAt = DateTimeOffset.UtcNow
+                Id = Guid.NewGuid(),
+                OwnerUserId = owner,
+                PlaylistLinkId = link.Id,
+                ProviderAccountId = account.Id,
+                Name = name,
+                SnapshotVersion = 1,
+                ProviderRevision = "1",
+                PayloadSha256 = new string('a', 64),
+                RetrievedAt = DateTimeOffset.UtcNow,
+                PublishedAt = DateTimeOffset.UtcNow
             };
             db.PlaylistSourceSnapshots.Add(snapshot);
             for (var position = 0; position < count; position++)
@@ -245,30 +262,58 @@ public sealed partial class ProtocolRouteFixtureTests
                 var hash = Guid.NewGuid().ToString("N").PadRight(64, 'a');
                 var identity = new ProviderTrackIdentityRecord
                 {
-                    Id = Guid.NewGuid(), CanonicalRecordingId = recording, ProviderId = "spotify", ProviderAccountId = account.Id, Scope = ProviderIdentityScope.Account,
-                    ResourceKind = ProviderResourceKind.Track, ExternalId = hash, ExternalIdHash = hash,
-                    Verification = ProviderIdentityVerification.Verified, VerificationMethod = "fixture", DecisionVersion = 1
+                    Id = Guid.NewGuid(),
+                    CanonicalRecordingId = recording,
+                    ProviderId = "spotify",
+                    ProviderAccountId = account.Id,
+                    Scope = ProviderIdentityScope.Account,
+                    ResourceKind = ProviderResourceKind.Track,
+                    ExternalId = hash,
+                    ExternalIdHash = hash,
+                    Verification = ProviderIdentityVerification.Verified,
+                    VerificationMethod = "fixture",
+                    DecisionVersion = 1
                 };
                 db.ProviderTrackIdentities.Add(identity);
                 db.ProviderTrackIdentities.Add(new()
                 {
-                    Id = Guid.NewGuid(), CanonicalRecordingId = recording, ProviderId = "deezer", Scope = ProviderIdentityScope.Catalog,
-                    ResourceKind = ProviderResourceKind.Track, ExternalId = hash, ExternalIdHash = hash,
-                    Verification = ProviderIdentityVerification.Verified, VerificationMethod = "fixture", DecisionVersion = 1
+                    Id = Guid.NewGuid(),
+                    CanonicalRecordingId = recording,
+                    ProviderId = "deezer",
+                    Scope = ProviderIdentityScope.Catalog,
+                    ResourceKind = ProviderResourceKind.Track,
+                    ExternalId = hash,
+                    ExternalIdHash = hash,
+                    Verification = ProviderIdentityVerification.Verified,
+                    VerificationMethod = "fixture",
+                    DecisionVersion = 1
                 });
                 var duration = (position == count - 1 ? seconds - seconds / count * (count - 1) : seconds / count) * 1000 + 654;
                 var external = new ExternalMetadataSnapshotRecord
                 {
-                    Id = Guid.NewGuid(), OwnerUserId = owner, ProviderAccountId = account.Id, ProviderTrackIdentityId = identity.Id,
-                    ProviderId = "spotify", Protocol = "jellyfin", BackendInstanceId = "primary", BackendPrincipalId = "user-1",
-                    ResourceKind = "Track", ExternalIdHash = hash, SnapshotVersion = 1, ProviderRevision = "1", PayloadSha256 = hash,
+                    Id = Guid.NewGuid(),
+                    OwnerUserId = owner,
+                    ProviderAccountId = account.Id,
+                    ProviderTrackIdentityId = identity.Id,
+                    ProviderId = "spotify",
+                    Protocol = "jellyfin",
+                    BackendInstanceId = "primary",
+                    BackendPrincipalId = "user-1",
+                    ResourceKind = "Track",
+                    ExternalIdHash = hash,
+                    SnapshotVersion = 1,
+                    ProviderRevision = "1",
+                    PayloadSha256 = hash,
                     PayloadJson = JsonSerializer.Serialize(new PlaylistSourceMetadata("Song", ["Artist"], DurationMilliseconds: duration, CanonicalRecordingId: recording))
                 };
                 db.ExternalMetadataSnapshots.Add(external);
                 db.PlaylistSourceEntries.Add(new()
                 {
-                    Id = Guid.NewGuid(), PlaylistSourceSnapshotId = snapshot.Id, ExternalMetadataSnapshotId = external.Id,
-                    SourcePosition = position, SourceEntryIdHash = hash
+                    Id = Guid.NewGuid(),
+                    PlaylistSourceSnapshotId = snapshot.Id,
+                    ExternalMetadataSnapshotId = external.Id,
+                    SourcePosition = position,
+                    SourceEntryIdHash = hash
                 });
             }
         }
