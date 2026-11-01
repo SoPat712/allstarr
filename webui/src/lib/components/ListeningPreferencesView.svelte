@@ -15,7 +15,7 @@
   } from "$lib/api";
   import RouteError from "$lib/components/RouteError.svelte";
   import { Button } from "$lib/components/ui/button";
-  import { Checkbox } from "$lib/components/ui/checkbox";
+  import { Switch } from "$lib/components/ui/switch";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
   import { canonicalProviderId, lyricsSourceDisplayName } from "$lib/sources";
@@ -222,11 +222,11 @@
           <p>Keep source and content cues visible without changing any track title.</p>
         </div>
         <label>
-          <span class="settings-toggle"><Checkbox bind:checked={showExternalLabel} disabled={busy} aria-label="Show [A] for external tracks" /></span>
+          <span class="settings-toggle"><Switch bind:checked={showExternalLabel} disabled={busy} aria-label="Show [A] for external tracks" /></span>
           <span><strong>Show [A] for external tracks</strong><small>Marks tracks supplied outside the native library.</small></span>
         </label>
         <label>
-          <span class="settings-toggle"><Checkbox bind:checked={showExplicitLabel} disabled={busy} aria-label="Show [E] for explicit tracks" /></span>
+          <span class="settings-toggle"><Switch bind:checked={showExplicitLabel} disabled={busy} aria-label="Show [E] for explicit tracks" /></span>
           <span><strong>Show [E] for explicit tracks</strong><small>Marks tracks identified as explicit.</small></span>
         </label>
       </section>
@@ -237,6 +237,16 @@
           <p>Fast start chooses quick lossless playback. Balanced favors the best quality when recent starts take 3 seconds or less. Best quality prefers the highest quality.</p>
         </div>
         <ThreeDetentSwitch label="Playback start" value={playbackStart} options={playbackStartOptions} compact disabled={busy} onchange={value => playbackStart = value} />
+      </section>
+
+      <section class="preference-options" aria-labelledby="problem-alerts-title">
+        <div class="preference-link-row">
+          <div>
+            <h3 id="problem-alerts-title">Alerts</h3>
+            <p>Choose where Allstarr tells you about problems.</p>
+          </div>
+          <Button variant="secondary" href="#/settings/alerts">Manage alerts</Button>
+        </div>
       </section>
 
       <section class="preference-options" aria-label="Lyrics source order">
@@ -278,6 +288,8 @@
 {/if}
 
 <style>
+  .preference-link-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
+  .preference-link-row p { color: var(--color-ink-muted); font-size: var(--text-sm); }
   .preferences-view { display: grid; min-width: 0; gap: var(--section-gap); }
   .preference-options { display: grid; gap: var(--space-3); border-top: 1px solid var(--color-edge); padding: var(--surface-gutter); }
   .preference-options h3 { margin: 0 0 .3rem; font-size: 1rem; font-weight: 600; }

@@ -25,7 +25,10 @@ export function applyThemeMode(mode: ThemeMode) {
 
 export function saveThemeMode(mode: ThemeMode) {
   localStorage.setItem(storageKey, mode);
-  applyThemeMode(mode);
+  // Crossfade the whole page where the browser supports it.
+  if (document.startViewTransition && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    document.startViewTransition(() => applyThemeMode(mode));
+  } else applyThemeMode(mode);
   window.dispatchEvent(new CustomEvent<ThemeMode>(changeEvent, { detail: mode }));
 }
 

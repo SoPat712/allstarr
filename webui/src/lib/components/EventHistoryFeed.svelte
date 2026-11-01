@@ -21,6 +21,7 @@
     activityDuration,
     activityCategories,
     activityCategory,
+    isRoutineActivity,
     activityIcon,
     dayLabel,
     filterActivity,
@@ -64,7 +65,12 @@
   let reducedMotion = $state(false);
   let streamTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const filtered = $derived(filterActivity(items, {
+  // Routine background work stays out of the way unless someone asks for it or it went wrong.
+  let showBackground = $state(false);
+  const visibleItems = $derived(showBackground || scope === "everyone" || category === "system" || query || problemsOnly
+    ? items
+    : items.filter((item) => !isRoutineActivity(item)));
+  const filtered = $derived(filterActivity(visibleItems, {
     query,
     category,
     provider: providerFilter,
@@ -283,6 +289,7 @@
           <button type="button" class="filter-chip" aria-pressed={category === item.id} onclick={() => category = category === item.id ? "" : item.id}>{item.label}</button>
         {/each}
         <span class="event-log-chip-divider" aria-hidden="true"></span>
+        {#if administrator}<button type="button" class="filter-chip" aria-pressed={showBackground} onclick={() => showBackground = !showBackground}>Background work</button>{/if}
         <button type="button" class="filter-chip problems" aria-pressed={problemsOnly} onclick={() => problemsOnly = !problemsOnly}><CircleAlert size={16} aria-hidden="true" />Problems only</button>
       </div>
       <div class="event-log-toolbar-end">

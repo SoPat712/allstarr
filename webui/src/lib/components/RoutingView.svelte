@@ -186,7 +186,7 @@
       {#each schema.priorityGroups ?? [] as group}
         <section class="settings-card routing-group">
           <header>
-            <div><h3>{group.label} order</h3><small>{group.id === "lyrics" ? "Your saved choice for a song takes precedence, then Kept LRC. Other sources follow this order, with a short priority window for slower services." : group.description || "Drag services, or use the arrows, to change the order Allstarr tries them."}</small></div>
+            <div><h3>{group.label.replace(/ order$/i, "")} order</h3><small>{group.id === "lyrics" ? "Your saved choice for a song takes precedence, then Kept LRC. Other sources follow this order, with a short priority window for slower services." : group.description || "Drag services, or use the arrows, to change the order Allstarr tries them."}</small></div>
             <Button aria-label={`Save ${group.label}`} disabled={Boolean(action) || !dirtyOrderIds.includes(group.id)} onclick={() => void saveOrder(group)}>{action === group.id ? "Saving…" : "Save order"}</Button>
           </header>
           <ol>

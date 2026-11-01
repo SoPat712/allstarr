@@ -135,7 +135,7 @@ test("guide rejects private URL fields and offers copy selection when clipboard 
   await mockSupport(page, true);
   await page.goto("/#/getting-started");
   const address = page.getByLabel("Music-client address", { exact: true });
-  await expect(page.getByRole("link", { name: "Set the household address" })).toHaveAttribute("href", "#/settings/network");
+  await expect(page.getByRole("link", { name: "Set the household address" })).toHaveAttribute("href", "#/settings/access");
   await address.fill("https://listener:private@music.test/?api_key=private");
   await expect(page.getByRole("button", { name: "Copy server address" })).toBeDisabled();
   await expect(page.getByRole("link", { name: "Open web player", exact: true })).toHaveCount(0);
@@ -154,7 +154,7 @@ test("the administrator address field loads its durable value and updates the gu
   const address = form.getByRole("textbox", { name: "Music-client address", exact: true });
   await expect(address).toHaveValue("http://music.test:5274");
   await address.fill("https://music.test/gateway");
-  await form.getByRole("button", { name: "Save Music-client address", exact: true }).click();
+  await form.getByRole("button", { name: "Save changes to Music-client address", exact: true }).click();
   await expect.poll(() => state.settingsWrites.length).toBe(1);
   expect(state.settingsWrites[0]).toEqual({ PUBLIC_LISTENER_URL: "https://music.test/gateway" });
   await expect(address).toHaveValue("https://music.test/gateway");
@@ -339,7 +339,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
     await mockSupport(page);
     await page.goto("/#/getting-started");
-    await expect(page.getByRole("heading", { name: "Getting started", level: 1, exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Connect apps", level: 1, exact: true })).toBeVisible();
     await expect(page.getByLabel("Music-client address", { exact: true })).toHaveValue("http://music.test:5274");
     await expect(page.getByLabel("Username", { exact: true })).toHaveValue("Listener");
     await expect(page.getByRole("heading", { name: "Feishin", exact: true })).toBeVisible();

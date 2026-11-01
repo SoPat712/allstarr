@@ -3,7 +3,7 @@
   import RouteError from "$lib/components/RouteError.svelte";
   import SourcesView from "$lib/components/SourcesView.svelte";
   import SharedProviderHearts from "$lib/components/SharedProviderHearts.svelte";
-  import { Button } from "$lib/components/ui/button";
+  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
 
   let {
     section = "services",
@@ -32,8 +32,19 @@
 </script>
 
 <section class="settings-workspace integrations-workspace">
+  {#if !serviceId}
+    <SegmentedNav
+      class="route-tabs"
+      label="Source sections"
+      active={section === "routing" && administrator ? "routing" : section === "accounts" ? "accounts" : "services"}
+      items={[
+        { id: "services", label: administrator ? "Services" : "Available services", href: "#/integrations/services" },
+        { id: "accounts", label: administrator ? "Accounts" : "My accounts", href: "#/integrations/accounts" },
+        ...(administrator ? [{ id: "routing", label: "Routing and quality", href: "#/integrations/routing" }] : []),
+      ]}
+    />
+  {/if}
   {#if section === "routing" && administrator}
-    <nav class="route-tabs flex flex-wrap gap-2" aria-label="Integration sections"><Button variant="secondary" href="#/integrations/services">Services</Button><Button variant="secondary" href="#/integrations/accounts">Accounts</Button><Button href="#/integrations/routing" aria-current="page">Routing</Button></nav>
     {#await import("$lib/components/RoutingView.svelte")}
       <Skeleton class="skeleton-panel" aria-label="Loading routing and quality" />
     {:then { default: RoutingView }}
@@ -56,13 +67,6 @@
   />
   {#if administrator && section === "accounts" && !serviceId && !initialSource && !initialConnect}
     <SharedProviderHearts {administrator} />
-  {/if}
-  {#if administrator && section !== "accounts" && !serviceId}
-    <section class="settings-card p-5 my-4 space-y-3" aria-labelledby="routing-entry-title">
-      <h3 id="routing-entry-title" class="font-semibold">Routing and quality</h3>
-      <p>Choose which sources are tried first for search and playback, and the audio quality listeners get.</p>
-      <Button variant="secondary" href="#/integrations/routing">Open routing and quality</Button>
-    </section>
   {/if}
   {/if}
 </section>

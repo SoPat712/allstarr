@@ -9451,3 +9451,400 @@
     outline-color: var(--color-primary);
   }
 }
+
+/* Interaction and motion. Every state change eases; nothing here runs with reduced motion. */
+:root {
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-emphasized: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --ease-exit: cubic-bezier(0.3, 0, 1, 1);
+  --row-hover: color-mix(in srgb, var(--color-ink) 5%, transparent);
+  --row-press: color-mix(in srgb, var(--color-ink) 9%, transparent);
+  scrollbar-color: color-mix(in srgb, var(--color-ink) 22%, transparent) transparent;
+  interpolate-size: allow-keywords;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-signal) 32%, transparent);
+}
+
+/* State layers: hover and press tint every control the same way, on any fill color. */
+:is([data-slot="button"], .icon-button, .auth-submit, .filter-chip, .add-chip) {
+  position: relative;
+  overflow: clip;
+  transition: background-color 160ms var(--ease-standard), color 160ms var(--ease-standard),
+    border-color 160ms var(--ease-standard), box-shadow 200ms var(--ease-standard), scale 160ms var(--ease-standard);
+}
+
+:is([data-slot="button"], .icon-button, .auth-submit, .filter-chip, .add-chip)::before {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: currentColor;
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms var(--ease-standard);
+}
+
+@media (hover: hover) {
+  :is([data-slot="button"], .icon-button, .auth-submit, .filter-chip, .add-chip):not(:disabled):hover::before {
+    opacity: 0.08;
+  }
+
+  [data-slot="button"]:not(:disabled):hover {
+    box-shadow: var(--shadow-sm);
+  }
+}
+
+:is([data-slot="button"], .icon-button, .auth-submit, .filter-chip, .add-chip):not(:disabled):active {
+  scale: 0.97;
+}
+
+:is([data-slot="button"], .icon-button, .auth-submit, .filter-chip, .add-chip):not(:disabled):active::before {
+  opacity: 0.14;
+}
+
+.ripple {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: currentColor;
+  opacity: 0.16;
+  pointer-events: none;
+  animation: ripple 520ms var(--ease-standard) forwards;
+}
+
+@keyframes ripple {
+  from { clip-path: circle(0 at var(--ripple-at)); }
+  to { clip-path: circle(var(--ripple-size) at var(--ripple-at)); opacity: 0; }
+}
+
+/* Sliding selection */
+.slide-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  width: var(--w);
+  height: var(--h);
+  transform: translate(var(--x), var(--y));
+  pointer-events: none;
+}
+
+.slide-indicator[hidden] {
+  display: none;
+}
+
+.slide-indicator[data-ready] {
+  transition: transform 320ms var(--ease-emphasized), width 320ms var(--ease-emphasized), height 320ms var(--ease-emphasized);
+}
+
+.desktop-navigation[data-indicator],
+.settings-nav[data-indicator] {
+  position: relative;
+}
+
+.desktop-navigation[data-indicator] > a,
+.settings-nav[data-indicator] > :not(.slide-indicator) {
+  position: relative;
+  z-index: 1;
+}
+
+.desktop-navigation a,
+.settings-nav > a,
+.mobile-navigation :is(a, button) {
+  overflow: clip;
+  transition: background-color 160ms var(--ease-standard), color 200ms var(--ease-standard);
+}
+
+.desktop-navigation .slide-indicator {
+  border-radius: 999px;
+  background: var(--color-signal-muted);
+}
+
+.desktop-navigation[data-indicator] a.active {
+  background: transparent;
+}
+
+.settings-nav .slide-indicator {
+  border-radius: 999px;
+  background: var(--md-sys-color-secondary-container);
+}
+
+.settings-nav[data-indicator] > a[aria-current="page"] {
+  background: transparent;
+}
+
+.segmented-tabs :is(a, button) {
+  overflow: clip;
+  transition: color 200ms var(--ease-standard);
+}
+
+.segmented-tabs .slide-indicator {
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--color-signal);
+  transform: translate(var(--x), calc(var(--y) + var(--h) - 2px));
+}
+
+.segmented-tabs[data-indicator]:not(.extension-tabs, .mapping-view-tabs) :is(a, button)[aria-selected="true"]::after {
+  display: none;
+}
+
+:is(.extension-tabs, .mapping-view-tabs) .slide-indicator {
+  display: none;
+}
+
+.desktop-navigation a svg,
+.nav-icon svg {
+  transition: scale 200ms var(--ease-emphasized);
+}
+
+@media (hover: hover) {
+  .desktop-navigation a:hover svg {
+    scale: 1.08;
+  }
+}
+
+/* Rows respond as one surface, and their chevrons lean toward where they go. */
+:is(.source-row-main, .provider-line, .activity-line, .home-facts a, .playlist-open-button, .download-row, .event-row) {
+  transition: background-color 160ms var(--ease-standard);
+}
+
+@media (hover: hover) {
+  :is(.source-row-main, .provider-line, .activity-line, .home-facts a, .download-row):hover,
+  .playlist-row:hover {
+    background-color: var(--row-hover);
+  }
+
+  :is(.source-row-main, .home-facts a):hover :is(.source-row-chevron, svg:last-child) {
+    transform: translateX(3px);
+  }
+}
+
+:is(.source-row-chevron, .home-facts a svg:last-child) {
+  transition: transform 200ms var(--ease-emphasized);
+}
+
+.playlist-row {
+  transition: background-color 160ms var(--ease-standard);
+}
+
+/* Coverage reads as a quiet meter inside the row, not a band between rows. */
+.playlist-row > .coverage-bar,
+.playlist-row > .coverage-bar.compact {
+  --strip: 3px;
+  right: var(--surface-gutter);
+  left: var(--surface-gutter);
+  width: auto;
+  margin: 0;
+  border-radius: 999px 999px 0 0;
+}
+
+.now-playing-empty p {
+  margin-bottom: var(--space-3);
+}
+
+.coverage-bar > span {
+  transition: flex-grow 480ms var(--ease-emphasized), width 480ms var(--ease-emphasized);
+}
+
+/* Fields */
+input:not([type="checkbox"], [type="radio"], [type="range"]),
+textarea,
+select,
+.select-trigger {
+  transition: border-color 160ms var(--ease-standard), box-shadow 160ms var(--ease-standard), background-color 160ms var(--ease-standard);
+}
+
+@media (hover: hover) {
+  input:not([type="checkbox"], [type="radio"], [type="range"], :disabled, :read-only):hover,
+  textarea:not(:disabled):hover,
+  .select-trigger:not(:disabled):hover {
+    border-color: var(--color-edge-strong);
+  }
+}
+
+input:not([type="checkbox"], [type="radio"], [type="range"]):focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  border-color: var(--color-signal);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-signal) 22%, transparent);
+  outline: none;
+}
+
+/* Switch */
+.ui-switch {
+  position: relative;
+  flex: none;
+  appearance: none;
+  width: 3.25rem;
+  height: 2rem;
+  min-height: 2rem;
+  margin: 0;
+  border: 2px solid var(--color-edge-strong);
+  border-radius: 999px;
+  background: var(--md-sys-color-surface-container-highest);
+  cursor: pointer;
+  transition: background-color 200ms var(--ease-standard), border-color 200ms var(--ease-standard);
+}
+
+.ui-switch::before {
+  position: absolute;
+  top: 50%;
+  left: 0.375rem;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: var(--color-edge-strong);
+  content: "";
+  transform: translateY(-50%);
+  transition: left 240ms var(--ease-emphasized), width 240ms var(--ease-emphasized), height 240ms var(--ease-emphasized), background-color 200ms var(--ease-standard);
+}
+
+.ui-switch:checked {
+  border-color: var(--color-signal);
+  background: var(--color-signal);
+}
+
+.ui-switch:checked::before {
+  left: 1.375rem;
+  width: 1.5rem;
+  height: 1.5rem;
+  background: var(--color-on-signal);
+}
+
+.ui-switch:active::before {
+  width: 1.75rem;
+  height: 1.75rem;
+}
+
+.ui-switch:checked:active::before {
+  left: 1.125rem;
+}
+
+.ui-switch:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.ui-switch:disabled {
+  cursor: default;
+  opacity: var(--disabled-opacity);
+}
+
+/* Views arrive softly; lists follow in a short cascade. */
+.workspace > :not(.workspace-header, .route-tabs),
+.settings-content > * {
+  animation: view-enter 280ms var(--ease-emphasized) backwards;
+}
+
+:is(.source-list, .playlist-rows, .download-rows, .provider-list, .activity-list, .home-attention ul, .settings-fields) > * {
+  animation: list-enter 300ms var(--ease-emphasized) backwards;
+}
+
+:is(.source-list, .playlist-rows, .download-rows, .provider-list, .activity-list, .home-attention ul) > :nth-child(2) { animation-delay: 20ms; }
+:is(.source-list, .playlist-rows, .download-rows, .provider-list, .activity-list, .home-attention ul) > :nth-child(3) { animation-delay: 40ms; }
+:is(.source-list, .playlist-rows, .download-rows, .provider-list, .activity-list, .home-attention ul) > :nth-child(4) { animation-delay: 60ms; }
+:is(.source-list, .playlist-rows, .download-rows, .provider-list, .activity-list, .home-attention ul) > :nth-child(5) { animation-delay: 80ms; }
+:is(.source-list, .playlist-rows, .download-rows, .provider-list, .activity-list, .home-attention ul) > :nth-child(6) { animation-delay: 100ms; }
+:is(.source-list, .playlist-rows, .download-rows, .provider-list, .activity-list, .home-attention ul) > :nth-child(n + 7) { animation-delay: 120ms; }
+
+@keyframes view-enter {
+  from { opacity: 0; transform: translateY(6px); }
+}
+
+@keyframes list-enter {
+  from { opacity: 0; transform: translateY(8px); }
+}
+
+/* Dialogs and menus. These use individual properties, so each dialog keeps its own position transform. */
+:is(.match-dialog, .source-dialog, .confirm-dialog)[data-state="open"] {
+  animation: dialog-in 280ms var(--ease-emphasized);
+}
+
+:is(.match-dialog, .source-dialog, .confirm-dialog)[data-state="closed"] {
+  animation: dialog-out 150ms var(--ease-exit) forwards;
+}
+
+:is(.dialog-overlay, .match-dialog-overlay, .confirm-dialog-overlay)[data-state="open"] {
+  animation: fade-in 220ms var(--ease-standard);
+}
+
+:is(.dialog-overlay, .match-dialog-overlay, .confirm-dialog-overlay)[data-state="closed"] {
+  animation: fade-out 150ms var(--ease-exit) forwards;
+}
+
+/* No scaling here: cover art inside a dialog draws at its measured size. */
+@keyframes dialog-in {
+  from { opacity: 0; translate: 0 -6px; }
+}
+
+@keyframes dialog-out {
+  to { opacity: 0; translate: 0 -3px; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+}
+
+@keyframes fade-out {
+  to { opacity: 0; }
+}
+
+/* Disclosures open instead of snapping. */
+details::details-content {
+  overflow: hidden;
+  block-size: 0;
+  transition: block-size 280ms var(--ease-emphasized), content-visibility 280ms allow-discrete;
+}
+
+details[open]::details-content {
+  block-size: auto;
+}
+
+.disclosure-chevron,
+summary > svg:last-child {
+  transition: transform 240ms var(--ease-emphasized);
+}
+
+/* Loading shimmer */
+:is([data-slot="skeleton"], .skeleton-line, .skeleton-card) {
+  background-image: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--color-ink) 7%, transparent) 50%, transparent 70%);
+  background-size: 220% 100%;
+  animation: shimmer 1.5s linear infinite;
+}
+
+@keyframes shimmer {
+  from { background-position: 120% 0; }
+  to { background-position: -120% 0; }
+}
+
+.live-state[data-state="live"] span {
+  animation: live-pulse 2.6s var(--ease-standard) infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
+  60% { box-shadow: 0 0 0 5px transparent; }
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 260ms;
+  animation-timing-function: var(--ease-standard);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after,
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+  }
+}

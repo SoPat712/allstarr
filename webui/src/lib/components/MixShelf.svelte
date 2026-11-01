@@ -30,12 +30,14 @@
   header { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); margin-bottom: var(--space-3); }
   h2 { font-size: 1.125rem; font-weight: 600; }
   a { display: inline-flex; min-height: 44px; align-items: center; }
-  .mix-shelf { display: grid; grid-auto-flow: column; grid-auto-columns: 160px; overflow-x: auto; scroll-snap-type: x mandatory; gap: 12px; padding-bottom: var(--space-2); }
+  .mix-shelf { padding-top: 6px; display: grid; grid-auto-flow: column; grid-auto-columns: 160px; overflow-x: auto; scroll-snap-type: x mandatory; gap: 12px; padding-bottom: var(--space-2); }
   .mix-card { scroll-snap-align: start; display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; text-align: left; color: var(--color-ink); border-radius: var(--radius-md); }
   .mix-open { display: flex; flex-direction: column; gap: var(--space-2); width: 100%; text-align: left; color: inherit; border-radius: inherit; }
   button.mix-open { cursor: pointer; }
   .mix-open:focus-visible { outline: 2px solid var(--color-signal); outline-offset: -2px; }
-  .cover { width: 100%; position: relative; border-radius: inherit; }
+  .cover { width: 100%; position: relative; border-radius: inherit; transition: transform 280ms var(--ease-emphasized), filter 280ms var(--ease-standard); }
+  @media (hover: hover) { .mix-card:hover .cover { transform: translateY(-3px) scale(1.015); filter: drop-shadow(0 8px 14px rgb(0 0 0 / 28%)); } }
+  .mix-card:active .cover { transform: scale(0.985); }
   .artwork { display: block; width: 100%; }
   .artwork.unready { opacity: 0.6; }
   small { min-height: 1.4em; font-size: var(--text-xs); color: var(--color-ink-muted); }

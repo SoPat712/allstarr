@@ -163,17 +163,17 @@ test("listener navigation exposes personal surfaces and blocks operator workspac
   await page.getByRole("button", { name: "More destinations" }).click();
   const more = page.getByRole("navigation", { name: "More destinations" });
   await expect(more.getByRole("link", { name: /Listening preferences/ })).toBeVisible();
-  await expect(more.getByRole("link", { name: /Sources/ })).toBeVisible();
-  await expect(more.getByRole("link", { name: /Getting started/ })).toBeVisible();
+  await expect(more.getByRole("link", { name: /Services/ })).toBeVisible();
+  await expect(more.getByRole("link", { name: /Connect apps/ })).toBeVisible();
   await expect(more.getByRole("link", { name: /Settings/ })).toHaveCount(0);
-  await more.getByRole("link", { name: /Sources/ }).click();
-  await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Add a source" })).toHaveCount(0);
+  await more.getByRole("link", { name: /Services/ }).click();
+  await expect(page.getByRole("heading", { name: "Services", level: 1 })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add extension" })).toHaveCount(0);
 
   await page.goto("/#/library/playlists");
   const library = page.getByRole("navigation", { name: "Library sections" });
   await expect(library).toContainText("Playlists");
-  await expect(library).toContainText("Mappings");
+  await expect(library).toContainText("Matches");
   await expect(library).not.toContainText("Cached");
   await expect(library).not.toContainText("Kept");
 
@@ -210,7 +210,7 @@ test("administrator navigation and household now-playing remain available", asyn
   await expect(page.getByRole("navigation", { name: "Library sections" })).toContainText("Kept");
 
   await page.goto("/#/integrations/services");
-  await expect(page.getByRole("button", { name: "Add a source" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add extension" })).toBeVisible();
   await page.goto("/#/settings/playback");
   await expect(page.getByRole("heading", { name: "Routing", level: 2 })).toBeVisible();
 });

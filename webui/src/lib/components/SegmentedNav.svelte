@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { Component } from "svelte";
+  import { slideIndicator } from "$lib/slide-indicator";
 
   type Item = { id: string; label: string; href?: string; count?: number; icon?: Component<any> };
 
@@ -33,7 +34,7 @@
         if (!tablist || !selected) return;
         const bounds = tablist.getBoundingClientRect();
         const selectedBounds = selected.getBoundingClientRect();
-        const next = selected.nextElementSibling as HTMLElement | null;
+        const next = selected.nextElementSibling?.matches('[role="tab"]') ? selected.nextElementSibling as HTMLElement : null;
         const nextBounds = next?.getBoundingClientRect();
         const end = nextBounds && nextBounds.right - selectedBounds.left <= bounds.width
           ? nextBounds.right
@@ -82,6 +83,7 @@
     tabindex="-1"
     style={`--tab-count:${items.length}`}
     onkeydown={navigate}
+    use:slideIndicator={'[aria-selected="true"]'}
   >
     {#each items as item}
       {#if item.href}

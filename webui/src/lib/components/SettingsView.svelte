@@ -3,7 +3,8 @@
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
-  import { Checkbox } from "$lib/components/ui/checkbox";
+  import { Switch } from "$lib/components/ui/switch";
+  import { slideIndicator } from "$lib/slide-indicator";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import {
@@ -31,7 +32,7 @@
   import { fieldValue, playbackStartLabel, playbackStartOptions } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { onThemeModeChange, readThemeMode, saveThemeMode, themeOptions, type ThemeMode } from "$lib/theme";
-  import { Activity, Archive, AudioLines, Bell, HardDrive, Lock, Network, Palette, Rocket, SlidersHorizontal, Users } from "@lucide/svelte";
+  import { Activity, Archive, AudioLines, Bell, HardDrive, Headphones, Lock, Palette, Rocket, SlidersHorizontal, Users } from "@lucide/svelte";
 
   let {
     section = "general",
@@ -50,22 +51,23 @@
   } = $props();
 
   const allPages = [
-    { id: "appearance", label: "Appearance", group: "This browser", icon: Palette, title: "Appearance", description: "How Allstarr looks in this browser. Other devices keep their own choice." },
-    { id: "access", label: "Access", group: "Server", icon: Lock, title: "Access", description: "Manage media-server access for playlist sync and library scans." },
+    { id: "appearance", label: "Appearance", group: "You", icon: Palette, title: "Appearance", description: "How Allstarr looks in this browser. Other devices keep their own choice." },
+    { id: "preferences", label: "Listening preferences", group: "You", icon: Headphones, title: "Listening preferences", description: "", href: "#/preferences" },
     { id: "general", label: "General", group: "Server", icon: SlidersHorizontal, title: "General", description: "Server-wide behavior for every listener." },
+    { id: "access", label: "Access and network", group: "Server", icon: Lock, title: "Access and network", description: "Who can sign in, media-server access, and how Allstarr is reached." },
     { id: "listeners", label: "Listeners", group: "Server", icon: Users, title: "Listeners", description: "Manage clean listening and see personal playlist copies." },
     { id: "alerts", label: "Alerts", group: "Server", icon: Bell, title: "Alerts", description: "Choose where Allstarr sends problem alerts." },
-    { id: "sound-analysis", label: "Sound analysis", group: "Server", icon: AudioLines, title: "Sound analysis (AudioMuse)", description: "Connect AudioMuse for sound analysis and choose whether listeners can add mixes to their apps." },
     { id: "storage", label: "Storage", group: "Server", icon: HardDrive, title: "Storage", description: "Manage saved music, cache space, and playback capacity." },
-    { id: "network", label: "Network", group: "Server", icon: Network, title: "Network and security", description: "How the admin interface is exposed. These are usually set by your deployment." },
+    { id: "sound-analysis", label: "Sound analysis", group: "Server", icon: AudioLines, title: "Sound analysis (AudioMuse)", description: "Connect AudioMuse for sound analysis and choose whether listeners can add mixes to their apps." },
     { id: "backups", label: "Backups", group: "Maintenance", icon: Archive, title: "Backups", description: "Save and restore Allstarr's database, accounts and encryption keys." },
-    { id: "health", label: "Health", group: "Maintenance", icon: Activity, title: "Health", description: "Monitor server checks and recent results." },
-    { id: "diagnostics", label: "Diagnostics", group: "Maintenance", icon: Activity, title: "Diagnostics", description: "Run checks when playback or playlists aren't working." },
-    { id: "setup", label: "Setup", group: "Maintenance", icon: Rocket, title: "Setup", description: "Reopen the setup guide or import settings from Allstarr v2." },
+    { id: "health", label: "Health", group: "Maintenance", icon: Activity, title: "Health", description: "Monitor server checks, and run tests when playback or playlists misbehave." },
+    { id: "setup", label: "Setup guide", group: "Maintenance", icon: Rocket, title: "Setup", description: "Reopen the setup guide or import settings from Allstarr v2." },
   ] as const;
   const pages = $derived(allPages.filter(item => administrator || item.id === "alerts"));
-  const navGroups = ["This browser", "Server", "Maintenance"] as const;
-  const sectionPages: Record<string, string> = { general: "general", paths: "storage", cache: "storage", "audio-limits": "storage", network: "network", "client-address": "network" };
+  const navGroups = ["You", "Server", "Maintenance"] as const;
+  const legacySections: Record<string, string> = { network: "access", diagnostics: "health", maintenance: "backups" };
+  const pageHref = (item: (typeof allPages)[number]) => "href" in item ? item.href : `#/settings/${item.id}`;
+  const sectionPages: Record<string, string> = { general: "general", paths: "storage", cache: "storage", "audio-limits": "storage", network: "access", "client-address": "access" };
   const contextualTrackCacheKeys = new Set([
     "STORAGE_MODE",
     "CACHE_DURATION_HOURS",
@@ -92,9 +94,8 @@
   let serverChanged = $state(false);
   let themeMode = $state<ThemeMode>("system");
 
-  const active = $derived(section === "maintenance"
-    ? "backups"
-    : pages.some((item) => item.id === section) ? section : administrator ? "general" : "alerts");
+  const requestedSection = $derived(legacySections[section] ?? section);
+  const active = $derived(pages.some((item) => item.id === requestedSection) ? requestedSection : administrator ? "general" : "alerts");
   const activePage = $derived(pages.find((item) => item.id === active) ?? pages[0]);
   const configSections = $derived.by(() => {
     return (schema?.configSections ?? [])
@@ -108,7 +109,7 @@
   });
   const pageSections = $derived(configSections.map((item) => ({ ...item,
     fields: item.fields.filter((field) => item.id !== "operator" ||
-      (/Cors:|ChallengeSolver:/.test(field.valuePath ?? "") ? "network" : /BackupRetention|EventLog/.test(field.valuePath ?? "") ? "storage" : "general") === active),
+      (/Cors:|ChallengeSolver:/.test(field.valuePath ?? "") ? "access" : /BackupRetention|EventLog/.test(field.valuePath ?? "") ? "storage" : "general") === active),
   })).filter((item) => item.fields.length && (item.id === "operator" || (sectionPages[item.id] ?? "general") === active)));
   const cacheDiskCeiling = $derived(
     Number((config.cache as Record<string, unknown> | undefined)?.mediaMaximumMegabytes ?? 512),
@@ -135,7 +136,7 @@
     refreshing = true;
     error = "";
     const requests: Array<[string, Promise<unknown>]> = [["schema", home.schema()]];
-    if (["general", "storage", "network"].includes(active))
+    if (["general", "storage", "access"].includes(active))
       requests.push(["config", settings.config()]);
     if (active === "storage") requests.push(
       ["cache", settings.cache()],
@@ -174,7 +175,7 @@
       .filter((field) => !field.readOnly && field.ownership !== "deployment")
       .map((field) => [
         field.key,
-        field.type === "toggle" ? String(data.get(field.key) === "on") : String(data.get(field.key) ?? ""),
+        isToggle(field) ? String(data.get(field.key) === "on") : String(data.get(field.key) ?? ""),
       ]));
     try {
       const result = await settings.save(updates);
@@ -234,6 +235,12 @@
     purgeOpen = false;
   }
 
+  const isToggle = (field: ConfigSection["fields"][number]) => field.type === "toggle" || field.type === "boolean";
+  const fieldEnabled = (field: ConfigSection["fields"][number]) => {
+    const value = fieldValue(config, field);
+    return typeof value === "string" ? value.toLowerCase() === "true" : Boolean(value);
+  };
+
   function deploymentOwned(field: ConfigSection["fields"][number]) {
     return field.readOnly || field.ownership === "deployment";
   }
@@ -262,20 +269,20 @@
   />
 {:else}
   <section class="settings-workspace settings-layout" aria-busy={refreshing}>
-    <nav class="settings-nav" aria-label="Settings sections">
+    <nav class="settings-nav" aria-label="Settings sections" use:slideIndicator={'a[aria-current="page"]'}>
       {#each navGroups as group}
         {#if pages.some(item => item.group === group)}
           <p>{group}</p>
           {#each pages.filter((item) => item.group === group) as item (item.id)}
             {@const Icon = item.icon}
-            <a href={`#/settings/${item.id}`} aria-current={active === item.id ? "page" : undefined}>
+            <a href={pageHref(item)} aria-current={active === item.id ? "page" : undefined}>
               <Icon size={18} aria-hidden="true" />{item.label}
             </a>
           {/each}
         {/if}
       {/each}
     </nav>
-    <SegmentedNav items={pages.map((item) => ({ id: item.id, label: item.label, href: `#/settings/${item.id}` }))} {active} label="Settings sections" class="route-tabs settings-tabs" />
+    <SegmentedNav items={pages.map((item) => ({ id: item.id, label: item.label, href: pageHref(item) }))} {active} label="Settings sections" class="route-tabs settings-tabs" />
 
     <div class="settings-content">
       <header class="settings-page-head">
@@ -304,16 +311,15 @@
             <SelectField bind:value={themeMode} label="Color theme" options={themeOptions} onchange={(value) => saveThemeMode(value as ThemeMode)} />
           </div>
         </section>
-      {:else if active === "access"}
-        <AccessSettingsCard kind="backend" />
       {:else if active === "listeners" && administrator}
         <ListenersView />
       {:else if active === "alerts"}
         <AlertsView {administrator} />
       {:else if active === "sound-analysis" && administrator}
         <SoundAnalysisSettings />
-      {:else if ["general", "storage", "network"].includes(active)}
-        {#if administrator && active === "network"}<AccessSettingsCard kind="oidc" />{/if}
+      {:else if ["general", "storage", "access"].includes(active)}
+        {#if active === "access"}<AccessSettingsCard kind="backend" />{/if}
+        {#if administrator && active === "access"}<AccessSettingsCard kind="oidc" />{/if}
         {#if administrator && active === "storage"}<StorageVerificationCard />{/if}
         {#each pageSections as item (item.id)}
           {@const editable = item.fields.filter((field) => !deploymentOwned(field))}
@@ -358,7 +364,7 @@
                     {#if deploymentOwned(field)}<small class="settings-owned"><Lock size={12} aria-hidden="true" />Deployment-owned · change it in your deployment config</small>{/if}
                   </div>
                   {#if deploymentOwned(field)}
-                    <output>{String(fieldValue(config, field)) || "Not set"}</output>
+                    <output>{isToggle(field) ? (fieldEnabled(field) ? "On" : "Off") : String(fieldValue(config, field)) || "Not set"}</output>
                   {:else if field.type === "select"}
                     <SelectField
                       name={field.key}
@@ -367,13 +373,9 @@
                       options={field.options ?? []}
                       onchange={() => markDirty(item.id)}
                     />
-                  {:else if field.type === "toggle"}
+                  {:else if isToggle(field)}
                     <span class="settings-toggle">
-                      <Checkbox
-                        name={field.key}
-                        checked={Boolean(fieldValue(config, field))}
-                        onCheckedChange={() => markDirty(item.id)}
-                      />
+                      <Switch name={field.key} checked={fieldEnabled(field)} aria-label={field.label} />
                     </span>
                   {:else}
                     <input
@@ -397,7 +399,7 @@
               {#if editable.length}
                 <footer>
                   {#if dirtyOwners.includes(item.id)}<span>Unsaved changes</span>{/if}
-                  <Button type="submit" disabled={Boolean(action) || !dirtyOwners.includes(item.id)}>{action === item.id ? "Saving…" : `Save ${item.label}`}</Button>
+                  <Button type="submit" aria-label={`Save changes to ${item.label}`} disabled={Boolean(action) || !dirtyOwners.includes(item.id)}>{action === item.id ? "Saving…" : "Save changes"}</Button>
                 </footer>
               {/if}
             </div>
@@ -418,8 +420,7 @@
         <BackupsView {administrator} />
       {:else if active === "health" && administrator}
         <HealthView />
-      {:else if active === "diagnostics"}
-        <section class="settings-card">
+        <section class="settings-card" aria-label="Diagnostics">
           <div class="settings-row maintenance-card">
             <div><strong>Media pipeline</strong><small>Checks metadata, artwork and authenticated playback.</small></div>
             <Button variant="secondary" disabled={Boolean(action)} onclick={() => void run("media", settings.mediaProbe, "Media pipeline checked.")}>{action === "media" ? "Testing…" : "Test media pipeline"}</Button>

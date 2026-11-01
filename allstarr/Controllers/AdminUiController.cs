@@ -1741,7 +1741,7 @@ public class AdminUiController : ControllerBase
 
     private static List<AdminUiConfigSection> BuildConfigSections() =>
     [
-        Section("operator", "Service and retention settings", OperatorSettingPolicy.Definitions
+        Section("operator", "Library and retention", OperatorSettingPolicy.Definitions
             .Where(item => !item.Key.StartsWith("MusicBrainz:", StringComparison.Ordinal) && item.Key is not ("Debug:LogAllRequests" or "Gateway:PublicListenerUrl"))
             .Select(item => Field(
                 LegacyEnvParser.DurableAliasKeys.First(key => LegacyEnvParser.TryGetDurableAlias(key, out var target) && target == item.Key),
@@ -1775,7 +1775,7 @@ public class AdminUiController : ControllerBase
             Field("EXPLICIT_FILTER", "Explicit filter", "select", "explicitFilter", ["All", "ExplicitOnly", "CleanOnly"]),
             Field(
                 "MATCHING_LOCAL_PREFERENCE_PERCENT",
-                "Tentative local window",
+                "Prefer your own music when unsure",
                 "number",
                 "matching.localPreferencePercent",
                 helpText: "Only used when no candidate qualifies for automatic acceptance. Accepted matches always use local first, then Streaming priority. This window never raises confidence. Default: 7 points.",

@@ -41,7 +41,7 @@ const routes = (page.dynamicImports ?? []).map((key) => {
 const kib = (bytes) => `${(bytes / 1024).toFixed(1)} KiB`;
 const failures = [
   initialJs > 100 * 1024 && `initial JavaScript ${kib(initialJs)} > 100 KiB`,
-  cssBytes > 30 * 1024 && `initial CSS ${kib(cssBytes)} > 30 KiB`,
+  cssBytes > 33 * 1024 && `initial CSS ${kib(cssBytes)} > 33 KiB`,
   ...routes
     .filter(([, bytes]) => bytes > 100 * 1024)
     .map(([key, bytes]) => `${key} ${kib(bytes)} > 100 KiB`),

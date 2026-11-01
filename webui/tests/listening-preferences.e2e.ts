@@ -61,7 +61,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     for (const radio of await radios.all())
       await expect(radio).toBeDisabled();
     await expect(page.getByText("Your administrator turned this on.", { exact: true })).toBeVisible();
-    await expect(page.getByRole("checkbox", { name: "Show [E] for explicit tracks", exact: true })).toBeEnabled();
+    await expect(page.getByRole("switch", { name: "Show [E] for explicit tracks", exact: true })).toBeEnabled();
     await page.screenshot({ path: `test-results/shots-uisettings/clean-only-locked-${width}-${theme}.png`, fullPage: true });
     if (width === 390) await expectContainedMobileGeometry(page);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -148,8 +148,8 @@ test("listener saves and resets preferences with the latest returned revision", 
   await expect(page.getByText("Native library titles remain untouched", { exact: false })).toBeVisible();
 
   await page.getByRole("radio", { name: "Hide clean/edited versions" }).check();
-  await page.getByRole("checkbox", { name: "Show [A] for external tracks", exact: true }).click();
-  await page.getByRole("checkbox", { name: "Show [E] for explicit tracks", exact: true }).click();
+  await page.getByRole("switch", { name: "Show [A] for external tracks", exact: true }).click();
+  await page.getByRole("switch", { name: "Show [E] for explicit tracks", exact: true }).click();
   await page.getByRole("button", { name: "Save preferences" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Listening preferences saved." })).toBeVisible();
   await expect(page.getByText("Personal choices", { exact: true })).toBeVisible();
@@ -157,8 +157,8 @@ test("listener saves and resets preferences with the latest returned revision", 
   await page.getByRole("button", { name: "Reset to household defaults" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Household defaults restored." })).toBeVisible();
   await expect(page.getByRole("radio", { name: /^All\b/ })).toBeChecked();
-  await expect(page.getByRole("checkbox", { name: "Show [A] for external tracks", exact: true })).toBeChecked();
-  await expect(page.getByRole("checkbox", { name: "Show [E] for explicit tracks", exact: true })).toBeChecked();
+  await expect(page.getByRole("switch", { name: "Show [A] for external tracks", exact: true })).toBeChecked();
+  await expect(page.getByRole("switch", { name: "Show [E] for explicit tracks", exact: true })).toBeChecked();
   expect(writes.map(({ method }) => method)).toEqual(["PUT", "DELETE"]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

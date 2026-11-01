@@ -16,7 +16,7 @@
   let ready = $state(false);
   let attention = $state(false);
   let everyoneButton = $state<HTMLButtonElement>();
-  $effect(() => { view = ["history", "plays", "jobs", "tasks", ...(administrator ? ["reports"] : [])].includes(initialView) ? initialView : "history"; });
+  $effect(() => { view = ["history", "plays", ...(administrator ? ["jobs", "tasks", "reports"] : [])].includes(initialView) ? initialView : "history"; });
   onMount(() => {
     scope = readActivityScope(administrator);
     ready = true;
@@ -34,8 +34,8 @@
 
 <div class="activity-content">
 <SegmentedNav label="Activity views" items={[
-  { id: "history", label: "History" }, { id: "plays", label: "Plays" }, { id: "jobs", label: "Jobs" }, { id: "tasks", label: "Tasks" },
-  ...(administrator ? [{ id: "reports", label: "Reports" }] : []),
+  { id: "history", label: "History" }, { id: "plays", label: "Plays" },
+  ...(administrator ? [{ id: "jobs", label: "Jobs" }, { id: "tasks", label: "Tasks" }, { id: "reports", label: "Reports" }] : []),
 ]} active={view} onchange={(next) => view = next} />
 {#if view !== "reports"}
 <div class="activity-toolbar">

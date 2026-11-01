@@ -570,7 +570,7 @@
           <li class="compact-empty connections-empty">
             <strong>No accounts connected</strong>
             <p>Connect Spotify, Deezer or another service to import playlists and play songs you don't have locally.</p>
-            {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</Button>{/if}
+            {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect account</Button>{/if}
           </li>
         {/each}
       </ul>
@@ -852,23 +852,24 @@
       <header class="sources-heading">
         <div>
           <h2 id="services-title" class="sr-only">Sources</h2>
-          <p>Everywhere Allstarr finds music, playlists, lyrics and scrobbling. Open a source to see its checks, accounts and settings.</p>
+          <p>{administrator
+            ? "Where Allstarr finds music, playlists and lyrics."
+            : "The music services Allstarr can play from for you. Connect your own account to add your library and playlists."}</p>
         </div>
         <div class="sources-heading-actions">
           <RefreshButton variant="secondary" onrefresh={refresh} />
-          {#if administrator}<Button variant="secondary" onclick={() => { addSourceOpen = true; }}><PackagePlus size={16} aria-hidden="true" />Add a source</Button>{/if}
-          {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}><Plus size={16} aria-hidden="true" />Connect Source</Button>{/if}
+          {#if administrator}<Button variant="secondary" onclick={() => { addSourceOpen = true; }}><PackagePlus size={16} aria-hidden="true" />Add extension</Button>{/if}
+          {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}><Plus size={16} aria-hidden="true" />Connect account</Button>{/if}
         </div>
       </header>
 
       {#if administrator}<ExtensionsView view="attention" onchanged={refresh} />{/if}
 
-      <div class="source-filters" role="group" aria-label="Show">
+      {#if administrator}<div class="source-filters" role="group" aria-label="Show">
         <button type="button" class="filter-chip" aria-pressed={listFilter === "mine"} onclick={() => listFilter = "mine"}>My sources <span class="segmented-tab-count">{mySources.length}</span></button>
         <button type="button" class="filter-chip" aria-pressed={listFilter === "attention"} onclick={() => listFilter = "attention"}>Needs attention <span class="segmented-tab-count">{needsSetup.length}</span></button>
-        <button type="button" class="filter-chip" aria-pressed={listFilter === "accounts"} onclick={() => listFilter = "accounts"}>Accounts <span class="segmented-tab-count">{accounts.length}</span></button>
         <button type="button" class="filter-chip" aria-pressed={listFilter === "all"} onclick={() => listFilter = "all"}>All available <span class="segmented-tab-count">{providers.length}</span></button>
-      </div>
+      </div>{/if}
 
       {#if listFilter === "accounts"}
         <PlaylistConsent />
@@ -876,7 +877,7 @@
         {@render accountList()}
       {:else}
       <ul class="source-list" aria-label="Services">
-        {#each listFilter === "attention" ? needsSetup : listFilter === "mine" ? mySources : providers as item (item.id)}
+        {#each !administrator ? providers : listFilter === "attention" ? needsSetup : listFilter === "mine" ? mySources : providers as item (item.id)}
           {@const state = sourceStatus(item, accounts, health)}
           {@const metrics = sourceMetrics(item, providerHealth(item.id))}
           {@const connected = providerAccounts(item.id)}
@@ -890,18 +891,24 @@
             <a class="source-row-main" href={servicePath(item.id)}>
               <ProviderArtwork id={item.id} definition={item} />
               <span class="source-row-copy">
-                <span class="source-name"><strong>{item.name}</strong><Badge tone="neutral" class="origin-badge">{sourceOriginLabel(item)}</Badge>{#if item.useMode === "manualOnly"}<Badge tone="neutral" class="origin-badge">Manual only</Badge>{:else if item.useMode === "off"}<Badge tone="neutral" class="origin-badge">Off</Badge>{/if}</span>
+                <span class="source-name"><strong>{item.name}</strong>{#if administrator}<Badge tone="neutral" class="origin-badge">{sourceOriginLabel(item)}</Badge>{/if}{#if item.useMode === "manualOnly"}<Badge tone="neutral" class="origin-badge">Manual only</Badge>{:else if item.useMode === "off"}<Badge tone="neutral" class="origin-badge">Off</Badge>{/if}</span>
                 <small>{sourcePurpose(item)}</small>
                 {#if appleReadiness}<small class="source-row-warning" role="status">{providerReadinessLabel(appleReadiness)}</small>{/if}
               </span>
               <span class="source-row-capabilities">
                 {#each (item.categories ?? []).slice(0, 4) as category}<span>{humanize(category)}</span>{/each}
               </span>
+              {#if !administrator}
+                <span class="source-row-status">
+                  {#if connected.length}<Badge state="healthy">Connected</Badge>{:else}<Badge tone="neutral">Available</Badge>{/if}
+                </span>
+              {:else}
               <span class="source-row-status">
                 <Badge state={state}>{state === "degraded" ? sourceProblemLabel(item, accounts, health) ?? sourceStatusLabel(state) : sourceStatusLabel(state)}</Badge>
                 <small>{metrics.checkedAt ? `${metrics.passing} of ${metrics.total || 0} checks passed · ${relativeTime(metrics.checkedAt)}` : "Not checked yet"}</small>
                 <small class="source-row-timing">{connected.length ? `${connected.filter((account) => account.enabled).length} of ${connected.length} account${connected.length === 1 ? "" : "s"} on · ` : ""}{timing}{#if cts} · CTS {ctsMeasurementLabel(cts)}{/if}</small>
               </span>
+              {/if}
               <ChevronRight class="source-row-chevron" size={18} aria-hidden="true" />
             </a>
           </li>

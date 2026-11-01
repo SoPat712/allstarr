@@ -76,7 +76,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(streams).toHaveValue("6");
     await expect(conversions).toHaveValue("2");
     await expect(quota).toHaveAccessibleName(/Maximum audio cache/);
-    const save = form.getByRole("button", { name: "Save Audio limits", exact: true });
+    const save = form.getByRole("button", { name: "Save changes to Audio limits", exact: true });
     await expect(save).toBeDisabled();
     await quota.fill("0");
     await save.click();

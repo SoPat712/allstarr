@@ -9,6 +9,8 @@
   import { adminOidc, type OidcStatus } from "$lib/admin-oidc";
   import { liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
+  import { installRipple } from "$lib/ripple";
+  import { slideIndicator } from "$lib/slide-indicator";
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import UiIcon from "$lib/components/UiIcon.svelte";
@@ -22,7 +24,7 @@
     { href: "#/for-you", label: "For you", mobileLabel: "For you", icon: "headphones", mobile: true },
     { href: "#/integrations/services", prefix: "/integrations/", label: "Sources", mobileLabel: "Sources", icon: "sources", mobile: false },
     { href: "#/activity", label: "Activity", mobileLabel: "Activity", icon: "activity", mobile: true },
-    { href: "#/getting-started", label: "Getting started", mobileLabel: "Getting started", icon: "guide", mobile: false },
+    { href: "#/getting-started", label: "Connect apps", mobileLabel: "Connect apps", icon: "guide", mobile: false },
     { href: "#/settings", label: "Settings", mobileLabel: "Settings", icon: "settings", mobile: false },
   ];
   const preferencesDestination: (typeof destinations)[number] = {
@@ -34,7 +36,7 @@
   };
   const allLibrarySections = [
     { id: "playlists", label: "Playlists", href: "#/library/playlists" },
-    { id: "mappings", label: "Mappings", href: "#/library/mappings" },
+    { id: "mappings", label: "Matches", href: "#/library/mappings" },
     { id: "cached", label: "Cached", href: "#/library/cached" },
     { id: "kept", label: "Kept", href: "#/library/kept" },
     { id: "import", label: "Import", href: "#/library/import" },
@@ -76,10 +78,14 @@
 
   const administrator = $derived(session?.user?.isAdministrator === true);
   const developmentIntelligence = $derived(session?.features?.intelligence === true);
-  const navigationDestinations = $derived(destinations.filter(item => item.href !== "#/for-you" || !developmentIntelligence).map(item => !administrator && item.href === "#/settings"
-      ? { ...item, href: "#/settings/alerts", label: "Alerts", mobileLabel: "Alerts" } : item));
+  const navigationDestinations = $derived(destinations
+    .filter(item => item.href !== "#/for-you" || !developmentIntelligence)
+    .map(item => administrator ? item
+      : item.href === "#/settings" ? preferencesDestination
+      : item.prefix === "/integrations/" ? { ...item, label: "Services", mobileLabel: "Services" }
+      : item));
   const mobileDestinations = $derived(navigationDestinations.filter((item) => item.mobile));
-  const moreDestinations = $derived([preferencesDestination, ...navigationDestinations.filter((item) => !item.mobile)]);
+  const moreDestinations = $derived([preferencesDestination, ...navigationDestinations.filter((item) => !item.mobile && item !== preferencesDestination)]);
   const librarySections = $derived(administrator
     ? allLibrarySections
     : allLibrarySections.filter((item) => item.id === "playlists" || item.id === "mappings" || item.id === "import"));
@@ -118,6 +124,7 @@
   });
   const routeQuery = $derived(new URLSearchParams(page.url.hash.split("?", 2)[1] ?? ""));
   const activeDestination = $derived(
+    route === "/settings/alerts" && !administrator ? { ...preferencesDestination, label: "Alerts" } :
     route === "/report" ? { href: "#/report", label: "Report a problem", mobileLabel: "Report", icon: "activity", mobile: false } : [...navigationDestinations, ...destinations, preferencesDestination].find((item) =>
       item.href === "#/" ? route === "/" : route.startsWith(item.prefix ?? item.href.slice(1)),
     ) ?? destinations[0],
@@ -215,6 +222,11 @@
   function cycleTheme() {
     themeMode = nextTheme;
     saveThemeMode(themeMode);
+  }
+
+  // Opening a page feels instant when its code starts loading on hover.
+  function prefetch(href: string) {
+    void viewLoader(currentRoute(href.slice(1).split("?")[0]))?.catch(() => {});
   }
 
   function viewLoader(path: string) {
@@ -340,8 +352,10 @@
     colorScheme.addEventListener("change", applySystemTheme);
 
     void bootstrap();
+    const removeRipple = installRipple();
 
     return () => {
+      removeRipple();
       compactSidebar.removeEventListener("change", applySidebarBreakpoint);
       mobileNavigation.removeEventListener("change", closeDesktopMenu);
       colorScheme.removeEventListener("change", applySystemTheme);
@@ -523,10 +537,12 @@
         {:else}<PanelLeftClose class="menu-icon" size={20} aria-hidden="true" />{/if}
       </button>
 
-      <nav class="desktop-navigation" aria-label="Primary">
+      <nav class="desktop-navigation" aria-label="Primary" use:slideIndicator={"a.active"}>
         {#each navigationDestinations as destination}
           <a
             href={destination.href}
+            onpointerenter={() => prefetch(destination.href)}
+            onfocus={() => prefetch(destination.href)}
             class:active={activeDestination.href === destination.href}
             aria-current={activeDestination.href === destination.href ? "page" : undefined}
           >

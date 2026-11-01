@@ -1,7 +1,7 @@
 <script lang="ts">
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
-  import { ChevronDown } from "@lucide/svelte";
+  import { ChevronDown, Download, Trash2 } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -250,14 +250,14 @@
           : "Songs Allstarr keeps permanently, even when the cache is cleaned."}</p>
       </div>
       <div class="downloads-summary" aria-label={`${label} totals`}>
-        <span><small>Indexed</small><strong>{data.managedCount}</strong></span>
-        <span><small>Diagnostics</small><strong>{data.diagnosticCount}</strong></span>
+        <span><small>Songs</small><strong>{data.managedCount}</strong></span>
+        {#if data.diagnosticCount}<span><small>Need review</small><strong>{data.diagnosticCount}</strong></span>{/if}
         <span><small>Size</small><strong>{data.totalSizeFormatted}</strong></span>
       </div>
       <div class="panel-heading-actions downloads-heading-actions">
         <RefreshButton variant="secondary" onrefresh={refresh} />
         {#if bulkActionCount}
-          <Button variant="destructive" onclick={() => confirm({ kind: "all" })}>Remove all</Button>
+          <Button class="download-remove" variant="ghost" onclick={() => confirm({ kind: "all" })}>Remove all</Button>
         {/if}
       </div>
     </header>
@@ -306,7 +306,7 @@
               </span>
               <span class="download-provider" role="cell">
                 <ProviderMark id={file.provider || "file"} definition={provider(file.provider)} label={providerName(file.provider)} />
-                <span><strong>{providerName(file.provider)}</strong>{#if file.externalId}<small>{file.externalId}</small>{/if}</span>
+                <span><strong>{providerName(file.provider)}</strong>{#if file.externalId}<small class="download-provider-id" title={file.externalId}>{file.externalId}</small>{/if}</span>
               </span>
               <span class="download-quality" role="cell">
                 <span class="download-quality-summary">
@@ -316,7 +316,7 @@
                 <small>{qualityDetails(file).join(" · ")}</small>
               </span>
               <span class="download-lifecycle" role="cell">
-                <Badge state={file.removable ? "healthy" : "suggested"}>{file.publicationState === "Imported" ? "Imported original · read-only" : file.publicationState}</Badge>
+                {#if file.publicationState !== "Indexed"}<Badge state={file.removable ? "healthy" : "suggested"}>{file.publicationState === "Imported" ? "Imported original · read-only" : file.publicationState}</Badge>{/if}
                 <small>Last access {relativeTime(file.lastAccessedAt)}</small>
                 {#if file.expiresAt}<small>Expires {relativeTime(file.expiresAt)}</small>{/if}
                 {#if file.referenceCount != null}<small>{file.referenceCount} reference{file.referenceCount === 1 ? "" : "s"}</small>{/if}
@@ -326,7 +326,7 @@
                 <small>Updated <time datetime={file.lastModified}>{relativeTime(file.lastModified)}</time></small>
               </span>
               <span class="download-actions" role="cell">
-                <Button variant="secondary" href={downloads.fileUrl(file.path, storage)}>Download</Button>
+                <Button variant="ghost" size="icon" href={downloads.fileUrl(file.path, storage)} aria-label="Download" title="Download a copy"><Download size={18} aria-hidden="true" /></Button>
                 {#if !cached && file.canDeleteKeptCopy}
                   <Button variant="destructive" disabled={Boolean(action)} onclick={() => void previewDeletion(file)}>Delete kept copy…</Button>
                 {/if}
@@ -337,7 +337,7 @@
                     <Button disabled={Boolean(action)} onclick={() => confirm({ kind: "release", file })}>Release Keep</Button>
                   {:else}
                     {#if cached}<Button disabled={Boolean(action)} onclick={() => void keep(file)}>Keep</Button>{/if}
-                    <Button variant="destructive" disabled={Boolean(action)} onclick={() => confirm({ kind: "one", file })}>Remove</Button>
+                    <Button class="download-remove" variant="ghost" size="icon" disabled={Boolean(action)} aria-label="Remove" title="Remove" onclick={() => confirm({ kind: "one", file })}><Trash2 size={18} aria-hidden="true" /></Button>
                   {/if}
                 {/if}
               </span>
@@ -415,6 +415,8 @@
 {/if}
 
 <style>
+  .download-provider-id { display: none; }
+  :global(.download-actions .download-remove:not(:disabled):hover) { color: var(--md-sys-color-error); }
   .download-quality-summary {
     display: flex;
     align-items: center;

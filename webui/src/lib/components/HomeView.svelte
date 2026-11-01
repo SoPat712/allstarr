@@ -3,7 +3,7 @@
   import { ChevronRight, CircleAlert, CircleCheck, CircleDashed, Headphones, KeyRound, Music, Pause } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
   import { home } from "$lib/api";
-  import { humanize, relativeTime } from "$lib/activity";
+  import { humanize, relativeTime, isRoutineActivity } from "$lib/activity";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import ActivityIcon from "$lib/components/ActivityIcon.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
@@ -166,6 +166,13 @@
     return `${Math.abs(change).toLocaleString()} ${change > 0 ? "more" : "fewer"} than last week`;
   }
 
+  const activitySource = (source: string | null | undefined) => {
+    const name = source ? providerName(source) : "";
+    return name && name !== "Unknown source" ? `${name} · ` : "";
+  };
+
+  const visibleActivity = $derived((snapshot?.activity ?? []).filter((item) => !isRoutineActivity(item)));
+
   const attention = $derived.by(() => {
     if (!snapshot || !summary) return [];
     const items: Array<{ key: string; title: string; detail: string; href: string; action: string }> = [];
@@ -195,15 +202,24 @@
         href: "#/settings/backups",
         action: "Open backups",
       });
-    for (const provider of snapshot.providers ?? [])
-      if (provider.failedCapabilityCount > 0 && !sourceIssues.some((issue) => issue.providerId === provider.providerId))
-        items.push({
-          key: `health:${provider.providerId}`,
-          title: `${providerName(provider.providerId)} is failing ${plural(provider.failedCapabilityCount, "check")}`,
-          detail: `${provider.healthyCapabilityCount} of ${provider.capabilityTotal} checks passed ${relativeTime(provider.lastCheckedAt, "")}`.trim(),
-          href: `#/integrations/services/${encodeURIComponent(provider.providerId)}`,
-          action: "Open service",
-        });
+    const failing = (snapshot.providers ?? []).filter((provider) =>
+      provider.failedCapabilityCount > 0 && !sourceIssues.some((issue) => issue.providerId === provider.providerId));
+    if (failing.length === 1)
+      items.push({
+        key: `health:${failing[0].providerId}`,
+        title: `${providerName(failing[0].providerId)} is failing ${plural(failing[0].failedCapabilityCount, "check")}`,
+        detail: `${failing[0].healthyCapabilityCount} of ${failing[0].capabilityTotal} checks passed ${relativeTime(failing[0].lastCheckedAt, "")}`.trim(),
+        href: `#/integrations/services/${encodeURIComponent(failing[0].providerId)}`,
+        action: "Open service",
+      });
+    else if (failing.length > 1)
+      items.push({
+        key: "health:several",
+        title: `${failing.length} sources are failing checks`,
+        detail: failing.map((provider) => providerName(provider.providerId)).join(", "),
+        href: "#/integrations/services",
+        action: "Review sources",
+      });
     return items;
   });
 
@@ -342,7 +358,7 @@
         <div>
           <h2>Nothing is playing</h2>
           <p>{administrator ? "When someone plays music through Allstarr, it shows up here." : "When you play music through Allstarr, it shows up here."}</p>
-          <Button variant="secondary" href="#/getting-started">Connect a music app</Button>
+          {#if !snapshot.stats?.currentWeekListens}<Button variant="secondary" href="#/getting-started">Connect a music app</Button>{/if}
         </div>
       </div>
     {/if}
@@ -390,17 +406,19 @@
         <dd>{plural(summary.managed, "playlist")}</dd>
         <ChevronRight size={16} aria-hidden="true" />
       </a>
+      {#if summary.playable + summary.unresolved > 0}
       <a href="#/library/mappings">
         <dt>Playable songs</dt>
         <dd>{summary.playable.toLocaleString()} of {(summary.playable + summary.unresolved).toLocaleString()}</dd>
         <ChevronRight size={16} aria-hidden="true" />
       </a>
-      <a href="#/activity">
+      {/if}
+      {#if administrator}
+      <a href="#/activity?view=jobs">
         <dt>Background work</dt>
         <dd>{summary.activeJobs ? `${plural(summary.activeJobs, "job")} running` : "Idle"}</dd>
         <ChevronRight size={16} aria-hidden="true" />
       </a>
-      {#if administrator}
         <a href="#/library/cached">
           <dt>Stored songs</dt>
           <dd>{snapshot.stats?.cacheTracks == null ? "—" : `${(snapshot.stats.cacheTracks + (snapshot.stats.keptTracks ?? 0)).toLocaleString()} (${snapshot.stats.cacheTracks} cached, ${snapshot.stats.keptTracks ?? 0} kept)`}</dd>
@@ -418,8 +436,8 @@
   <section class="home-columns">
     <article class="panel home-panel">
       <header>
-        <h2>Sources</h2>
-        <a href="#/integrations/services">Manage</a>
+        <h2>{administrator ? "Sources" : "Your accounts"}</h2>
+        <a href={administrator ? "#/integrations/services" : "#/integrations/accounts"}>Manage</a>
       </header>
 
       {#if snapshot.providers?.length}
@@ -449,9 +467,15 @@
         </div>
       {:else}
         <div class="compact-empty">
-          <strong>No sources connected</strong>
-          <p>Connect a music service to play songs you don't have locally.</p>
-          <Button variant="secondary" size="sm" href="#/integrations/services">Connect a source</Button>
+          {#if administrator}
+            <strong>No sources connected</strong>
+            <p>Connect a music service to play songs you don't have locally.</p>
+            <Button variant="secondary" size="sm" href="#/integrations/services">Connect a source</Button>
+          {:else}
+            <strong>Your music is ready to play</strong>
+            <p>You're using your household's services. Connect your own account to bring your library and playlists.</p>
+            <Button variant="secondary" size="sm" href="#/integrations/accounts">Connect an account</Button>
+          {/if}
         </div>
       {/if}
     </article>
@@ -462,9 +486,9 @@
         <a href="#/activity">View all</a>
       </header>
 
-      {#if snapshot.activity?.length}
+      {#if visibleActivity.length}
         <div class="activity-list">
-          {#each snapshot.activity as item}
+          {#each visibleActivity as item}
             <a href="#/activity" class="activity-line">
               <span
                 class="activity-artwork"
@@ -474,7 +498,7 @@
               ><ActivityIcon kind={item.kind} /></span>
               <span>
                 <strong>{humanize(item.label)}</strong>
-                <small>{providerName(item.source)} · {activityDetail(item.detail)}</small>
+                <small>{activitySource(item.source)}{activityDetail(item.detail)}</small>
               </span>
               <time datetime={item.occurredAt}>{relativeTime(item.occurredAt)}</time>
             </a>

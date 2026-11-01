@@ -24,6 +24,12 @@ export function isProblem(item: ActivityItem) {
   return severity === "error" || severity === "warning" || outcomeClass(item.state) === "rejected";
 }
 
+/** Plumbing that succeeded: useful when asked for, noise in a list of what happened. */
+export function isRoutineActivity(item: ActivityItem) {
+  return !isProblem(item) &&
+    /background.?task|library.?index|refresh.?library|scan.?completed|health.?check|track.?identity|canonical.?recording|history.?resolution/i.test(item.label);
+}
+
 export function dayLabel(value: string, now = new Date()) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Earlier";

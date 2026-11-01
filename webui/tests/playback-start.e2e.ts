@@ -148,7 +148,7 @@ test("Playback start defaults to Balanced when older responses omit the preferen
   await group.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath("playback-start-320.png") });
   await expect(page.getByRole("button", { name: "Save preferences", exact: true })).toBeDisabled();
-  await page.getByRole("checkbox", { name: "Show [A] for external tracks", exact: true }).click();
+  await page.getByRole("switch", { name: "Show [A] for external tracks", exact: true }).click();
   await page.getByRole("button", { name: "Save preferences", exact: true }).click();
   await expect.poll(() => writes[0]).toEqual({ explicitFilter: "All", showExternalLabel: false,
     showExplicitLabel: true, playbackStart: "Balanced", expectedRevision: "legacy" });
@@ -216,15 +216,15 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     const form = page.getByRole("form", { name: "Playback settings", exact: true });
     const group = form.getByRole("radiogroup", { name: "Playback start", exact: true });
     await expect(group.getByRole("radio", { name: "Balanced", exact: true })).toBeChecked();
-    await expect(form.getByRole("button", { name: "Save Playback", exact: true })).toBeDisabled();
+    await expect(form.getByRole("button", { name: "Save changes to Playback", exact: true })).toBeDisabled();
     await group.getByRole("radio", { name: "Balanced", exact: true }).focus();
     await page.keyboard.press("ArrowRight");
     await expect(group.getByRole("radio", { name: "Best quality", exact: true })).toBeChecked();
-    await form.getByRole("button", { name: "Save Playback", exact: true }).click();
+    await form.getByRole("button", { name: "Save changes to Playback", exact: true }).click();
     await expect.poll(() => writes).toEqual([{ updates: { PLAYBACK_START_PREFERENCE: "BestQuality" } }]);
     await expect(page.getByRole("status").filter({ hasText: "Playback settings saved." })).toBeVisible();
     await expect(group.getByRole("radio", { name: "Best quality", exact: true })).toBeChecked();
-    await expect(form.getByRole("button", { name: "Save Playback", exact: true })).toBeDisabled();
+    await expect(form.getByRole("button", { name: "Save changes to Playback", exact: true })).toBeDisabled();
     for (const radio of await group.getByRole("radio").all()) {
       const box = await radio.boundingBox();
       expect(box).not.toBeNull();
