@@ -107,6 +107,9 @@ public interface ITrackIdentityService
         ProviderActorContext actor, string publicId, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<allstarr.Models.Domain.Song>>([]);
 
+    Task<Uri?> GetStoredArtworkUriAsync(ProviderExternalResourceId resource,
+        CancellationToken cancellationToken = default) => Task.FromResult<Uri?>(null);
+
     Task<string?> GetStoredMetadataAsync(ProviderActorContext actor, ProviderExternalResourceId resource,
         CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
 

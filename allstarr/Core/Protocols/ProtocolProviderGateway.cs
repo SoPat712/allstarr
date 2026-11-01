@@ -246,10 +246,14 @@ public sealed partial class ProtocolProviderGateway(
         providerId = NormalizeProvider(providerId);
         if (resourceKind == ProviderResourceKind.Track &&
             await GetStoredSongAsync(PublicMetadataContext(cancellationToken), providerId, externalId) is { CoverArtUrl: { } cover } &&
-            Uri.TryCreate(cover, UriKind.Absolute, out var storedArtwork))
+            Uri.TryCreate(cover, UriKind.Absolute, out var storedArtwork) && storedArtwork.Scheme is "http" or "https")
             return storedArtwork;
-        if (providerId != "allstarr" && (!IsPublicMetadataProvider(providerId) ||
-            !ResolveProviderOrder(ProviderCapabilityKind.Metadata).Contains(providerId))) return null;
+        if (identities != null && resourceKind is ProviderResourceKind.Track or ProviderResourceKind.Album or ProviderResourceKind.Artist &&
+            await identities.GetStoredArtworkUriAsync(new(providerId, resourceKind, externalId), cancellationToken) is { } stored)
+            return stored;
+        // Recording ids have no public provider to ask. Provider ids seen only in search results still do.
+        if (providerId == "allstarr" || !IsPublicMetadataProvider(providerId) ||
+            !ResolveProviderOrder(ProviderCapabilityKind.Metadata).Contains(providerId)) return null;
         if (resourceKind is not (ProviderResourceKind.Track or ProviderResourceKind.Album or
             ProviderResourceKind.Artist or ProviderResourceKind.Playlist)) return null;
 

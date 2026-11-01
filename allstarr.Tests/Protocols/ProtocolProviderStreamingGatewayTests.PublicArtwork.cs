@@ -58,62 +58,25 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [InlineData(ProviderResourceKind.Album)]
     [InlineData(ProviderResourceKind.Artist)]
     [InlineData(ProviderResourceKind.Playlist)]
-    public async Task PublicArtwork_UsesTypedAccountFreeMetadataAndPreservesAppleAlias(ProviderResourceKind kind)
+    public async Task PublicArtwork_UsesStoredReferencesWithoutProviderMetadata(ProviderResourceKind kind)
     {
-        const string provider = "apple-musickit";
-        var id = new ProviderExternalResourceId(provider, kind, "public-resource");
-        var artwork = new ProviderArtworkReference(publicUri: new("https://artwork.example.invalid/cover.jpg"));
-        var capability = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
-        capability.SetupGet(item => item.ProviderId).Returns(provider);
-        capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
-        ProviderExecutionContext? execution = null;
-        switch (kind)
-        {
-            case ProviderResourceKind.Track:
-                capability.Setup(item => item.GetTrackAsync(It.IsAny<ProviderExecutionContext>(),
-                        It.Is<ProviderTrackLookupRequest>(request => request.Id == id)))
-                    .Callback((ProviderExecutionContext context, ProviderTrackLookupRequest _) => execution = context)
-                    .ReturnsAsync(ProviderOutcome<ProviderTrackMetadata>.Success(new(id, "Track", [new("Artist")], artwork: artwork)));
-                break;
-            case ProviderResourceKind.Album:
-                capability.Setup(item => item.GetAlbumAsync(It.IsAny<ProviderExecutionContext>(),
-                        It.Is<ProviderAlbumLookupRequest>(request => request.Id == id)))
-                    .Callback((ProviderExecutionContext context, ProviderAlbumLookupRequest _) => execution = context)
-                    .ReturnsAsync(ProviderOutcome<ProviderAlbumMetadata>.Success(new(id, "Album", [new("Artist")], artwork: artwork)));
-                break;
-            case ProviderResourceKind.Artist:
-                capability.Setup(item => item.GetArtistAsync(It.IsAny<ProviderExecutionContext>(),
-                        It.Is<ProviderArtistLookupRequest>(request => request.Id == id)))
-                    .Callback((ProviderExecutionContext context, ProviderArtistLookupRequest _) => execution = context)
-                    .ReturnsAsync(ProviderOutcome<ProviderArtistMetadata>.Success(new(id, "Artist", artwork)));
-                break;
-            case ProviderResourceKind.Playlist:
-                capability.Setup(item => item.GetPlaylistArtworkAsync(It.IsAny<ProviderExecutionContext>(), id))
-                    .Callback((ProviderExecutionContext context, ProviderExternalResourceId _) => execution = context)
-                    .ReturnsAsync(ProviderOutcome<ProviderArtworkReference>.Success(artwork));
-                break;
-        }
-        var registry = MetadataRegistry(capability.Object);
-        var accounts = new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict);
-        var health = new Mock<IProviderRouteHealthSource>(MockBehavior.Strict);
-        health.Setup(item => item.Get(provider, null, ProviderCapabilityKind.Metadata))
-            .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Unknown, false));
-        var router = new ProviderRouter(registry, accounts.Object, health.Object,
-            Mock.Of<IProviderRouteSidecarSource>(MockBehavior.Strict), Mock.Of<ITrackIdentityService>(MockBehavior.Strict));
-        var gateway = new ProtocolProviderGateway(router, registry, new HttpClientFactory(), audioVerifier: FixtureAudioVerifier.Instance);
+        var artwork = new Uri("https://artwork.example.invalid/cover.jpg");
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        identities.Setup(item => item.GetStoredSongsAsync(It.IsAny<ProviderActorContext>(),
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<allstarr.Models.Domain.Song>());
+        if (kind != ProviderResourceKind.Playlist)
+            identities.Setup(item => item.GetStoredArtworkUriAsync(
+                    new ProviderExternalResourceId("apple-musickit", kind, "public-resource"), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(artwork);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        var gateway = new ProtocolProviderGateway(router.Object, new ProviderRegistry([]), new HttpClientFactory(),
+            identities: identities.Object, audioVerifier: FixtureAudioVerifier.Instance);
 
-        var result = await gateway.GetPublicArtworkUriAsync("applemusic", kind, id.Value);
+        var result = await gateway.GetPublicArtworkUriAsync("applemusic", kind, "public-resource");
 
-        Assert.Equal(artwork.PublicUri, result);
-        Assert.NotNull(execution);
-        Assert.Equal(ProviderActorKind.PublicRead, execution.Actor.Kind);
-        Assert.Null(execution.Actor.EffectiveUserId);
-        Assert.Null(execution.Account);
-        Assert.False(execution.Policy.AllowSharedAccount);
-        Assert.False(execution.Policy.AllowFallback);
-        Assert.InRange(execution.Remaining(DateTimeOffset.UtcNow), TimeSpan.Zero, TimeSpan.FromSeconds(30));
-        accounts.VerifyNoOtherCalls();
-        capability.VerifyAll();
+        Assert.Equal(kind == ProviderResourceKind.Playlist ? null : artwork, result);
+        router.VerifyNoOtherCalls();
     }
 
     [Theory]

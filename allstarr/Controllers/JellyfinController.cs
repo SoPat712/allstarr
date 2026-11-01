@@ -450,8 +450,14 @@ public partial class JellyfinController : ControllerBase
         [FromQuery] int? maxWidth = null,
         [FromQuery] int? maxHeight = null,
         [FromQuery(Name = "tag")] string? tag = null,
-        [FromQuery(Name = "format")] string? requestedFormat = null)
+        [FromQuery(Name = "format")] string? requestedFormat = null,
+        [FromQuery] int? fillWidth = null,
+        [FromQuery] int? fillHeight = null,
+        [FromQuery] int? width = null,
+        [FromQuery] int? height = null)
     {
+        maxWidth = new[] { maxWidth, fillWidth, width }.Where(value => value > 0).Min();
+        maxHeight = new[] { maxHeight, fillHeight, height }.Where(value => value > 0).Min();
         if (string.IsNullOrWhiteSpace(itemId))
         {
             return NotFound();
@@ -535,8 +541,12 @@ public partial class JellyfinController : ControllerBase
         int maxWidth,
         int maxHeight,
         double percentPlayed,
-        int unplayedCount) =>
-        GetImage(itemId, imageType, imageIndex, maxWidth, maxHeight, tag, format);
+        int unplayedCount,
+        [FromQuery] int? fillWidth = null,
+        [FromQuery] int? fillHeight = null,
+        [FromQuery] int? width = null,
+        [FromQuery] int? height = null) =>
+        GetImage(itemId, imageType, imageIndex, maxWidth, maxHeight, tag, format, fillWidth, fillHeight, width, height);
 
     private async Task<ResolvedMediaAsset?> ResolveExternalImageAsync(
         string provider,
@@ -550,7 +560,7 @@ public partial class JellyfinController : ControllerBase
         var actor = HttpContext.GetProtocolExecutionContext()?.Actor;
         return await _mediaAssets.ResolveAsync(
             new MediaAssetIdentity(
-                actor?.EffectiveUserId,
+                resourceKind is "song" or "album" or "artist" ? null : actor?.EffectiveUserId,
                 null,
                 provider,
                 resourceKind,
@@ -573,7 +583,7 @@ public partial class JellyfinController : ControllerBase
                     var coverUrl = storedOnly
                         ? (await _providerGateway.GetStoredAlbumAsync(HttpContext.RequireProtocolExecutionContext(), provider, resourceId))?.CoverArtUrl
                         : await GetProviderImageUrlAsync(provider, resourceKind, resourceId, token);
-                    if (storedOnly && string.IsNullOrWhiteSpace(coverUrl)) return null;
+                    if ((storedOnly || actor == null) && string.IsNullOrWhiteSpace(coverUrl)) return null;
                     if (ProviderArtworkFallback.IsFallback(provider, coverUrl, resourceKind))
                         return await ProviderArtworkFallback.ReadAsync(HttpContext.RequestServices, provider,
                             width.HasValue && height.HasValue ? Math.Max(width.Value, height.Value) : width ?? height, token, coverUrl);

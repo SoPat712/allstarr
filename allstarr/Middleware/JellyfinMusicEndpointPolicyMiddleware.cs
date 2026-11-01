@@ -39,12 +39,14 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
         var imagePath = context.Request.Path.Value?.Split('/', StringSplitOptions.RemoveEmptyEntries) ?? [];
         if ((HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method)) &&
             !allstarr.Filters.JellyfinAuthFilter.HasClientCredentials(context.Request) &&
-            PlaylistVirtualizationService.TryParseProtocolId(referencedItemId, out _) &&
+            (PlaylistVirtualizationService.TryParseProtocolId(referencedItemId, out _) ||
+             JellyfinMusicEndpointPolicy.IsSynthesizedMusicItemId(referencedItemId ?? "")) &&
             imagePath.Length >= 4 && imagePath[0].Equals("Items", StringComparison.OrdinalIgnoreCase) &&
             imagePath[2].Equals("Images", StringComparison.OrdinalIgnoreCase) &&
             (!imagePath[3].Equals("Primary", StringComparison.OrdinalIgnoreCase) || imagePath.Length >= 5 && imagePath[4] != "0"))
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
+            context.Response.Headers.CacheControl = "no-store";
             return;
         }
 

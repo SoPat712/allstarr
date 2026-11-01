@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using SkiaSharp;
+using allstarr.Core.Storage;
+using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Services.Common;
 
@@ -45,7 +47,8 @@ public interface IMediaAssetResolver
 public sealed class MediaAssetResolver(
     IApplicationCache cache,
     ILogger<MediaAssetResolver> logger,
-    ApplicationCacheActivityMetrics? activityMetrics = null) : IMediaAssetResolver
+    ApplicationCacheActivityMetrics? activityMetrics = null,
+    IDbContextFactory<AllstarrDbContext>? contextFactory = null) : IMediaAssetResolver
 {
     public const int MaximumDecodedPixels = 16_000_000;
 
@@ -82,6 +85,29 @@ public sealed class MediaAssetResolver(
         {
             _activity.RecordUpstreamBytesAvoided(cached.Bytes.Length);
             return cached;
+        }
+
+        if (identity.UserId == null && identity.ProviderAccountId == null &&
+            identity.ResourceKind is "song" or "album" or "artist")
+        {
+            var users = new List<Guid?> { null };
+            if (contextFactory != null)
+            {
+                await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+                users.AddRange(await db.Users.Select(user => (Guid?)user.Id).ToArrayAsync(cancellationToken));
+            }
+            foreach (var user in users)
+            {
+                var scoped = identity with { UserId = user };
+                var original = scoped with { Width = null, Height = null };
+                var existing = await ReadAsync(CacheKeyBuilder.BuildMediaAssetDescriptorKey(scoped), maximumBytes);
+                var sizeSpecific = existing != null && (identity.Width.HasValue || identity.Height.HasValue);
+                existing ??= await ReadAsync(CacheKeyBuilder.BuildMediaAssetDescriptorKey(original), maximumBytes);
+                if (existing == null) continue;
+                var source = new MediaAssetSource(existing.Bytes, existing.ContentType, existing.ETag, existing.LastModified, sizeSpecific);
+                fetch = _ => Task.FromResult<MediaAssetSource?>(source);
+                break;
+            }
         }
 
         var created = new Lazy<Task<ResolvedMediaAsset?>>(
@@ -249,7 +275,9 @@ public sealed class MediaAssetResolver(
                     new SKSamplingOptions(SKFilterMode.Linear, SKMipmapMode.Linear)))
                 return source;
             using var image = SKImage.FromBitmap(resized);
-            var format = original.AlphaType == SKAlphaType.Opaque
+            var preservePng = identity.UserId == null && identity.ProviderAccountId == null &&
+                identity.ResourceKind is "song" or "album" or "artist" && source.ContentType == "image/png";
+            var format = original.AlphaType == SKAlphaType.Opaque && !preservePng
                 ? SKEncodedImageFormat.Jpeg
                 : SKEncodedImageFormat.Png;
             using var encoded = image.Encode(format, 85);
