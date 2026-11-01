@@ -17,6 +17,6 @@ test("A pending save keeps its preview stable", async ({ page }) => {
   await openHome(page); await page.getByRole("searchbox").fill("gold"); await page.getByRole("button", { name: "Golden hour by Mira", exact: true }).click();
   const dialog = page.getByRole("dialog"); await dialog.getByRole("button", { name: "Save to my mixes" }).click();
   await expect(dialog.getByRole("button", { name: "Mix length", exact: true })).toBeDisabled(); await expect(dialog.getByRole("button", { name: "Cancel" })).toBeDisabled();
-  await expect(dialog.getByLabel("Mix name")).toBeDisabled(); await expect(dialog.getByText("You play this a lot", { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel("Mix name")).toBeDisabled(); await expect(dialog.getByText("Played 6 times in 30 days", { exact: true })).toBeVisible();
   finish(); await expect(dialog).toBeHidden();
 });
