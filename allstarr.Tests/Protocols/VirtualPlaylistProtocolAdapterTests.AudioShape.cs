@@ -30,7 +30,7 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
     {
         var song = PlaylistSong(cached);
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        gateway.Setup(service => service.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "1")).ReturnsAsync(song);
+        gateway.Setup(service => service.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "1")).ReturnsAsync(song);
         var model = Model() with
         {
             CreatedAt = new DateTimeOffset(2026, 10, 1, 12, 0, 0, TimeSpan.Zero),
@@ -82,7 +82,6 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
             Assert.Equal(cached, stream.TryGetProperty(key, out _));
         Assert.Equal(cached, source.TryGetProperty("Size", out _));
         Assert.Equal(cached, source.TryGetProperty("Bitrate", out _));
-        gateway.Verify(service => service.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
     }
 
     [Fact]

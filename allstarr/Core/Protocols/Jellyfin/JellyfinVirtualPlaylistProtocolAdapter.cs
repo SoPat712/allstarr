@@ -605,7 +605,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             {
                 try
                 {
-                    return (track.BackendItemId, Song: await providerGateway.GetStoredSongAsync(
+                    return (track.BackendItemId, Song: await providerGateway.GetSongAsync(
                         context, track.RouteProviderId!, track.RouteExternalId!));
                 }
                 catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)

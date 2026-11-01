@@ -363,7 +363,7 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
             ]
         };
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        gateway.Setup(item => item.GetStoredSongAsync(
+        gateway.Setup(item => item.GetSongAsync(
                 It.IsAny<ProtocolExecutionContext>(), "apple-download", "101"))
             .ReturnsAsync(new Song
             {
