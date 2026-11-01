@@ -166,6 +166,8 @@ public sealed class PlaylistVirtualizationService(
             linkIds.Contains(snapshot.PlaylistLinkId) && snapshot.PublishedAt.HasValue)
             .GroupBy(snapshot => snapshot.PlaylistLinkId).Select(group => group.OrderByDescending(snapshot => snapshot.SnapshotVersion)
                 .ThenByDescending(snapshot => snapshot.RetrievedAt).First()).ToArrayAsync(token);
+        var externalProjections = await projections.ReadByLinkIdsAsync(owner,
+            links.Where(allstarr.Core.Music.PersonalMixService.IsExternalLink).Select(link => link.Id).ToArray(), token, owner);
         var result = new List<VirtualPlaylistReadModel>();
         foreach (var link in links)
         {
@@ -189,7 +191,8 @@ public sealed class PlaylistVirtualizationService(
             var external = allstarr.Core.Music.PersonalMixService.IsExternalLink(link);
             if (external)
             {
-                var playlist = await ReadAsync(context, CreateProtocolId(link.Id), token);
+                if (!externalProjections.TryGetValue(link.Id, out var projection)) continue;
+                var playlist = await ReadCoreAsync(context, CreateProtocolId(link.Id), null, token, projection);
                 if (playlist != null)
                     result.Add(playlist with
                     {
@@ -252,7 +255,8 @@ public sealed class PlaylistVirtualizationService(
         ProtocolExecutionContext context,
         string protocolId,
         PlaylistProjectionMode? projectionMode,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        DurablePlaylistProjection? publishedProjection = null)
     {
         ArgumentNullException.ThrowIfNull(context);
         var virtualId = TryParseProtocolId(protocolId, out var linkId);
@@ -296,7 +300,7 @@ public sealed class PlaylistVirtualizationService(
         }
         else if (link.OwnerUserId != actor.EffectiveUserId) return null;
 
-        var projection = await projections.ReadByLinkIdAsync(
+        var projection = publishedProjection ?? await projections.ReadByLinkIdAsync(
             link.OwnerUserId, link.Id, cancellationToken, actor.EffectiveUserId, includeHistory: false);
         if (projection == null) return null;
         var selectedMode = projectionMode ?? link.ProjectionMode;
@@ -466,7 +470,7 @@ public sealed class PlaylistVirtualizationService(
             return new(entry.Position, $"ext-{entry.RouteProviderId}-song-{entry.ExternalId}",
                 entry.Title, string.IsNullOrWhiteSpace(artist) ? "Unknown Artist" : artist,
                 entry.Album, null,
-                entry.DurationMilliseconds, null,
+                entry.DurationMilliseconds / 1000 * 1000, null,
                 entry.MatchState ?? TrackMatchState.Unresolved,
                 entry.RouteProviderId, entry.ExternalId, TrackRouteKind.External,
                 entry.RouteProviderId, entry.ExternalId, SourceMetadata: sourceMetadata, SourceEntryId: entry.SourceEntryId);

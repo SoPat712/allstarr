@@ -282,23 +282,48 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(views, requests.Count(request => request.StartsWith("/Users/user-1/Views", StringComparison.Ordinal)));
     }
 
-    [Fact]
-    public async Task JellyfinPlaylist_IdsLookupPreservesNativeParentQueryWithoutViews()
+    [Theory]
+    [InlineData("/Users/user-1/Items")]
+    [InlineData("/Items?UserId=user-1")]
+    public async Task JellyfinPlaylist_IdsLookupMatchesMusicParentBrowse(string path)
     {
         var requests = new List<string>();
         using var factory = PlaylistBrowseFactory(requests);
         using var client = factory.CreateClient();
-        const string id = "00112233445566778899aabbccddeeff";
-        using var response = await client.GetAsync($"/Users/user-1/Items?MediaTypes=Audio&ParentId=music-library&Recursive=true&SortBy=SortName&SortOrder=Ascending&StartIndex=0&IncludeItemTypes=Playlist&Fields=PrimaryImageAspectRatio,BasicSyncInfo,DateCreated,DateLastMediaAdded&Ids={id}&api_key=fixture-key");
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal(id, Assert.Single(body.RootElement.GetProperty("Items").EnumerateArray()).GetProperty("Id").GetString());
-        Assert.Equal(1, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
-        var native = Assert.Single(requests, request => request.StartsWith("/Users/user-1/Items?", StringComparison.Ordinal));
-        var query = QueryHelpers.ParseQuery(new Uri("http://fixture" + native).Query);
-        Assert.Equal("music-library", query["ParentId"].ToString());
-        Assert.Equal(id, query["Ids"].ToString());
-        Assert.DoesNotContain(requests, request => request.Contains("/Views", StringComparison.Ordinal));
+        var query = (path.Contains('?') ? "&" : "?") +
+            "IncludeItemTypes=Playlist&ParentId=music-library&MediaTypes=Audio&Fields=ParentId,ChildCount,Overview&api_key=fixture-key";
+        using var listResponse = await client.GetAsync(path + query);
+        using var list = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync());
+        foreach (var id in new[] { "native-00", "allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0" })
+        {
+            using var response = await client.GetAsync(path + query + "&Ids=" + id);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            var row = Assert.Single(body.RootElement.GetProperty("Items").EnumerateArray());
+            var listed = list.RootElement.GetProperty("Items").EnumerateArray().Single(item => item.GetProperty("Id").GetString() == id);
+            if (id.StartsWith("native-", StringComparison.Ordinal))
+                Assert.True(JsonElement.DeepEquals(listed, row), $"List: {listed.GetRawText()}, lookup: {row.GetRawText()}");
+            else
+                foreach (var key in new[] { "Id", "Name", "Type", "ParentId", "ChildCount", "RunTimeTicks" })
+                    Assert.True(JsonElement.DeepEquals(listed.GetProperty(key), row.GetProperty(key)));
+            Assert.Equal(1, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        }
+        foreach (var (id, parent) in new[] { ("native-song", "music-library"), ("native-album", "music-library"),
+            ("native-00", "other-folder"), ("allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0", "other-folder") })
+        {
+            using var response = await client.GetAsync(path + query.Replace("ParentId=music-library", "ParentId=" + parent, StringComparison.Ordinal) + "&Ids=" + id);
+            using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            Assert.Empty(body.RootElement.GetProperty("Items").EnumerateArray());
+        }
+        using var mixedResponse = await client.GetAsync(path + query.Replace("IncludeItemTypes=Playlist", "IncludeItemTypes=Playlist,Audio,MusicAlbum", StringComparison.Ordinal) +
+            "&Ids=native-song,native-album,native-00");
+        using var mixed = JsonDocument.Parse(await mixedResponse.Content.ReadAsStringAsync());
+        Assert.Equal("native-00", Assert.Single(mixed.RootElement.GetProperty("Items").EnumerateArray()).GetProperty("Id").GetString());
+        using var songResponse = await client.GetAsync(path + query.Replace("IncludeItemTypes=Playlist", "IncludeItemTypes=Audio", StringComparison.Ordinal) + "&Ids=native-song");
+        using var song = JsonDocument.Parse(await songResponse.Content.ReadAsStringAsync());
+        Assert.Empty(song.RootElement.GetProperty("Items").EnumerateArray());
+        var songQuery = QueryHelpers.ParseQuery(new Uri("http://fixture" + requests.Last()).Query);
+        Assert.Equal("music-library", songQuery["ParentId"].ToString());
     }
 
     private static ProtocolFactory PlaylistBrowseFactory(List<string>? requests = null)
@@ -353,6 +378,18 @@ public sealed partial class ProtocolRouteFixtureTests
             {
                 native[0]["Id"] = "00112233445566778899aabbccddeeff";
                 return Json(200, JsonSerializer.Serialize(new { Items = new[] { native[0] }, TotalRecordCount = 1 }));
+            }
+            if (query.GetValueOrDefault("Ids").ToString().Length > 0)
+            {
+                var ids = query["Ids"].ToString().Split(',');
+                var candidates = native.Concat(new[]
+                {
+                    new Dictionary<string, object?> { ["Id"] = "native-song", ["Type"] = "Audio" },
+                    new Dictionary<string, object?> { ["Id"] = "native-album", ["Type"] = "MusicAlbum" }
+                });
+                var selected = candidates.Where(row => ids.Contains(row["Id"]!.ToString()) &&
+                    query.GetValueOrDefault("ParentId").ToString() is not ("music-library" or "other-folder")).ToArray();
+                return Json(200, JsonSerializer.Serialize(new { Items = selected, TotalRecordCount = selected.Length }));
             }
             IEnumerable<Dictionary<string, object?>> filtered = native;
             if (query.GetValueOrDefault("SearchTerm").ToString().Length > 0) filtered = filtered.Where(row => row["Name"]!.ToString()!.Contains(query.GetValueOrDefault("SearchTerm").ToString(), StringComparison.OrdinalIgnoreCase));

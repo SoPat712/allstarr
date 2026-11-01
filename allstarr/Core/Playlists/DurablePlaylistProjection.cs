@@ -1097,6 +1097,7 @@ public sealed class DurablePlaylistProjectionReader(
             ? recordingDurations?.GetValueOrDefault(recordingId) : null;
         var primaryRoute = classification.PrimaryProviderRoute;
         var hasExternal = classification.RouteKind == TrackRouteKind.External;
+        var matchedDuration = hasExternal ? TrackMatchTargetResolver.Create(route, match)?.DurationMilliseconds : null;
         var externalId = hasExternal
             ? primaryRoute!.ExternalId
             : external.ExternalIdHash;
@@ -1114,12 +1115,14 @@ public sealed class DurablePlaylistProjectionReader(
             metadata.Artists,
             metadata.Album,
             metadata.Isrc,
-            local?.DurationMilliseconds ?? metadata.DurationMilliseconds ?? recordingDuration,
+            local?.DurationMilliseconds ?? matchedDuration ?? metadata.DurationMilliseconds ?? recordingDuration,
             local?.DurationMilliseconds.HasValue == true
                 ? local.DurationProvenance ?? local.Protocol
+                : matchedDuration.HasValue ? primaryRoute!.ProviderId
                 : metadata.DurationMilliseconds.HasValue ? external.ProviderId : null,
             local?.DurationMilliseconds.HasValue == true
                 ? local.DurationRetrievedAt ?? local.IndexedAt
+                : matchedDuration.HasValue ? match?.DecidedAt
                 : metadata.DurationMilliseconds.HasValue ? external.RetrievedAt : null,
             classification.ReviewState,
             backendItemId,

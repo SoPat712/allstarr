@@ -66,6 +66,13 @@ public partial class JellyfinController
             if (item != null) items[itemId] = JsonSerializer.SerializeToNode(item)!.AsObject();
         }
 
+        var parentId = Request.Query["ParentId"].ToString();
+        var playlistsOnly = Request.Path.Value?.TrimEnd('/').Equals("/Playlists", StringComparison.OrdinalIgnoreCase) == true;
+        var playlistRequest = playlistsOnly || JellyfinProviderQuery.Values(Request.Query["IncludeItemTypes"].ToString())
+            .Contains("Playlist", StringComparer.OrdinalIgnoreCase);
+        var musicPlaylistParent = nativeIds.Count > 0 && playlistRequest && parentId.Length > 0 &&
+            await _virtualPlaylistProtocolAdapter.IsMusicLibraryAsync(
+                HttpContext.RequireProtocolExecutionContext(), parentId, HttpContext.RequestAborted);
         JsonObject envelope = new();
         if (nativeIds.Count > 0)
         {
@@ -93,15 +100,43 @@ public partial class JellyfinController
             }
         }
 
+        if (musicPlaylistParent && nativeIds.Any(id => !items.ContainsKey(id)))
+        {
+            var query = Request.Query.ToDictionary(
+                pair => pair.Key, pair => (string?)pair.Value.ToString(), StringComparer.OrdinalIgnoreCase);
+            query.Remove("ParentId");
+            query["IncludeItemTypes"] = "Playlist";
+            query["Fields"] = string.Join(',', new[] { query.GetValueOrDefault("Fields"), "DateCreated,Etag,ParentId,Path,SortName,ProviderIds,ChildCount,Overview" }
+                .Where(value => !string.IsNullOrEmpty(value)));
+            query["Ids"] = string.Join(',', nativeIds.Where(id => !items.ContainsKey(id)));
+            query["StartIndex"] = "0";
+            query["Limit"] = nativeIds.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var endpoint = string.IsNullOrWhiteSpace(userId) ? "Items" : $"Users/{userId}/Items";
+            var (result, statusCode) = await _proxyService.GetJsonAsync(
+                QueryHelpers.AddQueryString(endpoint, query), null, Request.Headers);
+            using (result)
+            {
+                if (statusCode != StatusCodes.Status200OK || result == null)
+                    return HandleProxyResponse(result, statusCode);
+                if (result.RootElement.TryGetProperty("Items", out var rows))
+                    foreach (var row in rows.EnumerateArray())
+                        if (row.TryGetProperty("Type", out var type) && type.GetString() == "Playlist" &&
+                            row.TryGetProperty("Id", out var id) && nativeIds.Contains(id.GetString()!, StringComparer.Ordinal))
+                        {
+                            var item = JsonNode.Parse(row.GetRawText())!.AsObject();
+                            new JellyfinItemFields(Request.Query).Apply(item);
+                            items[id.GetString()!] = item;
+                        }
+            }
+        }
+
         var filter = new JellyfinProviderQuery(Request.Query);
         var mediaTypes = JellyfinProviderQuery.Values(Request.Query["MediaTypes"].ToString());
-        var parentId = Request.Query["ParentId"].ToString();
-        var playlistsOnly = Request.Path.Value?.TrimEnd('/').Equals("/Playlists", StringComparison.OrdinalIgnoreCase) == true;
         var candidates = requested.Where(items.ContainsKey).Where(id => !playlistsOnly || items[id]["Type"]?.ToString() == "Playlist").Where(id => !synthesizedIds.Contains(id) ||
             filter.Matches(JsonSerializer.Deserialize<Dictionary<string, object?>>(items[id].ToJsonString())!) &&
             (mediaTypes.Length == 0 || mediaTypes.Contains("Audio", StringComparer.OrdinalIgnoreCase)))
             .ToArray();
-        var musicParent = parentId.Length > 0 && candidates.Any(id => synthesizedIds.Contains(id) &&
+        var musicParent = musicPlaylistParent || parentId.Length > 0 && candidates.Any(id => synthesizedIds.Contains(id) &&
             !parentId.Equals(items[id]["ParentId"]?.ToString(), StringComparison.OrdinalIgnoreCase)) &&
             await _virtualPlaylistProtocolAdapter.IsMusicLibraryAsync(
                 HttpContext.RequireProtocolExecutionContext(), parentId, HttpContext.RequestAborted);

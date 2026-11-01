@@ -733,7 +733,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             IsLocal = true,
             ExplicitContentLyrics = track.RouteKind == TrackRouteKind.Local ? null : ExternalTrackPresentation.Explicitness(track) is { } rating ? rating ? 1 : 0 : null
         }, null, query);
-        item["RunTimeTicks"] = track.DurationMilliseconds * TimeSpan.TicksPerMillisecond;
+        item["RunTimeTicks"] = (track.DurationMilliseconds ?? 0) * TimeSpan.TicksPerMillisecond;
         item["UserData"] = UserData(track.BackendItemId);
         item["ImageTags"] = track.CoverArtReference == null
             ? new Dictionary<string, string>()
