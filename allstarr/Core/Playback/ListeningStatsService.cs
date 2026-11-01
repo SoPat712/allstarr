@@ -15,7 +15,10 @@ public sealed record ListeningStatsAlbum(string Album, string Artist, long PlayC
 public sealed record ListeningStats(ListeningStatsPeriod Period, long PlayCount, int ActiveDays, long ImportedCount,
     DateTimeOffset? ObservedSince, long EstimatedTimeFromSongLengthsMilliseconds, ListeningStatsCoverage Coverage,
     IReadOnlyList<ListeningStatsSong> TopSongs, IReadOnlyList<ListeningStatsArtist> TopArtists,
-    IReadOnlyList<ListeningStatsAlbum> TopAlbums);
+    IReadOnlyList<ListeningStatsAlbum> TopAlbums)
+{
+    public long ShortPlayCount { get; init; }
+}
 
 public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock) : IDisposable
 {
@@ -84,19 +87,25 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
             : new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(local, zone));
     }
 
+    private const long CountedPlayTicks = 30 * TimeSpan.TicksPerSecond;
+
     internal static async Task<ListeningStats> ReadAsync(AllstarrDbContext db, IntelligenceScope scope,
         ListeningStatsPeriod period, TimeZoneInfo zone, CancellationToken token)
     {
-        var qualified = db.ListeningEvents.AsNoTracking().Where(item => item.OwnerUserId == scope.OwnerUserId &&
-            item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
-            item.State == ListeningEventState.Completed && item.ListenedAt != null &&
+        var listened = db.ListeningEvents.AsNoTracking().Where(item => item.OwnerUserId == scope.OwnerUserId &&
+            item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId && item.ListenedAt != null &&
             db.Users.Any(user => user.Id == scope.OwnerUserId && !user.IsSynthetic));
+        // A play counts once it finished or reached 30 seconds, the rule streaming services use.
+        var qualified = listened.Where(item => item.State == ListeningEventState.Completed || item.PositionTicks >= CountedPlayTicks);
         var observed = qualified.Where(item => item.ImportProvenance == null &&
             (item.SourceKind == "protocol" || item.SourceKind == "listenbrainz-api"));
         var observedSince = await observed.OrderBy(item => item.ListenedAt).Select(item => item.ListenedAt).FirstOrDefaultAsync(token);
         var selected = qualified.Where(item => item.ListenedAt < period.To);
         if (period.From is { } from) selected = selected.Where(item => item.ListenedAt >= from);
         var imported = await selected.LongCountAsync(item => item.SourceKind == "import" || item.ImportProvenance != null, token);
+        var uncounted = listened.Where(item => item.ListenedAt < period.To && item.State != ListeningEventState.Completed && !(item.PositionTicks >= CountedPlayTicks));
+        if (period.From is { } start) uncounted = uncounted.Where(item => item.ListenedAt >= start);
+        var shortPlays = await uncounted.LongCountAsync(token);
         var plays = await selected.Where(item => item.SourceKind == "protocol" || item.SourceKind == "listenbrainz-api" ||
                 item.SourceKind == "import" || item.ImportProvenance != null)
             .Select(item => new StatsPlay(item.ListenedAt!.Value, item.TrackReference, item.CanonicalRecordingId,
@@ -119,7 +128,8 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
             .ThenBy(item => item.Album, StringComparer.Ordinal).Take(10).ToArray();
         return new(period, plays.Count, plays.Select(item => DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(item.At, zone).DateTime)).Distinct().Count(),
             imported, observedSince, plays.Sum(item => item.DurationMilliseconds ?? 0),
-            new(plays.Count - knownSongs.Length, plays.LongCount(item => item.DurationMilliseconds == null)), songs, artists, albums);
+            new(plays.Count - knownSongs.Length, plays.LongCount(item => item.DurationMilliseconds == null)), songs, artists, albums)
+        { ShortPlayCount = shortPlays };
     }
 
     private static string SongKey(StatsPlay item) => item.CanonicalRecordingId is { } recording ? $"recording:{recording:N}"

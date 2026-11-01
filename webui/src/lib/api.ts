@@ -1368,6 +1368,7 @@ export type ListeningStats = {
   playCount: number;
   activeDays: number;
   importedCount: number;
+  shortPlayCount?: number;
   observedSince: string | null;
   estimatedTimeFromSongLengthsMilliseconds: number;
   coverage: { unknownSongIdentityCount: number; unknownDurationCount: number };

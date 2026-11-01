@@ -204,6 +204,24 @@ public sealed class ListeningStatsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PlaysCountOnceTheyReachThirtySeconds()
+    {
+        var thirty = Play("2026-10-01T12:00:00Z");
+        thirty.State = ListeningEventState.Abandoned;
+        thirty.PositionTicks = 30 * TimeSpan.TicksPerSecond;
+        var lateSkip = Play("2026-10-01T12:01:00Z");
+        lateSkip.State = ListeningEventState.Skipped;
+        lateSkip.PositionTicks = 120 * TimeSpan.TicksPerSecond;
+        var brief = Play("2026-10-01T12:02:00Z");
+        brief.State = ListeningEventState.Abandoned;
+        brief.PositionTicks = 29 * TimeSpan.TicksPerSecond;
+        await Add(Play("2026-10-01T12:03:00Z"), thirty, lateSkip, brief);
+        var result = await stats.GetAsync(Session(), "all", null, default);
+        Assert.Equal(3, result.PlayCount);
+        Assert.Equal(1, result.ShortPlayCount);
+    }
+
+    [Fact]
     public async Task SyntheticAndUnqualifiedHistoricalRowsDoNotCount()
     {
         var playing = Play("2026-10-01T12:00:00Z");

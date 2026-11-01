@@ -8,7 +8,7 @@ namespace allstarr.Core.Intelligence;
 
 public sealed class SpotifyListeningHistoryImporter : IListeningHistoryImporter
 {
-    public const string ImporterRevision = "spotify-extended-streaming-history-v2";
+    public const string ImporterRevision = "spotify-extended-streaming-history-v3";
     private static readonly JsonSerializerOptions JsonOptions = new() { MaxDepth = 16 };
     private static readonly DateTimeOffset MinimumTimestamp = new(2000, 1, 1, 0, 0, 0, TimeSpan.Zero);
     private const long MaximumMillisecondsPlayed = 24L * 60 * 60 * 1000;
@@ -215,16 +215,17 @@ public sealed class SpotifyListeningHistoryImporter : IListeningHistoryImporter
         if (!TryString(element, "master_metadata_track_name", 500, out var title) ||
             !TryString(element, "master_metadata_album_artist_name", 500, out var artist) ||
             !TryString(element, "master_metadata_album_album_name", 500, out var album) ||
-            !TryString(element, "username", 200, out var sourceUser) ||
-            !TryString(element, "platform", 200, out var platform) ||
-            !TryString(element, "reason_start", 100, out var reasonStart) ||
-            !TryString(element, "reason_end", 100, out var reasonEnd) ||
-            !TryString(element, "spotify_track_uri", 100, out var spotifyUri) ||
-            !TryBoolean(element, "skipped", out var skipped) ||
-            !TryBoolean(element, "offline", out var offline) ||
-            !TryOfflineTimestamp(element, "offline_timestamp", now, out var offlineAt) ||
-            !TryBoolean(element, "incognito_mode", out var privateSession))
+            !TryString(element, "spotify_track_uri", 100, out var spotifyUri))
             return Malformed(state, "malformed_field");
+        // Spotify changes these between exports. A surprise in one of them must not lose the play.
+        var sourceUser = OptionalString(element, "username", 200);
+        var platform = OptionalString(element, "platform", 200);
+        var reasonStart = OptionalString(element, "reason_start", 100);
+        var reasonEnd = OptionalString(element, "reason_end", 100);
+        var skipped = TryBoolean(element, "skipped", out var skippedValue) ? skippedValue : null;
+        var offline = TryBoolean(element, "offline", out var offlineValue) ? offlineValue : null;
+        var offlineAt = OfflineTimestamp(element, "offline_timestamp", now);
+        var privateSession = TryBoolean(element, "incognito_mode", out var privateValue) ? privateValue : null;
         if (title == null && artist == null && spotifyUri == null)
         {
             state.NonTrack++;
@@ -318,6 +319,9 @@ public sealed class SpotifyListeningHistoryImporter : IListeningHistoryImporter
         return null;
     }
 
+    private static string? OptionalString(JsonElement element, string name, int maximum) =>
+        TryString(element, name, maximum, out var value) ? value : null;
+
     private static bool TryString(JsonElement element, string name, int maximum, out string? value)
     {
         value = null;
@@ -356,27 +360,17 @@ public sealed class SpotifyListeningHistoryImporter : IListeningHistoryImporter
                    out value);
     }
 
-    private static bool TryOfflineTimestamp(
-        JsonElement element,
-        string name,
-        DateTimeOffset now,
-        out DateTimeOffset? value)
+    // Older exports use milliseconds and newer ones use seconds.
+    private static DateTimeOffset? OfflineTimestamp(JsonElement element, string name, DateTimeOffset now)
     {
-        value = null;
-        if (!element.TryGetProperty(name, out var property) || property.ValueKind == JsonValueKind.Null) return true;
-        if (property.ValueKind != JsonValueKind.Number || !property.TryGetInt64(out var milliseconds)) return false;
-        if (milliseconds <= 0) return true;
+        if (!element.TryGetProperty(name, out var property) || property.ValueKind != JsonValueKind.Number ||
+            !property.TryGetInt64(out var raw) || raw <= 0) return null;
         try
         {
-            var timestamp = DateTimeOffset.FromUnixTimeMilliseconds(milliseconds);
-            if (timestamp < MinimumTimestamp || timestamp > now.AddDays(1)) return false;
-            value = timestamp;
-            return true;
+            var timestamp = raw < 100_000_000_000 ? DateTimeOffset.FromUnixTimeSeconds(raw) : DateTimeOffset.FromUnixTimeMilliseconds(raw);
+            return timestamp < MinimumTimestamp || timestamp > now.AddDays(1) ? null : timestamp;
         }
-        catch (ArgumentOutOfRangeException)
-        {
-            return false;
-        }
+        catch (ArgumentOutOfRangeException) { return null; }
     }
 
     private static bool ValidSpotifyTrackUri(string value)

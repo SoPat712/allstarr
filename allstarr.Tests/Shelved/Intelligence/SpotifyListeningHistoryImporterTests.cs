@@ -67,6 +67,49 @@ public sealed class SpotifyListeningHistoryImporterTests
         Assert.Equal(1, scan.ReasonCounts["episode"]);
     }
 
+    [Theory]
+    [InlineData(1_676_941_147L)]
+    [InlineData(1_676_941_147_000L)]
+    [InlineData(5L)]
+    public async Task Scan_KeepsPlaysWhateverUnitOfflineTimestampUses(long offlineTimestamp)
+    {
+        var row = Track("2023-02-21T01:59:07Z", "Song", "Artist", "spotify:track:0123456789abcdefghijkl", 200_000, "trackdone");
+        row["offline_timestamp"] = offlineTimestamp;
+        var scan = await new SpotifyListeningHistoryImporter().ScanAsync(Stream(new List<Dictionary<string, object?>> { row }), new(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)));
+        Assert.Equal(1, scan!.MusicRows);
+        Assert.Equal(0, scan.Malformed);
+    }
+
+    [Fact]
+    public async Task Scan_ReadsTheCurrentSpotifyExportLayout()
+    {
+        var row = new Dictionary<string, object?>
+        {
+            ["ts"] = "2025-04-28T21:04:35Z", ["platform"] = "windows", ["ms_played"] = 210_000, ["conn_country"] = "US",
+            ["ip_addr"] = "x.x.x.x", ["master_metadata_track_name"] = "Song", ["master_metadata_album_artist_name"] = "Artist",
+            ["master_metadata_album_album_name"] = "Album", ["spotify_track_uri"] = "spotify:track:0123456789abcdefghijkl",
+            ["episode_name"] = null, ["episode_show_name"] = null, ["spotify_episode_uri"] = null, ["audiobook_title"] = null,
+            ["audiobook_uri"] = null, ["audiobook_chapter_uri"] = null, ["audiobook_chapter_title"] = null,
+            ["reason_start"] = "clickrow", ["reason_end"] = "trackdone", ["shuffle"] = false, ["skipped"] = false,
+            ["offline"] = false, ["offline_timestamp"] = 1_745_874_272L, ["incognito_mode"] = false
+        };
+        var scan = await new SpotifyListeningHistoryImporter().ScanAsync(Stream(new List<Dictionary<string, object?>> { row }), new(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)));
+        Assert.Equal(1, scan!.Completed);
+        Assert.Equal(0, scan.Malformed);
+    }
+
+    [Fact]
+    public async Task Scan_OptionalFieldSurprisesDoNotLoseThePlay()
+    {
+        var row = Track("2023-02-21T01:59:07Z", "Song", "Artist", "spotify:track:0123456789abcdefghijkl", 200_000, "trackdone");
+        row["offline_timestamp"] = "not a number";
+        row["platform"] = 12;
+        row["incognito_mode"] = "no";
+        var scan = await new SpotifyListeningHistoryImporter().ScanAsync(Stream(new List<Dictionary<string, object?>> { row }), new(new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero)));
+        Assert.Equal(1, scan!.MusicRows);
+        Assert.Equal(0, scan.Malformed);
+    }
+
     [Fact]
     public async Task RegistryRejectsUnknownFormatsAndParserEnforcesTheRowLimit()
     {

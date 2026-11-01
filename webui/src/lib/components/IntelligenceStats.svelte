@@ -12,7 +12,7 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
 
   let stats = $state<ListeningStats | null>(null), yearStats = $state<ListeningStats | null>(null);
-  let period = $state("30d"), year = $state(""), loading = $state(true), refreshing = $state(false), error = $state("");
+  let period = $state("all"), year = $state(""), loading = $state(true), refreshing = $state(false), error = $state("");
   const recapYear = $derived(year || (new Date().getMonth() === 11 ? String(new Date().getFullYear()) : ""));
   let request = 0;
   let importedRefresh: ReturnType<typeof setTimeout> | undefined;
@@ -90,6 +90,7 @@
     <footer>
       <p>{stats.observedSince ? `Counting since ${new Date(stats.observedSince).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.` : "Counting starts with your first listen."} {formatCount(stats.coverage.unknownSongIdentityCount)} {stats.coverage.unknownSongIdentityCount === 1 ? "play couldn't" : "plays couldn't"} be identified.</p>
       <p>Imported from other services: {formatCount(stats.importedCount)} plays</p>
+      {#if stats.shortPlayCount}<p>{formatCount(stats.shortPlayCount)} skips and plays under 30 seconds aren't counted.</p>{/if}
     </footer>
   {/if}
   {#if recapYear && yearStats}
