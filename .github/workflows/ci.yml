@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -45,7 +45,20 @@ jobs:
 
       - name: Install media test tools
         timeout-minutes: 8
-        run: bash tools/ci/install-media-tools.sh
+        run: |
+          if command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null; then
+            ffmpeg -version
+            ffprobe -version
+          else
+            bash tools/ci/install-media-tools.sh
+          fi
+
+      - name: Cache NuGet packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ env.DOTNET_VERSION }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: nuget-${{ runner.os }}-${{ env.DOTNET_VERSION }}-
 
       - name: Restore dependencies
         run: python3 tools/tests/timing_report.py --name dotnet-restore -- dotnet restore -p:NuGetAudit=true
@@ -86,6 +99,13 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Cache NuGet packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ env.DOTNET_VERSION }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: nuget-${{ runner.os }}-${{ env.DOTNET_VERSION }}-
+
       - name: Restore dependencies
         run: python3 tools/tests/timing_report.py --name release-critical-restore -- dotnet restore -p:NuGetAudit=true
 
@@ -123,6 +143,13 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Cache NuGet packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ env.DOTNET_VERSION }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props') }}
+          restore-keys: nuget-${{ runner.os }}-${{ env.DOTNET_VERSION }}-
+
       - name: Restore dependencies
         run: python3 tools/tests/timing_report.py --name csharp-restore -- dotnet restore -p:NuGetAudit=true
 
@@ -146,7 +173,6 @@ jobs:
         working-directory: webui
         run: |
           npm ci
-          npx playwright install --with-deps chromium
 
       - name: WebUI check
         working-directory: webui
@@ -164,15 +190,63 @@ jobs:
         working-directory: webui
         run: python3 ../tools/tests/timing_report.py --name webui-budgets -- npm run check:budgets
 
+  webui-e2e:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: webui/package-lock.json
+
+      - name: Cache Playwright browser
+        id: browser-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('webui/package-lock.json') }}
+
+      - name: Restore WebUI and browser
+        working-directory: webui
+        run: |
+          npm ci
+          if [[ "${{ steps.browser-cache.outputs.cache-hit }}" == true ]]; then
+            npx playwright install-deps chromium
+          else
+            npx playwright install --with-deps chromium
+          fi
+
+      - name: WebUI build
+        working-directory: webui
+        run: python3 ../tools/tests/timing_report.py --name webui-build -- npm run build
+
       - name: WebUI E2E
         working-directory: webui
         run: >-
           python3 ../tools/tests/timing_report.py
-          --name webui-e2e
-          --timeout-seconds 1200
+          --name webui-e2e-${{ matrix.shard }}
+          --timeout-seconds 480
           --require-tests
-          --playwright-json "$RUNNER_TEMP/allstarr-playwright.json"
-          -- npm run test:e2e:existing-build
+          --playwright-json "$RUNNER_TEMP/allstarr-playwright-${{ matrix.shard }}.json"
+          -- npm run test:e2e:existing-build -- --shard=${{ matrix.shard }}/4 --workers=2
+
+      - name: Upload browser test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: playwright-results-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/allstarr-playwright-${{ matrix.shard }}.json
+            webui/test-results/
+          if-no-files-found: warn
 
   release-manifest:
     needs:
@@ -180,6 +254,7 @@ jobs:
       - release-critical-tests
       - csharp-format
       - webui
+      - webui-e2e
       - apple-contracts
       - compose-contracts
       - v2-image-upgrade
