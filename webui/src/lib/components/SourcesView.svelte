@@ -206,6 +206,7 @@
   );
   let scores = $state<ProviderScore[]>([]);
   const scoreOf = (id: string) => scores.find((item) => item.providerId.toLowerCase() === id.toLowerCase())?.score ?? null;
+  const qualityOf = (id: string) => scores.find((item) => item.providerId.toLowerCase() === id.toLowerCase())?.quality?.typical;
   let scoresRequested = false;
   $effect(() => {
     if (!administrator || scoresRequested) return;
@@ -914,7 +915,7 @@
               {:else}
               <span class="source-row-status">
                 <Badge state={state}>{state === "degraded" ? sourceProblemLabel(item, accounts, health) ?? sourceStatusLabel(state) : sourceStatusLabel(state)}</Badge>
-                {#if scoreOf(item.id) != null}<small class="source-row-score">Score {scoreOf(item.id)} of 100</small>{/if}
+                {#if scoreOf(item.id) != null}<small class="source-row-score">Score {scoreOf(item.id)} of 100{#if qualityOf(item.id)} · {qualityOf(item.id)}{/if}</small>{/if}
                 <small>{metrics.checkedAt ? `${metrics.passing} of ${metrics.total || 0} checks passed · ${relativeTime(metrics.checkedAt)}` : "Not checked yet"}</small>
                 <small class="source-row-timing">{connected.length ? `${connected.filter((account) => account.enabled).length} of ${connected.length} account${connected.length === 1 ? "" : "s"} on · ` : ""}{timing}{#if cts} · CTS {ctsMeasurementLabel(cts)}{/if}</small>
               </span>

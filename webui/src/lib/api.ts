@@ -583,6 +583,7 @@ export type ProviderScore = {
   checks: number;
   capabilities: ProviderCapabilityScore[];
   days: { day: string; passed: number; failed: number }[];
+  quality?: { typical: string; best: string | null; lossless: boolean; samples: number } | null;
 };
 
 export type ProviderCheckHistory = {

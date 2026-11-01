@@ -1,10 +1,12 @@
 <script lang="ts" module>
   import type { ProviderScore } from "$lib/api";
 
-  /** The score for what this list orders; a provider's overall score when it has no checks for that. */
+  /** Lyrics are judged on lyrics alone. Every other order decides which source plays, so it uses the overall score. */
   export function capabilityScore(score: ProviderScore | undefined, capability: string) {
     if (!score) return null;
-    return score.capabilities.find((item) => item.capability === capability)?.score ?? score.score;
+    return capability === "lyrics"
+      ? score.capabilities.find((item) => item.capability === capability)?.score ?? score.score
+      : score.score;
   }
 
   export const scoreTier = (value: number | null) =>
@@ -23,8 +25,12 @@
 <div class="score-details">
   <p class="score-summary">
     {#if score.score == null}Not rated yet. A score needs at least 5 checks; this source has {score.checks}.
-    {:else}Passed {score.uptimePercent}% of {score.checks.toLocaleString()} checks in the last 30 days. Reliability counts for 80% of the score, with the last week counting double, and speed for 20%.{/if}
+    {:else if score.quality}Passed {score.uptimePercent}% of {score.checks.toLocaleString()} checks and playback tests in the last 30 days. The score is 50% reliability, with the last week counting double, 30% audio quality and 20% speed. Lossy sources have a ceiling: 60 at low bitrates, up to 80 at 256 kbps or more.
+    {:else}Passed {score.uptimePercent}% of {score.checks.toLocaleString()} checks in the last 30 days. This source plays no audio here, so its score is 80% reliability, with the last week counting double, and 20% speed.{/if}
   </p>
+  {#if score.quality}
+    <p class="score-quality"><strong>Delivers {score.quality.typical}</strong>{#if score.quality.best} · up to {score.quality.best}{/if} <small>from {score.quality.samples} playback tests</small></p>
+  {/if}
   {#if days.length}
     <div class="score-days" role="img" aria-label={`Daily check results for the last ${days.length} days`}>
       {#each days as day (day.day)}
@@ -47,6 +53,9 @@
 <style>
   .score-details { grid-column: 1 / -1; display: grid; gap: var(--space-3); padding: 0 var(--space-3) var(--space-4) 5.5rem; animation: list-enter 280ms var(--ease-emphasized) backwards; }
   .score-summary { color: var(--color-ink-muted); font-size: var(--text-sm); }
+  .score-quality { font-size: var(--text-sm); }
+  .score-quality strong { font-weight: 600; }
+  .score-quality small { color: var(--color-ink-muted); }
   .score-days { display: flex; align-items: flex-end; gap: 3px; height: 2rem; }
   .score-days span { position: relative; flex: 1; max-width: 1.25rem; height: 100%; overflow: hidden; border-radius: 3px; background: var(--md-sys-color-error-container); }
   .score-days span::after { position: absolute; right: 0; bottom: 0; left: 0; height: var(--passed); background: var(--success); content: ""; }

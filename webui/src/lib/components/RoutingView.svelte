@@ -232,7 +232,7 @@
               >
                 <span class="routing-index" aria-hidden="true">{#if fixed}<Lock size={14} />{:else}<GripVertical size={16} />{index + 1}{/if}</span>
                 <ProviderArtwork id={providerId} definition={definition} label={label} />
-                <span class="routing-copy"><span class="routing-name"><strong>{group.id === "lyrics" ? label : definition?.name ?? humanize(providerId)}</strong>{#if definition}<Badge tone="neutral" class="origin-badge">{sourceOriginLabel(definition)}</Badge>{/if}</span><small>{providerId === "backend" ? "Lyrics supplied by your media server" : fixed ? "Saved lyrics from your library" : definition?.categories?.map(humanize).join(" · ") || "Provider service"}</small></span>
+                <span class="routing-copy"><span class="routing-name"><strong>{group.id === "lyrics" ? label : definition?.name ?? humanize(providerId)}</strong>{#if definition}<Badge tone="neutral" class="origin-badge">{sourceOriginLabel(definition)}</Badge>{/if}{#if scoreFor(providerId)?.quality}<span class="routing-quality-label" class:lossy={!scoreFor(providerId)?.quality?.lossless}>{scoreFor(providerId)?.quality?.typical}</span>{/if}</span><small>{providerId === "backend" ? "Lyrics supplied by your media server" : fixed ? "Saved lyrics from your library" : definition?.categories?.map(humanize).join(" · ") || "Provider service"}</small></span>
                 {#if scoreFor(providerId)}
                   {@const value = capabilityScore(scoreFor(providerId), group.id)}
                   <button type="button" class="score-chip" data-tier={scoreTier(value)} aria-expanded={openScore === `${group.id}:${providerId}`}
@@ -261,6 +261,9 @@
   :global(.routing-group li) { grid-template-columns: 3rem 2.5rem minmax(0, 1fr) auto auto; }
   :global(.routing-group li.pinned) { grid-template-columns: 3rem 2.5rem minmax(0, 1fr); }
   .routing-name { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  .routing-quality-label { color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .routing-quality-label.lossy { color: var(--on-warning-container); }
+  :global(.dark) .routing-quality-label.lossy { color: var(--warning); }
   .score-chip { display: inline-flex; align-items: center; gap: 2px; min-height: 2rem; padding-inline: var(--space-3) var(--space-2); border: 1px solid transparent; border-radius: 999px; font-size: var(--text-sm); font-weight: 600; cursor: pointer; transition: background-color 160ms var(--ease-standard), scale 160ms var(--ease-standard); }
   .score-chip :global(svg) { transition: transform 240ms var(--ease-emphasized); }
   .score-chip[aria-expanded="true"] :global(svg) { transform: rotate(180deg); }

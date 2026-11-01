@@ -56,4 +56,46 @@ public sealed class ProviderScoreServiceTests
         Assert.Equal(6, download.Failures);
         Assert.Equal("timeout", download.LastFailureCode);
     }
+
+    private static IEnumerable<(string, string, DateTimeOffset, bool, long?, string?)> Reliable(string provider) =>
+        Enumerable.Range(0, 10).Select(day => Row(provider, day, true));
+
+    private static ProviderScoreService.AudioSample Audio(string provider, string codec, int? depth = null, int? rate = null, int? bitrate = null) =>
+        new(provider, codec, depth, rate, bitrate);
+
+    [Fact]
+    public void AReliable128KbpsSourceCannotScoreAboveItsCeiling()
+    {
+        var score = Assert.Single(ProviderScoreService.ForTest(Reliable("deezer"), Now,
+            Enumerable.Repeat(Audio("deezer", "mp3", bitrate: 128_000), 5).Concat(Enumerable.Repeat(Audio("deezer", "mp3", rate: 44100), 5))));
+        Assert.Equal(60, score.Score);
+        Assert.Equal("MP3 128 kbps", score.Quality!.Typical);
+        Assert.False(score.Quality.Lossless);
+    }
+
+    [Fact]
+    public void LosslessSourcesKeepTheirScoreAndNameTheirFormat()
+    {
+        var score = Assert.Single(ProviderScoreService.ForTest(Reliable("apple"), Now,
+            Enumerable.Repeat(Audio("apple", "flac", 16, 44100), 6).Append(Audio("apple", "flac", 24, 96000))));
+        Assert.Equal(100, score.Score);
+        Assert.Equal("Lossless 16-bit/44.1 kHz", score.Quality!.Typical);
+        Assert.Equal("Lossless 24-bit/96 kHz", score.Quality.Best);
+    }
+
+    [Fact]
+    public void PlaceholderBitratesDoNotCountAsRealQuality()
+    {
+        var score = Assert.Single(ProviderScoreService.ForTest(Reliable("yt"), Now, Enumerable.Repeat(Audio("yt", "aac", bitrate: 1337), 6)));
+        Assert.Equal("AAC", score.Quality!.Typical);
+        Assert.Equal(75, score.Score);
+    }
+
+    [Fact]
+    public void MetadataOnlySourcesAreNotPenalizedForHavingNoAudio()
+    {
+        var score = Assert.Single(ProviderScoreService.ForTest(Reliable("genie"), Now));
+        Assert.Null(score.Quality);
+        Assert.Equal(100, score.Score);
+    }
 }
