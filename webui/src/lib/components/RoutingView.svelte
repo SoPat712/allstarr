@@ -2,17 +2,33 @@
   import { toast } from "$lib/toasts";
   let { embedded = false }: { embedded?: boolean } = $props();
   import { onMount } from "svelte";
-  import { ArrowDown, ArrowUp, GripVertical, Lock } from "@lucide/svelte";
+  import { ArrowDown, ArrowUp, ChevronDown, GripVertical, Lock, Sparkles } from "@lucide/svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import { home, settings, type PriorityGroup, type UiSchema } from "$lib/api";
+  import { home, settings, sources, type PriorityGroup, type ProviderScore, type UiSchema } from "$lib/api";
   import AudioQualityField from "$lib/components/AudioQualityField.svelte";
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
+  import ProviderScoreDetails, { capabilityScore, scoreTier } from "$lib/components/ProviderScoreDetails.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
-  import { humanize, lyricsSourceDisplayName } from "$lib/sources";
+  import { humanize, lyricsSourceDisplayName, sourceOriginLabel } from "$lib/sources";
   import { fieldValue, keptLyricsFirst, mergeRoutingOrders, move } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
+
+  let scores = $state<ProviderScore[]>([]);
+  let openScore = $state("");
+  const scoreFor = (providerId: string) => scores.find((item) => item.providerId.toLowerCase() === providerId.toLowerCase());
+
+  // Highest score first. Unscored sources keep their order below the scored ones; nothing saves until Save order.
+  function sortByScore(group: PriorityGroup) {
+    const order = orders[group.id] ?? group.providers;
+    const fixed: string[] = order.filter((id) => id === "kept" || id === "backend");
+    const rank = (id: string) => capabilityScore(scoreFor(id), group.id) ?? -1;
+    const sorted = order.filter((id) => !fixed.includes(id)).map((id, index) => ({ id, index }))
+      .sort((left, right) => rank(right.id) - rank(left.id) || left.index - right.index).map((item) => item.id);
+    orders = { ...orders, [group.id]: [...fixed, ...sorted] };
+    if (!dirtyOrderIds.includes(group.id)) dirtyOrderIds = [...dirtyOrderIds, group.id];
+  }
 
   let schema = $state<UiSchema | null>(null);
   let config = $state<Record<string, unknown>>({});
@@ -120,6 +136,7 @@
 
   onMount(() => {
     void refresh();
+    void sources.scores().then((result) => { scores = result.providers; }).catch(() => {});
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       unsubscribe();
@@ -187,6 +204,7 @@
         <section class="settings-card routing-group">
           <header>
             <div><h3>{group.label.replace(/ order$/i, "")} order</h3><small>{group.id === "lyrics" ? "Your saved choice for a song takes precedence, then Kept LRC. Other sources follow this order, with a short priority window for slower services." : group.description || "Drag services, or use the arrows, to change the order Allstarr tries them."}</small></div>
+            {#if scores.length && group.id !== "lyrics"}<Button variant="ghost" onclick={() => sortByScore(group)}><Sparkles size={16} aria-hidden="true" />Sort by score</Button>{/if}
             <Button aria-label={`Save ${group.label}`} disabled={Boolean(action) || !dirtyOrderIds.includes(group.id)} onclick={() => void saveOrder(group)}>{action === group.id ? "Saving…" : "Save order"}</Button>
           </header>
           <ol>
@@ -212,11 +230,22 @@
               >
                 <span class="routing-index" aria-hidden="true">{#if fixed}<Lock size={14} />{:else}<GripVertical size={16} />{index + 1}{/if}</span>
                 <ProviderArtwork id={providerId} definition={definition} label={label} />
-                <span class="routing-copy"><strong>{group.id === "lyrics" ? label : definition?.name ?? humanize(providerId)}</strong><small>{providerId === "backend" ? "Lyrics supplied by your media server" : fixed ? "Saved lyrics from your library" : definition?.categories?.map(humanize).join(" · ") || "Provider service"}</small></span>
+                <span class="routing-copy"><span class="routing-name"><strong>{group.id === "lyrics" ? label : definition?.name ?? humanize(providerId)}</strong>{#if definition}<Badge tone="neutral" class="origin-badge">{sourceOriginLabel(definition)}</Badge>{/if}</span><small>{providerId === "backend" ? "Lyrics supplied by your media server" : fixed ? "Saved lyrics from your library" : definition?.categories?.map(humanize).join(" · ") || "Provider service"}</small></span>
+                {#if scoreFor(providerId)}
+                  {@const value = capabilityScore(scoreFor(providerId), group.id)}
+                  <button type="button" class="score-chip" data-tier={scoreTier(value)} aria-expanded={openScore === `${group.id}:${providerId}`}
+                    aria-label={`${label} score ${value ?? "not rated yet"}. Show details.`}
+                    onclick={() => openScore = openScore === `${group.id}:${providerId}` ? "" : `${group.id}:${providerId}`}>
+                    {value ?? "New"}<ChevronDown size={14} aria-hidden="true" />
+                  </button>
+                {/if}
                 <span class="routing-actions">
                   <Button variant="ghost" size="icon" aria-label={`Move ${label} up`} disabled={fixed || index === 0 || group.id === "lyrics" && orders[group.id]?.[index - 1] === "kept"} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
                   <Button variant="ghost" size="icon" aria-label={`Move ${label} down`} disabled={fixed || index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
                 </span>
+                {#if openScore === `${group.id}:${providerId}` && scoreFor(providerId)}
+                  <ProviderScoreDetails score={scoreFor(providerId)!} capability={group.id} />
+                {/if}
               </li>
             {/each}
           </ol>
@@ -225,3 +254,19 @@
     </div>
   </div>
 {/if}
+
+<style>
+  :global(.routing-group li) { grid-template-columns: 3rem 2.5rem minmax(0, 1fr) auto auto; }
+  :global(.routing-group li.pinned) { grid-template-columns: 3rem 2.5rem minmax(0, 1fr); }
+  .routing-name { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  .score-chip { display: inline-flex; align-items: center; gap: 2px; min-height: 2rem; padding-inline: var(--space-3) var(--space-2); border: 1px solid transparent; border-radius: 999px; font-size: var(--text-sm); font-weight: 600; cursor: pointer; transition: background-color 160ms var(--ease-standard), scale 160ms var(--ease-standard); }
+  .score-chip :global(svg) { transition: transform 240ms var(--ease-emphasized); }
+  .score-chip[aria-expanded="true"] :global(svg) { transform: rotate(180deg); }
+  .score-chip[data-tier="great"] { background: var(--success-container); color: var(--on-success-container); }
+  .score-chip[data-tier="good"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+  .score-chip[data-tier="fair"] { background: var(--warning-container); color: var(--on-warning-container); }
+  .score-chip[data-tier="poor"] { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+  .score-chip[data-tier="none"] { border-color: var(--color-edge); color: var(--color-ink-muted); }
+  .score-chip:active { scale: 0.96; }
+  .score-chip:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+</style>

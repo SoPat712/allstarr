@@ -155,6 +155,14 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
         return Ok(results);
     }
 
+    [HttpGet("providers/scores")]
+    public async Task<IActionResult> GetProviderScores(CancellationToken cancellationToken)
+    {
+        var adminCheck = RequireAdministratorForSensitiveOperation("get provider scores");
+        if (adminCheck != null) return adminCheck;
+        return Ok(new { providers = await HttpContext.RequestServices.GetRequiredService<ProviderScoreService>().ReadAsync(cancellationToken) });
+    }
+
     [HttpGet("providers/{providerId}/health-history")]
     public async Task<IActionResult> GetProviderHealthHistory(
         string providerId,

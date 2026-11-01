@@ -566,6 +566,25 @@ export type ProviderHealth = {
   automaticPauseReasonCode?: string | null;
 };
 
+export type ProviderCapabilityScore = {
+  capability: string;
+  score: number | null;
+  uptimePercent: number | null;
+  checks: number;
+  failures: number;
+  typicalLatencyMilliseconds: number | null;
+  lastFailureCode: string | null;
+};
+
+export type ProviderScore = {
+  providerId: string;
+  score: number | null;
+  uptimePercent: number | null;
+  checks: number;
+  capabilities: ProviderCapabilityScore[];
+  days: { day: string; passed: number; failed: number }[];
+};
+
 export type ProviderCheckHistory = {
   provider: string;
   capturedAt: string;
@@ -1869,6 +1888,7 @@ export const sources = {
       accounts: ProviderAccount[];
     }>("/api/admin/provider-accounts"),
   health: () => json<ProviderHealth[]>("/api/admin/providers/status"),
+  scores: () => json<{ providers: ProviderScore[] }>("/api/admin/providers/scores"),
   history: (provider: string, signal?: AbortSignal) =>
     json<ProviderCheckHistory>(`/api/admin/providers/${encodeURIComponent(provider)}/health-history?limit=24`, { signal }),
   resume: (provider: string, capability: string, accountId?: string | null) =>

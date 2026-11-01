@@ -480,6 +480,7 @@ builder.Services.AddBuiltInLyricsCapabilities();
 builder.Services.AddSingleton<ExtensionManager>();
 builder.Services.AddSingleton<ProviderStatusManager>();
 builder.Services.AddSingleton<ProviderCheckHistory>();
+builder.Services.AddSingleton<ProviderScoreService>();
 builder.Services.AddSingleton<allstarr.Core.Playback.PlaybackStartTimingStore>();
 builder.Services.AddSingleton<allstarr.Core.Playback.PlayTraceService>();
 builder.Services.AddSingleton<IProviderCheckSessions, ProviderCheckSessions>();
