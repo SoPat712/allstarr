@@ -262,6 +262,13 @@
   :global(.routing-group li) { grid-template-columns: 3rem 2.5rem minmax(0, 1fr) auto auto; }
   :global(.routing-group li.pinned) { grid-template-columns: 3rem 2.5rem minmax(0, 1fr); }
   .routing-name { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  @media (max-width: 560px) {
+    :global(.routing-group li) { grid-template-columns: 2.25rem 2.5rem minmax(0, 1fr) auto; row-gap: var(--space-2); }
+    :global(.routing-group li.pinned) { grid-template-columns: 2.25rem 2.5rem minmax(0, 1fr); }
+    .routing-copy { grid-column: 3 / -1; }
+    .score-chip { grid-column: 3; grid-row: 2; justify-self: start; }
+    .routing-actions { grid-column: 4; grid-row: 2; }
+  }
   .routing-quality-label { color: var(--color-ink-muted); font-size: var(--text-xs); }
   .routing-quality-label.lossy { color: var(--on-warning-container); }
   :global(.dark) .routing-quality-label.lossy { color: var(--warning); }

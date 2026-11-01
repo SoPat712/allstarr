@@ -4259,9 +4259,8 @@ test("Intelligence cards, table columns, and compact actions stay aligned", asyn
     expect(Math.max(...boxes.map((box) => box.width)) - Math.min(...boxes.map((box) => box.width))).toBeLessThanOrEqual(1);
   }
 
-  const tabHeights = await page.locator(".history-workspace .segmented-tabs [role=tab]")
-    .evaluateAll((items) => items.map((item) => item.getBoundingClientRect().height));
-  expect(tabHeights.every((height) => height >= 44)).toBe(true);
+  await expect.poll(() => page.locator(".history-workspace .segmented-tabs [role=tab]")
+    .evaluateAll((items) => items.every((item) => item.getBoundingClientRect().height >= 44))).toBe(true);
 
   for (const width of [820, 1280]) {
     await page.setViewportSize({ width, height: 760 });

@@ -41,7 +41,7 @@
     <p class="score-cap">Earned {parts.earned}, held at {parts.cappedAt} because this source delivers {score.quality?.typical ?? "lossy audio"}.</p>
   {/if}
   {#if score.quality}
-    <p class="score-quality"><strong>Delivers {score.quality.typical}</strong>{#if score.quality.best} · up to {score.quality.best}{/if} <small>from {score.quality.samples} playback tests</small></p>
+    <p class="score-quality"><strong>Delivers {score.quality.typical}</strong>{#if score.quality.best}{" · "}up to {score.quality.best}{/if} <small>from {score.quality.samples} playback tests</small></p>
   {/if}
   {#if days.length}
     <div class="score-days" role="img" aria-label={`Daily check results for the last ${days.length} days`}>
@@ -57,7 +57,7 @@
         <strong>{humanize(item.capability)}</strong>
         <span class="score-bar" aria-hidden="true"><span style={`width:${item.uptimePercent ?? 0}%`}></span></span>
         <span>{item.uptimePercent ?? 0}%</span>
-        <small>{seconds(item.typicalLatencyMilliseconds)} typical{#if item.failures} · {item.failures} failed{#if item.lastFailureCode}, last: {checkGuide(item.lastFailureCode)?.label ?? humanize(item.lastFailureCode)}{/if}{/if}</small>
+        <small>{seconds(item.typicalLatencyMilliseconds)} typical{#if item.failures}{" · "}{item.failures} failed{#if item.lastFailureCode}, last: {checkGuide(item.lastFailureCode)?.label ?? humanize(item.lastFailureCode)}{/if}{/if}</small>
       </div>
     {/each}
   </div>
