@@ -87,8 +87,26 @@ public sealed class SharedTagSources(
         batches.Add(new(source, values, clock.UtcNow));
     }
 
-    private async Task<SharedTagBatch?> GetLastFmBatchAsync(string method, string firstKey, string firstValue,
-        string? secondKey, string? secondValue, string source, string apiKey, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<allstarr.Core.Music.SimilarTrackSuggestion>> TagTopTracksAsync(string tag, CancellationToken token)
+    {
+        var key = settings.CurrentValue.LastFm.ApiKey?.Trim();
+        if (string.IsNullOrWhiteSpace(key)) return [];
+        await LastFmTurnAsync(token);
+        using var timeout = new CancellationTokenSource(LastFmTimeout, _timeProvider);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token, timeout.Token);
+        using var response = await clients.CreateClient(LastFmClientName).GetAsync(
+            "https://ws.audioscrobbler.com/2.0/?method=tag.gettoptracks&format=json&limit=100" +
+            $"&tag={Uri.EscapeDataString(tag)}&api_key={Uri.EscapeDataString(key)}", HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+        response.EnsureSuccessStatusCode();
+        using var document = await ReadJsonAsync(response, deadline.Token);
+        if (!document.RootElement.TryGetProperty("tracks", out var tracks)) return [];
+        return allstarr.Core.Music.LastFmSimilarTracks.TrackElements(tracks).Select(track =>
+            new allstarr.Core.Music.SimilarTrackSuggestion(track.GetProperty("artist").GetProperty("name").GetString() ?? "",
+                track.GetProperty("name").GetString() ?? ""))
+            .Where(track => track.Artist.Length > 0 && track.Title.Length > 0).Take(100).ToArray();
+    }
+
+    private async Task LastFmTurnAsync(CancellationToken cancellationToken)
     {
         await _lastFmRateLimit.WaitAsync(cancellationToken);
         try
@@ -98,6 +116,12 @@ public sealed class SharedTagSources(
             _lastLastFmRequestAt = _timeProvider.GetUtcNow();
         }
         finally { _lastFmRateLimit.Release(); }
+    }
+
+    private async Task<SharedTagBatch?> GetLastFmBatchAsync(string method, string firstKey, string firstValue,
+        string? secondKey, string? secondValue, string source, string apiKey, CancellationToken cancellationToken)
+    {
+        await LastFmTurnAsync(cancellationToken);
 
         using var timeout = new CancellationTokenSource(LastFmTimeout, _timeProvider);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);

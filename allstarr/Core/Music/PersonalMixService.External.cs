@@ -63,7 +63,12 @@ public sealed partial class PersonalMixService
                 "Kept in sync · " + ExternalName(link), projection?.SnapshotVersion ?? 0,
                 projection?.RetrievedAt, new(items.Length > 0, items.Length > 0 ? "Your linked playlist is ready." : "Waiting for playable songs from your linked playlist."),
                 link.Enabled, items)
-            { SourceLabel = link.SourceProviderId == "lastfm" ? "Last.fm" : "ListenBrainz" });
+            {
+                SourceLabel = link.SourceProviderId == "lastfm" ? "Last.fm" : "ListenBrainz",
+                Evidence = new(MixRecipes.For("external"), 0, 0, null, null, null, 0, 0,
+                    projection?.SourceEntries.Count ?? items.Length, items.Length, items.Length, 0, items.Length,
+                    new Dictionary<string, int>(), null, null, null)
+            });
         }
         return result;
     }

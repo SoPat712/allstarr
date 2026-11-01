@@ -26,6 +26,7 @@ describe("personal mix presentation", () => {
     expect(mosaicArtwork(["", "a", "b"])).toEqual(["a"]);
   });
   it("uses short human reasons without exposing unknown codes", () => {
+    expect(shortReadiness("Refresh this mix to look for songs from your music and services.")).toBe("Refresh to look for songs");
     expect(reasonLabel("Played 6 times in 30 days")).toBe("You play this a lot");
     expect(reasonLabel("New release from an artist you follow or play often")).toBe("New release");
     expect(reasonLabel("A close new pick")).toBe("New for you");
@@ -66,4 +67,13 @@ describe("personal mix presentation", () => {
   it("marks more, less and never nudges", () => {
     expect([undefined, "more", "less", "never"].map(mode => nudgeMarker(mode))).toEqual(["", "↑", "↓", "⊘"]);
   });
+});
+
+it("uses plain exclusion labels without repeating counts", async () => {
+  const { mixExclusions } = await import("./for-you");
+  expect(mixExclusions({ "Three early skips": 3, Never: 1 })).toBe("3 skipped early · 1 you marked Never");
+  expect(mixExclusions({ "three early skips": 3, never: 1 })).toBe("3 skipped early · 1 you marked Never");
+  expect(mixExclusions({ "Duplicate recordings": 2, "Listening policy": 1, "No playable route": 1, "Missing song details": 1,
+    "Candidate limit": 1, "Changed before saving": 1, "Choices changed during generation": 1, "Outside this recipe": 1, "Artist, release, tier and size limits": 1 }))
+    .toBe("2 repeats · 1 left out by your listening settings · 1 you can't play · 1 missing song details · 1 over the song limit · 1 left out before saving · 1 left out after your choices changed · 1 didn't fit this mix · 1 over this mix's limits");
 });

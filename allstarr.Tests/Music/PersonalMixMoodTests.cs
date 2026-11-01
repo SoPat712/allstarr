@@ -49,18 +49,18 @@ public sealed class PersonalMixMoodTests
         { ["sample"] = AudioMuseClient.ParseScores(payload.RootElement) });
         Assert.Equal(kind switch { "workout" => "Energetic sound", "party" => "Party sound", _ => "Calm sound" }, PersonalMixMoods.Reason(kind, Assert.Single(measured)));
         var tagged = PersonalMixMoods.Qualify(kind, [row], new Dictionary<string, AudioMuseScores>());
-        Assert.Equal("Tagged " + kind, PersonalMixMoods.Reason(kind, Assert.Single(tagged)));
+        Assert.Equal("Tagged " + tag, PersonalMixMoods.Reason(kind, Assert.Single(tagged)));
         Assert.Equal("0 4 * * 1", PersonalMixRules.Cron(kind));
     }
 
     [Fact]
-    public void Measured_mismatch_does_not_fall_back_to_tags_and_streaming_requires_low_coverage()
+    public void Measured_mismatch_does_not_fall_back_and_external_tags_qualify_independently()
     {
         var row = new MixCandidate(new Song { Id = "one", IsLocal = true }, new Dictionary<string, double> { ["chill"] = 1 },
             0, 0, null, false, "library", 0);
         var scores = new Dictionary<string, AudioMuseScores> { ["one"] = new(.9, .1, .8, .8, .9, .1, .1) };
         Assert.Empty(PersonalMixMoods.Qualify("chill", [row], scores));
-        Assert.DoesNotContain(PersonalMixMoods.Qualify("chill", [row, row with { Song = new Song { Id = "stream" } }], scores),
+        Assert.Contains(PersonalMixMoods.Qualify("chill", [row, row with { Song = new Song { Id = "stream" } }], scores),
             item => item.Song.Id == "stream");
         Assert.Single(PersonalMixMoods.Qualify("chill", [row with { Song = new Song { Id = "stream" } }], new Dictionary<string, AudioMuseScores>()));
     }

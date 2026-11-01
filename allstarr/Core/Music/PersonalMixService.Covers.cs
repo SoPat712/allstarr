@@ -44,7 +44,7 @@ public sealed partial class PersonalMixService
         {
             var document = JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson);
             var mix = document?.Mixes.Values.SingleOrDefault(item => item.Id == id);
-            if (mix is { Added: true, Generation: > 0, Readiness.Ready: true } && mix.Songs.Count > 0)
+            if (mix is { Added: true, Generation: > 0 })
                 return MixCoverInput.From(mix);
         }
         return null;

@@ -18,6 +18,7 @@ using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using System.Text.Json.Nodes;
 using allstarr.Core.Protocols.Jellyfin;
 using allstarr.Core.Protocols.Subsonic;
@@ -38,6 +39,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
     private TasteService taste = null!;
     private SharedTagStore tags = null!;
     private PersonalMixService service = null!;
+    private SharedTagSources? tagSources;
     private bool publish;
     private string filter = "All";
     private string protocol = "subsonic";
@@ -64,11 +66,15 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
                 ImmutableHashSet<string>.Empty, "Lossless", .07)
             { Preferences = new(filter) }));
         gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>()))
-            .Returns((ProtocolExecutionContext _, string _, string id) => Task.FromResult(songs.GetValueOrDefault(id)));
+            .Returns((ProtocolExecutionContext _, string _, string id) => Task.FromResult(songs.GetValueOrDefault(id) is { Title: not "Unavailable" } song ? song : null));
         gateway.Setup(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>()))
             .Returns((ProtocolExecutionContext _, Song song) => Task.FromResult(song.Title != "Unavailable"));
         gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), It.IsAny<int>()))
             .ReturnsAsync([]);
+        gateway.Setup(item => item.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>()))
+            .Returns((ProtocolExecutionContext _, string _, string id) => Task.FromResult(songs.GetValueOrDefault(id) is { Title: not "Unavailable" } song ? song : null));
+        gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<allstarr.Core.Capabilities.ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["deezer"]);
         tags = new(factory, clock);
         taste = new(factory, tags, clock);
         service = NewService();
@@ -77,7 +83,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
     private PersonalMixService NewService() => new(factory, clock, tags, taste,
         new MusicMixService(gateway.Object), gateway.Object,
         new NewReleasesService(factory, clock, new Mock<IProviderRouter>().Object, settings.Object),
-        settings.Object, policies.Object, access.Object);
+        settings.Object, policies.Object, access.Object, tagSources: tagSources);
 
     private ProtocolExecutionContext Context(Guid user) => new(Enum.Parse<ProtocolKind>(protocol, true), "main", user.ToString(),
         new(user, protocol, "main", user.ToString(), "Listener", user == owner), "mix-test", clock.UtcNow.AddMinutes(5), default);
@@ -136,7 +142,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         await Seed();
         var mixes = await service.GenerateAsync(owner, token: default);
         var repeat = mixes.Single(item => item.Kind == "on-repeat");
-        Assert.Equal(30, repeat.Songs.Count);
+        Assert.Equal(40, repeat.Songs.Count);
         Assert.All(repeat.Songs, item => { Assert.Equal(repeat.Id, item.MixId); Assert.Equal(repeat.Generation, item.Generation); Assert.NotEmpty(item.Reason); });
         Assert.Empty(await service.PublishedAsync(Context(owner), default));
         Assert.All(await NewService().ListAsync(other, token: default), item => Assert.Empty(item.Songs));
@@ -315,8 +321,8 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         Assert.NotNull(firstModel);
         Assert.Equal(first.Generation, firstModel.MixCover!.Generation);
         Assert.Equal(first.Id.ToString(), firstModel.MixCover.Id);
-        Assert.Equal(30, firstModel.Tracks.Count);
-        await AssertProtocolCount(virtualization, firstModel.ProtocolId, 30);
+        Assert.Equal(40, firstModel.Tracks.Count);
+        await AssertProtocolCount(virtualization, firstModel.ProtocolId, 40);
         clock.UtcNow += TimeSpan.FromMinutes(16);
         songs["0"].Title = "Unavailable";
         await service.GenerateAsync(owner, first.Id);
@@ -324,7 +330,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         Assert.Equal(firstModel.ProtocolId, second!.ProtocolId);
         Assert.NotEqual(MixCoverImageService.GetTag(firstModel.MixCover!), MixCoverImageService.GetTag(second.MixCover!));
         Assert.DoesNotContain(second.Tracks, item => item.BackendItemId == songs["0"].Id);
-        await AssertProtocolCount(virtualization, second.ProtocolId, 30);
+        await AssertProtocolCount(virtualization, second.ProtocolId, 39);
         Assert.Single(await virtualization.ListAsync(Context(owner)), item => item.LinkId == first.Id);
         Assert.Null(await virtualization.ReadAsync(Context(other), firstModel.ProtocolId));
         await service.SetInAppsAsync(owner, first.Id, false, default);
@@ -390,7 +396,8 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
                 ExternalId = index.ToString(),
                 ExternalProvider = "deezer",
                 Title = "New " + index,
-                Artist = "New artist " + index,
+                Artist = "Artist " + (index % 40),
+                Genre = index % 2 == 0 ? "rock" : "soul",
                 CanonicalRecordingId = id,
                 ExplicitContentLyrics = 0
             });
@@ -398,6 +405,13 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         await db.SaveChangesAsync();
         foreach (var song in picks) await tags.SaveAsync(SharedTagStore.RecordingKey(song.CanonicalRecordingId!.Value),
             [new("provider", [new(int.Parse(song.ExternalId!) % 2 == 0 ? "rock" : "soul")], clock.UtcNow)], [], false, default);
+        gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 0, 0, 5, "deezer"))
+            .Returns((ProtocolExecutionContext _, string query, int _, int _, int _, string? _) => Task.FromResult(new allstarr.Models.Search.SearchResult
+            { Artists = [new Artist { Name = query, ExternalId = query, ExternalProvider = "deezer" }] }));
+        gateway.Setup(item => item.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), It.IsAny<int>()))
+            .ReturnsAsync(Enumerable.Range(0, 40).Select(i => new Artist { Name = "Artist " + i, ExternalId = "Artist " + i, ExternalProvider = "deezer" }).ToList());
+        gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), It.IsAny<int>()))
+            .Returns((ProtocolExecutionContext _, string _, string query, int _) => Task.FromResult(allstarr.Core.Capabilities.ProviderOutcome<IReadOnlyList<Song>>.Success(picks.Where(song => song.Artist == query).ToArray())));
         gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), It.IsAny<int>()))
             .Returns((ProtocolExecutionContext _, string _, string id, int _) => Task.FromResult(picks.Skip(int.Parse(id)).Take(50).ToList()));
     }
@@ -411,7 +425,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         Assert.Equal(2, mixes.Length);
         var ids = mixes.SelectMany(item => item.Songs).Select(item => item.Song.Id).ToArray();
         Assert.Equal(ids.Length, ids.Distinct().Count());
-        Assert.All(mixes, mix => Assert.Equal(mix.Songs.Count * .7, mix.Songs.Count(item => !item.Song.Title.StartsWith("New", StringComparison.Ordinal))));
+        Assert.All(mixes, mix => Assert.InRange(mix.Songs.Count(item => !item.Song.Title.StartsWith("New", StringComparison.Ordinal)), 1, 25));
         clock.UtcNow += TimeSpan.FromMinutes(16);
         var refreshed = (await service.GenerateAsync(owner, mixes[0].Id)).Where(item => item.Kind.StartsWith("daily-", StringComparison.Ordinal)).ToArray();
         var next = refreshed.SelectMany(item => item.Songs).Select(item => item.Song.Id).ToArray();
@@ -439,7 +453,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
         var first = (await service.GenerateAsync(owner)).Single(item => item.Kind == "discover-weekly");
-        Assert.Equal(30, first.Songs.Count);
+        Assert.Equal(50, first.Songs.Count);
         Assert.DoesNotContain(first.Songs, item => item.Song.ExternalId == "1000");
         clock.UtcNow += TimeSpan.FromDays(7);
         var next = (await service.GenerateAsync(owner, first.Id)).Single(item => item.Id == first.Id);
@@ -449,24 +463,13 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
     [Fact]
     public async Task HistoryRadar_UsesRecentAlbumsFromFrequentlyPlayedArtists()
     {
-        await Seed();
-        gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Artist 0", 0, 0, 1, null))
-            .ReturnsAsync(new allstarr.Models.Search.SearchResult
-            {
-                Artists = [new Artist { Id = "ext-deezer-artist-artist",
-                Name = "Artist 0", ExternalProvider = "deezer", ExternalId = "artist" }]
-            });
-        gateway.Setup(item => item.GetArtistAlbumsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "artist"))
-            .ReturnsAsync([new Album { Id = "fresh", ExternalId = "fresh", ReleaseDate = "2026-10-28" },
-                new Album { Id = "old", ExternalId = "old", ReleaseDate = "2026-09-01" },
-                new Album { Id = "future", ExternalId = "future", ReleaseDate = "2026-11-01" }]);
-        gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "fresh"))
-            .ReturnsAsync(new Album
-            {
-                Songs = [new Song { Id = "ext-deezer-song-new", ExternalProvider = "deezer", ExternalId = "new",
-                Title = "New release", Artist = "Artist 0", ExplicitContentLyrics = 0 }]
-            });
-        var radar = (await service.GenerateAsync(owner)).Single(item => item.Kind == "release-radar");
+        await Seed(plays: 10);
+        gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "Artist 0", 100))
+            .ReturnsAsync(allstarr.Core.Capabilities.ProviderOutcome<IReadOnlyList<Song>>.Success([
+                new Song { Id = "ext-deezer-song-new", ExternalProvider = "deezer", ExternalId = "new", AlbumId = "fresh",
+                    Title = "New release", Artist = "Artist 0", ExplicitContentLyrics = 0, ReleaseDate = "2026-10-28" }]));
+        var radarId = (await service.ListAsync(owner)).Single(item => item.Kind == "release-radar").Id;
+        var radar = (await service.GenerateAsync(owner, radarId)).Single(item => item.Kind == "release-radar");
         Assert.Equal("New release", Assert.Single(radar.Songs).Song.Title);
         await taste.SetUseImportedHistoryAsync(owner, false);
         Assert.Empty((await service.GenerateAsync(owner)).Single(item => item.Kind == "release-radar").Songs);
@@ -487,16 +490,16 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
             }
             await db.SaveChangesAsync();
         }
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 3))
-            .Returns((ProtocolExecutionContext _, string query, int _) => Task.FromResult<IReadOnlyList<Song>>(
-                songs.Values.Where(song => query == song.Title + " " + song.Artist).ToArray()));
+        gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), 3))
+            .Returns((ProtocolExecutionContext _, string _, string query, int _) => Task.FromResult(allstarr.Core.Capabilities.ProviderOutcome<IReadOnlyList<Song>>.Success(
+                songs.Values.Where(song => query == song.Title + " " + song.Artist).ToArray())));
         var repeat = (await service.GenerateAsync(owner)).Single(item => item.Kind == "on-repeat");
         Assert.Equal(10, repeat.Songs.Count);
         Assert.All(repeat.Songs, item => Assert.StartsWith("ext-deezer-song-", item.Song.Id));
     }
 
     [Fact]
-    public async Task Rewind_IncludesOldHeartsWithoutHeavyPlayCounts()
+    public async Task Rewind_HeartsDoNotReplaceFiveCompletedPlays()
     {
         await Seed(count: 1, plays: 1, age: 200);
         var options = new DurableJobOptions();
@@ -533,7 +536,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
         var rewind = (await service.GenerateAsync(owner)).Single(item => item.Kind == "rewind");
-        Assert.Equal(songs["0"].Id, Assert.Single(rewind.Songs).Song.Id);
+        Assert.Empty(rewind.Songs);
     }
 
     [Fact]
@@ -575,13 +578,13 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         await taste.PutNudgeAsync(owner, new("artist", "Artist 3", "never"));
         await using (var db = factory.CreateDbContext())
         {
-            db.ListeningEvents.Add(new()
+            for (var skip = 0; skip < 3; skip++) db.ListeningEvents.Add(new()
             {
                 Id = Guid.NewGuid(),
                 OwnerUserId = owner,
                 Protocol = protocol,
                 BackendInstanceId = "main",
-                OccurrenceKey = "skip",
+                OccurrenceKey = "skip-" + skip,
                 TrackReference = songs["10"].Id,
                 CanonicalRecordingId = songs["10"].CanonicalRecordingId,
                 State = state,
@@ -626,6 +629,9 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
             JellyfinAccessToken = "",
             ExpiresAtUtc = clock.UtcNow.AddHours(1).UtcDateTime
         };
+        var options = new DurableJobOptions();
+        http.RequestServices = new Microsoft.Extensions.DependencyInjection.ServiceCollection()
+            .AddSingleton(new DurableJobQueue(factory, options, new(options), clock)).BuildServiceProvider();
         return new(service, settings.Object, factory, clock, new()) { ControllerContext = new() { HttpContext = http } };
     }
 

@@ -1,14 +1,13 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
-  import { ApiError, mixes, taste, type MixDetail, type MixSong } from "$lib/api";
-  import { mixDescription, mixExplanation, mixName, mixNextStep, shortReadiness } from "$lib/for-you";
+  import { ApiError, activityWork, mixes, taste, type MixDetail, type MixSong } from "$lib/api";
+  import { mixDescription, mixExclusions, mixName, mixNextStep, shortReadiness } from "$lib/for-you";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button } from "$lib/components/ui/button";
   import { Dialog } from "$lib/components/ui/dialog";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
-  import { Popover } from "$lib/components/ui/popover";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import MixCover from "$lib/components/MixCover.svelte";
   import MixAppState from "$lib/components/MixAppState.svelte";
@@ -18,9 +17,10 @@
   import UiIcon from "$lib/components/UiIcon.svelte";
   let { id, administrator = false }: { id: string; administrator?: boolean } = $props();
   let detail = $state<MixDetail | null>(null), error = $state(""), busy = $state(false), throttled = $state(false);
-  let deleteOpen = $state(false), aboutOpen = $state(false);
-  let aboutAnchor = $state<HTMLButtonElement | null>(null);
+  let deleteOpen = $state(false);
   let disposed = false, request = 0, currentId = "", pending: Promise<void> | null = null;
+  let refreshJob = $state(""), refreshToast: number | undefined;
+  let checkingJob = false, checkAgain = false;
   let throttleTimer: ReturnType<typeof setTimeout> | undefined;
   const nextStep = $derived(mixNextStep(detail?.mix.kind ?? "", detail?.mix.readiness.message ?? "", administrator));
   const close = () => { void goto("#/for-you", { keepFocus: true, noScroll: true }); };
@@ -40,7 +40,7 @@
     })();
     return pending;
   }
-  $effect(() => { id; detail = null; aboutOpen = false; deleteOpen = false; throttled = false; clearTimeout(throttleTimer); void load(); });
+  $effect(() => { id; detail = null; deleteOpen = false; throttled = false; clearTimeout(throttleTimer); void load(); });
   async function perform(operation: (target: string) => Promise<unknown>) {
     const target = id;
     if (busy) return;
@@ -51,8 +51,14 @@
   }
   async function refresh() {
     await perform(async target => {
-      try { await mixes.refresh(target); }
+      try {
+        refreshToast = toast.progress("Refreshing this mix...");
+        refreshJob = (await mixes.refresh(target)).jobId;
+        await checkRefresh();
+      }
       catch (cause) {
+        if (refreshToast !== undefined) toast.dismiss(refreshToast);
+        refreshJob = "";
         if (cause instanceof ApiError && cause.status === 429) {
           if (id === target && !disposed) {
             throttled = true;
@@ -62,6 +68,25 @@
         } else throw cause;
       }
     });
+  }
+  async function checkRefresh() {
+    if (!refreshJob) return;
+    if (checkingJob) { checkAgain = true; return; }
+    checkingJob = true;
+    try {
+      const status = await activityWork.detail(refreshJob);
+      if (disposed || !refreshJob) return;
+      if (["Failed", "Cancelled"].includes(status.job.state)) throw new Error("Refresh failed");
+      if (status.job.state === "Succeeded") {
+        refreshJob = "";
+        await pending; await load();
+        if (error) throw new Error("Refresh could not be loaded");
+        if (refreshToast !== undefined) toast.update(refreshToast, { message: "Your mix has refreshed.", busy: false, kind: "success" });
+      }
+    } catch {
+      refreshJob = "";
+      if (!disposed && refreshToast !== undefined) toast.update(refreshToast, { message: "Your mix could not be refreshed. Try again.", busy: false, kind: "error" });
+    } finally { checkingJob = false; if (checkAgain) { checkAgain = false; void checkRefresh(); } }
   }
   async function feedback(row: MixSong, kind: "moreLikeThis" | "notForMe" | "neverArtist", today = false) {
     await perform(async target => {
@@ -89,8 +114,11 @@
   }
   const scheduler = createRefreshScheduler(async () => { if (!busy) await load(); }, 250, 30_000);
   onMount(() => {
-    const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
-    return () => { disposed = true; request++; clearTimeout(throttleTimer); unsubscribe(); scheduler.cancel(); };
+    const unsubscribe = liveUpdates.subscribe(event => {
+      if (!event.reason && refreshJob && (!event.resourceId || event.resourceId === refreshJob)) void checkRefresh();
+      scheduler.schedule();
+    });
+    return () => { disposed = true; request++; clearTimeout(throttleTimer); unsubscribe(); scheduler.cancel(); if (refreshToast !== undefined) toast.dismiss(refreshToast); };
   });
 </script>
 <Dialog.Root open={true} onOpenChange={open => { if (!open) close(); }}>
@@ -102,14 +130,35 @@
         <div class="mix-heading"><div class="mix-cover"><MixCover mix={detail.mix} songs={detail.songs} /></div><p>{detail.mix.updatedAt ? `Updated ${new Date(detail.mix.updatedAt).toLocaleString(undefined, { weekday: "long", hour: "numeric", minute: "2-digit" })} · ` : ""}{detail.songs.length} songs</p></div>
         <div class="mix-actions">
           <MixAppState added={detail.mix.inApps} allowed={detail.mix.appsAllowed} {busy} onadd={() => void perform(target => mixes.add(target))} />
-          {#if detail.mix.kind !== "custom" && detail.mix.kind !== "external"}<span title={throttled ? "Wait 15 minutes before refreshing again" : "Refresh this mix"}><RefreshButton label="Refresh mix" variant="secondary" disabled={busy || throttled} onrefresh={refresh} /></span>{/if}
-          <DropdownMenu.Root><DropdownMenu.Trigger bind:ref={aboutAnchor} class="icon-button" aria-label="Mix actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu mix-menu" align="end"><DropdownMenu.Item class="bits-menu-item" onSelect={() => setTimeout(() => { if (!disposed) aboutOpen = true; }, 0)}>About this mix</DropdownMenu.Item>{#if detail.mix.kind === "custom"}<DropdownMenu.Item class="bits-menu-item" onSelect={() => deleteOpen = true}>Delete mix</DropdownMenu.Item>{/if}</DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
+          {#if detail.mix.kind !== "custom" && detail.mix.kind !== "external"}<span title={throttled ? "Wait 15 minutes before refreshing again" : "Refresh this mix"}><RefreshButton label="Refresh mix" variant="secondary" disabled={busy || throttled || Boolean(refreshJob)} onrefresh={refresh} /></span>{/if}
+          {#if detail.mix.kind === "custom"}<DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label="Mix actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu mix-menu" align="end"><DropdownMenu.Item class="bits-menu-item" onSelect={() => deleteOpen = true}>Delete mix</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/if}
         </div>
         {#if !detail.mix.appsAllowed}<p class="muted" id="mix-apps-hint">Your admin hasn't allowed adding mixes.</p>{/if}
+        <details class="recipe settings-card">
+          <summary>How this mix is made</summary>
+          {#if detail.mix.evidence}
+            {@const evidence = detail.mix.evidence}
+            <div class="recipe-copy">
+              <p>{evidence.recipe.sentence}</p>
+              {#if detail.mix.kind !== "external" && detail.mix.kind !== "custom"}
+                <p>{evidence.livePlays.toLocaleString()} plays in Allstarr · {evidence.importedPlays.toLocaleString()} imported{#if evidence.listeningFrom && evidence.listeningTo}{" · "}{new Date(evidence.listeningFrom).toLocaleDateString()}–{new Date(evidence.listeningTo).toLocaleDateString()}{/if}</p>
+              {/if}
+              {#if evidence.historicalWindow}<p>Only {evidence.primaryPlays} plays in Allstarr in the last 30 days, so this also uses {evidence.fallbackPlays} imported plays from {evidence.historicalWindow}.</p>{/if}
+              <p>Looked at {evidence.candidates.toLocaleString()} songs, {evidence.qualified.toLocaleString()} fit, {evidence.shown} in this mix.</p>
+              {#if detail.mix.kind !== "external"}<p>{evidence.fromMusic} from your music, {evidence.fromServices} from your services, at most {evidence.recipe.artistLimit} per artist.</p>{/if}
+              {#if evidence.releaseInboxEntries != null}<p>{evidence.releaseInboxEntries} entries in your release inbox at generation.</p>{/if}
+              <p>{evidence.recipe.filters}</p><p>{evidence.recipe.order}</p>
+              <p>{evidence.recipe.cadence}. {evidence.recipe.shortfall}</p>
+              {#if Object.keys(evidence.excluded).length}<p>Left out: {mixExclusions(evidence.excluded)}.</p>{/if}
+              {#if evidence.shortfall && (detail.mix.readiness.ready || evidence.shortfall !== detail.mix.readiness.message)}<p>{evidence.shortfall}</p>{/if}
+              {#if evidence.providerFailures}<p>{evidence.providerFailures} service lookups failed.</p>{/if}
+            </div>
+          {:else}<p class="recipe-copy">Refresh this mix to see its recipe details.</p>{/if}
+        </details>
         {#if !detail.mix.readiness.ready}<div class="settings-card explanation"><p>{detail.mix.readiness.message}</p><Button variant="secondary" href={nextStep.href}>{nextStep.label}</Button></div>
         {/if}
         {#if detail.songs.length}<MixSongs songs={detail.songs} {busy} onfeedback={detail.mix.kind === "external" ? undefined : feedback} />{/if}
-        <Popover.Root bind:open={aboutOpen}><Popover.Portal><Popover.Content customAnchor={aboutAnchor} class="bits-menu mix-about" sideOffset={8} onCloseAutoFocus={event => { event.preventDefault(); aboutAnchor?.focus(); }}><p>{mixExplanation(detail.mix.kind)}</p><Popover.Close class="icon-button" aria-label="Close explanation">×</Popover.Close></Popover.Content></Popover.Portal></Popover.Root>
+
       {/if}
     </div>
   </Dialog.Content></Dialog.Portal>
@@ -126,6 +175,9 @@
   #mix-apps-hint { font-size: var(--text-xs); }
   .explanation { padding: var(--surface-gutter); display: grid; gap: var(--space-3); margin-top: var(--space-4); }
   :global(.mix-menu .bits-menu-item) { min-height: 44px; }
-  :global(.mix-about) { display: flex; align-items: start; gap: var(--space-3); max-width: min(360px, calc(100vw - 32px)); padding: var(--space-4); }
+  .recipe { margin-top: var(--space-4); padding-inline: var(--surface-gutter); }
+  .recipe summary { min-height: 44px; align-content: center; cursor: pointer; font-size: var(--text-sm); }
+  .recipe-copy { font-size: var(--text-sm); color: var(--color-ink-muted); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; padding-bottom: var(--space-3); }
+  .recipe-copy p { margin-block: var(--space-2); }
   @media (max-width: 600px) { .mix-cover { width: 120px; flex-basis: 120px; } }
 </style>

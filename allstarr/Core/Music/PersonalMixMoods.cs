@@ -4,29 +4,46 @@ namespace allstarr.Core.Music;
 
 internal static class PersonalMixMoods
 {
-    internal const string RecipeVersion = "moods-v1";
+    internal const string RecipeVersion = "moods-v2";
     internal static readonly string[] Kinds = ["chill", "focus", "workout", "party", "sleep"];
     internal static MixReadiness Readiness(int count) => count >= 25 ? new(true, "Ready") :
         new(false, $"Add about {25 - count} more qualifying analyzed or tagged songs.");
-    internal static string Reason(string kind, MixCandidate row) => row.Source == "audiomuse"
-        ? kind switch { "workout" => "Energetic sound", "party" => "Party sound", _ => "Calm sound" } : "Tagged " + kind;
+    internal static string Reason(string kind, MixCandidate row, string? providerName = null) => row.Source == "audiomuse"
+        ? kind switch { "workout" => "Energetic sound", "party" => "Party sound", _ => "Calm sound" } : row.ChartTags?.FirstOrDefault(tag => Wanted(kind).Contains(tag)) is { } chartTag ? $"Last.fm tags this {chartTag} · from {providerName ?? "your music service"}"
+        : "Tagged " + (row.Tags.Keys.FirstOrDefault(tag => TagScore(kind, new Dictionary<string, double> { [tag] = 1 }) != null) ?? kind) + (row.ProviderFilled ? " · from " + (providerName ?? "your music service") : "");
 
     internal static IReadOnlyList<MixCandidate> Qualify(string kind, IReadOnlyList<MixCandidate> rows,
         IReadOnlyDictionary<string, AudioMuseScores> features)
     {
-        var lowCoverage = features.Count < Math.Min(150, rows.Count(row => row.Song.IsLocal)) * .5 || features.Count == 0;
         var result = new List<MixCandidate>();
         foreach (var row in rows)
         {
             var measured = row.Song.IsLocal && features.TryGetValue(row.Song.Id, out _);
             var score = measured ? Score(kind, features[row.Song.Id]) :
-                row.Song.IsLocal || lowCoverage ? TagScore(kind, row.Tags) : null;
-            if (score is { } value) result.Add(row with { Score = row.Score + value, Source = measured ? "audiomuse" : "tags" });
+                TagScore(kind, row.Tags);
+            if (score != null) result.Add(row with { Source = measured ? "audiomuse" : row.Source });
         }
         return result;
     }
 
-    // Version one: feature thresholds qualify; optional measurements refine the ordering.
+    internal static string[] Wanted(string kind) => kind switch
+    {
+        "chill" => ["chill", "mellow", "calm", "dreamy"],
+        "focus" => ["ambient", "classical", "electronic", "post-rock"],
+        "sleep" => ["calm", "ambient", "mellow", "dreamy"],
+        "workout" => ["energetic", "intense", "angry", "metal", "hard rock", "techno"],
+        _ => ["dance", "disco", "house", "funk", "happy", "uplifting"]
+    };
+    internal static string Rule(string kind) => "Analyzed library songs require " + (kind switch
+    {
+        "chill" => "relaxed ≥ 0.6, happy ≥ 0.5; energy 0.2–0.7 when known.",
+        "focus" => "relaxed ≥ 0.6, aggressive ≤ 0.4.",
+        "sleep" => "relaxed ≥ 0.65, sad ≥ 0.5; energy ≤ 0.35 when known.",
+        "workout" => "aggressive and danceable ≥ 0.6; energy ≥ 0.6 and tempo 120–170 when known.",
+        _ => "party and danceable ≥ 0.6, happy ≥ 0.5."
+    }) + " Otherwise, one of these tags: " + string.Join(", ", Wanted(kind)) + ".";
+
+    // Feature thresholds qualify; missing optional measurements stay unknown.
     internal static double? Score(string kind, AudioMuseScores s)
     {
         var tags = s.Tags ?? new Dictionary<string, double>();
@@ -46,16 +63,9 @@ internal static class PersonalMixMoods
         };
     }
 
-    private static double? TagScore(string kind, IReadOnlyDictionary<string, double> tags)
+    internal static double? TagScore(string kind, IReadOnlyDictionary<string, double> tags)
     {
-        string[] wanted = kind switch
-        {
-            "chill" => ["chill", "mellow", "calm", "dreamy"],
-            "focus" => ["ambient", "classical", "electronic", "post-rock"],
-            "sleep" => ["calm", "ambient", "mellow", "dreamy"],
-            "workout" => ["energetic", "intense", "angry", "metal", "hard rock", "techno"],
-            _ => ["dance", "disco", "house", "funk", "happy", "uplifting"]
-        };
+        var wanted = Wanted(kind);
         var score = wanted.Sum(tag => Math.Max(0, tags.GetValueOrDefault(tag)));
         return score > 0 ? score : null;
     }

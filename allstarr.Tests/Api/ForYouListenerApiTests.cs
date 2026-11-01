@@ -59,6 +59,11 @@ public sealed partial class PersonalMixServiceTests
 
         clock.UtcNow += TimeSpan.FromMinutes(16);
         await ReadSuccess(await client.PostAsync($"/api/admin/mixes/{own.Id}/refresh", null));
+        Assert.Equal(own.Generation, (await service.GetAsync(other, own.Id)).Generation);
+        var queue = host.Services.GetRequiredService<DurableJobQueue>();
+        var claim = await queue.ClaimNextAsync("mix-refresh-test", [PersonalMixService.JobType]);
+        Assert.NotNull(claim);
+        await queue.CompleteAsync(claim, await new PersonalMixJobHandler(service).ExecuteAsync(new(claim, host.Services), default));
         using var refreshed = await client.GetAsync(path);
         Assert.Equal(HttpStatusCode.OK, refreshed.StatusCode);
         Assert.NotEqual(first.Headers.ETag, refreshed.Headers.ETag);

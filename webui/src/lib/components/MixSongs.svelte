@@ -1,7 +1,7 @@
 <script lang="ts">
   import { fade } from "svelte/transition";
   import type { MixSong } from "$lib/api";
-  import { artworkUrl, reasonLabel } from "$lib/for-you";
+  import { artworkUrl } from "$lib/for-you";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import { Badge } from "$lib/components/ui/badge";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
@@ -12,7 +12,7 @@
   {#each songs as row, index (`${index}:${row.song.id}`)}
     <li out:fade={{ duration: typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 160 }}>
       <MediaArtwork url={artworkUrl(row.song.id)} />
-      <div class="song-info"><strong>{row.song.title}</strong><small>{row.song.artist}{row.song.album ? ` · ${row.song.album}` : ""}</small><Badge tone="neutral" class="reason-chip">{reasonLabel(row.reason)}</Badge></div>
+      <div class="song-info"><strong>{row.song.title}</strong><small>{row.song.artist}{row.song.album ? ` · ${row.song.album}` : ""}</small><Badge tone="neutral" class="reason-chip">{row.reason}</Badge></div>
       {#if onfeedback}<DropdownMenu.Root>
         <DropdownMenu.Trigger class="icon-button" disabled={busy} aria-label={`Actions for ${row.song.title}`}><UiIcon name="more" /></DropdownMenu.Trigger>
         <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu song-menu" sideOffset={6} align="end">

@@ -40,7 +40,7 @@ public sealed class PersonalMixRulesTests
         var rows = new[] { Candidate(1, plays: 5, age: 190), Candidate(2, plays: 2, age: 200),
             Candidate(3, plays: 10, age: 179), Candidate(4, plays: 10, age: 200) with { EarlySkipped = true },
             Candidate(5, plays: 1, age: 200) with { Loved = true } };
-        Assert.Equal(["0001", "0005"], PersonalMixRules.Select("rewind", rows, Now, []).Select(item => item.Song.Id));
+        Assert.Equal(["0001"], PersonalMixRules.Select("rewind", rows, Now, []).Select(item => item.Song.Id));
     }
 
     [Fact]
@@ -68,29 +68,15 @@ public sealed class PersonalMixRulesTests
     }
 
     [Fact]
-    public void Clusters_AreDeterministicCoherentAndNamedFromTagsAndArtists()
-    {
-        var rows = Enumerable.Range(1, 60).Select(id => Candidate(id, id <= 30 ? "rock" : "soul")).ToArray();
-        var first = PersonalMixRules.Cluster(rows);
-        var second = PersonalMixRules.Cluster(rows.Reverse().ToArray());
-        Assert.Equal(2, first.Count);
-        Assert.Equal(first.Select(group => string.Join(',', group.Select(item => item.Song.Id))),
-            second.Select(group => string.Join(',', group.Select(item => item.Song.Id))));
-        Assert.All(first, group => Assert.Single(group.SelectMany(item => item.Tags.Keys).Distinct()));
-        Assert.Equal("rock · Artist 1, Artist 10, Artist 11", PersonalMixRules.ClusterName(first[0]));
-        Assert.Empty(PersonalMixRules.Cluster([Candidate(1) with { Tags = new Dictionary<string, double>() }]));
-    }
-
-    [Fact]
-    public void Daily_UsesSeventyThirtyWithoutDuplicatingSongsOrArtists()
+    public void Daily_UsesEqualTiersWithoutDuplicatingSongsOrArtists()
     {
         var rows = Enumerable.Range(1, 100).Select(id => Candidate(id, plays: id <= 70 ? 1 : 0)).ToArray();
         var selected = PersonalMixRules.Select("daily-1", rows, Now, []);
         Assert.Equal(50, selected.Count);
-        Assert.Equal(35, selected.Count(item => item.Plays > 0));
-        Assert.Equal(15, selected.Count(item => item.Plays == 0));
+        Assert.Equal(25, selected.Count(item => item.Plays > 0));
+        Assert.Equal(25, selected.Count(item => item.Plays == 0));
         Assert.Equal(50, selected.Select(item => item.Song.Id).Distinct().Count());
-        Assert.Empty(PersonalMixRules.Select("daily-1", rows.Where(item => item.Plays > 0).ToArray(), Now, []));
+        Assert.Equal(25, PersonalMixRules.Select("daily-1", rows.Where(item => item.Plays > 0).ToArray(), Now, []).Count);
     }
 
     [Fact]
@@ -99,21 +85,8 @@ public sealed class PersonalMixRulesTests
         var rows = Enumerable.Range(1, 100).Select(id => Candidate(id, plays: 0) with { Loved = id <= 70 }).ToArray();
         var daily = PersonalMixRules.Select("daily-1", rows, Now, []);
         Assert.Equal(50, daily.Count);
-        Assert.Equal(35, daily.Count(item => item.Loved));
+        Assert.Equal(25, daily.Count(item => item.Loved));
         Assert.DoesNotContain(PersonalMixRules.Select("discover-weekly", rows, Now, []), item => item.Loved);
-        Assert.NotEmpty(PersonalMixRules.Cluster(rows));
     }
 
-    [Theory]
-    [InlineData("on-repeat", 20, 0, false, "10 more")]
-    [InlineData("daily-1", 150, 0, true, "50 more")]
-    [InlineData("discover-weekly", 200, 0, false, "recommendations")]
-    [InlineData("release-radar", 0, 0, false, "Follow")]
-    [InlineData("rewind", 300, 0, false, "six months")]
-    public void Readiness_ExplainsMissingRequirements(string kind, int plays, int recent, bool source, string message)
-    {
-        var readiness = PersonalMixRules.Readiness(kind, plays, kind == "on-repeat" ? plays : recent, source, false, false);
-        Assert.False(readiness.Ready);
-        Assert.Contains(message, readiness.Message);
-    }
 }

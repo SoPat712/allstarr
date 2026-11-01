@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Enrichment;
+using allstarr.Core.Capabilities;
 using allstarr.Core.AudioMuse;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
@@ -28,6 +29,7 @@ public sealed record PersonalMix(Guid Id, string Kind, string Name, string Descr
     public string? RecipeVersion { get; init; }
     public string? SeedName { get; init; }
     public string? CoverTag { get; init; }
+    public MixRecipeEvidence? Evidence { get; init; }
 }
 public sealed record MixFeedback(string SongId, string Kind, bool TodayOnly = false);
 internal sealed class PersonalMixDocument
@@ -42,7 +44,7 @@ internal sealed class PersonalMixDocument
 public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock,
     SharedTagStore tags, TasteService taste, MusicMixService radio, IProtocolProviderGateway providers,
     NewReleasesService releases, IDurableRuntimeSettings settings, IEffectiveProviderPolicyResolver policies,
-    IBackendLibraryAccessResolver libraryAccess, AudioMuseDiscovery? audioMuse = null)
+    IBackendLibraryAccessResolver libraryAccess, AudioMuseDiscovery? audioMuse = null, SharedTagSources? tagSources = null, IProviderRegistry? registry = null, LastFmSimilarTracks? similarTracks = null)
 {
     public const string PublishKey = "Mixes:PublishToApps", JobType = "mixes.refresh";
     private const string ResourceKind = "personal-mixes";
@@ -60,7 +62,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     private HashSet<Guid> RecentHistory(IReadOnlyList<ListeningEventRecord> events)
     {
         var live = events.Where(item => item.SourceKind == "protocol" && item.State == ListeningEventState.Completed &&
-            item.ListenedAt >= clock.UtcNow.AddDays(-30)).ToArray();
+            item.ListenedAt >= clock.UtcNow.AddDays(-MixRecipes.RecentDays)).ToArray();
         var result = live.Select(item => item.Id).ToHashSet();
         if (live.Length >= PersonalMixRules.RepeatPlays) return result;
         var imports = events.Where(item => item.SourceKind != "protocol" && item.State == ListeningEventState.Completed &&
@@ -115,36 +117,10 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 };
             }
         if (publishedOnly) return document;
-        var missing = PersonalMixRules.Kinds.Where(kind => !document.Mixes.ContainsKey(kind)).ToArray();
-        var stale = document.Mixes.Values.Where(mix => PersonalMixRules.Kinds.Contains(mix.Kind) && !PersonalMixMoods.Kinds.Contains(mix.Kind) && !mix.Readiness.Ready)
-            .Select(mix => mix.Kind).ToArray();
-        if (missing.Length == 0 && stale.Length == 0) return document;
-        var events = await Events(db, user, await taste.UseImportedHistoryAsync(user.Id, token)).Where(item => item.State == ListeningEventState.Completed && item.ListenedAt <= clock.UtcNow)
-            .Select(item => new ListeningEventRecord
-            {
-                Id = item.Id,
-                Artist = item.Artist,
-                TrackReference = item.TrackReference,
-                ListenedAt = item.ListenedAt,
-                SourceKind = item.SourceKind,
-                State = item.State
-            }).ToArrayAsync(token);
-        var follows = await releases.ListAsync(user.Id, token);
-        var loved = (await db.FavoriteStates.AsNoTracking().Where(item => item.OwnerUserId == user.Id &&
-            item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId && item.IsFavorite)
-            .Select(item => item.ItemId).ToArrayAsync(token)).ToHashSet(StringComparer.Ordinal);
-        var recent = RecentHistory(events).Count;
-        var artists = follows.Count > 0 || events.GroupBy(item => item.Artist).Any(group => group.Count() >= 5);
-        var old = events.GroupBy(item => item.TrackReference).Any(group => (group.Count() >= 5 || loved.Contains(group.Key)) &&
-            group.Max(item => item.ListenedAt) <= clock.UtcNow.AddMonths(-6));
-        foreach (var kind in missing.Concat(stale))
-        {
-            var ready = PersonalMixRules.Readiness(kind, events.Length, recent, false, artists, old);
-            if (PersonalMixMoods.Kinds.Contains(kind)) ready = PersonalMixMoods.Readiness(0);
-            document.Mixes[kind] = document.Mixes.TryGetValue(kind, out var mix) ? mix with { Readiness = ready }
-                : new(Id(user, kind), kind, PersonalMixRules.Name(kind),
-                    PersonalMixMoods.Kinds.Contains(kind) ? "Updated Monday · Music for " + kind : "Made for you", 0, null, ready, false, []);
-        }
+        foreach (var kind in PersonalMixRules.Kinds.Where(kind => !document.Mixes.ContainsKey(kind)))
+            document.Mixes[kind] = new(Id(user, kind), kind, PersonalMixRules.Name(kind),
+                PersonalMixMoods.Kinds.Contains(kind) ? "Updated Monday · Music for " + kind : "Made for you", 0, null,
+                new(false, "Refresh this mix to look for songs from your music and services."), false, []);
         return document;
     }
 
@@ -158,11 +134,9 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             var saved = await RowAsync(db, user, token);
             if (saved == null) return;
             var before = JsonSerializer.Deserialize<PersonalMixDocument>(saved.PayloadJson)!;
-            var fresh = await LoadAsync(db, user, token);
-            var transitioned = before.Mixes.Any(item => PersonalMixRules.Kinds.Contains(item.Key) && !PersonalMixMoods.Kinds.Contains(item.Key) &&
-                (!item.Value.Readiness.Ready || item.Value.Songs.Count == 0) &&
-                fresh.Mixes.TryGetValue(item.Key, out var mix) && mix.Readiness.Ready);
-            if (transitioned)
+            var hasNewHistory = await Events(db, user, await taste.UseImportedHistoryAsync(owner, token))
+                .AnyAsync(item => item.State == ListeningEventState.Completed, token);
+            if (hasNewHistory && before.Mixes.Values.Any(mix => PersonalMixRules.Kinds.Contains(mix.Kind) && (!mix.Readiness.Ready || mix.Songs.Count == 0)))
                 await queue.EnqueueAsync(new DurableJobEnqueueRequest<Guid>(JobType, $"history-resolution:{resolutionId:N}", Guid.Empty, owner), token);
         }
         finally { writes.Release(); }
@@ -250,9 +224,13 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         var allowed = await LibraryTrackAccess.Query(db, context, access).Where(item => ids.Contains(item.BackendItemId))
             .Select(item => item.BackendItemId).ToArrayAsync(token);
         var scores = await taste.ScoreManyAsync(user.Id, candidates.Select(item => item.Song).ToArray(), token);
-        return candidates.Where(item => !scores[item.Song].Blocked && context.Policy!.Includes(item.Song) &&
+        var nudges = (await taste.GetAsync(user.Id, token)).Nudges;
+        bool Nudge(MixCandidate item, string mode) => nudges.Any(nudge => nudge.Mode == mode && (nudge.Kind == "tag" && item.Tags.ContainsKey(nudge.Name) ||
+            nudge.Kind == "artist" && string.Equals(nudge.Name, item.Song.Artist, StringComparison.OrdinalIgnoreCase) ||
+            nudge.Kind == "song" && nudge.Name == PersonalMixRules.Key(item.Song)));
+        return candidates.Where(item => !scores[item.Song].Blocked && !Nudge(item, "never") && context.Policy!.Includes(item.Song) &&
                 (item.Song.IsLocal ? allowed.Contains(item.Song.Id) : context.Policy.IsEnabled(item.Song.ExternalProvider ?? "")))
-            .Select(item => item with { Score = scores[item.Song].Score }).ToArray();
+            .Select(item => item with { Score = scores[item.Song].Score, Less = Nudge(item, "less") }).ToArray();
     }
 
     private async Task<bool> TrySaveAsync(UserRecord capturedUser, PersonalMixDocument document, int version, string revision,
@@ -305,7 +283,12 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
 
     public async Task<PersonalMix> GetAsync(Guid owner, Guid id, CancellationToken token = default)
     {
-        var (user, document, _) = await SnapshotAsync(owner, token);
+        await using var db = await factory.CreateDbContextAsync(token);
+        var user = await UserAsync(db, owner, token);
+        var row = await RowAsync(db, user, token);
+        var saved = row == null ? null : JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!;
+        var document = saved is { AppsOptInVersion: < 3 } ? (await SnapshotAsync(owner, token)).Document
+            : await LoadAsync(db, user, token, saved: row, document: saved);
         var selected = document.Mixes.SingleOrDefault(item => item.Value.Id == id);
         if (selected.Key != null)
             return (await VisibleAsync(owner, new() { Mixes = new() { [selected.Key] = selected.Value } }, token)).Single();
@@ -327,20 +310,25 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             if (!dryRun && timeZoneId != null) await SnapshotAsync(owner, token, timeZoneId);
             await using var db = await factory.CreateDbContextAsync(token);
             var (events, history) = await HistoryAsync(db, user, token);
-            var (fetched, _) = await CandidatesAsync(db, user, events, token);
+            var kinds = requested == null ? PersonalMixRules.Kinds : requested.Kind.StartsWith("daily-", StringComparison.Ordinal)
+                ? PersonalMixRules.Kinds.Where(kind => kind.StartsWith("daily-", StringComparison.Ordinal)).ToArray() : [requested.Kind];
+            var inputs = new GenerationInputs { Kind = kinds.OrderBy(kind => captured.Mixes[kind].Readiness.Ready).First() };
+            var (fetched, _) = await CandidatesAsync(db, user, events, token, inputs: inputs);
             var features = audioMuse == null || requested != null && !PersonalMixMoods.Kinds.Contains(requested.Kind)
                 ? new Dictionary<string, AudioMuseScores>() : await audioMuse.MixFeaturesAsync(await ContextAsync(user, token),
                     fetched.Where(item => item.Song.IsLocal).Select(item => item.Song.Id), token);
-            var follows = await releases.ListAsync(owner, token);
-            var kinds = requested == null ? PersonalMixRules.Kinds : requested.Kind.StartsWith("daily-", StringComparison.Ordinal)
-                ? PersonalMixRules.Kinds.Where(kind => kind.StartsWith("daily-", StringComparison.Ordinal)).ToArray() : [requested.Kind];
+            var styles = TopStyles(fetched).Take(4).ToArray();
+            foreach (var kind in kinds.Where(kind => kind.StartsWith("daily-", StringComparison.Ordinal)))
+                if (captured.Mixes[kind].CoverTag == null && kind[^1] - '1' < styles.Length)
+                    captured.Mixes[kind] = captured.Mixes[kind] with { CoverTag = styles[kind[^1] - '1'] };
+            fetched = await FillAsync(user, fetched, events, inputs, kinds, captured, features, token);
             for (var attempt = 0; attempt < 3; attempt++)
             {
                 var (_, document, version) = await SnapshotAsync(owner, token);
                 var revision = await InputRevisionAsync(db, owner, token);
                 var candidates = await RevalidateAsync(user, fetched, token);
                 if (dryRun && timeZoneId != null) document.TimeZoneId = timeZoneId.Trim();
-                GenerateKinds(document, captured, candidates, events, features, kinds, follows.Count > 0);
+                GenerateKinds(document, captured, candidates, events, features, kinds, inputs);
                 if (await TrySaveAsync(user, document, version, revision, history, token, dryRun)) return document.Mixes.Values.ToArray();
             }
             throw new InvalidOperationException("Listener choices changed while building this mix. Refresh again.");
@@ -348,72 +336,96 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         finally { generations.Release(); }
     }
 
+    private static string[] TopStyles(IReadOnlyList<MixCandidate> rows) => rows.Where(row => row.Plays > 0)
+        .SelectMany(row => row.Tags.Keys.Select(tag => (Tag: tag, row.Plays))).GroupBy(item => item.Tag)
+        .OrderByDescending(group => group.Sum(item => item.Plays)).ThenBy(group => group.Key, StringComparer.Ordinal)
+        .Take(MixRecipes.TopStyles).Select(group => group.Key).ToArray();
+
+    private IReadOnlyList<MixCandidate> RecipePool(string kind, string? style, IReadOnlyList<MixCandidate> rows,
+        IReadOnlyDictionary<string, AudioMuseScores> features, IReadOnlyList<MixCandidate> ingredients)
+    {
+        if (PersonalMixMoods.Kinds.Contains(kind)) return PersonalMixMoods.Qualify(kind, rows.Where(row => !row.ProviderFilled || row.Source == "Last.fm" || row.RelatedTo != null).ToArray(), features);
+        var styles = TopStyles(ingredients);
+        var artists = ingredients.Where(row => row.Plays > 0).Select(row => row.Song.Artist).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return rows.Where(row => kind switch
+        {
+            "on-repeat" => row.RecentPlays > 0 || row.NinetyPlays > 0,
+            "rewind" => row.Plays >= MixRecipes.For(kind).MinimumPlays && row.LastPlayed <= clock.UtcNow.AddMonths(-MixRecipes.For(kind).InactiveMonths),
+            "discover-weekly" => row.RelatedTo != null && row.Tags.Keys.Any(styles.Contains) && !row.Heard && !row.Loved && row.Plays == 0,
+            "release-radar" => row.ReleasedAt >= clock.UtcNow.AddDays(-PersonalMixRules.ReleaseDays) && row.ReleasedAt <= clock.UtcNow,
+            _ when kind.StartsWith("daily-", StringComparison.Ordinal) => style != null && row.Tags.ContainsKey(style) &&
+                (row.Plays > 0 || row.Loved || !row.Heard && artists.Contains(row.Song.Artist)),
+            _ => false
+        }).ToArray();
+    }
+
     private void GenerateKinds(PersonalMixDocument document, PersonalMixDocument captured, IReadOnlyList<MixCandidate> candidates,
-        ListeningEventRecord[] events, IReadOnlyDictionary<string, AudioMuseScores> features, string[] kinds, bool hasFollows)
+        ListeningEventRecord[] events, IReadOnlyDictionary<string, AudioMuseScores> features, string[] kinds, GenerationInputs inputs)
     {
         var completed = events.Where(item => item.State == ListeningEventState.Completed && item.ListenedAt <= clock.UtcNow).ToArray();
+        var recentIds = RecentHistory(completed);
+        var primary = completed.Count(item => item.SourceKind == "protocol" && recentIds.Contains(item.Id));
+        var fallback = completed.Where(item => item.SourceKind != "protocol" && recentIds.Contains(item.Id)).ToArray();
+        var historical = fallback.Length == 0 ? null : $"{fallback.Max(item => item.ListenedAt)?.AddDays(-30):dd MMM yyyy}–{fallback.Max(item => item.ListenedAt):dd MMM yyyy}";
         var previous = document.DiscoverPicks.Where(item => item.Value >= clock.UtcNow.AddDays(-14)).Select(item => item.Key).ToHashSet();
         foreach (var key in document.DiscoverPicks.Where(item => item.Value < clock.UtcNow.AddDays(-14)).Select(item => item.Key).ToArray()) document.DiscoverPicks.Remove(key);
-        var clusters = PersonalMixRules.Cluster(candidates);
         foreach (var kind in kinds)
         {
             var mix = document.Mixes[kind];
-            var ready = PersonalMixRules.Readiness(kind, completed.Length, RecentHistory(completed).Count,
-                candidates.Any(item => item.Source == "radio" || item.Plays == 0 && !item.Loved && item.Tags.Count > 0),
-                hasFollows || completed.GroupBy(item => item.Artist).Any(group => group.Count() >= 5),
-                candidates.Any(item => (item.Plays >= 5 || item.Loved) && item.LastPlayed <= clock.UtcNow.AddMonths(-6)));
+            var style = mix.CoverTag ?? captured.Mixes[kind].CoverTag;
+            var recipe = MixRecipes.For(kind, style);
             var removed = captured.Mixes[kind].Songs.Select(item => PersonalMixRules.Key(item.Song))
                 .Except(mix.Songs.Select(item => PersonalMixRules.Key(item.Song))).ToHashSet(StringComparer.Ordinal);
-            IReadOnlyList<MixCandidate> pool = candidates.Where(item => !removed.Contains(PersonalMixRules.Key(item.Song))).ToArray();
-            var name = PersonalMixRules.Name(kind, mix.CoverTag);
-            var coverTag = mix.CoverTag;
-            var description = kind.StartsWith("daily-", StringComparison.Ordinal) ? mix.Description : "Made for you · " + PersonalMixRules.Name(kind);
-            if (kind.StartsWith("daily-", StringComparison.Ordinal))
-            {
-                var index = kind[^1] - '1';
-                if (index >= clusters.Count || clusters.Count < 2) { pool = []; if (ready.Ready) ready = new(false, "Play more songs with shared tags to form another taste cluster."); }
-                else
-                {
-                    var group = clusters[index];
-                    var cluster = PersonalMixRules.ClusterName(group);
-                    var clusterParts = cluster.Split(" · ", 2);
-                    coverTag ??= clusterParts[0];
-                    name = PersonalMixRules.Name(kind, coverTag);
-                    description = "Made for you · " + coverTag + (clusterParts.Length > 1 ? " · " + clusterParts[1] : "");
-                    pool = pool.Where(item => item.Tags.Count > 0 && clusters.Select((cluster, slot) =>
-                        (Slot: slot, Distance: cluster.Min(other => PersonalMixRules.Distance(item, other))))
-                        .OrderBy(other => other.Distance).ThenBy(other => other.Slot).First().Slot == index).ToArray();
-                }
-            }
+            var pool = RecipePool(kind, style, candidates, features, candidates)
+                .Where(item => !removed.Contains(PersonalMixRules.Key(item.Song)) &&
+                    (kind != "discover-weekly" || !PersonalMixRules.IdentityKeys(item.Song).Any(previous.Contains))).ToArray();
+            var selected = PersonalMixRules.Select(kind, pool, clock.UtcNow, previous);
             var mood = PersonalMixMoods.Kinds.Contains(kind);
-            if (mood) pool = PersonalMixMoods.Qualify(kind, pool, features);
-            var selected = ready.Ready || mood ? PersonalMixRules.Select(kind, pool, clock.UtcNow, previous, mood ? 40 : null) : [];
-            if (mood) { ready = PersonalMixMoods.Readiness(selected.Count); if (!ready.Ready) selected = []; }
-            if (ready.Ready && selected.Count == 0) ready = new(false, kind.StartsWith("daily-", StringComparison.Ordinal)
-                ? "More familiar songs and close new picks are needed for a 70/30 mix." : "No eligible playable songs yet. Try again after more listening or new releases.");
+            var ready = selected.Count >= (mood ? 25 : 1);
+            var shortfall = selected.Count >= recipe.Target ? null : inputs.Playable.Length == 0
+                ? "No music service is enabled; only your eligible music was available."
+                : inputs.Reads >= MixRecipes.GenerationReads || inputs.RecipeReads.GetValueOrDefault(kind) >= MixRecipes.RecipeReads ? "No more songs were found within this mix’s service allowance."
+                : inputs.Failures > 0 ? "Some music services did not respond; eligible songs from the other sources are kept."
+                : "No more songs met this recipe's rules in the available music and services.";
+            if (kind == "release-radar" && selected.Count == 0) shortfall = $"Your release inbox contained {inputs.InboxEntries} entries. No eligible release track was found within this generation's service allowance.";
             var generation = mix.Generation + 1;
             var items = selected.Select(item => new PersonalMixItem(mix.Id, generation, SafeSong(item.Song), item.Source,
-                mood ? PersonalMixMoods.Reason(kind, item) : kind switch
+                mood ? PersonalMixMoods.Reason(kind, item, item.Song.IsLocal ? "your library" : SourceName(item.Song.ExternalProvider)) : kind switch
                 {
-                    "on-repeat" => $"Played {item.RecentPlays} times in 30 days",
-                    "rewind" => "An old favourite you have not played in six months",
-                    "release-radar" => "New release from an artist you follow or play often",
-                    _ => item.Song.TasteReason ?? (item.Plays > 0 || item.Loved ? "A familiar favourite" : "A close new pick")
-                }, item.Score)).ToArray();
+                    "on-repeat" => item.RecentPlays > 0 ? $"Played {item.RecentPlays} times · " + (historical == null ? "last 30 days" : "live last 30 days and imported " + historical)
+                        : $"Played {item.NinetyPlays} times · last 90 days",
+                    "rewind" => $"Played {item.Plays} times, last in {item.LastPlayed:MMM yyyy}",
+                    "release-radar" => $"New from {item.Song.Artist} · released {item.ReleasedAt:dd MMM yyyy}",
+                    "discover-weekly" => $"Similar to {item.RelatedTo} · {item.Tags.Keys.First(styles => TopStyles(candidates).Contains(styles))} · via {SourceName(item.EvidenceSource)}",
+                    _ => (item.Plays > 0 || item.Loved ? "Familiar" : "New to you") + " · " + style
+                }, 0)).ToArray();
+            var excluded = new Dictionary<string, int>(inputs.Excluded);
+            var changed = inputs.Offered - inputs.Excluded.Values.Sum() - candidates.Count;
+            if (changed > 0) excluded["Choices changed during generation"] = changed;
+            excluded["Outside this recipe"] = candidates.Count - pool.Length;
+            excluded["Artist, release, tier and size limits"] = pool.Length - selected.Count;
             document.Mixes[kind] = mix with
             {
-                Name = name,
+                Name = PersonalMixRules.Name(kind, style),
                 Generation = generation,
                 UpdatedAt = clock.UtcNow,
-                Description = mood ? $"Updated Monday · Music for {kind}" : description,
-                CoverTag = coverTag,
-                RecipeVersion = mood ? PersonalMixMoods.RecipeVersion : null,
-                Readiness = ready,
-                Songs = items
+                Description = mood ? $"Updated Monday · Music for {kind}" : "Made for you · " + PersonalMixRules.Name(kind, style),
+                CoverTag = style,
+                RecipeVersion = recipe.Version,
+                Readiness = new(ready, ready ? "Ready" : mood && inputs.Playable.Length == 0 ? PersonalMixMoods.Readiness(selected.Count).Message : shortfall ?? "No eligible songs yet."),
+                Songs = items,
+                Evidence = new(recipe, completed.Count(item => item.SourceKind == "protocol"), completed.Count(item => item.SourceKind != "protocol"),
+                    completed.Select(item => item.ListenedAt).Min(), completed.Select(item => item.ListenedAt).Max(), kind == "on-repeat" ? historical : null,
+                    kind == "on-repeat" ? primary : 0, kind == "on-repeat" ? fallback.Length : 0, inputs.Offered, pool.Length, selected.Count,
+                    selected.Count(item => !item.ProviderFilled), selected.Count(item => item.ProviderFilled), excluded.Where(item => item.Value > 0).ToDictionary(),
+                    inputs.Reads, inputs.Failures, shortfall, kind == "release-radar" ? inputs.InboxEntries : null)
             };
             if (kind == "discover-weekly") foreach (var key in selected.SelectMany(item => PersonalMixRules.IdentityKeys(item.Song))) document.DiscoverPicks[key] = clock.UtcNow;
         }
     }
+
+    private string SourceName(string? source) => source != null && registry?.TryGet(source, out var descriptor) == true
+        ? descriptor!.DisplayName : source switch { "Last.fm" or "lastfm" => "Last.fm", "deezer" => "Deezer", "qobuz" => "Qobuz", "apple-download" or "apple-musickit" => "Apple Music", _ => "your music service" };
 
     private static Song SafeSong(Song song) => new()
     {
@@ -439,8 +451,8 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         return document.Mixes.Values.Select(mix =>
         {
             var visible = mix.Songs.Where(item => !blocked.Contains(item.Song) && policy.Includes(item.Song)).ToArray();
-            var readiness = PersonalMixMoods.Kinds.Contains(mix.Kind) && mix.Generation > 0
-                ? PersonalMixMoods.Readiness(visible.Length) : mix.Readiness;
+            var readiness = PersonalMixMoods.Kinds.Contains(mix.Kind) && mix.Generation > 0 && visible.Length < 25
+                ? new MixReadiness(false, mix.Evidence != null ? "Fewer than 25 songs remain under your current listening policy. Refresh to look for more." : PersonalMixMoods.Readiness(visible.Length).Message) : mix.Readiness;
             if (readiness.Ready && visible.Length == 0)
                 readiness = new(false, "No playable songs are available for this mix yet. Refresh after more listening or new releases.");
             return mix with { Songs = visible, Readiness = readiness };
@@ -513,8 +525,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         var localIds = document.Mixes.Values.SelectMany(mix => mix.Songs).Where(item => item.Song.IsLocal).Select(item => item.Song.Id).ToArray();
         var allowed = summariesOnly || localIds.Length == 0 ? [] : await LibraryTrackAccess.Query(db, context, await libraryAccess.ResolveAsync(context, token))
             .Where(item => localIds.Contains(item.BackendItemId)).Select(item => item.BackendItemId).ToArrayAsync(token);
-        return visible.Where(mix => mix.Generation > 0 && mix.Songs.Count > 0 && mix.Added && mix.Readiness.Ready &&
-            (summariesOnly || !PersonalMixMoods.Kinds.Contains(mix.Kind) || mix.Songs.Count(item => !item.Song.IsLocal || allowed.Contains(item.Song.Id)) >= 25)).Select(mix =>
+        return visible.Where(mix => mix.Generation > 0 && mix.Added).Select(mix =>
             new VirtualPlaylistReadModel(PlaylistVirtualizationService.CreateProtocolId(mix.Id), mix.Id, mix.Id, mix.Name, mix.Description,
                 null, "allstarr", mix.Kind, mix.Generation.ToString(System.Globalization.CultureInfo.InvariantCulture), PlaylistLinkMode.Virtual,
                 summariesOnly ? [] : mix.Songs.Where(item => !item.Song.IsLocal || allowed.Contains(item.Song.Id)).Select((item, index) => new VirtualPlaylistTrack(index, item.Song.Id, item.Song.Title, item.Song.Artist,
@@ -559,14 +570,18 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     }
 }
 
+public sealed record MixRefreshRequest(Guid MixId, bool DryRun = false, string? TimeZoneId = null);
+
 public sealed class PersonalMixJobHandler(PersonalMixService mixes) : IDurableJobHandler
 {
     public string JobType => PersonalMixService.JobType;
     public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext context, CancellationToken cancellationToken)
     {
         if (context.Claim.OwnerUserId is not { } owner) return DurableJobCompletion.Failure("mix-owner-missing", "A linked listener is required.");
-        var mixId = context.Claim.Payload.GetGuid();
-        await mixes.GenerateAsync(owner, mixId == Guid.Empty ? null : mixId, token: cancellationToken, scheduled: true);
+        var request = context.Claim.Payload.ValueKind == JsonValueKind.Object
+            ? context.Claim.Payload.Deserialize<MixRefreshRequest>()! : new MixRefreshRequest(context.Claim.Payload.GetGuid());
+        await mixes.GenerateAsync(owner, request.MixId == Guid.Empty ? null : request.MixId, request.DryRun,
+            request.TimeZoneId, cancellationToken, scheduled: true);
         return DurableJobCompletion.Success();
     }
 }

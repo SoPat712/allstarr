@@ -18,6 +18,7 @@ export function reasonLabel(reason: string) {
   return "Picked for you";
 }
 export function shortReadiness(message: string) {
+  if (/^Refresh this mix/i.test(message)) return "Refresh to look for songs";
   const plays = message.match(/^Play about (\d+) more songs/i);
   if (plays) return `Play about ${plays[1]} more songs`;
   const songs = message.match(/^Add about (\d+) more qualifying analyzed or tagged songs/i);
@@ -67,4 +68,16 @@ export function mixDescription(description: string, kind: string) {
   if (kind.startsWith("daily-")) return description.replace(/^Made for you\s*·\s*[^·]*·?\s*/, "");
   if (["chill", "focus", "workout", "party", "sleep"].includes(kind)) return "Updated Monday";
   return description;
+}
+
+export function mixExclusions(excluded: Record<string, number>) {
+  const labels: Record<string, string> = {
+    "three early skips": "skipped early", never: "you marked Never", "duplicate recordings": "repeats",
+    "listening policy": "left out by your listening settings", "no playable route": "you can't play",
+    "missing song details": "missing song details", "candidate limit": "over the song limit",
+    "changed before saving": "left out before saving", "choices changed during generation": "left out after your choices changed", "outside this recipe": "didn't fit this mix",
+    "artist, release, tier and size limits": "over this mix's limits",
+  };
+  // The API client lowercases the first letter of every response key.
+  return Object.entries(excluded).filter(([, count]) => count > 0).map(([label, count]) => `${count} ${labels[label.toLowerCase()] ?? "left out"}`).join(" · ");
 }

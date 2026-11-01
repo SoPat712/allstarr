@@ -41,6 +41,15 @@ public sealed partial class PersonalMixService
                     selected.Select(row => new PersonalMixItem(id, 0, SafeSong(row.Song), row.Source,
                         row.Source == "audiomuse" ? "Similar sound" : row.Song.TasteReason ?? "Like your seed", row.Score)).ToArray())
                 {
+                    Evidence = new(MixRecipes.For("custom") with { Sentence = "Songs selected from " + seedName + ".", Target = request.Length },
+                        events.Count(item => item.State == allstarr.Core.Intelligence.ListeningEventState.Completed && item.SourceKind == "protocol"),
+                        events.Count(item => item.State == allstarr.Core.Intelligence.ListeningEventState.Completed && item.SourceKind != "protocol"),
+                        null, null, null, 0, 0, fetched.Count, candidates.Count, selected.Count,
+                        selected.Count(item => item.Song.IsLocal), selected.Count(item => !item.Song.IsLocal), new Dictionary<string, int>
+                        {
+                            ["Artist and size limits"] = candidates.Count - selected.Count,
+                            ["Choices changed"] = fetched.Count - candidates.Count
+                        }.Where(item => item.Value > 0).ToDictionary(), null, null, null),
                     SeedName = seedName,
                     CoverTag = selected.SelectMany(row => row.Tags).GroupBy(tag => tag.Key)
                         .OrderByDescending(group => group.Sum(tag => tag.Value)).ThenBy(group => group.Key, StringComparer.Ordinal)
@@ -124,7 +133,20 @@ public sealed partial class PersonalMixService
             var eligible = (await RevalidateAsync(user, playable, token)).Select(item => item.Song.Id).ToHashSet(StringComparer.Ordinal);
             var items = preview.Songs.Where(item => eligible.Contains(item.Song.Id)).Select(item => item with { Generation = 1 }).ToArray();
             if (items.Length == 0) throw new ArgumentException("No eligible playable songs remain. Start another mix.");
-            saved = preview with { Name = name.Trim(), Generation = 1, UpdatedAt = clock.UtcNow, Readiness = new(true, "Ready"), Added = true, Songs = items };
+            var evidence = preview.Evidence;
+            if (evidence != null)
+            {
+                var excluded = evidence.Excluded.ToDictionary();
+                if (preview.Songs.Count > items.Length) excluded["Changed before saving"] = preview.Songs.Count - items.Length;
+                evidence = evidence with
+                {
+                    Shown = items.Length,
+                    FromMusic = items.Count(item => item.Song.IsLocal),
+                    FromServices = items.Count(item => !item.Song.IsLocal),
+                    Excluded = excluded
+                };
+            }
+            saved = preview with { Evidence = evidence, Name = name.Trim(), Generation = 1, UpdatedAt = clock.UtcNow, Readiness = new(true, "Ready"), Added = true, Songs = items };
             document.Mixes[key] = saved;
             if (await TrySaveAsync(user, document, version, revision, history, token)) return saved;
         }

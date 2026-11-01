@@ -5,20 +5,17 @@ test.afterEach(async ({ page }) => { expect(await page.pageErrors()).toEqual([])
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) test(`Mix sheet at ${width}px ${theme}`, async ({ page }) => {
   await appearance(page, width, theme); await mockForYou(page); await openHome(page);
   await page.getByRole("region", { name: "Made for you", exact: true }).getByRole("button").first().click();
-  await expect(page).toHaveURL(/mix=daily-1/); await expect(page.getByRole("dialog").getByText("You play this a lot")).toBeVisible();
+  await expect(page).toHaveURL(/mix=daily-1/); await expect(page.getByRole("dialog").getByText("Played 6 times in 30 days")).toBeVisible();
   await expect(page.getByRole("dialog").getByRole("list", { name: "Songs", exact: true }).getByRole("listitem")).toHaveCount(songs.length);
   await capture(page, "mix", width, theme); await page.goBack(); await expect(page.getByRole("dialog")).toHaveCount(0);
 });
-test("Mix actions open an explanation after the songs load", async ({ page }) => {
-  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+test("Mix explanation is a keyboard disclosure with honest legacy details", async ({ page }) => {
   await mockForYou(page); await page.goto("/#/for-you?mix=daily-1");
-  await expect(page.getByRole("dialog").getByRole("list", { name: "Songs", exact: true }).getByRole("listitem")).toHaveCount(songs.length);
-  await page.getByRole("button", { name: "Mix actions", exact: true }).click();
-  await page.getByRole("menuitem", { name: "About this mix", exact: true }).click();
-  await expect(page.getByText("Songs you know and close new picks, grouped around your taste. Refreshes every morning.", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Close explanation", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Mix actions", exact: true })).toBeFocused();
-  expect(errors).toEqual([]);
+  const summary = page.getByText("How this mix is made", { exact: true });
+  await summary.focus(); await page.keyboard.press("Space");
+  await expect(page.getByText("Refresh this mix to see its recipe details.", { exact: true })).toBeVisible();
+  await page.keyboard.press("Space");
+  await expect(page.getByText("Refresh this mix to see its recipe details.", { exact: true })).toBeHidden();
 });
 test("Song feedback and preference undo", async ({ page }) => {
   const state = await mockForYou(page); await page.goto("/#/for-you?mix=daily-1");
@@ -191,4 +188,43 @@ test("Song actions stay enabled during a pending background refresh and its cool
   await page.clock.runFor(1_000);
   expect(refreshes).toBe(1);
   await expect(actions).toBeEnabled();
+});
+
+for (const outcome of ["Succeeded", "Failed"] as const) test(`Queued mix refresh reports ${outcome} through live updates`, async ({ page }) => {
+  await page.addInitScript(() => {
+    let stream: FixtureStream;
+    class FixtureStream {
+      listeners = new Map<string, (event: MessageEvent<string>) => void>();
+      constructor() { stream = this; }
+      addEventListener(name: string, listener: (event: MessageEvent<string>) => void) { this.listeners.set(name, listener); }
+      close() {}
+    }
+    Object.defineProperty(window, "EventSource", { value: FixtureStream });
+    Reflect.set(window, "finishMixJob", () => stream.listeners.get("update")?.(new MessageEvent("update", {
+      data: JSON.stringify({ eventId: "mix-finished", resource: "job", resourceId: "mix-job", revision: 1 }),
+    })));
+  });
+  const state = await mockForYou(page);
+  let jobState = "Running", jobReads = 0, refreshRequests = 0;
+  await page.route("**/api/admin/mixes/daily-1/refresh", route => { refreshRequests++; return route.fulfill({ json: { jobId: "mix-job" } }); });
+  await page.route("**/api/admin/jobs/mix-job?*", route => { jobReads++; return route.fulfill({ json: { job: { id: "mix-job", state: jobState } } }); });
+  await page.clock.install();
+  await page.goto("/#/for-you?mix=daily-1");
+  await page.getByRole("button", { name: "Refresh mix", exact: true }).click();
+  await expect(page.getByText("Refreshing this mix...", { exact: true })).toBeVisible();
+  await expect.poll(() => jobReads).toBe(1);
+  await page.clock.runFor(10_000);
+  expect(jobReads).toBe(1);
+  if (outcome === "Succeeded") state.songs[0].song.title = "Freshly refreshed song";
+  jobState = outcome;
+  await page.evaluate(() => Reflect.get(window, "finishMixJob")());
+  await expect(page.getByText(outcome === "Succeeded" ? "Your mix has refreshed." : "Your mix could not be refreshed. Try again.", { exact: true })).toBeVisible();
+  if (outcome === "Succeeded") await expect(page.getByRole("dialog").getByText("Freshly refreshed song", { exact: true })).toBeVisible();
+  else await expect(page.getByText("Your mix has refreshed.", { exact: true })).toHaveCount(0);
+  expect(jobReads).toBe(2);
+  await page.getByRole("button", { name: "Close mix", exact: true }).click();
+  const before = state.calls.filter(call => call.path === "/api/admin/mixes").length;
+  await page.getByRole("button", { name: "Refresh page", exact: true }).click();
+  await expect.poll(() => state.calls.filter(call => call.path === "/api/admin/mixes").length).toBe(before + 1);
+  expect(refreshRequests).toBe(1);
 });

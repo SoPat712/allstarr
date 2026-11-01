@@ -15,8 +15,8 @@ public sealed partial class PersonalMixServiceTests
     {
         await Seed(count: 40, age: 1000);
         var mixes = await service.GenerateAsync(owner);
-        Assert.Equal(30, mixes.Single(item => item.Kind == "on-repeat").Songs.Count);
-        Assert.Equal(30, mixes.Single(item => item.Kind == "rewind").Songs.Count);
+        Assert.Equal(40, mixes.Single(item => item.Kind == "on-repeat").Songs.Count);
+        Assert.Equal(40, mixes.Single(item => item.Kind == "rewind").Songs.Count);
         await taste.SetUseImportedHistoryAsync(owner, false);
         mixes = await service.GenerateAsync(owner);
         Assert.All(mixes, mix => Assert.Empty(mix.Songs));
@@ -50,7 +50,7 @@ public sealed partial class PersonalMixServiceTests
             await db.SaveChangesAsync();
         }
         var repeat = (await service.GenerateAsync(owner)).Single(item => item.Kind == "on-repeat");
-        Assert.Single(repeat.Songs);
+        Assert.Equal(40, repeat.Songs.Count);
         Assert.Equal("Song 39", repeat.Songs[0].Song.Title);
     }
 
@@ -65,7 +65,7 @@ public sealed partial class PersonalMixServiceTests
         Assert.NotEmpty(mixes.Single(item => item.Kind == "discover-weekly").Songs);
         Assert.NotEmpty(mixes.Single(item => item.Kind == "daily-1").Songs);
         Assert.NotEmpty(mixes.Single(item => item.Kind == "chill").Songs);
-        Assert.Contains(mixes.Single(item => item.Kind == "daily-1").Songs, item => item.Score > 0);
+        Assert.All(mixes.Single(item => item.Kind == "daily-1").Songs, item => Assert.Equal(0, item.Score));
         await using (var db = factory.CreateDbContext()) await db.ListeningEvents.ExecuteDeleteAsync();
         mixes = await service.GenerateAsync(owner);
         Assert.Empty(mixes.Single(item => item.Kind == "discover-weekly").Songs);
@@ -111,8 +111,8 @@ public sealed partial class PersonalMixServiceTests
         await Seed(count: 10, plays: 5);
         var mixes = await NewService().ListAsync(owner);
         Assert.False(mixes.Single(item => item.Kind == "on-repeat").Readiness.Ready);
-        Assert.Contains("Refresh", mixes.Single(item => item.Kind == "on-repeat").Readiness.Message);
-        Assert.Contains("150 more", mixes.Single(item => item.Kind == "daily-1").Readiness.Message);
+        Assert.NotNull(mixes.Single(item => item.Kind == "on-repeat").Evidence);
+        Assert.NotNull(mixes.Single(item => item.Kind == "daily-1").Evidence);
         Assert.All(mixes, item => Assert.Equal(1, item.Generation));
         Assert.All(mixes, item => Assert.Empty(item.Songs));
     }
@@ -149,8 +149,8 @@ public sealed partial class PersonalMixServiceTests
             await db.SaveChangesAsync();
         }
         var repeat = (await service.GenerateAsync(owner)).Single(item => item.Kind == "on-repeat");
-        Assert.Equal(30, repeat.Songs.Count);
-        Assert.All(repeat.Songs, item => { Assert.True(item.Song.IsLocal); Assert.Equal("Played 5 times in 30 days", item.Reason); });
+        Assert.Equal(40, repeat.Songs.Count);
+        Assert.All(repeat.Songs, item => { Assert.True(item.Song.IsLocal); Assert.Contains("imported", item.Reason); });
         gateway.Verify(item => item.SearchAutomaticSongsAsync(Moq.It.IsAny<allstarr.Core.Protocols.ProtocolExecutionContext>(), Moq.It.IsAny<string>(), 3), Moq.Times.Never);
     }
 
@@ -165,9 +165,9 @@ public sealed partial class PersonalMixServiceTests
             await db.SaveChangesAsync();
         }
         var repeat = (await service.GenerateAsync(owner)).Single(item => item.Kind == "on-repeat");
-        Assert.Equal(30, repeat.Songs.Count);
+        Assert.Equal(40, repeat.Songs.Count);
         gateway.Verify(item => item.GetSongAsync(Moq.It.IsAny<allstarr.Core.Protocols.ProtocolExecutionContext>(), "deezer", Moq.It.IsAny<string>()),
-            Moq.Times.AtLeast(40));
+            Moq.Times.Never);
         gateway.Verify(item => item.SearchAutomaticSongsAsync(Moq.It.IsAny<allstarr.Core.Protocols.ProtocolExecutionContext>(), Moq.It.IsAny<string>(), 3),
             Moq.Times.Never);
     }

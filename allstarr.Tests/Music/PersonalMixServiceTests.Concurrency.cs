@@ -16,6 +16,7 @@ public sealed partial class PersonalMixServiceTests
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        gateway.Setup(item => item.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", id)).ReturnsAsync((Song?)null);
         gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", id))
             .Returns(async (ProtocolExecutionContext context, string _, string _) =>
             {
@@ -58,7 +59,7 @@ public sealed partial class PersonalMixServiceTests
         var link = await ExternalLink();
         var virtualization = new PlaylistVirtualizationService(factory, new(factory, access.Object), access.Object, personalMixes: service);
         clock.UtcNow += TimeSpan.FromMinutes(16);
-        var block = BlockPlayback(songs["0"].Id);
+        var block = BlockSong("0");
         var generation = service.GenerateAsync(owner, timeZoneId: "UTC");
         try
         {
@@ -237,13 +238,10 @@ public sealed partial class PersonalMixServiceTests
         else
             gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>()))
                 .ThrowsAsync(new InvalidOperationException("Upstream detail."));
-        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => service.GenerateAsync(owner, repeat.Id));
-        Assert.Equal("Mix sources are unavailable. Try again later.", error.Message);
-        Assert.Null(error.InnerException);
-        Assert.DoesNotContain("Upstream detail", error.ToString(), StringComparison.Ordinal);
-        var stored = await service.GetAsync(owner, repeat.Id);
-        Assert.Equal(repeat.Generation, stored.Generation);
-        Assert.Equal(repeat.Songs.Select(item => item.Song.Id), stored.Songs.Select(item => item.Song.Id));
+        var next = (await service.GenerateAsync(owner, repeat.Id)).Single(item => item.Id == repeat.Id);
+        Assert.Equal(repeat.Generation + 1, next.Generation);
+        Assert.Equal(repeat.Songs.Select(item => item.Song.Id), next.Songs.Select(item => item.Song.Id));
+
     }
 
     [Fact]

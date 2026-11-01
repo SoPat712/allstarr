@@ -23,7 +23,7 @@ public sealed partial class PersonalMixServiceTests
         var cards = await service.ListAsync(owner, "UTC");
         Assert.Equal(15, cards.Count);
         Assert.Equal(1, probe.MixDocuments);
-        Assert.Equal(1, probe.HistoryReads);
+        Assert.Equal(0, probe.HistoryReads);
         Assert.Equal(0, probe.FullHistoryReads);
         Assert.Equal(0, probe.Writes);
         output.WriteLine($"Saved mix list: documents {probe.MixDocuments}, history reads {probe.HistoryReads}, writes {probe.Writes}, total reads {probe.Reads}.");

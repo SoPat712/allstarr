@@ -21,7 +21,7 @@ public sealed partial class PersonalMixServiceTests
         {
             Assert.True(mix.Readiness.Ready);
             Assert.Equal(40, mix.Songs.Count);
-            Assert.All(mix.Songs, item => Assert.Equal("Tagged " + mix.Kind, item.Reason));
+            Assert.All(mix.Songs, item => Assert.StartsWith("Tagged ", item.Reason));
         });
         Assert.Empty(await service.PublishedAsync(Context(owner), default));
         publish = true;
@@ -29,13 +29,13 @@ public sealed partial class PersonalMixServiceTests
         Assert.Equal(5, (await service.PublishedAsync(Context(owner), default)).Count(item => PersonalMixMoods.Kinds.Contains(item.SourcePlaylistId)));
         for (var index = 24; index < 40; index++) await taste.PutNudgeAsync(owner, new("artist", "Artist " + index, "never"));
         Assert.All((await service.ListAsync(owner)).Where(item => item.Section == "moods"), mix => Assert.False(mix.Readiness.Ready));
-        Assert.DoesNotContain(await service.PublishedAsync(Context(owner), default), item => PersonalMixMoods.Kinds.Contains(item.SourcePlaylistId));
+        Assert.Equal(5, (await service.PublishedAsync(Context(owner), default)).Count(item => PersonalMixMoods.Kinds.Contains(item.SourcePlaylistId)));
         await using var db = factory.CreateDbContext();
         foreach (var song in songs.Values.Skip(24)) song.Title = "Unavailable";
         clock.UtcNow += TimeSpan.FromMinutes(16);
         var chill = (await service.GenerateAsync(owner, moods[0].Id)).Single(item => item.Id == moods[0].Id);
         Assert.False(chill.Readiness.Ready);
-        Assert.Empty(chill.Songs);
+        Assert.Equal(24, chill.Songs.Count);
     }
 
     [Theory]
@@ -95,6 +95,8 @@ public sealed partial class PersonalMixServiceTests
         await taste.PutNudgeAsync(owner, new("artist", "Artist 3", "never"));
         var saved = await service.SaveCustomAsync(owner, preview.Id, "Saved");
         Assert.DoesNotContain(saved.Songs, item => item.Song.ExternalId == "3");
+        Assert.Equal(saved.Songs.Count, saved.Evidence!.Shown);
+        Assert.Equal(saved.Evidence.Candidates, saved.Evidence.Shown + saved.Evidence.Excluded.Values.Sum());
         await taste.PutNudgeAsync(owner, new("artist", "Artist 4", "never"));
         Assert.DoesNotContain((await service.SaveCustomAsync(owner, preview.Id, "Saved")).Songs, item => item.Song.ExternalId == "4");
         await Assert.ThrowsAsync<ArgumentException>(() => service.StartAsync(owner, new("song", songs["0"].Id, 24)));

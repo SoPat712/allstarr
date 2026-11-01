@@ -1,4 +1,5 @@
 using allstarr.Core.Music;
+using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
@@ -49,7 +50,15 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
 
     [HttpPost("{id:guid}/refresh")]
     public Task<IActionResult> Refresh(Guid id, CancellationToken token) => ExecuteAsync(async user =>
-        (await mixes.GenerateAsync(user.Id, id, token: token)).Single(item => item.Id == id), token);
+    {
+        var mix = await mixes.GetAsync(user.Id, id, token);
+        if (mix.Kind is "custom" or "external") throw new ArgumentException("This mix does not refresh here.");
+        if (mix.UpdatedAt > clock.UtcNow.AddMinutes(-15)) throw new InvalidOperationException("Wait 15 minutes before refreshing this mix again.");
+        var queue = HttpContext.RequestServices.GetRequiredService<DurableJobQueue>();
+        var job = await queue.EnqueueAsync(new DurableJobEnqueueRequest<Guid>(PersonalMixService.JobType,
+            $"mix-refresh:{user.Id}:{id}:{clock.UtcNow.ToUnixTimeSeconds() / 900}", id, user.Id), token);
+        return new { jobId = job.JobId };
+    }, token);
 
     [HttpPost("{id:guid}/in-apps")]
     public Task<IActionResult> AddToApps(Guid id, CancellationToken token) => ExecuteAsync(async user =>
@@ -101,7 +110,13 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
 
     [HttpPost("dry-run")]
     public Task<IActionResult> DryRun([FromQuery] Guid listenerId, [FromQuery] string? timeZoneId = null, CancellationToken token = default) =>
-        ExecuteAsync(async _ => await mixes.GenerateAsync(listenerId, dryRun: true, timeZoneId: timeZoneId, token: token), token, true);
+        ExecuteAsync(async _ =>
+        {
+            var queue = HttpContext.RequestServices.GetRequiredService<DurableJobQueue>();
+            var job = await queue.EnqueueAsync(new DurableJobEnqueueRequest<MixRefreshRequest>(PersonalMixService.JobType,
+                $"mix-preview:{listenerId}:{clock.UtcNow.ToUnixTimeSeconds() / 900}", new(Guid.Empty, true, timeZoneId), listenerId), token);
+            return new { jobId = job.JobId };
+        }, token, true);
 
     private static object Card(PersonalMix mix, bool enabled, Guid? initialJobId = null) => new
     {
@@ -113,6 +128,7 @@ public sealed partial class MixesController(PersonalMixService mixes, IDurableRu
         mix.SortOrder,
         mix.SourceLabel,
         mix.RecipeVersion,
+        mix.Evidence,
         mix.UpdatedAt,
         mix.Readiness,
         inApps = mix.Added,
