@@ -1,22 +1,9 @@
-<script lang="ts" module>
-  import type { ProviderScore } from "$lib/api";
-
-  /** Lyrics are judged on lyrics alone. Every other order decides which source plays, so it uses the overall score. */
-  export function capabilityScore(score: ProviderScore | undefined, capability: string) {
-    if (!score) return null;
-    return capability === "lyrics"
-      ? score.capabilities.find((item) => item.capability === capability)?.score ?? score.score
-      : score.score;
-  }
-
-  export const scoreTier = (value: number | null) =>
-    value == null ? "none" : value >= 90 ? "great" : value >= 70 ? "good" : value >= 50 ? "fair" : "poor";
-</script>
-
 <script lang="ts">
   import { checkGuide, humanize } from "$lib/sources";
 
-  let { score, capability }: { score: ProviderScore; capability: string } = $props();
+  import type { ProviderScore } from "$lib/api";
+
+  let { score, capability, ranked = true }: { score: ProviderScore; capability: string; ranked?: boolean } = $props();
 
   const seconds = (value: number | null) => value == null ? "—" : value < 1000 ? `${value} ms` : `${(value / 1000).toFixed(1)} s`;
   const days = $derived(score.days.slice(-14));
@@ -24,7 +11,8 @@
 
 <div class="score-details">
   <p class="score-summary">
-    {#if score.score == null}Not rated yet. A score needs at least 5 checks; this source has {score.checks}.
+    {#if !ranked}You choose this source yourself and Allstarr never picks it automatically, so it isn't scored or ranked. It passed {score.uptimePercent}% of {score.checks.toLocaleString()} checks in the last 30 days.
+    {:else if score.score == null}Not rated yet. A score needs at least 5 checks; this source has {score.checks}.
     {:else if score.quality}Passed {score.uptimePercent}% of {score.checks.toLocaleString()} checks and playback tests in the last 30 days. The score is 50% reliability, with the last week counting double, 30% audio quality and 20% speed. Lossy sources have a ceiling: 60 at low bitrates, up to 80 at 256 kbps or more.
     {:else}Passed {score.uptimePercent}% of {score.checks.toLocaleString()} checks in the last 30 days. This source plays no audio here, so its score is 80% reliability, with the last week counting double, and 20% speed.{/if}
   </p>

@@ -10,6 +10,7 @@
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
+  import { isRanked } from "$lib/provider-score";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   import {
     home,
@@ -915,7 +916,7 @@
               {:else}
               <span class="source-row-status">
                 <Badge state={state}>{state === "degraded" ? sourceProblemLabel(item, accounts, health) ?? sourceStatusLabel(state) : sourceStatusLabel(state)}</Badge>
-                {#if scoreOf(item.id) != null}<small class="source-row-score">Score {scoreOf(item.id)} of 100{#if qualityOf(item.id)} · {qualityOf(item.id)}{/if}</small>{/if}
+                {#if isRanked(item.useMode) && scoreOf(item.id) != null}<small class="source-row-score">Score {scoreOf(item.id)} of 100{#if qualityOf(item.id)} · {qualityOf(item.id)}{/if}</small>{/if}
                 <small>{metrics.checkedAt ? `${metrics.passing} of ${metrics.total || 0} checks passed · ${relativeTime(metrics.checkedAt)}` : "Not checked yet"}</small>
                 <small class="source-row-timing">{connected.length ? `${connected.filter((account) => account.enabled).length} of ${connected.length} account${connected.length === 1 ? "" : "s"} on · ` : ""}{timing}{#if cts} · CTS {ctsMeasurementLabel(cts)}{/if}</small>
               </span>

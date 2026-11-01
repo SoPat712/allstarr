@@ -9,7 +9,8 @@
   import { home, settings, sources, type PriorityGroup, type ProviderScore, type UiSchema } from "$lib/api";
   import AudioQualityField from "$lib/components/AudioQualityField.svelte";
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
-  import ProviderScoreDetails, { capabilityScore, scoreTier } from "$lib/components/ProviderScoreDetails.svelte";
+  import ProviderScoreDetails from "$lib/components/ProviderScoreDetails.svelte";
+  import { capabilityScore, isRanked, scoreTier, sortByScore as orderByScore } from "$lib/provider-score";
   import RouteError from "$lib/components/RouteError.svelte";
   import { canonicalProviderId, humanize, lyricsSourceDisplayName, sourceOriginLabel } from "$lib/sources";
   import { fieldValue, keptLyricsFirst, mergeRoutingOrders, move } from "$lib/settings";
@@ -19,13 +20,12 @@
   let openScore = $state("");
   const scoreFor = (providerId: string) => scores.find((item) => item.providerId.toLowerCase() === providerId.toLowerCase());
 
-  // Highest score first. Unscored sources keep their order below the scored ones; nothing saves until Save order.
+  // Manual sources sink to the bottom whatever their score. Nothing saves until Save order.
   function sortByScore(group: PriorityGroup) {
     const order = orders[group.id] ?? group.providers;
     const fixed: string[] = order.filter((id) => id === "kept" || id === "backend");
-    const rank = (id: string) => capabilityScore(scoreFor(id), group.id) ?? -1;
-    const sorted = order.filter((id) => !fixed.includes(id)).map((id, index) => ({ id, index }))
-      .sort((left, right) => rank(right.id) - rank(left.id) || left.index - right.index).map((item) => item.id);
+    const sorted = orderByScore(order.filter((id) => !fixed.includes(id)),
+      (id) => capabilityScore(scoreFor(id), group.id), (id) => isRanked(provider(id)?.useMode));
     orders = { ...orders, [group.id]: [...fixed, ...sorted] };
     if (!dirtyOrderIds.includes(group.id)) dirtyOrderIds = [...dirtyOrderIds, group.id];
   }
@@ -234,11 +234,12 @@
                 <ProviderArtwork id={providerId} definition={definition} label={label} />
                 <span class="routing-copy"><span class="routing-name"><strong>{group.id === "lyrics" ? label : definition?.name ?? humanize(providerId)}</strong>{#if definition}<Badge tone="neutral" class="origin-badge">{sourceOriginLabel(definition)}</Badge>{/if}{#if scoreFor(providerId)?.quality}<span class="routing-quality-label" class:lossy={!scoreFor(providerId)?.quality?.lossless}>{scoreFor(providerId)?.quality?.typical}</span>{/if}</span><small>{providerId === "backend" ? "Lyrics supplied by your media server" : fixed ? "Saved lyrics from your library" : definition?.categories?.map(humanize).join(" · ") || "Provider service"}</small></span>
                 {#if scoreFor(providerId)}
-                  {@const value = capabilityScore(scoreFor(providerId), group.id)}
+                  {@const ranked = isRanked(definition?.useMode)}
+                  {@const value = ranked ? capabilityScore(scoreFor(providerId), group.id) : null}
                   <button type="button" class="score-chip" data-tier={scoreTier(value)} aria-expanded={openScore === `${group.id}:${providerId}`}
-                    aria-label={`${label} score ${value ?? "not rated yet"}. Show details.`}
+                    aria-label={ranked ? `${label} score ${value ?? "not rated yet"}. Show details.` : `${label} is ${definition?.useMode === "off" ? "turned off" : "manual only"} and isn't scored. Show details.`}
                     onclick={() => openScore = openScore === `${group.id}:${providerId}` ? "" : `${group.id}:${providerId}`}>
-                    {value ?? "New"}<ChevronDown size={14} aria-hidden="true" />
+                    {ranked ? value ?? "New" : definition?.useMode === "off" ? "Off" : "Manual"}<ChevronDown size={14} aria-hidden="true" />
                   </button>
                 {/if}
                 <span class="routing-actions">
@@ -246,7 +247,7 @@
                   <Button variant="ghost" size="icon" aria-label={`Move ${label} down`} disabled={fixed || index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
                 </span>
                 {#if openScore === `${group.id}:${providerId}` && scoreFor(providerId)}
-                  <ProviderScoreDetails score={scoreFor(providerId)!} capability={group.id} />
+                  <ProviderScoreDetails score={scoreFor(providerId)!} capability={group.id} ranked={isRanked(definition?.useMode)} />
                 {/if}
               </li>
             {/each}
