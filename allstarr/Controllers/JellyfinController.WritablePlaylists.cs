@@ -293,6 +293,7 @@ public partial class JellyfinController
             {
                 var row = _responseBuilder.ConvertPlaylistSongToJellyfinItem(member.Song,
                     ExternalTrackPresentation.Preferences(HttpContext), saved.StoredAt);
+                row.TryAdd("ParentId", id);
                 row["PlaylistItemId"] = member.OccurrenceId;
                 rows.Add(row);
             }

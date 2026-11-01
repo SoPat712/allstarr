@@ -559,7 +559,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             }
             if (!native)
             {
-                if (!fullExternal) item["ParentId"] = responsePlaylistId;
+                if (!fullExternal || item["ParentId"] == null) item["ParentId"] = responsePlaylistId;
                 if (serverId != null) item["ServerId"] = serverId;
                 if (!fullExternal) new JellyfinItemFields(clientQuery).Apply(item);
             }

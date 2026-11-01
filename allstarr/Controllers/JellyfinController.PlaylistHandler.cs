@@ -141,6 +141,7 @@ public partial class JellyfinController
                         SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
                     var item = _responseBuilder.ConvertPlaylistSongToJellyfinItem(track,
                         ExternalTrackPresentation.Preferences(HttpContext), null);
+                    item.TryAdd("ParentId", playlistId);
                     item["PlaylistItemId"] = entryId;
                     return item;
                 }).ToList();
