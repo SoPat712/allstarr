@@ -17,7 +17,7 @@ describe("provider scores", () => {
   it("ranks only sources Allstarr can pick by itself", () => {
     expect(isRanked("automatic")).toBe(true);
     expect(isRanked(undefined)).toBe(true);
-    expect(isRanked("manual")).toBe(false);
+    expect(isRanked("manualOnly")).toBe(false);
     expect(isRanked("off")).toBe(false);
   });
 
