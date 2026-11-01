@@ -91,7 +91,7 @@ public sealed class TrackMatchPlayableSearch(
 
     public async Task<ProviderOutcome<PlayableTrackMatch>> MatchImportedHistoryAsync(
         ProtocolExecutionContext context, ExternalTrackMatchSnapshot source, TrackMatchScope scope,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, Dictionary<string, int>? providerFailures = null)
     {
         var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(context, cancellationToken);
         var queries = SearchQueries(source);
@@ -100,11 +100,20 @@ public sealed class TrackMatchPlayableSearch(
         if (!await CanAutomaticallyMatchAsync(context, source.ProviderId, cancellationToken) || queries.Length == 0)
             return ProviderOutcome<PlayableTrackMatch>.Success(DecideMatch(source, scope, [], [], null, providerOrder, effectiveMatcher));
         var songs = new List<Song>();
-        ProviderError? failure = null;
-        foreach (var provider in providerOrder)
+        ProviderError? failure = providerOrder.Any(provider => providerFailures?.GetValueOrDefault(provider) >= 2)
+            ? new(ProviderErrorKind.TransientFailure, TimeSpan.FromMinutes(1)) : null;
+        var answered = false;
+        var calls = 0;
+        var failed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var available = providerOrder.Where(provider => providerFailures?.GetValueOrDefault(provider) < 2 || providerFailures == null).ToArray();
+        if (available.Length == 0)
+            return ProviderOutcome<PlayableTrackMatch>.Failure(new(ProviderErrorKind.CapabilityUnavailable, TimeSpan.FromMinutes(1)));
+        foreach (var query in queries.Take(2))
         {
-            foreach (var query in queries)
+            foreach (var provider in available)
             {
+                if (providerFailures?.GetValueOrDefault(provider) >= 2 || failed.Contains(provider)) continue;
+                if (calls >= 3) break;
                 using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 deadline.CancelAfter(TimeSpan.FromSeconds(10));
                 ProviderOutcome<IReadOnlyList<Song>> result;
@@ -115,16 +124,24 @@ public sealed class TrackMatchPlayableSearch(
                     { Policy = context.Policy, IsReadOnly = context.IsReadOnly }, provider, query, 15)
                         .WaitAsync(deadline.Token);
                 }
-                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
                 {
+                    logger.LogWarning("History provider {Provider} failed ({ExceptionType})", provider, exception.GetType().Name);
+                    failed.Add(provider);
                     failure ??= new(ProviderErrorKind.TransientFailure, TimeSpan.FromMinutes(1));
-                    break;
+                    if (providerFailures != null) providerFailures[provider] = providerFailures.GetValueOrDefault(provider) + 1;
+                    continue;
                 }
                 if (!result.IsSuccess)
                 {
+                    failed.Add(provider);
                     if (failure == null || result.Error!.RetryAfter > failure.RetryAfter.GetValueOrDefault()) failure = result.Error;
-                    break;
+                    if (providerFailures != null) providerFailures[provider] = result.Error!.Kind == ProviderErrorKind.RateLimited
+                        ? 2 : providerFailures.GetValueOrDefault(provider) + 1;
+                    continue;
                 }
+                calls++;
+                answered = true;
                 songs.AddRange(result.RequireValue().Where(song => IsPlayable(song, providerOrder) &&
                     !string.IsNullOrWhiteSpace(song.ExternalProvider) && !string.IsNullOrWhiteSpace(song.ExternalId) &&
                     (!song.ExternalProvider.Equals(source.ProviderId, StringComparison.OrdinalIgnoreCase) ||
@@ -136,8 +153,10 @@ public sealed class TrackMatchPlayableSearch(
                     return ProviderOutcome<PlayableTrackMatch>.Success(match);
             }
         }
-        return failure != null ? ProviderOutcome<PlayableTrackMatch>.Failure(failure) :
-            ProviderOutcome<PlayableTrackMatch>.Success(DecideMatch(source, scope, songs, [], null, providerOrder, effectiveMatcher));
+        return !answered && failure != null ? ProviderOutcome<PlayableTrackMatch>.Failure(failure) :
+            ProviderOutcome<PlayableTrackMatch>.Success(DecideMatch(source, scope, songs, [], null, providerOrder, effectiveMatcher)
+                with
+            { SearchFailure = failure });
     }
 
     private static string[] SearchQueries(ExternalTrackMatchSnapshot source)
@@ -294,7 +313,7 @@ public sealed class TrackMatchPlayableSearch(
                                              ExternalTrackPlaybackPolicy.Normalize(song.ExternalProvider));
     }
 
-    private LocalTrackMatchCandidate ToCandidate(Song song, TrackMatchScope scope) => new(
+    internal static LocalTrackMatchCandidate ToCandidate(Song song, TrackMatchScope scope) => new(
         CandidateId(song.ExternalProvider!, song.ExternalId!),
         scope.UserId,
         scope.BackendInstanceId,
@@ -398,6 +417,8 @@ public sealed record PlayableTrackMatch(
     IReadOnlyDictionary<Guid, Song> ExternalCandidates,
     IReadOnlyDictionary<Guid, IReadOnlyList<Song>> EquivalentExternalCandidates)
 {
+    internal ProviderError? SearchFailure { get; init; }
+
     public Song? SelectedExternal =>
         Decision.SelectedLibraryTrackId is { } id
             ? ExternalCandidates.GetValueOrDefault(id)

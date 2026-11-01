@@ -15,7 +15,7 @@ namespace allstarr.Core.Intelligence;
 
 internal sealed record ListeningHistoryResolutionPayload(IntelligenceScope Scope, int Cursor = 0, int RetryOffset = 0);
 
-public sealed class ListeningHistoryResolution(
+public sealed partial class ListeningHistoryResolution(
     IDbContextFactory<AllstarrDbContext> factory,
     DurableJobQueue jobs,
     TrackMatchPlayableSearch matches,
@@ -26,17 +26,16 @@ public sealed class ListeningHistoryResolution(
     PersonalMixService mixes,
     IPlatformClock clock,
     JobPayloadPolicy payloadPolicy,
-    TimeProvider? timeProvider = null, SharedTagQueue? tags = null, TasteService? taste = null) : IDurableJobHandler, IDurableJobRecoveryHandler
+    TimeProvider? timeProvider = null, SharedTagQueue? tags = null, TasteService? taste = null, ILogger<ListeningHistoryResolution>? logger = null) : IDurableJobHandler, IDurableJobRecoveryHandler
 {
     public const string JobTypeName = "listening-history.resolve";
     private const string ResourceKind = "history-resolution";
     private const string ReceiptPayload = "{\"version\":1}";
-    private const int ProviderLimit = 100;
     private const int LocalBatchSize = 100;
     public string JobType => JobTypeName;
 
     private sealed record Resolution(IGrouping<string, ListeningEventRecord> Group, Guid? Canonical,
-        LibraryTrackRecord? Library, Song? Song = null, ProviderTrackIdentityRecord? Identity = null, bool Retry = false);
+        LibraryTrackRecord? Library, Song? Song = null, ProviderTrackIdentityRecord? Identity = null, bool Retry = false, string Reason = "matched-local");
 
     private static IQueryable<ListeningEventRecord> Unresolved(AllstarrDbContext db, IntelligenceScope scope) =>
         db.ListeningEvents.Where(item => item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
@@ -65,18 +64,21 @@ public sealed class ListeningHistoryResolution(
             item.BackendInstanceId == scope.BackendInstanceId && item.ProviderId == "allstarr" && item.ResourceKind == ResourceKind);
 
     private static string MetadataKey(string? title, string? artist) =>
-        FuzzyMatcher.NormalizeTitleForMatching(title ?? "", artist ?? "") + ":" + FuzzyMatcher.NormalizeForMatching(artist ?? "");
+        FuzzyMatcher.NormalizeTitleForMatching(title ?? "", artist ?? "", artist ?? "") + ":" +
+        FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(artist).FirstOrDefault() ?? "");
 
     private static string SongKey(ListeningEventRecord play) => ListeningHistoryImportService.Hash(
         play.ProviderId == "spotify" && play.ProviderTrackReference?.StartsWith("spotify:track:", StringComparison.Ordinal) == true
             ? "spotify:" + ListeningHistoryImportService.Hash(play.ProviderTrackReference[14..])
-            : MetadataKey(play.Title, play.Artist));
+            : FuzzyMatcher.NormalizeTitleForMatching(play.Title ?? "", play.Artist ?? "") + ":" + FuzzyMatcher.NormalizeForMatching(play.Artist ?? ""));
 
     internal static async Task EnqueueAsync(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs,
         IntelligenceScope scope, DateTimeOffset now, CancellationToken token)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         if (!await IntelligencePolicyService.OwnsBackendAsync(db, scope, token)) return;
+        if (await db.Jobs.AsNoTracking().AnyAsync(item => item.OwnerUserId == scope.OwnerUserId && item.Type == JobTypeName &&
+            (item.State == DurableJobState.Pending || item.State == DurableJobState.Running || item.State == DurableJobState.RetryScheduled), token)) return;
         var plays = await MatchingEvents(db, scope).ToArrayAsync(token);
         var recent = await Receipts(db, scope).Where(item => item.PayloadJson == ReceiptPayload && item.RetrievedAt > now.AddDays(-7))
             .Select(item => item.ExternalIdHash).ToHashSetAsync(token);
@@ -124,17 +126,21 @@ public sealed class ListeningHistoryResolution(
             execution.Claim.JobId.ToString("N"), clock.UtcNow.AddMinutes(10), token);
         if (taste != null) await taste.RememberPlaybackAsync(user.Id, token);
         var context = Execution();
-        await QueueTagsAsync();
         var access = await libraryAccess.ResolveAsync(context, token);
         if (!access.Succeeded)
             return DurableJobCompletion.Defer("history_resolution_library_unavailable", "Waiting for the listener's library access.", TimeSpan.FromMinutes(1));
-        var tracks = await LibraryTrackAccess.Query(db, context, access).ToArrayAsync(token);
-        var local = tracks.GroupBy(track => MetadataKey(track.Title, track.Artist)).ToDictionary(group => group.Key, group => group.ToArray());
-        var recent = await Receipts(db, saved.Scope).Where(item => item.PayloadJson == ReceiptPayload && item.RetrievedAt > clock.UtcNow.AddDays(-7))
-            .Select(item => item.ExternalIdHash).ToHashSetAsync(token);
-        var groups = (await MatchingEvents(db, saved.Scope).ToArrayAsync(token)).GroupBy(SongKey)
-            .Where(group => !recent.Contains(group.Key)).OrderByDescending(group => group.Count(item => item.State == ListeningEventState.Completed))
-            .ThenBy(group => group.Key, StringComparer.Ordinal).ToArray();
+        using var traffic = new HistoryRequestBudget();
+        var started = (timeProvider ?? TimeProvider.System).GetTimestamp();
+        var reasons = new Dictionary<string, int>();
+        var matchedRecordings = new HashSet<Guid>();
+        var state = await LoadAsync(db, context, access, execution.Claim.JobId, saved.Scope, token);
+        var tracks = state.Library;
+        var local = state.Metadata;
+        var stored = state.Targets;
+        var spotify = state.Spotify;
+        var tracksByRecording = tracks.Where(track => track.CanonicalRecordingId != null)
+            .GroupBy(track => track.CanonicalRecordingId!.Value).ToDictionary(group => group.Key, group => group.ToArray());
+        var groups = state.Groups.Where(group => !state.Completed.Contains(group.Key)).ToArray();
         var scope = new TrackMatchScope(user.Id, user.BackendInstanceId, null, 2, 1, access.LibraryIds.ToHashSet());
         var remaining = new List<IGrouping<string, ListeningEventRecord>>();
         for (var offset = 0; offset < groups.Length; offset += LocalBatchSize)
@@ -145,21 +151,22 @@ public sealed class ListeningHistoryResolution(
                 token.ThrowIfCancellationRequested();
                 var play = group.First();
                 var source = Source(group.Key, play);
-                var candidates = local.GetValueOrDefault(MetadataKey(play.Title, play.Artist)) ?? [];
+                var exact = play.ProviderTrackReference is { } reference ? spotify.GetValueOrDefault(reference) : null;
+                var candidates = exact ?? local.GetValueOrDefault(MetadataKey(play.Title, play.Artist)) ?? [];
+                if (exact is { Length: > 0 }) source = source with { CanonicalRecordingId = exact[0].CanonicalRecordingId };
                 if (candidates.Length == 0) { remaining.Add(group); continue; }
-                var decision = matcher.Decide(scope, source, candidates.Select(track => new LocalTrackMatchCandidate(
-                    track.Id, track.OwnerUserId, track.BackendInstanceId, track.BackendLibraryId, track.BackendItemId,
-                    track.CanonicalRecordingId, track.Title, track.Artist, track.Album, track.AlbumArtist, track.DurationMilliseconds,
-                    track.Isrc, track.MusicBrainzRecordingId, null)).ToArray(), null);
-                var selected = candidates.FirstOrDefault(track => track.Id == decision.SelectedLibraryTrackId);
+                var decision = matcher.Decide(scope, source, candidates, null);
+                var selected = candidates.FirstOrDefault(track => track.LibraryTrackId == decision.SelectedLibraryTrackId);
                 if (selected == null || !Accepted(decision) || !SameEdition(play.Title, selected.Title)) { remaining.Add(group); continue; }
-                var canonical = selected.CanonicalRecordingId ?? await db.ListeningEvents.AsNoTracking().Where(item =>
+                var target = stored[selected.LibraryTrackId];
+                var canonical = selected.CanonicalRecordingId ?? target.Library?.CanonicalRecordingId ?? await db.ListeningEvents.AsNoTracking().Where(item =>
                     item.OwnerUserId == user.Id && item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId &&
-                    item.LibraryTrackId == selected.Id && item.CanonicalRecordingId != null).Select(item => item.CanonicalRecordingId).FirstOrDefaultAsync(token)
+                    item.LibraryTrackId == selected.LibraryTrackId && item.CanonicalRecordingId != null).Select(item => item.CanonicalRecordingId).FirstOrDefaultAsync(token)
                     ?? (await identities.CreateRecordingAsync(context.RequireActor(), context.CorrelationId,
                         selected.Isrc, selected.MusicBrainzRecordingId, token)).Recording.Id;
-                selected.CanonicalRecordingId = canonical;
-                batch.Add(new(group, canonical, selected));
+                if (target.Library != null) target.Library.CanonicalRecordingId = canonical;
+                batch.Add(new(group, canonical, target.Library, target.Song, target.Identity,
+                    Reason: exact != null ? "matched-stored-id" : "matched-stored-metadata"));
             }
             if (batch.Count > 0) await SaveAsync(batch);
             if (batch.Count > 0 && offset + LocalBatchSize < groups.Length)
@@ -167,89 +174,105 @@ public sealed class ListeningHistoryResolution(
         }
 
         var attempted = 0;
-        var failures = 0;
         var needsRetry = false;
         TimeSpan? retryDelay = null;
-        var start = remaining.Count == 0 ? 0 : saved.RetryOffset % remaining.Count;
-        foreach (var group in remaining.Skip(start).Concat(remaining.Take(start)).Take(ProviderLimit))
+        ProviderError? unavailable = null;
+        var resolved = new Dictionary<string, Resolution>();
+        var providerFailures = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var group in remaining)
         {
             token.ThrowIfCancellationRequested();
-            if (attempted++ > 0) await Task.Delay(TimeSpan.FromSeconds(2), timeProvider ?? TimeProvider.System, token);
+            if ((timeProvider ?? TimeProvider.System).GetElapsedTime(started) > TimeSpan.FromHours(1)) break;
+            if (attempted > 0 && attempted % 100 == 0 &&
+                (await db.ListeningEvents.CountAsync(item => item.OwnerUserId == user.Id && item.Protocol == user.BackendType &&
+                    item.BackendInstanceId == user.BackendInstanceId, token) != state.Events ||
+                 await LibraryTrackAccess.Query(db, context, access).CountAsync(token) != state.Tracks)) break;
+            attempted++;
             context = Execution();
-            var resolution = await ResolveProviderAsync(group);
-            if (resolution == null)
-            {
-                var attempts = await db.ExternalMetadataSnapshots.CountAsync(item => item.OwnerUserId == user.Id &&
-                    item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId &&
-                    item.ProviderId == "allstarr" && item.ResourceKind == ResourceKind + "-retry" &&
-                    item.ExternalIdHash == group.Key && item.RetrievedAt > clock.UtcNow.AddDays(-7), token);
-                saved = saved with { RetryOffset = (start + attempted) % remaining.Count };
-                needsRetry |= attempts < 2;
-                await SaveAsync([new(group, null, null, Retry: attempts < 2)]);
-                failures++;
-                if (failures >= 3) break;
-            }
-            else await SaveAsync([resolution]);
-            await execution.ReportProgressAsync(new("history-resolution", "Matching past listening history.", saved.Cursor,
-                saved.Cursor + Math.Max(0, remaining.Count - attempted)), token);
+            var play = group.First();
+            var key = MetadataKey(play.Title, play.Artist);
+            var previous = resolved.GetValueOrDefault(key);
+            var resolution = previous?.Song is { } song && Accepted(matcher.Decide(scope, Source(group.Key, play),
+                [TrackMatchPlayableSearch.ToCandidate(song, scope)], null)) && SameEdition(play.Title, song.Title)
+                ? previous with { Group = group, Reason = "matched-stored-metadata" }
+                : await ResolveProviderAsync(group);
+            if (resolution.Canonical != null) resolved[key] = resolution;
+            needsRetry |= resolution.Retry;
+            await SaveAsync([resolution]);
         }
-        await QueueTagsAsync();
+        if (tags != null && matchedRecordings.Count > 0) await tags.EnqueuePendingAsync(token, matchedRecordings);
+        if (matchedRecordings.Count > 0) await mixes.RefreshAfterHistoryResolutionAsync(user.Id, execution.Claim.JobId, jobs, token);
+        var summary = JsonSerializer.Serialize(reasons);
+        logger?.LogInformation("History resolution {JobId}: reasons {Reasons}; matched by tier {MatchedByTier}; HTTP calls {HttpCalls}",
+            execution.Claim.JobId, summary, JsonSerializer.Serialize(reasons.Where(item => item.Key.StartsWith("matched-", StringComparison.Ordinal)).ToDictionary()), traffic.Calls);
+        await execution.ReportProgressAsync(new("history-resolution", summary, saved.Cursor), token);
         if (remaining.Count > attempted || needsRetry)
             return DurableJobCompletion.Defer("history_resolution_continuing", "Saved progress; more past songs remain.",
                 retryDelay is { } delay && delay > TimeSpan.FromMinutes(1) ? delay : TimeSpan.FromMinutes(1));
-        await mixes.RefreshAfterHistoryResolutionAsync(user.Id, execution.Claim.JobId, jobs, token);
+        retained = null;
         return DurableJobCompletion.Success();
 
-        async Task<Resolution?> ResolveProviderAsync(IGrouping<string, ListeningEventRecord> group)
+        async Task<Resolution> ResolveProviderAsync(IGrouping<string, ListeningEventRecord> group)
         {
             var play = group.First();
             try
             {
-                var outcome = await matches.MatchImportedHistoryAsync(context, Source(group.Key, play), scope, token);
+                if (unavailable != null) return new(group, null, null, Retry: true, Reason: "provider-failure:" + unavailable.Kind);
+                var outcome = await matches.MatchImportedHistoryAsync(context, Source(group.Key, play), scope, token, providerFailures);
                 if (!outcome.IsSuccess)
                 {
                     if (outcome.Error?.RetryAfter > retryDelay.GetValueOrDefault()) retryDelay = outcome.Error.RetryAfter;
-                    return null;
+                    if (outcome.Error?.Kind == ProviderErrorKind.CapabilityUnavailable) unavailable = outcome.Error;
+                    return new(group, null, null, Retry: true, Reason: "provider-failure:" + outcome.Error?.Kind);
                 }
                 var match = outcome.RequireValue();
+                if (match.SearchFailure?.RetryAfter > retryDelay.GetValueOrDefault()) retryDelay = match.SearchFailure.RetryAfter;
                 var selected = match.SelectedExternal;
-                if (!Accepted(match.Decision) || selected == null || !SameEdition(play.Title, selected.Title) ||
-                    FuzzyMatcher.HasCleanRecordingLabel(play.Title) && selected.ExplicitContentLyrics == 1)
-                    return new(group, null, null);
+                if (!Accepted(match.Decision) || selected == null)
+                    return new(group, null, null, Retry: match.SearchFailure != null,
+                        Reason: match.SearchFailure != null ? "provider-failure:" + match.SearchFailure.Kind :
+                            match.ExternalCandidates.Count == 0 ? "no-candidates" : "candidates-rejected:" + (match.Decision.Warnings.FirstOrDefault() ?? match.Decision.Reasons.FirstOrDefault() ?? match.Decision.State.ToString()));
+                if (!SameEdition(play.Title, selected.Title) || FuzzyMatcher.HasCleanRecordingLabel(play.Title) && selected.ExplicitContentLyrics == 1)
+                    return new(group, null, null, Reason: "edition-mismatch");
                 var reference = $"ext-{selected.ExternalProvider}-song-{selected.ExternalId}";
                 await providers.RememberTrackAsync(context, reference).WaitAsync(TimeSpan.FromSeconds(10), token);
                 var song = await providers.GetSongAsync(context, selected.ExternalProvider!, selected.ExternalId!)
                     .WaitAsync(TimeSpan.FromSeconds(10), token);
-                if (song == null) return null;
+                if (song == null) return new(group, null, null, Retry: true, Reason: "song-read-failed");
                 if (!SameEdition(play.Title, song.Title) || FuzzyMatcher.HasCleanRecordingLabel(play.Title) && song.ExplicitContentLyrics == 1)
-                    return new(group, null, null);
-                var identity = song.CanonicalRecordingId is { } recording
-                    ? (await db.ProviderTrackIdentities.AsNoTracking().Where(item => item.CanonicalRecordingId == recording &&
-                        item.ProviderId == selected.ExternalProvider && item.ExternalId == selected.ExternalId &&
-                        (item.Scope == ProviderIdentityScope.Catalog || db.ProviderAccounts.Any(account =>
-                            account.Id == item.ProviderAccountId && (account.OwnerUserId == user.Id || account.OwnerUserId == null) && account.Enabled)))
-                        .OrderBy(item => item.Id).ToArrayAsync(token)).FirstOrDefault(CatalogIdentityPolicy.IsPlaybackEligible) : null;
-                if (identity == null) return null;
-                var library = tracks.FirstOrDefault(track => track.CanonicalRecordingId == song.CanonicalRecordingId && SameEdition(play.Title, track.Title));
-                return new(group, song.CanonicalRecordingId, library, selected, identity);
+                    return new(group, null, null, Reason: "edition-mismatch");
+                var verified = matcher.Decide(scope, Source(group.Key, play), [TrackMatchPlayableSearch.ToCandidate(song, scope)], null);
+                if (!Accepted(verified)) return new(group, null, null, Reason: "song-read-rejected:" + (verified.Warnings.FirstOrDefault() ?? verified.Reasons.FirstOrDefault() ?? verified.State.ToString()));
+                var providerId = allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(selected.ExternalProvider!);
+                var externalHash = CanonicalCatalogKeys.Hash(selected.ExternalId!);
+                var links = await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
+                    item.ProviderId == providerId && item.ExternalIdHash == externalHash && item.ExternalId == selected.ExternalId &&
+                    (item.Scope == ProviderIdentityScope.Catalog || db.ProviderAccounts.Any(account =>
+                        account.Id == item.ProviderAccountId && (account.OwnerUserId == user.Id || account.OwnerUserId == null) && account.Enabled)))
+                    .OrderBy(item => item.Id).ToArrayAsync(token);
+                var eligible = links.Where(CatalogIdentityPolicy.IsPlaybackEligible).ToArray();
+                if (eligible.Length == 0) return new(group, null, null, Retry: true,
+                    Reason: links.Length == 0 ? "identity-missing" : "not-playback-eligible");
+                if (song.CanonicalRecordingId is { } known) eligible = eligible.Where(item => item.CanonicalRecordingId == known).ToArray();
+                if (eligible.Select(item => item.CanonicalRecordingId).Distinct().Count() != 1)
+                    return new(group, null, null, Retry: true, Reason: "identity-conflict");
+                var identity = eligible[0];
+                var library = tracksByRecording.GetValueOrDefault(identity.CanonicalRecordingId)?.FirstOrDefault(track => SameEdition(play.Title, track.Title));
+                return new(group, identity.CanonicalRecordingId, library, song, identity, Reason: "matched-search");
             }
-            catch (Exception) when (!token.IsCancellationRequested) { return null; }
-        }
-
-        async Task QueueTagsAsync()
-        {
-            var ids = await db.ListeningEvents.AsNoTracking().Where(item => item.OwnerUserId == user.Id &&
-                item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId && item.CanonicalRecordingId != null)
-                .Select(item => item.CanonicalRecordingId!.Value).Distinct().ToArrayAsync(token);
-            if (tags != null) await tags.EnqueuePendingAsync(token, ids);
-            await execution.ReportProgressAsync(new("history-tags", "Collecting styles for matched past songs.", saved.Cursor), token);
+            catch (Exception exception) when (!token.IsCancellationRequested)
+            {
+                logger?.LogWarning("History resolution failed at provider read ({ExceptionType})", exception.GetType().Name);
+                return new(group, null, null, Retry: true, Reason: "exception:" + exception.GetType().Name);
+            }
         }
 
         async Task SaveAsync(IReadOnlyCollection<Resolution> batch)
         {
             var next = saved with { Cursor = saved.Cursor + batch.Count(item => !item.Retry) };
             var json = payloadPolicy.SerializeAndValidate(next);
-            for (var retry = 0; ; retry++)
+            var checkpoint = batch.Any(item => !item.Retry);
+            for (var retry = 0; checkpoint; retry++)
             {
                 try
                 {
@@ -263,7 +286,11 @@ public sealed class ListeningHistoryResolution(
                         throw new DurableJobExecutionChangedException();
                     foreach (var resolution in batch)
                     {
-                        var (group, canonical, library, song, identity, retrying) = resolution;
+                        var group = resolution.Group;
+                        var canonical = resolution.Canonical;
+                        var library = resolution.Library;
+                        var song = resolution.Song;
+                        var identity = resolution.Identity;
                         if (canonical != null)
                         {
                             var libraryId = library?.Id;
@@ -282,9 +309,9 @@ public sealed class ListeningHistoryResolution(
                                         .SetProperty(item => item.Isrc, item => item.Isrc ?? isrc)
                                         .SetProperty(item => item.Revision, item => item.Revision + 1)
                                         .SetProperty(item => item.ProviderTrackIdentityId, item => identity != null ? identity.Id : item.ProviderTrackIdentityId)
-                                        .SetProperty(item => item.ProviderId, item => identity != null ? identity.ProviderId : item.ProviderId)
-                                        .SetProperty(item => item.ProviderAccountId, item => identity != null ? identity.ProviderAccountId : item.ProviderAccountId)
-                                        .SetProperty(item => item.ProviderTrackReference, item => identity != null ? identity.ExternalId : item.ProviderTrackReference), token);
+                                        .SetProperty(item => item.ProviderId, item => identity != null && item.ProviderTrackReference == null ? identity.ProviderId : item.ProviderId)
+                                        .SetProperty(item => item.ProviderAccountId, item => identity != null && item.ProviderTrackReference == null ? identity.ProviderAccountId : item.ProviderAccountId)
+                                        .SetProperty(item => item.ProviderTrackReference, item => identity != null && item.ProviderTrackReference == null ? identity.ExternalId : item.ProviderTrackReference), token);
                                 }
                                 if (!Guid.TryParse(importGroup.Key, out var importId)) continue;
                                 await write.ListeningHistoryImports.Where(item => item.Id == importId &&
@@ -296,9 +323,9 @@ public sealed class ListeningHistoryResolution(
                                         .SetProperty(item => item.Revision, item => item.Revision + 1), token);
                             }
                         }
-                        else
+                        else if (!resolution.Retry)
                         {
-                            var kind = retrying ? ResourceKind + "-retry" : ResourceKind;
+                            var kind = ResourceKind;
                             var version = await write.ExternalMetadataSnapshots.Where(item => item.OwnerUserId == user.Id &&
                                 item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId &&
                                 item.ProviderId == "allstarr" && item.ResourceKind == kind && item.ExternalIdHash == group.Key)
@@ -331,9 +358,15 @@ public sealed class ListeningHistoryResolution(
                 {
                 }
             }
-            var matched = batch.Select(item => item.Canonical).OfType<Guid>().Distinct().ToArray();
-            if (tags != null && matched.Length > 0) await tags.EnqueuePendingAsync(token, matched);
-            await execution.ReportProgressAsync(new("history-resolution", "Matching past listening history.", saved.Cursor), token);
+            foreach (var item in batch)
+            {
+                reasons[item.Reason] = reasons.GetValueOrDefault(item.Reason) + 1;
+                if (reasons[item.Reason] <= 3) logger?.LogDebug("History outcome {Reason}: {Title}", item.Reason, item.Group.First().Title);
+                if (item.Canonical is { } id) matchedRecordings.Add(id);
+                if (!item.Retry) state.Completed.Add(item.Group.Key);
+            }
+            if (checkpoint || reasons.Values.Sum() % 100 == 0)
+                await execution.ReportProgressAsync(new("history-resolution", JsonSerializer.Serialize(reasons), saved.Cursor), token);
         }
     }
 

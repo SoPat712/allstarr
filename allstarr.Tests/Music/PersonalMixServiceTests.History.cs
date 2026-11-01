@@ -11,6 +11,24 @@ namespace allstarr.Tests;
 public sealed partial class PersonalMixServiceTests
 {
     [Fact]
+    public async Task ThousandHistoryMatchesCoalesceWithTagRefreshesForFifteenMinutes()
+    {
+        await service.GenerateAsync(owner);
+        await Seed(count: 1000, plays: 1);
+        var queue = new DurableJobQueue(factory, new(), new(new()), clock);
+        var tagQueue = new allstarr.Core.Enrichment.SharedTagQueue(factory, queue, clock);
+        foreach (var song in songs.Values)
+        {
+            await service.RefreshAfterHistoryResolutionAsync(owner, Guid.NewGuid(), queue);
+            await tagQueue.RefreshListenersAsync(song.CanonicalRecordingId!.Value, default);
+        }
+        await using var db = factory.CreateDbContext();
+        var refresh = Assert.Single(await db.Jobs.Where(item => item.Type == allstarr.Core.Music.PersonalMixService.JobType).ToArrayAsync());
+        Assert.Equal(-100, refresh.Priority);
+        Assert.True(refresh.AvailableAt >= clock.UtcNow.AddMinutes(15));
+    }
+
+    [Fact]
     public async Task ImportedHistory_FillsRecentFallbackAndToggleExcludesAllMixInputs()
     {
         await Seed(count: 40, age: 1000);
@@ -185,6 +203,7 @@ public sealed partial class PersonalMixServiceTests
         await service.RefreshAfterHistoryResolutionAsync(owner, resolutionId, queue, default);
         await using var db = factory.CreateDbContext();
         Assert.Single(await db.Jobs.Where(item => item.Type == PersonalMixService.JobType).ToArrayAsync());
+        clock.UtcNow += TimeSpan.FromMinutes(15);
         var claim = await queue.ClaimNextAsync("mix-history-test", [PersonalMixService.JobType]);
         Assert.NotNull(claim);
         using var services = new ServiceCollection().BuildServiceProvider();

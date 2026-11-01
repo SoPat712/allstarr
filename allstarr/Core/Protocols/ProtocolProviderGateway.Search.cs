@@ -110,7 +110,8 @@ public sealed partial class ProtocolProviderGateway
         var scope = JsonSerializer.Serialize(new { context.Actor, context.Policy });
         var key = CacheKeyBuilder.BuildProviderSearchKey(candidate.Provider.Id, context.Account?.AccountId,
             context.Account?.Revision, scope, query, limit, songs, albums, artists);
-        var work = searchWork.GetOrAdd(key, _ => new(() => SearchAsync()));
+        var workKey = Intelligence.HistoryRequestBudget.Current == null ? key : key + ":history";
+        var work = searchWork.GetOrAdd(workKey, _ => new(() => SearchAsync()));
         var serialized = await work.Value;
         if (serialized == null) return null;
         var snapshot = JsonSerializer.Deserialize<SearchSnapshot>(serialized)!;
@@ -133,7 +134,7 @@ public sealed partial class ProtocolProviderGateway
             }
             finally
             {
-                searchWork.TryRemove(key, out _);
+                searchWork.TryRemove(workKey, out _);
             }
         }
 
@@ -201,7 +202,10 @@ public sealed partial class ProtocolProviderGateway
             var error = failed ? songPage?.Error ?? albumPage?.Error ?? artistPage?.Error ??
                 new ProviderError(ProviderErrorKind.TransientFailure) : null;
             if (failed)
-                RecordFailure("provider failure", error?.RetryAfter);
+            {
+                if (Intelligence.HistoryRequestBudget.Current == null || error?.Kind != ProviderErrorKind.Canceled)
+                    RecordFailure("provider failure", error?.RetryAfter);
+            }
             else
             {
                 lock (failures)

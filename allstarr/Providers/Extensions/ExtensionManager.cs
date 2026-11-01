@@ -650,6 +650,7 @@ public class ExtensionSandbox
     private readonly ILogger _logger;
     private readonly Action<string, string>? _logSink;
     private readonly object _engineLock = new();
+    private CancellationTokenSource? _historyInvocation;
     private readonly Dictionary<(Guid? AccountId, ProviderCapabilityKind Capability),
         (bool Failing, DateTimeOffset LastLoggedAt, int RepeatedFailures)> _probeLogStates = new();
     private bool _cleanupCompleted;
@@ -913,12 +914,17 @@ public class ExtensionSandbox
     {
         if (string.IsNullOrWhiteSpace(hook)) throw new ArgumentException("A hook name is required.", nameof(hook));
         if (requestJson.Length > 1024 * 1024) throw new InvalidOperationException("Extension request is too large.");
-        lock (_engineLock)
+        using (EnterEngine())
         {
             var callerToken = ExtensionArtifactInvocationScope.Current?.CancellationToken ?? cancellationToken;
+            var historyScope = allstarr.Core.Intelligence.HistoryRequestBudget.Current;
+            using var history = historyScope == null ? null : CancellationTokenSource.CreateLinkedTokenSource(callerToken, historyScope.Token);
+            if (history != null) callerToken = history.Token;
             using var budget = new ExtensionInvocationBudget(hook == "download" ? _downloadTimeout : _hookTimeout, callerToken, _timeProvider,
                 hook == "download", resolutionDeadline,
                 isHealthProbe: hook is "probeMetadata" or "probePlaylist" or "probeStreaming" or "probeDownload" or "probeIntelligence");
+            var previous = _historyInvocation;
+            if (history != null) Volatile.Write(ref _historyInvocation, history);
             try
             {
                 budget.Check();
@@ -950,7 +956,30 @@ public class ExtensionSandbox
                 LogInvocationLimit(exception, hook);
                 throw;
             }
+            finally
+            {
+                if (history != null) Volatile.Write(ref _historyInvocation, previous);
+            }
         }
+    }
+
+    private EngineLease EnterEngine()
+    {
+        if (allstarr.Core.Intelligence.HistoryRequestBudget.Current != null) Monitor.Enter(_engineLock);
+        else
+        {
+            while (!Monitor.TryEnter(_engineLock, 10))
+            {
+                try { Volatile.Read(ref _historyInvocation)?.Cancel(); }
+                catch (ObjectDisposedException) { }
+            }
+        }
+        return new(_engineLock);
+    }
+
+    private sealed class EngineLease(object gate) : IDisposable
+    {
+        public void Dispose() => Monitor.Exit(gate);
     }
 
     private bool LogInvocationLimit(Exception exception, string operation)
@@ -985,7 +1014,7 @@ public class ExtensionSandbox
         var failing = !outcome.IsSuccess || outcome.RequireValue().Status != ProviderProbeStatus.Healthy;
         var reason = SafeFailureReason(outcome.IsSuccess ? outcome.RequireValue().SafeCode : outcome.Error?.Code);
         var now = _timeProvider.GetUtcNow();
-        lock (_engineLock)
+        using (EnterEngine())
         {
             var key = (accountId, capability);
             var known = _probeLogStates.TryGetValue(key, out var previous);
@@ -1019,7 +1048,7 @@ public class ExtensionSandbox
 
     internal void Cleanup()
     {
-        lock (_engineLock)
+        using (EnterEngine())
         {
             if (_cleanupCompleted) return;
             _cleanupCompleted = true;
@@ -1034,7 +1063,7 @@ public class ExtensionSandbox
 
     internal bool HasSpotiFlacHook(string hook)
     {
-        lock (_engineLock)
+        using (EnterEngine())
         {
             var exported = _engine.GetValue("_spotiflacExtension");
             return exported.IsObject() && exported.AsObject().Get(hook).IsCallable();
@@ -1079,7 +1108,7 @@ public class ExtensionSandbox
 
     public (int EntryCount, long PayloadBytes) StorageUsage()
     {
-        lock (_engineLock)
+        using (EnterEngine())
         {
             return _hostBridge.StorageUsage();
         }
@@ -1095,7 +1124,7 @@ public class ExtensionSandbox
 
     private bool IsCallable(string hook)
     {
-        lock (_engineLock) return _extensionObj.Get(hook).IsCallable();
+        using (EnterEngine()) return _extensionObj.Get(hook).IsCallable();
     }
 
     public Album? GetAlbum(string id)

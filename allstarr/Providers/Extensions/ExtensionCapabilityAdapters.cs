@@ -150,7 +150,7 @@ public abstract class ExtensionCapabilityAdapterBase : IProviderUrlCapability
                 return await Task.Run(Run, context.CancellationToken);
             }, context.CancellationToken);
         }
-        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested || Intelligence.HistoryRequestBudget.Current != null)
         { return Failure<T>(ProviderErrorKind.Canceled); }
         catch (Exception exception) when (hook == "download")
         {

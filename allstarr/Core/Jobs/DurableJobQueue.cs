@@ -350,7 +350,7 @@ public sealed partial class DurableJobQueue
         CancellationToken cancellationToken = default)
     {
         var stage = SafeOperationalText.Sanitize(update.Stage, 100) ?? "progress";
-        var message = SafeOperationalText.Sanitize(update.Message, 500) ?? "Work is continuing.";
+        var message = SafeOperationalText.Sanitize(update.Message, stage == "history-resolution" ? 8000 : 500) ?? "Work is continuing.";
         var provider = SafeOperationalText.Sanitize(update.Provider, 100);
         var playlist = SafeOperationalText.Sanitize(update.Playlist, 300);
         var track = SafeOperationalText.Sanitize(update.Track, 500);

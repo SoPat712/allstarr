@@ -284,6 +284,7 @@ builder.Services.AddControllers()
 builder.Services.AddAdminSignInRateLimiting();
 
 builder.Services.AddHttpClient();
+builder.Services.ConfigureHttpClientDefaults(client => client.AddHttpMessageHandler(() => new allstarr.Core.Intelligence.HistoryRequestBudgetHandler()));
 builder.Services.Configure<OdesliSettings>(builder.Configuration.GetSection("Odesli"));
 builder.Services.AddHttpClient("Odesli", client => client.Timeout = TimeSpan.FromSeconds(6)).RemoveAllLoggers()
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, UseDefaultCredentials = false });

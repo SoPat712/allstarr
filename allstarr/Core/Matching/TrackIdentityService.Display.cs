@@ -116,7 +116,7 @@ public sealed partial class TrackIdentityService
         return songs;
     }
 
-    private static Song? ReadDisplaySong(string payload, string provider, string externalId)
+    internal static Song? ReadDisplaySong(string payload, string provider, string externalId)
     {
         using var document = JsonDocument.Parse(payload);
         var root = document.RootElement;

@@ -138,11 +138,17 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             var user = await UserAsync(db, owner, token);
             var saved = await RowAsync(db, user, token);
             if (saved == null) return;
+            if (await db.Jobs.AsNoTracking().AnyAsync(item => item.Type == JobType && item.OwnerUserId == owner &&
+                (item.IdempotencyKey.StartsWith("history-tags:") || item.IdempotencyKey.StartsWith("history-resolution:")) &&
+                (item.CreatedAt > clock.UtcNow.AddMinutes(-15) || item.State == DurableJobState.Pending ||
+                    item.State == DurableJobState.Running || item.State == DurableJobState.RetryScheduled), token)) return;
             var before = JsonSerializer.Deserialize<PersonalMixDocument>(saved.PayloadJson)!;
             var hasNewHistory = await Events(db, user, await taste.UseImportedHistoryAsync(owner, token))
                 .AnyAsync(item => item.State == ListeningEventState.Completed, token);
             if (hasNewHistory && before.Mixes.Values.Any(mix => PersonalMixRules.Kinds.Contains(mix.Kind) && (!mix.Readiness.Ready || mix.Songs.Count == 0)))
-                await queue.EnqueueAsync(new DurableJobEnqueueRequest<Guid>(JobType, $"history-resolution:{resolutionId:N}", Guid.Empty, owner), token);
+                await queue.EnqueueAsync(new DurableJobEnqueueRequest<Guid>(JobType,
+                    $"history-tags:{owner:N}:{clock.UtcNow.ToUnixTimeSeconds() / 900}", Guid.Empty, owner,
+                    Priority: -100, AvailableAt: clock.UtcNow.AddMinutes(15)), token);
         }
         finally { writes.Release(); }
     }

@@ -94,7 +94,12 @@ public sealed partial class ListeningHistoryResolutionTests
         probe.AfterEventWrite = null;
         Assert.Equal(DurableJobCompletionKind.Succeeded, (await Run(collectTags: true)).Kind);
         await AssertSavedProgress(225, 900, 900);
-        Assert.Equal(0, await new allstarr.Core.Enrichment.SharedTagQueue(factory, jobs, clock).EnqueuePendingAsync(default));
+        await using (var queued = factory.CreateDbContext())
+            Assert.Equal(100, await queued.Jobs.CountAsync(item => item.Type == allstarr.Core.Enrichment.SharedTagQueue.JobType));
+        var tagQueue = new allstarr.Core.Enrichment.SharedTagQueue(factory, jobs, clock);
+        Assert.Equal(100, await tagQueue.EnqueuePendingAsync(default));
+        Assert.Equal(25, await tagQueue.EnqueuePendingAsync(default));
+        Assert.Equal(0, await tagQueue.EnqueuePendingAsync(default));
         await using var read = factory.CreateDbContext();
         var tagJobs = await read.Jobs.Where(item => item.Type == allstarr.Core.Enrichment.SharedTagQueue.JobType).ToArrayAsync();
         Assert.Equal(225, tagJobs.Length);

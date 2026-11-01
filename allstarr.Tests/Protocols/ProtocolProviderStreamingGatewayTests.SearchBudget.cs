@@ -14,6 +14,58 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
+    [Fact]
+    public async Task InteractiveSearchDoesNotJoinThrottledHistoryWork()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var provider = DelayedSearchProvider("deezer", clock, TimeSpan.Zero);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var answer = ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("deezer",
+            [new(new("deezer", ProviderResourceKind.Track, "track"), "Track", [new("Artist")])]));
+        provider.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .Returns(() =>
+            {
+                if (allstarr.Core.Intelligence.HistoryRequestBudget.Current == null) return Task.FromResult(answer);
+                entered.TrySetResult();
+                return release.Task;
+            });
+        var gateway = BudgetGateway(clock, new TestMemoryApplicationCache(), provider.Object);
+        var context = Context();
+        Task<ProviderOutcome<IReadOnlyList<allstarr.Models.Domain.Song>>> history;
+        using (new allstarr.Core.Intelligence.HistoryRequestBudget())
+            history = gateway.SearchAutomaticProviderSongsAsync(context, "deezer", "Track Artist", 15);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var interactive = await gateway.SearchAutomaticProviderSongsAsync(context, "deezer", "Track Artist", 15)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.True(interactive.IsSuccess);
+            Assert.Single(interactive.RequireValue());
+        }
+        finally { release.TrySetResult(answer); await history; }
+    }
+
+    [Fact]
+    public async Task YieldedHistorySearchDoesNotPutInteractiveProviderIntoCooldown()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var provider = DelayedSearchProvider("deezer", clock, TimeSpan.Zero);
+        provider.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(new(ProviderErrorKind.Canceled)));
+        var gateway = BudgetGateway(clock, new TestMemoryApplicationCache(), provider.Object);
+        var context = Context();
+        for (var index = 0; index < 3; index++)
+        {
+            using var budget = new allstarr.Core.Intelligence.HistoryRequestBudget();
+            Assert.False((await gateway.SearchAutomaticProviderSongsAsync(context, "deezer", "Track Artist", 15)).IsSuccess);
+        }
+        provider.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("deezer",
+                [new(new("deezer", ProviderResourceKind.Track, "track"), "Track", [new("Artist")])])));
+        Assert.True((await gateway.SearchAutomaticProviderSongsAsync(context, "deezer", "Track Artist", 15)).IsSuccess);
+    }
+
     [Theory]
     [InlineData("songs")]
     [InlineData("albums")]

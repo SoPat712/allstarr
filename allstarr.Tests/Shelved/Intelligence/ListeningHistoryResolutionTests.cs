@@ -17,11 +17,12 @@ using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 using Moq;
 
 namespace allstarr.Tests;
 
-public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
+public sealed partial class ListeningHistoryResolutionTests(Xunit.Abstractions.ITestOutputHelper output) : IAsyncLifetime
 {
     private SqliteTestDatabase database = null!;
     private Factory factory = null!;
@@ -65,9 +66,9 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
             ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty, ImmutableHashSet.Create("spotify"), "Lossless", .07));
     }
 
-    private ListeningHistoryResolution Handler(bool collectTags = false) => new(factory, jobs,
+    private ListeningHistoryResolution Handler(bool collectTags = false, ILogger<ListeningHistoryResolution>? logger = null, TimeProvider? pacing = null) => new(factory, jobs,
         new(gateway.Object, new(), NullLogger<TrackMatchPlayableSearch>.Instance, matchingPolicies.Object), new(), gateway.Object,
-        access.Object, identities.Object, Mixes(), clock, new(new DurableJobOptions()), time, collectTags ? new(factory, jobs, clock) : null);
+        access.Object, identities.Object, Mixes(), clock, new(new DurableJobOptions()), pacing ?? time, collectTags ? new(factory, jobs, clock) : null, logger: logger);
 
     private PersonalMixService Mixes()
     {
@@ -128,11 +129,11 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
         return track;
     }
 
-    private async Task<DurableJobCompletion> Run(TimeSpan? firstDelay = null, bool collectTags = false)
+    private async Task<DurableJobCompletion> Run(TimeSpan? firstDelay = null, bool collectTags = false, bool realTime = false)
     {
         var claim = await jobs.ClaimNextAsync("history-test", [ListeningHistoryResolution.JobTypeName]);
         Assert.NotNull(claim);
-        var running = Handler(collectTags).ExecuteAsync(new(claim, services), default);
+        var running = Handler(collectTags, pacing: realTime ? TimeProvider.System : null).ExecuteAsync(new(claim, services), default);
         if (firstDelay != null) Assert.Equal(firstDelay.Value, await time.NextTimerAsync());
         while (!running.IsCompleted) { time.Advance(TimeSpan.FromSeconds(2)); await Task.Delay(1); }
         var result = await running;
@@ -416,21 +417,20 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RunCap_ResumesSavedCursorWithMostPlayedFirstAfterRestart()
+    public async Task ContinuousRunSavesEverySongAndKeepsMostPlayedFirst()
     {
         for (var index = 0; index < 101; index++) await Add("Missing " + index, index == 100 ? 3 : 1);
         await ListeningHistoryResolution.EnqueueAsync(factory, jobs, Scope, clock.UtcNow, default);
-        Assert.Equal(DurableJobCompletionKind.Deferred, (await Run(TimeSpan.FromSeconds(2))).Kind);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await Run()).Kind);
         await using (var db = factory.CreateDbContext())
         {
             var job = await db.Jobs.SingleAsync();
-            Assert.Equal(100, JsonDocument.Parse(job.PayloadJson).RootElement.GetProperty("Cursor").GetInt32());
+            Assert.Equal(101, JsonDocument.Parse(job.PayloadJson).RootElement.GetProperty("Cursor").GetInt32());
         }
         Assert.Contains("Missing 100", gateway.Invocations.First(item => item.Method.Name == "SearchAutomaticProviderSongsAsync").Arguments[2].ToString());
         gateway.Invocations.Clear();
-        clock.UtcNow += TimeSpan.FromMinutes(2);
-        Assert.Equal(DurableJobCompletionKind.Succeeded, (await Run()).Kind);
-        Assert.True(gateway.Invocations.Count(item => item.Method.Name == "SearchAutomaticProviderSongsAsync") < 6);
+        await Handler().RecoverAsync(default);
+        Assert.DoesNotContain(gateway.Invocations, item => item.Method.Name == "SearchAutomaticProviderSongsAsync");
     }
 
     [Fact]
@@ -488,7 +488,7 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ProviderFailure_ResumesAtAnotherSongWithoutNegativeReceipt()
+    public async Task ProviderFailureDisablesBrokenRouteWithoutNegativeReceipt()
     {
         await Add("First");
         await Add("Second");
@@ -503,33 +503,26 @@ public sealed partial class ListeningHistoryResolutionTests : IAsyncLifetime
         clock.UtcNow += TimeSpan.FromMinutes(2);
         Assert.Equal(DurableJobCompletionKind.Deferred, (await Run()).Kind);
         var nextQuery = gateway.Invocations.First(item => item.Method.Name == nameof(IProtocolProviderGateway.SearchAutomaticProviderSongsAsync)).Arguments[2];
-        Assert.NotEqual(firstQuery, nextQuery);
+        Assert.Equal(firstQuery, nextQuery);
         await using var db = factory.CreateDbContext();
         Assert.Empty(await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "history-resolution").ToArrayAsync());
     }
 
     [Fact]
-    public async Task FailedHistorySongs_HaveBoundedAttemptsAndDoNotBlockOtherSongs()
+    public async Task ProviderOutageNeverUsesUpSongRetries()
     {
         await Add("Broken");
-        await Add("Available");
         gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), 15))
-            .Returns((ProtocolExecutionContext _, string _, string query, int _) => Task.FromResult(
-                query.Contains("Broken", StringComparison.OrdinalIgnoreCase)
-                    ? ProviderOutcome<IReadOnlyList<Song>>.Failure(new(ProviderErrorKind.TransientFailure))
-                    : ProviderOutcome<IReadOnlyList<Song>>.Success([])));
+            .ReturnsAsync(ProviderOutcome<IReadOnlyList<Song>>.Failure(new(ProviderErrorKind.TransientFailure)));
         await Handler().RecoverAsync(default);
-        Assert.Equal(DurableJobCompletionKind.Deferred, (await Run()).Kind);
-        await using (var db = factory.CreateDbContext())
-            Assert.Single(await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "history-resolution").ToArrayAsync());
-        clock.UtcNow += TimeSpan.FromMinutes(2);
-        Assert.Equal(DurableJobCompletionKind.Deferred, (await Run()).Kind);
-        clock.UtcNow += TimeSpan.FromMinutes(2);
-        Assert.Equal(DurableJobCompletionKind.Succeeded, (await Run()).Kind);
-        await Handler().RecoverAsync(default);
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            Assert.Equal(DurableJobCompletionKind.Deferred, (await Run()).Kind);
+            clock.UtcNow += TimeSpan.FromMinutes(2);
+        }
         await using var read = factory.CreateDbContext();
-        Assert.Single(await read.Jobs.ToArrayAsync());
-        Assert.Equal(2, await read.ExternalMetadataSnapshots.CountAsync(item => item.ResourceKind == "history-resolution"));
+        Assert.Empty(await read.ExternalMetadataSnapshots.Where(item => item.ResourceKind.StartsWith("history-resolution")).ToArrayAsync());
+        Assert.Null((await read.ListeningEvents.SingleAsync()).CanonicalRecordingId);
     }
 
     [Fact]
