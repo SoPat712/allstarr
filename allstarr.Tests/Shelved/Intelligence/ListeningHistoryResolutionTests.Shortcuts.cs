@@ -153,7 +153,8 @@ public sealed partial class ListeningHistoryResolutionTests
         var measurement = $"Local fixture: 5375 songs, 32250 plays, 8078 recordings, 14763 identities, 3694 library tracks: {elapsed.Elapsed.TotalSeconds:F3}s, 0 provider calls";
         output.WriteLine(measurement);
         Console.WriteLine(measurement);
-        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(60), elapsed.Elapsed.ToString());
+        // About 13 seconds of this is the deliberate pause between batches that keeps writes out of playback's way.
+        Assert.True(elapsed.Elapsed < TimeSpan.FromSeconds(75), elapsed.Elapsed.ToString());
         gateway.Verify(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>(), 15), Times.Never);
         await using var read = factory.CreateDbContext();
         Assert.Equal(32250, await read.ListeningEvents.CountAsync(item => item.CanonicalRecordingId != null));
