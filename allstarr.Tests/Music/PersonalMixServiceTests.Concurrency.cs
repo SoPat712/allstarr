@@ -60,7 +60,7 @@ public sealed partial class PersonalMixServiceTests
         var virtualization = new PlaylistVirtualizationService(factory, new(factory, access.Object), access.Object, personalMixes: service);
         clock.UtcNow += TimeSpan.FromMinutes(16);
         var block = BlockSong("0");
-        var generation = service.GenerateAsync(owner, timeZoneId: "UTC");
+        var generation = service.GenerateAsync(owner, repeat.Id, timeZoneId: "UTC");
         try
         {
             await block.Entered.Task.WaitAsync(CompletionDeadline);
@@ -144,7 +144,7 @@ public sealed partial class PersonalMixServiceTests
         var result = (await service.GenerateAsync(owner, repeat.Id, timeZoneId: "UTC").WaitAsync(CompletionDeadline)).Single(item => item.Id == repeat.Id);
         Assert.Equal(2, polls);
         Assert.Equal(repeat.Generation + 1, result.Generation);
-        Assert.Equal(before + 1, await db.ExternalMetadataSnapshots.CountAsync(item => item.ResourceKind == "personal-mixes"));
+        Assert.Equal(before + 3, await db.ExternalMetadataSnapshots.CountAsync(item => item.ResourceKind == "personal-mixes"));
     }
 
     [Theory]
@@ -200,7 +200,7 @@ public sealed partial class PersonalMixServiceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task ChangedImportedInputs_LeaveStoredGenerationIntact(bool delete)
+    public async Task ChangedImportedInputs_ReselectWithoutStoredHistory(bool delete)
     {
         await Seed();
         var repeat = (await service.GenerateAsync(owner)).Single(item => item.Kind == "on-repeat");
@@ -218,10 +218,10 @@ public sealed partial class PersonalMixServiceTests
             else await taste.SetUseImportedHistoryAsync(owner, false).WaitAsync(CompletionDeadline);
         }
         finally { block.Release.TrySetResult(); }
-        await Assert.ThrowsAsync<InvalidOperationException>(() => generation.WaitAsync(CompletionDeadline));
+        await generation.WaitAsync(CompletionDeadline);
         var stored = await service.GetAsync(owner, repeat.Id);
-        Assert.Equal(repeat.Generation, stored.Generation);
-        Assert.Equal(repeat.Songs.Select(item => item.Song.Id), stored.Songs.Select(item => item.Song.Id));
+        Assert.Equal(repeat.Generation + 1, stored.Generation);
+        Assert.Empty(stored.Songs);
     }
 
     [Theory]
@@ -333,7 +333,7 @@ public sealed partial class PersonalMixServiceTests
         using var cancellation = new CancellationTokenSource();
         var block = BlockSong("0");
         gateway.Invocations.Clear();
-        var first = service.GenerateAsync(owner, token: cancellation.Token);
+        var first = service.GenerateAsync(owner, repeat.Id, token: cancellation.Token);
         Task<IReadOnlyList<PersonalMix>>? second = null;
         try
         {

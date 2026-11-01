@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Text.Json;
 using allstarr.Core.Operations;
+using allstarr.Core.Intelligence;
+using allstarr.Core.Protocols;
 using allstarr.Models.Settings;
 using allstarr.Services.MusicBrainz;
 using Microsoft.Extensions.Options;
@@ -9,7 +11,8 @@ namespace allstarr.Core.Enrichment;
 
 public sealed class SharedTagSources(
     IMusicBrainzCatalogClient musicBrainz, IHttpClientFactory clients,
-    IOptionsMonitor<ScrobblingSettings> settings, IPlatformClock clock, TimeProvider? timeProvider = null)
+    IOptionsMonitor<ScrobblingSettings> settings, IPlatformClock clock, TimeProvider? timeProvider = null,
+    IScopedRecommendationAccountAccessor? accounts = null)
 {
     private const string LastFmClientName = nameof(SharedTagSources);
     private const int MaximumLastFmResponseBytes = 256 * 1024;
@@ -87,10 +90,30 @@ public sealed class SharedTagSources(
         batches.Add(new(source, values, clock.UtcNow));
     }
 
-    public async Task<IReadOnlyList<allstarr.Core.Music.SimilarTrackSuggestion>> TagTopTracksAsync(string tag, CancellationToken token)
+    public Task<bool> HasTagChartKeyAsync(ProtocolExecutionContext context, CancellationToken token) =>
+        UseTagChartKeyAsync(context, _ => Task.FromResult(true), false, token);
+
+    private async Task<T> UseTagChartKeyAsync<T>(ProtocolExecutionContext? context, Func<string, Task<T>> use, T missing, CancellationToken token)
     {
-        var key = settings.CurrentValue.LastFm.ApiKey?.Trim();
-        if (string.IsNullOrWhiteSpace(key)) return [];
+        if (settings.CurrentValue.LastFm.ApiKey?.Trim() is { Length: > 0 } configured) return await use(configured);
+        if (context?.Actor?.EffectiveUserId is not { } owner || accounts == null) return missing;
+        var scope = new IntelligenceScope(owner, context.Protocol.ToString().ToLowerInvariant(), context.BackendInstanceId);
+        try
+        {
+            if (!await accounts.HasAccountAsync(scope, "lastfm", token)) return missing;
+            return await accounts.UseAsync(scope, "lastfm", (secret, _) =>
+                secret.TryGetProperty("apiKey", out var key) && key.ValueKind == JsonValueKind.String &&
+                    key.GetString()?.Trim() is { Length: > 0 } value ? use(value) : Task.FromResult(missing), token);
+        }
+        catch (Exception error) when (error is KeyNotFoundException or UnauthorizedAccessException or NotSupportedException) { return missing; }
+    }
+
+    public Task<IReadOnlyList<allstarr.Core.Music.SimilarTrackSuggestion>> TagTopTracksAsync(string tag, CancellationToken token,
+        ProtocolExecutionContext? context = null) => UseTagChartKeyAsync(context, key => ReadTagChartAsync(tag, key, token),
+            (IReadOnlyList<allstarr.Core.Music.SimilarTrackSuggestion>)[], token);
+
+    private async Task<IReadOnlyList<allstarr.Core.Music.SimilarTrackSuggestion>> ReadTagChartAsync(string tag, string key, CancellationToken token)
+    {
         await LastFmTurnAsync(token);
         using var timeout = new CancellationTokenSource(LastFmTimeout, _timeProvider);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token, timeout.Token);

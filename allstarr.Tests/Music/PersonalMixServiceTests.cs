@@ -82,8 +82,17 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
 
     private PersonalMixService NewService() => new(factory, clock, tags, taste,
         new MusicMixService(gateway.Object), gateway.Object,
-        new NewReleasesService(factory, clock, new Mock<IProviderRouter>().Object, settings.Object),
+        NewReleaseService(),
         settings.Object, policies.Object, access.Object, tagSources: tagSources);
+
+    private NewReleasesService NewReleaseService()
+    {
+        var router = new Mock<IProviderRouter>();
+        router.Setup(x => x.PlanAsync<allstarr.Core.Capabilities.IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => new ProviderRoutePlan<allstarr.Core.Capabilities.IProviderMetadataCapability>(request, [],
+                new(request.CorrelationId, request.Capability, null, null, [])));
+        return new(factory, clock, router.Object, settings.Object);
+    }
 
     private ProtocolExecutionContext Context(Guid user) => new(Enum.Parse<ProtocolKind>(protocol, true), "main", user.ToString(),
         new(user, protocol, "main", user.ToString(), "Listener", user == owner), "mix-test", clock.UtcNow.AddMinutes(5), default);
@@ -452,7 +461,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
             });
             await db.SaveChangesAsync();
         }
-        var first = (await service.GenerateAsync(owner)).Single(item => item.Kind == "discover-weekly");
+        var first = (await service.GenerateAsync(owner, scheduled: true)).Single(item => item.Kind == "discover-weekly");
         Assert.Equal(50, first.Songs.Count);
         Assert.DoesNotContain(first.Songs, item => item.Song.ExternalId == "1000");
         clock.UtcNow += TimeSpan.FromDays(7);
@@ -493,7 +502,8 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), 3))
             .Returns((ProtocolExecutionContext _, string _, string query, int _) => Task.FromResult(allstarr.Core.Capabilities.ProviderOutcome<IReadOnlyList<Song>>.Success(
                 songs.Values.Where(song => query == song.Title + " " + song.Artist).ToArray())));
-        var repeat = (await service.GenerateAsync(owner)).Single(item => item.Kind == "on-repeat");
+        var id = (await service.ListAsync(owner)).Single(item => item.Kind == "on-repeat").Id;
+        var repeat = (await service.GenerateAsync(owner, id)).Single(item => item.Kind == "on-repeat");
         Assert.Equal(10, repeat.Songs.Count);
         Assert.All(repeat.Songs, item => Assert.StartsWith("ext-deezer-song-", item.Song.Id));
     }

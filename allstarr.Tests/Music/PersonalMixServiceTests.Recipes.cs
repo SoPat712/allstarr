@@ -44,15 +44,15 @@ public sealed partial class PersonalMixServiceTests
         }
     }
 
-    private TagChart EnableChart(bool failFirst = false, int availableArtists = 25, int tracks = 50, int artists = 25)
+    private TagChart EnableChart(bool failFirst = false, int availableArtists = 25, int tracks = 50, int artists = 25, bool scopedKey = false, bool missingKey = false)
     {
         var chart = new TagChart { Tracks = tracks, Artists = artists };
         var http = new Mock<IHttpClientFactory>();
         http.Setup(x => x.CreateClient(It.IsAny<string>())).Returns(new HttpClient(chart));
         var options = new Mock<IOptionsMonitor<ScrobblingSettings>>();
-        var config = new ScrobblingSettings(); config.LastFm.ApiKey = "fixture-key";
+        var config = new ScrobblingSettings(); config.LastFm.ApiKey = scopedKey || missingKey ? "" : "fixture-key";
         options.SetupGet(x => x.CurrentValue).Returns(config);
-        tagSources = new SharedTagSources(new Mock<IMusicBrainzCatalogClient>().Object, http.Object, options.Object, clock);
+        tagSources = new SharedTagSources(new Mock<IMusicBrainzCatalogClient>().Object, http.Object, options.Object, clock, accounts: scopedKey ? new ChartAccounts(owner) : null);
         gateway.Setup(x => x.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(failFirst ? ["broken", "deezer"] : ["deezer"]);
         gateway.Setup(x => x.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "broken", It.IsAny<string>(), It.IsAny<int>()))
@@ -151,7 +151,7 @@ public sealed partial class PersonalMixServiceTests
         gateway.Setup(x => x.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Artist 0", 0, 0, 5, "deezer"))
             .ReturnsAsync(new allstarr.Models.Search.SearchResult { Artists = [new Artist { Name = "Artist 0", ExternalId = "seed" }] });
         gateway.Setup(x => x.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", 50))
-            .ReturnsAsync(Enumerable.Range(0, 25).Select(i => new Artist { Name = "Related " + i, ExternalId = i.ToString(), ExternalProvider = "deezer" }).ToList());
+            .ReturnsAsync(Enumerable.Range(0, 26).Select(i => new Artist { Name = "Related " + i, ExternalId = i.ToString(), ExternalProvider = "deezer" }).ToList());
         gateway.Setup(x => x.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), 100))
             .Returns((ProtocolExecutionContext _, string _, string query, int _) => Task.FromResult(ProviderOutcome<IReadOnlyList<Song>>.Success(
                 query.StartsWith("Related ", StringComparison.Ordinal) ? Enumerable.Range(0, 2).Select(i => new Song
@@ -161,16 +161,24 @@ public sealed partial class PersonalMixServiceTests
                     ExternalId = query + i,
                     Title = "New song " + query + i,
                     Artist = query,
-                    Genre = "rock",
+                    Genre = query == "Related 0" ? "country" : null,
                     ExplicitContentLyrics = 0
                 }).ToArray() : [])));
         var id = (await service.ListAsync(owner)).Single(x => x.Kind == "discover-weekly").Id;
         var mix = (await service.GenerateAsync(owner, id)).Single(x => x.Id == id);
         Assert.Equal(50, mix.Songs.Count);
-        Assert.All(mix.Songs, x => Assert.Equal("Similar to Artist 0 · rock · via Deezer", x.Reason));
-        Assert.Equal(27, mix.Evidence!.ProviderReads);
+        Assert.All(mix.Songs, x => Assert.Equal("Similar to Artist 0 · via Deezer", x.Reason));
+        Assert.Equal(28, mix.Evidence!.ProviderReads);
+        Assert.DoesNotContain(mix.Songs, song => song.Song.Artist == "Related 0");
         Assert.All(mix.Songs.GroupBy(x => x.Song.Artist), group => Assert.Equal(2, group.Count()));
         output.WriteLine($"Library seed Uncharted: {mix.Songs.Count} tracks, {mix.Songs.Select(x => x.Song.Artist).Distinct().Count()} artists, {mix.Evidence.ProviderReads}/30 reads.");
+        clock.UtcNow += TimeSpan.FromMinutes(16);
+        gateway.Invocations.Clear();
+        await RunRefreshJob("history-tags:related");
+        var kept = await service.GetAsync(owner, id);
+        Assert.Equal(mix.Songs.Select(song => song.Song.Id), kept.Songs.Select(song => song.Song.Id));
+        Assert.Equal(0, kept.Evidence!.ProviderReads);
+        Assert.DoesNotContain(gateway.Invocations, call => call.Method.Name is "SearchAsync" or "SearchAutomaticProviderSongsAsync" or "GetSimilarArtistsAsync");
     }
 
     [Fact]
@@ -238,7 +246,7 @@ public sealed partial class PersonalMixServiceTests
                     Genre = "acoustic",
                     Duration = 180
                 }).ToArray())));
-        var result = await service.GenerateAsync(owner);
+        var result = await service.GenerateAsync(owner, scheduled: true);
         foreach (var kind in new[] { "chill", "focus", "workout", "party", "sleep", "daily-1", "discover-weekly" })
             Assert.NotEmpty(result.Single(x => x.Kind == kind).Songs);
         Assert.True(result.Single(x => x.Kind == "chill").Readiness.Ready);
@@ -254,7 +262,7 @@ public sealed partial class PersonalMixServiceTests
         foreach (var song in songs.Values) await tags.SaveAsync(SharedTagStore.RecordingKey(song.CanonicalRecordingId!.Value),
             [new("lastfm-track", [new("chill")], clock.UtcNow)], [], false, default);
         var chart = EnableChart();
-        var result = await service.GenerateAsync(owner);
+        var result = await service.GenerateAsync(owner, scheduled: true);
         Assert.Equal("ambient", chart.Tags[0]);
         Assert.True(result.Single(x => x.Kind == "chill").Readiness.Ready);
     }
@@ -325,7 +333,7 @@ public sealed partial class PersonalMixServiceTests
             .ReturnsAsync(new allstarr.Models.Search.SearchResult { Artists = [new Artist { Name = "Fresh artist 59", ExternalId = "seed" }] });
         gateway.Setup(x => x.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", 50))
             .ReturnsAsync([new Artist { Name = "Fresh artist 58", ExternalId = "related" }]);
-        await service.GenerateAsync(owner);
+        await service.GenerateAsync(owner, scheduled: true);
         Assert.Equal(["Fresh artist 59", "Fresh artist 58", "Fresh artist 0"], chart.Searches.Where(x => x.Tag == "chill").Take(3).Select(x => x.Query));
     }
 

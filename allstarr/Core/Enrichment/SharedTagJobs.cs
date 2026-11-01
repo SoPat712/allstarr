@@ -16,6 +16,7 @@ public sealed record SharedTagPayload(Guid RecordingId, string? ArtistKey = null
 public sealed class SharedTagQueue(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs, IPlatformClock clock)
 {
     public const string JobType = "recording.tags.refresh";
+    private readonly SemaphoreSlim listenerRefreshes = new(1, 1);
     public static readonly TimeSpan RefreshAge = TimeSpan.FromDays(30);
 
     public Task<DurableJobEnqueueResult> CaptureArtistAsync(Guid owner, Artist artist, string provider, CancellationToken token)
@@ -29,18 +30,28 @@ public sealed class SharedTagQueue(IDbContextFactory<AllstarrDbContext> factory,
 
     internal async Task RefreshListenersAsync(Guid recording, CancellationToken token)
     {
-        await using var db = await factory.CreateDbContextAsync(token);
-        var owners = await db.Users.AsNoTracking().Where(user => user.Enabled && !user.IsSynthetic &&
-            db.ListeningEvents.Any(play => play.OwnerUserId == user.Id && play.Protocol == user.BackendType &&
-                play.BackendInstanceId == user.BackendInstanceId && play.CanonicalRecordingId == recording) &&
-            db.ExternalMetadataSnapshots.Any(item => item.OwnerUserId == user.Id && item.Protocol == user.BackendType &&
-                item.BackendInstanceId == user.BackendInstanceId && item.ResourceKind == "personal-mixes"))
-            .Select(user => user.Id).Take(100).ToArrayAsync(token);
-        var batch = clock.UtcNow.ToUnixTimeSeconds() / 300;
-        foreach (var owner in owners)
-            await jobs.EnqueueAsync(new DurableJobEnqueueRequest<Guid>(Music.PersonalMixService.JobType,
-                $"history-tags:{owner:N}:{batch}", Guid.Empty, owner,
-                Priority: -100, AvailableAt: DateTimeOffset.FromUnixTimeSeconds((batch + 1) * 300)), token);
+        await listenerRefreshes.WaitAsync(token);
+        try
+        {
+            await using var db = await factory.CreateDbContextAsync(token);
+            var owners = await db.Users.AsNoTracking().Where(user => user.Enabled && !user.IsSynthetic &&
+                db.ListeningEvents.Any(play => play.OwnerUserId == user.Id && play.Protocol == user.BackendType &&
+                    play.BackendInstanceId == user.BackendInstanceId && play.CanonicalRecordingId == recording) &&
+                db.ExternalMetadataSnapshots.Any(item => item.OwnerUserId == user.Id && item.Protocol == user.BackendType &&
+                    item.BackendInstanceId == user.BackendInstanceId && item.ResourceKind == "personal-mixes"))
+                .Select(user => user.Id).Take(100).ToArrayAsync(token);
+            var batch = clock.UtcNow.ToUnixTimeSeconds() / 900;
+            foreach (var owner in owners)
+            {
+                if (await db.Jobs.AsNoTracking().AnyAsync(item => item.Type == Music.PersonalMixService.JobType && item.OwnerUserId == owner &&
+                    item.IdempotencyKey.StartsWith("history-tags:") && (item.CreatedAt > clock.UtcNow.AddMinutes(-15) ||
+                        item.State == DurableJobState.Pending || item.State == DurableJobState.Running || item.State == DurableJobState.RetryScheduled), token)) continue;
+                await jobs.EnqueueAsync(new DurableJobEnqueueRequest<Guid>(Music.PersonalMixService.JobType,
+                    $"history-tags:{owner:N}:{batch}", Guid.Empty, owner,
+                    Priority: -100, AvailableAt: clock.UtcNow.AddMinutes(15)), token);
+            }
+        }
+        finally { listenerRefreshes.Release(); }
     }
 
     public async Task<int> EnqueuePendingAsync(CancellationToken token, IReadOnlyCollection<Guid>? onlyRecordings = null)

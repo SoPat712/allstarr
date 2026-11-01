@@ -5,7 +5,7 @@ public sealed record MixRecipe(string Version, string Sentence, string Inputs, s
 public sealed record MixRecipeEvidence(MixRecipe Recipe, int LivePlays, int ImportedPlays,
     DateTimeOffset? ListeningFrom, DateTimeOffset? ListeningTo, string? HistoricalWindow,
     int PrimaryPlays, int FallbackPlays, int Candidates, int Qualified, int Shown, int FromMusic, int FromServices,
-    IReadOnlyDictionary<string, int> Excluded, int? ProviderReads, int? ProviderFailures, string? Shortfall, int? ReleaseInboxEntries = null);
+    IReadOnlyDictionary<string, int> Excluded, int? ProviderReads, int? ProviderFailures, string? Shortfall, int? ReleaseInboxEntries = null, string? TagChartStatus = null);
 
 internal static class MixRecipes
 {
@@ -21,8 +21,8 @@ internal static class MixRecipes
         "rewind" => new("lost-v1", $"Songs played at least {LostPlays} times, with no play in {LostMonths} months.",
             "Full retained completed-play history, including enabled imports.", Common + " At least 5 plays; last play at least 6 months ago; hearts do not replace plays.",
             "Most plays first. Songs you marked Less come later.", 50, 3, "Updates every Monday", "Keep the eligible songs when fewer than 50 qualify.", MinimumPlays: LostPlays, InactiveMonths: LostMonths),
-        "discover-weekly" => new("uncharted-v1", $"Unplayed songs by artists related to your top {TopArtists} played artists, in your top {TopStyles} styles.",
-            "Completed plays, canonical styles, provider artist relationships.", Common + " Never played or hearted; shared top style; no pick repeated within 14 days.",
+        "discover-weekly" => new("uncharted-v1", $"Unplayed songs by artists related to your top {TopArtists} played artists; known styles must include one of your top {TopStyles}.",
+            "Completed plays, canonical styles, provider artist relationships.", Common + " Never played or hearted; related artist, with a shared top style when styles are known; no pick repeated within 14 days.",
             "Songs from your music first, then your services.", 50, 2, "Updates every Monday", "Keep only evidenced relationships and styles; keep the eligible songs if fewer than 50 qualify."),
         "release-radar" => new("releases-v1", $"Releases from the last {ReleaseDays} days by followed artists or artists played at least {FrequentPlays} times.",
             "Your release inbox and completed plays.", Common + " One playable track per release, in track order.",
@@ -33,7 +33,7 @@ internal static class MixRecipes
             "Saved linked playlist snapshot.", "Playable matches and household listening policy.", "Source order, including source duplicates.",
             0, 0, "Saved source sync schedule", "Unmatched and unavailable songs are not shown; the source's private selection rules are unknown."),
         _ when kind.StartsWith("daily-", StringComparison.Ordinal) => new("blend-v1", $"Half familiar songs and half unplayed songs in {style ?? "your first known style"}, from artists you already play.",
-            "Completed plays, hearts and canonical styles.", Common + " Exact saved style; unplayed picks must be from already-played artists.",
+            "Completed plays, hearts and canonical styles.", Common + " Saved track style or a style on that played artist’s own songs; unplayed picks must be from already-played artists.",
             "Familiar songs with the most plays first, then songs you have not played. Songs you marked Less come later.", 50, 2, "Updates every day",
             "Up to 25 familiar and 25 unplayed songs; keep either side's shortfall without borrowing from the other."),
         _ when PersonalMixMoods.Kinds.Contains(kind) => new(PersonalMixMoods.RecipeVersion, PersonalMixMoods.Rule(kind),

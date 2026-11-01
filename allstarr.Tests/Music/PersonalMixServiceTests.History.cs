@@ -61,7 +61,7 @@ public sealed partial class PersonalMixServiceTests
         await NewPicks();
         foreach (var song in songs.Values) await tags.SaveAsync(allstarr.Core.Enrichment.SharedTagStore.RecordingKey(song.CanonicalRecordingId!.Value),
             [new("lastfm-track", [new("calm")], clock.UtcNow)], [], false, default);
-        var mixes = await service.GenerateAsync(owner);
+        var mixes = await service.GenerateAsync(owner, scheduled: true);
         Assert.NotEmpty(mixes.Single(item => item.Kind == "discover-weekly").Songs);
         Assert.NotEmpty(mixes.Single(item => item.Kind == "daily-1").Songs);
         Assert.NotEmpty(mixes.Single(item => item.Kind == "chill").Songs);
@@ -91,11 +91,11 @@ public sealed partial class PersonalMixServiceTests
         await service.GenerateAsync(owner);
         var jobs = new DurableJobQueue(factory, new(), new(new()), clock);
         var queue = new allstarr.Core.Enrichment.SharedTagQueue(factory, jobs, clock);
-        var due = clock.UtcNow.AddMinutes(5);
+        var due = clock.UtcNow.AddMinutes(15);
         foreach (var song in songs.Values.Take(3))
         {
             await queue.RefreshListenersAsync(song.CanonicalRecordingId!.Value, default);
-            clock.UtcNow += TimeSpan.FromSeconds(1);
+            clock.UtcNow += TimeSpan.FromMinutes(5);
         }
         await using var db = factory.CreateDbContext();
         var job = Assert.Single(await db.Jobs.Where(item => item.Type == PersonalMixService.JobType).ToArrayAsync());
