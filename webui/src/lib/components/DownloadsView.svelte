@@ -101,7 +101,10 @@
       home.schema(),
       cached ? settings.config() : Promise.resolve(null),
     ]);
-    if (downloadsResult.status === "fulfilled") data = downloadsResult.value;
+    if (downloadsResult.status === "fulfilled") {
+      data = downloadsResult.value;
+      movingPaths = movingPaths.filter((path) => data?.files.some((file) => file.path === path));
+    }
     else error = downloadsResult.reason instanceof Error
       ? downloadsResult.reason.message
       : `${label} tracks are unavailable.`;
@@ -126,12 +129,15 @@
   const refreshScheduler = createRefreshScheduler(refresh);
   const scheduleRefresh = refreshScheduler.schedule;
 
+  let movingPaths = $state<string[]>([]);
+
   async function keep(file: ManagedDownload) {
     if (action) return;
     action = file.path;
     try {
       const result = await downloads.keep(file.path);
-      toast.success(result.message || `${file.title || file.fileName} queued for Kept.`);
+      toast.success(result.queued ? "Moving to Kept…" : "Moved to Kept.");
+      if (result.queued) movingPaths = [...movingPaths, file.path];
       await refresh();
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "The track could not be kept.");
@@ -239,8 +245,8 @@
         <h2>{label} songs</h2>
         <p>{cached
           ? storageMode === "Cache"
-            ? "Songs saved after streaming so they start faster next time. Keep a song to hold on to it permanently."
-            : "Playback caching is off. Hearts and Keep still save permanent copies."
+            ? "Cache saves songs after streaming and can be cleared automatically. Keep moves a song to Kept, the permanent place."
+            : "Playback caching is off. Kept is the permanent place for songs."
           : "Songs Allstarr keeps permanently, even when the cache is cleaned."}</p>
       </div>
       <div class="downloads-summary" aria-label={`${label} totals`}>
@@ -324,7 +330,9 @@
                 {#if !cached && file.canDeleteKeptCopy}
                   <Button variant="destructive" disabled={Boolean(action)} onclick={() => void previewDeletion(file)}>Delete kept copy…</Button>
                 {/if}
-                {#if file.removable}
+                {#if cached && movingPaths.includes(file.path)}
+                  <Button disabled>Moving to Kept…</Button>
+                {:else if file.removable}
                   {#if file.explicitlyKept}
                     <Button disabled={Boolean(action)} onclick={() => confirm({ kind: "release", file })}>Release Keep</Button>
                   {:else}

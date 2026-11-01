@@ -176,13 +176,26 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
         Stream? file = null;
         try
         {
-            if (!retainedOriginal && Path.GetExtension(path).Equals(".flac", StringComparison.OrdinalIgnoreCase) &&
-                IsOwnedCachePath(path) && HasId3Prefix(path))
+            try
             {
-                File.Move(path, path + $".legacy-id3-{Guid.NewGuid():N}");
-                return null;
+                if (!retainedOriginal && Path.GetExtension(path).Equals(".flac", StringComparison.OrdinalIgnoreCase) &&
+                    IsOwnedCachePath(path) && HasId3Prefix(path))
+                {
+                    File.Move(path, path + $".legacy-id3-{Guid.NewGuid():N}");
+                    return null;
+                }
+                file = await OpenPinnedAudioAsync(path, cancellationToken, preparation);
             }
-            file = await OpenPinnedAudioAsync(path, cancellationToken, preparation);
+            catch (FileNotFoundException)
+            {
+                if (originalMapping != null)
+                    originalMapping = await cacheMappings!.FindAsync(scope, track.ProviderId, track.Value, cancellationToken);
+                var current = retainedOriginal ? originalMapping?.LocalPath
+                    : await localLibrary.GetLocalPathForExternalSongAsync(scope, track.ProviderId, track.Value);
+                if (current == null || current == path) throw;
+                path = current;
+                file = await OpenPinnedAudioAsync(path, cancellationToken, preparation);
+            }
             if (file.Length == 0) { file.Dispose(); return null; }
             if (originalMapping != null && !await VerifyOriginalCacheAsync(file, originalMapping, cancellationToken)) return null;
             var extension = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
@@ -256,6 +269,14 @@ public sealed partial class ManagedTrackCacheService : IAsyncDisposable
         var source = file is PinnedAudioStream pinned ? pinned.Source : file;
         var identity = Identity(source);
         var proof = ReadIdentity(mapping.CacheIdentityJson);
+        if (RecordingKeptFiles.CachedMoveSource(mapping) != null)
+        {
+            if (!NoLinkedAncestors(mapping.LocalPath) || identity == null || !Same(identity, Identity(mapping.LocalPath))) return false;
+            var movedHash = System.Text.Json.Nodes.JsonNode.Parse(mapping.CacheIdentityJson!)?["KeptMoveHash"]?.GetValue<string>();
+            var actual = Convert.ToHexStringLower(await SHA256.HashDataAsync(file, token));
+            file.Position = 0;
+            return actual == movedHash && Same(identity, Identity(mapping.LocalPath)) && Same(identity, Identity(source));
+        }
         if (!SafeCachePath(mapping.LocalPath) || identity?.LinkCount != 1 || proof == null || proof.Representation != "Original" ||
             proof.Length != file.Length || !Matches(proof, identity) || !Same(identity, Identity(mapping.LocalPath))) return false;
         var hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(file, token));

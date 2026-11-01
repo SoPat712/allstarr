@@ -44,9 +44,10 @@ const baseFile = {
   removable: true,
 };
 
-async function mockDownloadsApp(page: Page): Promise<DownloadFixture> {
+async function mockDownloadsApp(page: Page, queued = true): Promise<DownloadFixture> {
   const fixture: DownloadFixture = { keepHeaders: [], keepRequests: 0, releaseRequests: 0, releaseStorage: [] };
   let cacheFile = { ...baseFile };
+  let moved = false;
   let keptFile = {
     ...baseFile,
     path: "The Fixture Band/Fixture Song.flac",
@@ -108,11 +109,11 @@ async function mockDownloadsApp(page: Page): Promise<DownloadFixture> {
       const file = storage === "kept" ? keptFile : cacheFile;
       return json(route, {
         storage,
-        files: [file],
-        totalSize: file.size,
-        totalSizeFormatted: file.sizeFormatted,
-        count: 1,
-        managedCount: 1,
+        files: storage === "cache" && moved ? [] : [file],
+        totalSize: storage === "cache" && moved ? 0 : file.size,
+        totalSizeFormatted: storage === "cache" && moved ? "0 B" : file.sizeFormatted,
+        count: storage === "cache" && moved ? 0 : 1,
+        managedCount: storage === "cache" && moved ? 0 : 1,
         diagnosticCount: 0,
       });
     }
@@ -120,13 +121,14 @@ async function mockDownloadsApp(page: Page): Promise<DownloadFixture> {
       fixture.keepRequests += 1;
       const idempotencyKey = request.headers()["idempotency-key"];
       fixture.keepHeaders.push(idempotencyKey ?? "");
+      moved = true;
       keptFile = { ...keptFile, explicitlyKept: true, removable: true, referenceCount: 3 };
       return json(route, {
         success: true,
-        queued: true,
+        queued,
         jobId: "77777777-7777-4777-8777-777777777777",
-        message: "Track queued for Kept. Its cached copy stays available.",
-      }, 202);
+        message: queued ? "Moving to Kept…" : "Moved to Kept.",
+      }, queued ? 202 : 200);
     }
     if (url.pathname === "/api/admin/downloads" && request.method() === "DELETE") {
       fixture.releaseRequests += 1;
@@ -158,11 +160,10 @@ for (const width of [390, 1280]) {
       const keep = row.getByRole("button", { name: "Keep", exact: true });
       await keep.focus();
       await page.keyboard.press("Enter");
-      await expect(page.getByText("Track queued for Kept. Its cached copy stays available.", { exact: true })).toBeVisible();
+      await expect(page.getByText("Moving to Kept…", { exact: true })).toBeVisible();
       await expect.poll(() => fixture.keepRequests).toBe(1);
       expect(fixture.keepHeaders[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-      await expect(row.getByRole("button", { name: "Keep", exact: true })).toBeVisible();
-      await expect(page.getByText("Fixture Song", { exact: true })).toBeVisible();
+      await expect(row).toHaveCount(0);
 
       await page.goto("/#/library/kept");
       const keptRow = page.locator(".download-row").filter({ hasText: "Fixture Song" });
@@ -189,8 +190,7 @@ for (const width of [390, 1280]) {
       await expect(keptRow.getByRole("button", { name: "Release Keep", exact: true })).toHaveCount(0);
       await page.goto("/#/library/cached");
       const retainedCacheRow = page.locator(".download-row").filter({ hasText: "Fixture Song" });
-      await expect(retainedCacheRow).toBeVisible();
-      await expect(retainedCacheRow.getByRole("button", { name: "Keep", exact: true })).toBeVisible();
+      await expect(retainedCacheRow).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     });
   }
@@ -325,7 +325,16 @@ test("Keep works without the secure UUID API", async ({ page }) => {
   const fixture = await mockDownloadsApp(page);
   await page.goto("/#/library/cached");
   await page.locator(".download-row").filter({ hasText: "Fixture Song" }).getByRole("button", { name: "Keep", exact: true }).click();
-  await expect(page.getByText("Track queued for Kept. Its cached copy stays available.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Moving to Kept…", { exact: true })).toBeVisible();
   expect(fixture.keepHeaders).toHaveLength(1);
   expect(fixture.keepHeaders[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+});
+
+test("completed Keep reports the move and removes the Cache row", async ({ page }) => {
+  await mockDownloadsApp(page, false);
+  await page.goto("/#/library/cached");
+  const row = page.locator(".download-row").filter({ hasText: "Fixture Song" });
+  await row.getByRole("button", { name: "Keep", exact: true }).click();
+  await expect(page.getByText("Moved to Kept.", { exact: true })).toBeVisible();
+  await expect(row).toHaveCount(0);
 });

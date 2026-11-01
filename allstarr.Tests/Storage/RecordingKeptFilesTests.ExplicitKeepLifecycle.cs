@@ -50,17 +50,9 @@ public sealed partial class RecordingKeptFilesTests
         await SeedKeepCacheAsync();
         if (existing) await Service().PublishAsync(Request());
         var claim = await AcceptKeepAsync();
-        if (!existing) await CreateKeepArtifactAsync(claim);
-        else await DisableSourceAccountAsync();
+        if (existing) await DisableSourceAccountAsync();
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
         var providers = new Mock<IProviderRegistry>(MockBehavior.Strict);
-        if (!existing)
-        {
-            var descriptor = ExecutorDescriptor();
-            providers.Setup(item => item.FindByCapability(ProviderCapabilityKind.Download, true)).Returns([descriptor]);
-            router.Setup(item => item.PlanAsync<IProviderDownloadCapability>(It.Is<ProviderRouteRequest>(request =>
-                request.OperationId == "recording-keep"))).ReturnsAsync(ExecutorPlan(descriptor));
-        }
         var collection = new ServiceCollection().AddLogging();
         collection.AddProviderDownloadArtifacts(new ConfigurationBuilder().Build());
         collection.AddSingleton<IProviderRouter>(router.Object);
@@ -79,14 +71,11 @@ public sealed partial class RecordingKeptFilesTests
         var handler = registered.GetServices<IDurableJobHandler>().Single(item => item.JobType == RecordingKeptFiles.ExplicitKeepJobType);
         var result = await handler.ExecuteAsync(new(claim, registered), default);
         Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
-        if (existing)
-        {
-            router.VerifyNoOtherCalls();
-            providers.VerifyNoOtherCalls();
-        }
+        router.VerifyNoOtherCalls();
+        providers.VerifyNoOtherCalls();
         var kept = Assert.IsType<KeptRecordingFile>(await Service().FindAsync(Actor(other), recordingId));
         Assert.Equal(audio, await File.ReadAllBytesAsync(kept.Path));
-        Assert.Equal(audio, await File.ReadAllBytesAsync(Path.Combine(root, "cache", "cached.flac")));
+        Assert.False(File.Exists(Path.Combine(root, "cache", "cached.flac")));
         await using var db = new AllstarrDbContext(database.Options);
         Assert.All(await db.Set<ProviderDownloadArtifactEntity>().ToArrayAsync(), item => Assert.Equal(ProviderDownloadArtifactState.Verified, item.State));
         Assert.Contains(await db.ManagedFileReferences.Where(item => item.ReleasedAt == null).ToArrayAsync(),
@@ -332,8 +321,8 @@ public sealed partial class RecordingKeptFilesTests
         new(userId, "jellyfin", "fixture", userId.ToString("N"), "Keeper", true), "explicit-keep",
         DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
 
-    private RecordingKeptFiles ExplicitKeepService() => new(factory, artifacts, services.GetRequiredService<IServiceScopeFactory>(),
-        placement, identities, new SystemPlatformClock(), jobs: queue, audioVerifier: FixtureAudioVerifier.Instance);
+    private RecordingKeptFiles ExplicitKeepService(allstarr.Core.Music.IProviderAudioVerifier? verifier = null) => new(factory, artifacts, services.GetRequiredService<IServiceScopeFactory>(),
+        placement, identities, new SystemPlatformClock(), jobs: queue, audioVerifier: verifier ?? FixtureAudioVerifier.Instance);
 
     private async Task<DurableJobClaim> AcceptKeepAsync()
     {

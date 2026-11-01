@@ -270,14 +270,33 @@ public partial class DownloadsController : ControllerBase
             if (Request.Headers.TryGetValue("Idempotency-Key", out var savedId) &&
                 (!Guid.TryParse(savedId.ToString(), out requestId) || requestId == Guid.Empty))
                 return BadRequest(new { error = "The keep request ID is invalid. Refresh the list and try again." });
-            if (!TryResolveExistingFile("cache", path, out _, out var sourcePath))
-                return NotFound(new { error = "Cached file not found" });
-            var ownership = await FindOwnershipAsync(sourcePath, cancellationToken);
+            await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+            var found = TryResolveExistingFile("cache", path, out _, out var sourcePath);
+            var ownership = found ? await FindOwnershipAsync(sourcePath, cancellationToken) : null;
+            if (ownership?.Mapping == null)
+            {
+                foreach (var root in ResolveListRoots("cache"))
+                {
+                    if (!TryGetRelativeRequestPath("cache", root, path, out var relative) ||
+                        !TryResolvePathUnderRoot(root.Path, relative, out var previous) || !IsSupportedAudioFile(previous)) continue;
+                    if ((await FindOwnershipAsync(previous, cancellationToken))?.Mapping != null)
+                    {
+                        sourcePath = previous;
+                        break;
+                    }
+                    var encoded = System.Text.Json.JsonSerializer.Serialize(previous);
+                    var moved = await db.DownloadedSongMappings.AsNoTracking().Where(item => item.CacheIdentityJson != null &&
+                        item.CacheIdentityJson.Contains(encoded)).ToArrayAsync(cancellationToken);
+                    sourcePath = moved.FirstOrDefault(item => Core.ManagedFiles.RecordingKeptFiles.CachedMoveSource(item) == previous)?.LocalPath ?? sourcePath;
+                    if (sourcePath.Length > 0) break;
+                }
+                if (sourcePath.Length == 0 && !found) return NotFound(new { error = "Cached file not found" });
+                ownership = await FindOwnershipAsync(sourcePath, cancellationToken);
+            }
             if (ownership?.Mapping is not { } mapping)
                 return Conflict(new { error = "Only indexed Allstarr cache files can be kept" });
             if (!Core.Downloads.DownloadedSongMappingScope.TryResolve(mapping, out var mappingScope))
                 return Conflict(new { error = "The cached track's account scope changed. Refresh the list and try again." });
-            await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
             if (mapping.ProviderAccountId is { } accountId)
             {
                 var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item => item.Id == accountId &&
@@ -287,6 +306,10 @@ public partial class DownloadsController : ControllerBase
                     mappingScope.SourceAccountRevision != account.Revision)
                     return StatusCode(403, new { error = "This cached track belongs to another account. Choose a track available to your account." });
             }
+            if (ownership.ExplicitlyKept && Core.ManagedFiles.RecordingKeptFiles.CachedMoveSource(mapping) is { } original &&
+                !System.IO.File.Exists(original) &&
+                await _kept.FindBySourceAsync(context.RequireActor(), new(mapping.ProviderId, ProviderResourceKind.Track, mapping.ExternalId), cancellationToken) != null)
+                return Ok(new { success = true, queued = false, message = "Moved to Kept." });
             var result = await _kept.RequestKeepAsync(context, new(mapping.ProviderId, ProviderResourceKind.Track, mapping.ExternalId),
                 new(string.IsNullOrWhiteSpace(mapping.Title) ? "Unknown track" : mapping.Title,
                     [string.IsNullOrWhiteSpace(mapping.Artist) ? "Unknown artist" : mapping.Artist], mapping.Album),
@@ -294,9 +317,9 @@ public partial class DownloadsController : ControllerBase
             return Accepted(new
             {
                 success = true,
-                queued = result.Created,
+                queued = true,
                 jobId = result.JobId,
-                message = "Track queued for Kept. Its cached copy stays available."
+                message = "Moving to Kept…"
             });
         }
         catch (UnauthorizedAccessException)

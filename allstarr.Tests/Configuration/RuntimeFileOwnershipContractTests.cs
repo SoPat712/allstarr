@@ -40,6 +40,7 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Core/ListeningHistory/ListeningHistoryImportPersistence.cs"] = "bounded listening-history upload",
             ["Core/ManagedFiles/FilePlacementService.cs"] = "managed audio and artwork",
             ["Core/ManagedFiles/FilePlacementService.Recovery.cs"] = "owned data-folder identity marker",
+            ["Core/ManagedFiles/RecordingKeptFiles.CacheMove.cs"] = "managed audio and lyrics sidecars",
             ["Core/ManagedFiles/PhysicalManagedFileOperations.cs"] = "managed audio and artwork",
             ["Core/Music/ProviderAudioTimeSeek.cs"] = "request-scoped temporary audio",
             ["Core/Music/ProviderAudioTranscoder.cs"] = "request-scoped temporary conversion input",

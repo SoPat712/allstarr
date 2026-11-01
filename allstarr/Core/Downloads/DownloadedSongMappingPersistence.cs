@@ -148,12 +148,12 @@ public sealed class EfDownloadedSongMappingStore(
         CancellationToken cancellationToken = default)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        return await db.DownloadedSongMappings
+        return await ResolveMovingPathAsync(db, await db.DownloadedSongMappings
             .AsNoTracking()
             .SingleOrDefaultAsync(
                 item => item.ScopeKey == DownloadedSongMappingScope.LegacyKey &&
                         item.ProviderId == providerId && item.ExternalId == externalId,
-                cancellationToken);
+                cancellationToken), cancellationToken);
     }
 
     public async Task<DownloadedSongMappingEntity?> FindAsync(
@@ -164,10 +164,35 @@ public sealed class EfDownloadedSongMappingStore(
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var scopeKey = scope.Key;
-        return await db.DownloadedSongMappings.AsNoTracking().SingleOrDefaultAsync(
+        return await ResolveMovingPathAsync(db, await db.DownloadedSongMappings.AsNoTracking().SingleOrDefaultAsync(
             item => item.ScopeKey == scopeKey &&
                     item.ProviderId == providerId && item.ExternalId == externalId,
-            cancellationToken);
+            cancellationToken), cancellationToken);
+    }
+
+    private static async Task<DownloadedSongMappingEntity?> ResolveMovingPathAsync(AllstarrDbContext db,
+        DownloadedSongMappingEntity? mapping, CancellationToken token)
+    {
+        if (mapping == null ||
+            allstarr.Core.ManagedFiles.RecordingKeptFiles.CachedMoveSource(mapping) is not { } source) return mapping;
+        var file = await db.ManagedFiles.AsNoTracking().SingleOrDefaultAsync(item => item.CanonicalPath == mapping.LocalPath &&
+            item.RemovedAt == null && item.IsManaged, token);
+        if (file == null) return null;
+        if (File.Exists(mapping.LocalPath))
+        {
+            var json = System.Text.Json.Nodes.JsonNode.Parse(mapping.CacheIdentityJson!)!;
+            json["KeptMoveHash"] = file.ContentSha256;
+            mapping.CacheIdentityJson = json.ToJsonString();
+            return mapping;
+        }
+        if (!File.Exists(source)) return mapping;
+        for (var info = new FileInfo(source) as FileSystemInfo; info != null;
+             info = info is FileInfo leaf ? leaf.Directory : ((DirectoryInfo)info).Parent)
+            if (info.LinkTarget != null) return mapping;
+        if (new allstarr.Core.ManagedFiles.PhysicalManagedFileOperations().TryGetFileIdentity(source, out var identity) &&
+            identity.DeviceId == file.FileSystemDeviceId && identity.FileId == file.FileSystemFileId && new FileInfo(source).Length == file.Length)
+            mapping.LocalPath = source;
+        return mapping;
     }
 
     public async Task UpsertAsync(

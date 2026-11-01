@@ -62,13 +62,14 @@ public sealed partial class RecordingKeptFilesTests
         var file = Assert.IsType<KeptRecordingFile>(await execute());
         var sidecar = Path.ChangeExtension(file.Path, ".lrc");
         Assert.True(File.Exists(sidecar));
-        Assert.Contains("[00:01.234]Saved household words", await File.ReadAllTextAsync(sidecar), StringComparison.Ordinal);
+        var expected = operation == "explicit" ? "[00:01.000]Cached words" : "[00:01.234]Saved household words";
+        Assert.Contains(expected, await File.ReadAllTextAsync(sidecar), StringComparison.Ordinal);
         var household = await CreateKeptLyricsReader(root).ReadHouseholdAsync(LyricsContext(other),
             new Song { CanonicalRecordingId = recordingId, Title = "Fixture", Artist = "Artist" }, []);
-        Assert.Contains("Saved household words", household!.SyncedLyrics, StringComparison.Ordinal);
+        Assert.Contains(operation == "explicit" ? "Cached words" : "Saved household words", household!.SyncedLyrics, StringComparison.Ordinal);
         Assert.Equal(file.ManagedFileId, (await execute())!.ManagedFileId);
         resolver.Verify(item => item.FindAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>(),
-            It.IsAny<string>(), It.IsAny<ProtocolLyricsSources>()), Times.Once);
+            It.IsAny<string>(), It.IsAny<ProtocolLyricsSources>()), operation == "explicit" ? Times.Never() : Times.Once());
         Assert.Equal(audio, await File.ReadAllBytesAsync(file.Path));
         Assert.Equal(audio, await File.ReadAllBytesAsync(artifact.SourcePath));
     }

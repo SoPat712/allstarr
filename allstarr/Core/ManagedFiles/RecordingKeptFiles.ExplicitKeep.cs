@@ -11,7 +11,10 @@ namespace allstarr.Core.ManagedFiles;
 public sealed record CachedKeepSource(Guid MappingId, long Revision);
 
 public sealed record RecordingKeepJobPayload(Guid RecordingId, string ProviderId, string ExternalId,
-    string Protocol, string BackendInstanceId, string BackendPrincipalId, KeptRecordingMetadata Metadata);
+    string Protocol, string BackendInstanceId, string BackendPrincipalId, KeptRecordingMetadata Metadata)
+{
+    public CachedKeepSource? CachedSource { get; init; }
+}
 
 public sealed partial class RecordingKeptFiles
 {
@@ -38,7 +41,14 @@ public sealed partial class RecordingKeptFiles
         if (await ResolveKeptRecordingIdAsync(actor, $"ext-{source.ProviderId}-song-{source.Value}", cancellationToken) != recordingId)
             throw new InvalidOperationException("The track's recording identity changed. Refresh the track and try again.");
         var payload = new RecordingKeepJobPayload(recordingId, source.ProviderId, source.Value,
-            user.BackendType, user.BackendInstanceId, user.BackendPrincipalId, metadata);
+            user.BackendType, user.BackendInstanceId, user.BackendPrincipalId, metadata)
+        { CachedSource = cachedSource };
+        var active = await db.Jobs.AsNoTracking().Where(item => item.Type == ExplicitKeepJobType &&
+            item.OwnerUserId == user.Id && item.CancellationRequestedAt == null &&
+            (item.State == DurableJobState.Pending || item.State == DurableJobState.Running || item.State == DurableJobState.RetryScheduled))
+            .ToArrayAsync(cancellationToken);
+        var repeated = active.FirstOrDefault(item => ReadKeepPayload(item.PayloadJson)?.RecordingId == recordingId);
+        if (repeated != null && repeated.IdempotencyKey != $"keep:{requestId:N}") return new(repeated.Id, false);
         var result = await jobs.EnqueueInExistingTransactionAsync(db,
             new DurableJobEnqueueRequest<RecordingKeepJobPayload>(ExplicitKeepJobType,
                 $"keep:{requestId:N}", payload, user.Id, MaxAttempts: 12, MaxDeferrals: 100,
@@ -66,6 +76,7 @@ public sealed partial class RecordingKeptFiles
     public async Task<KeptRecordingFile?> RetainRequestedKeepAsync(DurableJobClaim claim,
         CancellationToken cancellationToken = default)
     {
+        if (await MoveRequestedCacheAsync(claim, cancellationToken) is { } moved) return moved;
         await using var scope = scopes.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
