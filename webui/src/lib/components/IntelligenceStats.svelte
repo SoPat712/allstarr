@@ -25,7 +25,8 @@
   ];
   const years = $derived.by(() => {
     const current = new Date().getFullYear();
-    const first = stats?.observedSince ? new Date(stats.observedSince).getFullYear() : current - 10;
+    const since = stats?.firstPlayAt ?? stats?.observedSince;
+    const first = since ? new Date(since).getFullYear() : current - 10;
     return [{ value: "", label: "Past years" }, ...Array.from({ length: Math.max(1, current - first) }, (_, i) => ({ value: String(current - i - 1), label: String(current - i - 1) }))];
   });
   const lists = $derived(stats ? [
@@ -88,7 +89,7 @@
       {/each}
     </div>
     <footer>
-      <p>{stats.observedSince ? `Counting since ${new Date(stats.observedSince).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.` : "Counting starts with your first listen."} {formatCount(stats.coverage.unknownSongIdentityCount)} {stats.coverage.unknownSongIdentityCount === 1 ? "play couldn't" : "plays couldn't"} be identified.</p>
+      <p>{stats.firstPlayAt ?? stats.observedSince ? `Counting since ${new Date((stats.firstPlayAt ?? stats.observedSince)!).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.` : "Counting starts with your first listen."} {formatCount(stats.coverage.unknownSongIdentityCount)} {stats.coverage.unknownSongIdentityCount === 1 ? "play couldn't" : "plays couldn't"} be identified.</p>
       <p>Imported from other services: {formatCount(stats.importedCount)} plays</p>
       {#if stats.shortPlayCount}<p>{formatCount(stats.shortPlayCount)} skips and plays under 30 seconds aren't counted.</p>{/if}
     </footer>

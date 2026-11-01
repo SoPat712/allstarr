@@ -18,6 +18,7 @@ public sealed record ListeningStats(ListeningStatsPeriod Period, long PlayCount,
     IReadOnlyList<ListeningStatsAlbum> TopAlbums)
 {
     public long ShortPlayCount { get; init; }
+    public DateTimeOffset? FirstPlayAt { get; init; }
 }
 
 public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock) : IDisposable
@@ -93,23 +94,28 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
         ListeningStatsPeriod period, TimeZoneInfo zone, CancellationToken token)
     {
         var listened = db.ListeningEvents.AsNoTracking().Where(item => item.OwnerUserId == scope.OwnerUserId &&
-            item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId && item.ListenedAt != null &&
+            item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
+            (item.State == ListeningEventState.Completed ? item.ListenedAt != null :
+                (item.State == ListeningEventState.Abandoned || item.State == ListeningEventState.Skipped) && item.StartedAt != null) &&
             db.Users.Any(user => user.Id == scope.OwnerUserId && !user.IsSynthetic));
         // A play counts once it finished or reached 30 seconds, the rule streaming services use.
+        // Only finished plays carry a listen date, so the rest are dated from when they started.
         var qualified = listened.Where(item => item.State == ListeningEventState.Completed || item.PositionTicks >= CountedPlayTicks);
         var observed = qualified.Where(item => item.ImportProvenance == null &&
             (item.SourceKind == "protocol" || item.SourceKind == "listenbrainz-api"));
-        var observedSince = await observed.OrderBy(item => item.ListenedAt).Select(item => item.ListenedAt).FirstOrDefaultAsync(token);
-        var selected = qualified.Where(item => item.ListenedAt < period.To);
-        if (period.From is { } from) selected = selected.Where(item => item.ListenedAt >= from);
+        var observedSince = await observed.OrderBy(item => item.ListenedAt ?? item.StartedAt).Select(item => item.ListenedAt ?? item.StartedAt).FirstOrDefaultAsync(token);
+        var firstPlayAt = await qualified.OrderBy(item => item.ListenedAt ?? item.StartedAt).Select(item => item.ListenedAt ?? item.StartedAt).FirstOrDefaultAsync(token);
+        var selected = qualified.Where(item => (item.ListenedAt ?? item.StartedAt) < period.To);
+        if (period.From is { } from) selected = selected.Where(item => (item.ListenedAt ?? item.StartedAt) >= from);
         var imported = await selected.LongCountAsync(item => item.SourceKind == "import" || item.ImportProvenance != null, token);
-        var uncounted = listened.Where(item => item.ListenedAt < period.To && item.State != ListeningEventState.Completed && !(item.PositionTicks >= CountedPlayTicks));
-        if (period.From is { } start) uncounted = uncounted.Where(item => item.ListenedAt >= start);
+        var uncounted = listened.Where(item => (item.ListenedAt ?? item.StartedAt) < period.To && item.State != ListeningEventState.Completed && !(item.PositionTicks >= CountedPlayTicks));
+        if (period.From is { } start) uncounted = uncounted.Where(item => (item.ListenedAt ?? item.StartedAt) >= start);
         var shortPlays = await uncounted.LongCountAsync(token);
         var plays = await selected.Where(item => item.SourceKind == "protocol" || item.SourceKind == "listenbrainz-api" ||
                 item.SourceKind == "import" || item.ImportProvenance != null)
-            .Select(item => new StatsPlay(item.ListenedAt!.Value, item.TrackReference, item.CanonicalRecordingId,
-                item.RecordingMusicBrainzId, item.Title, item.Artist, item.Album, item.AlbumArtist, item.DurationMilliseconds))
+            .Select(item => new StatsPlay((item.ListenedAt ?? item.StartedAt)!.Value, item.TrackReference, item.CanonicalRecordingId,
+                item.RecordingMusicBrainzId, item.Title, item.Artist, item.Album, item.AlbumArtist,
+                item.DurationMilliseconds ?? item.PositionTicks / TimeSpan.TicksPerMillisecond))
             .ToListAsync(token);
         var knownSongs = plays.Where(item => !string.IsNullOrWhiteSpace(item.Title) && !string.IsNullOrWhiteSpace(item.Artist)).ToArray();
         var songs = knownSongs.GroupBy(SongKey).Select(group =>
@@ -129,7 +135,7 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
         return new(period, plays.Count, plays.Select(item => DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(item.At, zone).DateTime)).Distinct().Count(),
             imported, observedSince, plays.Sum(item => item.DurationMilliseconds ?? 0),
             new(plays.Count - knownSongs.Length, plays.LongCount(item => item.DurationMilliseconds == null)), songs, artists, albums)
-        { ShortPlayCount = shortPlays };
+        { ShortPlayCount = shortPlays, FirstPlayAt = firstPlayAt };
     }
 
     private static string SongKey(StatsPlay item) => item.CanonicalRecordingId is { } recording ? $"recording:{recording:N}"

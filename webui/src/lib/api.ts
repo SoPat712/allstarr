@@ -1370,6 +1370,7 @@ export type ListeningStats = {
   importedCount: number;
   shortPlayCount?: number;
   observedSince: string | null;
+  firstPlayAt?: string | null;
   estimatedTimeFromSongLengthsMilliseconds: number;
   coverage: { unknownSongIdentityCount: number; unknownDurationCount: number };
   topSongs: Array<{ title: string; artist: string; album: string | null; playCount: number }>;
