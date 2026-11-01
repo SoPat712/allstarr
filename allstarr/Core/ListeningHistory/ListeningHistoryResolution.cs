@@ -251,7 +251,16 @@ public sealed partial class ListeningHistoryResolution(
                         account.Id == item.ProviderAccountId && (account.OwnerUserId == user.Id || account.OwnerUserId == null) && account.Enabled)))
                     .OrderBy(item => item.Id).ToArrayAsync(token);
                 var eligible = links.Where(CatalogIdentityPolicy.IsPlaybackEligible).ToArray();
-                if (eligible.Length == 0) return new(group, null, null, Retry: true,
+                // A link retired for a better route still proves which recording this is, and another route plays it.
+                var retired = links.Where(item => item.VerificationMethod == CatalogIdentityPolicy.SupersededVerificationMethod)
+                    .Select(item => item.CanonicalRecordingId).Distinct().ToArray();
+                if (eligible.Length == 0 && retired.Length == 1)
+                    eligible = CatalogIdentityPolicy.OrderForPlayback((await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
+                        item.CanonicalRecordingId == retired[0] && item.ResourceKind == ProviderResourceKind.Track &&
+                        (item.Scope == ProviderIdentityScope.Catalog || db.ProviderAccounts.Any(account =>
+                            account.Id == item.ProviderAccountId && (account.OwnerUserId == user.Id || account.OwnerUserId == null) && account.Enabled)))
+                        .ToArrayAsync(token)).Where(CatalogIdentityPolicy.IsPlaybackEligible)).ToArray();
+                if (eligible.Length == 0) return new(group, null, null, Retry: links.Length == 0,
                     Reason: links.Length == 0 ? "identity-missing" : "not-playback-eligible");
                 if (song.CanonicalRecordingId is { } known) eligible = eligible.Where(item => item.CanonicalRecordingId == known).ToArray();
                 if (eligible.Select(item => item.CanonicalRecordingId).Distinct().Count() != 1)

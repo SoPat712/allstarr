@@ -5,6 +5,7 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
+using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
@@ -392,6 +393,47 @@ public sealed partial class ListeningHistoryResolutionTests
         Assert.Single(logger.Invocations, item => item.Method.Name == "Log" && (LogLevel)item.Arguments[0] == LogLevel.Information);
         if (mode == "exception") Assert.Contains(logger.Invocations, item => item.Method.Name == "Log" &&
             (LogLevel)item.Arguments[0] == LogLevel.Warning && item.Arguments[2].ToString()!.Contains("InvalidOperationException", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RetiredProviderLinkStillIdentifiesTheSong(bool anotherRoute)
+    {
+        await Add("Song");
+        var recording = Guid.NewGuid();
+        var other = Guid.NewGuid();
+        await using (var db = factory.CreateDbContext())
+        {
+            db.CanonicalRecordings.Add(new() { Id = recording, CreatedByUserId = owner });
+            db.ProviderTrackIdentities.Add(Link("deezer", "found", CatalogIdentityPolicy.SupersededVerificationMethod, Guid.NewGuid()));
+            if (anotherRoute) db.ProviderTrackIdentities.Add(Link("apple-musickit", "apple", "automatic-match", other));
+            await db.SaveChangesAsync();
+        }
+        var song = new Song { Title = "Song", Artist = "Artist", Album = "Album", Duration = 180, ExternalProvider = "deezer", ExternalId = "found" };
+        gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), 15))
+            .ReturnsAsync(ProviderOutcome<IReadOnlyList<Song>>.Success([song]));
+        gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "found")).ReturnsAsync(song);
+        await ListeningHistoryResolution.EnqueueAsync(factory, jobs, Scope, clock.UtcNow, default);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await Run()).Kind);
+        await using var read = factory.CreateDbContext();
+        var play = await read.ListeningEvents.SingleAsync();
+        Assert.Equal(anotherRoute ? recording : null, play.CanonicalRecordingId);
+        Assert.Equal(anotherRoute ? other : null, play.ProviderTrackIdentityId);
+
+        ProviderTrackIdentityRecord Link(string provider, string external, string method, Guid id) => new()
+        {
+            Id = id,
+            CanonicalRecordingId = recording,
+            ProviderId = provider,
+            ExternalId = external,
+            ExternalIdHash = ListeningHistoryImportService.Hash(external),
+            ResourceKind = ProviderResourceKind.Track,
+            Scope = ProviderIdentityScope.Catalog,
+            Verification = ProviderIdentityVerification.Verified,
+            VerificationMethod = method,
+            DecisionVersion = 1
+        };
     }
 
     [Theory]
