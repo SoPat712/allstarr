@@ -178,7 +178,10 @@ public sealed class ProviderScoreService(IDbContextFactory<AllstarrDbContext> fa
             if (check.Passed) earned += weight;
         }
         var reliability = earned / possible;
-        var speed = Typical(rows) is { } typical ? Math.Clamp(1 - (typical - 500) / 7500d, 0, 1) : 1;
+        // For a source that plays audio, speed means how fast a song starts, not how fast it answers a search.
+        var timed = quality != null && rows.Any(check => check.Capability == "streaming" && check.Passed && check.Latency != null)
+            ? rows.Where(check => check.Capability == "streaming") : rows;
+        var speed = Typical(timed) is { } typical ? Math.Clamp(1 - (typical - 500) / 7500d, 0, 1) : 1;
         if (quality is not { } value) return (int)Math.Round(100 * (0.8 * reliability + 0.2 * speed));
         return Math.Min(value.Ceiling, (int)Math.Round(100 * (0.5 * reliability + 0.2 * speed + 0.3 * value.Earned)));
     }

@@ -98,4 +98,13 @@ public sealed class ProviderScoreServiceTests
         Assert.Null(score.Quality);
         Assert.Equal(100, score.Score);
     }
+
+    [Fact]
+    public void AudioSourcesAreTimedOnHowFastSongsStart()
+    {
+        var rows = Enumerable.Range(0, 6).Select(day => Row("apple", day, true, 100))
+            .Concat(Enumerable.Range(0, 6).Select(day => Row("apple", day, true, 8000, capability: "streaming")));
+        var score = Assert.Single(ProviderScoreService.ForTest(rows, Now, Enumerable.Repeat(Audio("apple", "flac", 16, 44100), 6)));
+        Assert.Equal(80, score.Score);
+    }
 }
