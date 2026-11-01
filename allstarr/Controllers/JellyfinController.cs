@@ -200,7 +200,7 @@ public partial class JellyfinController : ControllerBase
             };
             return kind.HasValue
                 ? (await _providerGateway.GetPublicArtworkUriAsync(
-                    provider, kind.Value, externalId, cancellationToken))?.AbsoluteUri
+                    provider, kind.Value, externalId, cancellationToken, storedRecordingOnly: provider == "allstarr"))?.AbsoluteUri
                 : null;
         }
 

@@ -89,7 +89,12 @@ class FakeRunner:
     async def audio_codec(self, source: Path):
         return "alac"
 
-    async def seekable_flac(self, source: Path, target: Path):
+    async def exceeds_ceiling(self, source: Path, ceiling):
+        self.ceiling_checked = ceiling
+        return getattr(self, "over_ceiling", False)
+
+    async def seekable_flac(self, source: Path, target: Path, ceiling=None):
+        self.applied_ceiling = ceiling
         return await self.to_flac(source, target)
 
     async def audio_duration(self, source: Path):
@@ -1220,3 +1225,23 @@ def test_prepared_audio_cache_keeps_strong_etag_for_range_reopens(settings, orig
             assert response.headers["etag"] == tag
             if method == "GET":
                 assert response.content == first.content[:4]
+
+
+def test_lossless_above_the_requested_tier_is_reduced(settings):
+    runner = FakeRunner()
+    runner.over_ceiling = True
+    app = create_app(settings, FakeWrapper(), runner)
+    with TestClient(app, headers=ACCOUNT_HEADERS) as client:
+        response = client.get("/api/audio/101", params={"quality": "alac-16-44", "original_container": "true"})
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("audio/flac")
+    assert (runner.applied_ceiling.bit_depth, runner.applied_ceiling.sample_rate) == (16, 44100)
+
+
+def test_lossless_within_the_requested_tier_is_left_alone(settings):
+    runner = FakeRunner()
+    app = create_app(settings, FakeWrapper(), runner)
+    with TestClient(app, headers=ACCOUNT_HEADERS) as client:
+        assert client.get("/api/audio/101", params={"quality": "alac-16-44"}).status_code == 200
+    assert runner.ceiling_checked.bit_depth == 16
+    assert runner.applied_ceiling is None

@@ -913,7 +913,7 @@ const routes = [
   ["#/integrations/services", "Sources"],
   ["#/integrations/accounts", "Sources"],
   ["#/integrations/extensions", "Sources"],
-  ["#/integrations/routing", "Sources"],
+  ["#/integrations/routing", "Settings"],
   ["#/settings/general", "Settings"],
 ] as const;
 
@@ -1163,7 +1163,7 @@ for (const viewport of viewports) {
       await expect(sourceDialog.getByLabel("Access token")).toHaveValue("");
       await sourceDialog.getByRole("button", { name: "Cancel" }).click();
       await page.goto("#/settings/routing");
-      await expect(page.getByRole("heading", { name: "Routing", level: 2 })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Quality and routing", level: 2 })).toBeVisible();
       await expect(page.getByText(/always tried first/)).toBeVisible();
       await expect(page.getByRole("button", { name: "Save playback and matching" })).toBeDisabled();
       await expect(page.getByRole("button", { name: "Move Jellyfin up" })).toHaveCount(0);
@@ -1171,6 +1171,9 @@ for (const viewport of viewports) {
       const savePlayback = page.getByRole("button", { name: "Save Playback", exact: true });
       await expect(savePlayback).toBeDisabled();
       const routes = page.locator(".routing-group li[draggable=true]");
+      // Dragging while the view is still easing in can land on the wrong row.
+      await page.evaluate(() => Promise.all(document.getAnimations()
+        .filter((animation) => animation.effect?.getTiming().iterations !== Infinity).map((animation) => animation.finished)));
       await routes.nth(0).dragTo(routes.nth(1));
       await expect(routes.nth(0)).toContainText("Future Audio");
       await expect(savePlayback).toBeEnabled();
@@ -2383,7 +2386,7 @@ test("Legacy integration links open their canonical tabs", async ({ page }) => {
     ["#/sources", "Sources"],
     ["#/settings/accounts", "Sources"],
     ["#/settings/extensions", "Sources"],
-    ["#/settings/routing", "Sources"],
+    ["#/settings/routing", "Settings"],
   ] as const) {
     await page.goto(route);
     await expect(page.getByRole("heading", { name: tab, level: 1 })).toBeVisible();
@@ -3658,9 +3661,8 @@ test("Cached owns track storage and retention controls", async ({ page }) => {
   });
 
   await page.goto("#/library/cached");
-  await expect(page.getByText("Track cache behavior")).toBeVisible();
   await expect(page.getByText("Playback cache on", { exact: true })).toBeVisible();
-  await page.getByText("Track cache behavior").click();
+  await page.getByRole("link", { name: "Cache settings", exact: true }).click();
   await expect(page.locator('input[name="CACHE_DURATION_HOURS"]')).toHaveValue("24");
   await expect(page.locator('input[name="CACHE_TRANSCODE_MINUTES"]')).toHaveValue("60");
   const saveCache = page.getByRole("button", { name: "Save track cache" });
@@ -3710,26 +3712,22 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.goto("#/library/cached");
     await expect(page.getByText("Playback cache off", { exact: true })).toBeVisible();
     await expect(page.getByText(/New playback is not being added to Cached/)).toBeVisible();
-    await page.getByText("Track cache behavior").click();
+    await page.getByRole("link", { name: "Cache settings", exact: true }).click();
     await expect(page.getByRole("button", { name: "Playback caching", exact: true })).toContainText("Do not cache playback");
     await expect(page.getByText(/Hearts, Keep and retained playlists protect their copies in either mode/)).toBeVisible();
     if (width === 390) await expectContainedMobileGeometry(page);
-    await page.locator(".track-cache-controls").scrollIntoViewIfNeeded();
-    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     await page.screenshot({ path: test.info().outputPath(`cache-off-${width}-${theme}.png`) });
     await page.getByRole("button", { name: "Playback caching", exact: true }).click();
     await page.getByRole("option", { name: "Cache played songs", exact: true }).click();
     await page.locator('input[name="CACHE_DURATION_HOURS"]').fill("72");
     await page.getByRole("button", { name: "Save track cache", exact: true }).click();
     await expect.poll(() => saved).toEqual({ STORAGE_MODE: "Cache", CACHE_DURATION_HOURS: "72", CACHE_TRANSCODE_MINUTES: "60" });
-    await expect(page.getByText("Playback cache on", { exact: true })).toBeVisible();
     await expect(page.locator('input[name="CACHE_DURATION_HOURS"]')).toHaveValue("72");
     await expect(page.getByText(/The size limit can evict cached tracks sooner/)).toBeVisible();
     expect(writes).toEqual(["/api/admin/config"]);
     await page.getByRole("button", { name: "Dismiss notification", exact: true }).click();
     await page.locator('input[name="CACHE_DURATION_HOURS"]').click();
     if (width === 390) await expectContainedMobileGeometry(page);
-    await page.locator(".track-cache-controls").scrollIntoViewIfNeeded();
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     if (width === 390) {
       const save = await page.getByRole("button", { name: "Save track cache", exact: true }).boundingBox();
@@ -6478,13 +6476,13 @@ test("Playback diagnostic errors stay readable and persistent", async ({ page })
   await notification.getByRole("button", { name: "Dismiss notification" }).click(); await expect(notification).toHaveCount(0);
 });
 
-test("Routing and quality is a tab on the source list, not on a source page", async ({ page }) => {
+test("Quality and routing lives in Settings, not Sources", async ({ page }) => {
   await mockApi(page);
+  await page.goto("#/integrations/routing");
+  await expect(page.getByRole("heading", { name: "Quality and routing", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
   await page.goto("#/integrations/services");
-  await expect(page.getByRole("tab", { name: "Routing and quality" })).toHaveAttribute("href", "#/integrations/routing");
-  await page.goto("#/integrations/services/lumen-audio");
-  await expect(page.getByRole("heading", { name: "Lumen Audio", level: 2 })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "Routing and quality" })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: /routing/i })).toHaveCount(0);
 });
 
 test("A running source test shows progress until its result arrives", async ({ page }) => {
@@ -7683,7 +7681,7 @@ test("Cross-service links explain built-in lookups and preserve the optional mas
       "Odesli:Enabled": true, "Odesli:RateLimitMs": 6000, "Odesli:ApiKey": "********",
     } } });
   });
-  await page.goto("#/sources");
+  await page.goto("#/settings/general");
   const card = page.getByRole("form", { name: "Song links and extension installs" });
   await expect(card).toContainText("Deezer, Apple Music and enabled sources");
   await expect(card).toContainText("Song.link Web, UniTune, MusicBrainz and Squigly");

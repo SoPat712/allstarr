@@ -1344,7 +1344,7 @@ public sealed partial class ProtocolRouteFixtureTests
                 "applemusic",
                 ProviderResourceKind.Track,
                 "6768469976",
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(), false))
             .ReturnsAsync(new Uri("https://is1-ssl.mzstatic.com/image/thumb/song/1024x1024bb.jpg"));
         using var factory = new ProtocolFactory(
             "Jellyfin",

@@ -14,6 +14,8 @@
     type PlaybackStart,
     type UiSchema,
   } from "$lib/api";
+  import ServicePolicyCard from "$lib/components/ServicePolicyCard.svelte";
+  import TrackCacheCard from "$lib/components/TrackCacheCard.svelte";
   import SetupGuide from "$lib/components/SetupGuide.svelte";
   import AccessSettingsCard from "$lib/components/AccessSettingsCard.svelte";
   import StorageVerificationCard from "$lib/components/StorageVerificationCard.svelte";
@@ -32,7 +34,7 @@
   import { fieldValue, playbackStartLabel, playbackStartOptions } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { onThemeModeChange, readThemeMode, saveThemeMode, themeOptions, type ThemeMode } from "$lib/theme";
-  import { Activity, Archive, AudioLines, Bell, HardDrive, Headphones, Lock, Palette, Rocket, SlidersHorizontal, Users } from "@lucide/svelte";
+  import { Activity, Archive, AudioLines, Bell, Gauge, HardDrive, Headphones, Lock, Palette, Rocket, SlidersHorizontal, Users } from "@lucide/svelte";
 
   let {
     section = "general",
@@ -54,6 +56,7 @@
     { id: "appearance", label: "Appearance", group: "You", icon: Palette, title: "Appearance", description: "How Allstarr looks in this browser. Other devices keep their own choice." },
     { id: "preferences", label: "Listening preferences", group: "You", icon: Headphones, title: "Listening preferences", description: "", href: "#/preferences" },
     { id: "general", label: "General", group: "Server", icon: SlidersHorizontal, title: "General", description: "Server-wide behavior for every listener." },
+    { id: "quality", label: "Quality and routing", group: "Server", icon: Gauge, title: "Quality and routing", description: "The highest quality Allstarr plays and downloads, and the order it tries sources. Your media server always comes first when it has the song." },
     { id: "access", label: "Access and network", group: "Server", icon: Lock, title: "Access and network", description: "Who can sign in, media-server access, and how Allstarr is reached." },
     { id: "listeners", label: "Listeners", group: "Server", icon: Users, title: "Listeners", description: "Manage clean listening and see personal playlist copies." },
     { id: "alerts", label: "Alerts", group: "Server", icon: Bell, title: "Alerts", description: "Choose where Allstarr sends problem alerts." },
@@ -311,6 +314,14 @@
             <SelectField bind:value={themeMode} label="Color theme" options={themeOptions} onchange={(value) => saveThemeMode(value as ThemeMode)} />
           </div>
         </section>
+      {:else if active === "quality" && administrator}
+        {#await import("$lib/components/RoutingView.svelte")}
+          <Skeleton class="skeleton-panel" aria-label="Loading quality and routing" />
+        {:then { default: RoutingView }}
+          <RoutingView embedded />
+        {:catch}
+          <RouteError eyebrow="Quality unavailable" title="Quality and routing could not be loaded." message="Reload to try again." onRetry={() => window.location.reload()} />
+        {/await}
       {:else if active === "listeners" && administrator}
         <ListenersView />
       {:else if active === "alerts"}
@@ -318,16 +329,9 @@
       {:else if active === "sound-analysis" && administrator}
         <SoundAnalysisSettings />
       {:else if ["general", "storage", "access"].includes(active)}
-        {#if active === "general"}
-          <section class="settings-card">
-            <div class="settings-row maintenance-card">
-              <div><strong>Audio quality</strong><small>The highest quality Allstarr plays and downloads, and which sources it tries first.</small></div>
-              <Button variant="secondary" href="#/integrations/routing">Open routing and quality</Button>
-            </div>
-          </section>
-        {/if}
         {#if active === "access"}<AccessSettingsCard kind="backend" />{/if}
         {#if administrator && active === "access"}<AccessSettingsCard kind="oidc" />{/if}
+        {#if administrator && active === "storage"}<TrackCacheCard />{/if}
         {#if administrator && active === "storage"}<StorageVerificationCard />{/if}
         {#each pageSections as item (item.id)}
           {@const editable = item.fields.filter((field) => !deploymentOwned(field))}
@@ -415,6 +419,9 @@
         {:else}
           <div class="compact-empty"><strong>Nothing to change here</strong><p>This server doesn't expose any settings in this section.</p></div>
         {/each}
+        {#if administrator && active === "general" && schema}
+          <ServicePolicyCard fields={(schema.configSections ?? []).flatMap((section) => section.fields).filter((field) => /^(ODESLI_|EXTENSIONS_ALLOW_REMOTE_INSTALL)/.test(field.key))} {config} />
+        {/if}
         {#if active === "storage"}
           <CacheDiagnosticsCard
             snapshot={cache}

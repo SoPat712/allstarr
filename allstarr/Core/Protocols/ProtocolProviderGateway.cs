@@ -95,7 +95,8 @@ public interface IProtocolProviderGateway
         string providerId,
         ProviderResourceKind resourceKind,
         string externalId,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        bool storedRecordingOnly = false);
 
     Task<List<Album>> GetArtistAlbumsAsync(
         ProtocolExecutionContext protocol,
@@ -241,7 +242,8 @@ public sealed partial class ProtocolProviderGateway(
         string providerId,
         ProviderResourceKind resourceKind,
         string externalId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool storedRecordingOnly = false)
     {
         providerId = NormalizeProvider(providerId);
         if (resourceKind == ProviderResourceKind.Track &&
@@ -251,9 +253,9 @@ public sealed partial class ProtocolProviderGateway(
         if (identities != null && resourceKind is ProviderResourceKind.Track or ProviderResourceKind.Album or ProviderResourceKind.Artist &&
             await identities.GetStoredArtworkUriAsync(new(providerId, resourceKind, externalId), cancellationToken) is { } stored)
             return stored;
-        // Recording ids have no public provider to ask. Provider ids seen only in search results still do.
-        if (providerId == "allstarr" || !IsPublicMetadataProvider(providerId) ||
-            !ResolveProviderOrder(ProviderCapabilityKind.Metadata).Contains(providerId)) return null;
+        if (storedRecordingOnly && providerId == "allstarr") return null;
+        if (providerId != "allstarr" && (!IsPublicMetadataProvider(providerId) ||
+            !ResolveProviderOrder(ProviderCapabilityKind.Metadata).Contains(providerId))) return null;
         if (resourceKind is not (ProviderResourceKind.Track or ProviderResourceKind.Album or
             ProviderResourceKind.Artist or ProviderResourceKind.Playlist)) return null;
 

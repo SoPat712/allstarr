@@ -38,6 +38,11 @@ public sealed partial class TrackIdentityService
         if (resource.ProviderId == "allstarr")
         {
             if (!Guid.TryParse(resource.Value, out var recordingId)) return null;
+            // A merged recording's links moved to the recording that won the merge.
+            for (var hops = 0; hops < 8 &&
+                 await db.CanonicalRecordings.AsNoTracking().Where(item => item.Id == recordingId)
+                     .Select(item => item.MergedIntoId).FirstOrDefaultAsync(cancellationToken) is { } winner; hops++)
+                recordingId = winner;
             query = query.Where(item => db.ProviderTrackIdentities.Any(link =>
                 link.CanonicalRecordingId == recordingId && link.Verification == ProviderIdentityVerification.Verified &&
                 link.ProviderId == item.ProviderId && link.ExternalIdHash == item.ExternalIdHash));

@@ -19,7 +19,7 @@ from starlette.background import BackgroundTask
 
 from .config import Settings
 from .models import Login2faRequest, LoginRequest, MediaAccount
-from .runner import BoundedProcessRunner, ProcessFailure
+from .runner import AudioCeiling, BoundedProcessRunner, ProcessFailure
 from .security import diagnostic_tail, media_account, song_url
 from .wrapper import WrapperClient, WrapperResponse
 
@@ -55,6 +55,10 @@ def _authenticated(payload: Any) -> bool:
         auth.get("logged_in") is True
         or str(auth.get("state", "")).lower() in {"authenticated", "logged_in", "ready"}
     )
+
+
+# Apple serves one lossless stream per song, often 24-bit; the requested tier is a ceiling.
+AUDIO_CEILINGS = {"alac-16-44": AudioCeiling(16, 44100), "alac-24-96": AudioCeiling(24, 96000)}
 
 
 def _codec(quality: str) -> str:
@@ -331,7 +335,10 @@ def create_app(
                 codec = await process_runner.audio_codec(source)
                 if codec not in {"aac", "alac", "flac"}:
                     raise ProcessFailure("audio_artifact_missing")
-                copy_original = codec == "aac" or original_container and codec == "alac"
+                ceiling = AUDIO_CEILINGS.get(quality) if codec in {"alac", "flac"} else None
+                if ceiling and not await process_runner.exceeds_ceiling(source, ceiling):
+                    ceiling = None
+                copy_original = codec == "aac" or original_container and codec == "alac" and ceiling is None
                 if copy_original and source.suffix.lower() != ".m4a":
                     raise ProcessFailure("audio_artifact_missing")
                 suffix = ".m4a" if copy_original else ".flac"
@@ -342,7 +349,8 @@ def create_app(
                     shutil.copyfile(source, partial)
                     await asyncio.sleep(0)
                 else:
-                    await process_runner.seekable_flac(source, partial)
+                    await process_runner.seekable_flac(source, partial, ceiling) if ceiling \
+                        else await process_runner.seekable_flac(source, partial)
                 partial.replace(target)
                 cached_source(key, audio_file=True, original_container=original_container)
                 conversion_seconds = time.monotonic() - started

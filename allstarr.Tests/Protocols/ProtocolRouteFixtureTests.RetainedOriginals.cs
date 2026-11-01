@@ -32,7 +32,7 @@ public sealed partial class ProtocolRouteFixtureTests
             policies.Setup(item => item.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((Guid user, CancellationToken _) => new EffectiveProviderPolicySnapshot(
                     ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
-                    ImmutableHashSet<string>.Empty, "DataSaver", 0.07)
+                    ImmutableHashSet<string>.Empty, "BestAvailable", 0.07)
                 { UserId = user });
             services.RemoveAll<IEffectiveProviderPolicyResolver>();
             services.AddSingleton(policies.Object);

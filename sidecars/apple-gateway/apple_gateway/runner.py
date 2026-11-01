@@ -52,6 +52,12 @@ class ProcessResult:
     stderr: str
 
 
+@dataclass(frozen=True)
+class AudioCeiling:
+    bit_depth: int
+    sample_rate: int
+
+
 class ProcessFailure(RuntimeError):
     def __init__(self, code: str, *, stderr: str = ""):
         super().__init__(code)
@@ -203,10 +209,27 @@ class BoundedProcessRunner:
             raise ProcessFailure("audio_artifact_missing")
         return codec
 
-    async def seekable_flac(self, source: Path, target: Path) -> Path:
+    async def exceeds_ceiling(self, source: Path, ceiling: AudioCeiling) -> bool:
+        result = await self.execute([
+            str(Path(self._settings.ffmpeg_path).with_name("ffprobe")),
+            "-v", "error", "-select_streams", "a:0",
+            "-show_entries", "stream=sample_rate,bits_per_raw_sample",
+            "-of", "default=noprint_wrappers=1", str(source),
+        ], source.parent)
+        if result.return_code != 0:
+            raise ProcessFailure("audio_artifact_missing")
+        facts = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        depth = int(facts["bits_per_raw_sample"]) if facts.get("bits_per_raw_sample", "").isdigit() else 0
+        rate = int(facts["sample_rate"]) if facts.get("sample_rate", "").isdigit() else 0
+        return depth > ceiling.bit_depth or rate > ceiling.sample_rate
+
+    async def seekable_flac(self, source: Path, target: Path, ceiling: AudioCeiling | None = None) -> Path:
+        reduce = [] if ceiling is None else [
+            "-ar", str(ceiling.sample_rate), "-sample_fmt", "s16" if ceiling.bit_depth <= 16 else "s32",
+        ]
         result = await self.execute([
             self._settings.ffmpeg_path, "-nostdin", "-v", "error", "-y",
-            "-i", str(source), "-map", "0:a:0", "-map_metadata", "-1",
+            "-i", str(source), "-map", "0:a:0", "-map_metadata", "-1", *reduce,
             "-c:a", "flac", "-compression_level", "0", "-f", "flac", str(target),
         ], target.parent)
         if result.return_code != 0 or not target.is_file():

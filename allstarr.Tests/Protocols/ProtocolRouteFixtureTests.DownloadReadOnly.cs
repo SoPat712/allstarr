@@ -20,7 +20,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("Subsonic", "/rest/download.view?id=ext-qobuz-song-42&u=fixture&p=fixture&v=1.13.0&c=Feishin", true)]
     [InlineData("Jellyfin", "/Items/ext-qobuz-song-42/File?api_key=fixture-key&DeviceId=download-device", false)]
     [InlineData("Jellyfin", "/Items/ext-qobuz-song-42/File?api_key=fixture-key&DeviceId=download-device", true)]
-    public async Task OfflineDownload_IgnoresPlaybackQualityAndDoesNotWriteIdentity(string backend, string path, bool range)
+    public async Task OfflineDownload_HonorsTheQualityLimitAndDoesNotWriteIdentity(string backend, string path, bool range)
     {
         byte[] bytes = [102, 76, 97, 67, 0, 0, 0, 34, 1, 2, 3, 4];
         var lease = new ProviderStreamLease("original", new Uri("https://media.example.test/original"),
@@ -39,7 +39,7 @@ public sealed partial class ProtocolRouteFixtureTests
         capability.SetupGet(item => item.ProviderId).Returns("qobuz");
         capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
         capability.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
-                It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "42" && request.RequestedQuality == ProviderAudioQuality.Any)))
+                It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "42" && request.RequestedQuality == ProviderAudioQuality.DataSaver)))
             .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(lease));
         var descriptor = new ProviderDescriptor("qobuz", "Qobuz", "Fixture provider", ProviderOrigin.BuiltIn, "1", "1",
             [new ProviderCapabilityDescriptor(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported,

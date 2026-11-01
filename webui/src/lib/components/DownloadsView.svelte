@@ -1,7 +1,7 @@
 <script lang="ts">
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
-  import { ChevronDown, Download, Trash2 } from "@lucide/svelte";
+  import { Download, Trash2 } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -51,11 +51,6 @@
   let confirmOpen = $state(false);
   let removalError = $state("");
   let storageMode = $state("Cache");
-  let cacheDurationHours = $state(72);
-  let transcodeCacheMinutes = $state(60);
-  let controlsReady = $state(false);
-  let controlsError = $state("");
-  let cacheControlsDirty = $state(false);
 
   const cached = $derived(storage === "cache");
   const label = $derived(cached ? "Cached" : "Kept");
@@ -109,19 +104,8 @@
       ? downloadsResult.reason.message
       : `${label} tracks are unavailable.`;
     if (schemaResult.status === "fulfilled") providers = schemaResult.value.providers;
-    if (cached && configResult.status === "fulfilled" && configResult.value) {
-      if (!cacheControlsDirty) {
-        storageMode = String(pathValue(configResult.value, "library.storageMode") ?? "Cache");
-        cacheDurationHours = Number(pathValue(configResult.value, "library.cacheDurationHours") ?? 72);
-        transcodeCacheMinutes = Number(pathValue(configResult.value, "cache.transcodeCacheMinutes") ?? 60);
-      }
-      controlsReady = true;
-      controlsError = "";
-    } else if (cached && configResult.status === "rejected") {
-      controlsError = configResult.reason instanceof Error
-        ? configResult.reason.message
-        : "Track cache settings are unavailable.";
-    }
+    if (cached && configResult.status === "fulfilled" && configResult.value)
+      storageMode = String(pathValue(configResult.value, "library.storageMode") ?? "Cache");
     loading = false;
     refreshing = false;
   }
@@ -141,26 +125,6 @@
       await refresh();
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "The track could not be kept.");
-    } finally {
-      action = "";
-    }
-  }
-
-  async function saveCacheControls(event: SubmitEvent) {
-    event.preventDefault();
-    if (action) return;
-    action = "cache-settings";
-    try {
-      await settings.save({
-        STORAGE_MODE: storageMode,
-        CACHE_DURATION_HOURS: String(cacheDurationHours),
-        CACHE_TRANSCODE_MINUTES: String(transcodeCacheMinutes),
-      });
-      cacheControlsDirty = false;
-      toast.success("Track cache settings saved.");
-      await refresh();
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "Track cache settings could not be saved.");
     } finally {
       action = "";
     }
@@ -359,38 +323,10 @@
     {/if}
 
     {#if cached}
-      <details class="track-cache-controls">
-        <summary>
-          <span>
-            <strong id="track-cache-controls-title">Track cache behavior</strong>
-            <small>Playback storage and retention, next to the files they control.</small>
-          </span>
-          <Badge state={storageMode === "Cache" ? "healthy" : "suggested"}>Playback cache {storageMode === "Cache" ? "on" : "off"}</Badge>
-          <ChevronDown class="disclosure-chevron" size={16} aria-hidden="true" />
-        </summary>
-        {#if controlsReady}
-          <form class="settings-fields track-cache-settings" onsubmit={(event) => void saveCacheControls(event)}>
-            <label class="setting-field">
-              <span><strong>Playback caching</strong></span>
-              <SelectField bind:value={storageMode} name="STORAGE_MODE" label="Playback caching" options={[{ value: "Cache", label: "Cache played songs" }, { value: "Permanent", label: "Do not cache playback" }]} onchange={() => cacheControlsDirty = true} />
-              <small>Hearts, Keep and retained playlists protect their copies in either mode.</small>
-            </label>
-            <label class="setting-field">
-              <span><strong>Track retention</strong><small>Hours</small></span>
-              <input bind:value={cacheDurationHours} name="CACHE_DURATION_HOURS" type="number" min="1" max="8760" oninput={() => cacheControlsDirty = true} />
-              <small>Hours since last use. The size limit can evict cached tracks sooner.</small>
-            </label>
-            <label class="setting-field">
-              <span><strong>Quality override retention</strong><small>Minutes</small></span>
-              <input bind:value={transcodeCacheMinutes} name="CACHE_TRANSCODE_MINUTES" type="number" min="1" max="10080" oninput={() => cacheControlsDirty = true} />
-              <small>Temporary lower-bandwidth versions use this shorter window.</small>
-            </label>
-            <footer><Button type="submit" disabled={Boolean(action) || !cacheControlsDirty}>{action === "cache-settings" ? "Saving…" : "Save track cache"}</Button></footer>
-          </form>
-        {:else}
-          <p class="inline-status" role="status">{controlsError || "Loading track cache settings…"}</p>
-        {/if}
-      </details>
+      <div class="track-cache-link">
+        <Badge state={storageMode === "Cache" ? "healthy" : "suggested"}>Playback cache {storageMode === "Cache" ? "on" : "off"}</Badge>
+        <Button variant="ghost" href="#/settings/storage">Cache settings</Button>
+      </div>
     {/if}
   </section>
 
@@ -416,6 +352,7 @@
 
 <style>
   .download-provider-id { display: none; }
+  .track-cache-link { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--surface-gutter); border-top: 1px solid var(--color-edge); }
   :global(.download-actions .download-remove:not(:disabled):hover) { color: var(--md-sys-color-error); }
   .download-quality-summary {
     display: flex;

@@ -100,7 +100,7 @@
     if (path === "/sources") return "/integrations/services";
     if (path === "/settings/accounts") return "/integrations/accounts";
     if (path === "/settings/extensions") return "/integrations/services";
-    if (path === "/settings/routing" || path === "/settings/playback") return "/integrations/routing";
+    if (["/settings/routing", "/settings/playback", "/integrations/routing"].includes(path)) return "/settings/quality";
     if (path === "/integrations/extensions") return "/integrations/services";
     return path;
   }
@@ -108,7 +108,6 @@
   const route = $derived(currentRoute(`/${page.params.path ?? ""}`));
   const forbiddenRoute = $derived(!administrator && (
     (route.startsWith("/settings") && route !== "/settings/alerts") ||
-    route === "/integrations/routing" ||
     route === "/library/cached" ||
     route === "/library/kept" ||
     (route === "/intelligence" && developmentIntelligence)

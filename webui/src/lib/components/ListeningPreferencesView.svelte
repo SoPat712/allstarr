@@ -261,7 +261,7 @@
           </div>
           <SelectField bind:value={qualityLimit} label="Quality limit" options={qualityChoices} disabled={busy} />
         </div>
-        {#if administrator}<Button variant="ghost" href="#/integrations/routing">Change the household limit</Button>{/if}
+        {#if administrator}<Button variant="ghost" href="#/settings/quality">Change the household limit</Button>{/if}
       </section>
 
       <section class="preference-options" aria-labelledby="problem-alerts-title">
