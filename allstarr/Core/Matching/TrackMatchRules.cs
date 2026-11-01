@@ -326,7 +326,7 @@ internal sealed class FieldScoreRule : ITrackMatchRule
         var warnings = new List<string>();
         var sourceTitle = FuzzyMatcher.NormalizeTitleForMatching(source.Title, source.Artist, candidate.Artist);
         var candidateTitle = FuzzyMatcher.NormalizeTitleForMatching(candidate.Title, candidate.Artist, source.Artist);
-        var title = FuzzyMatcher.CalculateTitleSimilarity(sourceTitle, candidateTitle) / 100d;
+        var title = FuzzyMatcher.CalculateTitleSimilarity(sourceTitle, candidateTitle, source.Title, candidate.Title) / 100d;
         var seriesContext = source.Title + " | " + candidate.Title;
         var artist = TrackMatchSignals.ArtistSimilarity(
             FuzzyMatcher.ArtistWithoutSeriesCredits(seriesContext, source.Artist),

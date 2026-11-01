@@ -57,6 +57,9 @@ public static partial class FuzzyMatcher
     [System.Text.RegularExpressions.GeneratedRegex(@"^\s*(?:feat(?:uring)?\.?|ft\.?|with)\s+", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex CreditPrefixRegex();
 
+    [System.Text.RegularExpressions.GeneratedRegex(@"[\(\[:,/–—]|\s-\s")]
+    private static partial System.Text.RegularExpressions.Regex TitleNoteRegex();
+
     [System.Text.RegularExpressions.GeneratedRegex(@"(?:[\(\[](?<label>[^\(\)\[\]]*?\bremix)\b|\s+[-–—]\s+(?<label>(?:(?!\s+[-–—]\s+)[^\(\)\[\]])*?\bremix)\b)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex RemixLabelRegex();
 
@@ -358,13 +361,23 @@ public static partial class FuzzyMatcher
             .Where(value => !string.IsNullOrWhiteSpace(value)));
     }
 
-    public static int CalculateTitleSimilarity(string source, string candidate)
+    public static int CalculateTitleSimilarity(string source, string candidate, string? rawSource = null, string? rawCandidate = null)
     {
         var left = NormalizeForMatching(source);
         var right = NormalizeForMatching(candidate);
         if (left != right && (CreditPrefixRegex().Replace(left, "") == right ||
                               CreditPrefixRegex().Replace(right, "") == left))
             return CalculateLevenshteinScore(left, right);
+        if (left.Length > 0 && right.Length > 0 && left != right && (left.Contains(right) || right.Contains(left)))
+        {
+            var (shorter, longer, rawLonger) = left.Length < right.Length
+                ? (left, right, rawCandidate ?? candidate)
+                : (right, left, rawSource ?? source);
+            // Extra words set apart by punctuation are a note about the song, as in "Feels (Live)". Anything else
+            // is another song: "Fade" and "Faded", "MIA" and "Otra Noche en Miami", "Everyday" and "Everyday Cookin'".
+            if (!$" {longer} ".Contains($" {shorter} ", StringComparison.Ordinal) || !TitleNoteRegex().IsMatch(rawLonger))
+                return CalculateTokenSimilarity(left, right);
+        }
         return CalculateSimilarity(source, candidate);
     }
 
@@ -403,6 +416,11 @@ public static partial class FuzzyMatcher
             return 85;
         }
 
+        return CalculateTokenSimilarity(queryNorm, targetNorm);
+    }
+
+    private static int CalculateTokenSimilarity(string queryNorm, string targetNorm)
+    {
         var tokens1 = queryNorm.Split(' ', StringSplitOptions.RemoveEmptyEntries);
         var tokens2 = targetNorm.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 

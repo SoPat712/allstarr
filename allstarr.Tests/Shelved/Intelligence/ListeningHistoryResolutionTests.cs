@@ -282,7 +282,7 @@ public sealed partial class ListeningHistoryResolutionTests(Xunit.Abstractions.I
         {
             var receipt = Assert.Single(await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "history-resolution").ToArrayAsync());
             using var payload = JsonDocument.Parse(receipt.PayloadJson);
-            Assert.Equal(1, payload.RootElement.GetProperty("version").GetInt32());
+            Assert.Equal(2, payload.RootElement.GetProperty("version").GetInt32());
             Assert.Single(await db.Jobs.Where(item => item.Type == ListeningHistoryResolution.JobTypeName).ToArrayAsync());
         }
         gateway.Verify(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), 15), Times.Never);

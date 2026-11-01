@@ -423,9 +423,14 @@ public sealed class TrackMatchDecisionEngine
     private bool IsAcceptanceQualified(TrackMatchCandidateScore score) =>
         IsRecordingAllowed(score) && score.Confidence >= _policy.AcceptThreshold &&
         HasStrongArtistEvidence(score) &&
-        HasDurationWithinTolerance(score) &&
+        HasDurationWithinTolerance(score) && HasCloseTitleWithoutDuration(score) &&
         HasSameSemanticVersion(score) &&
         HasSameTitleAnnotations(score) && HasMatchingExplicitness(score) && HasConfirmedSourceAlbum(score);
+
+    // With no song length to confirm it, a one-letter difference can be another song by the same artist.
+    private static bool HasCloseTitleWithoutDuration(TrackMatchCandidateScore score) =>
+        score.Components == null || score.Components.ContainsKey("duration") ||
+        score.Components.GetValueOrDefault("title", 1) >= 0.9;
 
     private static bool HasConfirmedSourceAlbum(TrackMatchCandidateScore score) =>
         score.Components?.GetValueOrDefault("sourceAlbumConfirmation", 1) != 0;

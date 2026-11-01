@@ -19,6 +19,10 @@ public sealed class TrackMatchPlayableSearch(
     ILogger<TrackMatchPlayableSearch> logger,
     IEffectiveProviderPolicyResolver? effectivePolicies = null)
 {
+    // Hard songs are often on only one service, sometimes the last in line. Requests are paced, so this costs time, not load.
+    private const int MaxHistorySearches = 8;
+    private const int TrustedHistoryAnswers = 2;
+
     public async Task<PlayableTrackMatch> MatchAsync(
         ProtocolExecutionContext context,
         ExternalTrackMatchSnapshot source,
@@ -102,7 +106,7 @@ public sealed class TrackMatchPlayableSearch(
         var songs = new List<Song>();
         ProviderError? failure = providerOrder.Any(provider => providerFailures?.GetValueOrDefault(provider) >= 2)
             ? new(ProviderErrorKind.TransientFailure, TimeSpan.FromMinutes(1)) : null;
-        var answered = false;
+        var answered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var calls = 0;
         var failed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var available = providerOrder.Where(provider => providerFailures?.GetValueOrDefault(provider) < 2 || providerFailures == null).ToArray();
@@ -113,7 +117,7 @@ public sealed class TrackMatchPlayableSearch(
             foreach (var provider in available)
             {
                 if (providerFailures?.GetValueOrDefault(provider) >= 2 || failed.Contains(provider)) continue;
-                if (calls >= 3) break;
+                if (calls >= MaxHistorySearches) break;
                 using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 deadline.CancelAfter(TimeSpan.FromSeconds(10));
                 ProviderOutcome<IReadOnlyList<Song>> result;
@@ -141,7 +145,7 @@ public sealed class TrackMatchPlayableSearch(
                     continue;
                 }
                 calls++;
-                answered = true;
+                answered.Add(provider);
                 songs.AddRange(result.RequireValue().Where(song => IsPlayable(song, providerOrder) &&
                     !string.IsNullOrWhiteSpace(song.ExternalProvider) && !string.IsNullOrWhiteSpace(song.ExternalId) &&
                     (!song.ExternalProvider.Equals(source.ProviderId, StringComparison.OrdinalIgnoreCase) ||
@@ -153,10 +157,10 @@ public sealed class TrackMatchPlayableSearch(
                     return ProviderOutcome<PlayableTrackMatch>.Success(match);
             }
         }
-        return !answered && failure != null ? ProviderOutcome<PlayableTrackMatch>.Failure(failure) :
+        return answered.Count == 0 && failure != null ? ProviderOutcome<PlayableTrackMatch>.Failure(failure) :
             ProviderOutcome<PlayableTrackMatch>.Success(DecideMatch(source, scope, songs, [], null, providerOrder, effectiveMatcher)
                 with
-            { SearchFailure = failure });
+            { SearchFailure = answered.Count >= TrustedHistoryAnswers ? null : failure });
     }
 
     private static string[] SearchQueries(ExternalTrackMatchSnapshot source)

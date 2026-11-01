@@ -30,7 +30,7 @@ public sealed partial class ListeningHistoryResolution(
 {
     public const string JobTypeName = "listening-history.resolve";
     private const string ResourceKind = "history-resolution";
-    private const string ReceiptPayload = "{\"version\":1}";
+    private const string ReceiptPayload = "{\"version\":2}";
     private const int LocalBatchSize = 100;
     public string JobType => JobTypeName;
 

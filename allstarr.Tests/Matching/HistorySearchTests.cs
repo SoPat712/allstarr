@@ -69,6 +69,64 @@ public sealed class HistorySearchTests
         Assert.True(result.Decision.State != TrackMatchReviewState.Accepted || result.Decision.RequiresReview);
     }
 
+    // Spotify exports carry no song length, so nothing but the title and artist can tell these apart.
+    [Theory]
+    [InlineData("MIA (feat. Drake)", "Bad Bunny", "Otra Noche en Miami", "Bad Bunny")]
+    [InlineData("Fade", "Alan Walker", "Faded", "Alan Walker")]
+    [InlineData("Everyday", "Logic", "Everyday Cookin'", "Logic Levls")]
+    [InlineData("Stay", "Artist", "Stays", "Artist")]
+    public async Task ImportedPlayNeverTakesASimilarlyNamedSong(string title, string artist, string target, string targetArtist)
+    {
+        var result = (await Search(Gateway(target, targetArtist), title, artist, null)).RequireValue();
+        Assert.True(result.Decision.State != TrackMatchReviewState.Accepted || result.Decision.RequiresReview);
+    }
+
+    [Theory]
+    [InlineData("Going Bad (feat. Drake)", "Meek Mill", "Going Bad (feat. Drake)", "Meek Mill")]
+    [InlineData("MIA (feat. Drake)", "Bad Bunny", "MIA", "Bad Bunny, Drake")]
+    [InlineData("Godzilla (feat. Juice WRLD)", "Eminem", "Godzilla", "Eminem, Juice WRLD")]
+    [InlineData("Drip Too Hard (Lil Baby & Gunna)", "Lil Baby", "Drip Too Hard", "Lil Baby, Gunna")]
+    [InlineData("Happier", "Marshmello", "Happier", "Marshmello, Bastille")]
+    [InlineData("Don’t Matter To Me (with Michael Jackson)", "Drake", "Don't Matter To Me", "Drake, Michael Jackson")]
+    public async Task ImportedPlayWithoutALengthStillFindsTheRightSong(string title, string artist, string target, string targetArtist)
+    {
+        var result = (await Search(Gateway(target, targetArtist), title, artist, null)).RequireValue();
+        Assert.True(result.Decision.State == TrackMatchReviewState.Accepted && !result.Decision.RequiresReview,
+            string.Join(",", result.Decision.Reasons.Concat(result.Decision.Warnings)));
+    }
+
+    [Fact]
+    public async Task HardSongsAreSearchedPastServicesThatDoNotHaveThem()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        string[] order = ["apple", "deezer", "qobuz", "monochrome", "tidal", "ytmusic"];
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(order);
+        foreach (var provider in order)
+            gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), provider, It.IsAny<string>(), 15))
+                .ReturnsAsync(ProviderOutcome<IReadOnlyList<Song>>.Success(provider != "ytmusic" ? [] : [
+                    new() { ExternalProvider = provider, ExternalId = "song", Title = "Going Bad (feat. Drake)", Artist = "Meek Mill", Album = "Championships" }]));
+        var result = (await Search(gateway, "Going Bad (feat. Drake)", "Meek Mill", null)).RequireValue();
+        Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
+        Assert.Equal("ytmusic", result.SelectedExternal?.ExternalProvider);
+    }
+
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(2, false)]
+    public async Task OneBrokenServiceOnlyHoldsASongBackWhenTooFewOthersAnswered(int answering, bool heldBack)
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        var answers = Enumerable.Range(0, answering).Select(index => $"answers-{index}").ToArray();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["broken", .. answers]);
+        gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "broken", It.IsAny<string>(), 15))
+            .ThrowsAsync(new HttpRequestException());
+        foreach (var provider in answers)
+            gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), provider, It.IsAny<string>(), 15))
+                .ReturnsAsync(ProviderOutcome<IReadOnlyList<Song>>.Success([]));
+        var result = (await Search(gateway, "Song", "Artist", null)).RequireValue();
+        Assert.Equal(heldBack, result.SearchFailure != null);
+    }
+
     private static Mock<IProtocolProviderGateway> Gateway(string title, string artist)
     {
         var gateway = new Mock<IProtocolProviderGateway>();
@@ -79,12 +137,12 @@ public sealed class HistorySearchTests
         return gateway;
     }
 
-    private static Task<ProviderOutcome<PlayableTrackMatch>> Search(Mock<IProtocolProviderGateway> gateway, string title, string artist)
+    private static Task<ProviderOutcome<PlayableTrackMatch>> Search(Mock<IProtocolProviderGateway> gateway, string title, string artist, long? duration = 180000)
     {
         var user = Guid.NewGuid();
         return new TrackMatchPlayableSearch(gateway.Object, new(), NullLogger<TrackMatchPlayableSearch>.Instance)
             .MatchImportedHistoryAsync(new(ProtocolKind.Jellyfin, "main", "listener", null, "history-test", DateTimeOffset.UtcNow.AddMinutes(1), default),
-                new("source", "history", "source", title, artist, "Album", null, 180000, null, null, null),
+                new("source", "history", "source", title, artist, "Album", null, duration, null, null, null),
                 new(user, "main", null, 2, 1, new HashSet<string>()), default);
     }
 }
