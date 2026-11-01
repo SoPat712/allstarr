@@ -38,6 +38,40 @@ public sealed class ProviderScoreServiceTests
     }
 
     [Fact]
+    public void PartsExplainAReliableLosslessSourceThatStartsSlowly()
+    {
+        var rows = Enumerable.Range(0, 10).Select(day => Row("apple", day, true, 7146, "streaming"));
+        var samples = Enumerable.Range(0, 5).Select(_ => new ProviderScoreService.AudioSample("apple", "alac", 24, 44100, null));
+        var score = Assert.Single(ProviderScoreService.ForTest(rows, Now, samples));
+        var parts = Assert.IsType<ProviderScoreParts>(score.Parts);
+        Assert.Equal(82, score.Score);
+        Assert.Equal((50, 50, 2, 20, 30, 30), (parts.Reliability, parts.ReliabilityOutOf, parts.Speed, parts.SpeedOutOf, parts.Quality, parts.QualityOutOf));
+        Assert.Equal(score.Score, parts.Reliability + parts.Speed + parts.Quality);
+        Assert.Equal(7146, parts.TypicalMilliseconds);
+        Assert.Null(parts.CappedAt);
+    }
+
+    [Fact]
+    public void PartsShowWhenALossySourceIsHeldAtItsCeiling()
+    {
+        var rows = Enumerable.Range(0, 10).Select(day => Row("deezer", day, true, 500, "streaming"));
+        var samples = Enumerable.Range(0, 5).Select(_ => new ProviderScoreService.AudioSample("deezer", "mp3", null, null, 128_000));
+        var score = Assert.Single(ProviderScoreService.ForTest(rows, Now, samples));
+        Assert.Equal(60, score.Score);
+        Assert.Equal(60, score.Parts!.CappedAt);
+        Assert.True(score.Parts.Earned > 60);
+    }
+
+    [Fact]
+    public void SourcesThatPlayNoAudioHaveNoQualityPartAndEachFeatureHasItsOwnParts()
+    {
+        var rows = Enumerable.Range(0, 10).Select(day => Row("lyrics", day, true, 4250, "lyrics"));
+        var score = Assert.Single(ProviderScoreService.ForTest(rows, Now));
+        Assert.Equal((80, 80, 10, 20, 0, 0), (score.Parts!.Reliability, score.Parts.ReliabilityOutOf, score.Parts.Speed, score.Parts.SpeedOutOf, score.Parts.Quality, score.Parts.QualityOutOf));
+        Assert.Equal(score.Parts, Assert.Single(score.Capabilities).Parts);
+    }
+
+    [Fact]
     public void TooFewChecksGiveNoScoreInsteadOfAGuess()
     {
         var score = Assert.Single(ProviderScoreService.ForTest(Enumerable.Range(0, ProviderScoreService.MinimumChecks - 1).Select(day => Row("a", day, true)), Now));

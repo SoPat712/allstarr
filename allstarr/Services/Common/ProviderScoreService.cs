@@ -4,15 +4,19 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Services.Common;
 
+/// <summary>How a score was earned. The parts add up to <see cref="Earned"/>; a lossy source may then be held at a ceiling.</summary>
+public sealed record ProviderScoreParts(int Earned, int Reliability, int ReliabilityOutOf, int Speed, int SpeedOutOf, int Quality, int QualityOutOf,
+    int? CappedAt, long? TypicalMilliseconds);
+
 public sealed record ProviderCapabilityScore(string Capability, int? Score, double? UptimePercent, int Checks, int Failures,
-    long? TypicalLatencyMilliseconds, string? LastFailureCode);
+    long? TypicalLatencyMilliseconds, string? LastFailureCode, ProviderScoreParts? Parts = null);
 
 public sealed record ProviderScoreDay(DateOnly Day, int Passed, int Failed);
 
 public sealed record ProviderQuality(string Typical, string? Best, bool Lossless, int Samples);
 
 public sealed record ProviderScore(string ProviderId, int? Score, double? UptimePercent, int Checks,
-    IReadOnlyList<ProviderCapabilityScore> Capabilities, IReadOnlyList<ProviderScoreDay> Days, ProviderQuality? Quality = null);
+    IReadOnlyList<ProviderCapabilityScore> Capabilities, IReadOnlyList<ProviderScoreDay> Days, ProviderQuality? Quality = null, ProviderScoreParts? Parts = null);
 
 /// <summary>Turns the last 30 days of provider checks and playback tests into one comparable score per provider.</summary>
 public sealed class ProviderScoreService(IDbContextFactory<AllstarrDbContext> factory, TimeProvider time)
@@ -142,17 +146,19 @@ public sealed class ProviderScoreService(IDbContextFactory<AllstarrDbContext> fa
                 var rows = provider.ToArray();
                 var samples = audio.GetValueOrDefault(provider.Key) ?? [];
                 var quality = Quality(samples);
-                return new ProviderScore(provider.Key, Score(rows, now, quality == null ? null : QualityValue(quality, samples)), Uptime(rows), rows.Length,
+                var parts = Parts(rows, now, quality == null ? null : QualityValue(quality, samples));
+                return new ProviderScore(provider.Key, Score(parts), Uptime(rows), rows.Length,
                     rows.GroupBy(check => check.Capability, StringComparer.OrdinalIgnoreCase).Select(group =>
                     {
                         var capability = group.ToArray();
-                        return new ProviderCapabilityScore(group.Key, Score(capability, now), Uptime(capability), capability.Length,
+                        var capabilityParts = Parts(capability, now);
+                        return new ProviderCapabilityScore(group.Key, Score(capabilityParts), Uptime(capability), capability.Length,
                             capability.Count(check => !check.Passed), Typical(capability),
-                            capability.Where(check => !check.Passed).OrderByDescending(check => check.At).FirstOrDefault().Reason);
+                            capability.Where(check => !check.Passed).OrderByDescending(check => check.At).FirstOrDefault().Reason, capabilityParts);
                     }).OrderBy(item => item.Capability, StringComparer.Ordinal).ToArray(),
                     rows.GroupBy(check => DateOnly.FromDateTime(check.At.UtcDateTime))
                         .Select(day => new ProviderScoreDay(day.Key, day.Count(check => check.Passed), day.Count(check => !check.Passed)))
-                        .OrderBy(day => day.Day).ToArray(), quality);
+                        .OrderBy(day => day.Day).ToArray(), quality, parts);
             }).OrderBy(item => item.ProviderId, StringComparer.Ordinal).ToArray();
 
     private static double? Uptime(IReadOnlyCollection<Check> rows) =>
@@ -166,7 +172,7 @@ public sealed class ProviderScoreService(IDbContextFactory<AllstarrDbContext> fa
 
     // Reliability, with the last week counting double, and speed. Sources that play audio also earn a share for
     // the quality they deliver, and lossy sources have a ceiling however dependable they are.
-    private static int? Score(IReadOnlyCollection<Check> rows, DateTimeOffset now, (double Earned, int Ceiling)? quality = null)
+    private static ProviderScoreParts? Parts(IReadOnlyCollection<Check> rows, DateTimeOffset now, (double Earned, int Ceiling)? quality = null)
     {
         if (rows.Count < MinimumChecks) return null;
         var recent = now.AddDays(-7);
@@ -181,10 +187,21 @@ public sealed class ProviderScoreService(IDbContextFactory<AllstarrDbContext> fa
         // For a source that plays audio, speed means how fast a song starts, not how fast it answers a search.
         var timed = quality != null && rows.Any(check => check.Capability == "streaming" && check.Passed && check.Latency != null)
             ? rows.Where(check => check.Capability == "streaming") : rows;
-        var speed = Typical(timed) is { } typical ? Math.Clamp(1 - (typical - 500) / 7500d, 0, 1) : 1;
-        if (quality is not { } value) return (int)Math.Round(100 * (0.8 * reliability + 0.2 * speed));
-        return Math.Min(value.Ceiling, (int)Math.Round(100 * (0.5 * reliability + 0.2 * speed + 0.3 * value.Earned)));
+        var typicalTime = Typical(timed);
+        var speed = typicalTime is { } typical ? Math.Clamp(1 - (typical - 500) / 7500d, 0, 1) : 1;
+        var speedPoints = (int)Math.Round(20 * speed);
+        if (quality is not { } value)
+        {
+            var total = (int)Math.Round(100 * (0.8 * reliability + 0.2 * speed));
+            return new(total, Math.Max(0, total - speedPoints), 80, speedPoints, 20, 0, 0, null, typicalTime);
+        }
+        var qualityPoints = (int)Math.Round(30 * value.Earned);
+        var earnedTotal = (int)Math.Round(100 * (0.5 * reliability + 0.2 * speed + 0.3 * value.Earned));
+        return new(earnedTotal, Math.Max(0, earnedTotal - speedPoints - qualityPoints), 50, speedPoints, 20, qualityPoints, 30,
+            earnedTotal > value.Ceiling ? value.Ceiling : null, typicalTime);
     }
+
+    private static int? Score(ProviderScoreParts? parts) => parts == null ? null : parts.CappedAt ?? parts.Earned;
 
     internal static IReadOnlyList<ProviderScore> ForTest(IEnumerable<(string Provider, string Capability, DateTimeOffset At, bool Passed, long? Latency, string? Reason)> rows,
         DateTimeOffset now, IEnumerable<AudioSample>? samples = null) =>

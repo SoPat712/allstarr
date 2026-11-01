@@ -574,6 +574,19 @@ export type ProviderCapabilityScore = {
   failures: number;
   typicalLatencyMilliseconds: number | null;
   lastFailureCode: string | null;
+  parts?: ProviderScoreParts | null;
+};
+
+export type ProviderScoreParts = {
+  earned: number;
+  reliability: number;
+  reliabilityOutOf: number;
+  speed: number;
+  speedOutOf: number;
+  quality: number;
+  qualityOutOf: number;
+  cappedAt: number | null;
+  typicalMilliseconds: number | null;
 };
 
 export type ProviderScore = {
@@ -584,6 +597,7 @@ export type ProviderScore = {
   capabilities: ProviderCapabilityScore[];
   days: { day: string; passed: number; failed: number }[];
   quality?: { typical: string; best: string | null; lossless: boolean; samples: number } | null;
+  parts?: ProviderScoreParts | null;
 };
 
 export type ProviderCheckHistory = {

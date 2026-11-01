@@ -8,6 +8,13 @@ export function capabilityScore(score: ProviderScore | undefined, capability: st
     : score.score;
 }
 
+/** How the score shown for this order was earned, so the parts always add up to the number on the chip. */
+export function scoreParts(score: ProviderScore, capability: string) {
+  return (capability === "lyrics"
+    ? score.capabilities.find((item) => item.capability === capability)?.parts ?? score.parts
+    : score.parts) ?? null;
+}
+
 /** Only sources Allstarr can pick by itself compete on score. Manual and turned-off sources are never ranked. */
 export const isRanked = (useMode?: ProviderUseMode | null) => useMode !== "manualOnly" && useMode !== "off";
 
