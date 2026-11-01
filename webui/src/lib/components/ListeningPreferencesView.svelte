@@ -19,7 +19,10 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
   import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
   import { canonicalProviderId, lyricsSourceDisplayName } from "$lib/sources";
-  import { keptLyricsFirst, move, playbackStartLabel, playbackStartOptions } from "$lib/settings";
+  import { audioQualityOptions, keptLyricsFirst, move, playbackStartLabel, playbackStartOptions } from "$lib/settings";
+  import SelectField from "$lib/components/SelectField.svelte";
+
+  let { administrator = false }: { administrator?: boolean } = $props();
 
   const filterOptions: Array<{ value: ExplicitFilter; label: string; description: string }> = [
     { value: "All", label: "All", description: "Show clean and explicit releases." },
@@ -32,6 +35,7 @@
   let showExternalLabel = $state(false);
   let showExplicitLabel = $state(false);
   let playbackStart = $state<PlaybackStart>("Balanced");
+  let qualityLimit = $state("");
   let providerDefinitions = $state<ProviderDefinition[]>([]);
   let lyricsOrder = $state<string[]>([]);
   let initialLyricsOrder = $state("");
@@ -39,6 +43,13 @@
   let busy = $state(false);
   let error = $state("");
   let conflict = $state(false);
+
+  const householdQualityIndex = $derived(audioQualityOptions.findIndex(option => option.value === snapshot?.householdQuality));
+  const householdQualityLabel = $derived(audioQualityOptions[householdQualityIndex]?.label ?? "Best available");
+  const qualityChoices = $derived([
+    { value: "", label: `Same as household · ${householdQualityLabel}` },
+    ...audioQualityOptions.filter((_, index) => householdQualityIndex < 0 || index < householdQualityIndex),
+  ]);
 
   const selectedFilter = $derived(
     filterOptions.find((option) => option.value === explicitFilter)?.value ?? null,
@@ -48,6 +59,7 @@
     showExternalLabel !== snapshot?.values.showExternalLabel ||
     showExplicitLabel !== snapshot?.values.showExplicitLabel ||
     playbackStart !== (snapshot?.values.playbackStart ?? "Balanced") ||
+    qualityLimit !== (snapshot?.values.qualityLimit ?? "") ||
     lyricsOrder.join(",") !== initialLyricsOrder
   ));
 
@@ -76,6 +88,7 @@
     showExternalLabel = next.values.showExternalLabel;
     showExplicitLabel = next.values.showExplicitLabel;
     playbackStart = next.values.playbackStart ?? "Balanced";
+    qualityLimit = next.values.qualityLimit ?? "";
     lyricsOrder = completeLyricsOrder(next.values.lyricsOrder);
     initialLyricsOrder = lyricsOrder.join(",");
   }
@@ -124,6 +137,7 @@
         showExternalLabel,
         showExplicitLabel,
         playbackStart,
+        ...(qualityLimit !== (snapshot.values.qualityLimit ?? "") ? { qualityLimit } : {}),
         ...(lyricsOrder.join(",") !== initialLyricsOrder ? { lyricsOrder: lyricsOrder.join(",") } : {}),
         expectedRevision: snapshot.revision,
       }));
@@ -237,6 +251,17 @@
           <p>Fast start chooses quick lossless playback. Balanced favors the best quality when recent starts take 3 seconds or less. Best quality prefers the highest quality.</p>
         </div>
         <ThreeDetentSwitch label="Playback start" value={playbackStart} options={playbackStartOptions} compact disabled={busy} onchange={value => playbackStart = value} />
+      </section>
+
+      <section class="preference-options" aria-labelledby="quality-limit-title">
+        <div class="preference-link-row">
+          <div>
+            <h3 id="quality-limit-title">Quality limit</h3>
+            <p>The highest quality Allstarr fetches for you. You can choose less than your household's limit, not more. Songs already kept stay as they are.</p>
+          </div>
+          <SelectField bind:value={qualityLimit} label="Quality limit" options={qualityChoices} disabled={busy} />
+        </div>
+        {#if administrator}<Button variant="ghost" href="#/integrations/routing">Change the household limit</Button>{/if}
       </section>
 
       <section class="preference-options" aria-labelledby="problem-alerts-title">

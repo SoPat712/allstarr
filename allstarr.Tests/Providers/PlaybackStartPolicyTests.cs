@@ -49,4 +49,36 @@ public sealed class PlaybackStartPolicyTests
         Assert.Equal(TimeSpan.FromSeconds(2), PlaybackStartPolicy.HedgeDelay("FastStart"));
         Assert.Equal(TimeSpan.FromSeconds(6), PlaybackStartPolicy.HedgeDelay("BestQuality"));
     }
+
+    [Theory]
+    [InlineData("Balanced", 10)]
+    [InlineData("BestQuality", 10)]
+    [InlineData("FastStart", 2)]
+    public void KnownLossySourcesCannotRaceASlowerLosslessStart(string mode, int seconds) =>
+        Assert.Equal(TimeSpan.FromSeconds(seconds), PlaybackStartPolicy.HedgeDelay(mode, ProviderAudioQuality.Lossless, Mp3));
+
+    [Fact]
+    public void LosslessFallbacksComeBeforeKnownLossySources() =>
+        Assert.Equal([2, 1, 0], PlaybackStartPolicy.Order("Balanced",
+        [
+            new(0, Mp3, TimeSpan.FromMilliseconds(100)),
+            new(1, Cd, TimeSpan.FromSeconds(5)),
+            new(2, Cd, TimeSpan.FromSeconds(4))
+        ]));
+
+    [Theory]
+    [InlineData(ProviderAudioQuality.Any, "CdLossless", ProviderAudioQuality.Lossless)]
+    [InlineData(ProviderAudioQuality.HighResolution, "CdLossless", ProviderAudioQuality.Lossless)]
+    [InlineData(ProviderAudioQuality.Lossy, "CdLossless", ProviderAudioQuality.Lossy)]
+    [InlineData(ProviderAudioQuality.Any, "BestAvailable", ProviderAudioQuality.Any)]
+    [InlineData(ProviderAudioQuality.HighResolution, "BestAvailable", ProviderAudioQuality.HighResolution)]
+    public void TheConfiguredQualityIsACeiling(ProviderAudioQuality requested, string step, ProviderAudioQuality expected) =>
+        Assert.Equal(expected, AudioQualityPolicy.Limit(requested, step));
+
+    [Theory]
+    [InlineData("CdLossless", null, "CdLossless")]
+    [InlineData("CdLossless", "High", "High")]
+    [InlineData("CdLossless", "BestAvailable", "CdLossless")]
+    public void PersonalLimitsOnlyLowerTheHouseholdLimit(string household, string? personal, string expected) =>
+        Assert.Equal(expected, AudioQualityPolicy.Lower(household, personal));
 }

@@ -120,6 +120,32 @@ public partial class DownloadsController : ControllerBase
         }
     }
 
+    /// <summary>Reads an MP4 file's ALAC setup, which media tag readers don't expose.</summary>
+    private static (int BitDepth, int SampleRate)? ReadAlacConfiguration(string filePath)
+    {
+        if (!filePath.EndsWith(".m4a", StringComparison.OrdinalIgnoreCase)) return null;
+        try
+        {
+            const int window = 1024 * 1024;
+            using var stream = System.IO.File.OpenRead(filePath);
+            foreach (var start in new[] { 0L, Math.Max(0, stream.Length - window) })
+            {
+                var bytes = new byte[(int)Math.Min(window, stream.Length - start)];
+                stream.Position = start;
+                stream.ReadExactly(bytes);
+                // The sample entry and its configuration box are both named "alac"; values live in the second.
+                var first = bytes.AsSpan().IndexOf("alac"u8);
+                if (first < 0) continue;
+                var offset = bytes.AsSpan(first + 4).IndexOf("alac"u8);
+                if (offset < 0 || first + 4 + offset + 32 > bytes.Length) continue;
+                var box = first + 4 + offset;
+                return (bytes[box + 13], (int)System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(bytes.AsSpan(box + 28)));
+            }
+        }
+        catch (IOException) { }
+        return null;
+    }
+
     [HttpDelete("downloads")]
     public async Task<IActionResult> DeleteDownload(
         [FromQuery] string path,
@@ -525,8 +551,12 @@ public partial class DownloadsController : ControllerBase
         else if (!string.IsNullOrWhiteSpace(mapping?.ProviderId) && !string.IsNullOrWhiteSpace(mapping.ExternalId))
             identity = (mapping.ProviderId, mapping.ExternalId);
 
+        var alac = bitDepth == null || sampleRate == null ? ReadAlacConfiguration(filePath) : null;
+        bitDepth ??= alac?.BitDepth;
+        sampleRate ??= alac?.SampleRate;
         var codec = Path.GetExtension(filePath).TrimStart('.').ToUpperInvariant() switch
         {
+            "M4A" when alac != null => "ALAC",
             "M4A" or "AAC" => "AAC",
             "OGG" => "Vorbis",
             var value => value

@@ -198,6 +198,9 @@ public static class RuntimeSettingCatalog
         items.Add(new(ListeningPreferenceKeys.PlaybackStart, RuntimeSettingValueType.String,
             ListeningPreferenceKeys.PlaybackStart, DefaultValue: "Balanced",
             Choices: new HashSet<string>(["FastStart", "Balanced", "BestQuality"], Comparer)));
+        items.Add(new(ListeningPreferenceKeys.QualityLimit, RuntimeSettingValueType.String,
+            ListeningPreferenceKeys.QualityLimit, AllowEmpty: true, DefaultValue: "",
+            Choices: new HashSet<string>(AudioQualityPolicy.Steps, Comparer)));
         items.Add(new("Playback:PrepareUpcomingSongs", RuntimeSettingValueType.Boolean,
             "Playback:PrepareUpcomingSongs", DefaultValue: "false"));
         items.Add(new("Playback:PrepareUpcomingCount", RuntimeSettingValueType.Integer,
@@ -504,6 +507,9 @@ public sealed partial class DurableRuntimeSettingsService : BackgroundService, I
             if (overrides.PlaybackStart != null)
                 writes.Add(new(ListeningPreferenceKeys.PlaybackStart, overrides.PlaybackStart,
                     existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.PlaybackStart)));
+            if (overrides.QualityLimit != null)
+                writes.Add(new(ListeningPreferenceKeys.QualityLimit, overrides.QualityLimit,
+                    existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.QualityLimit)));
             if (overrides.LyricsOrder != null)
                 writes.Add(new(ListeningPreferenceKeys.LyricsOrder, overrides.LyricsOrder,
                     existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.LyricsOrder)));
@@ -656,6 +662,7 @@ public sealed partial class DurableRuntimeSettingsService : BackgroundService, I
         return new(effective, household, personalRows.Count == 0 && !cleanOnlyLocked,
             ComputePreferencesRevision(userId, householdSettings, personalRows, lockRow))
         {
+            HouseholdQuality = (string)(await GetManyAsync([AudioQualityPolicy.SettingKey], cancellationToken))[AudioQualityPolicy.SettingKey].Value,
             CleanOnlyLocked = cleanOnlyLocked,
             ProviderModeOverrides = personalRows.TryGetValue(ProviderUsePolicy.SettingKey, out var modeRow)
                 ? ProviderUsePolicy.ParseModes((string)FromRecord(modeRow,
@@ -675,7 +682,8 @@ public sealed partial class DurableRuntimeSettingsService : BackgroundService, I
             settings[ListeningPreferenceKeys.LyricsOrder].NormalizedValue,
             modes.Count == 0 ? null : modes.ToDictionary(item => item.Key,
                 item => ProviderUsePolicy.Name(item.Value), StringComparer.Ordinal),
-            (string)settings[ListeningPreferenceKeys.PlaybackStart].Value);
+            (string)settings[ListeningPreferenceKeys.PlaybackStart].Value,
+            settings[ListeningPreferenceKeys.QualityLimit].Value is string { Length: > 0 } limit ? limit : null);
     }
 
     private static string ComputePreferencesRevision(

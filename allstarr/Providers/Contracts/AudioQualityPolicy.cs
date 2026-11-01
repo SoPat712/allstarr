@@ -27,6 +27,21 @@ public static class AudioQualityPolicy
         _ => throw new ArgumentException($"Audio quality step '{step}' is not supported.", nameof(step))
     };
 
+    /// <summary>Applies the configured step as a ceiling. Best available has no ceiling.</summary>
+    public static ProviderAudioQuality Limit(ProviderAudioQuality requested, string step)
+    {
+        if (step == DefaultStep || !Steps.Contains(step)) return requested;
+        var ceiling = RequestedQuality(step);
+        return requested == ProviderAudioQuality.Any || requested > ceiling ? ceiling : requested;
+    }
+
+    /// <summary>A listener can choose less than the household limit, never more.</summary>
+    public static string Lower(string household, string? personal)
+    {
+        var personalRank = Steps.ToList().IndexOf(personal ?? "");
+        return personalRank >= 0 && personalRank < Steps.ToList().IndexOf(household) ? personal! : household;
+    }
+
     public static string FromProviderCeilings(string? apple, string? deezer, string? qobuz)
     {
         var rank = Math.Min(AppleRank(apple), Math.Min(DeezerRank(deezer), QobuzRank(qobuz)));

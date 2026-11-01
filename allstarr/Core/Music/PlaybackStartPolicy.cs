@@ -7,7 +7,14 @@ public sealed record PlaybackStartCandidate(int Index, ProviderMediaFormat? Medi
 
 public static class PlaybackStartPolicy
 {
+    private static readonly TimeSpan LosslessPatience = TimeSpan.FromSeconds(10);
+
     public static TimeSpan HedgeDelay(string? mode) => TimeSpan.FromSeconds(mode == "BestQuality" ? 6 : 2);
+
+    /// <summary>Waits longer before racing a source known to be lossy, so it can't beat a slower lossless start.</summary>
+    public static TimeSpan HedgeDelay(string? mode, ProviderAudioQuality quality, ProviderMediaFormat? next) =>
+        mode != "FastStart" && quality >= ProviderAudioQuality.Lossless && next != null && !IsLossless(next)
+            ? LosslessPatience : HedgeDelay(mode);
 
     public static IReadOnlyList<int> Order(string? mode, IReadOnlyList<PlaybackStartCandidate> candidates)
     {
@@ -24,7 +31,8 @@ public static class PlaybackStartPolicy
         var selected = mode == "BestQuality" || mode != "FastStart" && best.MedianStart <= TimeSpan.FromSeconds(3) ? best : fastest;
         if (cached != null && CompareQuality(cached.Media, selected.Media) >= 0) selected = cached;
         return new[] { selected.Index }.Concat(candidates.Where(item => item.Index != selected.Index)
-            .OrderBy(item => item.IsCached ? TimeSpan.Zero : item.MedianStart ?? TimeSpan.MaxValue)
+            .OrderBy(item => item.Media != null && !IsLossless(item.Media))
+            .ThenBy(item => item.IsCached ? TimeSpan.Zero : item.MedianStart ?? TimeSpan.MaxValue)
             .Select(item => item.Index)).ToArray();
     }
 

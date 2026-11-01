@@ -66,9 +66,11 @@ export type ListeningPreferences = {
   showExplicitLabel: boolean;
   playbackStart?: PlaybackStart | null;
   lyricsOrder?: string | null;
+  qualityLimit?: string | null;
 };
 
 export type PersonalListeningPreferences = {
+  householdQuality?: string | null;
   values: ListeningPreferences;
   householdDefaults: ListeningPreferences;
   usesHouseholdDefaults: boolean;
@@ -2139,6 +2141,7 @@ export const listeningPreferences = {
     }),
   copies: (userId: string) => json<ListenerPlaylistCopy[]>(`/api/admin/listeners/${encodeURIComponent(userId)}/playlist-forks`),
   save: (values: {
+    qualityLimit?: string;
     explicitFilter: ExplicitFilter;
     showExternalLabel: boolean;
     showExplicitLabel: boolean;

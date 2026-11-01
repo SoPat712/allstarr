@@ -1,5 +1,13 @@
 import type { ConfigField, PlaybackStart, PriorityGroup } from "./api";
 
+export const audioQualityOptions = [
+  { value: "DataSaver", label: "Data saver · about 128 kbps" },
+  { value: "High", label: "High lossy · about 320 kbps" },
+  { value: "CdLossless", label: "CD lossless · 16-bit/44.1 kHz" },
+  { value: "HiResLossless", label: "Hi-Res lossless · up to 24-bit/96 kHz" },
+  { value: "BestAvailable", label: "Best available" },
+] as const;
+
 export const playbackStartOptions = [
   { value: "FastStart", label: "Fast start" },
   { value: "Balanced", label: "Balanced" },

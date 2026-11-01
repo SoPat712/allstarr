@@ -142,6 +142,8 @@
   const activeProps = $derived(
     route === "/"
       ? { administrator }
+      : route === "/preferences"
+      ? { administrator }
       : route === "/library/import"
         ? { initialAccount: routeQuery.get("account") ?? "", initialRun: routeQuery.get("run") ?? "", currentUserId: session?.user?.allstarrUserId ?? session?.user?.id ?? "" }
         : route === "/library/playlists"

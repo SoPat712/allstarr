@@ -148,7 +148,7 @@ public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings sett
         return new EffectiveProviderPolicySnapshot(
             orders,
             disabled,
-            (string)values[AudioQualityPolicy.SettingKey].Value,
+            AudioQualityPolicy.Lower((string)values[AudioQualityPolicy.SettingKey].Value, preferences.Values.QualityLimit),
             (int)values["Matching:LocalPreferencePercent"].Value / 100d)
         {
             UserId = userId,

@@ -318,6 +318,14 @@
       {:else if active === "sound-analysis" && administrator}
         <SoundAnalysisSettings />
       {:else if ["general", "storage", "access"].includes(active)}
+        {#if active === "general"}
+          <section class="settings-card">
+            <div class="settings-row maintenance-card">
+              <div><strong>Audio quality</strong><small>The highest quality Allstarr plays and downloads, and which sources it tries first.</small></div>
+              <Button variant="secondary" href="#/integrations/routing">Open routing and quality</Button>
+            </div>
+          </section>
+        {/if}
         {#if active === "access"}<AccessSettingsCard kind="backend" />{/if}
         {#if administrator && active === "access"}<AccessSettingsCard kind="oidc" />{/if}
         {#if administrator && active === "storage"}<StorageVerificationCard />{/if}

@@ -63,6 +63,7 @@ public sealed partial class ProtocolProviderGateway
             _ => "playback-start-balanced"
         };
         plan = plan with { Candidates = order.Select(index => eligible[index]).ToArray() };
+        var orderedMedia = order.Select(index => facts.First(fact => fact.Index == index).Media).ToArray();
         var localCapacity = 0;
         ProviderError? lastFailure = null;
         string? fallbackReason = null;
@@ -81,7 +82,7 @@ public sealed partial class ProtocolProviderGateway
                         return StartAsync(current + 1, token, abandonment);
                     },
                     item => item.Stream != null || item.Error?.Code == LocalCapacityException.Code || item.Error?.Kind is ProviderErrorKind.Unauthorized or ProviderErrorKind.Forbidden,
-                    item => item.Dispose(), PlaybackStartPolicy.HedgeDelay(mode), clock, protocol.CancellationToken)
+                    item => item.Dispose(), PlaybackStartPolicy.HedgeDelay(mode, quality, orderedMedia[current + 1]), clock, protocol.CancellationToken)
                 : await StartAsync(current, protocol.CancellationToken, CancellationToken.None);
             if (result.Stream != null)
             {

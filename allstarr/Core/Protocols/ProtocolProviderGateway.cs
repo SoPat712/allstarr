@@ -1170,6 +1170,8 @@ public sealed partial class ProtocolProviderGateway(
         {
             quality = AudioQualityPolicy.RequestedQuality(effectivePolicy.AudioQuality);
         }
+        // The configured quality is a ceiling for every route, including original file requests.
+        if (effectivePolicy != null) quality = AudioQualityPolicy.Limit(quality, effectivePolicy.AudioQuality);
         if (protocol.IsPreparation && (managedTrackCache?.CanPrepare(protocol) != true ||
             quality == ProviderAudioQuality.DataSaver || effectivePolicy?.AudioQuality == "DataSaver")) return null;
         var trackId = new ProviderExternalResourceId(
@@ -1185,7 +1187,7 @@ public sealed partial class ProtocolProviderGateway(
             (!string.IsNullOrWhiteSpace(protocol.Client.DeviceId) ||
              protocol.Protocol == ProtocolKind.Subsonic && !string.IsNullOrWhiteSpace(protocol.Client.ClientId));
         // Legacy provider requests without a device retain their direct provider route across ranges.
-        if ((hasPlaybackIdentity || providerId == "allstarr") &&
+        if ((hasPlaybackIdentity || providerId == "allstarr" || protocol.IsOriginalDownload) &&
             (pinnedDownload == null || pinnedDownload.ManagedFileId != null) &&
             (providerId == "allstarr" || IsAutomaticProvider(providerId, effectivePolicy)))
         {

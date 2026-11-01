@@ -6,7 +6,8 @@ public sealed record ListeningPreferences(
     bool ShowExplicitLabel = true,
     string? LyricsOrder = null,
     IReadOnlyDictionary<string, string>? ProviderModes = null,
-    string? PlaybackStart = "Balanced");
+    string? PlaybackStart = "Balanced",
+    string? QualityLimit = null);
 
 public sealed record PersonalListeningPreferences(
     ListeningPreferences Values,
@@ -16,6 +17,7 @@ public sealed record PersonalListeningPreferences(
 {
     public IReadOnlyDictionary<string, string>? ProviderModeOverrides { get; init; }
     public bool CleanOnlyLocked { get; init; }
+    public string? HouseholdQuality { get; init; }
 }
 
 internal static class CleanOnlyLockKeys
@@ -35,7 +37,8 @@ internal static class ListeningPreferenceKeys
     internal const string ShowExplicitLabel = "Playback:ShowExplicitLabel";
     internal const string LyricsOrder = "Providers:LyricsOrder";
     internal const string PlaybackStart = "Playback:StartPreference";
+    internal const string QualityLimit = "Audio:PersonalLimit";
 
     internal static readonly string[] All =
-        [ExplicitFilter, ShowExternalLabel, ShowExplicitLabel, LyricsOrder, ProviderUsePolicy.SettingKey, PlaybackStart];
+        [ExplicitFilter, ShowExternalLabel, ShowExplicitLabel, LyricsOrder, ProviderUsePolicy.SettingKey, PlaybackStart, QualityLimit];
 }
