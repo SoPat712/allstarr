@@ -189,27 +189,28 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
             link.TargetPlaylistId = null;
             await db.SaveChangesAsync();
         }
-        var access = new Mock<IBackendLibraryAccessResolver>(MockBehavior.Strict);
-        var service = new PlaylistVirtualizationService(_factory, new(_factory, access.Object), access.Object);
+        var access = new TestBackendLibraryAccess(_factory, "music");
+        var service = new PlaylistVirtualizationService(_factory, new(_factory, access), access);
         Assert.Equal(visible ? 1 : 0, (await service.ListAsync(Context())).Count);
-        access.VerifyNoOtherCalls();
     }
 
     [Fact]
-    public async Task VirtualPlaylistList_ReadsSummariesWithoutTrackProjection()
+    public async Task VirtualPlaylistList_SummariesMatchPublishedMemberProjection()
     {
         await SetLink(mode: PlaylistLinkMode.Virtual);
         _source.Snapshot = Snapshot("summary", Entry(0, "one", "source-1", "One"), Entry(1, "two", "missing", "Two"));
         await _service.RunAsync(Context(), new(_link, 1));
-        var access = new Mock<IBackendLibraryAccessResolver>(MockBehavior.Strict);
-        var service = new PlaylistVirtualizationService(_factory, new(_factory, access.Object), access.Object);
+        var access = new TestBackendLibraryAccess(_factory, "music");
+        var service = new PlaylistVirtualizationService(_factory, new(_factory, access), access);
         var rows = await service.ListAsync(Context());
         var row = Assert.Single(rows);
         Assert.Empty(row.Tracks);
         Assert.Equal(2, row.TrackCount);
         Assert.True(row.DurationMilliseconds > 0);
         Assert.NotEqual(DateTimeOffset.UnixEpoch, row.CreatedAt);
-        access.VerifyNoOtherCalls();
+        var detail = Assert.IsType<VirtualPlaylistReadModel>(await service.ReadAsync(Context(), row.ProtocolId));
+        Assert.Equal(detail.TrackCount, row.TrackCount);
+        Assert.Equal(detail.DurationMilliseconds, row.DurationMilliseconds);
     }
 
     [Fact]

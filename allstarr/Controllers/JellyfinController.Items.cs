@@ -130,6 +130,16 @@ public partial class JellyfinController
             }
         }
 
+        var playlistRows = items.Values.Where(item => item["Type"]?.ToString() == "Playlist").ToArray();
+        if (playlistRows.Length > 0)
+        {
+            var context = HttpContext.RequireProtocolExecutionContext();
+            var visibleTargetIds = playlistRows.Select(item => item["Id"]?.ToString() ?? "")
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var summaries = await _virtualPlaylistProtocolAdapter.ListAsync(context, HttpContext.RequestAborted, visibleTargetIds);
+            OverlayLinkedPlaylistSummaries(playlistRows, summaries, context);
+        }
+
         var filter = new JellyfinProviderQuery(Request.Query);
         var mediaTypes = JellyfinProviderQuery.Values(Request.Query["MediaTypes"].ToString());
         var candidates = requested.Where(items.ContainsKey).Where(id => !playlistsOnly || items[id]["Type"]?.ToString() == "Playlist").Where(id => !synthesizedIds.Contains(id) ||

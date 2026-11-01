@@ -8,6 +8,7 @@ using allstarr.Models.Subsonic;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using allstarr.Core.Music;
+using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Mvc;
 
@@ -943,6 +944,56 @@ public partial class JellyfinController
         key.Equals("CollapseBoxSetItems", StringComparison.OrdinalIgnoreCase) ||
         key.Equals("ExcludeLocationTypes", StringComparison.OrdinalIgnoreCase);
 
+    private HashSet<string> OverlayLinkedPlaylistSummaries(
+        IEnumerable<JsonObject> items,
+        IReadOnlyList<VirtualPlaylistReadModel> virtualPlaylists,
+        ProtocolExecutionContext context)
+    {
+        var aliasedProtocolIds = new HashSet<string>(StringComparer.Ordinal);
+        var byTargetId = virtualPlaylists
+            .Where(item => !string.IsNullOrWhiteSpace(item.TargetPlaylistId))
+            .GroupBy(item => item.TargetPlaylistId!, StringComparer.Ordinal)
+            .Where(group => group.Count() == 1)
+            .ToDictionary(group => group.Key, group => group.Single(), StringComparer.Ordinal);
+        foreach (var playlist in byTargetId.Values)
+            aliasedProtocolIds.Add(playlist.ProtocolId);
+        var aliases = new Dictionary<string, VirtualPlaylistReadModel>(StringComparer.OrdinalIgnoreCase);
+        if (_spotifySettings.Enabled)
+        {
+            var bySourceId = virtualPlaylists
+                .Where(item => item.SourceProviderId.Equals("spotify", StringComparison.OrdinalIgnoreCase))
+                .GroupBy(item => item.SourcePlaylistId, StringComparer.Ordinal)
+                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+            aliases = _spotifySettings.Playlists
+                .Where(item =>
+                    !string.IsNullOrWhiteSpace(item.JellyfinId) &&
+                    (string.IsNullOrWhiteSpace(item.UserId) ||
+                     item.UserId.Equals(context.VerifiedBackendPrincipalId, StringComparison.OrdinalIgnoreCase)) &&
+                    bySourceId.ContainsKey(item.Id))
+                .GroupBy(item => item.JellyfinId, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => bySourceId[group.First().Id], StringComparer.OrdinalIgnoreCase);
+            foreach (var playlist in aliases.Values)
+                aliasedProtocolIds.Add(playlist.ProtocolId);
+        }
+        foreach (var item in items.Where(item => item["Type"]?.ToString() == "Playlist"))
+        {
+            if (item["Id"] is not JsonValue idValue || !idValue.TryGetValue<string>(out var id)) continue;
+            var sourceAlias = aliases.TryGetValue(id, out var playlist);
+            if (!sourceAlias && !byTargetId.TryGetValue(id, out playlist)) continue;
+            item["Name"] = playlist!.Name;
+            item["Overview"] = playlist.Description;
+            item["ChildCount"] = playlist.TrackCount;
+            item["RunTimeTicks"] = playlist.DurationMilliseconds * TimeSpan.TicksPerMillisecond;
+            if (sourceAlias)
+            {
+                var providerIds = item["ProviderIds"] as JsonObject ?? [];
+                item["ProviderIds"] = providerIds;
+                providerIds["AllstarrSource"] = playlist.SourceProviderId;
+            }
+        }
+        return aliasedProtocolIds;
+    }
+
     private async Task<IActionResult> MergeVirtualPlaylistBrowseAsync(
         JsonDocument backendResult,
         int limit,
@@ -961,62 +1012,7 @@ public partial class JellyfinController
         var visibleTargetIds = items.OfType<JsonObject>().Where(item => item["Type"]?.ToString() == "Playlist")
             .Select(item => item["Id"]?.ToString() ?? "").ToHashSet(StringComparer.OrdinalIgnoreCase);
         var virtualPlaylists = await _virtualPlaylistProtocolAdapter.ListAsync(context, cancellationToken, visibleTargetIds);
-        var aliasedProtocolIds = new HashSet<string>(StringComparer.Ordinal);
-        var byTargetId = virtualPlaylists
-            .Where(item => !string.IsNullOrWhiteSpace(item.TargetPlaylistId))
-            .GroupBy(item => item.TargetPlaylistId!, StringComparer.Ordinal)
-            .Where(group => group.Count() == 1)
-            .ToDictionary(group => group.Key, group => group.Single(), StringComparer.Ordinal);
-        foreach (var playlist in byTargetId.Values)
-            aliasedProtocolIds.Add(playlist.ProtocolId);
-        foreach (var item in items.OfType<JsonObject>())
-        {
-            if (item["Id"] is not JsonValue idValue || !idValue.TryGetValue<string>(out var id) ||
-                !byTargetId.TryGetValue(id, out var playlist)) continue;
-            item["Name"] = playlist.Name;
-            item["Overview"] = playlist.Description;
-            item["ChildCount"] = playlist.TrackCount;
-            item["RunTimeTicks"] = playlist.DurationMilliseconds * TimeSpan.TicksPerMillisecond;
-        }
-        if (_spotifySettings.Enabled)
-        {
-            var bySourceId = virtualPlaylists
-                .Where(item => item.SourceProviderId.Equals("spotify", StringComparison.OrdinalIgnoreCase))
-                .GroupBy(item => item.SourcePlaylistId, StringComparer.Ordinal)
-                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
-            var aliases = _spotifySettings.Playlists
-                .Where(item =>
-                    !string.IsNullOrWhiteSpace(item.JellyfinId) &&
-                    (string.IsNullOrWhiteSpace(item.UserId) ||
-                     item.UserId.Equals(
-                         context.VerifiedBackendPrincipalId,
-                         StringComparison.OrdinalIgnoreCase)) &&
-                    bySourceId.ContainsKey(item.Id))
-                .GroupBy(item => item.JellyfinId, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(
-                    group => group.Key,
-                    group => bySourceId[group.First().Id],
-                    StringComparer.OrdinalIgnoreCase);
-            foreach (var playlist in aliases.Values)
-                aliasedProtocolIds.Add(playlist.ProtocolId);
-
-            for (var index = 0; index < items.Count; index++)
-            {
-                if (items[index] is not JsonObject item ||
-                    item["Id"] is not JsonValue idValue ||
-                    !idValue.TryGetValue<string>(out var id) ||
-                    !aliases.TryGetValue(id, out var playlist))
-                    continue;
-
-                item["Name"] = playlist.Name;
-                item["Overview"] = playlist.Description;
-                item["ChildCount"] = playlist.TrackCount;
-                item["RunTimeTicks"] = playlist.DurationMilliseconds * TimeSpan.TicksPerMillisecond;
-                var providerIds = item["ProviderIds"] as JsonObject ?? [];
-                item["ProviderIds"] = providerIds;
-                providerIds["AllstarrSource"] = playlist.SourceProviderId;
-            }
-        }
+        var aliasedProtocolIds = OverlayLinkedPlaylistSummaries(items.OfType<JsonObject>(), virtualPlaylists, context);
 
         var folderId = items.OfType<JsonObject>().FirstOrDefault(item => item["Type"]?.ToString() == "Playlist")?["ParentId"]?.ToString();
         if (virtualPlaylists.Count > 0 && folderId == null)
