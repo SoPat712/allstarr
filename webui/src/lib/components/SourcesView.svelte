@@ -26,6 +26,7 @@
     type ProviderDefinition,
     type ProviderHealth,
     type ProviderSetting,
+    type ProviderScore,
     type ProviderSummary,
     type UiSchema,
   } from "$lib/api";
@@ -203,6 +204,15 @@
         left.name.localeCompare(right.name);
     }),
   );
+  let scores = $state<ProviderScore[]>([]);
+  const scoreOf = (id: string) => scores.find((item) => item.providerId.toLowerCase() === id.toLowerCase())?.score ?? null;
+  let scoresRequested = false;
+  $effect(() => {
+    if (!administrator || scoresRequested) return;
+    scoresRequested = true;
+    void sources.scores().then((result) => { scores = result.providers ?? []; }).catch(() => {});
+  });
+
   const canConnectAccounts = $derived(administrator || listenersCanConnectOwnAccounts);
   const mySources = $derived(providers.filter(item => sourceIsInUse(item, accounts, health)));
   const needsSetup = $derived(mySources.filter((item) =>
@@ -904,6 +914,7 @@
               {:else}
               <span class="source-row-status">
                 <Badge state={state}>{state === "degraded" ? sourceProblemLabel(item, accounts, health) ?? sourceStatusLabel(state) : sourceStatusLabel(state)}</Badge>
+                {#if scoreOf(item.id) != null}<small class="source-row-score">Score {scoreOf(item.id)} of 100</small>{/if}
                 <small>{metrics.checkedAt ? `${metrics.passing} of ${metrics.total || 0} checks passed · ${relativeTime(metrics.checkedAt)}` : "Not checked yet"}</small>
                 <small class="source-row-timing">{connected.length ? `${connected.filter((account) => account.enabled).length} of ${connected.length} account${connected.length === 1 ? "" : "s"} on · ` : ""}{timing}{#if cts} · CTS {ctsMeasurementLabel(cts)}{/if}</small>
               </span>

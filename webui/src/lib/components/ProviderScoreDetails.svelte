@@ -32,16 +32,16 @@
       {/each}
     </div>
   {/if}
-  <ul>
+  <div class="score-rows">
     {#each score.capabilities as item (item.capability)}
-      <li class:current={item.capability === capability}>
+      <div class="score-row" class:current={item.capability === capability}>
         <strong>{humanize(item.capability)}</strong>
         <span class="score-bar" aria-hidden="true"><span style={`width:${item.uptimePercent ?? 0}%`}></span></span>
         <span>{item.uptimePercent ?? 0}%</span>
         <small>{seconds(item.typicalLatencyMilliseconds)} typical{#if item.failures} · {item.failures} failed{#if item.lastFailureCode}, last: {checkGuide(item.lastFailureCode)?.label ?? humanize(item.lastFailureCode)}{/if}{/if}</small>
-      </li>
+      </div>
     {/each}
-  </ul>
+  </div>
 </div>
 
 <style>
@@ -50,16 +50,16 @@
   .score-days { display: flex; align-items: flex-end; gap: 3px; height: 2rem; }
   .score-days span { position: relative; flex: 1; max-width: 1.25rem; height: 100%; overflow: hidden; border-radius: 3px; background: var(--md-sys-color-error-container); }
   .score-days span::after { position: absolute; right: 0; bottom: 0; left: 0; height: var(--passed); background: var(--success); content: ""; }
-  ul { display: grid; gap: var(--space-2); }
-  li { display: grid; grid-template-columns: 6rem minmax(3rem, 1fr) 3.25rem minmax(0, 2fr); align-items: center; gap: var(--space-3); font-size: var(--text-sm); }
-  li strong { font-weight: 500; }
-  li.current strong { font-weight: 700; }
-  li small { overflow: hidden; color: var(--color-ink-muted); font-size: 0.8125rem; text-overflow: ellipsis; white-space: nowrap; }
+  .score-rows { display: grid; gap: var(--space-2); }
+  .score-row { display: grid; grid-template-columns: 6rem minmax(3rem, 1fr) 3.25rem minmax(0, 2fr); align-items: center; gap: var(--space-3); font-size: var(--text-sm); }
+  .score-row strong { font-weight: 500; }
+  .score-row.current strong { font-weight: 700; }
+  .score-row small { overflow: hidden; color: var(--color-ink-muted); font-size: 0.8125rem; text-overflow: ellipsis; white-space: nowrap; }
   .score-bar { height: 6px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--color-ink) 12%, transparent); }
   .score-bar span { display: block; height: 100%; border-radius: inherit; background: var(--color-signal); transition: width 480ms var(--ease-emphasized); }
   @media (max-width: 760px) {
     .score-details { padding-inline: var(--space-3); }
-    li { grid-template-columns: 5rem minmax(0, 1fr) 3rem; }
-    li small { grid-column: 1 / -1; white-space: normal; }
+    .score-row { grid-template-columns: 5rem minmax(0, 1fr) 3rem; }
+    .score-row small { grid-column: 1 / -1; white-space: normal; }
   }
 </style>

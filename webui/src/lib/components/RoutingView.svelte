@@ -11,7 +11,7 @@
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import ProviderScoreDetails, { capabilityScore, scoreTier } from "$lib/components/ProviderScoreDetails.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
-  import { humanize, lyricsSourceDisplayName, sourceOriginLabel } from "$lib/sources";
+  import { canonicalProviderId, humanize, lyricsSourceDisplayName, sourceOriginLabel } from "$lib/sources";
   import { fieldValue, keptLyricsFirst, mergeRoutingOrders, move } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
 
@@ -64,7 +64,9 @@
       : null;
     if (nextConfig && !policyDirty) config = nextConfig;
     if (schema && nextConfig) {
-      orders = mergeRoutingOrders(nextConfig, schema.priorityGroups ?? [], orders, dirtyOrderIds);
+      // Older saved orders can list one service under two names; show it once.
+      orders = Object.fromEntries(Object.entries(mergeRoutingOrders(nextConfig, schema.priorityGroups ?? [], orders, dirtyOrderIds))
+        .map(([id, order]) => [id, [...new Set(order.map(canonicalProviderId))]]));
       if (orders.lyrics) orders.lyrics = keptLyricsFirst(orders.lyrics);
     }
     const failed = results.filter((result) => result.status === "rejected");
@@ -136,7 +138,7 @@
 
   onMount(() => {
     void refresh();
-    void sources.scores().then((result) => { scores = result.providers; }).catch(() => {});
+    void sources.scores().then((result) => { scores = result.providers ?? []; }).catch(() => {});
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       unsubscribe();
