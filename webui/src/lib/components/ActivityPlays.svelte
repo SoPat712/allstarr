@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { newUuid } from "$lib/uuid";
   import { onMount } from "svelte";
   import { ApiError, home, matchReview, playTraces, type MatchAuthorityScope, type MatchReviewItem, type PlayTrace, type PlayTraceChoice, type ProviderDefinition } from "$lib/api";
   import { expectedAuthorityForScope } from "$lib/matching-api";
@@ -159,7 +160,7 @@
   }
   function openReport() {
     if (reportOpen) return;
-    reportNote = ""; reportRequestId = crypto.randomUUID(); reportOpen = true;
+    reportNote = ""; reportRequestId = newUuid(); reportOpen = true;
   }
   async function report(event: SubmitEvent) {
     event.preventDefault();

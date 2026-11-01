@@ -215,7 +215,7 @@ public class JellyfinResponseBuilderTests
 
         Assert.Equal("backend-server", result["ServerId"]);
         var imageTags = Assert.IsType<Dictionary<string, string>>(result["ImageTags"]);
-        Assert.Equal("ext-applemusic-song-42-art-v2", imageTags["Primary"]);
+        Assert.Equal("ext-applemusic-song-42-art-v3", imageTags["Primary"]);
     }
 
     [Fact]
@@ -241,10 +241,10 @@ public class JellyfinResponseBuilderTests
 
         Assert.Equal("ext-apple-musickit-song-i.song", result["Id"]);
         Assert.Equal("ext-apple-musickit-album-i.album", result["AlbumId"]);
-        Assert.Equal("ext-apple-musickit-album-i.album", result["AlbumPrimaryImageTag"]);
+        Assert.Equal("ext-apple-musickit-album-i.album-art-v3", result["AlbumPrimaryImageTag"]);
         Assert.False(result.ContainsKey("ParentLogoImageTag"));
         var imageTags = Assert.IsType<Dictionary<string, string>>(result["ImageTags"]);
-        Assert.Equal("ext-apple-musickit-song-i.song-art-v2", imageTags["Primary"]);
+        Assert.Equal("ext-apple-musickit-song-i.song-art-v3", imageTags["Primary"]);
     }
 
     [Fact]

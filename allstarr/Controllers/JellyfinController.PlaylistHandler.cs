@@ -130,7 +130,7 @@ public partial class JellyfinController
                     HttpContext.RequireProtocolExecutionContext(), provider, externalId);
 
                 var occurrences = new Dictionary<string, int>(StringComparer.Ordinal);
-                var fields = new JellyfinItemFields(Request.Query);
+                HttpContext.Items[JellyfinItemFields.PlaylistMembersKey] = true;
                 // Provider rows have no entry token; repeated copies use their ordinal within the same track.
                 var items = tracks.Select(track =>
                 {
@@ -139,11 +139,9 @@ public partial class JellyfinController
                     var identity = JsonSerializer.Serialize(new object[] { playlistId, track.Id, ordinal });
                     var entryId = "allstarr-entry-" + Convert.ToHexStringLower(
                         SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
-                    var item = QuerySong(track);
-                    if (fields.Includes("ParentId")) item["ParentId"] = playlistId;
+                    var item = _responseBuilder.ConvertPlaylistSongToJellyfinItem(track,
+                        ExternalTrackPresentation.Preferences(HttpContext), null);
                     item["PlaylistItemId"] = entryId;
-                    item["AlbumId"] = playlistId;
-                    item["AlbumPrimaryImageTag"] = playlistId;
                     return item;
                 }).ToList();
 
@@ -178,13 +176,17 @@ public partial class JellyfinController
         {
             var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(playlistId);
             var asset = await ResolveExternalImageAsync(
-                provider, "playlist", externalId, width: width, height: height);
-            return asset == null ? NotFound() : CreateFormattedImageResponse(asset, requestedFormat);
+                provider, "playlist", externalId, retryTransientFailures: true, width: width, height: height);
+            return asset == null ? MissingExternalImage() : CreateFormattedImageResponse(asset, requestedFormat);
+        }
+        catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            return MissingExternalImage();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to get playlist image {PlaylistId}", playlistId);
-            return NotFound();
+            _logger.LogWarning(ex, "Failed to get playlist image {PlaylistId}", playlistId);
+            return MissingExternalImage();
         }
     }
 

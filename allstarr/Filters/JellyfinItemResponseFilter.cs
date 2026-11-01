@@ -64,12 +64,17 @@ public sealed partial class JellyfinItemResponseFilter(JellyfinProxyService prox
                 if (parsed.isExternal && await artwork.GetCachedBlurHashAsync(new MediaAssetIdentity(
                     http.GetProtocolExecutionContext()?.Actor?.EffectiveUserId, null,
                     parsed.provider!, parsed.type!, parsed.externalId!)) is { Length: > 0 } hash)
-                    item["ImageBlurHashes"] = new JsonObject { ["Primary"] = new JsonObject { [tag] = hash } };
+                {
+                    var hashes = new JsonObject { [tag] = hash };
+                    if (item["AlbumPrimaryImageTag"] is JsonValue albumTag && albumTag.TryGetValue<string>(out var album))
+                        hashes[album] = hash;
+                    item["ImageBlurHashes"] = new JsonObject { ["Primary"] = hashes };
+                }
             }
             var id = item["Id"]!.GetValue<string>();
             if (FavoriteDisplaySnapshot.Resource(id) != null && item["UserData"] is JsonObject userData)
                 userData["IsFavorite"] = saved.Contains(id);
-            JellyfinItemFields.ForRequest(http).Apply(item);
+            if (!http.Items.ContainsKey(JellyfinItemFields.PlaylistMembersKey)) JellyfinItemFields.ForRequest(http).Apply(item);
         }
         if (bool.TryParse(http.Request.Query["IsFavorite"], out var favoriteOnly))
             FilterProviderFavorites(root, favoriteOnly);

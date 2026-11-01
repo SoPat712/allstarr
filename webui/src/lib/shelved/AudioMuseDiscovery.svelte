@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { newUuid } from "$lib/uuid";
   import SelectField from "$lib/components/SelectField.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { Progress } from "$lib/components/ui/progress";
@@ -168,7 +169,7 @@
   }
 
   function confirmCreation() {
-    creationKey = crypto.randomUUID();
+    creationKey = newUuid();
     createOpen = true;
   }
 

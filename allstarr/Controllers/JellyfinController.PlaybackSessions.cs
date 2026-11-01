@@ -1400,7 +1400,7 @@ public partial class JellyfinController
             AlbumArtist = albumArtist,
             RunTimeTicks = runTimeTicks,
             IndexNumber = song?.Track,
-            ImageTags = new Dictionary<string, string> { ["Primary"] = $"{itemId}-art-v2" },
+            ImageTags = new Dictionary<string, string> { ["Primary"] = $"{itemId}-art-v3" },
             AlbumId = song?.AlbumId
         };
     }

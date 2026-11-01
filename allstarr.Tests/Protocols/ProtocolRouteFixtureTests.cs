@@ -1398,6 +1398,8 @@ public sealed partial class ProtocolRouteFixtureTests
         using var response = await client.GetAsync($"/Items/{virtualId}/Images/Primary");
 
         Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        Assert.True(response.Headers.CacheControl?.NoStore);
+        Assert.Empty(await response.Content.ReadAsByteArrayAsync());
         virtualization.VerifyNoOtherCalls();
         gateway.VerifyNoOtherCalls();
     }
@@ -2414,7 +2416,7 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task JellyfinExternalPlaylist_PreservesSourceOrderAndPlaylistParentIdentity()
+    public async Task JellyfinExternalPlaylist_PreservesSourceOrderAndAlbumParentIdentity()
     {
         using var fixture = ReadFixture("jellyfin-playlist-order.json");
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
@@ -2427,7 +2429,8 @@ public sealed partial class ProtocolRouteFixtureTests
                 ExternalId = id.GetString(),
                 Title = $"Fixture {index}",
                 Artist = "Fixture Artist",
-                Album = "Fixture Album"
+                Album = "Fixture Album",
+                AlbumId = fixture.RootElement.GetProperty("expectedParentId").GetString()
             })
             .ToList();
         gateway.Setup(service => service.GetPlaylistTracksAsync(

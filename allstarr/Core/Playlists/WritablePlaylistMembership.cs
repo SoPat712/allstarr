@@ -18,7 +18,11 @@ public sealed record WritablePlaylistMember(string OccurrenceId, string ItemId, 
     public int? NativePosition { get; init; }
 }
 
-public sealed record WritablePlaylistState(IReadOnlyList<WritablePlaylistMember> Members);
+public sealed record WritablePlaylistState(IReadOnlyList<WritablePlaylistMember> Members)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DateTimeOffset? StoredAt { get; init; }
+}
 
 public sealed partial class WritablePlaylistMembership(
     IDbContextFactory<AllstarrDbContext> factory,
@@ -44,7 +48,7 @@ public sealed partial class WritablePlaylistMembership(
                 item.ResourceKind == ResourceKind && item.ProviderId == "allstarr" && item.ExternalIdHash == hash &&
                 item.Protocol == context.Protocol.ToString().ToLowerInvariant() && item.BackendInstanceId == context.BackendInstanceId)
             .OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(cancellationToken);
-        return row == null ? null : JsonSerializer.Deserialize<WritablePlaylistState>(row.PayloadJson);
+        return row == null ? null : JsonSerializer.Deserialize<WritablePlaylistState>(row.PayloadJson)! with { StoredAt = row.RetrievedAt };
     }
 
     public async Task SaveAsync(ProtocolExecutionContext context, string playlistId,

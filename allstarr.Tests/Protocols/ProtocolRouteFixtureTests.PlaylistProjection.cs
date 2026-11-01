@@ -67,8 +67,8 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal(3, json.RootElement.GetProperty("TotalRecordCount").GetInt32());
             Assert.Equal(["ext-deezer-song-42", "local-song", "allstarr-unresolved-missing"],
                 items.Select(item => item.GetProperty("Id").GetString()));
-            Assert.All(items.Where(item => item.GetProperty("Id").GetString() != "local-song"),
-                item => Assert.Equal(nativeId, item.GetProperty("ParentId").GetString()));
+            Assert.Equal(JsonValueKind.Null, items[0].GetProperty("ParentId").ValueKind);
+            Assert.Equal(nativeId, items[2].GetProperty("ParentId").GetString());
             Assert.False(items.Single(item => item.GetProperty("Id").GetString() == "local-song").TryGetProperty("ParentId", out _));
             Assert.Equal("None", items[2].GetProperty("PlayAccess").GetString());
         }

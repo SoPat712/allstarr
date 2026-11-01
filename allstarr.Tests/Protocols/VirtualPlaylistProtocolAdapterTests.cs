@@ -17,7 +17,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class VirtualPlaylistProtocolAdapterTests
+public sealed partial class VirtualPlaylistProtocolAdapterTests
 {
     private static readonly Guid LinkId = Guid.Parse("0198a537-719c-7ea8-9e5a-17e1f2f963f0");
     private static readonly string ProtocolId = PlaylistVirtualizationService.CreateProtocolId(LinkId);
@@ -137,7 +137,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task JellyfinPlaylistEntries_IncludeOccurrenceIdentityAndHonorFields(bool includeFields)
+    public async Task JellyfinPlaylistEntries_IncludeOccurrenceIdentityAndFullFields(bool includeFields)
     {
         var model = Model() with
         {
@@ -157,7 +157,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         var item = Assert.Single(json.RootElement.GetProperty("Items").EnumerateArray());
         Assert.Equal("entry-7", item.GetProperty("PlaylistItemId").GetString());
         foreach (var field in new[] { "ParentId", "MediaSources", "MediaStreams", "ProviderIds", "Genres", "GenreItems" })
-            Assert.Equal(includeFields, item.TryGetProperty(field, out _));
+            Assert.True(item.TryGetProperty(field, out _));
         foreach (var field in new[] { "AudioInfo", "SupportsSync", "ParentLogoItemId", "ParentBackdropItemId" })
             Assert.False(item.TryGetProperty(field, out _));
     }
@@ -363,7 +363,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             ]
         };
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        gateway.Setup(item => item.GetSongAsync(
+        gateway.Setup(item => item.GetStoredSongAsync(
                 It.IsAny<ProtocolExecutionContext>(), "apple-download", "101"))
             .ReturnsAsync(new Song
             {

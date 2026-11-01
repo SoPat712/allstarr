@@ -446,6 +446,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         IQueryCollection? clientQuery)
     {
         clientQuery ??= httpContexts?.HttpContext?.Request.Query;
+        if (httpContexts?.HttpContext is { } http) http.Items[JellyfinItemFields.PlaylistMembersKey] = true;
         var startIndex = QueryInt(clientQuery, "StartIndex", 0);
         var limit = QueryInt(clientQuery, "Limit", int.MaxValue);
         var tracks = playlist.Tracks.Skip(startIndex).Take(limit).ToArray();
@@ -468,6 +469,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         {
             JsonObject item;
             var native = false;
+            var fullExternal = false;
             if (playlist.ProjectionMode is PlaylistProjectionMode.Resolved or PlaylistProjectionMode.Target &&
                 track.RouteKind == TrackRouteKind.Local && originals != null &&
                 (proxyService != null || track.NativeEntryJson != null))
@@ -516,7 +518,8 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                     ExternalId = track.RouteExternalId ?? track.SourceExternalId,
                     ExplicitContentLyrics = ExternalTrackPresentation.Explicitness(track) is { } explicitContent ? explicitContent ? 1 : 0 : null
                 };
-                item = JsonSerializer.SerializeToNode(_builder.ConvertSongToJellyfinItem(song, context.Policy?.Preferences, clientQuery))!.AsObject();
+                fullExternal = true;
+                item = JsonSerializer.SerializeToNode(_builder.ConvertPlaylistSongToJellyfinItem(song, context.Policy?.Preferences, playlist.CreatedAt))!.AsObject();
             }
             else
             {
@@ -556,9 +559,9 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             }
             if (!native)
             {
-                item["ParentId"] = responsePlaylistId;
+                if (!fullExternal) item["ParentId"] = responsePlaylistId;
                 if (serverId != null) item["ServerId"] = serverId;
-                new JellyfinItemFields(clientQuery).Apply(item);
+                if (!fullExternal) new JellyfinItemFields(clientQuery).Apply(item);
             }
             if (track.OriginalItemId != null) item["OriginalItemId"] = track.OriginalItemId;
             if (!native && track.RouteKind != TrackRouteKind.Local && ExternalTrackPresentation.Explicitness(track) is { } rating)
@@ -602,7 +605,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             {
                 try
                 {
-                    return (track.BackendItemId, Song: await providerGateway.GetSongAsync(
+                    return (track.BackendItemId, Song: await providerGateway.GetStoredSongAsync(
                         context, track.RouteProviderId!, track.RouteExternalId!));
                 }
                 catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)

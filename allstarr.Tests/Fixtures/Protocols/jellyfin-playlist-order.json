@@ -4,5 +4,5 @@
   "externalPlaylistId": "list-7",
   "sourceTrackIds": ["track-3", "track-1", "track-2"],
   "expectedItemIds": ["ext-deezer-track-3", "ext-deezer-track-1", "ext-deezer-track-2"],
-  "expectedParentId": "ext-deezer-playlist-list-7"
+  "expectedParentId": "ext-deezer-album-fixture"
 }

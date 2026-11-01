@@ -319,3 +319,13 @@ test("kept deletion keeps a changed confirmation open and requires a fresh previ
   expect(requests[1]).toMatchObject({ revision: 2, referenceFingerprint: "proof-2" });
   await expect(dialog).not.toBeVisible();
 });
+
+test("Keep works without the secure UUID API", async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(crypto, "randomUUID", { value: undefined }));
+  const fixture = await mockDownloadsApp(page);
+  await page.goto("/#/library/cached");
+  await page.locator(".download-row").filter({ hasText: "Fixture Song" }).getByRole("button", { name: "Keep", exact: true }).click();
+  await expect(page.getByText("Track queued for Kept. Its cached copy stays available.", { exact: true })).toBeVisible();
+  expect(fixture.keepHeaders).toHaveLength(1);
+  expect(fixture.keepHeaders[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+});

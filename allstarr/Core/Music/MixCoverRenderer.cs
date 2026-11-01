@@ -426,6 +426,21 @@ public sealed class MixCoverRenderer
         }, over: true, specks: 200);
         using var text = Paint("#e9e2d0"); Pasted(canvas, text, "Sleep", .07, .92, .2);
     }
+    internal static (string[] Lines, string Subtitle) LastFmCaption(string playlistId) => playlistId switch
+    {
+        "loved" => (new[] { "loved", "tracks" }, "your hearts on last.fm"),
+        "similar" => (new[] { "similar", "tracks" }, "like your top tracks"),
+        _ => (new[] { "top tracks" }, playlistId.Split(':').ElementAtOrDefault(1) switch
+        {
+            "7day" => "this week",
+            "1month" => "this month",
+            "3month" => "three months",
+            "6month" => "six months",
+            "12month" => "this year",
+            _ => "all time"
+        })
+    };
+
     private void External()
     {
         if (mix.Source == "lastfm")
@@ -436,20 +451,7 @@ public sealed class MixCoverRenderer
                 g.Save(); Transform(g, .1, .08, Between(layout, -.08, .02)); g.Scale(.5f / 24);
                 using var path = SKPath.ParseSvgPathData(LastFm); g.DrawPath(path, paint); g.Restore();
             }, over: true, alpha: .95, specks: 2600);
-            var (lines, subtitle) = mix.SourcePlaylistId switch
-            {
-                "loved" => (new[] { "loved", "tracks" }, "your hearts on last.fm"),
-                "similar" => (new[] { "similar", "artists" }, "like your top artists"),
-                _ => (new[] { "top tracks" }, mix.SourcePlaylistId.Split(':').ElementAtOrDefault(1) switch
-                {
-                    "7day" => "this week",
-                    "1month" => "this month",
-                    "3month" => "three months",
-                    "6month" => "six months",
-                    "12month" => "this year",
-                    _ => "all time"
-                })
-            };
+            var (lines, subtitle) = LastFmCaption(mix.SourcePlaylistId);
             Label(.07, .66, .7, [.. lines, subtitle]);
         }
         else

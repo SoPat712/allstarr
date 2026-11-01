@@ -38,16 +38,16 @@ public sealed class ProviderArtworkFallbackTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void FallbackTagsAreStableAcrossKindsAndNativeTagsRemainUnchanged(bool local)
+    public void FallbackTagsAreVersionedAndNativeTagsRemainUnchanged(bool local)
     {
         var builder = new JellyfinResponseBuilder();
         var song = builder.ConvertSongToJellyfinItem(new Song { Id = "song", ExternalProvider = "deezer", IsLocal = local });
         var album = builder.ConvertAlbumToJellyfinItem(new Album { Id = "album", ExternalProvider = "deezer", IsLocal = local });
         var artist = builder.ConvertArtistToJellyfinItem(new Artist { Id = "artist", ExternalProvider = "deezer", IsLocal = local });
         string Tag(Dictionary<string, object?> item) => Assert.IsType<Dictionary<string, string>>(item["ImageTags"])["Primary"];
-        Assert.Equal(local ? "song" : ProviderArtworkFallback.Tag("deezer"), Tag(song));
-        Assert.Equal(local ? "album" : Tag(song), Tag(album));
-        Assert.Equal(local ? "artist" : Tag(song), Tag(artist));
+        Assert.Equal(local ? "song" : "song-art-v3", Tag(song));
+        Assert.Equal(local ? "album" : "album-art-v3", Tag(album));
+        Assert.Equal(local ? "artist" : "artist-art-v3", Tag(artist));
         Assert.False(ProviderArtworkFallback.IsFallback("deezer", "https://images.example.test/cover.png", "song"));
     }
 }

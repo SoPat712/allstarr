@@ -281,6 +281,7 @@ public partial class JellyfinController
     {
         var read = await ReadWritableNativeItemsAsync(id);
         if (read.Envelope == null) return StatusCode(read.Status);
+        HttpContext.Items[JellyfinItemFields.PlaylistMembersKey] = true;
         var nativeRows = (read.Envelope["Items"] as JsonArray ?? []).OfType<JsonObject>().ToArray();
         var natives = NativeMembers(read.Envelope);
         var members = WritablePlaylistMembership.Reconcile(saved, natives);
@@ -290,8 +291,8 @@ public partial class JellyfinController
         {
             if (member.Song != null)
             {
-                var row = QuerySong(member.Song);
-                if (new JellyfinItemFields(Request.Query).Includes("ParentId")) row["ParentId"] = id;
+                var row = _responseBuilder.ConvertPlaylistSongToJellyfinItem(member.Song,
+                    ExternalTrackPresentation.Preferences(HttpContext), saved.StoredAt);
                 row["PlaylistItemId"] = member.OccurrenceId;
                 rows.Add(row);
             }

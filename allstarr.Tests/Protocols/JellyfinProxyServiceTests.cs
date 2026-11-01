@@ -109,6 +109,8 @@ public class JellyfinProxyServiceTests
     }
 
     [Theory]
+    [InlineData("/Playlists/list/Items", true)]
+    [InlineData("/Playlists/list/Items", false)]
     [InlineData("/Items", true)]
     [InlineData("/Items", false)]
     [InlineData("/Items/ext-deezer-song-1", true)]
@@ -118,6 +120,8 @@ public class JellyfinProxyServiceTests
         _service.RememberServerId("primary", "library-server");
         var http = new DefaultHttpContext();
         http.Request.Path = path;
+        if (path.StartsWith("/Playlists/", StringComparison.Ordinal))
+            http.Items[JellyfinItemFields.PlaylistMembersKey] = true;
         http.Items[ProtocolExecutionContextFactory.HttpContextItemKey] = new ProtocolExecutionContext(
             ProtocolKind.Jellyfin, "primary", "listener", null, "test", DateTimeOffset.UtcNow.AddMinutes(1), default);
         var artwork = new Mock<IMediaAssetResolver>(MockBehavior.Strict);
@@ -125,12 +129,14 @@ public class JellyfinProxyServiceTests
             .ReturnsAsync(known ? "L00000fQfQfQfQfQfQfQfQfQfQfQ" : null);
         const string native = """{"Id":"native","Type":"Audio","ImageBlurHashes":{"Primary":{"native-tag":"original"}}}""";
         var result = new JsonResult(JsonNode.Parse("""
-            {"Items":[{"Id":"ext-deezer-song-1","Type":"Audio","ImageTags":{"Primary":"art-v2"}},NATIVE]}
+            {"Items":[{"Id":"ext-deezer-song-1","Type":"Audio","ImageTags":{"Primary":"art-v3"},"AlbumPrimaryImageTag":"album-art-v3"},NATIVE]}
             """.Replace("NATIVE", native, StringComparison.Ordinal)));
         await new JellyfinItemResponseFilter(_service, artwork.Object).PrepareAsync(result, http);
         var items = JsonSerializer.SerializeToNode(result.Value)!["Items"]!;
         Assert.Equal(known, items[0]!.AsObject().ContainsKey("ImageBlurHashes"));
-        if (known) Assert.Equal("L00000fQfQfQfQfQfQfQfQfQfQfQ", items[0]!["ImageBlurHashes"]!["Primary"]!["art-v2"]!.GetValue<string>());
+        if (known) Assert.Equal("L00000fQfQfQfQfQfQfQfQfQfQfQ", items[0]!["ImageBlurHashes"]!["Primary"]!["art-v3"]!.GetValue<string>());
+        if (known) Assert.Equal(items[0]!["ImageBlurHashes"]!["Primary"]!["art-v3"]!.GetValue<string>(),
+            items[0]!["ImageBlurHashes"]!["Primary"]!["album-art-v3"]!.GetValue<string>());
         Assert.True(JsonNode.DeepEquals(JsonNode.Parse(native), items[1]));
         artwork.VerifyAll();
         artwork.VerifyNoOtherCalls();

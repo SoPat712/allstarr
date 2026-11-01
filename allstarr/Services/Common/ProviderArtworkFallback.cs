@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Extensions;
 using allstarr.Core.Storage;
@@ -12,9 +10,6 @@ internal static class ProviderArtworkFallback
     private const string Prefix = "/api/admin/providers/";
 
     internal static string CoverPath(string provider) => Prefix + Uri.EscapeDataString(provider) + "/cover";
-
-    internal static string Tag(string? provider, string? cover = null) => "provider-cover-v2-" +
-        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(SourceProvider(provider, cover))))[..16];
 
     internal static bool IsFallback(string? provider, string? cover, string kind) =>
         !string.IsNullOrWhiteSpace(provider) && kind is "song" or "track" or "album" or "artist" &&

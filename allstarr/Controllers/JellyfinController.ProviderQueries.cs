@@ -72,7 +72,8 @@ public partial class JellyfinController
         var query = new JellyfinProviderQuery(Request.Query, GetEffectiveSearchTerm(Request.Query["SearchTerm"], Request.QueryString.Value), defaultLimit);
         Func<IEnumerable<Dictionary<string, object?>>, IEnumerable<Dictionary<string, object?>>>? reconcile = deduplicate ? ReconcileQueryRows : null;
         var ordered = query.FilterAndSort(items, defaultSort, deduplicate, nativeAlreadyFiltered, reconcile);
-        foreach (var item in ordered.Where(IsProviderQueryItem)) new JellyfinItemFields(Request.Query).Apply(item);
+        if (!HttpContext.Items.ContainsKey(JellyfinItemFields.PlaylistMembersKey))
+            foreach (var item in ordered.Where(IsProviderQueryItem)) new JellyfinItemFields(Request.Query).Apply(item);
         var response = _searchProtocolAdapter.ShapeItemsResponse(ordered, query.StartIndex, query.Limit, totalRecordCount);
         return new ContentResult
         {

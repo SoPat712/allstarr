@@ -1,3 +1,4 @@
+import { newUuid } from "./uuid";
 import { adminUrl } from "./admin-url";
 
 export type Session = {
@@ -1657,7 +1658,7 @@ export const intelligence = {
       intelligenceBody({ ...scope, ...input }, "PUT")),
   run: (scope: IntelligenceScope, seedTrackKeys: string[] = []) =>
     json<{ runId: string; jobId: string }>("/api/admin/intelligence/runs",
-      intelligenceBody({ ...scope, seedTrackKeys, limit: 25, idempotencyKey: crypto.randomUUID() })),
+      intelligenceBody({ ...scope, seedTrackKeys, limit: 25, idempotencyKey: newUuid() })),
   generate: (scope: IntelligenceScope, runId: string, name: string) =>
     json<{ id: string }>("/api/admin/intelligence/generated-sets",
       intelligenceBody({ ...scope, runId, name })),
@@ -1676,7 +1677,7 @@ export const intelligence = {
       intelligenceBody(scope, "DELETE")),
   startAudioMuseAnalysis: (scope: IntelligenceScope, rebuild = false) =>
     json<AudioMuseAnalysis>("/api/admin/intelligence/audiomuse/analysis",
-      intelligenceBody({ ...scope, rebuild, idempotencyKey: crypto.randomUUID() })),
+      intelligenceBody({ ...scope, rebuild, idempotencyKey: newUuid() })),
   audioMuseAnalysis: (scope: IntelligenceScope, jobId: string) =>
     json<AudioMuseAnalysis>(`/api/admin/intelligence/audiomuse/analysis/${encodeURIComponent(jobId)}?${intelligenceQuery(scope)}`),
   audioMuseSimilar: (scope: IntelligenceScope, seedTrackIds: string[], limit = 25) =>
@@ -2331,7 +2332,7 @@ export const downloads = {
   keep: (path: string) =>
     json<{ success: boolean; queued: boolean; jobId: string; message: string }>(
       `/api/admin/downloads/promote?path=${encodeURIComponent(path)}`,
-      { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() } },
+      { method: "POST", headers: { "Idempotency-Key": newUuid() } },
     ),
   remove: (path: string, storage: "cache" | "kept") =>
     json<{ success: boolean; released?: boolean; message?: string }>(

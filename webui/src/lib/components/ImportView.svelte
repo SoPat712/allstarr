@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { newUuid } from "$lib/uuid";
   import { onMount, tick } from "svelte";
   import { Check } from "@lucide/svelte";
   import { ApiError, home, matchReview, migrations, sources, type MigrationChoice, type MigrationReviewItem, type MigrationResourceCandidate,
@@ -162,7 +163,7 @@
   async function findMusic() {
     await act(async () => {
       if (!runId) {
-        requestKey ||= crypto.randomUUID();
+        requestKey ||= newUuid();
         const receipt = await migrations.start(accountId, requestKey);
         if (disposed) return;
         runId = receipt.id; remember();
@@ -216,7 +217,7 @@
   }
   function fresh() {
     runId = ""; remember(); status = null; choices = []; selected = {}; sync = {}; pages = {}; more = {}; expanded = {}; pageBusy = {};
-    unsupported = []; receiptCounts = {}; pendingCount = 0; reviewInitialized = false; cursor = null; requestKey = crypto.randomUUID(); error = "";
+    unsupported = []; receiptCounts = {}; pendingCount = 0; reviewInitialized = false; cursor = null; requestKey = newUuid(); error = "";
   }
   const scheduler = createRefreshScheduler(refresh);
   onMount(() => {

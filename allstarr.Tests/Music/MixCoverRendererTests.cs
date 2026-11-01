@@ -46,6 +46,16 @@ public sealed class MixCoverRendererTests
         Assert.Equal(expected, MixCoverRenderer.PaletteName(tag));
 
     [Fact]
+    public void Similar_track_cover_caption_matches_the_track_source()
+    {
+        var (lines, subtitle) = MixCoverRenderer.LastFmCaption("similar");
+        Assert.Equal(new[] { "similar", "tracks" }, lines);
+        Assert.Equal("like your top tracks", subtitle);
+        var input = new MixCoverInput("similar", 1, "external", Source: "lastfm", SourcePlaylistId: "similar");
+        Assert.EndsWith("-tracks-v2", MixCoverImageService.GetTag(input));
+    }
+
+    [Fact]
     public void Daily_cover_inputs_retain_the_cluster_and_top_artists()
     {
         var mix = new PersonalMix(Guid.NewGuid(), "daily-2", "Daily Mix 2 · Neo Soul · SZA, Khalid", "Made for you",

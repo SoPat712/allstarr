@@ -79,7 +79,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Equal(song.Id, item.GetProperty("Id").GetString());
         Assert.Equal("ext-deezer-album-7", item.GetProperty("AlbumId").GetString());
         Assert.Equal("ext-deezer-album-7", item.GetProperty("ParentId").GetString());
-        Assert.Equal(song.Id + "-art-v2", item.GetProperty("ImageTags").GetProperty("Primary").GetString());
+        Assert.Equal(song.Id + "-art-v3", item.GetProperty("ImageTags").GetProperty("Primary").GetString());
         Assert.Equal("https://images.invalid/catalog.jpg", song.CoverArtUrl);
         Assert.Equal("42", item.GetProperty("ProviderIds").GetProperty("deezer").GetString());
         Assert.Equal("recording-id", item.GetProperty("ProviderIds").GetProperty("MusicBrainzTrack").GetString());

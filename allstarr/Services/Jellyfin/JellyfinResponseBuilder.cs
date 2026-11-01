@@ -271,6 +271,35 @@ public partial class JellyfinResponseBuilder
         allstarr.Core.Settings.ListeningPreferences? preferences, IQueryCollection? query, bool includeAllFields = false) =>
         BuildSongItem(song, preferences, JellyfinItemFields.ForRequest(_httpContexts?.HttpContext, query, includeAllFields));
 
+    internal Dictionary<string, object?> ConvertPlaylistSongToJellyfinItem(Song song,
+        allstarr.Core.Settings.ListeningPreferences? preferences, DateTimeOffset? createdAt)
+    {
+        var item = BuildSongItem(song, preferences, null);
+        foreach (var key in new[] { "AudioInfo", "SupportsSync", "ParentBackdropItemId", "ParentBackdropImageTags",
+                     "ParentLogoItemId", "ParentLogoImageTag", "Overview", "Size", "Bitrate", "TrackPeak", "AlbumPeak" })
+            item.Remove(key);
+        if (item.Remove("AlbumGain", out var albumGain)) item["AlbumNormalizationGain"] = albumGain;
+        item["Etag"] = song.Id;
+        item["DateCreated"] = createdAt?.UtcDateTime.ToString("O");
+        item["ExternalUrls"] = Array.Empty<object>();
+        item["EnableMediaSourceDisplay"] = true;
+        item["PlayAccess"] = "Full";
+        item["DisplayPreferencesId"] = song.Id;
+        item["LockData"] = false;
+        item["ImageBlurHashes"] = new Dictionary<string, object>();
+        foreach (var key in new[] { "Taglines", "RemoteTrailers", "Studios", "Chapters", "LockedFields" })
+            item.TryAdd(key, Array.Empty<object>());
+        item["LocalTrailerCount"] = 0;
+        item["SpecialFeatureCount"] = 0;
+        item.TryAdd("ProviderIds", new Dictionary<string, string>());
+        var artists = ((Dictionary<string, object?>[])item["ArtistItems"]!)
+            .Concat((Dictionary<string, object?>[])item["AlbumArtists"]!).DistinctBy(artist => artist["Id"]);
+        item["People"] = artists.Select(artist => new { Name = artist["Name"], Id = artist["Id"], Type = "Artist" }).ToArray();
+        foreach (var key in item.Where(pair => pair.Value == null && pair.Key != "ChannelId").Select(pair => pair.Key).ToArray())
+            item.Remove(key);
+        return item;
+    }
+
     private Dictionary<string, object?> BuildSongItem(Song song,
         allstarr.Core.Settings.ListeningPreferences? preferences, JellyfinItemFields? fields)
     {
@@ -310,8 +339,7 @@ public partial class JellyfinResponseBuilder
             albumArtistName = ExternalTrackPresentation.Name(albumArtistName, preferences);
         }
 
-        var primaryImageTag = !song.IsLocal && ProviderArtworkFallback.IsFallback(song.ExternalProvider, song.CoverArtUrl, "song")
-            ? ProviderArtworkFallback.Tag(song.ExternalProvider, song.CoverArtUrl) : song.IsLocal ? song.Id : $"{song.Id}-art-v2";
+        var primaryImageTag = song.IsLocal ? song.Id : $"{song.Id}-art-v3";
         Dictionary<string, object?>[] artistItems =
             artistNames.Count > 0 && song.ArtistIds.Count == artistNames.Count
             ? artistNames
@@ -401,7 +429,7 @@ public partial class JellyfinResponseBuilder
             ["ArtistItems"] = artistItems,
             ["Album"] = albumName,
             ["AlbumId"] = song.AlbumId,
-            ["AlbumPrimaryImageTag"] = song.AlbumId,
+            ["AlbumPrimaryImageTag"] = song.IsLocal ? song.AlbumId : song.AlbumId == null ? null : $"{song.AlbumId}-art-v3",
             ["PrimaryImageAspectRatio"] = 1.0,
             ["AlbumArtist"] = albumArtistName,
             ["AlbumArtists"] = albumArtists,
@@ -560,6 +588,10 @@ public partial class JellyfinResponseBuilder
         if (bitDepth is > 0) stream["BitDepth"] = bitDepth.Value;
         if (channels is > 0) stream["Channels"] = channels.Value;
         if (bitrate is > 0) stream["BitRate"] = bitrate.Value;
+        if (stream.GetValueOrDefault("Codec") is string knownCodec)
+            stream["DisplayTitle"] = string.Join(" - ", new[] { knownCodec.ToUpperInvariant(),
+                channels is > 0 ? $"{channels} ch" : null, sampleRate is > 0 ? $"{sampleRate} Hz" : null }
+                .Where(value => value != null));
         if (size is > 0) source["Size"] = size.Value;
         if (size is > 0) item["Size"] = size.Value;
         if (bitrate is > 0) item["Bitrate"] = bitrate.Value;
@@ -699,8 +731,7 @@ public partial class JellyfinResponseBuilder
             ["AlbumArtists"] = albumArtistItems,
             ["ImageTags"] = new Dictionary<string, string>
             {
-                ["Primary"] = !album.IsLocal && ProviderArtworkFallback.IsFallback(album.ExternalProvider, album.CoverArtUrl, "album")
-                    ? ProviderArtworkFallback.Tag(album.ExternalProvider, album.CoverArtUrl) : album.Id
+                ["Primary"] = album.IsLocal ? album.Id : $"{album.Id}-art-v3"
             },
             ["BackdropImageTags"] = new string[0],
             ["ParentLogoImageTag"] = album.ArtistId ?? album.Id,
@@ -761,8 +792,7 @@ public partial class JellyfinResponseBuilder
             },
             ["ImageTags"] = new Dictionary<string, string>
             {
-                ["Primary"] = !artist.IsLocal && ProviderArtworkFallback.IsFallback(artist.ExternalProvider, artist.ImageUrl, "artist")
-                    ? ProviderArtworkFallback.Tag(artist.ExternalProvider, artist.ImageUrl) : artist.Id
+                ["Primary"] = artist.IsLocal ? artist.Id : $"{artist.Id}-art-v3"
             },
             ["BackdropImageTags"] = new string[0],
             ["ImageBlurHashes"] = artist.IsLocal ? new Dictionary<string, object>() : null,

@@ -4,6 +4,8 @@ namespace allstarr.Services.Jellyfin;
 
 internal sealed class JellyfinItemFields(IQueryCollection? query, bool includeAllFields = false)
 {
+    internal const string PlaylistMembersKey = "allstarr.playlist-members";
+
     private readonly HashSet<string> _fields = (query?["Fields"].ToString() ?? string.Empty)
         .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
