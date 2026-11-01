@@ -661,9 +661,9 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData("2026-03-07T10:00:00Z", "2026-03-08T08:00:00Z")]
-    [InlineData("2026-10-31T10:00:00Z", "2026-11-01T09:00:00Z")]
-    public async Task Schedules_UseListenerFourAmAcrossDaylightSaving(string now, string next)
+    [InlineData("2026-03-07T10:00:00Z", "2026-03-08T09:00:00Z")]
+    [InlineData("2026-10-31T10:00:00Z", "2026-11-01T10:00:00Z")]
+    public async Task Schedules_UseListenerFiveAmAcrossDaylightSaving(string now, string next)
     {
         clock.UtcNow = DateTimeOffset.Parse(now);
         await service.ListAsync(owner, "America/New_York");
@@ -671,9 +671,9 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
         await using var db = factory.CreateDbContext();
         var schedules = await db.JobSchedules.Where(item => item.OwnerUserId == owner).ToArrayAsync();
         Assert.Equal(10, schedules.Length);
-        Assert.All(schedules.Where(item => item.CronExpression == "0 4 * * *"), item => Assert.Equal(DateTimeOffset.Parse(next), item.NextRunAt));
-        Assert.Equal(7, schedules.Count(item => item.CronExpression == "0 4 * * 1"));
-        Assert.Single(schedules, item => item.CronExpression == "0 4 * * 5");
+        Assert.All(schedules.Where(item => item.CronExpression == "0 5 * * *"), item => Assert.Equal(DateTimeOffset.Parse(next), item.NextRunAt));
+        Assert.Equal(7, schedules.Count(item => item.CronExpression == "0 5 * * 1"));
+        Assert.Single(schedules, item => item.CronExpression == "0 5 * * 5");
         clock.UtcNow = DateTimeOffset.Parse(next);
         var options = new DurableJobOptions();
         var queue = new DurableJobQueue(factory, options, new(options), clock);

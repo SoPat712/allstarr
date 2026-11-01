@@ -642,7 +642,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             {
                 var id = Id(user, "schedule:" + kind);
                 var row = await db.JobSchedules.SingleOrDefaultAsync(item => item.Id == id, token);
-                if (row != null && row.TimeZoneId == document.TimeZoneId) continue;
+                if (row != null && row.TimeZoneId == document.TimeZoneId && row.CronExpression == PersonalMixRules.Cron(kind)) continue;
                 if (row == null) db.JobSchedules.Add(row = new() { Id = id, OwnerUserId = user.Id, CreatedAt = clock.UtcNow });
                 row.JobType = JobType;
                 row.Enabled = true;

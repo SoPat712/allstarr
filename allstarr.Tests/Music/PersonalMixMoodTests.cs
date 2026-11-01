@@ -50,7 +50,7 @@ public sealed class PersonalMixMoodTests
         Assert.Equal(kind switch { "workout" => "Energetic sound", "party" => "Party sound", _ => "Calm sound" }, PersonalMixMoods.Reason(kind, Assert.Single(measured)));
         var tagged = PersonalMixMoods.Qualify(kind, [row], new Dictionary<string, AudioMuseScores>());
         Assert.Equal("Tagged " + tag, PersonalMixMoods.Reason(kind, Assert.Single(tagged)));
-        Assert.Equal("0 4 * * 1", PersonalMixRules.Cron(kind));
+        Assert.Equal("0 5 * * 1", PersonalMixRules.Cron(kind));
     }
 
     [Fact]

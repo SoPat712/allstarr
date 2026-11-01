@@ -28,8 +28,8 @@ internal static class PersonalMixRules
         return PersonalMixMoods.Kinds.Contains(kind) ? char.ToUpperInvariant(kind[0]) + kind[1..] + " Mix" : kind switch
         { "on-repeat" => "Heavy Rotation", "rewind" => "Long Lost", "release-radar" => "Just Dropped", _ => "Uncharted" };
     }
-    internal static string Cron(string kind) => PersonalMixMoods.Kinds.Contains(kind) ? "0 4 * * 1" : kind switch
-    { "release-radar" => "0 4 * * 5", "discover-weekly" or "rewind" => "0 4 * * 1", _ => "0 4 * * *" };
+    internal static string Cron(string kind) => PersonalMixMoods.Kinds.Contains(kind) ? "0 5 * * 1" : kind switch
+    { "release-radar" => "0 5 * * 5", "discover-weekly" or "rewind" => "0 5 * * 1", _ => "0 5 * * *" };
 
     internal static IReadOnlyList<MixCandidate> Select(string kind, IReadOnlyList<MixCandidate> candidates,
         DateTimeOffset now, IReadOnlyCollection<string> previous, int? length = null)

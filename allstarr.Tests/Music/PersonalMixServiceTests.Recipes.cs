@@ -375,7 +375,7 @@ public sealed partial class PersonalMixServiceTests
         Assert.All(result.Where(x => PersonalMixMoods.Kinds.Contains(x.Kind)), mix => Assert.Equal(0, mix.Generation));
         Assert.DoesNotContain(gateway.Invocations, x => x.Method.Name == "SearchAutomaticProviderSongsAsync" &&
             x.Arguments[2] is string query && query.StartsWith("Fresh artist", StringComparison.Ordinal));
-        Assert.All(PersonalMixMoods.Kinds, kind => Assert.Equal("0 4 * * 1", PersonalMixRules.Cron(kind)));
+        Assert.All(PersonalMixMoods.Kinds, kind => Assert.Equal("0 5 * * 1", PersonalMixRules.Cron(kind)));
     }
 
     [Fact]

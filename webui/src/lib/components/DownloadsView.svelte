@@ -352,7 +352,7 @@
 
 <style>
   .download-provider-id { display: none; }
-  .track-cache-link { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--surface-gutter); border-top: 1px solid var(--color-edge); }
+  .track-cache-link { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--surface-gutter); border-top: 1px solid var(--color-edge); }
   :global(.download-actions .download-remove:not(:disabled):hover) { color: var(--md-sys-color-error); }
   .download-quality-summary {
     display: flex;
