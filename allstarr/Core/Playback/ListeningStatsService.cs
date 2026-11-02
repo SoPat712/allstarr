@@ -1,3 +1,5 @@
+using allstarr.Core.Capabilities;
+using allstarr.Core.Enrichment;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
@@ -9,9 +11,20 @@ namespace allstarr.Core.Playback;
 
 public sealed record ListeningStatsPeriod(DateTimeOffset? From, DateTimeOffset To, string TimeZoneId);
 public sealed record ListeningStatsCoverage(long UnknownSongIdentityCount, long UnknownDurationCount);
-public sealed record ListeningStatsSong(string Title, string Artist, string? Album, long PlayCount);
-public sealed record ListeningStatsArtist(string Artist, long PlayCount);
-public sealed record ListeningStatsAlbum(string Album, string Artist, long PlayCount);
+public sealed record ListeningStatsSong(string Title, string Artist, string? Album, long PlayCount)
+{
+    public string? ArtworkUrl { get; init; }
+}
+public sealed record ListeningStatsArtist(string Artist, long PlayCount)
+{
+    public string? ArtworkUrl { get; init; }
+}
+public sealed record ListeningStatsAlbum(string Album, string Artist, long PlayCount)
+{
+    public string? ArtworkUrl { get; init; }
+}
+public sealed record ListeningStatsPoint(string Key, long Plays);
+public sealed record ListeningStatsGenre(string Genre, long Plays);
 public sealed record ListeningStats(ListeningStatsPeriod Period, long PlayCount, int ActiveDays, long ImportedCount,
     DateTimeOffset? ObservedSince, long EstimatedTimeFromSongLengthsMilliseconds, ListeningStatsCoverage Coverage,
     IReadOnlyList<ListeningStatsSong> TopSongs, IReadOnlyList<ListeningStatsArtist> TopArtists,
@@ -19,13 +32,25 @@ public sealed record ListeningStats(ListeningStatsPeriod Period, long PlayCount,
 {
     public long ShortPlayCount { get; init; }
     public DateTimeOffset? FirstPlayAt { get; init; }
+    public int UniqueSongs { get; init; }
+    public int UniqueArtists { get; init; }
+    public string TimelineUnit { get; init; } = "month";
+    public IReadOnlyList<ListeningStatsPoint> Timeline { get; init; } = [];
+    public IReadOnlyList<long> ByHour { get; init; } = [];
+    public ListeningStatsPoint? BiggestDay { get; init; }
+    public int LongestStreakDays { get; init; }
+    public IReadOnlyList<ListeningStatsGenre> TopGenres { get; init; } = [];
+    public long NewArtistCount { get; init; }
+    public IReadOnlyList<ListeningStatsArtist> NewArtists { get; init; } = [];
 }
 
-public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock) : IDisposable
+public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, SharedTagStore? tags = null) : IDisposable
 {
+    private const int TopLimit = 50;
+    private static readonly string[] NoArtwork = ["lastfm", "listenbrainz", "apple-download"];
     private readonly MemoryCache cache = new(new MemoryCacheOptions { SizeLimit = 256 });
 
-    public async Task<ListeningStats> GetAsync(AdminAuthSession session, string? period, int? year, CancellationToken token)
+    public async Task<ListeningStats> GetAsync(AdminAuthSession session, string? period, int? year, CancellationToken token, string? timeZoneId = null)
     {
         if (session.AllstarrUserId is not { } owner || session.ExpiresAtUtc <= clock.UtcNow.UtcDateTime)
             throw new UnauthorizedAccessException();
@@ -38,15 +63,23 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
             ?? throw new UnauthorizedAccessException();
         var scope = new IntelligenceScope(owner, protocol, session.BackendInstanceId);
         var zone = TimeZoneInfo.Local;
+        if (!string.IsNullOrWhiteSpace(timeZoneId))
+        {
+            try { zone = TimeZoneInfo.FindSystemTimeZoneById(timeZoneId); }
+            catch (Exception error) when (error is TimeZoneNotFoundException or InvalidTimeZoneException) { throw new ArgumentException("The time zone is invalid."); }
+        }
         var interval = CreatePeriod(period, year, clock.UtcNow, zone);
-        var key = (scope, interval, actor.IsSynthetic);
+        // Reading a long history takes a moment, so an answer is kept until the listener's plays change.
+        var plays = await db.ListeningEvents.AsNoTracking().LongCountAsync(item => item.OwnerUserId == owner, token);
+        var finished = await db.ListeningEvents.AsNoTracking().LongCountAsync(item => item.OwnerUserId == owner && item.State == ListeningEventState.Completed, token);
+        var key = (scope, interval, actor.IsSynthetic, plays, finished);
         if (cache.TryGetValue(key, out (ListeningStats Stats, DateTimeOffset ExpiresAt) cached) && cached.ExpiresAt > clock.UtcNow)
             return cached.Stats;
-        var result = await ReadAsync(db, scope, interval, zone, token);
-        cache.Set(key, (result, clock.UtcNow.AddSeconds(30)), new MemoryCacheEntryOptions
+        var result = await ReadAsync(db, scope, interval, zone, token, clock.UtcNow, tags);
+        cache.Set(key, (result, clock.UtcNow.AddMinutes(10)), new MemoryCacheEntryOptions
         {
             Size = 1,
-            AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30)
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10)
         });
         return result;
     }
@@ -91,7 +124,7 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
     private const long CountedPlayTicks = 30 * TimeSpan.TicksPerSecond;
 
     internal static async Task<ListeningStats> ReadAsync(AllstarrDbContext db, IntelligenceScope scope,
-        ListeningStatsPeriod period, TimeZoneInfo zone, CancellationToken token)
+        ListeningStatsPeriod period, TimeZoneInfo zone, CancellationToken token, DateTimeOffset? now = null, SharedTagStore? tags = null)
     {
         var listened = db.ListeningEvents.AsNoTracking().Where(item => item.OwnerUserId == scope.OwnerUserId &&
             item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
@@ -118,24 +151,131 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
                 item.DurationMilliseconds ?? item.PositionTicks / TimeSpan.TicksPerMillisecond))
             .ToListAsync(token);
         var knownSongs = plays.Where(item => !string.IsNullOrWhiteSpace(item.Title) && !string.IsNullOrWhiteSpace(item.Artist)).ToArray();
-        var songs = knownSongs.GroupBy(SongKey).Select(group =>
+        var songGroups = knownSongs.GroupBy(SongKey).ToArray();
+        var songs = songGroups.Select(group =>
         {
             var song = group.OrderByDescending(item => item.At).ThenBy(item => item.Title, StringComparer.Ordinal).First();
-            return new ListeningStatsSong(song.Title!.Trim(), song.Artist!.Trim(), song.Album?.Trim(), group.LongCount());
-        }).OrderByDescending(item => item.PlayCount).ThenBy(item => item.Artist, StringComparer.Ordinal)
-            .ThenBy(item => item.Title, StringComparer.Ordinal).ThenBy(item => item.Album, StringComparer.Ordinal).Take(10).ToArray();
-        var artists = plays.Where(item => !string.IsNullOrWhiteSpace(item.Artist)).GroupBy(item => item.Artist!.Trim(), StringComparer.OrdinalIgnoreCase)
-            .Select(group => new ListeningStatsArtist(group.Key, group.LongCount()))
-            .OrderByDescending(item => item.PlayCount).ThenBy(item => item.Artist, StringComparer.Ordinal).Take(10).ToArray();
+            return (Row: new ListeningStatsSong(song.Title!.Trim(), song.Artist!.Trim(), song.Album?.Trim(), group.LongCount()), Recording: MostPlayedRecording(group));
+        }).OrderByDescending(item => item.Row.PlayCount).ThenBy(item => item.Row.Artist, StringComparer.Ordinal)
+            .ThenBy(item => item.Row.Title, StringComparer.Ordinal).ThenBy(item => item.Row.Album, StringComparer.Ordinal).Take(TopLimit).ToArray();
+        var artistGroups = plays.Where(item => !string.IsNullOrWhiteSpace(item.Artist)).GroupBy(item => item.Artist!.Trim(), StringComparer.OrdinalIgnoreCase).ToArray();
+        var artists = artistGroups.Select(group => (Row: new ListeningStatsArtist(group.Key, group.LongCount()), Recording: MostPlayedRecording(group)))
+            .OrderByDescending(item => item.Row.PlayCount).ThenBy(item => item.Row.Artist, StringComparer.Ordinal).Take(TopLimit).ToArray();
         var albums = plays.Where(item => !string.IsNullOrWhiteSpace(item.Album) && !string.IsNullOrWhiteSpace(item.AlbumArtist ?? item.Artist))
             .GroupBy(item => (Album: Normalize(item.Album!), Artist: Normalize(item.AlbumArtist ?? item.Artist!)))
-            .Select(group => new ListeningStatsAlbum(group.First().Album!.Trim(), (group.First().AlbumArtist ?? group.First().Artist)!.Trim(), group.LongCount()))
-            .OrderByDescending(item => item.PlayCount).ThenBy(item => item.Artist, StringComparer.Ordinal)
-            .ThenBy(item => item.Album, StringComparer.Ordinal).Take(10).ToArray();
-        return new(period, plays.Count, plays.Select(item => DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(item.At, zone).DateTime)).Distinct().Count(),
+            .Select(group => (Row: new ListeningStatsAlbum(group.First().Album!.Trim(), (group.First().AlbumArtist ?? group.First().Artist)!.Trim(), group.LongCount()), Recording: MostPlayedRecording(group)))
+            .OrderByDescending(item => item.Row.PlayCount).ThenBy(item => item.Row.Artist, StringComparer.Ordinal)
+            .ThenBy(item => item.Row.Album, StringComparer.Ordinal).Take(TopLimit).ToArray();
+
+        var local = plays.Select(item => TimeZoneInfo.ConvertTime(item.At, zone).DateTime).ToArray();
+        var days = local.GroupBy(DateOnly.FromDateTime).ToDictionary(group => group.Key, group => group.LongCount());
+        var byHour = new long[24];
+        foreach (var at in local) byHour[at.Hour]++;
+        var biggest = days.OrderByDescending(item => item.Value).ThenBy(item => item.Key).Select(item => new ListeningStatsPoint(item.Key.ToString("yyyy-MM-dd"), item.Value)).FirstOrDefault();
+
+        var newArtists = Array.Empty<ListeningStatsArtist>();
+        var newArtistCount = 0L;
+        if (period.From is { } since)
+        {
+            var earlier = (await qualified.Where(item => (item.ListenedAt ?? item.StartedAt) < since && item.Artist != null).Select(item => item.Artist!).Distinct().ToListAsync(token))
+                .Select(item => item.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (earlier.Count > 0)
+            {
+                var fresh = artistGroups.Where(group => !earlier.Contains(group.Key)).ToArray();
+                newArtistCount = fresh.Length;
+                newArtists = fresh.Select(group => new ListeningStatsArtist(group.Key, group.LongCount()))
+                    .OrderByDescending(item => item.PlayCount).ThenBy(item => item.Artist, StringComparer.Ordinal).Take(12).ToArray();
+            }
+        }
+
+        var artwork = await ArtworkAsync(db, songs.Select(item => item.Recording).Concat(artists.Select(item => item.Recording))
+            .Concat(albums.Select(item => item.Recording)).OfType<Guid>().Distinct().ToArray(), token);
+        string? Art(Guid? recording) => recording is { } id ? artwork.GetValueOrDefault(id) : null;
+        var (unit, timeline) = Timeline(period, zone, days, now);
+        return new(period, plays.Count, days.Count,
             imported, observedSince, plays.Sum(item => item.DurationMilliseconds ?? 0),
-            new(plays.Count - knownSongs.Length, plays.LongCount(item => item.DurationMilliseconds == null)), songs, artists, albums)
-        { ShortPlayCount = shortPlays, FirstPlayAt = firstPlayAt };
+            new(plays.Count - knownSongs.Length, plays.LongCount(item => item.DurationMilliseconds == null)),
+            songs.Select(item => item.Row with { ArtworkUrl = Art(item.Recording) }).ToArray(),
+            artists.Select(item => item.Row with { ArtworkUrl = Art(item.Recording) }).ToArray(),
+            albums.Select(item => item.Row with { ArtworkUrl = Art(item.Recording) }).ToArray())
+        {
+            ShortPlayCount = shortPlays,
+            FirstPlayAt = firstPlayAt,
+            UniqueSongs = songGroups.Length,
+            UniqueArtists = artistGroups.Length,
+            TimelineUnit = unit,
+            Timeline = timeline,
+            ByHour = byHour,
+            BiggestDay = biggest,
+            LongestStreakDays = LongestStreak(days.Keys),
+            TopGenres = tags == null ? [] : await GenresAsync(tags, plays, token),
+            NewArtistCount = newArtistCount,
+            NewArtists = newArtists
+        };
+    }
+
+    private static Guid? MostPlayedRecording(IEnumerable<StatsPlay> plays) => plays.Where(item => item.CanonicalRecordingId != null)
+        .GroupBy(item => item.CanonicalRecordingId).OrderByDescending(group => group.Count()).ThenBy(group => group.Key).Select(group => group.Key).FirstOrDefault();
+
+    private static async Task<IReadOnlyDictionary<Guid, string>> ArtworkAsync(AllstarrDbContext db, IReadOnlyCollection<Guid> recordings, CancellationToken token)
+    {
+        if (recordings.Count == 0) return new Dictionary<Guid, string>();
+        var identities = await db.ProviderTrackIdentities.AsNoTracking().Where(item => recordings.Contains(item.CanonicalRecordingId) &&
+                item.ResourceKind == ProviderResourceKind.Track &&
+                (item.Verification == ProviderIdentityVerification.Verified || item.Verification == ProviderIdentityVerification.Pinned))
+            .Select(item => new { item.CanonicalRecordingId, item.ProviderId, item.ExternalId }).ToArrayAsync(token);
+        return identities.Where(item => !NoArtwork.Contains(item.ProviderId, StringComparer.OrdinalIgnoreCase)).GroupBy(item => item.CanonicalRecordingId)
+            .ToDictionary(group => group.Key, group =>
+            {
+                // These two answer quickly and reliably; anything else is still better than a blank square.
+                var source = group.OrderBy(item => item.ProviderId == "deezer" ? 0 : item.ProviderId == "apple-musickit" ? 1 : 2).ThenBy(item => item.ProviderId, StringComparer.Ordinal).First();
+                return $"/api/admin/downloads/artwork/{Uri.EscapeDataString($"ext-{source.ProviderId}-song-{source.ExternalId}")}";
+            });
+    }
+
+    // A long span reads best by month, a short one by day.
+    private static (string Unit, IReadOnlyList<ListeningStatsPoint> Points) Timeline(ListeningStatsPeriod period, TimeZoneInfo zone,
+        IReadOnlyDictionary<DateOnly, long> days, DateTimeOffset? now)
+    {
+        if (days.Count == 0) return ("day", []);
+        var end = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(period.To.AddTicks(-1), zone).DateTime);
+        if (now.HasValue && DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(now.Value, zone).DateTime) is var today && today < end) end = today;
+        if (!now.HasValue) end = days.Keys.Max();
+        var first = period.From.HasValue ? DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(period.From.Value, zone).DateTime) : days.Keys.Min();
+        if (end.DayNumber - first.DayNumber <= 62)
+            return ("day", Enumerable.Range(0, end.DayNumber - first.DayNumber + 1).Select(first.AddDays)
+                .Select(day => new ListeningStatsPoint(day.ToString("yyyy-MM-dd"), days.GetValueOrDefault(day))).ToArray());
+        var months = days.GroupBy(item => (item.Key.Year, item.Key.Month)).ToDictionary(group => group.Key, group => group.Sum(item => item.Value));
+        var points = new List<ListeningStatsPoint>();
+        for (var month = new DateOnly(first.Year, first.Month, 1); month <= end; month = month.AddMonths(1))
+            points.Add(new(month.ToString("yyyy-MM"), months.GetValueOrDefault((month.Year, month.Month))));
+        return ("month", points);
+    }
+
+    private static int LongestStreak(IEnumerable<DateOnly> days)
+    {
+        var (longest, current, previous) = (0, 0, default(DateOnly?));
+        foreach (var day in days.OrderBy(item => item))
+        {
+            current = previous is { } last && last.AddDays(1) == day ? current + 1 : 1;
+            longest = Math.Max(longest, current);
+            previous = day;
+        }
+        return longest;
+    }
+
+    private static async Task<IReadOnlyList<ListeningStatsGenre>> GenresAsync(SharedTagStore tags, IReadOnlyList<StatsPlay> plays, CancellationToken token)
+    {
+        var recordings = plays.Where(item => item.CanonicalRecordingId != null).GroupBy(item => item.CanonicalRecordingId!.Value)
+            .Select(group => (Id: group.Key, Plays: group.LongCount())).OrderByDescending(item => item.Plays).ThenBy(item => item.Id).Take(3000).ToArray();
+        if (recordings.Length == 0) return [];
+        var profiles = await tags.GetTags(recordings.Select(item => item.Id).ToArray(), token);
+        var totals = new Dictionary<string, long>(StringComparer.Ordinal);
+        foreach (var recording in recordings)
+            if (profiles.TryGetValue(recording.Id, out var profile))
+                foreach (var tag in profile.Tags) totals[tag.Tag] = totals.GetValueOrDefault(tag.Tag) + recording.Plays;
+        return totals.OrderByDescending(item => item.Value).ThenBy(item => item.Key, StringComparer.Ordinal).Take(10)
+            .Select(item => new ListeningStatsGenre(item.Key, item.Value)).ToArray();
     }
 
     private static string SongKey(StatsPlay item) => item.CanonicalRecordingId is { } recording ? $"recording:{recording:N}"

@@ -1394,9 +1394,19 @@ export type ListeningStats = {
   firstPlayAt?: string | null;
   estimatedTimeFromSongLengthsMilliseconds: number;
   coverage: { unknownSongIdentityCount: number; unknownDurationCount: number };
-  topSongs: Array<{ title: string; artist: string; album: string | null; playCount: number }>;
-  topArtists: Array<{ artist: string; playCount: number }>;
-  topAlbums: Array<{ album: string; artist: string; playCount: number }>;
+  topSongs: Array<{ title: string; artist: string; album: string | null; playCount: number; artworkUrl?: string | null }>;
+  topArtists: Array<{ artist: string; playCount: number; artworkUrl?: string | null }>;
+  topAlbums: Array<{ album: string; artist: string; playCount: number; artworkUrl?: string | null }>;
+  uniqueSongs?: number;
+  uniqueArtists?: number;
+  timelineUnit?: string;
+  timeline?: Array<{ key: string; plays: number }>;
+  byHour?: number[];
+  biggestDay?: { key: string; plays: number } | null;
+  longestStreakDays?: number;
+  topGenres?: Array<{ genre: string; plays: number }>;
+  newArtistCount?: number;
+  newArtists?: Array<{ artist: string; playCount: number }>;
 };
 
 export type HistoryImport = {
@@ -2460,7 +2470,7 @@ export const taste = {
 };
 
 export const listeningStats = {
-  get: (period = "30d", year = "") => json<ListeningStats>(`/api/admin/stats?${new URLSearchParams(year ? { year } : { period })}`),
+  get: (period = "30d", year = "") => json<ListeningStats>(`/api/admin/stats?${new URLSearchParams({ ...(year ? { year } : { period }), timeZoneId: Intl.DateTimeFormat().resolvedOptions().timeZone })}`),
 };
 
 export const historyImports = {
@@ -2495,6 +2505,7 @@ export const releaseInbox = {
   get: () => json<ReleaseInbox>("/api/admin/releases"),
   artists: () => json<FollowedReleaseArtist[]>("/api/admin/releases/artists"),
   followFromHearts: () => json<{ followed: number }>("/api/admin/releases/artists/from-hearts", { method: "POST" }),
+  followFromHistory: () => json<{ followed: number }>("/api/admin/releases/artists/from-history", { method: "POST" }),
   unfollow: (providerId: string, artistId: string) => json<void>(`/api/admin/releases/artists/${encodeURIComponent(providerId)}/${encodeURIComponent(artistId)}`, { method: "DELETE" }),
   dismiss: (id: string) => json<void>(`/api/admin/releases/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

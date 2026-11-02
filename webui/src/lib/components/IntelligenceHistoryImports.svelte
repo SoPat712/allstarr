@@ -178,6 +178,30 @@
   });
 </script>
 
+{#snippet importRows()}
+    <ul class="history-list">
+      {#each groups as group (group.id)}
+        {@const combined = combineHistoryPreviews(group.items)}
+        <li>
+          <div class="settings-row">
+            <div>
+              {#if group.items.length > 1}<strong>{source(group.items)} · {group.items.length} files · {historyDateRange(combined.earliest, combined.latest, true)} · {historyPlays(combined.completed)}</strong>
+              {:else}<strong>{source(group.items)}</strong><small>{historyDateRange(combined.earliest, combined.latest)}</small><small>{historyPlays(combined.completed)} in file</small>{/if}
+              <span class="history-state">{groupState(group.items)}</span>
+              {#if group.items.some(active)}<Progress value={group.items.length > 1 ? importBatchProgress(group.items).percent : importProgress(group.items[0])} aria-label={`${source(group.items)} import`} />{/if}
+            </div>
+            <div class="history-actions">{#if group.items.some(item => importPhase(item) === "previewed")}<Button variant="secondary" disabled={uploading || action} onclick={() => review(group.items)}>Review</Button>{/if}<Button variant="ghost" disabled={uploading || action} onclick={() => { removing = [...group.items]; deleteError = ""; deleteOpen = true; }}>Delete</Button></div>
+          </div>
+          {#if group.items.length > 1}
+            <details class="history-files"><summary class="disclosure-summary"><DisclosureLabel title="Show files" /></summary>
+              <ul class="history-file-list">{#each group.items as item (item.importId)}<li><strong>{item.displayFileName}</strong><small>{historyPlays(item.preview.completed)} · {historyDateRange(item.preview.earliest, item.preview.latest)}</small><span>{importState(item)}</span></li>{/each}</ul>
+            </details>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+{/snippet}
+
 <section class="settings-card history-imports" aria-labelledby="history-imports-heading">
   <header><div><h3 id="history-imports-heading">Listening history from other services</h3><small>Bring in your history from Spotify, Last.fm, ListenBrainz, Maloja or Koito. Completed imported plays appear in Recap at their original dates and never scrobble.</small></div></header>
   <div class="settings-row">
@@ -195,27 +219,14 @@
   {#if loading}<p class="history-message" role="status">Loading imports…</p>
   {:else if !items.length}<p class="history-message">No imports yet.</p>
   {:else}
-    <ul class="history-list">
-      {#each groups as group (group.id)}
-        {@const combined = combineHistoryPreviews(group.items)}
-        <li>
-          <div class="settings-row">
-            <div>
-              {#if group.items.length > 1}<strong>{source(group.items)} · {group.items.length} files · {historyDateRange(combined.earliest, combined.latest, true)} · {historyPlays(combined.completed)}</strong>
-              {:else}<strong>{source(group.items)}</strong><small>{historyDateRange(combined.earliest, combined.latest)}</small><small>{historyPlays(combined.completed)} in file · Import date unavailable</small>{/if}
-              <span class="history-state">{groupState(group.items)}</span>
-              {#if group.items.some(active)}<Progress value={group.items.length > 1 ? importBatchProgress(group.items).percent : importProgress(group.items[0])} aria-label={`${source(group.items)} import`} />{/if}
-            </div>
-            <div class="history-actions">{#if group.items.some(item => importPhase(item) === "previewed")}<Button variant="secondary" disabled={uploading || action} onclick={() => review(group.items)}>Review</Button>{/if}<Button variant="ghost" disabled={uploading || action} onclick={() => { removing = [...group.items]; deleteError = ""; deleteOpen = true; }}>Delete</Button></div>
-          </div>
-          {#if group.items.length > 1}
-            <details class="history-files"><summary class="disclosure-summary"><DisclosureLabel title="Show files" /></summary>
-              <ul class="history-file-list">{#each group.items as item (item.importId)}<li><strong>{item.displayFileName}</strong><small>{historyPlays(item.preview.completed)} · {historyDateRange(item.preview.earliest, item.preview.latest)}</small><span>{importState(item)}</span></li>{/each}</ul>
-            </details>
-          {/if}
-        </li>
-      {/each}
-    </ul>
+    {#if items.length > 3 && !items.some(active)}
+      <details class="imports-details">
+        <summary class="disclosure-summary"><DisclosureLabel title={`Show ${items.length} imports`} description={`${formatCount(items.reduce((sum, item) => sum + item.importedRows, 0))} plays added`} /></summary>
+        {@render importRows()}
+      </details>
+    {:else}
+      {@render importRows()}
+    {/if}
   {/if}
 </section>
 
@@ -263,6 +274,7 @@
   .history-preview li + li, .history-file-list li + li { border-top: 1px solid var(--color-edge); }
   .history-file-list li { display: grid; gap: var(--space-1); font-size: var(--text-sm); overflow-wrap: anywhere; }
   .history-list strong { overflow-wrap: anywhere; }
+  .imports-details > summary { min-height: 44px; padding: var(--space-3) var(--space-6); cursor: pointer; }
   .history-files { padding: 0 var(--space-6) var(--space-4); }
   .history-files summary { min-height: 44px; }
   @media (max-width: 600px) { .history-imports :global(.settings-row) { grid-template-columns: minmax(0, 1fr); } .history-actions { justify-content: start; } }

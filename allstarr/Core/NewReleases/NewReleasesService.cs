@@ -3,11 +3,13 @@ using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Favorites;
+using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Routing;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Releases;
@@ -21,6 +23,8 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
     private const string CatalogKind = "release-catalog";
     private const string RateKind = "release-rate";
     private const string DismissKind = "release-dismissal";
+    private const int FollowTopArtists = 25, FollowMinimumPlays = 5;
+    private static readonly string[] FollowSources = ["deezer", "apple-musickit", "spotiflac-deezer", "spotiflac-tidal-web", "spotiflac-spotify-web", "spotiflac-apple-music"];
 
     public async Task<IReadOnlyList<FollowedReleaseArtist>> ListAsync(Guid owner, CancellationToken token = default)
     {
@@ -99,6 +103,69 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
                 var id = artist.Id!;
                 if (follows.Any(item => item.ProviderId == id.ProviderId && item.ArtistId == id.Value)) continue;
                 follows.Add(new(id.ProviderId, id.Value, artist.Name!, await KnownArtistMbidAsync(db, user, id, token)));
+                added++;
+            }
+            if (added > 0)
+            {
+                await SaveAsync(db, user, FollowsKind, Scope(user), follows.ToArray(), token);
+                await EnsureScheduleAsync(db, user, token);
+                await db.SaveChangesAsync(token);
+            }
+            return added;
+        }
+        finally { Gate.Release(); }
+    }
+
+    /// <summary>Follows the artists a listener plays most, looking each one up by exact name in a source that can list releases.</summary>
+    public async Task<int> FollowTopArtistsAsync(Guid owner, CancellationToken token = default)
+    {
+        await using var db = await factory.CreateDbContextAsync(token);
+        var user = await UserAsync(db, owner, token);
+        var since = clock.UtcNow.AddYears(-3);
+        var names = (await db.ListeningEvents.AsNoTracking().Where(item => item.OwnerUserId == owner && item.Protocol == user.BackendType &&
+                item.BackendInstanceId == user.BackendInstanceId && item.State == ListeningEventState.Completed && item.Artist != null && item.ListenedAt >= since)
+            .GroupBy(item => item.Artist!).Select(group => new { Name = group.Key, Plays = group.Count() }).ToArrayAsync(token))
+            .GroupBy(item => item.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(group => (Name: group.Key, Plays: group.Sum(item => item.Plays)))
+            .Where(item => FuzzyMatcher.SplitCredits(item.Name).Count == 1 || item.Plays >= FollowMinimumPlays * 2)
+            .Where(item => item.Plays >= FollowMinimumPlays).OrderByDescending(item => item.Plays).ThenBy(item => item.Name, StringComparer.Ordinal)
+            .Take(FollowTopArtists).Select(item => item.Name).ToArray();
+        if (names.Length == 0) return 0;
+        var principal = new ProviderBackendPrincipal(user.BackendType, user.BackendInstanceId, user.BackendPrincipalId);
+        var policy = new ProviderExecutionPolicy(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, false),
+            ProviderExplicitContentPolicy.Allow, false, true, false, FollowSources);
+        var plan = await router.PlanAsync<IProviderMetadataCapability>(new(ProviderCapabilityKind.Metadata, new(ProviderActorKind.User, user.Id, principal), policy,
+            "releases-follow-top", "releases", DateTimeOffset.UtcNow.AddSeconds(60), FollowSources, cancellationToken: token));
+        var sources = plan.Candidates.Where(item => item.Descriptor.Hooks.Contains("getArtistAlbums", StringComparer.Ordinal))
+            .OrderBy(item => Array.IndexOf(FollowSources, item.Provider.Id)).ToArray();
+        if (sources.Length == 0) return 0;
+        using var searches = new SemaphoreSlim(4);
+        var found = await Task.WhenAll(names.Select(async name =>
+        {
+            await searches.WaitAsync(token);
+            try
+            {
+                foreach (var source in sources)
+                {
+                    var outcome = await source.Implementation.SearchArtistsAsync(source.Context, new(name, new(5)));
+                    if (outcome.IsSuccess && outcome.RequireValue().Items.FirstOrDefault(item => item.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) is { } artist)
+                        return new FollowedReleaseArtist(artist.Id.ProviderId, artist.Id.Value, artist.Name);
+                }
+                return null;
+            }
+            finally { searches.Release(); }
+        }));
+        await Gate.WaitAsync(token);
+        try
+        {
+            var follows = (await FollowsAsync(db, user, token)).ToList();
+            var added = 0;
+            foreach (var artist in found.OfType<FollowedReleaseArtist>())
+            {
+                if (follows.Any(item => item.ProviderId == artist.ProviderId && item.ArtistId == artist.ArtistId ||
+                    item.DisplayName.Equals(artist.DisplayName, StringComparison.OrdinalIgnoreCase))) continue;
+                var id = new ProviderExternalResourceId(artist.ProviderId, ProviderResourceKind.Artist, artist.ArtistId);
+                follows.Add(artist with { MusicBrainzArtistId = await KnownArtistMbidAsync(db, user, id, token) });
                 added++;
             }
             if (added > 0)

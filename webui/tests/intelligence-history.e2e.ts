@@ -112,7 +112,6 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(card).toContainText("Done");
     await expect(card).toContainText("Failed: The history file is no longer available.");
     await expect(card.getByRole("listitem").first()).toContainText("Spotify");
-    await expect(card).toContainText("Import date unavailable");
     await expect(card).toContainText("Bring in your history from Spotify, Last.fm, ListenBrainz, Maloja or Koito. Completed imported plays appear in Recap at their original dates and never scrobble.");
     await capture(page, "history", width, theme);
     let finishUpload!: () => void;

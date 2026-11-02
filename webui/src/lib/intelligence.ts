@@ -39,6 +39,30 @@ export function listeningTime(milliseconds: number) {
   return hours ? `${formatCount(hours)} hr${minutes % 60 ? ` ${minutes % 60} min` : ""}` : `${minutes} min`;
 }
 
+// Dates here are calendar days the server already placed in the listener's time zone, so they're read as plain dates.
+export function recapTimeline(points: { key: string; plays: number }[], unit: string) {
+  const months = points.length;
+  return points.map((point, index) => {
+    const [year, month, day = 1] = point.key.split("-").map(Number);
+    const date = new Date(year, (month || 1) - 1, day);
+    const label = unit === "day"
+      ? date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+      : date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+    const axis = unit === "day"
+      ? (months <= 7 ? date.toLocaleDateString("en-US", { weekday: "short" }) : (index % 5 === 0 ? date.toLocaleDateString("en-US", { month: "short", day: "numeric" }) : ""))
+      : months > 24
+        ? (month === 1 ? String(year) : "")
+        : (index % (months > 12 ? 3 : 1) === 0 ? date.toLocaleDateString("en-US", { month: "short" }) : "");
+    return { key: point.key, label, axis, value: point.plays };
+  });
+}
+
+export function recapClock(hours: number[]) {
+  if (!hours.some(value => value > 0)) return [];
+  const name = (hour: number) => hour === 0 ? "12 AM" : hour === 12 ? "12 PM" : hour < 12 ? `${hour} AM` : `${hour - 12} PM`;
+  return hours.map((value, hour) => ({ key: String(hour), label: name(hour), axis: hour % 6 === 0 ? name(hour) : "", value }));
+}
+
 function exactDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const [year, month, day] = value.split("-").map(Number);

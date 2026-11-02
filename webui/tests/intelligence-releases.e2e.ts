@@ -80,7 +80,7 @@ async function openReleases(page: Page) {
 
 async function openFollowConfirmation(page: Page) {
   await page.getByRole("button", { name: "Release actions", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Follow artists you play a lot", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Follow artists from my hearts", exact: true }).click();
 }
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
@@ -125,9 +125,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(page.getByText("Follow artists to see their new music here.", { exact: true })).toBeVisible();
     await capture(page, "new-releases-empty", width, theme);
     await openFollowConfirmation(page);
-    const confirm = page.getByRole("alertdialog", { name: "Follow artists you play a lot", exact: true });
+    const confirm = page.getByRole("alertdialog", { name: "Follow artists from your hearts", exact: true });
     await expect(confirm).toContainText("Follow up to 200 artists from songs you've hearted?");
-    await expect(confirm).toContainText("Following from your play history isn't available yet.");
     await expect(confirm.getByRole("button", { name: "Cancel", exact: true })).toHaveAttribute("type", "button");
     await capture(page, "new-releases-follow", width, theme);
     await confirm.getByRole("button", { name: "Cancel", exact: true }).click();

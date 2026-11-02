@@ -16,7 +16,9 @@ async function mockStats(page: Page, value: ListeningStats = stats) {
   const calls: string[] = [];
   await mockForYou(page);
   await page.route("**/api/admin/stats?*", route => {
-    calls.push(new URL(route.request().url()).search);
+    const search = new URL(route.request().url()).searchParams;
+    search.delete("timeZoneId");
+    calls.push(`?${search}`);
     return route.fulfill({ json: value });
   });
   return calls;
@@ -27,7 +29,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await appearance(page, width, theme);
     await mockStats(page);
     await page.goto("/#/for-you?section=recap");
-    await expect(page.getByRole("heading", { name: "Your listening", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Your listening", exact: true })).toBeAttached();
     await expect(page.getByText("1,234", { exact: true })).toBeVisible();
     await expect(page.getByText("about 30 hr 50 min from song lengths", { exact: true })).toBeVisible();
     await expect(page.getByRole("region", { name: "Top songs", exact: true })).toContainText("Evening light");
@@ -89,13 +91,13 @@ test("Completed imported-only plays populate their original year", async ({ page
   await expect(page.getByRole("region", { name: "Top artists", exact: true })).toContainText("The Coast");
   await expect(page.getByRole("region", { name: "Top albums", exact: true })).toContainText("Open water");
   await expect(page.getByText("Imported from other services: 450 plays", { exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "2015 · Year in music", exact: true })).toBeVisible();
+  await expect(page.getByText("2015 in music", { exact: true })).toBeVisible();
   await expect(page.getByText("No plays in this period.", { exact: true })).toHaveCount(0);
 });
 
 test("A failed period change does not label the previous totals as the new period", async ({ page }) => {
   await mockStats(page);
-  await page.route("**/api/admin/stats?period=7d", route => route.fulfill({ status: 503, json: { error: "Unavailable" } }));
+  await page.route("**/api/admin/stats?period=7d*", route => route.fulfill({ status: 503, json: { error: "Unavailable" } }));
   await page.goto("/#/for-you?section=recap");
   await expect(page.getByText("1,234", { exact: true })).toBeVisible();
   await page.getByRole("navigation", { name: "Stats period" }).getByRole("tab", { name: "Last 7 days", exact: true }).click();

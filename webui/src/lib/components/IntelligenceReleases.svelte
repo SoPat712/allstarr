@@ -57,6 +57,19 @@
     } catch { if (!disposed) followError = "Artists could not be followed. Try again."; }
     finally { if (!disposed) action = ""; }
   }
+  async function followTop() {
+    if (action) return;
+    action = "follow-top";
+    try {
+      await pending;
+      const result = await releaseInbox.followFromHistory();
+      if (disposed) return;
+      if (result.followed) toast.success(`Following ${result.followed} of your top artists`);
+      else toast.error("No more artists to follow from your listening yet.");
+      await load();
+    } catch { if (!disposed) toast.error("Your top artists could not be followed. Try again."); }
+    finally { if (!disposed) action = ""; }
+  }
   async function unfollow(artist: FollowedReleaseArtist) {
     if (action) return;
     action = `artist:${artist.providerId}:${artist.artistId}`;
@@ -98,7 +111,7 @@
     <p>{#if radar}<a href={`#/for-you?mix=${encodeURIComponent(radar)}`}>Just Dropped collects these every Friday.</a>{:else}Just Dropped collects these every Friday.{/if}</p>
     <div class="release-actions">
       <Button variant="secondary" onclick={() => artistsOpen = true}>Following ({artists.length})</Button>
-      <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label="Release actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu release-menu" align="end"><DropdownMenu.Item class="bits-menu-item" onSelect={() => { followError = ""; followOpen = true; }}>Follow artists you play a lot</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
+      <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label="Release actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu release-menu" align="end"><DropdownMenu.Item class="bits-menu-item" onSelect={() => void followTop()}>Follow my top artists</DropdownMenu.Item><DropdownMenu.Item class="bits-menu-item" onSelect={() => { followError = ""; followOpen = true; }}>Follow artists from my hearts</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
       <RefreshButton variant="secondary" label="Refresh releases" disabled={Boolean(action)} onrefresh={load} />
     </div>
   </div>
@@ -113,7 +126,10 @@
       </details>
     {/if}
     {#if !inbox.entries.length}
-      <div class="settings-card release-empty"><p>Follow artists to see their new music here.</p></div>
+      <div class="settings-card release-empty">
+        <p>{artists.length ? "Nothing new from the artists you follow yet." : "Follow artists to see their new music here."}</p>
+        {#if !artists.length}<Button disabled={Boolean(action)} onclick={() => void followTop()}>{action === "follow-top" ? "Finding your top artists…" : "Follow my top artists"}</Button>{/if}
+      </div>
     {:else}
       {#each groups as group (group.label)}
         <section aria-label={group.label}>
@@ -162,7 +178,7 @@
     </Dialog.Content>
   </Dialog.Portal>
 </Dialog.Root>
-<ConfirmDialog bind:open={followOpen} title="Follow artists you play a lot" description="Follow up to 200 artists from songs you've hearted? Following from your play history isn't available yet." confirmLabel="Follow artists from my hearts" confirmVariant="default" disabled={Boolean(action)} closeOnConfirm={false} error={followError} onConfirm={follow} />
+<ConfirmDialog bind:open={followOpen} title="Follow artists from your hearts" description="Follow up to 200 artists from songs you've hearted?" confirmLabel="Follow artists from my hearts" confirmVariant="default" disabled={Boolean(action)} closeOnConfirm={false} error={followError} onConfirm={follow} />
 
 <style>
   :global(.release-menu .bits-menu-item) { min-height: 44px; }

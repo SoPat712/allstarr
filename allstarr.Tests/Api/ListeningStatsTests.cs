@@ -266,20 +266,56 @@ public sealed class ListeningStatsTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task CachedRecapExpiresAndRechecksTheSessionBeforeReturning()
+    public async Task CachedRecapFollowsNewPlaysAndRechecksTheSessionBeforeReturning()
     {
         await Add(Play("2025-01-01T12:00:00Z"));
         var first = await stats.GetAsync(Session(), null, 2025, default);
-        await Add(Play("2025-02-01T12:00:00Z"));
         Assert.Same(first, await stats.GetAsync(Session(), null, 2025, default));
-        clock.UtcNow = clock.UtcNow.AddSeconds(31);
-        Assert.Equal(2, (await stats.GetAsync(Session(), null, 2025, default)).PlayCount);
+        await Add(Play("2025-02-01T12:00:00Z"));
+        var second = await stats.GetAsync(Session(), null, 2025, default);
+        Assert.Equal(2, second.PlayCount);
+        clock.UtcNow = clock.UtcNow.AddMinutes(11);
+        Assert.NotSame(second, await stats.GetAsync(Session(), null, 2025, default));
         await using (var db = factory.CreateDbContext())
         {
             (await db.Users.SingleAsync()).Enabled = false;
             await db.SaveChangesAsync();
         }
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => stats.GetAsync(Session(), null, 2025, default));
+    }
+
+    [Fact]
+    public async Task RecapDescribesWhenAndHowOftenInTheListenersTimeZone()
+    {
+        await Add(Play("2025-03-01T02:30:00Z"), Play("2025-03-01T03:30:00Z"), Play("2025-03-01T15:00:00Z"), Play("2025-05-10T15:00:00Z"));
+
+        var result = await stats.GetAsync(Session(), null, 2025, default, "America/New_York");
+
+        Assert.Equal("month", result.TimelineUnit);
+        Assert.Equal(12, result.Timeline.Count);
+        Assert.Equal("2025-02", result.Timeline[1].Key);
+        Assert.Equal(2, result.Timeline[1].Plays);
+        Assert.Equal(0, result.Timeline[3].Plays);
+        Assert.Equal(2, result.ByHour[21] + result.ByHour[22]);
+        Assert.Equal(1, result.ByHour[10]);
+        Assert.Equal(1, result.ByHour[11]);
+        Assert.Equal(2, result.LongestStreakDays);
+        Assert.Equal(new ListeningStatsPoint("2025-02-28", 2), result.BiggestDay);
+        await Assert.ThrowsAsync<ArgumentException>(() => stats.GetAsync(Session(), null, 2025, default, "Nowhere/Invalid"));
+    }
+
+    [Fact]
+    public async Task RecapNamesArtistsFirstHeardInThePeriod()
+    {
+        await Add(Play("2024-06-01T12:00:00Z"), Play("2025-06-01T12:00:00Z"));
+        var fresh = Play("2025-07-01T12:00:00Z");
+        fresh.Artist = "Someone New";
+        await Add(fresh);
+
+        var result = await stats.GetAsync(Session(), null, 2025, default);
+
+        Assert.Equal(1, result.NewArtistCount);
+        Assert.Equal("Someone New", Assert.Single(result.NewArtists).Artist);
     }
 
     [Theory]
@@ -336,7 +372,7 @@ public sealed class ListeningStatsTests : IAsyncLifetime
     [Fact]
     public async Task TopsAreLimitedAndKeepDistinctSongAndAlbumIdentities()
     {
-        var plays = Enumerable.Range(0, 12).Select(index =>
+        var plays = Enumerable.Range(0, 52).Select(index =>
         {
             var play = Play("2026-10-01T12:00:00Z");
             play.Title = "Song";
@@ -347,9 +383,9 @@ public sealed class ListeningStatsTests : IAsyncLifetime
         }).ToArray();
         await Add(plays);
         var result = await stats.GetAsync(Session(), "all", null, default);
-        Assert.Equal(10, result.TopSongs.Count);
-        Assert.Equal(10, result.TopArtists.Count);
-        Assert.Equal(10, result.TopAlbums.Count);
+        Assert.Equal(50, result.TopSongs.Count);
+        Assert.Equal(50, result.TopArtists.Count);
+        Assert.Equal(50, result.TopAlbums.Count);
         Assert.Equal("Artist 00", result.TopSongs[0].Artist);
     }
 
