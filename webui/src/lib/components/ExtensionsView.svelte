@@ -308,7 +308,8 @@
           extensions.permissions(item.id),
           previous ? extensions.permissions(previous.id) : Promise.resolve([]),
         ]);
-        return { item, previous, permissions: current, previousPermissions: before, approve: true };
+        // An update to an extension that was switched off stays unticked so approving does not turn it back on.
+        return { item, previous, permissions: current, previousPermissions: before, approve: !previous || previous.active };
       })).then((rows) => rows.filter((row): row is BulkEntry => row !== null));
     } catch (cause) {
       bulkErrors = [...bulkErrors, cause instanceof Error ? cause.message : "The extensions could not be read."];

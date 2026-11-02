@@ -2441,7 +2441,7 @@ test("extension updates can be reviewed together", async ({ page }) => {
   });
   const packages = [
     extension("lumen-old", "lumen-audio", "Lumen Audio", "1.0.0", "active"),
-    extension("pulse-old", "pulse-lyrics", "Pulse Lyrics", "1.0.0", "active"),
+    extension("pulse-old", "pulse-lyrics", "Pulse Lyrics", "1.0.0", "disabled"),
     extension("nova", "nova-art", "Nova Art", "0.1.0", "reviewRequired"),
   ];
   const updates: Record<string, ReturnType<typeof extension>> = {
@@ -2492,9 +2492,10 @@ test("extension updates can be reviewed together", async ({ page }) => {
   await expect(rows.nth(0)).toContainText("New access");
   await expect(rows.nth(1)).toContainText("No new access");
   await expect(rows.nth(2)).toContainText("Version 0.1.0");
-  const approve = review.getByRole("button", { name: "Approve 3" });
-  await expect(approve).toBeDisabled();
-  await review.getByRole("checkbox", { name: "Approve and turn on Pulse Lyrics" }).click();
+  await expect(review.getByRole("checkbox", { name: "Approve and turn on Pulse Lyrics" })).not.toBeChecked();
+  await review.getByRole("checkbox", { name: "Approve and turn on Nova Art" }).click();
+  await expect(review.getByRole("button", { name: "Approve 1" })).toBeDisabled();
+  await review.getByRole("checkbox", { name: "Approve and turn on Nova Art" }).click();
   await review.getByText("I understand what these extensions can access.").click();
   await review.getByRole("button", { name: "Approve 2" }).click();
   await expect(review).toBeHidden();
