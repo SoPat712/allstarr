@@ -92,13 +92,24 @@ export function mixExclusions(excluded: Record<string, number>) {
   return Object.entries(excluded).filter(([, count]) => count > 0).map(([label, count]) => `${count} ${labels[label.toLowerCase()] ?? "left out"}`).join(" · ");
 }
 
-// One sentence a listener can recognise: their two strongest traits, the pace, and what they skip or keep.
-export function soundSummary(profile: { traits: { name: string; value: number; lean: number | null }[]; tempo: number | null }) {
-  const strongest = [...profile.traits].sort((a, b) => b.value - a.value).slice(0, 2).map(trait => trait.name.toLowerCase());
-  const leans = profile.traits.filter(trait => trait.lean !== null && Math.abs(trait.lean) >= 5).sort((a, b) => Math.abs(b.lean!) - Math.abs(a.lean!));
-  const lean = leans[0];
+// One sentence a listener can recognise: what sets their favourites apart from the rest of their library, the pace,
+// and what they skip. Differences under a quarter of the library's spread aren't worth saying.
+const notable = 25;
+export function soundSummary(profile: { traits: { name: string; difference: number; lean: number | null }[]; tempo: number | null; libraryTempo: number | null }) {
+  const names = (rows: { name: string }[]) => rows.map(row => row.name.toLowerCase()).join(" and ");
+  const more = profile.traits.filter(trait => trait.difference >= notable).sort((a, b) => b.difference - a.difference).slice(0, 2);
+  const less = profile.traits.filter(trait => trait.difference <= -notable).sort((a, b) => a.difference - b.difference).slice(0, 1);
+  const sets = [more.length ? `more ${names(more)}` : "", less.length ? `less ${names(less)}` : ""].filter(Boolean).join(" and ");
+  const faster = profile.tempo && profile.libraryTempo && Math.abs(profile.tempo - profile.libraryTempo) >= 5
+    ? profile.tempo > profile.libraryTempo ? "a little faster" : "a little slower" : "";
+  const pace = profile.tempo ? `${faster ? `${faster}, ` : ""}around ${profile.tempo} BPM` : "";
+  const lean = profile.traits.filter(trait => trait.lean !== null && Math.abs(trait.lean) >= notable).sort((a, b) => Math.abs(b.lean!) - Math.abs(a.lean!))[0];
   return [
-    strongest.length ? `Mostly ${strongest.join(" and ")}${profile.tempo ? `, around ${profile.tempo} BPM` : ""}.` : "",
+    `${sets ? `Your favourites are ${sets} than the rest of your library` : "Your favourites sound much like the rest of your library"}${pace ? `, ${pace}` : ""}.`,
     lean ? lean.lean! < 0 ? `You skip ${lean.name.toLowerCase()} songs more than you finish them.` : `You finish ${lean.name.toLowerCase()} songs more than you skip them.` : "",
   ].filter(Boolean).join(" ");
+}
+
+export function soundDifference(value: number) {
+  return value > 0 ? `+${value}` : value < 0 ? `−${Math.abs(value)}` : "0";
 }

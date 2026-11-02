@@ -2454,8 +2454,10 @@ export const mixes = {
   },
 };
 
-export type SoundTrait = { name: string; value: number; lean: number | null };
-export type SoundProfile = { songs: number; skippedSongs: number; traits: SoundTrait[]; tempo: number | null; at: string };
+export type SoundTrait = { name: string; difference: number; lean: number | null };
+export type SoundProfile = {
+  songs: number; skippedSongs: number; librarySongs: number; traits: SoundTrait[]; tempo: number | null; libraryTempo: number | null; at: string;
+};
 
 export const taste = {
   get: () => json<TasteProfile>("/api/admin/taste"),

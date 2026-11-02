@@ -55,16 +55,17 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await appearance(page, width, theme);
     await mockTaste(page);
     await page.route("**/api/admin/taste/sound", route => route.fulfill({ json: { profile: {
-      songs: 214, skippedSongs: 61, tempo: 118, at: "2026-11-02T10:00:00Z",
-      traits: [{ name: "Energetic", value: 71, lean: 4 }, { name: "Danceable", value: 64, lean: 2 }, { name: "Happy", value: 48, lean: 9 },
-        { name: "Relaxed", value: 33, lean: -3 }, { name: "Festive", value: 41, lean: 1 }, { name: "Intense", value: 52, lean: 3 },
-        { name: "Melancholy", value: 29, lean: -14 }],
+      songs: 214, skippedSongs: 61, librarySongs: 152, tempo: 124, libraryTempo: 116, at: "2026-11-02T10:00:00Z",
+      traits: [{ name: "Energetic", difference: 52, lean: 4 }, { name: "Danceable", difference: 31, lean: 2 }, { name: "Happy", difference: 12, lean: 9 },
+        { name: "Relaxed", difference: -40, lean: -3 }, { name: "Festive", difference: 18, lean: 1 }, { name: "Intense", difference: 0, lean: 3 },
+        { name: "Melancholy", difference: -9, lean: -38 }],
     } } }));
     await openTaste(page);
     const card = page.getByRole("region", { name: "Your sound" });
-    await expect(card.getByText("Mostly energetic and danceable, around 118 BPM. You skip melancholy songs more than you finish them.", { exact: true })).toBeVisible();
-    await expect(card.getByRole("progressbar", { name: "Energetic 71 out of 100" })).toBeVisible();
-    await expect(card.getByText("From AudioMuse's analysis of 214 songs you've finished and 61 you mostly skip.", { exact: true })).toBeVisible();
+    await expect(card.getByText("Your favourites are more energetic and danceable and less relaxed than the rest of your library, a little faster, around 124 BPM. You skip melancholy songs more than you finish them.", { exact: true })).toBeVisible();
+    await expect(card.getByRole("listitem", { name: "Energetic: +52 compared with your library" })).toBeVisible();
+    await expect(card.getByRole("listitem", { name: "Intense: typical for your library" })).toBeVisible();
+    await expect(card.getByText("Compared with 152 other analyzed songs in your library. From AudioMuse's analysis of 214 songs you've finished and 61 you mostly skip.", { exact: true })).toBeVisible();
     await capture(page, "taste-sound", width, theme);
   });
 

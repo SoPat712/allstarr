@@ -10,15 +10,19 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Music;
 
-public sealed record SoundTrait(string Name, int Value, int? Lean);
-public sealed record SoundProfile(int Songs, int SkippedSongs, IReadOnlyList<SoundTrait> Traits, int? Tempo, DateTimeOffset At);
+// Difference is how far the listener's favourites sit from their library, in hundredths of the library's spread:
+// 0 is typical, +50 is half a spread more. Lean compares what they finish with what they skip the same way.
+public sealed record SoundTrait(string Name, int Difference, int? Lean);
+public sealed record SoundProfile(int Songs, int SkippedSongs, int LibrarySongs, IReadOnlyList<SoundTrait> Traits, int? Tempo,
+    int? LibraryTempo, DateTimeOffset At);
 
-// How a listener's music sounds, from AudioMuse's analysis of the library songs they finish, set against the ones they
-// skip. It reads stored analysis only, takes a few seconds for a long history, and is kept for hours.
+// How a listener's music sounds, from AudioMuse's analysis of the library songs they finish, set against the rest of
+// their library and the ones they skip. AudioMuse rates nearly every song 0.6–0.7 on every mood, so only differences
+// from the library mean anything. It reads stored analysis only, takes seconds, and is kept for hours.
 public sealed class SoundProfileService(IDbContextFactory<AllstarrDbContext> factory, IEffectiveProviderPolicyResolver policies,
     IPlatformClock clock, AudioMuseDiscovery? audioMuse = null, ILogger<SoundProfileService>? logger = null)
 {
-    private const int FinishedSongs = 250, SkippedSongs = 100, MinimumSongs = 20, MinimumSkipped = 10;
+    private const int FinishedSongs = 250, SkippedSongs = 100, LibrarySample = 450, MinimumSongs = 20, MinimumSkipped = 10;
     private static readonly TimeSpan KeptFor = TimeSpan.FromHours(6);
     private static readonly (string Name, Func<AudioMuseScores, double?> Value)[] Traits =
     [
@@ -68,26 +72,47 @@ public sealed class SoundProfileService(IDbContextFactory<AllstarrDbContext> fac
             user.BackendPrincipalId, new AllstarrPrincipal(user.Id, user.BackendType, user.BackendInstanceId, user.BackendPrincipalId,
                 user.DisplayName, user.IsAdmin), "sound-profile", clock.UtcNow.AddMinutes(5), token)
         { Policy = await policies.ResolveForUserAsync(user.Id, token), IsReadOnly = true };
+        // A spread of the library to compare with; song IDs are hashes, so ordering by them samples evenly.
+        var known = favourites.Concat(skips).Select(item => item.Key).ToHashSet(StringComparer.Ordinal);
+        var sample = (await db.LibraryTracks.AsNoTracking().Where(item => item.OwnerUserId == userId &&
+                item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId)
+            .Select(item => item.BackendItemId).Distinct().OrderBy(id => id).ToArrayAsync(token))
+            .Where(id => !known.Contains(id)).Take(LibrarySample).ToArray();
         // AudioMuse is asked about 150 songs at a time.
         var features = new Dictionary<string, AudioMuseScores>(StringComparer.Ordinal);
-        foreach (var batch in favourites.Concat(skips).Select(item => item.Key).Chunk(150))
+        foreach (var batch in known.Concat(sample).Chunk(150))
             foreach (var item in await audioMuse.MixFeaturesAsync(context, batch, token)) features[item.Key] = item.Value;
         // A song played a hundred times says more than one played once, but not a hundred times more.
         var liked = favourites.Where(item => features.ContainsKey(item.Key))
             .Select(item => (Scores: features[item.Key], Weight: 1 + Math.Log(item.Value))).ToArray();
         var disliked = skips.Where(item => features.ContainsKey(item.Key)).Select(item => (Scores: features[item.Key], Weight: 1d)).ToArray();
-        logger?.LogInformation("Sound profile: {Finished} finished and {Skipped} skipped library songs, {Analyzed} analyzed",
-            favourites.Length, skips.Length, features.Count);
-        if (liked.Length < MinimumSongs) return null;
+        var library = sample.Where(features.ContainsKey).Select(id => (Scores: features[id], Weight: 1d)).ToArray();
+        logger?.LogInformation("Sound profile: {Liked} finished, {Disliked} skipped and {Library} other library songs analyzed",
+            liked.Length, disliked.Length, library.Length);
+        if (liked.Length < MinimumSongs || library.Length < MinimumSongs) return null;
         var traits = Traits.Select(trait =>
         {
             var value = Mean(liked, trait.Value);
+            var typical = Mean(library, trait.Value);
+            var spread = Spread(library, trait.Value);
+            if (value == null || typical == null || spread is not > 1e-6) return null;
             var skippedValue = disliked.Length >= MinimumSkipped ? Mean(disliked, trait.Value) : null;
-            return value == null ? null : new SoundTrait(trait.Name, (int)Math.Round(100 * value.Value),
-                skippedValue == null ? null : (int)Math.Round(100 * (value.Value - skippedValue.Value)));
+            return new SoundTrait(trait.Name, (int)Math.Round(100 * (value.Value - typical.Value) / spread.Value),
+                skippedValue == null ? null : (int)Math.Round(100 * (value.Value - skippedValue.Value) / spread.Value));
         }).OfType<SoundTrait>().ToArray();
-        var tempo = Mean(liked, item => item.Tempo is > 0 and < 300 ? item.Tempo : null);
-        return traits.Length == 0 ? null : new(liked.Length, disliked.Length, traits, tempo == null ? null : (int)Math.Round(tempo.Value), clock.UtcNow);
+        static double? Tempo(AudioMuseScores item) => item.Tempo is > 0 and < 300 ? item.Tempo : null;
+        var tempo = Mean(liked, Tempo);
+        var libraryTempo = Mean(library, Tempo);
+        return traits.Length == 0 ? null : new(liked.Length, disliked.Length, library.Length, traits,
+            tempo == null ? null : (int)Math.Round(tempo.Value), libraryTempo == null ? null : (int)Math.Round(libraryTempo.Value), clock.UtcNow);
+    }
+
+    private static double? Spread(IReadOnlyList<(AudioMuseScores Scores, double Weight)> songs, Func<AudioMuseScores, double?> value)
+    {
+        var values = songs.Select(item => value(item.Scores)).OfType<double>().ToArray();
+        if (values.Length < 2) return null;
+        var mean = values.Average();
+        return Math.Sqrt(values.Sum(item => (item - mean) * (item - mean)) / (values.Length - 1));
     }
 
     private static double? Mean(IReadOnlyList<(AudioMuseScores Scores, double Weight)> songs, Func<AudioMuseScores, double?> value)

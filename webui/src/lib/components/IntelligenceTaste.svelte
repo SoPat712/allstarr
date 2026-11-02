@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { taste, type SoundProfile, type TasteNudge, type TasteProfile } from "$lib/api";
   import { formatCount } from "$lib/intelligence";
-  import { nudgeMarker, nudgeName, soundSummary, steeringNames, tasteSummary } from "$lib/for-you";
+  import { nudgeMarker, nudgeName, soundDifference, soundSummary, steeringNames, tasteSummary } from "$lib/for-you";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button, buttonVariants } from "$lib/components/ui/button";
@@ -72,10 +72,14 @@
       <section class="settings-card taste-section sound-profile" aria-labelledby="sound-heading">
         <h2 id="sound-heading">Your sound</h2>
         <p class="sound-summary">{soundSummary(sound)}</p>
-        <div class="sound-traits">{#each sound.traits as trait (trait.name)}
-          <div class="taste-strength"><span class="sound-trait"><strong>{trait.name}</strong><small>{trait.value}</small></span><Progress value={Math.max(0, Math.min(100, trait.value))} aria-label={`${trait.name} ${trait.value} out of 100`} /></div>
+        <div class="sound-traits" role="list" aria-label="Compared with the rest of your library">{#each sound.traits as trait (trait.name)}
+          <div class="sound-trait" role="listitem" aria-label={`${trait.name}: ${trait.difference === 0 ? "typical for your library" : `${soundDifference(trait.difference)} compared with your library`}`}>
+            <strong>{trait.name}</strong>
+            <span class="sound-track" aria-hidden="true"><span class="sound-fill" class:less={trait.difference < 0} style={`--extent: ${Math.min(100, Math.abs(trait.difference)) / 2}%`}></span></span>
+            <small aria-hidden="true">{soundDifference(trait.difference)}</small>
+          </div>
         {/each}</div>
-        <small>From AudioMuse's analysis of {formatCount(sound.songs)} songs you've finished{sound.skippedSongs ? ` and ${formatCount(sound.skippedSongs)} you mostly skip` : ""}.</small>
+        <small>Compared with {formatCount(sound.librarySongs)} other analyzed songs in your library. From AudioMuse's analysis of {formatCount(sound.songs)} songs you've finished{sound.skippedSongs ? ` and ${formatCount(sound.skippedSongs)} you mostly skip` : ""}.</small>
       </section>
     {/if}
     <section class="panel taste-section"><h2>Steer your mixes</h2><p>Tap a style to hear more or less of it.</p>{@render chips("tag", tags)}<h3>Artists</h3>{@render chips("artist", artists)}</section>
@@ -118,7 +122,13 @@
   .settings-toggle :global([data-slot="checkbox-indicator"]) { width: 20px; height: 20px; border: 2px solid var(--md-sys-color-on-surface-variant); border-radius: 3px; }
   .settings-toggle :global([data-checked] [data-slot="checkbox-indicator"]) { border-color: var(--md-sys-color-primary); background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
   .sound-summary { margin-top: var(--space-2); }
-  .sound-traits { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); column-gap: var(--space-6); margin-block: var(--space-2); }
-  .sound-trait { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+  .sound-traits { display: grid; gap: var(--space-2); margin-block: var(--space-4); max-width: 40rem; }
+  .sound-trait { display: grid; grid-template-columns: 7rem minmax(0, 1fr) 2.75rem; align-items: center; gap: var(--space-3); min-height: 28px; }
+  .sound-trait strong { font-size: var(--text-sm); }
+  .sound-trait small { text-align: end; font-variant-numeric: tabular-nums; }
+  .sound-track { position: relative; height: 4px; border-radius: 999px; background: var(--md-sys-color-surface-container-highest); }
+  .sound-track::after { content: ""; position: absolute; left: 50%; top: -5px; bottom: -5px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--md-sys-color-outline); }
+  .sound-fill { position: absolute; top: 0; bottom: 0; left: 50%; width: var(--extent); border-radius: 0 999px 999px 0; background: var(--md-sys-color-primary); }
+  .sound-fill.less { left: auto; right: 50%; border-radius: 999px 0 0 999px; }
   @media (max-width: 600px) { .taste-layers { grid-template-columns: minmax(0, 1fr); } }
 </style>

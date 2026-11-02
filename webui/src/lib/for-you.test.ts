@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { soundSummary, steeringNames, greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep } from "./for-you";
+import { soundDifference, soundSummary, steeringNames, greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep } from "./for-you";
 
 describe("personal mix presentation", () => {
   it("describes each mix without repeating its name", () => {
@@ -88,13 +88,16 @@ describe("steeringNames", () => {
 });
 
 describe("soundSummary", () => {
-  const trait = (name: string, value: number, lean: number | null = null) => ({ name, value, lean });
-  it("names the two strongest traits and the pace", () => {
-    expect(soundSummary({ traits: [trait("Relaxed", 30), trait("Energetic", 72), trait("Danceable", 65)], tempo: 121 }))
-      .toBe("Mostly energetic and danceable, around 121 BPM.");
+  const trait = (name: string, difference: number, lean: number | null = null) => ({ name, difference, lean });
+  it("names what sets favourites apart and the pace", () => {
+    expect(soundSummary({ traits: [trait("Relaxed", -40), trait("Energetic", 52), trait("Danceable", 31), trait("Happy", 10)], tempo: 124, libraryTempo: 116 }))
+      .toBe("Your favourites are more energetic and danceable and less relaxed than the rest of your library, a little faster, around 124 BPM.");
   });
-  it("adds the clearest difference from skipped songs", () => {
-    expect(soundSummary({ traits: [trait("Energetic", 72, 3), trait("Melancholy", 40, -12), trait("Happy", 55, 8)], tempo: null }))
-      .toBe("Mostly energetic and happy. You skip melancholy songs more than you finish them.");
+  it("says when favourites sound like the library and adds the clearest skip difference", () => {
+    expect(soundSummary({ traits: [trait("Energetic", 8, 3), trait("Melancholy", -12, -38), trait("Happy", 15, 26)], tempo: 118, libraryTempo: 117 }))
+      .toBe("Your favourites sound much like the rest of your library, around 118 BPM. You skip melancholy songs more than you finish them.");
+  });
+  it("signs differences", () => {
+    expect([soundDifference(32), soundDifference(-18), soundDifference(0)]).toEqual(["+32", "−18", "0"]);
   });
 });
