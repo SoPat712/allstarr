@@ -62,8 +62,10 @@ public sealed class ProviderCoverageRunner(
             .Except(LocalLyricsSources, StringComparer.OrdinalIgnoreCase).ToArray();
         var scope = new TrackMatchScope(user.Id, user.BackendInstanceId, null, 2, 1, new HashSet<string>());
         var offset = (int)(time.GetUtcNow().ToUnixTimeSeconds() / (RunHours * 3600) * SongsPerRun % pool.Length);
+        // The first run checks enough songs for a score straight away.
+        var count = await LastRunAsync(token) == null ? ProviderScoreService.MinimumSongs : SongsPerRun;
         using var traffic = new HistoryRequestBudget();
-        for (var index = 0; index < Math.Min(SongsPerRun, pool.Length); index++)
+        for (var index = 0; index < Math.Min(count, pool.Length); index++)
         {
             var picked = pool[(offset + index) % pool.Length];
             var song = new PoolSong(picked.Title!, picked.Artist!, picked.Album);

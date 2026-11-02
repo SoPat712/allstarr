@@ -95,6 +95,25 @@ public sealed class HistorySearchTests
             string.Join(",", result.Decision.Reasons.Concat(result.Decision.Warnings)));
     }
 
+    // Last.fm gives no length or album, so the artist credit is all that separates these two different recordings.
+    [Theory]
+    [InlineData("Charli xcx featuring julian casablancas", "Charli xcx, julian casablancas")]
+    [InlineData("Charli xcx", "Charli xcx")]
+    public void SparseMetadataStillPrefersTheRecordingWithTheRightCredits(string artist, string expected)
+    {
+        var user = Guid.NewGuid();
+        var withFeature = new LocalTrackMatchCandidate(Guid.NewGuid(), user, "main", null, "with", null, "Mean girls", "Charli xcx, julian casablancas",
+            "Brat and it's completely different but also still brat", null, 227_000, null, null, null, IsLocal: false);
+        var solo = new LocalTrackMatchCandidate(Guid.NewGuid(), user, "main", null, "solo", null, "Mean girls", "Charli xcx", "BRAT", null, 189_000, null, null, null, IsLocal: false);
+        var decision = new TrackMatchDecisionEngine().Decide(new(user, "main", null, 2, 1, new HashSet<string>()),
+            new("source", "lastfm", "source", "Mean girls", artist, null, null, null, null, null, null), [withFeature, solo]);
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        var selected = decision.Candidates.Single(item => item.LibraryTrackId == decision.SelectedLibraryTrackId);
+        Assert.Equal(expected, selected.Artist);
+        Assert.True(selected.Confidence > decision.Candidates.Single(item => item.LibraryTrackId != decision.SelectedLibraryTrackId).Confidence);
+        Assert.True(selected.Confidence <= 0.94);
+    }
+
     [Fact]
     public async Task HardSongsAreSearchedPastServicesThatDoNotHaveThem()
     {

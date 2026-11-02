@@ -315,6 +315,8 @@ internal sealed class FieldScoreRule : ITrackMatchRule
         TrackMatchPolicy policy) =>
         Score(source, candidate, policy);
 
+    private const double LimitedMetadataCeiling = 0.94;
+
     public static TrackMatchRuleOutcome Score(
         ExternalTrackMatchSnapshot source,
         LocalTrackMatchCandidate candidate,
@@ -406,7 +408,10 @@ internal sealed class FieldScoreRule : ITrackMatchRule
         if (!titleAnnotationsMatch) warnings.Add("title_annotation_mismatch");
         if (!duration.HasValue && Math.Max(album ?? 0, albumArtist ?? 0) < 0.85)
         {
-            confidence = Math.Min(confidence, 0.94);
+            // Title and artist alone can't prove a recording, so the score stays under the limit. Better evidence
+            // must still rank higher, or two different recordings tie just because both reach it.
+            var floor = Math.Min(policy.AcceptThreshold, LimitedMetadataCeiling);
+            if (confidence > floor) confidence = floor + (confidence - floor) * (LimitedMetadataCeiling - floor) / (1 - floor);
             warnings.Add("limited_recording_metadata");
         }
         if (weakDuration && !weakAlbum) confidence = Math.Min(confidence, policy.AcceptThreshold - 0.01);

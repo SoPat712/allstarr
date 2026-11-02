@@ -33,7 +33,16 @@ public sealed class ProviderCoverageRunnerTests : IAsyncLifetime
         factory = new(new DbContextOptionsBuilder<AllstarrDbContext>().UseSqlite(connection).Options);
         await using var db = factory.CreateDbContext();
         await db.Database.EnsureCreatedAsync();
-        db.Users.Add(new() { Id = admin, DisplayName = "Admin", BackendType = "jellyfin", BackendInstanceId = "main", BackendPrincipalId = "admin", Enabled = true, IsAdmin = true });
+        db.Users.Add(new()
+        {
+            Id = admin,
+            DisplayName = "Admin",
+            BackendType = "jellyfin",
+            BackendInstanceId = "main",
+            BackendPrincipalId = "admin",
+            Enabled = true,
+            IsAdmin = true
+        });
         await db.SaveChangesAsync();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["has-it", "missing-it", "broken"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["kept", "words"]);
@@ -59,9 +68,20 @@ public sealed class ProviderCoverageRunnerTests : IAsyncLifetime
         for (var index = 0; index < times; index++)
             db.ListeningEvents.Add(new()
             {
-                Id = Guid.CreateVersion7(), OwnerUserId = admin, Protocol = "jellyfin", BackendInstanceId = "main", OccurrenceKey = Guid.NewGuid().ToString("N"),
-                State = ListeningEventState.Completed, ListenedAt = clock.GetUtcNow(), UpdatedAt = clock.GetUtcNow(), SourceKind = "import",
-                TrackReference = title, Title = title, Artist = "Artist", Album = "Album", CanonicalRecordingId = recording
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = admin,
+                Protocol = "jellyfin",
+                BackendInstanceId = "main",
+                OccurrenceKey = Guid.NewGuid().ToString("N"),
+                State = ListeningEventState.Completed,
+                ListenedAt = clock.GetUtcNow(),
+                UpdatedAt = clock.GetUtcNow(),
+                SourceKind = "import",
+                TrackReference = title,
+                Title = title,
+                Artist = "Artist",
+                Album = "Album",
+                CanonicalRecordingId = recording
             });
         await db.SaveChangesAsync();
     }
