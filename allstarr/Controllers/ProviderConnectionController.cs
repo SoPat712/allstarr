@@ -160,7 +160,15 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
     {
         var adminCheck = RequireAdministratorForSensitiveOperation("get provider scores");
         if (adminCheck != null) return adminCheck;
-        return Ok(new { providers = await HttpContext.RequestServices.GetRequiredService<ProviderScoreService>().ReadAsync(cancellationToken) });
+        var policies = HttpContext.RequestServices.GetRequiredService<IEffectiveProviderPolicyResolver>();
+        var policy = GetAdminSession()?.AllstarrUserId is { } userId
+            ? await policies.ResolveForUserAsync(userId, cancellationToken)
+            : await policies.ResolveAsync(cancellationToken);
+        return Ok(new
+        {
+            providers = await HttpContext.RequestServices.GetRequiredService<ProviderScoreService>().ReadAsync(policy.AudioQuality, cancellationToken),
+            qualityTarget = policy.AudioQuality
+        });
     }
 
     [HttpGet("providers/{providerId}/health-history")]

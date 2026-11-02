@@ -163,6 +163,40 @@ public sealed class TrackMatchPlayableSearch(
             { SearchFailure = answered.Count >= TrustedHistoryAnswers ? null : failure });
     }
 
+    public async Task<IReadOnlyList<string>> AutomaticStreamingSourcesAsync(ProtocolExecutionContext context, CancellationToken cancellationToken) =>
+        (await MatchingPolicyAsync(context, cancellationToken)).ProviderOrder;
+
+    /// <summary>Whether one source has this song, or null when it couldn't answer.</summary>
+    public async Task<bool?> SourceHasSongAsync(ProtocolExecutionContext context, string provider, ExternalTrackMatchSnapshot source,
+        TrackMatchScope scope, CancellationToken cancellationToken)
+    {
+        var (_, effectiveMatcher) = await MatchingPolicyAsync(context, cancellationToken);
+        IReadOnlyList<string> order = [provider];
+        var songs = new List<Song>();
+        var answered = false;
+        foreach (var query in SearchQueries(source).Take(2))
+        {
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(TimeSpan.FromSeconds(10));
+            ProviderOutcome<IReadOnlyList<Song>> result;
+            try
+            {
+                result = await gateway.SearchAutomaticProviderSongsAsync(new ProtocolExecutionContext(context.Protocol, context.BackendInstanceId, context.VerifiedBackendPrincipalId,
+                    context.Principal, context.CorrelationId, context.Deadline, deadline.Token, context.Client)
+                { Policy = context.Policy, IsReadOnly = context.IsReadOnly }, provider, query, 15).WaitAsync(deadline.Token);
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested) { continue; }
+            if (!result.IsSuccess) continue;
+            answered = true;
+            songs.AddRange(result.RequireValue().Where(song => IsPlayable(song, order) &&
+                !string.IsNullOrWhiteSpace(song.ExternalProvider) && !string.IsNullOrWhiteSpace(song.ExternalId)));
+            songs = songs.DistinctBy(song => $"{song.ExternalProvider}:{song.ExternalId}", StringComparer.OrdinalIgnoreCase).ToList();
+            var match = DecideMatch(source, scope, songs, [], null, order, effectiveMatcher);
+            if (match.Decision.State == TrackMatchReviewState.Accepted && !match.Decision.RequiresReview) return true;
+        }
+        return answered ? false : null;
+    }
+
     private static string[] SearchQueries(ExternalTrackMatchSnapshot source)
     {
         var title = FuzzyMatcher.SearchQuery(source.Title);

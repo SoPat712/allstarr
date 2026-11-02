@@ -4,12 +4,12 @@
   import { slide } from "svelte/transition";
 
   import { Button } from "$lib/components/ui/button";
-  import { capabilityScore, scoreParts } from "$lib/provider-score";
+  import { capabilityScore, qualityTargetLabel, scoreParts } from "$lib/provider-score";
   import { checkGuide, humanize } from "$lib/sources";
 
   import type { ProviderScore } from "$lib/api";
 
-  let { score, capability, ranked = true, onclose }: { score: ProviderScore; capability: string; ranked?: boolean; onclose?: () => void } = $props();
+  let { score, capability, ranked = true, qualityTarget, onclose }: { score: ProviderScore; capability: string; ranked?: boolean; qualityTarget?: string; onclose?: () => void } = $props();
 
   const seconds = (value: number | null) => value == null ? "—" : value < 1000 ? `${value} ms` : `${(value / 1000).toFixed(1)} s`;
   const days = $derived(score.days.slice(-14));
@@ -21,19 +21,29 @@
   const timing = $derived(parts?.typicalMilliseconds ?? null);
   const speedDetail = $derived(timing == null ? "Not timed yet" :
     `${capability === "streaming" ? "Songs start in about" : capability === "download" ? "Downloads take about" : "Answers in about"} ${seconds(timing)}`);
+  const targetLabel = $derived(qualityTargetLabel(qualityTarget));
+  const songsCount = $derived(Boolean(parts?.coverageOutOf));
+  const songsApply = $derived(capability === "streaming" || capability === "download" || capability === "lyrics");
+  const songs = $derived(parts?.songsTried != null ? parts : score.parts);
+  const songsDetail = $derived(songs?.songsTried == null ? "Checked every 6 hours" : capability === "lyrics"
+    ? `Found lyrics for ${songs.songsFound} of ${songs.songsTried} most-played songs`
+    : `Found ${songs.songsFound} of ${songs.songsTried} of your most-played songs`);
+  const realPlays = $derived(parts?.realPlays ? `, and ${parts.realPlays - (parts.realPlayFailures ?? 0)} of ${parts.realPlays} real plays` : "");
   const shares = $derived(parts ? [
-    { label: "Reliability", counted: true, points: parts.reliability, outOf: parts.reliabilityOutOf, detail: `Passed ${feature?.uptimePercent}% of ${feature?.checks.toLocaleString()} checks` },
-    { label: "Speed", counted: speedCounts, points: parts.speed, outOf: parts.speedOutOf, detail: speedDetail },
-    ...(score.quality || qualityCounts ? [{ label: "Quality", counted: qualityCounts, points: parts.quality, outOf: parts.qualityOutOf, detail: score.quality?.lossless ? "Lossless" : score.quality ? "Lossy" : "Not measured yet" }] : []),
+    { label: "Reliability", counted: true, note: "", points: parts.reliability, outOf: parts.reliabilityOutOf, detail: `Passed ${feature?.uptimePercent}% of ${feature?.checks.toLocaleString()} checks${realPlays}` },
+    ...(songsApply || songs?.songsTried != null ? [{ label: capability === "lyrics" ? "Has the lyrics" : "Has the song", counted: songsCount, note: songsApply ? "Still measuring" : "Doesn't count here", points: parts.coverage ?? 0, outOf: parts.coverageOutOf ?? 0, detail: songsDetail }] : []),
+    ...(score.quality || qualityCounts ? [{ label: "Quality", counted: qualityCounts, note: "Doesn't count here", points: parts.quality, outOf: parts.qualityOutOf,
+      detail: qualityCounts ? `${parts.quality === parts.qualityOutOf ? "Meets" : "Below"} your ${targetLabel} setting` : score.quality?.lossless ? "Lossless" : score.quality ? "Lossy" : "Not measured yet" }] : []),
+    { label: "Speed", counted: speedCounts, note: "Doesn't count here", points: parts.speed, outOf: parts.speedOutOf, detail: `${speedDetail}${parts.timedOnRealPlays ? " in real plays" : ""}` },
   ] : []);
   const window = "measured over the last 30 days with the last week counting double.";
-  const ceiling = "Lossy sources are held to a ceiling: 60 at low bitrates, up to 80 at 256 kbps or more.";
+  const ceiling = $derived(`Quality is judged against your ${targetLabel} setting, and sources below it are held to a ceiling.`);
 </script>
 
 <div class="score-details" transition:slide={{ duration: 240, easing: cubicOut }}>
   <p class="score-summary">
     {#if !ranked}You choose this source yourself and Allstarr never picks it automatically, so it isn't scored or ranked. It passed {score.uptimePercent}% of {score.checks.toLocaleString()} checks in the last 30 days.
-    {:else if capabilityScore(score, capability) == null}Not rated for {featureName} yet. A score needs at least 5 {featureName} checks; this source has {feature?.checks ?? 0}.
+    {:else if capabilityScore(score, capability) == null}Not rated for {featureName} yet. A score needs at least 20 {featureName} checks; this source has {feature?.checks ?? 0}.
     {:else if capability === "streaming"}Only streaming checks count here, {window} Speed is how fast songs start: full points at 0.5 s, none at 8 s. {ceiling}
     {:else if capability === "download"}Only download checks count here, {window} How long a download takes doesn't count. {ceiling}
     {:else}Only {featureName} checks count here, {window} Speed earns full points at 0.5 s and none at 8 s.{/if}
@@ -42,7 +52,7 @@
     <div class="score-parts">
       {#each shares as share (share.label)}
         <div class="score-part" class:dimmed={!share.counted}>
-          <span class="score-part-head"><strong>{share.label}</strong><span>{share.counted ? `${share.points} of ${share.outOf}` : "Doesn't count here"}</span></span>
+          <span class="score-part-head"><strong>{share.label}</strong><span>{share.counted ? `${share.points} of ${share.outOf}` : share.note}</span></span>
           <span class="score-bar" aria-hidden="true">{#if share.counted}<span style={`width:${share.points / share.outOf * 100}%`}></span>{/if}</span>
           <small>{share.detail}</small>
         </div>
@@ -50,7 +60,7 @@
     </div>
   {/if}
   {#if parts?.cappedAt != null}
-    <p class="score-cap">Earned {parts.earned}, held at {parts.cappedAt} because this source delivers {score.quality?.typical ?? "lossy audio"}.</p>
+    <p class="score-cap">Earned {parts.earned}, held at {parts.cappedAt} because this source delivers {score.quality?.typical ?? "lossy audio"} and you've asked for {targetLabel}.</p>
   {/if}
   {#if score.quality}
     <p class="score-quality" class:dimmed={ranked && !qualityCounts}><strong>Delivers {score.quality.typical}</strong>{#if score.quality.best}{" · "}up to {score.quality.best}{/if} <small>from {score.quality.samples} playback tests</small></p>
@@ -88,7 +98,7 @@
   .score-history { display: grid; gap: var(--space-2); }
   .score-actions { display: flex; justify-content: flex-end; }
   .score-summary { color: var(--color-ink-muted); font-size: var(--text-sm); }
-  .score-parts { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--space-4); }
+  .score-parts { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: var(--space-4); }
   .score-part { display: grid; gap: var(--space-1); font-size: var(--text-sm); }
   .score-part-head { display: flex; justify-content: space-between; gap: var(--space-2); }
   .score-part-head strong { font-weight: 600; }

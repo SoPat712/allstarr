@@ -4606,7 +4606,7 @@ test("Score details open from the whole row, close again, and dim what does not 
   });
   await page.route("**/api/admin/providers/scores", (route) => route.fulfill({
     contentType: "application/json",
-    body: JSON.stringify({ providers: [{
+    body: JSON.stringify({ qualityTarget: "CdLossless", providers: [{
       providerId: "lumen-audio", score: 82, uptimePercent: 100, checks: 20, days: [],
       quality: { typical: "Lossless 16-bit/44.1 kHz", best: null, lossless: true, samples: 5 },
       capabilities: [feature("download", 100, 0, 40), feature("streaming", 82, 20, 30)],
@@ -4614,15 +4614,17 @@ test("Score details open from the whole row, close again, and dim what does not 
   }));
   await page.goto("#/integrations/routing");
   const row = page.locator(".routing-group li.has-score").first();
-  const chip = row.locator(".score-chip");
-  await expect(chip).toContainText("82");
-  await expect(chip).toContainText("Details");
+  const chip = row.locator(".score-toggle");
+  await expect(row.locator(".score-chip")).toHaveText("82");
+  await expect(row.locator(".score-toggle-label")).toHaveText("Details");
   await expect(chip).toHaveAttribute("aria-expanded", "false");
 
   await row.locator(".routing-copy").click();
   const details = row.locator(".score-details");
   await expect(details).toBeVisible();
-  await expect(chip).toContainText("Hide");
+  await expect(row.locator(".score-toggle-label")).toHaveText("Hide");
+  await expect(details.locator(".score-part").filter({ hasText: "Quality" })).toContainText("Meets your CD lossless setting");
+  await expect(details.locator(".score-part").filter({ hasText: "Has the song" })).toContainText("Still measuring");
   await expect(details.locator(".score-row.current")).toContainText("Streaming");
   await expect(details.locator(".score-row.dimmed")).toContainText("Download");
 

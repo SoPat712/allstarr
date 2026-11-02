@@ -17,6 +17,8 @@
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
 
   let scores = $state<ProviderScore[]>([]);
+  let qualityTarget = $state<string | undefined>();
+  const loadScores = () => void sources.scores().then((result) => { scores = result.providers ?? []; qualityTarget = result.qualityTarget; }).catch(() => {});
   let openScore = $state("");
   const toggleScore = (key: string) => { openScore = openScore === key ? "" : key; };
   const scoreFor = (providerId: string) => scores.find((item) => item.providerId.toLowerCase() === providerId.toLowerCase());
@@ -127,6 +129,7 @@
     const updates = Object.fromEntries(policyFields.map((field) => [field.key, String(data.get(field.key) ?? "")]));
     try {
       await settings.save(updates);
+      loadScores();
       policyDirty = false;
       toast.success("Playback and matching preferences saved.");
       await refresh();
@@ -139,7 +142,7 @@
 
   onMount(() => {
     void refresh();
-    void sources.scores().then((result) => { scores = result.providers ?? []; }).catch(() => {});
+    loadScores();
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
       unsubscribe();
@@ -241,11 +244,11 @@
                 {#if scoreFor(providerId)}
                   {@const ranked = isRanked(definition?.useMode)}
                   {@const value = ranked ? capabilityScore(scoreFor(providerId), group.id) : null}
-                  <button type="button" class="score-chip" data-tier={scoreTier(value)} aria-expanded={openScore === scoreKey}
+                  <button type="button" class="score-toggle" aria-expanded={openScore === scoreKey}
                     aria-label={ranked ? `${label} score ${value ?? "not rated yet"}. ${openScore === scoreKey ? "Hide" : "Show"} details.` : `${label} is ${definition?.useMode === "off" ? "turned off" : "manual only"} and isn't scored. ${openScore === scoreKey ? "Hide" : "Show"} details.`}
                     onclick={() => toggleScore(scoreKey)}>
-                    <strong>{ranked ? value ?? "New" : definition?.useMode === "off" ? "Off" : "Manual"}</strong>
-                    <span class="score-chip-action">{openScore === scoreKey ? "Hide" : "Details"}</span>
+                    <span class="score-chip" data-tier={scoreTier(value)}>{ranked ? value ?? "New" : definition?.useMode === "off" ? "Off" : "Manual"}</span>
+                    <span class="score-toggle-label">{openScore === scoreKey ? "Hide" : "Details"}</span>
                     <ChevronDown size={16} aria-hidden="true" />
                   </button>
                 {/if}
@@ -254,7 +257,7 @@
                   <Button variant="ghost" size="icon" aria-label={`Move ${label} down`} disabled={fixed || index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
                 </span>
                 {#if openScore === scoreKey && scoreFor(providerId)}
-                  <ProviderScoreDetails score={scoreFor(providerId)!} capability={group.id} ranked={isRanked(definition?.useMode)} onclose={() => toggleScore(scoreKey)} />
+                  <ProviderScoreDetails score={scoreFor(providerId)!} capability={group.id} ranked={isRanked(definition?.useMode)} {qualityTarget} onclose={() => toggleScore(scoreKey)} />
                 {/if}
               </li>
             {/each}
@@ -273,7 +276,7 @@
     :global(.routing-group li) { grid-template-columns: 2.25rem 2.5rem minmax(0, 1fr) auto; row-gap: var(--space-2); }
     :global(.routing-group li.pinned) { grid-template-columns: 2.25rem 2.5rem minmax(0, 1fr); }
     .routing-copy { grid-column: 3 / -1; }
-    .score-chip { grid-column: 3; grid-row: 2; justify-self: start; }
+    .score-toggle { grid-column: 3; grid-row: 2; justify-self: start; }
     .routing-actions { grid-column: 4; grid-row: 2; }
   }
   .routing-quality-label { color: var(--color-ink-muted); font-size: var(--text-xs); }
@@ -281,17 +284,16 @@
   :global(.dark) .routing-quality-label.lossy { color: var(--warning); }
   :global(.routing-group li.has-score) { cursor: pointer; transition: background-color 200ms var(--ease-emphasized); }
   :global(.routing-group li.has-score:hover) { background: color-mix(in srgb, var(--color-ink) 4%, transparent); }
-  .score-chip { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 2.25rem; padding-inline: var(--space-3) var(--space-2); border: 1px solid transparent; border-radius: 999px; font-size: var(--text-sm); cursor: pointer; transition: filter 200ms var(--ease-emphasized), scale 200ms var(--ease-emphasized); }
-  .score-chip:hover { filter: brightness(1.12); }
-  .score-chip strong { font-weight: 700; }
-  .score-chip-action { min-width: 2.75rem; font-size: 0.8125rem; font-weight: 500; text-align: left; }
-  .score-chip :global(svg) { transition: transform 240ms var(--ease-emphasized); }
-  .score-chip[aria-expanded="true"] :global(svg) { transform: rotate(180deg); }
+  .score-toggle { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 2.5rem; padding: var(--space-1) var(--space-2); border: 0; border-radius: 999px; background: transparent; color: var(--color-ink-muted); font-size: 0.8125rem; font-weight: 500; cursor: pointer; transition: background-color 200ms var(--ease-emphasized), color 200ms var(--ease-emphasized); }
+  .score-toggle:hover { background: color-mix(in srgb, var(--color-ink) 8%, transparent); color: var(--color-ink); }
+  .score-toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .score-toggle :global(svg) { transition: transform 240ms var(--ease-emphasized); }
+  .score-toggle[aria-expanded="true"] :global(svg) { transform: rotate(180deg); }
+  .score-toggle-label { min-width: 2.75rem; text-align: left; }
+  .score-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 2.75rem; min-height: 1.75rem; padding-inline: var(--space-2); border: 1px solid transparent; border-radius: 999px; font-size: var(--text-sm); font-variant-numeric: tabular-nums; font-weight: 700; }
   .score-chip[data-tier="great"] { background: var(--success-container); color: var(--on-success-container); }
   .score-chip[data-tier="good"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
   .score-chip[data-tier="fair"] { background: var(--warning-container); color: var(--on-warning-container); }
   .score-chip[data-tier="poor"] { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
   .score-chip[data-tier="none"] { border-color: var(--color-edge); color: var(--color-ink-muted); }
-  .score-chip:active { scale: 0.96; }
-  .score-chip:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 </style>

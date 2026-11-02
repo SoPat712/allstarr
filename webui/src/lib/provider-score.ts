@@ -11,6 +11,13 @@ export const capabilityScore = (score: ProviderScore | undefined, capability: st
 export const scoreParts = (score: ProviderScore | undefined, capability: string) =>
   feature(score, capability)?.parts ?? null;
 
+const qualityLabels: Record<string, string> = {
+  DataSaver: "Data saver", High: "High lossy", CdLossless: "CD lossless", HiResLossless: "Hi-Res lossless", BestAvailable: "Best available",
+};
+
+/** The quality setting a score was judged against, as the listener knows it. */
+export const qualityTargetLabel = (target?: string | null) => qualityLabels[target ?? ""] ?? "quality";
+
 /** Only sources Allstarr can pick by itself compete on score. Manual and turned-off sources are never ranked. */
 export const isRanked = (useMode?: ProviderUseMode | null) => useMode !== "manualOnly" && useMode !== "off";
 

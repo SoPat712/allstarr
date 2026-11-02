@@ -587,6 +587,13 @@ export type ProviderScoreParts = {
   qualityOutOf: number;
   cappedAt: number | null;
   typicalMilliseconds: number | null;
+  coverage?: number;
+  coverageOutOf?: number;
+  songsFound?: number | null;
+  songsTried?: number | null;
+  realPlays?: number;
+  realPlayFailures?: number;
+  timedOnRealPlays?: boolean;
 };
 
 export type ProviderScore = {
@@ -1905,7 +1912,7 @@ export const sources = {
       accounts: ProviderAccount[];
     }>("/api/admin/provider-accounts"),
   health: () => json<ProviderHealth[]>("/api/admin/providers/status"),
-  scores: () => json<{ providers: ProviderScore[] }>("/api/admin/providers/scores"),
+  scores: () => json<{ providers: ProviderScore[]; qualityTarget?: string }>("/api/admin/providers/scores"),
   history: (provider: string, signal?: AbortSignal) =>
     json<ProviderCheckHistory>(`/api/admin/providers/${encodeURIComponent(provider)}/health-history?limit=24`, { signal }),
   resume: (provider: string, capability: string, accountId?: string | null) =>

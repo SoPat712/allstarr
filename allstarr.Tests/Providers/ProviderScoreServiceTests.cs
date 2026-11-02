@@ -12,7 +12,7 @@ public sealed class ProviderScoreServiceTests
     [Fact]
     public void AReliableFastProviderScoresAtTheTop()
     {
-        var score = Assert.Single(ProviderScoreService.ForTest(Enumerable.Range(0, 10).Select(day => Row("apple", day, true)), Now));
+        var score = Assert.Single(ProviderScoreService.ForTest(Enumerable.Range(0, 25).Select(day => Row("apple", day, true)), Now));
         Assert.Equal(100, score.Score);
         Assert.Equal(100d, score.UptimePercent);
     }
@@ -21,9 +21,9 @@ public sealed class ProviderScoreServiceTests
     public void RecentFailuresCostMoreThanOldOnes()
     {
         var recent = Assert.Single(ProviderScoreService.ForTest(
-            Enumerable.Range(0, 5).Select(day => Row("a", day, false)).Concat(Enumerable.Range(20, 5).Select(day => Row("a", day, true))), Now));
+            Enumerable.Range(0, 10).Select(day => Row("a", day, false)).Concat(Enumerable.Range(20, 10).Select(day => Row("a", day, true))), Now));
         var old = Assert.Single(ProviderScoreService.ForTest(
-            Enumerable.Range(0, 5).Select(day => Row("a", day, true)).Concat(Enumerable.Range(20, 5).Select(day => Row("a", day, false))), Now));
+            Enumerable.Range(0, 10).Select(day => Row("a", day, true)).Concat(Enumerable.Range(20, 10).Select(day => Row("a", day, false))), Now));
         Assert.True(old.Score > recent.Score);
         Assert.Equal(old.UptimePercent, recent.UptimePercent);
     }
@@ -31,8 +31,8 @@ public sealed class ProviderScoreServiceTests
     [Fact]
     public void SlowProvidersScoreBelowFastOnesWithTheSameUptime()
     {
-        var fast = Assert.Single(ProviderScoreService.ForTest(Enumerable.Range(0, 6).Select(day => Row("a", day, true, 400)), Now));
-        var slow = Assert.Single(ProviderScoreService.ForTest(Enumerable.Range(0, 6).Select(day => Row("a", day, true, 9000)), Now));
+        var fast = Assert.Single(ProviderScoreService.ForTest(Enumerable.Range(0, 25).Select(day => Row("a", day, true, 400)), Now));
+        var slow = Assert.Single(ProviderScoreService.ForTest(Enumerable.Range(0, 25).Select(day => Row("a", day, true, 9000)), Now));
         Assert.Equal(100, fast.Score);
         Assert.Equal(80, slow.Score);
     }
@@ -40,7 +40,7 @@ public sealed class ProviderScoreServiceTests
     [Fact]
     public void PartsExplainAReliableLosslessSourceThatStartsSlowly()
     {
-        var rows = Enumerable.Range(0, 10).Select(day => Row("apple", day, true, 7146, "streaming"));
+        var rows = Enumerable.Range(0, 25).Select(day => Row("apple", day, true, 7146, "streaming"));
         var samples = Enumerable.Range(0, 5).Select(_ => new ProviderScoreService.AudioSample("apple", "alac", 24, 44100, null));
         var score = Assert.Single(ProviderScoreService.ForTest(rows, Now, samples));
         var parts = Assert.IsType<ProviderScoreParts>(score.Parts);
@@ -54,7 +54,7 @@ public sealed class ProviderScoreServiceTests
     [Fact]
     public void PartsShowWhenALossySourceIsHeldAtItsCeiling()
     {
-        var rows = Enumerable.Range(0, 10).Select(day => Row("deezer", day, true, 500, "streaming"));
+        var rows = Enumerable.Range(0, 25).Select(day => Row("deezer", day, true, 500, "streaming"));
         var samples = Enumerable.Range(0, 5).Select(_ => new ProviderScoreService.AudioSample("deezer", "mp3", null, null, 128_000));
         var score = Assert.Single(ProviderScoreService.ForTest(rows, Now, samples));
         Assert.Equal(60, score.Score);
@@ -65,7 +65,7 @@ public sealed class ProviderScoreServiceTests
     [Fact]
     public void SourcesThatPlayNoAudioHaveNoQualityPartAndEachFeatureHasItsOwnParts()
     {
-        var rows = Enumerable.Range(0, 10).Select(day => Row("lyrics", day, true, 4250, "lyrics"));
+        var rows = Enumerable.Range(0, 25).Select(day => Row("lyrics", day, true, 4250, "lyrics"));
         var score = Assert.Single(ProviderScoreService.ForTest(rows, Now));
         Assert.Equal((80, 80, 10, 20, 0, 0), (score.Parts!.Reliability, score.Parts.ReliabilityOutOf, score.Parts.Speed, score.Parts.SpeedOutOf, score.Parts.Quality, score.Parts.QualityOutOf));
         Assert.Equal(score.Parts, Assert.Single(score.Capabilities).Parts);
@@ -74,7 +74,7 @@ public sealed class ProviderScoreServiceTests
     [Fact]
     public void EachFeatureIsJudgedOnlyOnItsOwnChecks()
     {
-        var rows = Enumerable.Range(0, 10).SelectMany(day => new[]
+        var rows = Enumerable.Range(0, 25).SelectMany(day => new[]
         {
             Row("apple", day, true, 184, "metadata"),
             Row("apple", day, true, 200, "playlist"),
@@ -98,7 +98,7 @@ public sealed class ProviderScoreServiceTests
     [InlineData(60_000)]
     public void HowLongADownloadTakesNeverChangesItsScore(long milliseconds)
     {
-        var rows = Enumerable.Range(0, 10).Select(day => Row("source", day, true, milliseconds, "download"));
+        var rows = Enumerable.Range(0, 25).Select(day => Row("source", day, true, milliseconds, "download"));
         var samples = Enumerable.Range(0, 5).Select(_ => new ProviderScoreService.AudioSample("source", "flac", 16, 44100, null));
         var download = Assert.Single(Assert.Single(ProviderScoreService.ForTest(rows, Now, samples)).Capabilities);
         var parts = download.Parts!;
@@ -110,7 +110,7 @@ public sealed class ProviderScoreServiceTests
     [Fact]
     public void ABrokenPlaylistFeatureDoesNotLowerHowASourcePlays()
     {
-        var rows = Enumerable.Range(0, 10).SelectMany(day => new[]
+        var rows = Enumerable.Range(0, 25).SelectMany(day => new[]
         {
             Row("source", day, false, 300, "playlist", "unreachable"),
             Row("source", day, true, 500, "streaming"),
@@ -125,7 +125,7 @@ public sealed class ProviderScoreServiceTests
     [Fact]
     public void LossyAudioCeilingOnlyAppliesToPlayingAndDownloading()
     {
-        var rows = Enumerable.Range(0, 10).SelectMany(day => new[]
+        var rows = Enumerable.Range(0, 25).SelectMany(day => new[]
         {
             Row("deezer", day, true, 177, "metadata"),
             Row("deezer", day, true, 267, "download"),
@@ -138,28 +138,110 @@ public sealed class ProviderScoreServiceTests
         Assert.Equal(60, score.Capabilities.Single(item => item.Capability == "streaming").Score);
     }
 
+    private static IEnumerable<(string, string, DateTimeOffset, bool, long?, string?)> Streaming(string provider, long latency = 500) =>
+        Enumerable.Range(0, 25).Select(day => Row(provider, day, true, latency, "streaming"));
+
+    private static IEnumerable<ProviderScoreService.AudioSample> Delivers(string provider, string codec, int? depth = null, int? bitrate = null) =>
+        Enumerable.Range(0, 5).Select(_ => new ProviderScoreService.AudioSample(provider, codec, depth, 44100, bitrate));
+
+    [Theory]
+    [InlineData("DataSaver", 100, 100, 100)]
+    [InlineData("High", 100, 100, 65)]
+    [InlineData("CdLossless", 100, 100, 60)]
+    [InlineData("HiResLossless", 100, 75, 40)]
+    [InlineData("BestAvailable", 100, 75, 40)]
+    public void ScoresFollowWhatEachListenerAskedFor(string target, int hiRes, int cd, int lowLossy)
+    {
+        int Score(string codec, int? depth, int? bitrate) => Assert.Single(ProviderScoreService.ForTest(Streaming("s"), Now, Delivers("s", codec, depth, bitrate), target)).Score!.Value;
+        Assert.Equal(hiRes, Score("alac", 24, null));
+        Assert.Equal(cd, Score("flac", 16, null));
+        Assert.Equal(lowLossy, Score("mp3", null, 128_000));
+    }
+
+    private static IEnumerable<ProviderScoreService.SongCheck> Songs(string provider, string capability, int found, int missing) =>
+        Enumerable.Range(0, found + missing).Select(index => new ProviderScoreService.SongCheck(provider, capability, $"song-{index}", index < found, Now));
+
+    [Fact]
+    public void ASourceMissingHalfTheSongsLosesThatShareOnlyWhereItMatters()
+    {
+        var rows = Streaming("s").Concat(Enumerable.Range(0, 25).Select(day => Row("s", day, true, 300, "metadata")));
+        var score = Assert.Single(ProviderScoreService.ForTest(rows, Now, Delivers("s", "flac", 16), songs: Songs("s", "streaming", 10, 10)));
+        var streaming = score.Capabilities.Single(item => item.Capability == "streaming");
+        Assert.Equal(90, streaming.Score);
+        Assert.Equal((10, 20, 10, 20), (streaming.Parts!.Coverage, streaming.Parts.CoverageOutOf, streaming.Parts.SongsFound, streaming.Parts.SongsTried));
+        Assert.Equal(100, score.Capabilities.Single(item => item.Capability == "metadata").Score);
+    }
+
+    [Fact]
+    public void TooFewSongsDoNotCountYetAndTheLatestAnswerForASongStands()
+    {
+        var few = Assert.Single(ProviderScoreService.ForTest(Streaming("s"), Now, Delivers("s", "flac", 16), songs: Songs("s", "streaming", 0, 19)));
+        Assert.Equal(100, few.Score);
+        Assert.Equal((0, 19), (few.Parts!.CoverageOutOf, few.Parts.SongsTried));
+        var added = Songs("s", "streaming", 0, 20).Concat(Songs("s", "streaming", 20, 0).Select(song => song with { At = Now.AddHours(1) }));
+        var later = Assert.Single(ProviderScoreService.ForTest(Streaming("s"), Now, Delivers("s", "flac", 16), songs: added));
+        Assert.Equal(100, later.Score);
+        Assert.Equal(20, later.Parts!.SongsFound);
+    }
+
+    [Fact]
+    public void LyricsSourcesAreJudgedOnWhetherTheyHaveTheLyrics()
+    {
+        var rows = Enumerable.Range(0, 25).Select(day => Row("l", day, true, 200, "lyrics"));
+        var score = Assert.Single(ProviderScoreService.ForTest(rows, Now, songs: Songs("l", "lyrics", 5, 15)));
+        var lyrics = Assert.Single(score.Capabilities);
+        Assert.Equal(81, lyrics.Score);
+        Assert.Equal(6, lyrics.Parts!.Coverage);
+    }
+
+    private static IEnumerable<ProviderScoreService.RealPlay> Plays(string provider, int completed, int failed, long start = 3000, bool cached = false) =>
+        Enumerable.Range(0, completed).Select(_ => new ProviderScoreService.RealPlay(provider, true, cached, start))
+            .Concat(Enumerable.Range(0, failed).Select(_ => new ProviderScoreService.RealPlay(provider, false, cached, start)));
+
+    [Fact]
+    public void RealPlayFailuresCountForHalfOnceThereAreEnough()
+    {
+        var few = Assert.Single(ProviderScoreService.ForTest(Streaming("s"), Now, Delivers("s", "flac", 16), plays: Plays("s", 10, 19, 500)));
+        Assert.Equal(100, few.Score);
+        Assert.Equal(0, few.Parts!.RealPlays);
+        var many = Assert.Single(ProviderScoreService.ForTest(Streaming("s"), Now, Delivers("s", "flac", 16), plays: Plays("s", 20, 20, 500)));
+        Assert.Equal(88, many.Score);
+        Assert.Equal((40, 20), (many.Parts!.RealPlays, many.Parts.RealPlayFailures));
+    }
+
+    [Fact]
+    public void RealSongStartsReplaceTestTimesButCachedPlaysNeverDo()
+    {
+        var real = Assert.Single(ProviderScoreService.ForTest(Streaming("s", 800), Now, Delivers("s", "mp3", null, 320_000), plays: Plays("s", 10, 0, 3100)));
+        Assert.Equal(3100, real.Parts!.TypicalMilliseconds);
+        Assert.True(real.Parts.TimedOnRealPlays);
+        var cached = Assert.Single(ProviderScoreService.ForTest(Streaming("s", 800), Now, Delivers("s", "mp3", null, 320_000), plays: Plays("s", 40, 0, 50, cached: true)));
+        Assert.Equal(800, cached.Parts!.TypicalMilliseconds);
+        Assert.False(cached.Parts.TimedOnRealPlays);
+    }
+
     [Fact]
     public void TooFewChecksGiveNoScoreInsteadOfAGuess()
     {
         var score = Assert.Single(ProviderScoreService.ForTest(Enumerable.Range(0, ProviderScoreService.MinimumChecks - 1).Select(day => Row("a", day, true)), Now));
         Assert.Null(score.Score);
-        Assert.Equal(4, score.Checks);
+        Assert.Equal(ProviderScoreService.MinimumChecks - 1, score.Checks);
     }
 
     [Fact]
     public void CapabilitiesAreScoredSeparatelyAndKeepTheLastFailure()
     {
-        var rows = Enumerable.Range(0, 6).Select(day => Row("a", day, true, capability: "metadata"))
-            .Concat(Enumerable.Range(0, 6).Select(day => Row("a", day, false, capability: "download", reason: day == 0 ? "timeout" : "unreachable")));
+        var rows = Enumerable.Range(0, 25).Select(day => Row("a", day, true, capability: "metadata"))
+            .Concat(Enumerable.Range(0, 25).Select(day => Row("a", day, false, capability: "download", reason: day == 0 ? "timeout" : "unreachable")));
         var score = Assert.Single(ProviderScoreService.ForTest(rows, Now));
         Assert.Equal(100, score.Capabilities.Single(item => item.Capability == "metadata").Score);
         var download = score.Capabilities.Single(item => item.Capability == "download");
-        Assert.Equal(6, download.Failures);
+        Assert.Equal(25, download.Failures);
         Assert.Equal("timeout", download.LastFailureCode);
     }
 
     private static IEnumerable<(string, string, DateTimeOffset, bool, long?, string?)> Reliable(string provider) =>
-        Enumerable.Range(0, 10).Select(day => Row(provider, day, true));
+        Enumerable.Range(0, 25).Select(day => Row(provider, day, true));
 
     private static ProviderScoreService.AudioSample Audio(string provider, string codec, int? depth = null, int? rate = null, int? bitrate = null) =>
         new(provider, codec, depth, rate, bitrate);
@@ -203,8 +285,8 @@ public sealed class ProviderScoreServiceTests
     [Fact]
     public void AudioSourcesAreTimedOnHowFastSongsStart()
     {
-        var rows = Enumerable.Range(0, 6).Select(day => Row("apple", day, true, 100))
-            .Concat(Enumerable.Range(0, 6).Select(day => Row("apple", day, true, 8000, capability: "streaming")));
+        var rows = Enumerable.Range(0, 25).Select(day => Row("apple", day, true, 100))
+            .Concat(Enumerable.Range(0, 25).Select(day => Row("apple", day, true, 8000, capability: "streaming")));
         var score = Assert.Single(ProviderScoreService.ForTest(rows, Now, Enumerable.Repeat(Audio("apple", "flac", 16, 44100), 6)));
         Assert.Equal(80, score.Score);
     }
