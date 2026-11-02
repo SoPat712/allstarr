@@ -1,4 +1,3 @@
-using allstarr.Core.Capabilities;
 using allstarr.Core.Enrichment;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Operations;
@@ -154,17 +153,20 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
         var songs = songGroups.Select(group =>
         {
             var song = group.OrderByDescending(item => item.At).ThenBy(item => item.Title, StringComparer.Ordinal).First();
-            return (Row: new ListeningStatsSong(song.Title!.Trim(), song.Artist!.Trim(), song.Album?.Trim(), group.LongCount()), Recording: MostPlayedRecording(group));
-        }).OrderByDescending(item => item.Row.PlayCount).ThenBy(item => item.Row.Artist, StringComparer.Ordinal)
-            .ThenBy(item => item.Row.Title, StringComparer.Ordinal).ThenBy(item => item.Row.Album, StringComparer.Ordinal).Take(TopLimit).ToArray();
+            return new ListeningStatsSong(song.Title!.Trim(), song.Artist!.Trim(), song.Album?.Trim(), group.LongCount()) { ArtworkUrl = ArtworkByName(song.Artist!.Trim(), title: song.Title!.Trim()) };
+        }).OrderByDescending(item => item.PlayCount).ThenBy(item => item.Artist, StringComparer.Ordinal)
+            .ThenBy(item => item.Title, StringComparer.Ordinal).ThenBy(item => item.Album, StringComparer.Ordinal).Take(TopLimit).ToArray();
         var artistGroups = plays.Where(item => !string.IsNullOrWhiteSpace(item.Artist)).GroupBy(item => item.Artist!.Trim(), StringComparer.OrdinalIgnoreCase).ToArray();
-        var artists = artistGroups.Select(group => (Row: new ListeningStatsArtist(group.Key, group.LongCount()), Recording: MostPlayedRecording(group)))
-            .OrderByDescending(item => item.Row.PlayCount).ThenBy(item => item.Row.Artist, StringComparer.Ordinal).Take(TopLimit).ToArray();
+        var artists = artistGroups.Select(group => new ListeningStatsArtist(group.Key, group.LongCount()) { ArtworkUrl = ArtworkByName(group.Key) })
+            .OrderByDescending(item => item.PlayCount).ThenBy(item => item.Artist, StringComparer.Ordinal).Take(TopLimit).ToArray();
         var albums = plays.Where(item => !string.IsNullOrWhiteSpace(item.Album) && !string.IsNullOrWhiteSpace(item.AlbumArtist ?? item.Artist))
             .GroupBy(item => (Album: Normalize(item.Album!), Artist: Normalize(item.AlbumArtist ?? item.Artist!)))
-            .Select(group => (Row: new ListeningStatsAlbum(group.First().Album!.Trim(), (group.First().AlbumArtist ?? group.First().Artist)!.Trim(), group.LongCount()), Recording: MostPlayedRecording(group)))
-            .OrderByDescending(item => item.Row.PlayCount).ThenBy(item => item.Row.Artist, StringComparer.Ordinal)
-            .ThenBy(item => item.Row.Album, StringComparer.Ordinal).Take(TopLimit).ToArray();
+            .Select(group => new ListeningStatsAlbum(group.First().Album!.Trim(), (group.First().AlbumArtist ?? group.First().Artist)!.Trim(), group.LongCount())
+            {
+                ArtworkUrl = ArtworkByName((group.First().AlbumArtist ?? group.First().Artist)!.Trim(), album: group.First().Album!.Trim())
+            })
+            .OrderByDescending(item => item.PlayCount).ThenBy(item => item.Artist, StringComparer.Ordinal)
+            .ThenBy(item => item.Album, StringComparer.Ordinal).Take(TopLimit).ToArray();
 
         var local = plays.Select(item => TimeZoneInfo.ConvertTime(item.At, zone).DateTime).ToArray();
         var days = local.GroupBy(DateOnly.FromDateTime).ToDictionary(group => group.Key, group => group.LongCount());
@@ -187,17 +189,11 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
             }
         }
 
-        var covers = await SongCoversAsync(db, songs.Select(item => item.Recording).OfType<Guid>().ToArray(), token);
         var (unit, timeline) = Timeline(period, zone, days, now);
         return new(period, plays.Count, days.Count,
             imported, observedSince, plays.Sum(item => item.DurationMilliseconds ?? 0),
             new(plays.Count - knownSongs.Length, plays.LongCount(item => item.DurationMilliseconds == null)),
-            songs.Select(item => item.Row with
-            {
-                ArtworkUrl = (item.Recording is { } recording ? covers.GetValueOrDefault(recording) : null) ?? ArtworkByName(item.Row.Artist, title: item.Row.Title)
-            }).ToArray(),
-            artists.Select(item => item.Row with { ArtworkUrl = ArtworkByName(item.Row.Artist) }).ToArray(),
-            albums.Select(item => item.Row with { ArtworkUrl = ArtworkByName(item.Row.Artist, album: item.Row.Album) }).ToArray())
+            songs, artists, albums)
         {
             ShortPlayCount = shortPlays,
             FirstPlayAt = firstPlayAt,
@@ -212,20 +208,6 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
             NewArtistCount = newArtistCount,
             NewArtists = newArtists
         };
-    }
-
-    private static Guid? MostPlayedRecording(IEnumerable<StatsPlay> plays) => plays.Where(item => item.CanonicalRecordingId != null)
-        .GroupBy(item => item.CanonicalRecordingId).OrderByDescending(group => group.Count()).ThenBy(group => group.Key).Select(group => group.Key).FirstOrDefault();
-
-    private static async Task<IReadOnlyDictionary<Guid, string>> SongCoversAsync(AllstarrDbContext db, IReadOnlyCollection<Guid> recordings, CancellationToken token)
-    {
-        if (recordings.Count == 0) return new Dictionary<Guid, string>();
-        var identities = await db.ProviderTrackIdentities.AsNoTracking().Where(item => recordings.Contains(item.CanonicalRecordingId) &&
-                item.ProviderId == "deezer" && item.ResourceKind == ProviderResourceKind.Track &&
-                (item.Verification == ProviderIdentityVerification.Verified || item.Verification == ProviderIdentityVerification.Pinned))
-            .Select(item => new { item.CanonicalRecordingId, item.ExternalId }).ToArrayAsync(token);
-        return identities.GroupBy(item => item.CanonicalRecordingId).ToDictionary(group => group.Key,
-            group => $"/api/admin/downloads/artwork/{Uri.EscapeDataString($"ext-deezer-song-{group.First().ExternalId}")}");
     }
 
     private static string ArtworkByName(string artist, string? title = null, string? album = null) =>

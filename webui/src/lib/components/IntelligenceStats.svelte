@@ -124,7 +124,7 @@
         {@const open = expanded === list.title}
         <section class="panel" aria-label={list.title}>
           <h2>{list.title}</h2>
-          <ol>{#each open ? list.rows : list.rows.slice(0, 10) as row, index}<li><span class="rank">{index + 1}</span><MediaArtwork url={row.artworkUrl} class={list.round ? "list-art round" : "list-art"} /><div class="stats-name"><strong>{row.name}</strong><small>{#if row.detail}{row.detail} · {/if}{formatCount(row.count)} {row.count === 1 ? "play" : "plays"}</small></div></li>{/each}</ol>
+          <ol>{#each open ? list.rows : list.rows.slice(0, 10) as row, index}<li><span class="rank">{index + 1}</span><MediaArtwork url={row.artworkUrl} class={list.round ? "list-art round" : "list-art"} /><div class="stats-name"><strong>{row.name}</strong><small>{#if row.detail}{row.detail}{" · "}{/if}{formatCount(row.count)} {row.count === 1 ? "play" : "plays"}</small></div></li>{/each}</ol>
           {#if !list.rows.length}<p>{list.empty}</p>{/if}
           {#if list.rows.length > 10}<Button variant="ghost" onclick={() => expanded = open ? "" : list.title}>{open ? "Show fewer" : `Show all ${list.rows.length}`}</Button>{/if}
         </section>

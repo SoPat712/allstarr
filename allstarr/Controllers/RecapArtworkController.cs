@@ -15,7 +15,7 @@ namespace allstarr.Controllers;
 public sealed class RecapArtworkController(AdminProtocolExecutionContextFactory contexts, IProtocolProviderGateway gateway,
     IMediaAssetResolver media, IHttpClientFactory clients) : ControllerBase
 {
-    private const int MaximumBytes = 8 * 1024 * 1024;
+    private const int MaximumBytes = 8 * 1024 * 1024, MinimumBytes = 1024;
 
     [HttpGet]
     public async Task<IActionResult> Get([FromQuery] string? artist, [FromQuery] string? title = null, [FromQuery] string? album = null, CancellationToken token = default)
@@ -35,8 +35,10 @@ public sealed class RecapArtworkController(AdminProtocolExecutionContextFactory 
             await response.Content.LoadIntoBufferAsync(MaximumBytes, cancel);
             return new MediaAssetSource(await response.Content.ReadAsByteArrayAsync(cancel), contentType);
         }, MaximumBytes, token);
-        Response.Headers.CacheControl = asset == null ? "private, max-age=3600" : "private, max-age=604800";
-        return asset == null ? NotFound() : File(asset.Bytes, asset.ContentType);
+        // Some sources hold a blank picture for an artist; the placeholder looks better than a black circle.
+        var usable = asset is { Bytes.Length: >= MinimumBytes };
+        Response.Headers.CacheControl = usable ? "private, max-age=604800" : "private, max-age=3600";
+        return usable ? File(asset!.Bytes, asset.ContentType) : NotFound();
     }
 
     private async Task<string?> FindAsync(AdminAuthSession session, string artist, string? title, string? album, CancellationToken token)

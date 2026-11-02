@@ -316,6 +316,7 @@ public sealed class ListeningStatsTests : IAsyncLifetime
 
         Assert.Equal(1, result.NewArtistCount);
         Assert.Equal("Someone New", Assert.Single(result.NewArtists).Artist);
+        Assert.Equal("/api/admin/stats/art?artist=Someone%20New", result.TopArtists.Single(item => item.Artist == "Someone New").ArtworkUrl);
     }
 
     [Theory]
