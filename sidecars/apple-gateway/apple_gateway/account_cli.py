@@ -138,16 +138,19 @@ def song_preparation(cli, started: float | None = None, ceiling: tuple[int, int]
     select = vars(cli.AppleMusicSongInterface).get("_get_playlist_from_codec_enhanced")
     if select is not None and stream is not None:
         # GAMDL takes the largest lossless stream Apple offers. Within a quality limit the largest stream that fits is
-        # enough, and a smaller file downloads and decrypts sooner. With none that fits, conversion still applies it.
+        # enough, and a smaller file downloads and decrypts sooner. When none fits, conversion applies the limit anyway,
+        # so the smallest lossless stream gives the same result: 48 kHz instead of 96 kHz halves the download.
         def choose(self, m3u8_data, codec):
             chosen = select(self, m3u8_data, codec)
             playlists = m3u8_data.get("playlists", [])
             if getattr(codec, "value", None) == "alac" and ceiling is not None:
-                fitting = [playlist for playlist in playlists
-                    if (match := ALAC_STREAM.fullmatch(str(playlist.get("stream_info", {}).get("audio") or "")))
-                    and int(match.group(2)) <= ceiling[0] and int(match.group(1)) <= ceiling[1]]
+                lossless = [(playlist, int(match.group(1)), int(match.group(2))) for playlist in playlists
+                    if (match := ALAC_STREAM.fullmatch(str(playlist.get("stream_info", {}).get("audio") or "")))]
+                fitting = [playlist for playlist, rate, depth in lossless if depth <= ceiling[0] and rate <= ceiling[1]]
                 if fitting:
                     chosen = max(fitting, key=lambda playlist: playlist["stream_info"].get("average_bandwidth") or 0)
+                elif lossless:
+                    chosen = min(lossless, key=lambda item: (item[1] * item[2], item[0]["stream_info"].get("average_bandwidth") or 0))[0]
             names = {playlist.get("stream_info", {}).get("audio") for playlist in playlists}
             stream["offered"] = sorted(name for name in names if isinstance(name, str) and STREAM_NAME.fullmatch(name))[:16]
             stream["chosen"] = chosen.get("stream_info", {}).get("audio") if chosen else None

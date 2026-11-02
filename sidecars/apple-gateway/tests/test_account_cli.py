@@ -306,7 +306,7 @@ async def test_account_factory_fetches_and_saves_a_web_token_when_none_is_saved(
     assert (tmp_path / "web-token").read_text() == token
 
 
-def test_stream_choice_takes_the_largest_lossless_stream_within_the_limit():
+def test_stream_choice_takes_the_largest_lossless_stream_within_the_limit_or_else_the_smallest():
     cli = importlib.import_module("gamdl.cli.cli")
     from gamdl.interface.enums import SongCodec
 
@@ -320,13 +320,17 @@ def test_stream_choice_takes_the_largest_lossless_stream_within_the_limit():
     ]}
     original = cli.AppleMusicSongInterface._get_playlist_from_codec_enhanced
     for ceiling, expected in [((16, 44100), "audio-alac-stereo-44100-16"), ((24, 96000), "audio-alac-stereo-96000-24"),
-            (None, "audio-alac-stereo-192000-24"), ((16, 22050), "audio-alac-stereo-192000-24")]:
+            (None, "audio-alac-stereo-192000-24"), ((16, 22050), "audio-alac-stereo-44100-16")]:
         stream = {}
         with song_preparation(cli, ceiling=ceiling, stream=stream):
             chosen = cli.AppleMusicSongInterface._get_playlist_from_codec_enhanced(None, manifest, SongCodec.ALAC)
         assert chosen["stream_info"]["audio"] == expected
         assert stream["chosen"] == expected
         assert "audio-alac-stereo-44100-16" in stream["offered"]
+    high_resolution_only = {"playlists": manifest["playlists"][2:]}
+    with song_preparation(cli, ceiling=(16, 44100), stream={}):
+        chosen = cli.AppleMusicSongInterface._get_playlist_from_codec_enhanced(None, high_resolution_only, SongCodec.ALAC)
+    assert chosen["stream_info"]["audio"] == "audio-alac-stereo-48000-24"
     assert cli.AppleMusicSongInterface._get_playlist_from_codec_enhanced is original
 
 
