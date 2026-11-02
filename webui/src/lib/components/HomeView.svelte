@@ -171,7 +171,7 @@
     return name && name !== "Unknown source" ? `${name} · ` : "";
   };
 
-  const visibleActivity = $derived((snapshot?.activity ?? []).filter((item) => !isRoutineActivity(item)));
+  const visibleActivity = $derived((snapshot?.activity ?? []).filter((item) => !isRoutineActivity(item)).slice(0, 8));
 
   const attention = $derived.by(() => {
     if (!snapshot || !summary) return [];
@@ -506,8 +506,8 @@
         </div>
       {:else}
         <div class="compact-empty">
-          <strong>No activity yet</strong>
-          <p>{administrator ? "Matches, playlist updates and source checks will show up here." : "Your listening, playlists and matches will show up here."}</p>
+          <strong>Nothing new lately</strong>
+          <p>{administrator ? "Matches, playlist updates and source problems will show up here." : "Your listening, playlists and matches will show up here."}</p>
         </div>
       {/if}
     </article>

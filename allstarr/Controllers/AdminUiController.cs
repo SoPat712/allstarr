@@ -272,9 +272,16 @@ public class AdminUiController : ControllerBase
         }
 
         var linkIds = await linksQuery.Select(item => item.Id).ToArrayAsync(cancellationToken);
-        var playlistCounts = await services.GetRequiredService<DurablePlaylistProjectionReader>()
-            .ReadHomeCountsAsync(session.IsAdministrator ? null : session.AllstarrUserId,
-                linkIds, session.AllstarrUserId.Value, cancellationToken);
+        var countsOwner = session.IsAdministrator ? null : session.AllstarrUserId;
+        var countsViewer = session.AllstarrUserId.Value;
+        // These walk every song of every playlist, and Home stays open and refreshing.
+        var playlistCounts = services.GetService<RecentValues>() is { } recentValues && services.GetService<IServiceScopeFactory>() is { } scopes
+            ? await recentValues.GetAsync($"home-playlists:{countsOwner}:{countsViewer}:{string.Join(',', linkIds)}", TimeSpan.FromMinutes(1), async token =>
+            {
+                await using var scope = scopes.CreateAsyncScope();
+                return await scope.ServiceProvider.GetRequiredService<DurablePlaylistProjectionReader>().ReadHomeCountsAsync(countsOwner, linkIds, countsViewer, token);
+            }, cancellationToken)
+            : await services.GetRequiredService<DurablePlaylistProjectionReader>().ReadHomeCountsAsync(countsOwner, linkIds, countsViewer, cancellationToken);
         var activeJobs = await jobsQuery.CountAsync(item =>
             item.State != DurableJobState.Succeeded && item.State != DurableJobState.Failed &&
             item.State != DurableJobState.Cancelled, cancellationToken);
@@ -317,7 +324,8 @@ public class AdminUiController : ControllerBase
         var providerHealth = session.IsAdministrator
             ? (await GetProviderSummaries(cancellationToken) as OkObjectResult)?.Value
             : new { providers = Array.Empty<object>() };
-        var activity = (await GetDashboardActivity(8, cancellationToken: cancellationToken) as OkObjectResult)?.Value;
+        // Home leaves out routine work, so it asks for enough to still have something to show.
+        var activity = (await GetDashboardActivity(40, cancellationToken: cancellationToken) as OkObjectResult)?.Value;
 
         return Ok(new
         {

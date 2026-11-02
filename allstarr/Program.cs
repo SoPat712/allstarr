@@ -489,6 +489,7 @@ builder.Services.AddSingleton<ProviderScoreService>();
 builder.Services.AddSingleton<ProviderCoverageRunner>();
 builder.Services.AddHostedService<ProviderCoverageService>();
 builder.Services.AddHostedService<RuntimeStallMonitor>();
+builder.Services.AddSingleton<RecentValues>();
 builder.Services.AddSingleton<allstarr.Core.Playback.PlaybackStartTimingStore>();
 builder.Services.AddSingleton<allstarr.Core.Playback.PlayTraceService>();
 builder.Services.AddSingleton<IProviderCheckSessions, ProviderCheckSessions>();

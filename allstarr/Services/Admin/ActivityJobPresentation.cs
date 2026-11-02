@@ -22,7 +22,8 @@ internal static class ActivityJobPresentation
     private static readonly string[] RoutineJobTypes =
     [
         "recording.tags.refresh", "recording.musicbrainz.enrich", "recording.odesli.enrich",
-        "listening.musicbrainz.enrich", "favorite.display-backfill", "health.cleanup", "recording.kept-cleanup"
+        "listening.musicbrainz.enrich", "favorite.display-backfill", "health.cleanup", "recording.kept-cleanup",
+        Core.Music.PersonalMixService.JobType
     ];
     private static readonly string[] FailureOutcomes = ["failed", "failure", "error", "retry_scheduled", "interrupted"];
     private static readonly HashSet<string> KnownHealthSteps = HealthSmokeServerProbe.StepNames.Concat(HealthSmokeProtocolProbe.StepNames).ToHashSet(StringComparer.Ordinal);
@@ -358,6 +359,7 @@ internal static class ActivityJobPresentation
         "releases.poll" => "Check new releases",
         "track-match.rematch" => "Refresh matches",
         "library.index" => "Refresh library index",
+        Core.Music.PersonalMixService.JobType => "Refresh your mixes",
         _ => "Background task"
     };
 

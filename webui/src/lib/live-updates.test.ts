@@ -56,6 +56,8 @@ describe("acceptUpdate", () => {
 
     liveUpdates.state.status = "live";
     vi.advanceTimersByTime(1_000);
+    expect(listener).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(29_000);
     expect(listener).toHaveBeenCalledTimes(2);
 
     unsubscribe();
