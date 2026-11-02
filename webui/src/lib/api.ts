@@ -2473,8 +2473,19 @@ export const listeningStats = {
   get: (period = "30d", year = "") => json<ListeningStats>(`/api/admin/stats?${new URLSearchParams({ ...(year ? { year } : { period }), timeZoneId: Intl.DateTimeFormat().resolvedOptions().timeZone })}`),
 };
 
+export type HistoryRecheckSong = {
+  recordingId: string; title: string; artist: string | null; album: string | null;
+  matchedTitle: string; matchedArtist: string | null; matchedAlbum: string | null; verdict: string; plays: number;
+};
+export type HistoryRecheck = { songs: number; unchecked: number; doubtful: number; doubtfulPlays: number; examples: HistoryRecheckSong[] };
+
 export const historyImports = {
   list: () => json<HistoryImport[]>("/api/admin/history/imports"),
+  recheck: () => json<HistoryRecheck>("/api/admin/history/imports/recheck"),
+  unmatch: (song: HistoryRecheckSong) => json<{ unmatched: number }>("/api/admin/history/imports/recheck/unmatch", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ recordingId: song.recordingId, title: song.title, artist: song.artist }),
+  }),
   get: (id: string) => json<HistoryImport>(`/api/admin/history/imports/${encodeURIComponent(id)}`),
   confirm: (item: HistoryImport) => json<HistoryImport>(`/api/admin/history/imports/${encodeURIComponent(item.importId)}/confirm`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ revision: item.revision }),

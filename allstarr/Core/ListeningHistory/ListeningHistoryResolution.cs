@@ -31,6 +31,7 @@ public sealed partial class ListeningHistoryResolution(
     public const string JobTypeName = "listening-history.resolve";
     private const string ResourceKind = "history-resolution";
     private const string ReceiptPayload = "{\"version\":2}";
+    private const string UnmatchedPayload = "{\"version\":2,\"unmatched\":true}";
     private const int LocalBatchSize = 100;
     public string JobType => JobTypeName;
 
@@ -80,7 +81,8 @@ public sealed partial class ListeningHistoryResolution(
         if (await db.Jobs.AsNoTracking().AnyAsync(item => item.OwnerUserId == scope.OwnerUserId && item.Type == JobTypeName &&
             (item.State == DurableJobState.Pending || item.State == DurableJobState.Running || item.State == DurableJobState.RetryScheduled), token)) return;
         var plays = await MatchingEvents(db, scope).ToArrayAsync(token);
-        var recent = await Receipts(db, scope).Where(item => item.PayloadJson == ReceiptPayload && item.RetrievedAt > now.AddDays(-7))
+        var recent = await Receipts(db, scope).Where(item => item.PayloadJson == UnmatchedPayload ||
+                item.PayloadJson == ReceiptPayload && item.RetrievedAt > now.AddDays(-7))
             .Select(item => item.ExternalIdHash).ToHashSetAsync(token);
         var backfill = !await db.Jobs.AnyAsync(item => item.OwnerUserId == scope.OwnerUserId && item.Type == JobTypeName &&
             item.IdempotencyKey.StartsWith("history-styles:" + scope.Protocol + ":" + scope.BackendInstanceId + ":"), token);

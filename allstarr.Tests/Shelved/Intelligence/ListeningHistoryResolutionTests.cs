@@ -270,6 +270,36 @@ public sealed partial class ListeningHistoryResolutionTests(Xunit.Abstractions.I
     }
 
     [Fact]
+    public async Task Recheck_ListsADisagreeingTitleAndUnmatchedPlaysStayUnmatched()
+    {
+        var track = await Library("Lonely Is a Man Without Love");
+        await Add("A Man Without Love", 2);
+        await using (var write = factory.CreateDbContext())
+        {
+            foreach (var play in await write.ListeningEvents.ToArrayAsync())
+            {
+                play.CanonicalRecordingId = track.CanonicalRecordingId;
+                play.LibraryTrackId = track.Id;
+                play.TrackReference = track.BackendItemId;
+            }
+            var import = await write.ListeningHistoryImports.SingleAsync();
+            import.ResolvedRows += 2;
+            import.UnresolvedRows -= 2;
+            await write.SaveChangesAsync();
+        }
+        var doubtful = Assert.Single((await Handler().RecheckAsync(Scope, default)).Examples);
+        Assert.Equal(("A Man Without Love", "Lonely Is a Man Without Love", 2), (doubtful.Title, doubtful.MatchedTitle, doubtful.Plays));
+        Assert.Equal(2, await Handler().UnmatchAsync(Scope, new(doubtful.RecordingId, doubtful.Title, doubtful.Artist), default));
+        Assert.Empty((await Handler().RecheckAsync(Scope, default)).Examples);
+        await ListeningHistoryResolution.EnqueueAsync(factory, jobs, Scope, clock.UtcNow, default);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await Run()).Kind);
+        await using var db = factory.CreateDbContext();
+        Assert.All(await db.ListeningEvents.ToArrayAsync(), play => Assert.Null(play.CanonicalRecordingId));
+        var counts = await db.ListeningHistoryImports.SingleAsync();
+        Assert.Equal((0, 2), (counts.ResolvedRows, counts.UnresolvedRows));
+    }
+
+    [Fact]
     public async Task UnmatchedSong_IsRecordedAndRetriedOnlyAfterOneWeek()
     {
         await Add("Missing");

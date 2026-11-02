@@ -23,6 +23,10 @@ public sealed class HistoryImportsController(
     public Task<IActionResult> Recheck(CancellationToken token) => ExecuteAsync(async scope =>
         resolution == null ? NotFound() : Ok(await resolution.RecheckAsync(scope, token)), token);
 
+    [HttpPost("recheck/unmatch")]
+    public Task<IActionResult> Unmatch([FromBody] HistoryUnmatchRequest request, CancellationToken token) => ExecuteAsync(async scope =>
+        resolution == null ? NotFound() : Ok(new { unmatched = await resolution.UnmatchAsync(scope, request, token) }), token);
+
     [HttpPost]
     [RequestSizeLimit(ListeningHistoryImportOptions.UploadLimitBytes)]
     public Task<IActionResult> Upload([FromQuery] string fileName, CancellationToken token) => ExecuteAsync(async scope =>

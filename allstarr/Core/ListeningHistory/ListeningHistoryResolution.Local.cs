@@ -30,7 +30,8 @@ public sealed partial class ListeningHistoryResolution
             previous.Tracks == trackCount && previous.Libraries == libraries) return previous;
         var tracks = await query.ToArrayAsync(token);
         var (metadata, targets, spotify) = await StoredIndexAsync(db, context, tracks, token);
-        var recent = await Receipts(db, scope).Where(item => item.PayloadJson == ReceiptPayload && item.RetrievedAt > clock.UtcNow.AddDays(-7))
+        var recent = await Receipts(db, scope).Where(item => item.PayloadJson == UnmatchedPayload ||
+                item.PayloadJson == ReceiptPayload && item.RetrievedAt > clock.UtcNow.AddDays(-7))
             .Select(item => item.ExternalIdHash).ToHashSetAsync(token);
         var groups = (await MatchingEvents(db, scope).ToArrayAsync(token)).GroupBy(SongKey)
             .Where(group => !recent.Contains(group.Key)).OrderByDescending(group => group.Count(item => item.State == ListeningEventState.Completed))

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ApiError, historyImports, type HistoryImport } from "$lib/api";
+  import { ApiError, historyImports, type HistoryImport, type HistoryRecheck, type HistoryRecheckSong } from "$lib/api";
   import { formatCount } from "$lib/intelligence";
   import { combineHistoryPreviews, groupHistoryImports, historyBytes, historyDateRange, historyError, historyPlays, historySource, importBatchProgress, importPhase, importProgress, importState, importSummary } from "$lib/history-import";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
@@ -27,9 +27,32 @@
   const waiting = $derived(previews.filter(item => importPhase(item) === "previewed"));
   let removing = $state<HistoryImport[]>([]), deleteOpen = $state(false), deleteError = $state("");
   let disposed = false, pending: Promise<void> | null = null;
+  let recheckOpen = $state(false), recheck = $state<HistoryRecheck | null>(null), recheckError = $state("");
+  let unmatched = $state<Record<string, boolean>>({}), unmatching = $state("");
+  const songKey = (song: HistoryRecheckSong) => `${song.recordingId}\n${song.title}\n${song.artist ?? ""}`;
   const uploadController = new AbortController();
   const active = (item: HistoryImport) => ["pending", "running"].includes(importPhase(item));
   const source = (rows: HistoryImport[]) => [...new Set(rows.map(item => historySource(item.preview.format)))].join(", ") || "Listening history";
+
+  async function openRecheck() {
+    recheckOpen = true;
+    recheck = null;
+    recheckError = "";
+    unmatched = {};
+    try { recheck = await historyImports.recheck(); }
+    catch (cause) { recheckError = cause instanceof Error ? cause.message : "Your matched songs couldn't be checked."; }
+  }
+
+  async function unmatch(song: HistoryRecheckSong) {
+    unmatching = songKey(song);
+    recheckError = "";
+    try {
+      await historyImports.unmatch(song);
+      unmatched = { ...unmatched, [songKey(song)]: true };
+      onchanged();
+    } catch (cause) { recheckError = cause instanceof Error ? cause.message : "That song couldn't be unmatched."; }
+    finally { unmatching = ""; }
+  }
 
   function saveBatches() {
     try { localStorage.setItem(storageKey, JSON.stringify(batches)); } catch { /* Browser storage is optional. */ }
@@ -227,8 +250,39 @@
     {:else}
       {@render importRows()}
     {/if}
+    <div class="settings-row recheck-row">
+      <div><strong>Check matched songs</strong><small>Find past plays matched to a song whose title doesn't agree, and unmatch the wrong ones.</small></div>
+      <Button variant="secondary" disabled={uploading || action} onclick={() => void openRecheck()}>Check</Button>
+    </div>
   {/if}
 </section>
+
+<Dialog.Root bind:open={recheckOpen}>
+  <Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog recheck-dialog">
+    <header><div><Dialog.Title>Check matched songs</Dialog.Title><Dialog.Description>These past plays are matched to a song whose title doesn't agree. Most are only written differently. Unmatch the wrong ones: their plays stay in your history and won't be matched to a song again.</Dialog.Description></div></header>
+    {#if recheckError}<p class="notice-error" role="alert">{recheckError}</p>{/if}
+    {#if !recheck && !recheckError}
+      <div class="history-preview" role="status"><p>Checking your matched songs…</p><Progress value={null} aria-label="Checking matched songs" /></div>
+    {:else if recheck && !recheck.examples.length}
+      <p class="history-preview">All {formatCount(recheck.songs)} matched songs agree with their titles.</p>
+    {:else if recheck}
+      <ul class="recheck-list" aria-label="Songs to check">
+        {#each recheck.examples as song (songKey(song))}
+          <li>
+            <div>
+              <strong>{song.title}</strong>
+              <small>{song.artist ?? "Unknown artist"} · {historyPlays(song.plays)}</small>
+              <small>Matched to {song.matchedTitle}{song.matchedArtist && song.matchedArtist !== song.artist ? ` · ${song.matchedArtist}` : ""}</small>
+            </div>
+            {#if unmatched[songKey(song)]}<span class="history-state">Unmatched</span>
+            {:else}<Button variant="ghost" disabled={Boolean(unmatching)} onclick={() => void unmatch(song)}>{unmatching === songKey(song) ? "Unmatching…" : "Unmatch"}</Button>{/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    <footer class="dialog-actions"><Button type="button" variant="secondary" onclick={() => recheckOpen = false}>Done</Button></footer>
+  </Dialog.Content></Dialog.Portal>
+</Dialog.Root>
 
 <Dialog.Root bind:open={previewOpen}>
   <Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog" onEscapeKeydown={event => { event.preventDefault(); void cancel(); }} onInteractOutside={event => { event.preventDefault(); void cancel(); }}>
@@ -277,5 +331,13 @@
   .imports-details > summary { min-height: 44px; padding: var(--space-3) var(--space-6); cursor: pointer; }
   .history-files { padding: 0 var(--space-6) var(--space-4); }
   .history-files summary { min-height: 44px; }
+  .recheck-row { border-top: 1px solid var(--color-edge); }
+  .recheck-row small { display: block; color: var(--color-ink-muted); }
+  .recheck-list { list-style: none; margin: 0; padding: 0; max-height: min(60vh, 560px); overflow-y: auto; }
+  .recheck-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); padding-block: var(--space-3); }
+  .recheck-list li + li { border-top: 1px solid var(--color-edge); }
+  .recheck-list li > div { display: grid; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
+  .recheck-list small { color: var(--color-ink-muted); font-size: var(--text-sm); }
+  .recheck-list .history-state { color: var(--color-ink-muted); }
   @media (max-width: 600px) { .history-imports :global(.settings-row) { grid-template-columns: minmax(0, 1fr); } .history-actions { justify-content: start; } }
 </style>
