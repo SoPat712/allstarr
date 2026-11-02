@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { taste, type TasteNudge, type TasteProfile } from "$lib/api";
-  import { nudgeMarker, nudgeName, tasteSummary } from "$lib/for-you";
+  import { nudgeMarker, nudgeName, steeringNames, tasteSummary } from "$lib/for-you";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button, buttonVariants } from "$lib/components/ui/button";
@@ -18,9 +18,11 @@
   let selected = $state(""), duration = $state("today");
   let pending: Promise<void> | null = null, disposed = false;
   const layers = $derived(profile ? [{ title: "Lately", data: profile.lately }, { title: "Usually", data: profile.usually }] : []);
-  const tags = $derived([...new Set(layers.flatMap(layer => layer.data.tags.map(row => row.name)))].slice(0, 12));
-  const artists = $derived([...new Set(layers.flatMap(layer => layer.data.artists.map(row => row.name)))].slice(0, 8));
-  const summary = $derived(tasteSummary(profile?.lately.tags.map(item => item.name) ?? [], profile?.usually.tags.map(item => item.name) ?? []));
+  // Skipped styles and artists are listed too, but they aren't what this listener is into.
+  const liked = (rows: { name: string; value?: number }[] = []) => rows.filter(row => (row.value ?? 1) > 0).map(row => row.name);
+  const tags = $derived(steeringNames(liked(profile?.lately.tags), liked(profile?.usually.tags), 12));
+  const artists = $derived(steeringNames(liked(profile?.lately.artists), liked(profile?.usually.artists), 12));
+  const summary = $derived(tasteSummary(liked(profile?.lately.tags), liked(profile?.usually.tags)));
   const summaryTags = $derived([...new Set(layers.flatMap(layer => layer.data.tags.map(row => row.name)))]);
   const summaryParts = $derived.by(() => {
     const pattern = summaryTags.map(name => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");

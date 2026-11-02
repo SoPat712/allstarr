@@ -1,10 +1,13 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using allstarr.Core.Enrichment;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Operations;
 using allstarr.Core.Playback;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Music;
@@ -18,8 +21,12 @@ public sealed record TasteScore(double Score, IReadOnlyList<string> Reasons, boo
 internal sealed record TasteAffinity(string Name, double Lately, double Usually, DateTimeOffset At);
 internal sealed record TasteOccurrence(DateTimeOffset At, double Position, double Listened, bool Done = false, bool Interrupted = false);
 internal sealed record TastePlaybackLearning(DateTimeOffset At, double Value, IReadOnlyDictionary<string, string> Features, bool Legacy = false);
+// How far values reach before they stop adding much. It grows with the listener's strongest value, so someone with years
+// of history still has a difference between what they love and what they merely play.
+internal sealed record TasteScales(double LatelyTag = 3, double LatelyArtist = 3, double UsuallyTag = 3, double UsuallyArtist = 3);
 internal sealed class TasteDocument
 {
+    [JsonIgnore] public TasteScales Scales { get; set; } = new();
     public bool Paused { get; set; }
     public bool UseImportedHistory { get; set; } = true;
     public DateTimeOffset LearnAfter { get; set; }
@@ -41,13 +48,17 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
     public static readonly TimeSpan ImportedHistoryHalfLife = TimeSpan.FromDays(180);
     private const int RecentThreshold = 5;
     private const double RecentBlend = .8;
+    private static readonly TimeSpan LoadedFor = TimeSpan.FromMinutes(30);
+    private sealed record LoadedTaste(long Revision, int Plays, DateTimeOffset At, TasteDocument Document);
+    private readonly ConcurrentDictionary<Guid, LoadedTaste> loaded = new();
+    private readonly ConcurrentDictionary<Guid, SemaphoreSlim> loading = new();
     private readonly SemaphoreSlim writes = new(1, 1);
 
     public static double Decay(double value, TimeSpan age, TimeSpan halfLife) =>
         value * Math.Pow(.5, Math.Max(0, age.TotalSeconds) / halfLife.TotalSeconds);
     private static string Key(string kind, string name) => kind + ":" + name.Trim().ToLowerInvariant();
     private static double Blend(TasteDocument document) => document.Recent.Count >= RecentThreshold ? RecentBlend : 0;
-    private static double Bounded(double value) => value / (3 + Math.Abs(value));
+    private static double Bounded(double value, double scale) => value / (scale + Math.Abs(value));
     private static TasteDocument Read(TasteProfileRecord? row) => row == null ? new() : JsonSerializer.Deserialize<TasteDocument>(row.PayloadJson) ?? new();
 
     private void Prune(TasteDocument document)
@@ -64,11 +75,40 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
     {
         await using var db = await factory.CreateDbContextAsync(token);
         await RequireUser(db, user, token);
-        var document = Read(await db.TasteProfiles.AsNoTracking().SingleOrDefaultAsync(item => item.OwnerUserId == user, token));
-        await RememberPlaybackAsync(db, user, document, token);
-        Prune(document);
-        if (!document.Paused) await AddListeningHistoryAsync(db, user, document, token);
-        return document;
+        // This reads every play the listener has, so the result is kept until something it depends on changes.
+        var row = await db.TasteProfiles.AsNoTracking().SingleOrDefaultAsync(item => item.OwnerUserId == user, token);
+        var plays = await db.ListeningEvents.AsNoTracking().CountAsync(item => item.OwnerUserId == user &&
+            (item.State == ListeningEventState.Completed || item.State == ListeningEventState.Skipped), token);
+        var revision = row?.Revision ?? 0;
+        TasteDocument? Known()
+        {
+            var now = clock.UtcNow;
+            return loaded.TryGetValue(user, out var known) && known.Revision == revision && known.Plays == plays && now - known.At < LoadedFor &&
+                !known.Document.Nudges.Any(item => item.ExpiresAt <= now) ? known.Document : null;
+        }
+        if (Known() is { } current) return current;
+        var gate = loading.GetOrAdd(user, _ => new(1, 1));
+        await gate.WaitAsync(token);
+        try
+        {
+            if (Known() is { } finished) return finished;
+            var document = Read(row);
+            await RememberPlaybackAsync(db, user, document, token);
+            Prune(document);
+            if (!document.Paused) await AddListeningHistoryAsync(db, user, document, token);
+            document.Scales = Scales(document);
+            loaded[user] = new(revision, plays, clock.UtcNow, document);
+            return document;
+        }
+        finally { gate.Release(); }
+    }
+
+    private TasteScales Scales(TasteDocument document)
+    {
+        double Scale(string kind, bool lately) => Math.Max(3, document.Learned.Where(item => item.Key.StartsWith(kind + ":", StringComparison.Ordinal))
+            .Select(item => Math.Abs(Decay(lately ? item.Value.Lately : item.Value.Usually, clock.UtcNow - item.Value.At, lately ? LatelyHalfLife : UsuallyHalfLife)))
+            .DefaultIfEmpty(0).Max() / 4);
+        return new(Scale("tag", true), Scale("artist", true), Scale("tag", false), Scale("artist", false));
     }
 
     private static async Task RequireUser(AllstarrDbContext db, Guid user, CancellationToken token)
@@ -101,12 +141,21 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
         var document = await LoadAsync(user, token);
         TasteLayer Layer(bool lately)
         {
-            TasteStrength[] Top(string kind) => document.Learned.Where(item => item.Key.StartsWith(kind + ":", StringComparison.Ordinal))
-                .Select(item =>
-                {
-                    var value = Decay(lately ? item.Value.Lately : item.Value.Usually, clock.UtcNow - item.Value.At, lately ? LatelyHalfLife : UsuallyHalfLife);
-                    return new TasteStrength(item.Value.Name, (int)Math.Round(100 * Math.Abs(Bounded(value))), value);
-                }).Where(item => item.Strength > 0).OrderByDescending(item => item.Strength).ThenBy(item => item.Name, StringComparer.Ordinal).Take(20).ToArray();
+            TasteStrength[] Top(string kind)
+            {
+                var scale = kind == "tag" ? lately ? document.Scales.LatelyTag : document.Scales.UsuallyTag
+                    : lately ? document.Scales.LatelyArtist : document.Scales.UsuallyArtist;
+                var rows = document.Learned.Where(item => item.Key.StartsWith(kind + ":", StringComparison.Ordinal))
+                    .Select(item =>
+                    {
+                        var value = Decay(lately ? item.Value.Lately : item.Value.Usually, clock.UtcNow - item.Value.At, lately ? LatelyHalfLife : UsuallyHalfLife);
+                        return new TasteStrength(item.Value.Name, (int)Math.Round(100 * Math.Abs(Bounded(value, scale))), value);
+                    }).Where(item => item.Strength > 0).ToArray();
+                // Plays credited to several artists together only say something about the artists themselves.
+                var names = rows.Select(item => item.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                return rows.Where(item => kind != "artist" || FuzzyMatcher.SplitCredits(item.Name) is not { Count: > 1 } credits || !credits.Any(names.Contains))
+                    .OrderByDescending(item => item.Value > 0).ThenByDescending(item => Math.Abs(item.Value)).ThenBy(item => item.Name, StringComparer.Ordinal).Take(20).ToArray();
+            }
             return new(Top("tag"), Top("artist"));
         }
         return new(Layer(true), Layer(false), Blend(document), document.Nudges, document.Paused, document.UseImportedHistory);
@@ -305,7 +354,9 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
             if (!document.Learned.TryGetValue(feature.Key, out var affinity)) continue;
             var lately = Decay(affinity.Lately, clock.UtcNow - affinity.At, LatelyHalfLife);
             var usually = Decay(affinity.Usually, clock.UtcNow - affinity.At, UsuallyHalfLife);
-            var contribution = blend * Bounded(lately) + (1 - blend) * Bounded(usually);
+            var tag = feature.Key.StartsWith("tag:", StringComparison.Ordinal);
+            var contribution = blend * Bounded(lately, tag ? document.Scales.LatelyTag : document.Scales.LatelyArtist) +
+                (1 - blend) * Bounded(usually, tag ? document.Scales.UsuallyTag : document.Scales.UsuallyArtist);
             score += contribution / Math.Max(1, features.Keys.Count(key => !key.StartsWith("song:", StringComparison.Ordinal)));
             if (Math.Abs(contribution) < .01) continue;
             var name = affinity.Name;

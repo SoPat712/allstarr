@@ -34,6 +34,15 @@ export function tasteSummary(lately: string[], usually: string[]) {
   const join = (values: string[]) => values.length > 1 ? `${values.slice(0, -1).join(", ")} and ${values.at(-1)}` : values[0];
   return [lately.length ? `Lately you've been into ${join(lately.slice(0, 2))}.` : "", usually.length ? `Usually it's ${join(usually.slice(0, 3))}.` : ""].filter(Boolean).join(" ") || "Play some music and your taste will show up here.";
 }
+// Long-term favourites and what's playing lately take turns, so neither crowds the other out.
+export function steeringNames(lately: string[], usually: string[], limit: number) {
+  const names = new Set<string>();
+  for (let index = 0; names.size < limit && index < Math.max(lately.length, usually.length); index++) {
+    if (usually[index]) names.add(usually[index]);
+    if (lately[index] && names.size < limit) names.add(lately[index]);
+  }
+  return [...names];
+}
 export function nudgeMarker(mode?: string) { return ({ more: "↑", less: "↓", never: "⊘" } as Record<string, string>)[mode ?? ""] ?? ""; }
 export function nudgeName(nudge: TasteNudge) { return nudge.kind === "song" ? "Hidden song" : nudge.name; }
 export const mixOrder = ["daily-1", "daily-2", "daily-3", "daily-4", "discover-weekly", "release-radar", "on-repeat", "rewind", "chill", "focus", "workout", "party", "sleep"];

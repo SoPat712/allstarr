@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep } from "./for-you";
+import { steeringNames, greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep } from "./for-you";
 
 describe("personal mix presentation", () => {
   it("describes each mix without repeating its name", () => {
@@ -76,4 +76,13 @@ it("uses plain exclusion labels without repeating counts", async () => {
   expect(mixExclusions({ "Duplicate recordings": 2, "Listening policy": 1, "No playable route": 1, "Missing song details": 1,
     "Candidate limit": 1, "Changed before saving": 1, "Choices changed during generation": 1, "Outside this recipe": 1, "Artist, release, tier and size limits": 1 }))
     .toBe("2 repeats · 1 left out by your listening settings · 1 you can't play · 1 missing song details · 1 over the song limit · 1 left out before saving · 1 left out after your choices changed · 1 didn't fit this mix · 1 over this mix's limits");
+});
+
+describe("steeringNames", () => {
+  it("takes turns between long-term favourites and recent listening without repeats", () => {
+    expect(steeringNames(["a", "b"], ["x", "a", "y"], 12)).toEqual(["x", "a", "b", "y"]);
+  });
+  it("stops at the limit", () => {
+    expect(steeringNames(["a", "b"], ["x", "y"], 3)).toEqual(["x", "a", "y"]);
+  });
 });

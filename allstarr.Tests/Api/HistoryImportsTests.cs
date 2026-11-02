@@ -118,6 +118,53 @@ public sealed partial class ListeningHistoryImportIntegrationTests
     }
 
     [Fact]
+    public async Task ImportedTaste_LongHistoryIsOrderedByHowMuchWasPlayed()
+    {
+        var service = ImportService();
+        var preview = await PreviewAsync(service, "Finished", "1111111111111111111111");
+        await using (var db = _factory.CreateDbContext())
+        {
+            // Enough plays that each artist would read as equally strong if strength simply topped out.
+            foreach (var (artist, plays) in new[] { ("Aardvark", 200), ("Most Played", 2000), ("Middle", 800) })
+                for (var index = 0; index < plays; index++)
+                {
+                    var play = ImportedEvent(preview.ImportId, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(artist + index))).ToLowerInvariant());
+                    play.Artist = artist;
+                    db.ListeningEvents.Add(play);
+                }
+            await db.SaveChangesAsync();
+        }
+
+        var artists = (await Taste().GetAsync(_scope.OwnerUserId)).Usually.Artists;
+
+        Assert.Equal(["Most Played", "Middle", "Aardvark"], artists.Select(item => item.Name));
+        Assert.True(artists[0].Strength > artists[1].Strength && artists[1].Strength > artists[2].Strength);
+    }
+
+    [Fact]
+    public async Task ImportedTaste_PlaysCreditedTogetherDoNotListTheCreditAsAnArtist()
+    {
+        var service = ImportService();
+        var preview = await PreviewAsync(service, "Finished", "1111111111111111111111");
+        await using (var db = _factory.CreateDbContext())
+        {
+            foreach (var (artist, hash) in new[] { ("Tove Lo", 'a'), ("Tove Lo, Stromae", 'b'), ("Tyler, The Creator", 'c') })
+            {
+                var play = ImportedEvent(preview.ImportId, new string(hash, 64));
+                play.Artist = artist;
+                db.ListeningEvents.Add(play);
+            }
+            await db.SaveChangesAsync();
+        }
+
+        var artists = (await Taste().GetAsync(_scope.OwnerUserId)).Usually.Artists.Select(item => item.Name).ToArray();
+
+        Assert.Contains("Tove Lo", artists);
+        Assert.Contains("Tyler, The Creator", artists);
+        Assert.DoesNotContain("Tove Lo, Stromae", artists);
+    }
+
+    [Fact]
     public async Task ImportedTaste_UsesDatesAndClassificationAndRespondsToSettingPauseAndDeletion()
     {
         var service = ImportService();
