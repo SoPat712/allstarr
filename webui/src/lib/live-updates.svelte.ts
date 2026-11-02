@@ -13,8 +13,6 @@ export type UpdateEvent = {
   data?: { category?: string; type?: string };
 };
 
-const healthyPollInterval = 30_000;
-
 const state = $state({
   status: "connecting" as LiveState,
   revision: 0,
@@ -158,13 +156,7 @@ export const liveUpdates = {
       if (typeof document === "undefined" || document.visibilityState !== "hidden") listener({ reason });
     };
     const resume = () => reconcile("resume");
-    // A healthy stream already reports most changes, so the catch-up check can be far less frequent.
-    let lastPoll = Date.now();
-    const fallback = setInterval(() => {
-      if (state.status === "live" && Date.now() - lastPoll < healthyPollInterval) return;
-      lastPoll = Date.now();
-      reconcile("poll");
-    }, pollInterval);
+    const fallback = setInterval(() => reconcile("poll"), pollInterval);
     if (typeof window !== "undefined") window.addEventListener("focus", resume);
     if (typeof document !== "undefined") document.addEventListener("visibilitychange", resume);
     return () => {
