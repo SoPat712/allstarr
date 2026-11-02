@@ -337,9 +337,12 @@ public sealed partial class TrackMatchCommandService
         CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var matches = await db.TrackMatches.AsNoTracking()
-            .Where(item => (actor.IsAdministrator || item.OwnerUserId == actor.UserId) &&
-                           (!before.HasValue ||
+        // Filtering by listener through its index made SQLite read and sort the listener's whole match history;
+        // the "+" keeps it on the newest-first index so it stops at the limit.
+        var visibleMatches = actor.IsAdministrator ? db.TrackMatches
+            : db.TrackMatches.FromSqlInterpolated($"""SELECT * FROM track_matches WHERE +"OwnerUserId" = {actor.UserId}""");
+        var matches = await visibleMatches.AsNoTracking()
+            .Where(item => (!before.HasValue ||
                             item.DecidedAt < before.Value ||
                             item.DecidedAt == before.Value &&
                             beforeId.HasValue &&
