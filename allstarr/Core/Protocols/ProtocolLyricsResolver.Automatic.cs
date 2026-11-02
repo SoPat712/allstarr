@@ -1,4 +1,5 @@
 using allstarr.Core.Providers.Lyrics;
+using allstarr.Core.Music;
 using allstarr.Models.Lyrics;
 
 namespace allstarr.Core.Protocols;
@@ -23,6 +24,7 @@ public sealed partial class ProtocolLyricsResolver
         internal DateTimeOffset Deadline { get; } = deadline;
         internal CancellationToken Token => cancellation.Token;
         internal List<Task<AutomaticAnswer?>> Tasks { get; } = [];
+        internal ProtocolLyricsCandidate? Fallback { get; set; }
         internal TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal void Cancel() => cancellation.Cancel();
         internal void Dispose() { cancellation.Dispose(); timer.Dispose(); }
@@ -71,8 +73,47 @@ public sealed partial class ProtocolLyricsResolver
         IReadOnlyList<AutomaticSource> sources, AutomaticLookup lookup, CancellationToken caller)
     {
         try { return await RunAutomaticCoreAsync(gateway, sources, lookup, caller); }
-        catch (OperationCanceledException) when (lookup.Token.IsCancellationRequested && !caller.IsCancellationRequested) { return null; }
+        catch (OperationCanceledException) when (lookup.Token.IsCancellationRequested && !caller.IsCancellationRequested) { return lookup.Fallback; }
         catch { lookup.Cancel(); throw; }
+    }
+
+    private async Task<ProtocolLyricsCandidate?> RunUpgradeAsync(IProtocolLyricsExecutionGateway gateway,
+        IReadOnlyList<AutomaticSource> sources, ProtocolLyricsCandidate local, AutomaticLookup lookup, CancellationToken caller)
+    {
+        var best = local;
+        var bestRank = sources.ToList().FindIndex(source => source.Id == local.SourceId);
+        var providerIds = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            for (var rank = 0; rank < sources.Count; rank++)
+            {
+                lookup.Token.ThrowIfCancellationRequested();
+                var source = sources[rank];
+                if (source.Local != null || !LyricsQuality.CanImprove(source.Id, rank, LyricsQuality.Rank(best.Lyrics), bestRank)) continue;
+                PreparedLyricsRead? read;
+                try { read = source.Prepare == null ? null : await source.Prepare(true, lookup.Token); }
+                catch (Exception exception) when (exception is not (OperationCanceledException or UnauthorizedAccessException))
+                {
+                    logger.LogWarning("Lyrics source {Provider} could not be prepared; trying the next configured source", source.Id);
+                    continue;
+                }
+                if (read == null || !providerIds.Add(read.Binding.ProviderId)) continue;
+                var task = ReadAutomaticAsync(gateway, source.Id, rank, read, lookup.Token);
+                lookup.Tasks.Add(task);
+                var answer = await task.WaitAsync(lookup.Token);
+                if (answer == null || !await gateway.IsCurrentAsync(read, lookup.Token)) continue;
+                var quality = LyricsQuality.Rank(answer.Lyrics);
+                if (quality > LyricsQuality.Rank(best.Lyrics) || quality == LyricsQuality.Rank(best.Lyrics) && rank < bestRank)
+                {
+                    best = new(answer.Id, answer.Lyrics);
+                    bestRank = rank;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (lookup.Token.IsCancellationRequested && !caller.IsCancellationRequested) { }
+        catch { lookup.Cancel(); throw; }
+        caller.ThrowIfCancellationRequested();
+        return best;
     }
     private async Task<ProtocolLyricsCandidate?> RunAutomaticCoreAsync(IProtocolLyricsExecutionGateway gateway,
         IReadOnlyList<AutomaticSource> sources, AutomaticLookup lookup, CancellationToken caller)
@@ -137,7 +178,7 @@ public sealed partial class ProtocolLyricsResolver
                 }
                 if (advanced) continue;
             }
-            if (pending.Length == 0) return null;
+            if (pending.Length == 0) return lookup.Fallback;
             var until = elapsed < TimeSpan.FromSeconds(1.5) ? started.AddSeconds(1.5) : started.AddSeconds(3);
             var wait = until - LyricsClock.GetUtcNow();
             var wake = wait > TimeSpan.Zero ? Task.Delay(wait, LyricsClock, lookup.Token) : Task.Delay(Timeout.InfiniteTimeSpan, LyricsClock, lookup.Token);
@@ -147,6 +188,9 @@ public sealed partial class ProtocolLyricsResolver
         {
             lookup.Token.ThrowIfCancellationRequested();
             var source = sources[rank];
+            var bestRank = sources.ToList().FindIndex(item => item.Id == lookup.Fallback?.SourceId);
+            if (lookup.Fallback != null && !LyricsQuality.CanImprove(source.Id, rank, LyricsQuality.Rank(lookup.Fallback.Lyrics), bestRank))
+            { attempted.Add(rank); return null; }
             if (!source.WasPrepared || discovery && source.Read == null && source.CanDiscover && !source.WasDiscovered)
             {
                 source.WasPrepared = true;
@@ -193,13 +237,19 @@ public sealed partial class ProtocolLyricsResolver
                 ranks.Remove(task);
             }
             var completed = lookup.Tasks.Where(task => task.IsCompletedSuccessfully && task.Result != null)
-                .Select(task => task.Result!).Where(item => !discarded.Contains(item.Rank)).OrderBy(item => item.Rank).ToArray();
+                .Select(task => task.Result!).Where(item => !discarded.Contains(item.Rank))
+                .OrderByDescending(item => LyricsQuality.Rank(item.Lyrics)).ThenBy(item => item.Rank).ToArray();
+            lookup.Fallback = null;
             foreach (var answer in completed)
             {
-                var hasHigher = lookup.Tasks.Any(task => !task.IsCompleted && ranks[task] < answer.Rank);
-                if (LyricsClock.GetUtcNow() - started < TimeSpan.FromSeconds(1.5) && hasHigher) return null;
                 if (answer.Read != null && !await gateway.IsCurrentAsync(answer.Read, lookup.Token))
                 { discarded.Add(answer.Rank); continue; }
+                lookup.Fallback = new(answer.Id, answer.Lyrics);
+                var quality = LyricsQuality.Rank(answer.Lyrics);
+                if (lookup.Tasks.Any(task => !task.IsCompleted && LyricsQuality.Maximum(sources[ranks[task]].Id) > quality) ||
+                    Enumerable.Range(0, sources.Count).Any(rank => !attempted.Contains(rank) && LyricsQuality.Maximum(sources[rank].Id) > quality)) return null;
+                var hasHigher = lookup.Tasks.Any(task => !task.IsCompleted && ranks[task] < answer.Rank);
+                if (LyricsClock.GetUtcNow() - started < TimeSpan.FromSeconds(1.5) && hasHigher) return null;
                 caller.ThrowIfCancellationRequested();
                 return new(answer.Id, answer.Lyrics);
             }

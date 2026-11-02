@@ -14,7 +14,7 @@
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import { canonicalProviderId, humanize, lyricsSourceDisplayName, sourceOriginLabel } from "$lib/sources";
-  import { fieldValue, keptLyricsFirst, mergeRoutingOrders, move } from "$lib/settings";
+  import { fieldValue, mergeRoutingOrders, move } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
 
   // One order at a time; five near-identical lists in a row were hard to tell apart.
@@ -78,7 +78,6 @@
       // Older saved orders can list one service under two names; show it once.
       orders = Object.fromEntries(Object.entries(mergeRoutingOrders(nextConfig, schema.priorityGroups ?? [], orders, dirtyOrderIds))
         .map(([id, order]) => [id, [...new Set(order.map(canonicalProviderId))]]));
-      if (orders.lyrics) orders.lyrics = keptLyricsFirst(orders.lyrics);
     }
     const failed = results.filter((result) => result.status === "rejected");
     if (failed.length)
@@ -107,7 +106,6 @@
 
   function moveProvider(group: PriorityGroup, index: number, direction: -1 | 1) {
     const order = orders[group.id] ?? [];
-    if (group.id === "lyrics" && (order[index] === "kept" || order[index + direction] === "kept")) return;
     const providerId = order[index];
     orders = { ...orders, [group.id]: move(order, index, direction) };
     if (!dirtyOrderIds.includes(group.id)) dirtyOrderIds = [...dirtyOrderIds, group.id];
@@ -117,10 +115,6 @@
   function dropProvider(group: PriorityGroup, index: number) {
     if (!dragging || dragging.groupId !== group.id || dragging.index === index) return;
     const order = [...(orders[group.id] ?? [])];
-    if (group.id === "lyrics" && (order[index] === "kept" || order[dragging.index] === "kept")) {
-      dragging = null;
-      return;
-    }
     const [providerId] = order.splice(dragging.index, 1);
     order.splice(index, 0, providerId);
     orders = { ...orders, [group.id]: order };
@@ -221,7 +215,7 @@
       {#each groups.filter((item) => item.id === shown) as group}
         <section class="settings-card routing-group">
           <header>
-            <div><h3>{tabNames[group.id] ?? group.label.replace(/ order$/i, "")} order</h3><small>{group.id === "lyrics" ? "Your saved choice for a song takes precedence, then Kept LRC. Other sources follow this order, with a short priority window for slower services." : group.description || "Drag services, or use the arrows, to change the order Allstarr tries them."}</small></div>
+            <div><h3>{tabNames[group.id] ?? group.label.replace(/ order$/i, "")} order</h3><small>{group.id === "lyrics" ? "A lyrics choice saved for a song always wins. Otherwise the best-timed lyrics win: word by word, then line by line, then plain text. This order decides between equally timed lyrics." : group.description || "Drag services, or use the arrows, to change the order Allstarr tries them."}</small></div>
             {#if scores.length && group.id !== "lyrics"}<Button variant="ghost" onclick={() => sortByScore(group)}><Sparkles size={16} aria-hidden="true" />Sort by score</Button>{/if}
             <Button aria-label={`Save ${group.label}`} disabled={Boolean(action) || !dirtyOrderIds.includes(group.id)} onclick={() => void saveOrder(group)}>{action === group.id ? "Saving…" : "Save order"}</Button>
           </header>
@@ -236,23 +230,21 @@
             {#each orders[group.id] ?? group.providers as providerId, index}
               {@const definition = provider(providerId)}
               {@const label = group.id === "lyrics" ? lyricsSourceDisplayName(schema?.providers ?? [], providerId) : definition?.name ?? providerId}
-              {@const fixed = group.id === "lyrics" && providerId === "kept"}
               {@const scoreKey = `${group.id}:${providerId}`}
               <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
               <li
-                draggable={!fixed}
-                class:pinned={fixed}
+                draggable={true}
                 class:has-score={Boolean(scoreFor(providerId))}
                 onclick={(event) => { if (scoreFor(providerId) && !(event.target as Element).closest("button, a, input, .score-details")) toggleScore(scoreKey); }}
                 class:dragging={dragging?.groupId === group.id && dragging.index === index}
-                ondragstart={(event) => { if (fixed) event.preventDefault(); else dragging = { groupId: group.id, index }; }}
+                ondragstart={() => { dragging = { groupId: group.id, index }; }}
                 ondragover={(event) => event.preventDefault()}
                 ondrop={() => dropProvider(group, index)}
                 ondragend={() => { dragging = null; }}
               >
-                <span class="routing-index" aria-hidden="true">{#if fixed}<Lock size={14} />{:else}<GripVertical size={16} />{index + 1}{/if}</span>
+                <span class="routing-index" aria-hidden="true"><GripVertical size={16} />{index + 1}</span>
                 <ProviderArtwork id={providerId} definition={definition} label={label} />
-                <span class="routing-copy"><span class="routing-name"><strong>{group.id === "lyrics" ? label : definition?.name ?? humanize(providerId)}</strong>{#if definition}<Badge tone="neutral" class="origin-badge">{sourceOriginLabel(definition)}</Badge>{/if}{#if scoreFor(providerId)?.quality}<span class="routing-quality-label" class:lossy={!scoreFor(providerId)?.quality?.lossless}>{scoreFor(providerId)?.quality?.typical}</span>{/if}</span><small>{providerId === "backend" ? "Lyrics supplied by your media server" : fixed ? "Saved lyrics from your library" : definition?.categories?.map(humanize).join(" · ") || "Provider service"}</small></span>
+                <span class="routing-copy"><span class="routing-name"><strong>{group.id === "lyrics" ? label : definition?.name ?? humanize(providerId)}</strong>{#if definition}<Badge tone="neutral" class="origin-badge">{sourceOriginLabel(definition)}</Badge>{/if}{#if scoreFor(providerId)?.quality}<span class="routing-quality-label" class:lossy={!scoreFor(providerId)?.quality?.lossless}>{scoreFor(providerId)?.quality?.typical}</span>{/if}</span><small>{providerId === "backend" ? "Lyrics supplied by your media server" : providerId === "kept" ? "Saved lyrics from your library" : definition?.categories?.map(humanize).join(" · ") || "Provider service"}</small></span>
                 {#if scoreFor(providerId)}
                   {@const ranked = isRanked(definition?.useMode)}
                   {@const value = ranked ? capabilityScore(scoreFor(providerId), group.id) : null}
@@ -265,8 +257,8 @@
                   </button>
                 {/if}
                 <span class="routing-actions">
-                  <Button variant="ghost" size="icon" aria-label={`Move ${label} up`} disabled={fixed || index === 0 || group.id === "lyrics" && orders[group.id]?.[index - 1] === "kept"} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
-                  <Button variant="ghost" size="icon" aria-label={`Move ${label} down`} disabled={fixed || index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
+                  <Button variant="ghost" size="icon" aria-label={`Move ${label} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
+                  <Button variant="ghost" size="icon" aria-label={`Move ${label} down`} disabled={index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
                 </span>
                 {#if openScore === scoreKey && scoreFor(providerId)}
                   <ProviderScoreDetails score={scoreFor(providerId)!} capability={group.id} ranked={isRanked(definition?.useMode)} {qualityTarget} onclose={() => toggleScore(scoreKey)} />

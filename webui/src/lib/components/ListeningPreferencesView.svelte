@@ -19,7 +19,7 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
   import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
   import { canonicalProviderId, lyricsSourceDisplayName } from "$lib/sources";
-  import { audioQualityOptions, keptLyricsFirst, move, playbackStartLabel, playbackStartOptions } from "$lib/settings";
+  import { audioQualityOptions, move, playbackStartLabel, playbackStartOptions } from "$lib/settings";
   import SelectField from "$lib/components/SelectField.svelte";
 
   let { administrator = false }: { administrator?: boolean } = $props();
@@ -64,19 +64,19 @@
   ));
 
   function completeLyricsOrder(value?: string | null) {
-    const candidates = [...(value ?? "").split(","), "backend", "kept", ...providerDefinitions
+    const configured = (value ?? "").split(",").map(id => canonicalProviderId(id.trim())).filter(Boolean);
+    const candidates = [...["backend", "kept"].filter(id => !configured.includes(id)), ...configured, ...providerDefinitions
       .filter(provider => provider.categories?.includes("lyrics")).map(provider => provider.id).sort()];
     const included = new Set<string>();
-    return keptLyricsFirst(candidates.map(id => id.trim()).filter(id => {
+    return candidates.map(id => id.trim()).filter(id => {
       const canonical = canonicalProviderId(id);
       if (!id || included.has(canonical)) return false;
       included.add(canonical);
       return true;
-    }));
+    });
   }
 
   function moveLyrics(index: number, direction: -1 | 1) {
-    if (lyricsOrder[index] === "kept" || lyricsOrder[index + direction] === "kept") return;
     lyricsOrder = move(lyricsOrder, index, direction);
   }
 
@@ -277,15 +277,15 @@
       <section class="preference-options" aria-label="Lyrics source order">
         <div>
           <h3>Lyrics source order</h3>
-          <p>Your saved choice for a song takes precedence, then Kept LRC. Other sources follow this order, with a short priority window for slower services. Sources must be enabled and available to your account.</p>
+          <p>Your saved choice for a song takes precedence. Otherwise, word timing wins over line timing, then plain text. This order breaks ties. Sources must be enabled and available to your account.</p>
         </div>
         <ol class="lyrics-order-list">
           {#each lyricsOrder as providerId, index (providerId)}
             <li>
               <strong>{lyricsName(providerId)}</strong>
               <span class="lyrics-order-actions">
-                <Button variant="ghost" size="icon" aria-label={`Move ${lyricsName(providerId)} up`} disabled={busy || providerId === "kept" || index === 0 || lyricsOrder[index - 1] === "kept"} onclick={() => moveLyrics(index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
-                <Button variant="ghost" size="icon" aria-label={`Move ${lyricsName(providerId)} down`} disabled={busy || providerId === "kept" || index === lyricsOrder.length - 1} onclick={() => moveLyrics(index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
+                <Button variant="ghost" size="icon" aria-label={`Move ${lyricsName(providerId)} up`} disabled={busy || index === 0} onclick={() => moveLyrics(index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
+                <Button variant="ghost" size="icon" aria-label={`Move ${lyricsName(providerId)} down`} disabled={busy || index === lyricsOrder.length - 1} onclick={() => moveLyrics(index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
               </span>
             </li>
           {/each}

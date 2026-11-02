@@ -103,7 +103,7 @@ public sealed partial class ProtocolLyricsResolver(
         var lookupKey = preference.RecordingId?.ToString("N") ?? resourceKey;
 
         await foreach (var candidate in ReadCandidatesAsync(protocol, song, lookupKey,
-            sourceProvider, sourceExternalId, spotifyTrackId, sources, preference.SourceId, preference.RecordingId, skipPaxsenixAfterPlainLyrics: true, automaticLookup: true))
+            sourceProvider, sourceExternalId, spotifyTrackId, sources, preference.SourceId, preference.RecordingId, automaticLookup: true))
         {
             var lyrics = candidate.Lyrics;
             if (lyrics == null) continue;
@@ -155,7 +155,6 @@ public sealed partial class ProtocolLyricsResolver(
         ProtocolLyricsSources? sources,
         string? preferredSourceId = null,
         Guid? canonicalRecordingId = null,
-        bool skipPaxsenixAfterPlainLyrics = false,
         bool automaticLookup = false)
     {
         ArgumentNullException.ThrowIfNull(protocol);
@@ -225,8 +224,10 @@ public sealed partial class ProtocolLyricsResolver(
                     ? await keptLyrics.ReadHouseholdAsync(protocol, song, identities)
                     : await keptLyrics.ReadAsync(protocol, song, identities);
             });
-        IReadOnlyList<string> order = providers.GetProviderOrder(ProviderCapabilityKind.Lyrics).Concat(localSources.Keys)
-            .Distinct(StringComparer.Ordinal).ToArray();
+        var configuredOrder = providers.GetProviderOrder(ProviderCapabilityKind.Lyrics);
+        IReadOnlyList<string> order = new[] { "backend", "kept" }
+            .Where(id => localSources.ContainsKey(id) && !configuredOrder.Contains(id, StringComparer.Ordinal))
+            .Concat(configuredOrder).Distinct(StringComparer.Ordinal).ToArray();
         IReadOnlyList<string> enabledOrder = order;
         var cleanOnly = protocol.Policy?.Preferences.ExplicitFilter == "CleanOnly";
         if (effectivePolicies != null)
@@ -262,27 +263,34 @@ public sealed partial class ProtocolLyricsResolver(
             enabledOrder = enabledOrder.Where(id => id != "spicylyrics").ToArray();
         }
 
+        var localResults = new Dictionary<string, LyricsInfo?>(StringComparer.Ordinal);
+        ProtocolLyricsCandidate? bestLocal = null;
+        var bestLocalRank = int.MaxValue;
         if (automaticLookup && sources?.OnlySourceId == null)
         {
-            var preflight = new[] { preferredSourceId, "kept" }.Where(id => id != null).Distinct(StringComparer.Ordinal);
-            foreach (var id in preflight)
+            if (preferredSourceId != null && enabledOrder.Contains(preferredSourceId, StringComparer.Ordinal))
             {
-                if (!enabledOrder.Contains(id!, StringComparer.Ordinal) || id == "kept" && id != preferredSourceId &&
-                    !order.Contains(id, StringComparer.Ordinal)) continue;
-                var answer = await ReadOneAsync(id!);
-                order = order.Where(item => item != id).ToArray();
-                if (answer != null) { yield return new(id!, answer); yield break; }
+                var pinned = await ReadOneAsync(preferredSourceId);
+                if (pinned != null) { yield return new(preferredSourceId, pinned); yield break; }
+                order = order.Where(id => id != preferredSourceId).ToArray();
+            }
+            for (var rank = 0; rank < order.Count; rank++)
+            {
+                var id = order[rank];
+                if (!localSources.ContainsKey(id)) continue;
+                var answer = await ReadOneAsync(id);
+                localResults[id] = answer;
+                if (LyricsQuality.Rank(answer) <= LyricsQuality.Rank(bestLocal?.Lyrics)) continue;
+                bestLocal = new(id, answer);
+                bestLocalRank = rank;
+                if (LyricsQuality.Rank(answer) == 3) break;
             }
             if (providers is IProtocolLyricsExecutionGateway executionGateway && protocol.Actor != null)
             {
                 var lookup = EnterAutomatic(protocol);
                 if (lookup == null)
                 {
-                    foreach (var id in order.Where(localSources.ContainsKey))
-                    {
-                        var answer = await ReadOneAsync(id);
-                        if (answer != null) { yield return new(id, answer); yield break; }
-                    }
+                    if (bestLocal != null) yield return bestLocal;
                     yield break;
                 }
                 try
@@ -290,7 +298,7 @@ public sealed partial class ProtocolLyricsResolver(
                     var prepared = new List<AutomaticSource>();
                     foreach (var id in order)
                     {
-                        if (localSources.ContainsKey(id)) prepared.Add(new(id, null, false, false, () => ReadOneAsync(id)));
+                        if (localSources.ContainsKey(id)) prepared.Add(new(id, null, false, false, () => Task.FromResult(localResults.GetValueOrDefault(id))));
                         else if (id is not ("backend" or "kept"))
                         {
                             var needsDiscovery = ResolveExternalId(id, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId) == null &&
@@ -305,7 +313,9 @@ public sealed partial class ProtocolLyricsResolver(
                             }, needsDiscovery, canDiscover, null));
                         }
                     }
-                    var answer = await RunAutomaticAsync(executionGateway, prepared, lookup, protocol.CancellationToken);
+                    var answer = bestLocal == null
+                        ? await RunAutomaticAsync(executionGateway, prepared, lookup, protocol.CancellationToken)
+                        : await RunUpgradeAsync(executionGateway, prepared, bestLocal, lookup, protocol.CancellationToken);
                     if (answer != null) yield return answer;
                 }
                 finally { DrainAutomatic(lookup); }
@@ -361,15 +371,23 @@ public sealed partial class ProtocolLyricsResolver(
                 householdOnly ? [ProviderAccountScope.Shared] : [ProviderAccountScope.Personal, ProviderAccountScope.Shared], protocol.CorrelationId, deadline, householdOnly);
         }
 
-        var hasPlainLyrics = false;
-        foreach (var providerId in order.Distinct(StringComparer.OrdinalIgnoreCase))
+        var best = bestLocal;
+        var bestRank = bestLocalRank;
+        for (var rank = 0; rank < order.Count; rank++)
         {
+            var providerId = order[rank];
             protocol.CancellationToken.ThrowIfCancellationRequested();
-            if (skipPaxsenixAfterPlainLyrics && hasPlainLyrics && providerId == "paxsenix") continue;
-            var lyrics = await ReadOneAsync(providerId);
-            hasPlainLyrics |= !string.IsNullOrWhiteSpace(lyrics?.PlainLyrics);
-            yield return new ProtocolLyricsCandidate(providerId, lyrics);
+            if (automaticLookup && !LyricsQuality.CanImprove(providerId, rank, LyricsQuality.Rank(best?.Lyrics), bestRank)) continue;
+            var lyrics = localResults.TryGetValue(providerId, out var local) ? local : await ReadOneAsync(providerId);
+            if (!automaticLookup) { yield return new(providerId, lyrics); continue; }
+            var quality = LyricsQuality.Rank(lyrics);
+            if (quality > LyricsQuality.Rank(best?.Lyrics) || quality > 0 && quality == LyricsQuality.Rank(best?.Lyrics) && rank < bestRank)
+            {
+                best = new(providerId, lyrics);
+                bestRank = rank;
+            }
         }
+        if (automaticLookup && best != null) yield return best;
 
         async Task<LyricsInfo?> ReadOneAsync(string providerId)
         {

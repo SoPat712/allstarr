@@ -1698,7 +1698,7 @@ public class AdminUiController : ControllerBase
                 ProviderCapabilityKind.Lyrics,
                 "lyrics",
                 "Lyrics priority",
-                "Choose when media-server lyrics and other available sources are tried. Synced lyrics are preferred.",
+                "Saved choices take precedence. Otherwise, word timing wins over line timing, then plain text. This order breaks ties.",
                 null,
                 pinnedProvider: null,
                 policy: policy)

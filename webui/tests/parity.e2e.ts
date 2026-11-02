@@ -8584,7 +8584,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.screenshot({ path: `test-results/lyrics-source-name-${width}-${theme}.png` });
   });
 
-  test(`Lyrics routing fixes saved precedence at ${width}px ${theme}`, async ({ page }) => {
+  test(`Lyrics routing preserves movable local sources at ${width}px ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     await mockApi(page);
@@ -8606,20 +8606,22 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     });
     await page.goto("#/integrations/routing");
     const group = page.locator(".routing-group").filter({ has: page.getByRole("heading", { name: "Lyrics order", exact: true }) });
-    await expect(group.locator("li strong")).toHaveText(["Kept LRC", "Media server lyrics", "LRCLib", "Paxsenix"]);
-    await expect(group.getByRole("button", { name: "Move Kept LRC up", exact: true })).toBeDisabled();
-    await expect(group.getByRole("button", { name: "Move Kept LRC down", exact: true })).toBeDisabled();
-    await expect(group.getByRole("button", { name: "Move Media server lyrics up", exact: true })).toBeDisabled();
-    await expect(group.locator("li").first()).toHaveAttribute("draggable", "false");
+    await expect(group.locator("li strong")).toHaveText(["Media server lyrics", "LRCLib", "Kept LRC", "Paxsenix"]);
+    await expect(group.getByRole("button", { name: "Move Kept LRC up", exact: true })).toBeEnabled();
+    await expect(group.getByRole("button", { name: "Move Kept LRC down", exact: true })).toBeEnabled();
+    await expect(group.locator("li").nth(2)).toHaveAttribute("draggable", "true");
     await group.locator("li").nth(2).dispatchEvent("dragstart");
     await group.locator("li").first().dispatchEvent("drop");
-    await group.locator("li").nth(2).dispatchEvent("dragend");
+    await group.locator("li").first().dispatchEvent("dragend");
     await expect(group.locator("li strong")).toHaveText(["Kept LRC", "Media server lyrics", "LRCLib", "Paxsenix"]);
+    await group.getByRole("button", { name: "Move Kept LRC down", exact: true }).click();
     await group.getByRole("button", { name: "Move LRCLib up", exact: true }).focus();
     await page.keyboard.press("Enter");
-    await expect(group.locator("li strong")).toHaveText(["Kept LRC", "LRCLib", "Media server lyrics", "Paxsenix"]);
+    await expect(group.locator("li strong")).toHaveText(["Media server lyrics", "LRCLib", "Kept LRC", "Paxsenix"]);
+    await group.getByRole("button", { name: "Move LRCLib up", exact: true }).click();
     await group.getByRole("button", { name: "Save Lyrics", exact: true }).click();
-    await expect.poll(() => saved).toEqual({ MULTI_PROVIDER_LYRICS_ORDER: "kept,lrclib,backend,paxsenix" });
+    await expect.poll(() => saved).toEqual({ MULTI_PROVIDER_LYRICS_ORDER: "lrclib,backend,kept,paxsenix" });
+    await expect(group.locator("li strong")).toHaveText(["LRCLib", "Media server lyrics", "Kept LRC", "Paxsenix"]);
     await expect(page.locator(".routing-policy")).toContainText("Match scores describe the recording evidence");
     await expect(page.locator(".routing-policy")).not.toContainText("gets 5 confidence points");
     while (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count())
@@ -8627,7 +8629,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await group.getByRole("heading", { name: "Lyrics order", exact: true }).click();
     if (width < 600) await expectContainedMobileGeometry(page);
     await page.evaluate(() => window.scrollTo(0, 0));
-    await page.screenshot({ path: `test-results/lyrics-routing-kept-${width}-${theme}.png`, fullPage: true });
+    await page.screenshot({ path: `test-results/lyrics-routing-${width}-${theme}.png`, fullPage: true });
   });
 }
 

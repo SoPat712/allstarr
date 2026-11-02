@@ -22,16 +22,24 @@ internal static class StoredItemLyrics
         IReadOnlyList<ProviderTrackIdentityRecord> identities, CancellationToken token)
     {
         if (song == null) return new(false, null, chosenSource);
-        if (audioPath != null && (chosenSource is null or "kept") && policy.IsEnabled("kept"))
+        var best = new ItemDetailsLyrics(false, null, chosenSource);
+        bool Consider(RichLyrics? rich, string source)
         {
-            var kept = RichLyricsMapper.Map(await KeptLyricsReader.ReadStoredSidecarAsync(song, audioPath, token));
-            if (kept != null) return new(true, kept.Format, "kept");
+            if (rich != null && LyricsQuality.Rank(rich.Format) > LyricsQuality.Rank(best.Format))
+                best = new(true, rich.Format, source);
+            return best.Format == "word";
         }
         var lookup = MusicLyrics.ForLookup(song);
-        var providers = chosenSource == null ? policy.GetProviderOrder(ProviderCapabilityKind.Lyrics) : [chosenSource];
+        var providers = chosenSource == null
+            ? ProviderOrderPolicyCatalog.NormalizeOrder(ProviderCapabilityKind.Lyrics, policy.GetProviderOrder(ProviderCapabilityKind.Lyrics)) : [chosenSource];
         foreach (var provider in providers.Where(policy.IsEnabled))
         {
             token.ThrowIfCancellationRequested();
+            if (provider == "kept" && audioPath != null)
+            {
+                if (Consider(RichLyricsMapper.Map(await KeptLyricsReader.ReadStoredSidecarAsync(song, audioPath, token)), provider)) return best;
+                continue;
+            }
             if (provider is not ("lrclib" or "lrcred" or "unison" or "genius" or "paxsenix" or "lyricsplus" or "musixmatch" or "spicylyrics" or "spotify")) continue;
             if (provider == "lrclib")
             {
@@ -41,7 +49,7 @@ internal static class StoredItemLyrics
                     var cached = await cache.GetStringAsync("lrclib:automatic:v2:" + CacheKeyBuilder.BuildLyricsKey(
                         string.Join(", ", artists), lookup.Title, lookup.Album, lookup.Duration ?? 0));
                     var richCached = cached == null ? null : RichLyricsMapper.Map(JsonSerializer.Deserialize<LyricsInfo>(cached, ClientApiContract.JsonOptions));
-                    if (richCached != null) return new(true, richCached.Format, "lrclib");
+                    if (Consider(richCached, provider)) return best;
                 }
                 catch (Exception error) when (error is not OperationCanceledException) { }
                 continue;
@@ -73,7 +81,7 @@ internal static class StoredItemLyrics
                     {
                         var accountStored = await ReadAccountCacheAsync(cache, provider, request, song, recordingId, execution, accounts, identities);
                         var richStored = Map(accountStored, provider);
-                        if (richStored != null) return new(true, richStored.Format, provider);
+                        if (Consider(richStored, provider)) return best;
                         continue;
                     }
                 }
@@ -85,9 +93,9 @@ internal static class StoredItemLyrics
             catch (Exception error) when (error is not OperationCanceledException) { continue; }
             if (stored?.Availability != ProviderLyricsAvailabilityState.Available) continue;
             var rich = Map(stored, provider);
-            if (rich != null) return new(true, rich.Format, provider);
+            if (Consider(rich, provider)) return best;
         }
-        return new(false, null, chosenSource);
+        return best;
     }
 
     private static RichLyrics? Map(ProviderLyricsResult? stored, string provider)

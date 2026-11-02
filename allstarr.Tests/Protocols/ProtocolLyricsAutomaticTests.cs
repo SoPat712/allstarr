@@ -25,6 +25,81 @@ namespace allstarr.Tests;
 public sealed class ProtocolLyricsAutomaticTests
 {
     [Fact]
+    public async Task LocalWordLyricsDoNotStartAutomaticProviderWork()
+    {
+        var source = new Source("lyricsplus", Result("lyricsplus", true));
+        await using var fixture = new Fixture(source);
+        var result = await fixture.FindAsync(new ProtocolLyricsSources(Backend: _ => Task.FromResult<allstarr.Models.Lyrics.LyricsInfo?>(
+            new() { SyncedLyrics = "[00:01.000]<00:01.000>Local <00:01.500>words" })));
+        Assert.Equal("backend", result?.Source);
+        Assert.Equal(0, source.Calls);
+        Assert.Empty(fixture.Plans);
+    }
+
+    [Fact]
+    public async Task LocalLineUpgradeUsesTheExistingProviderCacheOnRepeat()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var root = Path.Combine(Path.GetTempPath(), "lyrics-upgrade-" + Guid.NewGuid().ToString("N"));
+        using var cache = new ObservedCache(new FileMediaApplicationCache(new FileMediaCacheOptions(root), new ClockBridge(clock),
+            NullLogger<FileMediaApplicationCache>.Instance), root);
+        var handler = new WaitingHandler();
+        handler.Response.SetResult(new(HttpStatusCode.OK)
+        {
+            Content = new StringContent("<tt xmlns=\"http://www.w3.org/ns/ttml\"><body><div><p begin=\"1s\"><span begin=\"1s\">Service </span><span begin=\"1.5s\">words</span></p></div></body></tt>")
+        });
+        var source = new LrcRedCapabilityAdapter(new HttpClient(handler), cache, timeProvider: clock);
+        var skipped = new Source("spotify", Result("spotify", true));
+        var later = new Source("lyricsplus", Result("lyricsplus", true));
+        await using var fixture = new Fixture(clock, skipped, source, later);
+        var sources = new ProtocolLyricsSources(Backend: _ => Task.FromResult<allstarr.Models.Lyrics.LyricsInfo?>(
+            new() { SyncedLyrics = "[00:01.000]Local words" }));
+        for (var index = 0; index < 2; index++)
+        {
+            var result = await fixture.FindAsync(sources);
+            Assert.Equal("lrcred", result?.Source);
+            Assert.Equal("word", allstarr.Core.Music.RichLyricsMapper.Map(result)?.Format);
+        }
+        Assert.Equal(1, handler.Calls);
+        Assert.Equal(0, skipped.Calls);
+        Assert.Equal(0, later.Calls);
+    }
+
+    [Fact]
+    public async Task LocalUpgradeWaitsInOrderAndRetainsLocalLyricsAtTheDeadline()
+    {
+        var first = new Source("lyricsplus");
+        var later = new Source("lrcred", Result("lrcred", true));
+        await using var fixture = new Fixture(first, later);
+        var sources = new ProtocolLyricsSources(Backend: _ => Task.FromResult<allstarr.Models.Lyrics.LyricsInfo?>(
+            new() { SyncedLyrics = "[00:01.000]Local words" }));
+        var pending = fixture.FindAsync(sources, deadline: TimeSpan.FromSeconds(2));
+        await StartAsync(pending, first);
+        Assert.Equal(0, later.Calls);
+        await fixture.Clock.WaitForTimersAsync(TimeSpan.FromSeconds(2));
+        fixture.Clock.Advance(TimeSpan.FromSeconds(2));
+        Assert.Equal("backend", (await pending.WaitAsync(TimeSpan.FromSeconds(5)))?.Source);
+        Assert.Equal(0, later.Calls);
+        first.CompleteAll();
+    }
+
+    [Fact]
+    public async Task LocalUpgradeStopsWhenTheCallerCancels()
+    {
+        var first = new Source("lyricsplus");
+        var later = new Source("lrcred", Result("lrcred", true));
+        await using var fixture = new Fixture(first, later);
+        using var cancellation = new CancellationTokenSource();
+        var pending = fixture.FindAsync(new ProtocolLyricsSources(Backend: _ => Task.FromResult<allstarr.Models.Lyrics.LyricsInfo?>(
+            new() { PlainLyrics = "Local words" })), token: cancellation.Token);
+        await StartAsync(pending, first);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(0, later.Calls);
+        first.CompleteAll();
+    }
+
+    [Fact]
     public async Task SpicyAutomaticMissingAliasDoesNotStartExternalDiscovery()
     {
         var recording = Guid.NewGuid();
@@ -59,7 +134,7 @@ public sealed class ProtocolLyricsAutomaticTests
         try
         {
             await StartAsync(pending, first);
-            first.Completion.TrySetResult(Result("lrclib", false));
+            first.Completion.TrySetResult(Result("lrclib", true));
             Assert.Equal("lrclib", (await pending.WaitAsync(TimeSpan.FromSeconds(10)))?.Source);
             Assert.False(aliasEntered.Task.IsCompleted);
             Assert.Equal(0, later.Calls);
@@ -81,7 +156,7 @@ public sealed class ProtocolLyricsAutomaticTests
         var cache = new SpicyLyricsTestCache();
         var source = new SpicyLyricsCapabilityAdapter(http, new SpicyLyricsTestSecrets(), cache, clock: clock);
         var higher = new Source("lrclib");
-        var lower = new Source("lrcred", Result("lrcred", false));
+        var lower = new Source("lrcred", Result("lrcred", true));
         await using var fixture = new Fixture(clock, higher, source, lower) { UseAccount = true, SpotifyId = SpicyLyricsTestData.TrackId };
         var snapshot = await ((IInternalLyricsCapability)source).CaptureSourceAsync(default);
         ((ILyricsOutcomeObserver)fixture.Health).ObserveLyrics(SpicyLyricsTestData.Context(account: fixture.Account), null, TimeSpan.Zero, snapshot.ConfigurationId);
@@ -114,7 +189,7 @@ public sealed class ProtocolLyricsAutomaticTests
         links.Setup(item => item.ResolveAsync(It.IsAny<ExternalTrackMatchSnapshot>(), It.IsAny<IReadOnlyList<ProviderExternalResourceId>>(),
                 It.IsAny<ProviderActorContext>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .Returns(() => { called.TrySetResult(); return release.Task; });
-        var first = new Source("lrclib", Result("lrclib", false));
+        var first = new Source("lrclib", Result("lrclib", true));
         var later = new Source("spotify", Result("spotify", true));
         await using var fixture = new Fixture(links.Object, first, later) { ExternalProvider = "deezer", ExternalId = "source" };
         try
@@ -143,7 +218,7 @@ public sealed class ProtocolLyricsAutomaticTests
         await StartAsync(pending, first);
         await StartAsync(pending, other);
         await fixture.Clock.WaitForTimersAsync(TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(1.5));
-        first.Completion.SetResult(Result("lrclib", false));
+        first.Completion.SetResult(Result("lrclib", true));
         Assert.Equal("lrclib", (await pending.WaitAsync(TimeSpan.FromSeconds(5)))?.Source);
         Assert.False(other.Completion.Task.IsCompleted);
         Assert.Equal(knownRecording ? 1 : 0, deferred.Calls);
@@ -313,7 +388,7 @@ public sealed class ProtocolLyricsAutomaticTests
     public async Task LowerAnswerWaitsForPriorityWindowThenWinsWithoutSlowHigherSource()
     {
         var higher = new Source("lrclib");
-        var lower = new Source("lrcred", Result("lrcred", false));
+        var lower = new Source("lrcred", Result("lrcred", true));
         await using var fixture = new Fixture(higher, lower);
         var pending = fixture.FindAsync();
         await StartAsync(pending, higher);
@@ -324,21 +399,21 @@ public sealed class ProtocolLyricsAutomaticTests
         fixture.Clock.Advance(TimeSpan.FromMilliseconds(1));
         var result = await pending.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal("lrcred", result?.Source);
-        Assert.Equal("Words", result?.PlainLyrics);
+        Assert.Equal("[00:01]Words", result?.SyncedLyrics);
         Assert.False(higher.Completion.Task.IsCompleted);
         higher.Completion.SetResult(null);
         await fixture.Resolver.StopAsync(default);
     }
 
     [Fact]
-    public async Task EarlierPlainBeatsLaterTimedAndDoesNotStartItWhenAlreadyAvailable()
+    public async Task LaterTimedLyricsImproveAnImmediatelyAvailablePlainAnswer()
     {
         var first = new Source("lrclib", Result("lrclib", false));
         var second = new Source("lrcred", Result("lrcred", true));
         await using var fixture = new Fixture(first, second);
-        Assert.Equal("lrclib", (await fixture.FindAsync())?.Source);
+        Assert.Equal("lrcred", (await fixture.FindAsync())?.Source);
         Assert.Equal(1, first.Calls);
-        Assert.Equal(0, second.Calls);
+        Assert.Equal(1, second.Calls);
         await fixture.Resolver.StopAsync(default);
     }
 
@@ -476,7 +551,7 @@ public sealed class ProtocolLyricsAutomaticTests
             NullLogger<FileMediaApplicationCache>.Instance), root);
         var handler = new WaitingHandler();
         var realSource = new LrcRedCapabilityAdapter(new HttpClient(handler), cache, timeProvider: clock);
-        var lower = new Source("lrclib", Result("lrclib", false));
+        var lower = new Source("lrclib", Result("lrclib", true));
         await using var fixture = new Fixture(clock, realSource, lower);
         var pending = fixture.FindAsync();
         await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -874,5 +949,6 @@ public sealed class ProtocolLyricsAutomaticTests
         "lyrics", "fixture", DateTimeOffset.UtcNow.AddMinutes(1), token);
     private static ProviderOutcome<ProviderLyricsResult> Result(string provider, bool timed) => ProviderOutcome<ProviderLyricsResult>.Success(new(
         ProviderLyricsAvailabilityState.Available, provider, timed ? ProviderLyricsFormat.LineTimed : ProviderLyricsFormat.PlainText,
-        timed ? "[00:01]Words" : "Words"));
+        timed ? "[00:01]Words" : "Words", timedLines: timed ? [new("Words", TimeSpan.FromSeconds(1),
+            segments: [new("Words", TimeSpan.FromSeconds(1))])] : null));
 }
