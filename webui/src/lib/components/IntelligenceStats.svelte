@@ -89,10 +89,11 @@
       {/if}
       <div class="stats-numbers">
         <article><strong>{formatCount(stats.playCount)}</strong><span>Plays</span></article>
-        <article><strong>{missingTime ? "Unavailable" : hours(stats.estimatedTimeFromSongLengthsMilliseconds)}</strong><span>Listening time</span>{#if missingTime}<small>Song lengths aren't available for these plays.</small>{:else}<small>about {listeningTime(stats.estimatedTimeFromSongLengthsMilliseconds)} from song lengths</small>{/if}{#if !missingTime && stats.coverage.unknownDurationCount}<small>{formatCount(stats.coverage.unknownDurationCount)} plays had no song length.</small>{/if}</article>
-        <article><strong>{formatCount(stats.activeDays)}</strong><span>Active days</span>{#if stats.longestStreakDays}<small>Longest streak: {stats.longestStreakDays} {stats.longestStreakDays === 1 ? "day" : "days"}</small>{/if}</article>
+        <article><strong>{missingTime ? "Unavailable" : hours(stats.estimatedTimeFromSongLengthsMilliseconds)}</strong><span>Listening time</span>{#if missingTime}<small>Song lengths aren't available for these plays.</small>{:else if stats.coverage.unknownDurationCount}<small>{formatCount(stats.coverage.unknownDurationCount)} plays had no song length.</small>{/if}</article>
+        <article><strong>{formatCount(stats.activeDays)}</strong><span>Active days</span></article>
         {#if stats.uniqueArtists}<article><strong>{formatCount(stats.uniqueArtists)}</strong><span>Artists</span></article>{/if}
         {#if stats.uniqueSongs}<article><strong>{formatCount(stats.uniqueSongs)}</strong><span>Songs</span></article>{/if}
+        {#if stats.longestStreakDays}<article><strong>{formatCount(stats.longestStreakDays)} {stats.longestStreakDays === 1 ? "day" : "days"}</strong><span>Longest streak</span></article>{/if}
       </div>
     </section>
     {#if !stats.playCount}<p>No plays in this period.</p>{/if}
@@ -123,7 +124,7 @@
         {@const open = expanded === list.title}
         <section class="panel" aria-label={list.title}>
           <h2>{list.title}</h2>
-          <ol>{#each open ? list.rows : list.rows.slice(0, 10) as row, index}<li><span class="rank">{index + 1}</span><MediaArtwork url={row.artworkUrl} class={list.round ? "list-art round" : "list-art"} /><div class="stats-name"><strong>{row.name}</strong>{#if row.detail}<small>{row.detail}</small>{/if}</div><span class="plays-count">{formatCount(row.count)} {row.count === 1 ? "play" : "plays"}</span></li>{/each}</ol>
+          <ol>{#each open ? list.rows : list.rows.slice(0, 10) as row, index}<li><span class="rank">{index + 1}</span><MediaArtwork url={row.artworkUrl} class={list.round ? "list-art round" : "list-art"} /><div class="stats-name"><strong>{row.name}</strong><small>{#if row.detail}{row.detail} · {/if}{formatCount(row.count)} {row.count === 1 ? "play" : "plays"}</small></div></li>{/each}</ol>
           {#if !list.rows.length}<p>{list.empty}</p>{/if}
           {#if list.rows.length > 10}<Button variant="ghost" onclick={() => expanded = open ? "" : list.title}>{open ? "Show fewer" : `Show all ${list.rows.length}`}</Button>{/if}
         </section>
@@ -158,8 +159,8 @@
   .hero-artist small { color: var(--color-ink-muted); font-size: var(--text-sm); }
   .hero-artist strong { font-size: clamp(1.5rem, 3vw, 2rem); font-weight: 600; line-height: 1.15; overflow-wrap: anywhere; }
   .hero-artist span { color: var(--color-ink-muted); font-size: var(--text-sm); }
-  .stats-numbers { display: flex; flex-wrap: wrap; gap: var(--space-4) var(--space-6); flex: 2 1 420px; min-width: 0; }
-  .stats-numbers article { display: flex; flex-direction: column; gap: var(--space-1); min-width: 7rem; flex: 1 1 7rem; }
+  .stats-numbers { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: var(--space-4) var(--space-6); flex: 2 1 420px; min-width: 0; }
+  .stats-numbers article { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
   .stats-numbers strong { font-size: clamp(1.25rem, 2.2vw, 1.75rem); font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
   .stats-numbers small, footer, .rank, .stats-name small, .chart-card header small, .new-artists small { color: var(--color-ink-muted); font-size: var(--text-sm); }
   .chart-card { display: grid; gap: var(--space-4); padding: var(--surface-gutter); min-width: 0; }
@@ -182,9 +183,10 @@
   .stats-lists :global(.list-art.round) { border-radius: 50%; }
   .stats-lists :global(.list-art img) { width: 100%; height: 100%; object-fit: cover; }
   .stats-name { min-width: 0; flex: 1; }
-  .stats-name strong, .stats-name small { display: block; overflow-wrap: anywhere; }
+  .stats-name strong, .stats-name small { display: block; overflow-wrap: break-word; }
   .stats-name strong { font-size: var(--text-sm); font-weight: 600; line-height: 1.3; }
   .plays-count { color: var(--color-ink-muted); font-size: var(--text-sm); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  @media (max-width: 480px) { .stats-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .stats-lists section :global(button) { width: 100%; margin-top: var(--space-2); }
   .new-artists { display: grid; gap: var(--space-4); padding: var(--surface-gutter); }
   .new-artists ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: var(--space-3) var(--space-4); list-style: none; margin: 0; padding: 0; }

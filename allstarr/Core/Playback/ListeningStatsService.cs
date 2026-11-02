@@ -47,7 +47,6 @@ public sealed record ListeningStats(ListeningStatsPeriod Period, long PlayCount,
 public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, SharedTagStore? tags = null) : IDisposable
 {
     private const int TopLimit = 50;
-    private static readonly string[] NoArtwork = ["lastfm", "listenbrainz", "apple-download"];
     private readonly MemoryCache cache = new(new MemoryCacheOptions { SizeLimit = 256 });
 
     public async Task<ListeningStats> GetAsync(AdminAuthSession session, string? period, int? year, CancellationToken token, string? timeZoneId = null)
@@ -188,16 +187,17 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
             }
         }
 
-        var artwork = await ArtworkAsync(db, songs.Select(item => item.Recording).Concat(artists.Select(item => item.Recording))
-            .Concat(albums.Select(item => item.Recording)).OfType<Guid>().Distinct().ToArray(), token);
-        string? Art(Guid? recording) => recording is { } id ? artwork.GetValueOrDefault(id) : null;
+        var covers = await SongCoversAsync(db, songs.Select(item => item.Recording).OfType<Guid>().ToArray(), token);
         var (unit, timeline) = Timeline(period, zone, days, now);
         return new(period, plays.Count, days.Count,
             imported, observedSince, plays.Sum(item => item.DurationMilliseconds ?? 0),
             new(plays.Count - knownSongs.Length, plays.LongCount(item => item.DurationMilliseconds == null)),
-            songs.Select(item => item.Row with { ArtworkUrl = Art(item.Recording) }).ToArray(),
-            artists.Select(item => item.Row with { ArtworkUrl = Art(item.Recording) }).ToArray(),
-            albums.Select(item => item.Row with { ArtworkUrl = Art(item.Recording) }).ToArray())
+            songs.Select(item => item.Row with
+            {
+                ArtworkUrl = (item.Recording is { } recording ? covers.GetValueOrDefault(recording) : null) ?? ArtworkByName(item.Row.Artist, title: item.Row.Title)
+            }).ToArray(),
+            artists.Select(item => item.Row with { ArtworkUrl = ArtworkByName(item.Row.Artist) }).ToArray(),
+            albums.Select(item => item.Row with { ArtworkUrl = ArtworkByName(item.Row.Artist, album: item.Row.Album) }).ToArray())
         {
             ShortPlayCount = shortPlays,
             FirstPlayAt = firstPlayAt,
@@ -217,21 +217,20 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
     private static Guid? MostPlayedRecording(IEnumerable<StatsPlay> plays) => plays.Where(item => item.CanonicalRecordingId != null)
         .GroupBy(item => item.CanonicalRecordingId).OrderByDescending(group => group.Count()).ThenBy(group => group.Key).Select(group => group.Key).FirstOrDefault();
 
-    private static async Task<IReadOnlyDictionary<Guid, string>> ArtworkAsync(AllstarrDbContext db, IReadOnlyCollection<Guid> recordings, CancellationToken token)
+    private static async Task<IReadOnlyDictionary<Guid, string>> SongCoversAsync(AllstarrDbContext db, IReadOnlyCollection<Guid> recordings, CancellationToken token)
     {
         if (recordings.Count == 0) return new Dictionary<Guid, string>();
         var identities = await db.ProviderTrackIdentities.AsNoTracking().Where(item => recordings.Contains(item.CanonicalRecordingId) &&
-                item.ResourceKind == ProviderResourceKind.Track &&
+                item.ProviderId == "deezer" && item.ResourceKind == ProviderResourceKind.Track &&
                 (item.Verification == ProviderIdentityVerification.Verified || item.Verification == ProviderIdentityVerification.Pinned))
-            .Select(item => new { item.CanonicalRecordingId, item.ProviderId, item.ExternalId }).ToArrayAsync(token);
-        return identities.Where(item => !NoArtwork.Contains(item.ProviderId, StringComparer.OrdinalIgnoreCase)).GroupBy(item => item.CanonicalRecordingId)
-            .ToDictionary(group => group.Key, group =>
-            {
-                // These two answer quickly and reliably; anything else is still better than a blank square.
-                var source = group.OrderBy(item => item.ProviderId == "deezer" ? 0 : item.ProviderId == "apple-musickit" ? 1 : 2).ThenBy(item => item.ProviderId, StringComparer.Ordinal).First();
-                return $"/api/admin/downloads/artwork/{Uri.EscapeDataString($"ext-{source.ProviderId}-song-{source.ExternalId}")}";
-            });
+            .Select(item => new { item.CanonicalRecordingId, item.ExternalId }).ToArrayAsync(token);
+        return identities.GroupBy(item => item.CanonicalRecordingId).ToDictionary(group => group.Key,
+            group => $"/api/admin/downloads/artwork/{Uri.EscapeDataString($"ext-deezer-song-{group.First().ExternalId}")}");
     }
+
+    private static string ArtworkByName(string artist, string? title = null, string? album = null) =>
+        $"/api/admin/stats/art?artist={Uri.EscapeDataString(artist)}" +
+        (title != null ? $"&title={Uri.EscapeDataString(title)}" : album != null ? $"&album={Uri.EscapeDataString(album)}" : "");
 
     // A long span reads best by month, a short one by day.
     private static (string Unit, IReadOnlyList<ListeningStatsPoint> Points) Timeline(ListeningStatsPeriod period, TimeZoneInfo zone,

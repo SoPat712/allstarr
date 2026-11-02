@@ -11,7 +11,7 @@
     const step = 10 ** Math.floor(Math.log10(peak));
     return Math.ceil(peak / (step / 2)) * (step / 2);
   });
-  const compact = (value: number) => value >= 1000 ? `${(value / 1000).toFixed(value >= 10000 || value % 1000 === 0 ? 0 : 1)}K` : String(value);
+  const compact = (value: number) => value >= 1000 ? `${Number((value / 1000).toFixed(2))}K` : String(value);
   const sparse = $derived(points.length > 40);
   const shown = $derived(active === null ? null : points[active]);
   const tipOffset = $derived(active === null ? 50 : (active + .5) / points.length * 100);

@@ -31,7 +31,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.goto("/#/for-you?section=recap");
     await expect(page.getByRole("heading", { name: "Your listening", exact: true })).toBeAttached();
     await expect(page.getByText("1,234", { exact: true })).toBeVisible();
-    await expect(page.getByText("about 30 hr 50 min from song lengths", { exact: true })).toBeVisible();
+    await expect(page.getByText("31 hours", { exact: true })).toBeVisible();
     await expect(page.getByRole("region", { name: "Top songs", exact: true })).toContainText("Evening light");
     await expect(page.getByRole("region", { name: "Top artists", exact: true })).toContainText("57 plays");
     await expect(page.getByRole("region", { name: "Top albums", exact: true })).toContainText("Open water");

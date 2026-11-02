@@ -51,7 +51,7 @@ export function recapTimeline(points: { key: string; plays: number }[], unit: st
     const axis = unit === "day"
       ? (months <= 7 ? date.toLocaleDateString("en-US", { weekday: "short" }) : (index % 5 === 0 ? date.toLocaleDateString("en-US", { month: "short", day: "numeric" }) : ""))
       : months > 24
-        ? (month === 1 ? String(year) : "")
+        ? (month === 1 && (months <= 84 || year % 2 === 0) ? String(year) : "")
         : (index % (months > 12 ? 3 : 1) === 0 ? date.toLocaleDateString("en-US", { month: "short" }) : "");
     return { key: point.key, label, axis, value: point.plays };
   });
