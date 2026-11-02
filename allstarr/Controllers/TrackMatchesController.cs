@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -38,7 +39,8 @@ public sealed class TrackMatchesController(
     TrackRematchAllService bulkRematches,
     IEffectiveProviderPolicyResolver? effectivePolicies = null,
     IApplicationCache? applicationCache = null,
-    RecordingOdesliEnrichmentQueue? enrichment = null) : ControllerBase
+    RecordingOdesliEnrichmentQueue? enrichment = null,
+    ILogger<TrackMatchesController>? logger = null) : ControllerBase
 {
     public sealed record ResolveTrackMatchRequest(
         string TargetType,
@@ -320,12 +322,14 @@ public sealed class TrackMatchesController(
             return BadRequest(new { error = "Sort is not supported" });
 
         var userId = session!.AllstarrUserId!.Value;
+        var started = Stopwatch.GetTimestamp();
         var review = await trackMatchCommands.GetReviewDataAsync(
             new TrackMatchActor(userId, session.IsAdministrator),
             backendLibraryId,
             search,
             externalSnapshotId,
             cancellationToken: cancellationToken);
+        var loaded = Stopwatch.GetTimestamp();
         var decisions = review.LatestDecisions.ToDictionary(item => item.ExternalSnapshotId);
         var overrides = ManualTrackOverrides.Index(review.Snapshots, review.ActiveOverrides, userId);
         var library = review.LibraryTracks.ToDictionary(item => item.Id);
@@ -351,6 +355,7 @@ public sealed class TrackMatchesController(
         var providerPolicy = effectivePolicies == null ? execution.Policy :
             await effectivePolicies.ResolveForUserAsync(userId, cancellationToken);
 
+        var prepared = Stopwatch.GetTimestamp();
         var rowLibrary = new RowLibrary(library);
         var playableProviderSet = playableProviders.ToHashSet(StringComparer.Ordinal);
         var allRows = review.Snapshots
@@ -403,10 +408,16 @@ public sealed class TrackMatchesController(
         };
         var total = rows.Length;
         var pageRows = rows.Skip((page - 1) * pageSize).Take(pageSize).ToArray();
+        var projected = Stopwatch.GetTimestamp();
         await new TrackMatchTargetResolver(contextFactory, applicationCache, enrichment).EnrichAsync(
             new(userId, session.IsAdministrator),
             pageRows.Select(row => row.TargetLookup).OfType<TrackMatchTargetLookup>().ToArray(), cancellationToken);
+        var enriched = Stopwatch.GetTimestamp();
         var items = pageRows.Select(row => row.Value()).ToArray();
+        logger?.LogInformation("Match review timing: records {Records} ms, sources {Sources} ms, rows {Rows} ms, targets {Targets} ms, details {Details} ms for {Count} songs",
+            (int)Stopwatch.GetElapsedTime(started, loaded).TotalMilliseconds, (int)Stopwatch.GetElapsedTime(loaded, prepared).TotalMilliseconds,
+            (int)Stopwatch.GetElapsedTime(prepared, projected).TotalMilliseconds, (int)Stopwatch.GetElapsedTime(projected, enriched).TotalMilliseconds,
+            (int)Stopwatch.GetElapsedTime(enriched).TotalMilliseconds, allRows.Length);
         return Ok(new
         {
             matches = items,
