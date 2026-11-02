@@ -52,6 +52,9 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     IBackendLibraryAccessResolver libraryAccess, AudioMuseDiscovery? audioMuse = null, SharedTagSources? tagSources = null, IProviderRegistry? registry = null, LastFmSimilarTracks? similarTracks = null)
 {
     public const string PublishKey = "Mixes:PublishToApps", JobType = "mixes.refresh";
+    // Saved songs carry dozens of empty fields; leaving them out keeps a listener's mixes well under the 1 MB a stored
+    // document may hold. A long history had pushed it over, and refreshes after new tags failed.
+    private static readonly JsonSerializerOptions DocumentJson = new() { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull };
     private const string ResourceKind = "personal-mixes";
     private const int KeptDocuments = 3;
     private readonly SemaphoreSlim writes = new(1, 1);
@@ -158,7 +161,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     {
         var kind = preview ? "personal-mixes-preview" : ResourceKind;
         var previous = await RowAsync(db, user, token, kind);
-        var json = JsonSerializer.Serialize(document);
+        var json = JsonSerializer.Serialize(document, DocumentJson);
         db.ExternalMetadataSnapshots.Add(new()
         {
             Id = Guid.CreateVersion7(),
