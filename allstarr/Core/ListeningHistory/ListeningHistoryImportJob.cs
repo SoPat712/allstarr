@@ -167,7 +167,22 @@ public sealed class ListeningHistoryImportJobHandler(
         record.UpdatedAt = now;
         record.Revision++;
         db.AuditEvents.Add(Audit(record, "completed", "success", now));
+        // Earlier imports whose plays this one took over are empty now, and listing them would only suggest the plays are there twice.
+        var earlier = await db.ListeningHistoryImports.Where(item => item.Id != record.Id && item.OwnerUserId == record.OwnerUserId &&
+            item.Protocol == record.Protocol && item.BackendInstanceId == record.BackendInstanceId &&
+            item.State == ListeningHistoryImportState.Completed && (item.ImportedRows > 0 || item.DuplicateRows > 0)).ToListAsync(cancellationToken);
+        var merged = new List<Guid>();
+        foreach (var other in earlier)
+        {
+            var prefix = $"history-import:{other.Id:N}:";
+            if (await db.ListeningEvents.AnyAsync(item => item.OwnerUserId == other.OwnerUserId && item.ImportProvenance != null &&
+                item.ImportProvenance.StartsWith(prefix), cancellationToken)) continue;
+            db.AuditEvents.Add(Audit(other, "merged", "success", now));
+            db.ListeningHistoryImports.Remove(other);
+            merged.Add(other.Id);
+        }
         await db.SaveChangesAsync(cancellationToken);
+        foreach (var id in merged) artifacts.Delete(id);
     }
 
     private async Task CancelAsync(ListeningHistoryImportJobPayload payload, Guid jobId)
@@ -342,10 +357,19 @@ public sealed class ListeningHistoryImportJobHandler(
                 ? _rows.Where(row => row.ListenedAt >= cutoff).ToArray()
                 : _rows.ToArray();
             var occurrenceKeys = retainedRows.Select(row => ListeningHistoryImportService.OccurrenceKey(payload.Scope, row)).ToArray();
-            var existing = await db.ListeningEvents.AsNoTracking().Where(item =>
+            var existingRows = await db.ListeningEvents.AsNoTracking().Where(item =>
                     item.OwnerUserId == payload.Scope.OwnerUserId &&
                     occurrenceKeys.Contains(item.OccurrenceKey))
-                .Select(item => item.OccurrenceKey).ToHashSetAsync(cancellationToken);
+                .Select(item => new { item.Id, item.OccurrenceKey, item.SourceKind, item.ImportProvenance }).ToListAsync(cancellationToken);
+            var existing = existingRows.Select(item => item.OccurrenceKey).ToHashSet();
+            // A play an earlier import already brought in now belongs to this one, so that import can go once nothing is left in it.
+            var own = $"history-import:{payload.ImportId:N}:";
+            var taken = existingRows.Where(item => item.SourceKind == "import" && item.ImportProvenance is { Length: > 48 } provenance &&
+                provenance.StartsWith("history-import:", StringComparison.Ordinal) && !provenance.StartsWith(own, StringComparison.Ordinal))
+                .Select(item => item.Id).ToArray();
+            if (taken.Length > 0)
+                await db.ListeningEvents.Where(item => taken.Contains(item.Id))
+                    .ExecuteUpdateAsync(set => set.SetProperty(item => item.ImportProvenance, item => own + item.ImportProvenance!.Substring(48)), cancellationToken);
             var externalHashes = retainedRows.Select(ListeningHistoryImportService.ProviderIdentityHash)
                 .OfType<string>().Distinct().ToArray();
             var identities = externalHashes.Length == 0

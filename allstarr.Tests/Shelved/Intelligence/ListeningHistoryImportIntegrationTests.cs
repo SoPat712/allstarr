@@ -113,6 +113,9 @@ public sealed partial class ListeningHistoryImportIntegrationTests : IAsyncLifet
         using var services = new ServiceCollection().BuildServiceProvider();
         var completion = await handler.ExecuteAsync(new(claim!, services), CancellationToken.None);
         await _jobs.CompleteAsync(claim!, completion, CancellationToken.None);
+        ListeningHistoryImportRecord import;
+        await using (var before = await _factory.CreateDbContextAsync())
+            import = await before.ListeningHistoryImports.AsNoTracking().SingleAsync(item => item.Id == preview.ImportId);
 
         await using var reimportStream = new MemoryStream(source);
         var reimportPreview = await service.PreviewAsync(
@@ -126,7 +129,8 @@ public sealed partial class ListeningHistoryImportIntegrationTests : IAsyncLifet
         await _jobs.CompleteAsync(reimportClaim!, reimportCompletion, CancellationToken.None);
 
         await using var db = await _factory.CreateDbContextAsync();
-        var import = await db.ListeningHistoryImports.SingleAsync(item => item.Id == preview.ImportId);
+        // The second import holds every play the first one had, so it takes them over and the first is folded away.
+        Assert.False(await db.ListeningHistoryImports.AnyAsync(item => item.Id == preview.ImportId));
         var reimport = await db.ListeningHistoryImports.SingleAsync(item => item.Id == reimportPreview.ImportId);
         var events = await db.ListeningEvents.OrderBy(item => item.StartedAt).ToListAsync();
         Assert.Equal(ListeningHistoryImportState.Completed, import.State);
@@ -137,6 +141,7 @@ public sealed partial class ListeningHistoryImportIntegrationTests : IAsyncLifet
         Assert.Equal(0, reimport.ImportedRows);
         Assert.Equal(3, reimport.DuplicateRows);
         Assert.Equal(3, reimport.NextSequence);
+        Assert.All(events, item => Assert.StartsWith($"history-import:{reimportPreview.ImportId:N}:", item.ImportProvenance));
         Assert.Collection(events,
             item =>
             {
@@ -162,6 +167,7 @@ public sealed partial class ListeningHistoryImportIntegrationTests : IAsyncLifet
         var firstAudits = audits.Where(item => item.CorrelationId == preview.ImportId.ToString("N")).ToList();
         var previewAudit = Assert.Single(firstAudits, item => item.Action == "previewed");
         var completedAudit = Assert.Single(firstAudits, item => item.Action == "completed");
+        Assert.Single(firstAudits, item => item.Action == "merged");
         var spotifyFormat = new SpotifyListeningHistoryImporter().Format;
         Assert.All(firstAudits, item => Assert.Equal(preview.ImportId.ToString("N"), item.CorrelationId));
         using (var details = JsonDocument.Parse(previewAudit.DetailsJson))
