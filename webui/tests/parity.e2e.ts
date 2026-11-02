@@ -2431,6 +2431,77 @@ test("extension review scrolls long permission lists", async ({ page }) => {
   await expect(review.getByRole("button", { name: "Approve" })).toBeEnabled();
 });
 
+test("extension updates can be reviewed together", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await mockApi(page);
+  const extension = (id: string, extensionId: string, displayName: string, version: string, state: string, extra = {}) => ({
+    id, extensionId, displayName, version, state, lifecycle: state, active: state === "active", installed: true,
+    permissionReviewRequired: state === "reviewRequired", capabilities: ["metadata"], revision: 1,
+    stagedAt: "2026-01-01", ...extra,
+  });
+  const packages = [
+    extension("lumen-old", "lumen-audio", "Lumen Audio", "1.0.0", "active"),
+    extension("pulse-old", "pulse-lyrics", "Pulse Lyrics", "1.0.0", "active"),
+    extension("nova", "nova-art", "Nova Art", "0.1.0", "reviewRequired"),
+  ];
+  const updates: Record<string, ReturnType<typeof extension>> = {
+    "lumen-audio": extension("lumen-new", "lumen-audio", "Lumen Audio", "2.0.0", "reviewRequired", { previousPackageId: "lumen-old", stagedAt: "2026-02-01" }),
+    "pulse-lyrics": extension("pulse-new", "pulse-lyrics", "Pulse Lyrics", "1.1.0", "reviewRequired", { previousPackageId: "pulse-old", stagedAt: "2026-02-01" }),
+  };
+  await page.route("**/api/admin/extensions/packages", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(packages) }));
+  await page.route("**/api/admin/extensions/store", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({
+      items: Object.values(updates).map((item) => ({
+        id: item.extensionId, displayName: item.displayName, version: item.version,
+        downloadUrl: `https://example.test/${item.extensionId}.zip`, sha256: "a".repeat(64), registryId: null, types: ["metadata"],
+      })),
+      errors: [],
+    }),
+  }));
+  await page.route("**/api/admin/extensions/install", (route) => {
+    const update = updates[route.request().postDataJSON().id];
+    packages.push(update);
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify({ packageId: update.id, message: "Staged." }) });
+  });
+  const permission = (kind: string, value: string) => ({ id: `${kind}-${value}`, permissionKind: kind, permissionValue: value, required: true, decision: "pending" });
+  const network = permission("network", "https://api.example.test/");
+  const access: Record<string, unknown[]> = {
+    "lumen-old": [network], "lumen-new": [network, permission("secret", "accountToken")],
+    "pulse-old": [network], "pulse-new": [network], nova: [permission("cache", "metadata")],
+  };
+  const reviewed: string[] = [];
+  const activated: string[] = [];
+  await page.route("**/api/admin/extensions/packages/*/*", (route) => {
+    const [id, step] = new URL(route.request().url()).pathname.split("/").slice(-2);
+    const item = packages.find((entry) => entry.id === id)!;
+    if (step === "permissions") return route.fulfill({ contentType: "application/json", body: JSON.stringify(access[id]) });
+    (step === "review" ? reviewed : activated).push(id);
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ ...item, state: step === "review" ? "staged" : "active", permissionReviewRequired: false }),
+    });
+  });
+
+  await page.goto("#/settings/extensions");
+  await page.getByRole("button", { name: "Update and review all (3)" }).click();
+  const review = page.getByRole("dialog", { name: "Update and review extensions" });
+  const rows = review.getByRole("list", { name: "Extensions to approve" }).locator(":scope > li");
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0)).toContainText("1.0.0 → 2.0.0");
+  await expect(rows.nth(0)).toContainText("New access");
+  await expect(rows.nth(1)).toContainText("No new access");
+  await expect(rows.nth(2)).toContainText("Version 0.1.0");
+  const approve = review.getByRole("button", { name: "Approve 3" });
+  await expect(approve).toBeDisabled();
+  await review.getByRole("checkbox", { name: "Approve and turn on Pulse Lyrics" }).click();
+  await review.getByText("I understand what these extensions can access.").click();
+  await review.getByRole("button", { name: "Approve 2" }).click();
+  await expect(review).toBeHidden();
+  expect(reviewed).toEqual(["lumen-new", "nova"]);
+  expect(activated).toEqual(["lumen-new", "nova"]);
+});
+
 test("extension updates explain access changes on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);

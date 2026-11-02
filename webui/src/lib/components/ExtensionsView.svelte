@@ -5,6 +5,7 @@
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Dialog } from "$lib/components/ui/dialog";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
+  import { Progress } from "$lib/components/ui/progress";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { ChevronDown, CircleAlert, Database, Globe, KeyRound, MoreHorizontal, Plus, X } from "@lucide/svelte";
   import {
@@ -66,6 +67,12 @@
   let removeRegistry = $state<ExtensionRegistry | null>(null);
   let reviewAccessPackage = $state<ExtensionPackage | null>(null);
   let confirmOpen = $state(false);
+  type BulkEntry = {
+    item: ExtensionPackage; previous: ExtensionPackage | null;
+    permissions: ExtensionPermission[]; previousPermissions: ExtensionPermission[]; approve: boolean;
+  };
+  let bulkOpen = $state(false), bulkEntries = $state<BulkEntry[]>([]), bulkProgress = $state("");
+  let bulkErrors = $state<string[]>([]), bulkConfirmed = $state(false);
 
   const extensionDataUnavailable = "Some extension data is unavailable.";
 
@@ -78,6 +85,11 @@
     ["failed", "staged", "disabled", "reviewrequired"].includes(item.state.toLowerCase()) ||
     Boolean(updateFor(item))));
   const focused = $derived(installed.find((item) => item.extensionId.toLowerCase() === extensionId.toLowerCase()));
+  const updatable = $derived(installed.filter((item) => updateFor(item)));
+  const reviewable = $derived(installed.filter((item) => !updateFor(item) &&
+    (item.permissionReviewRequired || ["reviewrequired", "staged"].includes(item.state.toLowerCase()))));
+  const bulkTargets = $derived(updatable.length + reviewable.length);
+  const bulkChosen = $derived(bulkEntries.filter((entry) => entry.approve).length);
   const catalogTabs = $derived([
     { id: "catalog", label: "Catalog", count: catalog.length },
     { id: "url", label: "From a URL" },
@@ -264,6 +276,76 @@
     } finally {
       action = "";
     }
+  }
+
+  const permissionKeys = (rows: ExtensionPermission[]) => rows.map((item) => `${item.permissionKind}:${item.permissionValue}`);
+
+  // Updating many extensions one review at a time meant a dialog per extension. This fetches every update first, then
+  // shows one review with only what each asks for beyond the version running now.
+  async function startBulk() {
+    if (action) return;
+    action = "bulk";
+    bulkOpen = true;
+    bulkEntries = [];
+    bulkErrors = [];
+    bulkConfirmed = false;
+    const targets = [...updatable.map((item) => ({ item, update: updateFor(item) ?? null })), ...reviewable.map((item) => ({ item, update: null }))];
+    const waiting: string[] = [];
+    try {
+      for (const [index, target] of targets.entries()) {
+        bulkProgress = `Getting ${index + 1} of ${targets.length}: ${target.item.displayName}`;
+        if (!target.update) { waiting.push(target.item.id); continue; }
+        try { waiting.push((await extensions.install(target.update)).packageId); }
+        catch (cause) { bulkErrors = [...bulkErrors, `${target.item.displayName}: ${cause instanceof Error ? cause.message : "the update could not be fetched."}`]; }
+      }
+      bulkProgress = "Reading what each one asks for…";
+      packages = await extensions.packages();
+      bulkEntries = await Promise.all(waiting.map(async (id) => {
+        const item = packages.find((entry) => entry.id === id);
+        if (!item) return null;
+        const previous = packages.find((entry) => entry.id === item.previousPackageId) ?? null;
+        const [current, before] = await Promise.all([
+          extensions.permissions(item.id),
+          previous ? extensions.permissions(previous.id) : Promise.resolve([]),
+        ]);
+        return { item, previous, permissions: current, previousPermissions: before, approve: true };
+      })).then((rows) => rows.filter((row): row is BulkEntry => row !== null));
+    } catch (cause) {
+      bulkErrors = [...bulkErrors, cause instanceof Error ? cause.message : "The extensions could not be read."];
+    } finally {
+      bulkProgress = "";
+      action = "";
+    }
+  }
+
+  async function applyBulk() {
+    if (action) return;
+    action = "bulk-apply";
+    const failures: string[] = [];
+    let enabled = 0;
+    try {
+      for (const entry of bulkEntries.filter((item) => item.approve)) {
+        bulkProgress = `Turning on ${entry.item.displayName}…`;
+        try {
+          let current = entry.item;
+          if (current.permissionReviewRequired || current.state.toLowerCase() === "reviewrequired")
+            current = await extensions.review(current, entry.permissions.map((item) => ({
+              kind: item.permissionKind, value: item.permissionValue, approved: true,
+            })));
+          if (current.state.toLowerCase() === "staged") await extensions.activate(current);
+          enabled++;
+        } catch (cause) {
+          failures.push(`${entry.item.displayName}: ${cause instanceof Error ? cause.message : "it could not be turned on."}`);
+        }
+      }
+    } finally {
+      bulkProgress = "";
+      action = "";
+    }
+    if (enabled) toast.success(`${enabled} ${enabled === 1 ? "extension" : "extensions"} updated and turned on.`);
+    bulkErrors = failures;
+    if (!failures.length) bulkOpen = false;
+    await changed();
   }
 
   function closeReview() {
@@ -482,7 +564,10 @@
 {:else if view === "attention"}
   {#if attention.length || dataUnavailable}
     <section class="extension-attention" aria-labelledby="extension-attention-title">
-      <h3 id="extension-attention-title">Extensions that need you</h3>
+      <div class="extension-attention-heading">
+        <h3 id="extension-attention-title">Extensions that need you</h3>
+        {#if bulkTargets > 1}<Button disabled={Boolean(action)} onclick={() => void startBulk()}>{action === "bulk" ? "Getting updates…" : `Update and review all (${bulkTargets})`}</Button>{/if}
+      </div>
       {#if dataUnavailable}<p class="degraded-banner" role="status">{extensionDataUnavailable}</p>{/if}
 
       {#if attention.length}
@@ -556,6 +641,43 @@
       <div class="extension-review-footer">
         <label class="permission-confirm"><Checkbox bind:checked={permissionConfirmed} /><span>I understand what this extension can access.</span></label>
         <footer class="dialog-actions"><Button variant="secondary" disabled={Boolean(action)} onclick={closeReview}>Close review</Button><Button disabled={!permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined) || Boolean(action)} onclick={() => void approve()}>{action.startsWith("review:") ? "Approving…" : "Approve"}</Button></footer>
+      </div>
+    </Dialog.Content></Dialog.Portal>
+  </Dialog.Root>
+
+  <Dialog.Root bind:open={bulkOpen} onOpenChange={(value) => { if (!value) void changed(); }}>
+    <Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog extension-review-dialog">
+      <header class="dialog-heading"><div><Dialog.Title>Update and review extensions</Dialog.Title><Dialog.Description>Approving gives each ticked extension the access listed and turns it on. Unticked ones wait for their own review, where you can also deny single permissions.</Dialog.Description></div></header>
+      <div class="extension-review-body">
+        {#if bulkProgress}<div class="bulk-progress" role="status"><p>{bulkProgress}</p><Progress value={null} aria-label="Extension updates" /></div>{/if}
+        {#each bulkErrors as message}<p class="notice-error" role="alert">{message}</p>{/each}
+        <ul class="bulk-review-list" aria-label="Extensions to approve">
+          {#each bulkEntries as entry (entry.item.id)}
+            {@const changes = valueChanges(permissionKeys(entry.permissions), permissionKeys(entry.previousPermissions))}
+            {@const added = entry.permissions.filter((item) => changes.some((change) => change.change === "added" && change.value === `${item.permissionKind}:${item.permissionValue}`))}
+            {@const dropped = changes.filter((change) => change.change === "removed").length}
+            <li>
+              <label class="bulk-review-choice">
+                <Checkbox bind:checked={entry.approve} aria-label={`Approve and turn on ${entry.item.displayName}`} />
+                <span><strong>{entry.item.displayName}</strong><small>{entry.previous ? `${entry.previous.version} → ${entry.item.version}` : `Version ${entry.item.version}`}</small></span>
+              </label>
+              {#if added.length}
+                <ul class="extension-permissions">
+                  {#each added as item (item.id)}
+                    {@const copy = permissionCopy(item.permissionKind, item.permissionValue)}
+                    {@const Icon = copy.icon}
+                    <li><span class="permission-icon" aria-hidden="true"><Icon size={18} /></span><span class="permission-copy"><strong>{copy.title}</strong><small>{copy.detail}</small>{#if entry.previous}<span class="permission-tags"><em class="new">New access</em></span>{/if}</span></li>
+                  {/each}
+                </ul>
+              {:else}<p class="bulk-review-note">{entry.permissions.length ? "No new access" : "Asks for no access"}</p>{/if}
+              {#if dropped}<p class="bulk-review-note">No longer asks for {dropped} {dropped === 1 ? "permission" : "permissions"}.</p>{/if}
+            </li>
+          {/each}
+        </ul>
+      </div>
+      <div class="extension-review-footer">
+        <label class="permission-confirm"><Checkbox bind:checked={bulkConfirmed} disabled={!bulkEntries.length} /><span>I understand what these extensions can access.</span></label>
+        <footer class="dialog-actions"><Button variant="secondary" disabled={Boolean(action)} onclick={() => { bulkOpen = false; void changed(); }}>Close</Button><Button disabled={!bulkConfirmed || !bulkChosen || Boolean(action)} onclick={() => void applyBulk()}>{action === "bulk-apply" ? "Turning on…" : `Approve ${bulkChosen}`}</Button></footer>
       </div>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>
