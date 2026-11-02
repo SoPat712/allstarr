@@ -281,7 +281,8 @@ public sealed partial class TrackMatchCommandService(
     IProtocolProviderGateway? providerGateway = null,
     RecordingOdesliEnrichmentQueue? crossLinks = null, IProviderRegistry? registry = null,
     IConfiguration? configuration = null, MatchLibrarySearch? librarySearch = null,
-    ILibraryIndexService? libraryIndex = null) : ITrackMatchRepository
+    ILibraryIndexService? libraryIndex = null,
+    ILogger<TrackMatchCommandService>? logger = null) : ITrackMatchRepository
 {
     private const int ConcurrentWriteRetries = 3;
 

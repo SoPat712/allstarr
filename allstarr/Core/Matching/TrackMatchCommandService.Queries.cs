@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -109,6 +110,7 @@ public sealed partial class TrackMatchCommandService
         int scanLimit = 5000,
         CancellationToken cancellationToken = default)
     {
+        var timings = new List<(string Step, long At)> { ("start", Stopwatch.GetTimestamp()) };
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var visibleAccountIds = actor.IsAdministrator
             ? null
@@ -134,6 +136,7 @@ public sealed partial class TrackMatchCommandService
             snapshots.Add(snapshot);
             if (snapshots.Count == limit) break;
         }
+        timings.Add(("snapshots", Stopwatch.GetTimestamp()));
         var snapshotIds = snapshots.Select(item => item.Id).ToArray();
         var decisionQuery = db.TrackMatches.AsNoTracking()
             .Where(item => snapshotIds.Contains(item.ExternalSnapshotId));
@@ -150,8 +153,10 @@ public sealed partial class TrackMatchCommandService
                 latest => new { latest.ExternalSnapshotId, latest.DecisionVersion },
                 (item, _) => item)
             .ToListAsync(cancellationToken);
+        timings.Add(("decisions", Stopwatch.GetTimestamp()));
         var overrides = await ManualTrackOverrides.LoadAsync(
             db, actor.UserId, snapshots, cancellationToken);
+        timings.Add(("overrides", Stopwatch.GetTimestamp()));
         var libraryIds = decisions.Where(item => item.LibraryTrackId.HasValue)
             .Select(item => item.LibraryTrackId!.Value)
             .Concat(overrides.Where(item => item.LibraryTrackId.HasValue)
@@ -176,6 +181,7 @@ public sealed partial class TrackMatchCommandService
                                 sourceExternalIdHashes.Contains(item.ExternalIdHash))),
             visibleAccountIds,
             cancellationToken);
+        timings.Add(("source identities", Stopwatch.GetTimestamp()));
         var canonicalIds = decisions.Where(item => item.CanonicalRecordingId.HasValue)
             .Select(item => item.CanonicalRecordingId!.Value)
             .Concat(sourceIdentities.Select(item => item.CanonicalRecordingId))
@@ -188,6 +194,7 @@ public sealed partial class TrackMatchCommandService
         if (!string.IsNullOrWhiteSpace(backendLibraryId))
             libraryQuery = libraryQuery.Where(item => item.BackendLibraryId == backendLibraryId.Trim());
         var library = await libraryQuery.ToListAsync(cancellationToken);
+        timings.Add(("library", Stopwatch.GetTimestamp()));
         var identities = await VisibleProviderIdentitiesAsync(
             db,
             actor,
@@ -197,6 +204,7 @@ public sealed partial class TrackMatchCommandService
                 .ThenBy(item => item.ExternalId),
             visibleAccountIds,
             cancellationToken);
+        timings.Add(("identities", Stopwatch.GetTimestamp()));
         var hashes = snapshots.Select(item => item.ExternalIdHash).Distinct().ToArray();
         var owners = snapshots.Select(item => item.OwnerUserId).Distinct().ToArray();
         var mediaSnapshots = await db.ExternalMetadataSnapshots.AsNoTracking()
@@ -208,6 +216,7 @@ public sealed partial class TrackMatchCommandService
                     item.ProviderRevision == "media:" + account.Revision)))
             .OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion)
             .ToArrayAsync(cancellationToken);
+        timings.Add(("media", Stopwatch.GetTimestamp()));
         var mediaBySnapshot = new Dictionary<Guid, ExternalMetadataSnapshotRecord>();
         foreach (var snapshot in snapshots)
         {
@@ -216,6 +225,9 @@ public sealed partial class TrackMatchCommandService
                 item.ExternalIdHash == snapshot.ExternalIdHash);
             if (media != null) mediaBySnapshot[snapshot.Id] = media;
         }
+        timings.Add(("pairing", Stopwatch.GetTimestamp()));
+        logger?.LogInformation("Match review records: {Steps}", string.Join(", ", timings.Skip(1).Select((item, index) =>
+            $"{item.Step} {(int)Stopwatch.GetElapsedTime(timings[index].At, item.At).TotalMilliseconds} ms")));
         return new(snapshots, decisions, overrides, library, identities) { MediaSnapshots = mediaBySnapshot };
     }
 
