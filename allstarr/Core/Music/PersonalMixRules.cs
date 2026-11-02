@@ -32,8 +32,10 @@ internal static class PersonalMixRules
     { "release-radar" => "0 5 * * 5", "discover-weekly" or "rewind" => "0 5 * * 1", _ => "0 5 * * *" };
 
     internal static IReadOnlyList<MixCandidate> Select(string kind, IReadOnlyList<MixCandidate> candidates,
-        DateTimeOffset now, IReadOnlyCollection<string> previous, int? length = null)
+        DateTimeOffset now, IReadOnlyCollection<string> previous, int? length = null, SeedMixDiagnostics? diagnostics = null)
     {
+        using var phase = diagnostics?.Phase("select");
+        diagnostics?.Reset("eligible", "artist-checked", "artist-kept", "selected");
         var recipe = MixRecipes.For(kind);
         IEnumerable<MixCandidate> rows = candidates.Where(item => !item.EarlySkipped).DistinctBy(item => Key(item.Song)).Where(item => kind switch
         {
@@ -49,6 +51,11 @@ internal static class PersonalMixRules
             .ThenByDescending(item => kind == "custom" ? item.Score : 0)
             .ThenBy(item => item.ReleaseKey, StringComparer.Ordinal)
             .ThenBy(item => kind == "release-radar" ? item.Song.Track ?? int.MaxValue : 0).ThenBy(item => item.Song.Id, StringComparer.Ordinal);
+        if (diagnostics != null)
+        {
+            rows = rows.ToArray();
+            foreach (var row in rows) diagnostics.Count(row.Source, "eligible");
+        }
         if (kind == "custom") rows = CustomOrder(rows, length ?? recipe.Target);
         var selected = new List<MixCandidate>();
         var artists = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -61,10 +68,13 @@ internal static class PersonalMixRules
             if (kind.StartsWith("daily-", StringComparison.Ordinal) && (known ? familiar : fresh) >= recipe.Target / 2) continue;
             var names = row.Song.Artists.Append(row.Song.Artist).Where(name => !string.IsNullOrWhiteSpace(name))
                 .Select(name => name.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            diagnostics?.Count(row.Source, "artist-checked");
             if (names.Any(name => artists.GetValueOrDefault(name) >= recipe.ArtistLimit ||
                 row.ProviderFilled && fills.GetValueOrDefault(name) >= 2)) continue;
+            diagnostics?.Count(row.Source, "artist-kept");
             if (kind == "release-radar" && row.ReleaseKey != null && !releases.Add(row.ReleaseKey)) continue;
             selected.Add(row);
+            diagnostics?.Count(row.Source, "selected");
             foreach (var name in names)
             {
                 artists[name] = artists.GetValueOrDefault(name) + 1;
@@ -73,6 +83,7 @@ internal static class PersonalMixRules
             if (known) familiar++; else fresh++;
             if (selected.Count == (length ?? recipe.Target)) break;
         }
+        diagnostics?.Selected(candidates, selected, length ?? recipe.Target);
         return selected;
     }
 

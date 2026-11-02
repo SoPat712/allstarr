@@ -4,6 +4,7 @@ using allstarr.Core.Intelligence;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -30,11 +31,29 @@ public sealed class PersonalMixSeedTests
         clients.Setup(item => item.CreateClient(nameof(LastFmSimilarTracks))).Returns(() => new HttpClient(new Suggestions()));
         var similar = new LastFmSimilarTracks(clients.Object, new Accounts(), NullLogger<LastFmSimilarTracks>.Instance);
         var radio = new MusicMixService(gateway.Object, similar);
+        var logger = new SeedLogger();
+        var diagnostics = new SeedMixDiagnostics(logger);
         var result = await radio.SeedCandidatesAsync(MusicObservationsTests.Context(), artist ? null : seed,
-            artist ? new Artist { Name = "Seed artist" } : null, "deezer", artist ? "artist" : "seed", default);
+            artist ? new Artist { Name = "Seed artist" } : null, "deezer", artist ? "artist" : "seed", default, diagnostics);
+        diagnostics.Dispose();
         Assert.Contains(providerSong, result);
         Assert.Contains(suggested, result);
         Assert.DoesNotContain(result, song => song.Title == "Wrong edition");
+        var message = Assert.Single(logger.Messages);
+        Assert.Contains("seed resolved=1, seed search found=0, provider similar=1", message);
+        Assert.Contains("similar tracks=1, suggestions found=2, suggestions resolved=1", message);
+        Assert.Contains("artist tracks=" + (artist ? 1 : 0), message);
+        Assert.DoesNotContain("Suggested", message);
+        Assert.DoesNotContain("Related artist", message);
+        Assert.DoesNotContain("fixture-key", message);
+    }
+
+    private sealed class SeedLogger : ILogger<PersonalMixService>
+    {
+        internal List<string> Messages { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) => true;
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? error, Func<TState, Exception?, string> formatter) => Messages.Add(formatter(state, error));
     }
 
     private sealed class Accounts : IScopedRecommendationAccountAccessor

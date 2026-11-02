@@ -12,6 +12,7 @@ using allstarr.Core.Routing;
 using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Moq;
 using static allstarr.Tests.AudioMuseTests;
 using static allstarr.Tests.AudioMuseDiscoveryTests;
@@ -20,7 +21,7 @@ namespace allstarr.Tests;
 
 public sealed class PersonalMixAudioTests
 {
-    private static PersonalMixService Service(Fixture f, Mock<IProtocolProviderGateway> gateway, IPlatformClock? clock = null)
+    private static PersonalMixService Service(Fixture f, Mock<IProtocolProviderGateway> gateway, IPlatformClock? clock = null, ILogger<PersonalMixService>? logger = null)
     {
         clock ??= new SystemPlatformClock();
         var tags = new SharedTagStore(f.Factory, clock);
@@ -35,7 +36,48 @@ public sealed class PersonalMixAudioTests
             .ReturnsAsync(new PersonalListeningPreferences(new("All"), new(), false, "1"));
         return new(f.Factory, clock, tags, new(f.Factory, tags, clock), new(gateway.Object), gateway.Object,
             new NewReleasesService(f.Factory, clock, Mock.Of<IProviderRouter>(), settings.Object),
-            settings.Object, policy.Object, f.Access.Object, f.Discovery);
+            settings.Object, policy.Object, f.Access.Object, f.Discovery, logger: logger);
+    }
+
+    [Fact]
+    public async Task Local_start_logs_sound_shortfall_and_library_artist_limits()
+    {
+        await using var f = await ReadyAsync();
+        var sound = Enumerable.Range(0, 25).Select(index => Track("sound-" + index, "Sound artist " + index)).ToArray();
+        var own = Enumerable.Range(0, 3).Select(index => Track("own-" + index, "Artist A")).ToArray();
+        await AddAsync(f, sound.Concat(own).Append(Track("seed", "Artist A")).ToArray());
+        var original = f.Respond;
+        f.Respond = request => request.RequestUri!.AbsolutePath == "/api/similar_tracks"
+            ? Fixture.Json(JsonSerializer.Serialize(sound.Select(track => new { item_id = track.BackendItemId }))) : original(request);
+        var logger = new SoundMixLogger();
+
+        var preview = await Service(f, new(), logger: logger).StartAsync(f.Actor.AllstarrUserId!.Value, new("song", "seed", 25));
+
+        Assert.Equal(25, preview.Songs.Count);
+        var message = Assert.Single(logger.Messages);
+        Assert.Contains("seed resolved=0, seed search found=0, provider similar=0", message);
+        Assert.Contains("sound neighbours=25, preferred=0", message);
+        Assert.Contains("audiomuse[found=25,without-seed=25,unique=25,details=25,policy=25,never=25,playable=25,skips=25,filters=25,evidence=0,revalidated-never=25,revalidated-policy=25,access=25,eligible=25,artist-checked=23,artist-kept=23,selected=23]", message);
+        Assert.Contains("library[found=4,without-seed=3,unique=3,details=3,policy=3,never=3,playable=3,skips=3,filters=3,evidence=3,revalidated-never=3,revalidated-policy=3,access=3,eligible=3,artist-checked=3,artist-kept=2,selected=2]", message);
+        Assert.Contains("selected seed/related/sound/general=2/0/23/0; sound allowance=10, related shortfall=13", message);
+        Assert.Matches(@"sound=\d+,radio=\d+", message);
+        foreach (var track in sound.Concat(own))
+        {
+            Assert.DoesNotContain(track.Title, message, StringComparison.Ordinal);
+            Assert.DoesNotContain(track.BackendItemId, message, StringComparison.Ordinal);
+        }
+    }
+
+    private sealed class SoundMixLogger : ILogger<PersonalMixService>
+    {
+        internal List<string> Messages { get; } = [];
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel level) => true;
+        public void Log<TState>(LogLevel level, EventId id, TState state, Exception? error, Func<TState, Exception?, string> formatter)
+        {
+            Assert.Equal(LogLevel.Information, level);
+            Messages.Add(formatter(state, error));
+        }
     }
 
     [Theory]

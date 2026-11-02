@@ -28,20 +28,27 @@ public sealed partial class PersonalMixService
     {
         if (request.SeedKind is not ("song" or "artist") || string.IsNullOrWhiteSpace(request.SeedId) || request.SeedId.Length > 200 || request.Length is < 25 or > 50)
             throw new ArgumentException("Choose a song or artist and 25–50 songs.");
-        await generations.WaitAsync(token);
+        using var diagnostics = new SeedMixDiagnostics(logger);
+        using (diagnostics.Phase("queue")) await generations.WaitAsync(token);
         try
         {
-            var (user, _, _) = await SnapshotAsync(owner, token);
+            UserRecord user;
+            ListeningEventRecord[] events;
+            string history;
             await using var db = await factory.CreateDbContextAsync(token);
-            var (events, history) = await HistoryAsync(db, user, token);
-            var (fetched, seedName) = await CandidatesAsync(db, user, events, token, request);
+            using (diagnostics.Phase("setup"))
+            {
+                (user, _, _) = await SnapshotAsync(owner, token);
+                (events, history) = await HistoryAsync(db, user, token);
+            }
+            var (fetched, seedName) = await CandidatesAsync(db, user, events, token, request, diagnostics: diagnostics);
             var id = Guid.CreateVersion7();
             for (var attempt = 0; attempt < 3; attempt++)
             {
                 var (_, document, version) = await SnapshotAsync(owner, token);
                 var revision = await InputRevisionAsync(db, owner, token);
-                var candidates = await RevalidateAsync(user, fetched, token);
-                var selected = PersonalMixRules.Select("custom", candidates, clock.UtcNow, [], request.Length);
+                var candidates = await RevalidateAsync(user, fetched, token, diagnostics);
+                var selected = PersonalMixRules.Select("custom", candidates, clock.UtcNow, [], request.Length, diagnostics);
                 var preview = new PersonalMix(id, "custom", "Your mix", "Songs like your seed", 0, clock.UtcNow,
                     new(selected.Count > 0, selected.Count > 0 ? "Ready" : "No eligible playable songs found."), false,
                     selected.Select(row => new PersonalMixItem(id, 0, SafeSong(row.Song), row.Source,
@@ -65,7 +72,8 @@ public sealed partial class PersonalMixService
                     .Select(item => item.Key).ToArray()) document.Previews.Remove(key);
                 if (document.Previews.Count >= 10) document.Previews.Remove(document.Previews.MinBy(item => item.Value.UpdatedAt).Key);
                 document.Previews[id] = preview;
-                if (await TrySaveAsync(user, document, version, revision, history, token)) return preview;
+                using (diagnostics.Phase("save"))
+                    if (await TrySaveAsync(user, document, version, revision, history, token)) { diagnostics.Complete(); return preview; }
             }
             throw new InvalidOperationException("Listener choices changed while building this mix. Start again.");
         }
@@ -74,30 +82,40 @@ public sealed partial class PersonalMixService
 
     private async Task<(IReadOnlyList<MixCandidate> Candidates, string? SeedName)> StartCandidatesAsync(AllstarrDbContext db,
         ProtocolExecutionContext context, BackendLibraryAccess access, UserRecord user, ListeningEventRecord[] events,
-        MixStartRequest request, CancellationToken token)
+        MixStartRequest request, CancellationToken token, SeedMixDiagnostics? diagnostics)
     {
         var query = LibraryTrackAccess.Query(db, context, access);
-        var library = await query.Where(item => item.BackendItemId == request.SeedId).Take(600).ToArrayAsync(token);
-        var seed = await SeedRowsAsync(context, library, request, token);
+        diagnostics?.Add("library-access-succeeded", access.Succeeded ? 1 : 0);
+        LibraryTrackRecord[] library;
+        using (diagnostics?.Phase("seed"))
+            library = await query.Where(item => item.BackendItemId == request.SeedId).Take(600).ToArrayAsync(token);
+        diagnostics?.Add("seed-library-found", library.Length);
+        var seed = await SeedRowsAsync(context, library, request, token, diagnostics);
         var artists = seed.Rows.Where(row => row.Source == "radio").SelectMany(row => row.Song.Artists.Append(row.Song.Artist))
             .Append(seed.Artist).Where(name => !string.IsNullOrWhiteSpace(name)).Select(name => name.Trim().ToLowerInvariant()).Distinct().ToArray();
+        diagnostics?.Add("related-artist-names", artists.Length);
         var seedTags = seed.Genres.Select(genre => SharedTagNormalization.Canonical(genre, [])).OfType<string>().ToHashSet();
         if (seed.Song?.CanonicalRecordingId is { } recording)
         {
             var profiles = await tags.GetTags([recording], token);
             if (profiles.TryGetValue(recording, out var profile)) seedTags.UnionWith(profile.Tags.Where(tag => tag.Score > 0).Select(tag => tag.Tag));
         }
-        var related = await query.Where(item => artists.Contains(item.Artist.Trim().ToLower()))
-            .OrderBy(item => item.BackendItemId).Take(600).ToArrayAsync(token);
+        LibraryTrackRecord[] related;
+        using (diagnostics?.Phase("related-library"))
+            related = await query.Where(item => artists.Contains(item.Artist.Trim().ToLower()))
+                .OrderBy(item => item.BackendItemId).Take(600).ToArrayAsync(token);
+        diagnostics?.Count("library", "found", related.Length);
         seed.Rows.AddRange(related.Select(track => (LibrarySong(track), "library", (DateTimeOffset?)null)));
         var radioRecordings = new RecordingIndex();
         foreach (var row in seed.Rows.Where(row => row.Source == "radio")) radioRecordings.Add(row.Song);
-        var candidates = (await RankCandidatesAsync(WithoutSeed(seed.Rows), context, user, events, [], token)).Select(Relationship).ToList();
+        var candidates = (await RankCandidatesAsync(WithoutSeed(seed.Rows), context, user, events, [], token, diagnostics: diagnostics)).Select(Relationship).ToList();
         var selected = PersonalMixRules.Select("custom", candidates, clock.UtcNow, [], request.Length);
         if (selected.Count == request.Length && selected.Count(row => row.Source != "audiomuse") >= Math.Ceiling(request.Length * .6))
             return (candidates, seed.Name);
 
-        var hearts = (await new FavoriteViewReader(factory).ReadAsync(context, token)).Where(item => item.Display.Kind == "song").Take(300).ToArray();
+        FavoriteViewItem[] hearts;
+        using (diagnostics?.Phase("hearts"))
+            hearts = (await new FavoriteViewReader(factory).ReadAsync(context, token)).Where(item => item.Display.Kind == "song").Take(300).ToArray();
         var heartRows = hearts.Select(item => (Song: item.Song(), Source: "heart", Release: (DateTimeOffset?)null)).ToArray();
         await AddAsync(heartRows.Where(row => RelatedArtist(row.Song) || radioRecordings.Find(row.Song) != null).ToList());
         if (!candidates.Any(row => row.Source == "audiomuse" || row.RelatedTo != null)) return ([], seed.Name);
@@ -106,38 +124,48 @@ public sealed partial class PersonalMixService
         if (PersonalMixRules.Select("custom", candidates, clock.UtcNow, [], request.Length).Count < request.Length)
         {
             var known = events.Select(item => item.LibraryTrackId).OfType<Guid>().Distinct().ToArray();
-            var fallback = await query.OrderByDescending(item => known.Contains(item.Id)).ThenBy(item => item.BackendItemId).Take(600).ToArrayAsync(token);
+            LibraryTrackRecord[] fallback;
+            using (diagnostics?.Phase("fallback-library"))
+                fallback = await query.OrderByDescending(item => known.Contains(item.Id)).ThenBy(item => item.BackendItemId).Take(600).ToArrayAsync(token);
             await AddAsync(fallback.Select(track => (LibrarySong(track), "library", (DateTimeOffset?)null)).ToList());
         }
         return (candidates, seed.Name);
 
-        List<(Song Song, string Source, DateTimeOffset? Release)> WithoutSeed(List<(Song Song, string Source, DateTimeOffset? Release)> rows) =>
-            rows.Where(row => seed.Song == null || !MusicMixService.SameRadioRecording(seed.Song, row.Song)).ToList();
+        List<(Song Song, string Source, DateTimeOffset? Release)> WithoutSeed(List<(Song Song, string Source, DateTimeOffset? Release)> rows)
+        {
+            var remaining = rows.Where(row => seed.Song == null || !MusicMixService.SameRadioRecording(seed.Song, row.Song)).ToList();
+            foreach (var row in remaining) diagnostics?.Count(row.Source, "without-seed");
+            return remaining;
+        }
 
         bool RelatedArtist(Song song) => song.Artists.Append(song.Artist).Any(name => artists.Contains(name.Trim().ToLowerInvariant()));
 
         MixCandidate Relationship(MixCandidate row)
         {
             var fromRadio = radioRecordings.Find(row.Song) != null;
-            return row with
+            if (fromRadio && row.Source == "audiomuse") diagnostics?.Add("radio-overlaps", 1);
+            var related = row with
             {
                 Source = fromRadio && row.Source == "audiomuse" ? "radio" : row.Source,
                 RelatedTo = fromRadio || RelatedArtist(row.Song) || row.Source == "audiomuse" && row.Tags.Keys.Any(seedTags.Contains) ? seed.Artist : null
             };
+            if (related.RelatedTo != null) diagnostics?.Count(related.Source, "evidence");
+            return related;
         }
 
         async Task AddAsync(List<(Song Song, string Source, DateTimeOffset? Release)> rows)
         {
+            foreach (var row in rows) diagnostics?.Count(row.Source, "found");
             var recordings = new RecordingIndex();
             foreach (var row in candidates) recordings.Add(row.Song);
             var additional = WithoutSeed(rows).Where(row => recordings.Find(row.Song) == null).Take(Math.Max(0, 1000 - candidates.Count)).ToList();
             if (additional.Count == 0) return;
-            candidates.AddRange((await RankCandidatesAsync(additional, context, user, events, hearts, token)).Select(Relationship));
+            candidates.AddRange((await RankCandidatesAsync(additional, context, user, events, hearts, token, diagnostics: diagnostics)).Select(Relationship));
         }
     }
 
     private async Task<CustomSeed> SeedRowsAsync(ProtocolExecutionContext context,
-        LibraryTrackRecord[] library, MixStartRequest request, CancellationToken token)
+        LibraryTrackRecord[] library, MixStartRequest request, CancellationToken token, SeedMixDiagnostics? diagnostics)
     {
         var parsed = LocalLibraryService.ParseExternalResource(request.SeedId);
         Song? seed = null;
@@ -145,26 +173,47 @@ public sealed partial class PersonalMixService
         // The library keeps a copy of a shared song for each listener, so the seed can match several rows; the listener's own wins.
         var local = library.Where(track => track.BackendItemId == request.SeedId)
             .OrderByDescending(track => track.OwnerUserId == context.Actor?.EffectiveUserId).ThenBy(track => track.Id).FirstOrDefault();
-        if (request.SeedKind == "song")
+        using (diagnostics?.Phase("seed"))
         {
-            if (parsed.isExternal && parsed.type == "song") seed = await providers.GetSongAsync(context, parsed.provider!, parsed.externalId!);
-            else if (local != null) seed = LibrarySong(local);
-            if (seed == null) throw new KeyNotFoundException();
-        }
-        else
-        {
-            if (!parsed.isExternal || parsed.type != "artist") throw new ArgumentException("Choose an artist from search.");
-            artist = await providers.GetArtistAsync(context, parsed.provider!, parsed.externalId!) ?? throw new KeyNotFoundException();
+            if (request.SeedKind == "song")
+            {
+                if (parsed.isExternal && parsed.type == "song") seed = await providers.GetSongAsync(context, parsed.provider!, parsed.externalId!);
+                else if (local != null) seed = LibrarySong(local);
+                if (seed == null) throw new KeyNotFoundException();
+            }
+            else
+            {
+                if (!parsed.isExternal || parsed.type != "artist") throw new ArgumentException("Choose an artist from search.");
+                artist = await providers.GetArtistAsync(context, parsed.provider!, parsed.externalId!) ?? throw new KeyNotFoundException();
+            }
         }
         var rows = new List<(Song Song, string Source, DateTimeOffset? Release)>();
-        var sound = local != null && audioMuse != null ? audioMuse.MixSimilarAsync(context, local.BackendItemId, token) : Task.FromResult<LibraryTrackRecord[]>([]);
-        var suggestions = radio.SeedCandidatesAsync(context, seed, artist, parsed.isExternal ? parsed.provider : null,
-            parsed.isExternal ? parsed.externalId : null, token);
-        await Task.WhenAll(sound, suggestions);
-        rows.AddRange((await sound).Select(track => (LibrarySong(track), "audiomuse", (DateTimeOffset?)null)));
-        rows.AddRange((await suggestions).Select(song => (song, "radio", (DateTimeOffset?)null)));
+        using (diagnostics?.Phase("sources"))
+        {
+            var sound = SoundAsync();
+            var suggestions = RadioAsync();
+            await Task.WhenAll(sound, suggestions);
+            rows.AddRange((await sound).Select(track => (LibrarySong(track), "audiomuse", (DateTimeOffset?)null)));
+            rows.AddRange((await suggestions).Select(song => (song, "radio", (DateTimeOffset?)null)));
+        }
+        foreach (var row in rows) diagnostics?.Count(row.Source, "found");
         return new(rows.Where(row => seed == null || !MusicMixService.SameRadioRecording(seed, row.Song)).ToList(),
             seed?.Title ?? artist!.Name, seed, seed?.Artist ?? artist!.Name, seed?.Genres.Append(seed.Genre).OfType<string>().ToArray() ?? artist!.Genres.ToArray());
+
+        async Task<LibraryTrackRecord[]> SoundAsync()
+        {
+            using var phase = diagnostics?.Phase("sound");
+            var neighbours = local != null && audioMuse != null ? await audioMuse.MixSimilarAsync(context, local.BackendItemId, token) : [];
+            diagnostics?.Add("sound-neighbours", neighbours.Length);
+            return neighbours;
+        }
+
+        async Task<IReadOnlyList<Song>> RadioAsync()
+        {
+            using var phase = diagnostics?.Phase("radio");
+            return await radio.SeedCandidatesAsync(context, seed, artist, parsed.isExternal ? parsed.provider : null,
+                parsed.isExternal ? parsed.externalId : null, token, diagnostics);
+        }
     }
 
     private static Song LibrarySong(LibraryTrackRecord track) => new()

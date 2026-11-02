@@ -49,7 +49,8 @@ internal sealed record MixFillSong(Song Song, DateTimeOffset ReadAt, string Sour
 public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock,
     SharedTagStore tags, TasteService taste, MusicMixService radio, IProtocolProviderGateway providers,
     NewReleasesService releases, IDurableRuntimeSettings settings, IEffectiveProviderPolicyResolver policies,
-    IBackendLibraryAccessResolver libraryAccess, AudioMuseDiscovery? audioMuse = null, SharedTagSources? tagSources = null, IProviderRegistry? registry = null, LastFmSimilarTracks? similarTracks = null)
+    IBackendLibraryAccessResolver libraryAccess, AudioMuseDiscovery? audioMuse = null, SharedTagSources? tagSources = null, IProviderRegistry? registry = null, LastFmSimilarTracks? similarTracks = null,
+    ILogger<PersonalMixService>? logger = null)
 {
     public const string PublishKey = "Mixes:PublishToApps", JobType = "mixes.refresh";
     // Saved songs carry dozens of empty fields; leaving them out keeps a listener's mixes well under the 1 MB a stored
@@ -234,8 +235,10 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         return Hash(JsonSerializer.Serialize(new { Taste = revision, Controls = controls }));
     }
 
-    private async Task<IReadOnlyList<MixCandidate>> RevalidateAsync(UserRecord user, IReadOnlyList<MixCandidate> candidates, CancellationToken token)
+    private async Task<IReadOnlyList<MixCandidate>> RevalidateAsync(UserRecord user, IReadOnlyList<MixCandidate> candidates, CancellationToken token, SeedMixDiagnostics? diagnostics = null)
     {
+        using var phase = diagnostics?.Phase("revalidate");
+        diagnostics?.Reset("revalidated-never", "revalidated-policy", "access");
         var context = await ContextAsync(user, token);
         var access = await libraryAccess.ResolveAsync(context, token);
         await using var db = await factory.CreateDbContextAsync(token);
@@ -247,8 +250,16 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         bool Nudge(MixCandidate item, string mode) => nudges.Any(nudge => nudge.Mode == mode && (nudge.Kind == "tag" && item.Tags.ContainsKey(nudge.Name) ||
             nudge.Kind == "artist" && string.Equals(nudge.Name, item.Song.Artist, StringComparison.OrdinalIgnoreCase) ||
             nudge.Kind == "song" && nudge.Name == PersonalMixRules.Key(item.Song)));
-        return candidates.Where(item => !scores[item.Song].Blocked && !Nudge(item, "never") && context.Policy!.Includes(item.Song) &&
-                (item.Song.IsLocal ? allowed.Contains(item.Song.Id) : context.Policy.IsEnabled(item.Song.ExternalProvider ?? "")))
+        return candidates.Where(item =>
+            {
+                if (scores[item.Song].Blocked || Nudge(item, "never")) return false;
+                diagnostics?.Count(item.Source, "revalidated-never");
+                if (!context.Policy!.Includes(item.Song)) return false;
+                diagnostics?.Count(item.Source, "revalidated-policy");
+                if (!(item.Song.IsLocal ? allowed.Contains(item.Song.Id) : context.Policy.IsEnabled(item.Song.ExternalProvider ?? ""))) return false;
+                diagnostics?.Count(item.Source, "access");
+                return true;
+            })
             .Select(item => item with { Score = scores[item.Song].Score, Less = Nudge(item, "less") }).ToArray();
     }
 
