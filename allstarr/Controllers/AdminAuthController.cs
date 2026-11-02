@@ -289,10 +289,11 @@ public sealed class AdminAuthController : ControllerBase
             },
             5 * 1024 * 1024,
             cancellationToken);
-        if (asset == null) return NotFound();
-
         Response.Headers.CacheControl = "private, max-age=300";
         Response.Headers.Vary = "Cookie";
+        // Most listeners have no picture. An empty answer lets the page show initials without logging an error on
+        // every page change.
+        if (asset == null) return NoContent();
         return File(asset.Bytes, asset.ContentType);
     }
 
