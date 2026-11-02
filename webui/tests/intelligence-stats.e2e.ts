@@ -62,7 +62,7 @@ test("Recap periods and past years send separate exact selections", async ({ pag
   }
   await page.getByRole("button", { name: "Year in review", exact: true }).click();
   await page.getByRole("option", { name: "2024", exact: true }).click();
-  await expect.poll(() => calls.at(-1)).toBe("?year=2024");
+  await expect.poll(() => calls.includes("?year=2024")).toBe(true);
   await page.getByRole("button", { name: "Year in review", exact: true }).focus();
   await page.keyboard.press("Shift+Tab");
   await expect(page.getByRole("navigation", { name: "Stats period" }).getByRole("tab", { name: "Last 7 days", exact: true })).toBeFocused();
@@ -85,7 +85,7 @@ test("Completed imported-only plays populate their original year", async ({ page
   await page.goto("/#/for-you?section=recap");
   await page.getByRole("button", { name: "Year in review", exact: true }).click();
   await page.getByRole("option", { name: "2015", exact: true }).click();
-  await expect.poll(() => calls.at(-1)).toBe("?year=2015");
+  await expect.poll(() => calls.includes("?year=2015")).toBe(true);
   await expect(page.locator(".stats-numbers").getByText("450", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Top songs", exact: true })).toContainText("Evening light");
   await expect(page.getByRole("region", { name: "Top artists", exact: true })).toContainText("The Coast");

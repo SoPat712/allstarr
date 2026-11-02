@@ -17,7 +17,7 @@
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
 
-  let stats = $state<ListeningStats | null>(null);
+  let stats = $state<ListeningStats | null>(null), before = $state<ListeningStats | null>(null);
   let period = $state("all"), year = $state(""), loading = $state(true), refreshing = $state(false), error = $state(""), expanded = $state("");
   let request = 0;
   let importedRefresh: ReturnType<typeof setTimeout> | undefined;
@@ -40,6 +40,18 @@
     { title: "Top albums", empty: "No albums yet.", round: false, rows: stats.topAlbums.map(item => ({ name: item.album, detail: item.artist, count: item.playCount, artworkUrl: item.artworkUrl, seed: "", artist: item.artist })) },
   ] : []);
   const heroArtist = $derived(stats?.topArtists[0]);
+  const change = (now: number, then: number) => then > 0 ? Math.round((now - then) / then * 100) : null;
+  const comparison = $derived.by(() => {
+    if (!stats || !before?.playCount || !year) return null;
+    const earlier = new Set(before.topArtists.slice(0, 10).map(item => item.artist.toLowerCase()));
+    return {
+      plays: change(stats.playCount, before.playCount),
+      time: change(stats.estimatedTimeFromSongLengthsMilliseconds, before.estimatedTimeFromSongLengthsMilliseconds),
+      newcomers: stats.topArtists.slice(0, 10).filter(item => !earlier.has(item.artist.toLowerCase())).map(item => item.artist),
+      label: String(Number(year) - 1),
+    };
+  });
+  const changeText = (value: number | null, noun: string) => value == null ? "" : value === 0 ? `Same ${noun}` : `${Math.abs(value)}% ${value > 0 ? "more" : "less"} ${noun}`;
   const timeline = $derived(recapTimeline(stats?.timeline ?? [], stats?.timelineUnit ?? "month"));
   const busiest = $derived(timeline.length ? timeline.reduce((best, point) => point.value > best.value ? point : best) : null);
   const clock = $derived(recapClock(stats?.byHour ?? []));
@@ -68,7 +80,12 @@
     refreshing = true;
     try {
       const value = await listeningStats.get(period, year);
-      if (current === request) { stats = value; loadedSelection = selected; error = ""; }
+      if (current === request) { stats = value; loadedSelection = selected; error = ""; before = null; }
+      // A past year is compared with the one before it.
+      if (year && current === request) {
+        const previous = await listeningStats.get(period, String(Number(year) - 1)).catch(() => null);
+        if (current === request) before = previous;
+      }
     } catch { if (current === request) error = "Your listening stats could not be loaded. Try again."; }
     finally { if (current === request) { loading = false; refreshing = false; } }
   }
@@ -113,6 +130,16 @@
         {#if stats.longestStreakDays}<article><strong>{formatCount(stats.longestStreakDays)} {stats.longestStreakDays === 1 ? "day" : "days"}</strong><span>Longest streak</span></article>{/if}
       </div>
     </section>
+    {#if comparison}
+      <section class="panel comparison" aria-label="Compared with the year before">
+        <h2>Compared with {comparison.label}</h2>
+        <ul>
+          {#if comparison.plays != null}<li class:up={comparison.plays > 0} class:down={comparison.plays < 0}><strong>{changeText(comparison.plays, "plays")}</strong></li>{/if}
+          {#if comparison.time != null}<li class:up={comparison.time > 0} class:down={comparison.time < 0}><strong>{changeText(comparison.time, "listening time")}</strong></li>{/if}
+          {#if comparison.newcomers.length}<li><strong>New in your top 10:</strong> {comparison.newcomers.slice(0, 4).join(", ")}{comparison.newcomers.length > 4 ? ` and ${comparison.newcomers.length - 4} more` : ""}</li>{/if}
+        </ul>
+      </section>
+    {/if}
     {#if !stats.playCount}<p>No plays in this period.</p>{/if}
     {#if timeline.length > 1}
       <section class="panel chart-card" aria-label="Plays over time">
@@ -215,6 +242,11 @@
   @media (max-width: 480px) { .stats-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .stats-lists section :global(button) { width: 100%; margin-top: var(--space-2); }
   .new-artists { display: grid; gap: var(--space-4); padding: var(--surface-gutter); }
+  .comparison { padding: var(--surface-gutter); }
+  .comparison ul { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-6); list-style: none; margin: 0; padding: 0; font-size: var(--text-sm); }
+  .comparison li strong { font-weight: 600; }
+  .comparison li.up strong::before { content: "▲ "; color: var(--md-sys-color-primary); }
+  .comparison li.down strong::before { content: "▼ "; color: var(--color-ink-muted); }
   .new-artists ul { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: var(--space-3) var(--space-4); list-style: none; margin: 0; padding: 0; }
   .new-artists li { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
   .new-artists strong { font-size: var(--text-sm); font-weight: 600; }
