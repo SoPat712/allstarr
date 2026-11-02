@@ -10,6 +10,7 @@ public sealed class RuntimeStallMonitor(ILogger<RuntimeStallMonitor> logger) : I
     private static readonly TimeSpan WorthLogging = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan MemoryEvery = TimeSpan.FromMinutes(15);
     private readonly CancellationTokenSource stopping = new();
+    private bool settingsLogged;
     private Thread? thread;
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -74,6 +75,11 @@ public sealed class RuntimeStallMonitor(ILogger<RuntimeStallMonitor> logger) : I
         const double Mb = 1024 * 1024;
         var info = GC.GetGCMemoryInfo();
         var settings = GC.GetConfigurationVariables();
+        if (!settingsLogged)
+        {
+            settingsLogged = true;
+            logger.LogInformation("Runtime collector settings: {Settings}", string.Join(", ", settings.Select(item => $"{item.Key}={item.Value}")));
+        }
         using var process = Process.GetCurrentProcess();
         logger.LogInformation(
             "Runtime memory: process {Process:F0} MB, collector committed {Committed:F0} MB, live {Heap:F0} MB, fragmented {Fragmented:F0} MB, heaps {Heaps}, adaptive {Adaptive}, server mode {Server}",

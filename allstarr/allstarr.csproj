@@ -16,6 +16,10 @@
         <InformationalVersion>$(AppVersion)</InformationalVersion>
         <AssemblyVersion>$(AppVersionCore).0</AssemblyVersion>
         <FileVersion>$(AppVersionCore).0</FileVersion>
+
+        <!-- Allstarr is idle most of the time. Adaptive sizing lets the collector shrink to one heap when idle instead of
+             keeping one per core, each with its own reserve. -->
+        <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
     </PropertyGroup>
 
     <ItemGroup>
