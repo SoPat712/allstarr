@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -166,6 +167,34 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task StoreReportsABrokenRegistryOnceUntilItRecovers()
+    {
+        await _service.AddRegistryAsync(new("Fixture", "https://extensions.example.test/index.json"));
+        var handler = new RegistryResponseHandler { Status = HttpStatusCode.BadGateway };
+        var clientFactory = new Mock<IHttpClientFactory>();
+        clientFactory.Setup(item => item.CreateClient("ExtensionSdkV1")).Returns(() => new HttpClient(handler));
+        var logger = new RecordingLogger();
+        var manager = new ExtensionManager(clientFactory.Object, logger,
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Extensions:Directory"] = Path.Combine(_root, "extensions")
+            }).Build(), _service);
+
+        for (var attempt = 0; attempt < 3; attempt++)
+            Assert.Single((await manager.FetchStoreCatalogAsync()).Errors);
+        Assert.Equal([LogLevel.Error, LogLevel.Debug, LogLevel.Debug], logger.Levels);
+
+        handler.Status = HttpStatusCode.NotFound;
+        await manager.FetchStoreCatalogAsync();
+        Assert.Equal(LogLevel.Error, logger.Levels[^1]);
+
+        handler.Status = HttpStatusCode.OK;
+        Assert.Empty((await manager.FetchStoreCatalogAsync()).Errors);
+        await manager.FetchStoreCatalogAsync();
+        Assert.Equal([LogLevel.Error, LogLevel.Debug, LogLevel.Debug, LogLevel.Error, LogLevel.Information], logger.Levels);
+    }
+
+    [Fact]
     public async Task ReviewEndpoint_RequiresPlatformUserLinkedAdministratorSession()
     {
         var administrator = Controller(Session(administrator: true, allstarrUserId: null));
@@ -283,12 +312,28 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
         public DateTimeOffset UtcNow => new(2026, 7, 12, 8, 0, 0, TimeSpan.Zero);
     }
 
+    private sealed class RecordingLogger : ILogger<ExtensionManager>
+    {
+        public List<LogLevel> Levels { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter) => Levels.Add(logLevel);
+    }
+
     private sealed class RegistryResponseHandler : HttpMessageHandler
     {
+        public HttpStatusCode Status { get; set; } = HttpStatusCode.OK;
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            if (Status != HttpStatusCode.OK)
+                return Task.FromResult(new HttpResponseMessage(Status));
             const string registry = """
             {
               "extensions": [

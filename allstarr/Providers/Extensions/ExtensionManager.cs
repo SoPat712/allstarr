@@ -38,6 +38,8 @@ public class ExtensionManager : IDisposable
     private readonly ExtensionControlPlaneService? _controlPlane;
 
     private readonly ConcurrentDictionary<string, ExtensionSandbox> _activeExtensions = new();
+    // The last failure per catalog, so a broken one is reported once rather than on every store load.
+    private readonly ConcurrentDictionary<string, string> _registryFailures = new(StringComparer.Ordinal);
     private readonly Microsoft.Extensions.Caching.Memory.MemoryCache _packageChecksumCache = new(
         new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions
         {
@@ -123,10 +125,17 @@ public class ExtensionManager : IDisposable
                                                              package.State == ExtensionPackageState.Active);
                     catalog.Items.Add(item);
                 }
+                if (_registryFailures.TryRemove(repo, out _))
+                    _logger.LogInformation("Extension store registry {Repo} is reachable again", repo);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to fetch extension store registry from {Repo}", repo);
+                var failure = $"{ex.GetType().FullName}: {ex.Message}";
+                if (_registryFailures.TryGetValue(repo, out var previous) && previous == failure)
+                    _logger.LogDebug(ex, "Extension store registry {Repo} is still failing", repo);
+                else
+                    _logger.LogError(ex, "Failed to fetch extension store registry from {Repo}", repo);
+                _registryFailures[repo] = failure;
                 catalog.Errors.Add(new ExtensionStoreError
                 {
                     Repository = repo,
