@@ -9,7 +9,7 @@ public sealed record MixRecipeEvidence(MixRecipe Recipe, int LivePlays, int Impo
 
 internal static class MixRecipes
 {
-    internal const int RecipeReads = 30, GenerationReads = 240;
+    internal const int RecipeReads = 30, GenerationReads = 240, HistoryLookupReads = 60;
     internal const int RecentDays = 30, RotationDays = 90, LostPlays = 5, LostMonths = 6, ReleaseDays = 14, FrequentPlays = 10, TopArtists = 20, TopStyles = 10;
     private const string Common = "Leaves out songs you can't play, explicit songs on clean-only accounts, anything you marked Never, songs you skipped early 3 times in 30 days, and repeats. Songs you marked Less come later.";
     internal static MixRecipe For(string kind, string? style = null) => kind switch

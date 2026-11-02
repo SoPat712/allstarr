@@ -26,7 +26,11 @@ public sealed partial class PersonalMixService
         internal HashSet<string> ReleaseArtists = new(StringComparer.OrdinalIgnoreCase);
         internal Dictionary<string, string[]> CachedTags = [];
         internal Dictionary<string, int> RecipeReads = [];
-        internal bool CanRead => (ReadKinds == null || ReadKinds.Contains(Kind)) && Reads < MixRecipes.GenerationReads && RecipeReads.GetValueOrDefault(Kind) < MixRecipes.RecipeReads;
+        // Finding your own top songs at a service is shared groundwork, so it has its own allowance. Charged to whichever
+        // mix came first, a long history used that mix's whole allowance before it could look for anything new.
+        internal const string HistoryLookups = "history-lookups";
+        internal bool CanRead => (Kind == HistoryLookups ? ReadKinds is not { Count: 0 } : ReadKinds == null || ReadKinds.Contains(Kind)) &&
+            Reads < MixRecipes.GenerationReads && RecipeReads.GetValueOrDefault(Kind) < (Kind == HistoryLookups ? MixRecipes.HistoryLookupReads : MixRecipes.RecipeReads);
         internal string[] Playable = [];
         internal Dictionary<string, int> Excluded = [];
         internal Dictionary<string, DateTimeOffset> ReleaseDates = [];
@@ -75,6 +79,8 @@ public sealed partial class PersonalMixService
             row.Song.CanonicalRecordingId is { } id && historyRecordings.Contains(id)).Select(row => (row.Song, row.Source, row.Release)));
         var recent = RecentHistory(events);
         inputs.Playable = (await providers.GetPlayableProviderOrderAsync(context.Actor!, token) ?? []).Where(provider => context.Policy?.IsAutomatic(provider) != false).ToArray();
+        var recipeKind = inputs.Kind;
+        inputs.Kind = GenerationInputs.HistoryLookups;
         foreach (var group in events.Where(item => item.State == ListeningEventState.Completed)
             .GroupBy(item => item.CanonicalRecordingId?.ToString("D") ?? item.TrackReference)
             .OrderByDescending(group => group.Count(play => recent.Contains(play.Id))).ThenByDescending(group => group.Count()).ThenBy(group => group.Key, StringComparer.Ordinal).Take(PersonalMixRules.TopSongs))
@@ -114,6 +120,7 @@ public sealed partial class PersonalMixService
             }
             if (song != null) { song.CanonicalRecordingId ??= play.CanonicalRecordingId; rows.Add((song, "history", null)); }
         }
+        inputs.Kind = recipeKind;
         return (await RankCandidatesAsync(rows, context, user, events, hearts, token, inputs), null);
     }
 

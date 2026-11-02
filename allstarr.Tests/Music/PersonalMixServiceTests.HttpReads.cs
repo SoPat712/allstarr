@@ -90,13 +90,14 @@ public sealed partial class PersonalMixServiceTests
             });
         var result = await service.GenerateAsync(owner, scheduled: true);
         Assert.Equal(240, result[0].Evidence!.ProviderReads);
-        Assert.Equal(30, gateway.Invocations.Count(x => x.Method.Name == "GetSongAsync"));
-        Assert.Equal(570, handler.Calls + chart.Reads);
-        metadata.Verify(x => x.SearchArtistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Exactly(300));
-        metadata.Verify(x => x.SearchAlbumsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Exactly(30));
+        // Finding your own songs has its own allowance, separate from each mix's search for new ones.
+        Assert.Equal(60, gateway.Invocations.Count(x => x.Method.Name == "GetSongAsync"));
+        Assert.Equal(900, handler.Calls + chart.Reads);
+        metadata.Verify(x => x.SearchArtistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Exactly(600));
+        metadata.Verify(x => x.SearchAlbumsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Exactly(60));
         var calls = handler.Calls + chart.Reads;
         await service.GenerateAsync(owner, scheduled: true);
         Assert.Equal(calls, handler.Calls + chart.Reads);
-        output.WriteLine($"Generation: 240 reads, {calls} HTTP calls (30 song reads × 12 calls, 210 other reads). Same-day repeat: 0 HTTP calls.");
+        output.WriteLine($"Generation: 240 reads, {calls} HTTP calls (60 song reads × 12 calls, 180 other reads). Same-day repeat: 0 HTTP calls.");
     }
 }
