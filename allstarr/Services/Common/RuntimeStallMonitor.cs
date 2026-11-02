@@ -84,6 +84,6 @@ public sealed class RuntimeStallMonitor(ILogger<RuntimeStallMonitor> logger) : I
         logger.LogInformation(
             "Runtime memory: process {Process:F0} MB, collector committed {Committed:F0} MB, live {Heap:F0} MB, fragmented {Fragmented:F0} MB, heaps {Heaps}, adaptive {Adaptive}, server mode {Server}",
             process.WorkingSet64 / Mb, info.TotalCommittedBytes / Mb, info.HeapSizeBytes / Mb, info.FragmentedBytes / Mb,
-            settings.GetValueOrDefault("HeapCount"), settings.GetValueOrDefault("DynamicAdaptationMode"), System.Runtime.GCSettings.IsServerGC);
+            settings.GetValueOrDefault("HeapCount"), settings.GetValueOrDefault("GCDynamicAdaptationMode"), System.Runtime.GCSettings.IsServerGC);
     }
 }
