@@ -461,7 +461,8 @@ public sealed class MixCoverRenderer
             Ink("#9a93e6", (g, paint) => Blob(g, paint, .66, .42, .17, .05), over: true, alpha: .9);
             var lines = mix.SourcePlaylistId.Contains("explor", StringComparison.OrdinalIgnoreCase) ? new[] { "weekly", "exploration" }
                 : mix.SourcePlaylistId.Contains("jams", StringComparison.OrdinalIgnoreCase) ? new[] { "weekly jams" }
-                : mix.SourcePlaylistId == "recommended" ? new[] { "recommended", "for you" } : new[] { mix.Name.ToLowerInvariant() };
+                : mix.SourcePlaylistId == "recommended" ? new[] { "recommended", "for you" }
+                : mix.SourcePlaylistId == "fresh-releases" ? new[] { "fresh", "releases" } : new[] { mix.Name.ToLowerInvariant() };
             Label(.07, .66, .72, ["listenbrainz", .. lines]);
         }
     }

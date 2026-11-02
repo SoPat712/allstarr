@@ -241,6 +241,130 @@ public sealed class ListenBrainzPlaylistCapabilityAdapterTests
         Assert.Equal("Recommended for you", page.Playlist.Name);
     }
 
+    [Fact]
+    public async Task FreshReleasesIsListedAfterRecommendedAndFollowsItself()
+    {
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath.EndsWith("validate-token")
+            ? Json("{\"valid\":true,\"user_name\":\"listener\"}") : Json(Listing()));
+        var adapter = new ListenBrainzPlaylistCapabilityAdapter(new HttpClient(handler), new Secrets());
+
+        var items = (await adapter.GetUserPlaylistsAsync(Context(personal: true), new(new()))).RequireValue().Items;
+        var follow = await adapter.FollowNewestAsync(Context(personal: true), Resource("fresh-releases"));
+
+        Assert.Equal(new[] { "recommended", "fresh-releases" }, items.Take(2).Select(item => item.Id.Value));
+        Assert.Equal("Fresh releases", items[1].Name);
+        Assert.True(ListenBrainzPlaylistCapabilityAdapter.TryNormalize("fresh-releases", out var normalized));
+        Assert.Equal("fresh-releases", normalized);
+        Assert.Equal("fresh-releases", follow.RequireValue().Value);
+    }
+
+    [Fact]
+    public async Task FreshReleasesTakesOneSongFromEachRecentReleaseNewestFirst()
+    {
+        const string album = "55555555-5555-4555-8555-555555555555", single = "66666666-6666-4666-8666-666666666666";
+        const string repeat = "77777777-7777-4777-8777-777777777777", unlisted = "88888888-8888-4888-8888-888888888888";
+        const string upcoming = "99999999-9999-4999-8999-999999999999", old = "12121212-1212-4212-8212-121212121212";
+        const string opener = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", title = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+        const string other = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/1/validate-token" => Json("""{"valid":true,"user_name":"listener"}"""),
+            "/1/user/listener/fresh_releases" => Json(FreshReleaseList(FreshRelease(album, "2026-10-30", "Album One", 1),
+                FreshRelease(single, "2026-10-30", "Title Song", 9), FreshRelease(unlisted, "2026-10-20", "Not Listed Yet", 50),
+                FreshRelease(repeat, "2026-10-25", "Title Song", 3), FreshRelease(upcoming, "2026-11-09", "Upcoming", 99),
+                FreshRelease(old, "2026-09-01", "Old", 99))),
+            "/1/metadata/release_group/" => Json(new JsonObject
+            {
+                [album] = Songs((2, [Song(1, "Disc Two", other)]), (1, [Song(2, "Second", other), Song(1, "Opener", opener)])),
+                [single] = Songs((1, [Song(1, "B-side", other), Song(2, "Title Song", title)])),
+                [repeat] = Songs((1, [Song(1, "Title Song", title)]))
+            }.ToJsonString()),
+            _ => throw new InvalidOperationException(request.RequestUri.AbsolutePath)
+        });
+        var adapter = new ListenBrainzPlaylistCapabilityAdapter(new HttpClient(handler), new Secrets(), new Clock(Today));
+
+        var page = (await adapter.GetPlaylistTracksAsync(Context(personal: true), new(Resource("fresh-releases"), new()))).RequireValue();
+        var again = (await adapter.GetPlaylistTracksAsync(Context(personal: true), new(Resource("fresh-releases"), new()))).RequireValue();
+
+        Assert.Equal(new[] { "Title Song", "Opener" }, page.Tracks.Items.Select(item => item.Metadata!.Title));
+        Assert.Equal(new[] { 0, 1 }, page.Tracks.Items.Select(item => item.Position));
+        var track = page.Tracks.Items[1];
+        Assert.Equal(opener, track.TrackId.Value);
+        Assert.Equal("Singer & Guest", Assert.Single(track.Metadata!.Artists).Name);
+        Assert.Equal("Album One", track.Metadata.AlbumTitle);
+        Assert.Equal(TimeSpan.FromMilliseconds(200000), track.Metadata.Duration);
+        Assert.Equal(opener, track.Metadata.ProviderIds["musicbrainzrecording"]);
+        Assert.Equal("Fresh releases", page.Playlist.Name);
+        Assert.Equal(2, page.Playlist.TrackCount);
+        Assert.Equal(page.Playlist.SourceRevision, again.Playlist.SourceRevision);
+        Assert.Contains(handler.Requests, item => item.Path == "/1/user/listener/fresh_releases?days=30&past=true&future=false");
+        var lookup = Uri.UnescapeDataString(handler.Requests.First(item => item.Path.StartsWith("/1/metadata/release_group/", StringComparison.Ordinal)).Path);
+        Assert.EndsWith("&inc=recording", lookup);
+        Assert.All(new[] { single, album, repeat, unlisted }, group => Assert.Contains(group, lookup));
+        Assert.DoesNotContain(upcoming, lookup);
+        Assert.DoesNotContain(old, lookup);
+    }
+
+    [Theory]
+    [InlineData("none")]
+    [InlineData("empty")]
+    [InlineData("upcoming")]
+    [InlineData("unlisted")]
+    public async Task FreshReleasesIsEmptyWithAReasonWhenThereIsNothingToPlay(string state)
+    {
+        const string album = "55555555-5555-4555-8555-555555555555";
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/1/validate-token" => Json("""{"valid":true,"user_name":"listener"}"""),
+            "/1/user/listener/fresh_releases" => state switch
+            {
+                "none" => new HttpResponseMessage(HttpStatusCode.NoContent),
+                "empty" => Json(FreshReleaseList()),
+                _ => Json(FreshReleaseList(FreshRelease(album, state == "upcoming" ? "2026-11-03" : "2026-11-02", "Album One", 1)))
+            },
+            "/1/metadata/release_group/" => Json("{}"),
+            _ => throw new InvalidOperationException(request.RequestUri.AbsolutePath)
+        });
+        var adapter = new ListenBrainzPlaylistCapabilityAdapter(new HttpClient(handler), new Secrets(), new Clock(Today));
+
+        var page = (await adapter.GetPlaylistTracksAsync(Context(personal: true), new(Resource("fresh-releases"), new()))).RequireValue();
+
+        Assert.Empty(page.Tracks.Items);
+        Assert.Equal(0, page.Playlist.TrackCount);
+        Assert.Contains(state == "unlisted" ? "doesn't have the songs" : "hasn't found new releases", page.Playlist.Description);
+        Assert.Equal(state == "unlisted", handler.Requests.Any(item => item.Path.StartsWith("/1/metadata/", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task FreshReleasesLooksUpAtMostOneHundredReleasesAndKeepsFiftySongs()
+    {
+        var groups = Enumerable.Range(1, 120).Select(index => $"{index:x8}-1111-4111-8111-111111111111").ToArray();
+        var handler = new Handler(request =>
+        {
+            var metadata = new JsonObject();
+            for (var index = 0; index < groups.Length; index++)
+                metadata[groups[index]] = Songs((1, [Song(1, "Song " + index, $"{index + 1:x8}-2222-4222-8222-222222222222")]));
+            return request.RequestUri!.AbsolutePath switch
+            {
+                "/1/validate-token" => Json("""{"valid":true,"user_name":"listener"}"""),
+                "/1/user/listener/fresh_releases" => Json(FreshReleaseList(groups.Select((group, index) =>
+                    FreshRelease(group, "2026-10-20", "Release " + index, index)).ToArray())),
+                "/1/metadata/release_group/" => Json(metadata.ToJsonString()),
+                _ => throw new InvalidOperationException(request.RequestUri.AbsolutePath)
+            };
+        });
+        var adapter = new ListenBrainzPlaylistCapabilityAdapter(new HttpClient(handler), new Secrets(), new Clock(Today));
+
+        var page = (await adapter.GetPlaylistTracksAsync(Context(personal: true), new(Resource("fresh-releases"), new(200)))).RequireValue();
+
+        Assert.Equal(50, page.Tracks.Items.Count);
+        Assert.Equal(50, page.Playlist.TrackCount);
+        Assert.Equal("Song 119", page.Tracks.Items[0].Metadata!.Title);
+        var lookup = Uri.UnescapeDataString(handler.Requests.Single(item => item.Path.StartsWith("/1/metadata/release_group/", StringComparison.Ordinal)).Path);
+        Assert.Equal(100, lookup.Split("release_group_mbids=")[1].Split('&')[0].Split(',').Length);
+    }
+
+    private static readonly DateTimeOffset Today = new(2026, 11, 2, 12, 0, 0, TimeSpan.Zero);
     private static ProviderExternalResourceId Resource(string id) => new("listenbrainz", ProviderResourceKind.Playlist, id);
     private static string Fixture() => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "ListenBrainz", "playlist.json"));
     private static HttpResponseMessage Json(string value) => new(HttpStatusCode.OK) { Content = new StringContent(value, Encoding.UTF8, "application/json") };
@@ -259,6 +383,41 @@ public sealed class ListenBrainzPlaylistCapabilityAdapterTests
         root["playlist"]!["extension"]!["https://musicbrainz.org/doc/jspf#playlist"]!["additional_metadata"]!["algorithm_metadata"]!["source_patch"] = kind;
         return root.ToJsonString();
     }
+    private static string FreshReleaseList(params JsonObject[] releases) => new JsonObject
+    {
+        ["payload"] = new JsonObject { ["releases"] = new JsonArray(releases), ["user_id"] = "listener" }
+    }.ToJsonString();
+    private static JsonObject FreshRelease(string group, string date, string name, int confidence) => new()
+    {
+        ["artist_credit_name"] = "Release Artist",
+        ["confidence"] = confidence,
+        ["release_date"] = date,
+        ["release_group_mbid"] = group,
+        ["release_group_primary_type"] = "Album",
+        ["release_mbid"] = group,
+        ["release_name"] = name
+    };
+    private static JsonObject Songs(params (int Position, JsonObject[] Tracks)[] mediums) => new()
+    {
+        ["release_group"] = new JsonObject(),
+        ["recording"] = new JsonObject
+        {
+            ["mediums"] = new JsonArray(mediums.Select(medium => (JsonNode?)new JsonObject
+            {
+                ["position"] = medium.Position,
+                ["tracks"] = new JsonArray(medium.Tracks)
+            }).ToArray())
+        }
+    };
+    private static JsonObject Song(int position, string name, string recording) => new()
+    {
+        ["position"] = position,
+        ["name"] = name,
+        ["recording_mbid"] = recording,
+        ["length"] = 200000,
+        ["artists"] = new JsonArray(new JsonObject { ["artist_credit_name"] = "Singer", ["join_phrase"] = " & " },
+            new JsonObject { ["artist_credit_name"] = "Guest", ["join_phrase"] = "" })
+    };
     private static ProviderExecutionContext Context(bool personal = false, bool shared = false)
     {
         var actor = personal || shared ? new ProviderActorContext(ProviderActorKind.User, Listener, new("jellyfin", "backend", "principal"))
@@ -276,6 +435,10 @@ public sealed class ListenBrainzPlaylistCapabilityAdapterTests
             Accounts.Add(account.AccountId);
             return operation(Encoding.UTF8.GetBytes("{\"token\":\"fixture-token\",\"username\":\"untrusted\"}"));
         }
+    }
+    private sealed class Clock(DateTimeOffset now) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => now;
     }
     private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {

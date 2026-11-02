@@ -11,7 +11,7 @@ using allstarr.Services.Common;
 
 namespace allstarr.Core.Providers.ListenBrainz;
 
-public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProviderAccountSecretAccessor secrets)
+public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProviderAccountSecretAccessor secrets, TimeProvider? clock = null)
     : IProviderPlaylistCapability
 {
     public const string StableProviderId = "listenbrainz";
@@ -24,6 +24,14 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
     public const string Recommended = "recommended";
     private const string RecommendedName = "Recommended for you";
     private const int RecommendedCount = 100;
+    // Songs from new releases by artists the listener plays, newest first, kept as a playlist that follows them.
+    public const string FreshReleases = "fresh-releases";
+    private const string FreshReleasesName = "Fresh releases";
+    private const int FreshReleasesDays = 30;
+    // One song per release, so a big album can't crowd out other artists.
+    private const int FreshReleasesCount = 50;
+    // ListenBrainz doesn't have song lists for every new release yet, so look up more releases than songs we keep.
+    private const int FreshReleasesLookupCount = 100;
     public string ProviderId => StableProviderId;
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Playlist;
 
@@ -32,7 +40,7 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
         normalized = "";
         var value = reference?.Trim();
         if (value == null) return false;
-        if (value.StartsWith("createdfor:", StringComparison.Ordinal) && SafeKind(value[11..]) || value == Recommended)
+        if (value.StartsWith("createdfor:", StringComparison.Ordinal) && SafeKind(value[11..]) || value is Recommended or FreshReleases)
         { normalized = value; return true; }
         if (Guid.TryParseExact(value, "D", out var id) && id != Guid.Empty)
         { normalized = id.ToString("D"); return true; }
@@ -46,7 +54,7 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
         {
             RequirePlaylist(playlistId, out var id);
             var username = await UsernameAsync(baseUri, token!, ct);
-            if (id.StartsWith("createdfor:", StringComparison.Ordinal) || id == Recommended) return Resource(id);
+            if (id.StartsWith("createdfor:", StringComparison.Ordinal) || id is Recommended or FreshReleases) return Resource(id);
             var playlist = Playlist(await GetAsync(baseUri, "playlist/" + id, token, ct));
             if (PlaylistId(playlist) != id) throw new InvalidOperationException();
             var kind = SourcePatch(playlist);
@@ -65,6 +73,11 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
             {
                 if (token == null) throw new ProviderFailure(new(ProviderErrorKind.Forbidden));
                 return await RecommendedAsync(baseUri, token, request, offset, ct);
+            }
+            if (id == FreshReleases)
+            {
+                if (token == null) throw new ProviderFailure(new(ProviderErrorKind.Forbidden));
+                return await FreshReleasesAsync(baseUri, token, request, offset, ct);
             }
             JsonElement playlist;
             var generated = id.StartsWith("createdfor:", StringComparison.Ordinal);
@@ -113,6 +126,8 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
             var created = await ListAsync(baseUri, username, token!, true, ct);
             var summaries = own.Concat(created.Where(item => Text(Extension(item), "created_for") == username))
                 .DistinctBy(PlaylistId).Select(item => Summary(item, Resource(PlaylistId(item))))
+                .Prepend(new ProviderPlaylistSummary(Resource(FreshReleases), FreshReleasesName, new("ListenBrainz"), Hash(FreshReleases + ":" + username),
+                    "New songs from artists you listen to, newest first."))
                 .Prepend(new ProviderPlaylistSummary(Resource(Recommended), RecommendedName, new("ListenBrainz"), Hash(Recommended + ":" + username),
                     "Songs ListenBrainz recommends from what you listen to."))
                 .Where(item => search == null || item.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
@@ -155,6 +170,79 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
         var id = new ProviderExternalResourceId(StableProviderId, ProviderResourceKind.Track, mbid);
         return new(position, id, metadata: new ProviderTrackMetadata(id, Clip(Text(recording, "name") ?? "Unknown", 500)!,
             [new(Clip(Text(artist, "name") ?? "Unknown", 300)!)], albumTitle: Clip(Text(release, "name"), 500), duration: duration,
+            providerIds: new Dictionary<string, string> { ["musicbrainzrecording"] = mbid }));
+    }
+
+    private async Task<ProviderPlaylistTrackPage> FreshReleasesAsync(Uri baseUri, string token, ProviderPlaylistTracksRequest request, int offset, CancellationToken ct)
+    {
+        var username = await UsernameAsync(baseUri, token, ct);
+        var today = DateOnly.FromDateTime((clock ?? TimeProvider.System).GetUtcNow().UtcDateTime);
+        // ListenBrainz answers with no content when it can't build this listener's release list.
+        var root = await GetAsync(baseUri, $"user/{Uri.EscapeDataString(username)}/fresh_releases?days={FreshReleasesDays}&past=true&future=false",
+            token, ct, allowEmpty: true);
+        var found = new List<(string Group, string? Name, string? Artist, DateOnly Date, int Confidence)>();
+        if (root.ValueKind == JsonValueKind.Object && Object(root, "payload") is { ValueKind: JsonValueKind.Object } payload &&
+            payload.TryGetProperty("releases", out var items) && items.ValueKind == JsonValueKind.Array)
+            foreach (var item in items.EnumerateArray())
+                // Upcoming releases have nothing to play yet.
+                if (item.ValueKind == JsonValueKind.Object && Guid.TryParseExact(Text(item, "release_group_mbid"), "D", out var group) && group != Guid.Empty &&
+                    DateOnly.TryParseExact(Text(item, "release_date"), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date) &&
+                    date <= today && date >= today.AddDays(-FreshReleasesDays))
+                    found.Add((group.ToString("D"), Text(item, "release_name"), Text(item, "artist_credit_name"), date,
+                        item.TryGetProperty("confidence", out var confidence) && confidence.ValueKind == JsonValueKind.Number &&
+                        confidence.TryGetInt32(out var score) ? score : 0));
+        // Newest first; on a busy release day, artists the listener plays more come first.
+        var releases = found.OrderByDescending(item => item.Date).ThenByDescending(item => item.Confidence)
+            .ThenBy(item => item.Group, StringComparer.Ordinal).DistinctBy(item => item.Group).Take(FreshReleasesLookupCount).ToArray();
+        if (releases.Length == 0)
+            return TrackPage(new(request.PlaylistId, FreshReleasesName, new("ListenBrainz"), Hash(FreshReleases + ":none"),
+                "ListenBrainz hasn't found new releases from artists you listen to yet.", trackCount: 0), [], request, offset);
+        var metadata = await GetAsync(baseUri, "metadata/release_group/?release_group_mbids=" +
+            string.Join(",", releases.Select(item => item.Group)) + "&inc=recording", token, ct);
+        var mbids = new List<string>();
+        var tracks = new List<ProviderPlaylistTrack>();
+        foreach (var release in releases)
+        {
+            if (FreshReleaseSong(metadata, release.Group, release.Name) is not { ValueKind: JsonValueKind.Object } song) continue;
+            var mbid = Guid.ParseExact(Text(song, "recording_mbid")!, "D").ToString("D");
+            // A song released as a single and then on an album shows up once.
+            if (mbids.Contains(mbid)) continue;
+            mbids.Add(mbid);
+            tracks.Add(FreshReleaseTrack(song, mbid, release.Name, release.Artist, tracks.Count));
+            if (tracks.Count == FreshReleasesCount) break;
+        }
+        if (tracks.Count == 0)
+            return TrackPage(new(request.PlaylistId, FreshReleasesName, new("ListenBrainz"), Hash(FreshReleases + ":waiting"),
+                "ListenBrainz doesn't have the songs from your new releases yet.", trackCount: 0), [], request, offset);
+        return TrackPage(new(request.PlaylistId, FreshReleasesName, new("ListenBrainz"), Hash(FreshReleases + ":" + string.Join(",", mbids)),
+            "New songs from artists you listen to, newest first.", trackCount: tracks.Count), tracks.ToArray(), request, offset);
+    }
+
+    private static JsonElement FreshReleaseSong(JsonElement metadata, string group, string? releaseName)
+    {
+        var item = metadata.TryGetProperty(group, out var found) && found.ValueKind == JsonValueKind.Object ? found : default;
+        var recording = item.ValueKind == JsonValueKind.Object ? Object(item, "recording") : default;
+        if (recording.ValueKind != JsonValueKind.Object || !recording.TryGetProperty("mediums", out var mediums) ||
+            mediums.ValueKind != JsonValueKind.Array) return default;
+        var songs = mediums.EnumerateArray().Where(medium => medium.ValueKind == JsonValueKind.Object).OrderBy(Position)
+            .SelectMany(medium => medium.TryGetProperty("tracks", out var tracks) && tracks.ValueKind == JsonValueKind.Array
+                ? tracks.EnumerateArray().Where(track => track.ValueKind == JsonValueKind.Object).OrderBy(Position) : Enumerable.Empty<JsonElement>())
+            .Where(track => Guid.TryParseExact(Text(track, "recording_mbid"), "D", out var mbid) && mbid != Guid.Empty).ToArray();
+        // A single's song or an album's title song is usually the one being promoted; otherwise take the opening song.
+        return songs.FirstOrDefault(track => releaseName != null && string.Equals(Text(track, "name"), releaseName, StringComparison.OrdinalIgnoreCase))
+            is { ValueKind: JsonValueKind.Object } title ? title : songs.FirstOrDefault();
+    }
+
+    private static ProviderPlaylistTrack FreshReleaseTrack(JsonElement song, string mbid, string? album, string? releaseArtist, int position)
+    {
+        // The song's own credit can differ from the release's, as on a split single.
+        var artist = song.TryGetProperty("artists", out var artists) && artists.ValueKind == JsonValueKind.Array
+            ? string.Concat(artists.EnumerateArray().Select(item => Text(item, "artist_credit_name") + Text(item, "join_phrase"))) : null;
+        TimeSpan? duration = song.TryGetProperty("length", out var length) && length.ValueKind == JsonValueKind.Number &&
+            length.TryGetInt64(out var milliseconds) && milliseconds is > 0 and <= int.MaxValue ? TimeSpan.FromMilliseconds(milliseconds) : null;
+        var id = new ProviderExternalResourceId(StableProviderId, ProviderResourceKind.Track, mbid);
+        return new(position, id, metadata: new ProviderTrackMetadata(id, Clip(Text(song, "name") ?? "Unknown", 500)!,
+            [new(Clip(string.IsNullOrWhiteSpace(artist) ? releaseArtist ?? "Unknown" : artist, 300)!)], albumTitle: Clip(album, 500), duration: duration,
             providerIds: new Dictionary<string, string> { ["musicbrainzrecording"] = mbid }));
     }
 
@@ -338,6 +426,8 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
         if (value.ValueKind != JsonValueKind.String) throw new InvalidOperationException();
         return string.IsNullOrWhiteSpace(value.GetString()) ? null : value.GetString();
     }
+    private static int Position(JsonElement item) => item.TryGetProperty("position", out var value) && value.ValueKind == JsonValueKind.Number &&
+        value.TryGetInt32(out var position) ? position : int.MaxValue;
     private static int Integer(JsonElement root, string key) => root.TryGetProperty(key, out var value) && value.TryGetInt32(out var result) && result >= 0
         ? result : throw new InvalidOperationException();
     private static int Offset(string? cursor) => cursor == null ? 0 : int.TryParse(cursor, NumberStyles.None, CultureInfo.InvariantCulture, out var value) && value >= 0

@@ -11,7 +11,8 @@ public sealed partial class PersonalMixService
 {
     internal static bool IsExternalLink(PlaylistLinkRecord link) => link.ImportMode == PlaylistImportMode.Linked &&
         (link.SourceProviderId == "listenbrainz" && (link.SourcePlaylistId.StartsWith("createdfor:", StringComparison.Ordinal) ||
-            link.SourcePlaylistId == Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.Recommended) ||
+            link.SourcePlaylistId is Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.Recommended
+                or Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.FreshReleases) ||
          link.SourceProviderId == "lastfm" && (link.SourcePlaylistId is "loved" or "similar" ||
              link.SourcePlaylistId.StartsWith("top:", StringComparison.Ordinal)));
 
@@ -80,6 +81,7 @@ public sealed partial class PersonalMixService
 
     private static string ExternalName(PlaylistLinkRecord link) => link.SourceProviderId == "listenbrainz"
         ? link.SourcePlaylistId == Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.Recommended ? "Recommended for you"
+            : link.SourcePlaylistId == Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.FreshReleases ? "Fresh releases"
             : "Created for you · " + link.SourcePlaylistId[11..].Replace('-', ' ')
         : link.SourcePlaylistId switch
         {
