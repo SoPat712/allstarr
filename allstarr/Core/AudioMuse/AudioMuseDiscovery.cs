@@ -106,20 +106,24 @@ public sealed class AudioMuseDiscovery(IDbContextFactory<AllstarrDbContext> fact
         IEnumerable<string> ids, CancellationToken token)
     {
         var result = new Dictionary<string, AudioMuseScores>(StringComparer.Ordinal);
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-        deadline.CancelAfter(TimeSpan.FromSeconds(20));
         var (asked, found, analyzed, reason) = (0, 0, 0, (string?)null);
         try
         {
-            var (endpoint, server, _) = await BoundAsync(context, deadline.Token);
-            var rows = await ResolveAsync(context, ids.Select(id => new AudioMuseTrack(id)).ToArray(), deadline.Token);
-            (asked, found) = (ids.Count(), rows.Length);
-            foreach (var row in rows)
+            // Songs are matched 150 at a time, each batch with its own time limit, so a long list is read whole.
+            foreach (var batch in ids.Distinct(StringComparer.Ordinal).Chunk(150))
             {
-                if (!await client.AnalyzedAsync(endpoint, server, row.BackendItemId, deadline.Token)) continue;
-                analyzed++;
-                try { result[row.BackendItemId] = await client.ScoresAsync(endpoint, server, row.BackendItemId, deadline.Token); }
-                catch (AudioMuseUnavailable error) when (error.Reason == "song_not_analyzed") { }
+                using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+                deadline.CancelAfter(TimeSpan.FromSeconds(20));
+                var (endpoint, server, _) = await BoundAsync(context, deadline.Token);
+                var rows = await ResolveAsync(context, batch.Select(id => new AudioMuseTrack(id)).ToArray(), deadline.Token);
+                (asked, found) = (asked + batch.Length, found + rows.Length);
+                foreach (var row in rows)
+                {
+                    if (!await client.AnalyzedAsync(endpoint, server, row.BackendItemId, deadline.Token)) continue;
+                    analyzed++;
+                    try { result[row.BackendItemId] = await client.ScoresAsync(endpoint, server, row.BackendItemId, deadline.Token); }
+                    catch (AudioMuseUnavailable error) when (error.Reason == "song_not_analyzed") { }
+                }
             }
         }
         catch (Exception error) when (Unavailable(error, token) != null) { reason = Unavailable(error, token); }

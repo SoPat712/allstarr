@@ -78,10 +78,7 @@ public sealed class SoundProfileService(IDbContextFactory<AllstarrDbContext> fac
                 item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId)
             .Select(item => item.BackendItemId).Distinct().OrderBy(id => id).ToArrayAsync(token))
             .Where(id => !known.Contains(id)).Take(LibrarySample).ToArray();
-        // AudioMuse is asked about 150 songs at a time.
-        var features = new Dictionary<string, AudioMuseScores>(StringComparer.Ordinal);
-        foreach (var batch in known.Concat(sample).Chunk(150))
-            foreach (var item in await audioMuse.MixFeaturesAsync(context, batch, token)) features[item.Key] = item.Value;
+        var features = await audioMuse.MixFeaturesAsync(context, known.Concat(sample).ToArray(), token);
         // A song played a hundred times says more than one played once, but not a hundred times more.
         var liked = favourites.Where(item => features.ContainsKey(item.Key))
             .Select(item => (Scores: features[item.Key], Weight: 1 + Math.Log(item.Value))).ToArray();
