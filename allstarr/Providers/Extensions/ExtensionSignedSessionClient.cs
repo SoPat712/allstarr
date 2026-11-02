@@ -121,8 +121,10 @@ internal sealed class ExtensionSignedSessionClient
             authenticated ? record.SessionId : null, _config.AppVersion, _config.Platform, _pendingAuthUrl));
     });
 
+    // Reading the stored session needs no turn: saves replace the file whole. Playback asks this for every song, and a
+    // signed request keeps the turn while it runs, so waiting here held up plays started during a search.
     public Task<ExtensionSessionView> ViewAsync(CancellationToken cancellationToken) =>
-        RunAdministratorAsync(_ => Task.FromResult(ViewOf(Load(), null)), cancellationToken);
+        Task.FromResult(ViewOf(Load(), null));
 
     public Task<ExtensionSessionView?> RefreshDueAsync(CancellationToken cancellationToken) =>
         RunAdministratorAsync<ExtensionSessionView?>(async limit =>

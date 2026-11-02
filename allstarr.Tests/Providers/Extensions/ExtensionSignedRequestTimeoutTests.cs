@@ -140,6 +140,22 @@ public sealed class ExtensionSignedRequestTimeoutTests : IDisposable
     }
 
     [Fact]
+    public async Task SignedSessionStatus_AnswersWhileASignedRequestIsRunning()
+    {
+        var sandbox = await SandboxAsync();
+        var first = Task.Run(() => sandbox.InvokeJson("download", "{}"));
+        await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        try
+        {
+            var view = await sandbox.SignedSessionStatusAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(ExtensionSessionStates.SignedIn, view.State);
+            Assert.False(first.IsCompleted);
+        }
+        finally { handler.Release.TrySetResult(); }
+        Assert.NotNull(await first.WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    [Fact]
     public async Task SignedDownloadRequest_StopsWhenTheCallerCancels()
     {
         var sandbox = await SandboxAsync();
