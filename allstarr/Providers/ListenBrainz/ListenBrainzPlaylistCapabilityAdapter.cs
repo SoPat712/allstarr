@@ -20,6 +20,10 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
     private const int MaximumResponseBytes = 4 * 1024 * 1024;
     private const int ListCount = 100;
     private static readonly Uri PublicBaseUri = new("https://api.listenbrainz.org/1/");
+    // ListenBrainz's own song recommendations for the listener, kept as a playlist that follows them.
+    public const string Recommended = "recommended";
+    private const string RecommendedName = "Recommended for you";
+    private const int RecommendedCount = 100;
     public string ProviderId => StableProviderId;
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Playlist;
 
@@ -28,7 +32,7 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
         normalized = "";
         var value = reference?.Trim();
         if (value == null) return false;
-        if (value.StartsWith("createdfor:", StringComparison.Ordinal) && SafeKind(value[11..]))
+        if (value.StartsWith("createdfor:", StringComparison.Ordinal) && SafeKind(value[11..]) || value == Recommended)
         { normalized = value; return true; }
         if (Guid.TryParseExact(value, "D", out var id) && id != Guid.Empty)
         { normalized = id.ToString("D"); return true; }
@@ -42,7 +46,7 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
         {
             RequirePlaylist(playlistId, out var id);
             var username = await UsernameAsync(baseUri, token!, ct);
-            if (id.StartsWith("createdfor:", StringComparison.Ordinal)) return Resource(id);
+            if (id.StartsWith("createdfor:", StringComparison.Ordinal) || id == Recommended) return Resource(id);
             var playlist = Playlist(await GetAsync(baseUri, "playlist/" + id, token, ct));
             if (PlaylistId(playlist) != id) throw new InvalidOperationException();
             var kind = SourcePatch(playlist);
@@ -57,6 +61,11 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
         {
             RequirePlaylist(request.PlaylistId, out var id);
             var offset = Offset(request.Page.Cursor);
+            if (id == Recommended)
+            {
+                if (token == null) throw new ProviderFailure(new(ProviderErrorKind.Forbidden));
+                return await RecommendedAsync(baseUri, token, request, offset, ct);
+            }
             JsonElement playlist;
             var generated = id.StartsWith("createdfor:", StringComparison.Ordinal);
             if (generated)
@@ -104,12 +113,50 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
             var created = await ListAsync(baseUri, username, token!, true, ct);
             var summaries = own.Concat(created.Where(item => Text(Extension(item), "created_for") == username))
                 .DistinctBy(PlaylistId).Select(item => Summary(item, Resource(PlaylistId(item))))
+                .Prepend(new ProviderPlaylistSummary(Resource(Recommended), RecommendedName, new("ListenBrainz"), Hash(Recommended + ":" + username),
+                    "Songs ListenBrainz recommends from what you listen to."))
                 .Where(item => search == null || item.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
                     (item.Description?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false)).ToArray();
             var items = summaries.Skip(offset).Take(page.Limit).ToArray();
             var next = offset + items.Length < summaries.Length ? (offset + items.Length).ToString(CultureInfo.InvariantCulture) : null;
             return new ProviderPage<ProviderPlaylistSummary>(StableProviderId, items, next, next != null);
         });
+
+    private async Task<ProviderPlaylistTrackPage> RecommendedAsync(Uri baseUri, string token, ProviderPlaylistTracksRequest request, int offset, CancellationToken ct)
+    {
+        var username = await UsernameAsync(baseUri, token, ct);
+        // ListenBrainz answers with no content until it has recommendations for this listener.
+        var root = await GetAsync(baseUri, $"cf/recommendation/user/{Uri.EscapeDataString(username)}/recording?count={RecommendedCount}", token, ct, allowEmpty: true);
+        var mbids = new List<string>();
+        if (root.ValueKind == JsonValueKind.Object && Object(root, "payload") is { ValueKind: JsonValueKind.Object } payload &&
+            payload.TryGetProperty("mbids", out var items) && items.ValueKind == JsonValueKind.Array)
+            foreach (var item in items.EnumerateArray())
+                if (item.ValueKind == JsonValueKind.Object && Guid.TryParseExact(Text(item, "recording_mbid"), "D", out var mbid) && mbid != Guid.Empty)
+                    mbids.Add(mbid.ToString("D"));
+        mbids = mbids.Distinct().Take(RecommendedCount).ToList();
+        if (mbids.Count == 0)
+            return TrackPage(new(request.PlaylistId, RecommendedName, new("ListenBrainz"), Hash(Recommended + ":none"),
+                "ListenBrainz hasn't made recommendations for you yet.", trackCount: 0), [], request, offset);
+        var metadata = await GetAsync(baseUri, "metadata/recording/?recording_mbids=" + string.Join(",", mbids) + "&inc=artist%20release", token, ct);
+        var tracks = mbids.Select((mbid, position) => RecommendedTrack(metadata, mbid, position)).ToArray();
+        return TrackPage(new(request.PlaylistId, RecommendedName, new("ListenBrainz"), Hash(string.Join(",", mbids)),
+            "Songs ListenBrainz recommends from what you listen to.", trackCount: tracks.Length), tracks, request, offset);
+    }
+
+    private static ProviderPlaylistTrack RecommendedTrack(JsonElement metadata, string mbid, int position)
+    {
+        var item = metadata.TryGetProperty(mbid, out var found) && found.ValueKind == JsonValueKind.Object ? found : default;
+        var recording = item.ValueKind == JsonValueKind.Object ? Object(item, "recording") : default;
+        var artist = item.ValueKind == JsonValueKind.Object ? Object(item, "artist") : default;
+        var release = item.ValueKind == JsonValueKind.Object ? Object(item, "release") : default;
+        TimeSpan? duration = recording.ValueKind == JsonValueKind.Object && recording.TryGetProperty("length", out var length) &&
+            length.ValueKind == JsonValueKind.Number && length.TryGetInt64(out var milliseconds) && milliseconds is > 0 and <= int.MaxValue
+            ? TimeSpan.FromMilliseconds(milliseconds) : null;
+        var id = new ProviderExternalResourceId(StableProviderId, ProviderResourceKind.Track, mbid);
+        return new(position, id, metadata: new ProviderTrackMetadata(id, Clip(Text(recording, "name") ?? "Unknown", 500)!,
+            [new(Clip(Text(artist, "name") ?? "Unknown", 300)!)], albumTitle: Clip(Text(release, "name"), 500), duration: duration,
+            providerIds: new Dictionary<string, string> { ["musicbrainzrecording"] = mbid }));
+    }
 
     private async Task<List<JsonElement>> ListAsync(Uri baseUri, string username, string token, bool createdFor, CancellationToken ct)
     {
@@ -224,7 +271,7 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
         { return ProviderOutcome<T>.Failure(new(ProviderErrorKind.PermanentFailure)); }
     }
 
-    private async Task<JsonElement> GetAsync(Uri baseUri, string path, string? token, CancellationToken ct)
+    private async Task<JsonElement> GetAsync(Uri baseUri, string path, string? token, CancellationToken ct, bool allowEmpty = false)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, ListenBrainzServiceEndpoint.Route(baseUri, path));
         if (token != null) request.Headers.Authorization = new AuthenticationHeaderValue("Token", token);
@@ -242,6 +289,7 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
             var retry = response.Headers.RetryAfter?.Delta ?? (response.Headers.RetryAfter?.Date - DateTimeOffset.UtcNow) ?? TimeSpan.FromSeconds(60);
             throw new ProviderFailure(new(kind, kind == ProviderErrorKind.RateLimited ? (retry < TimeSpan.Zero ? TimeSpan.Zero : retry) : null));
         }
+        if (allowEmpty && response.StatusCode == HttpStatusCode.NoContent) return default;
         if (response.Content.Headers.ContentLength > MaximumResponseBytes) throw new InvalidOperationException();
         await using var stream = await response.Content.ReadAsStreamAsync(ct);
         using var buffer = new MemoryStream();

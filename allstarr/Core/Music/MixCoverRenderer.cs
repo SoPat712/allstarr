@@ -460,7 +460,8 @@ public sealed class MixCoverRenderer
             Ink("#eb743b", (g, paint) => Cut(g, paint, [(.1, .1), (.62, .14), (.56, .56), (.12, .5)], .01), over: true);
             Ink("#9a93e6", (g, paint) => Blob(g, paint, .66, .42, .17, .05), over: true, alpha: .9);
             var lines = mix.SourcePlaylistId.Contains("explor", StringComparison.OrdinalIgnoreCase) ? new[] { "weekly", "exploration" }
-                : mix.SourcePlaylistId.Contains("jams", StringComparison.OrdinalIgnoreCase) ? new[] { "weekly jams" } : new[] { mix.Name.ToLowerInvariant() };
+                : mix.SourcePlaylistId.Contains("jams", StringComparison.OrdinalIgnoreCase) ? new[] { "weekly jams" }
+                : mix.SourcePlaylistId == "recommended" ? new[] { "recommended", "for you" } : new[] { mix.Name.ToLowerInvariant() };
             Label(.07, .66, .72, ["listenbrainz", .. lines]);
         }
     }

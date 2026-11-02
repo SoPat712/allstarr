@@ -215,6 +215,32 @@ public sealed class ListenBrainzPlaylistCapabilityAdapterTests
     public void ReferencesAcceptOnlyPlaylistMbidsAndOwnedUrls(string reference, bool valid) =>
         Assert.Equal(valid, ListenBrainzPlaylistCapabilityAdapter.TryNormalize(reference, out _));
 
+    [Fact]
+    public async Task RecommendedFollowsListenBrainzRecommendationsAndWaitsWhenThereAreNone()
+    {
+        var empty = true;
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath switch
+        {
+            "/1/validate-token" => Json("""{"valid":true,"user_name":"listener"}"""),
+            "/1/cf/recommendation/user/listener/recording" => empty ? new HttpResponseMessage(HttpStatusCode.NoContent)
+                : Json($$$"""{"payload":{"mbids":[{"recording_mbid":"{{{RecordingId}}}","score":1}]}}"""),
+            "/1/metadata/recording/" => Json("{\"" + RecordingId + "\":" + """{"recording":{"name":"Song","length":200000},"artist":{"name":"Artist"},"release":{"name":"Album"}}}"""),
+            _ => throw new InvalidOperationException(request.RequestUri.AbsolutePath)
+        });
+        var adapter = new ListenBrainzPlaylistCapabilityAdapter(new HttpClient(handler), new Secrets());
+
+        var none = (await adapter.GetPlaylistTracksAsync(Context(personal: true), new(Resource("recommended"), new()))).RequireValue();
+        empty = false;
+        var page = (await adapter.GetPlaylistTracksAsync(Context(personal: true), new(Resource("recommended"), new()))).RequireValue();
+
+        Assert.Empty(none.Tracks.Items);
+        var track = Assert.Single(page.Tracks.Items);
+        Assert.Equal("Song", track.Metadata!.Title);
+        Assert.Equal("Album", track.Metadata.AlbumTitle);
+        Assert.Equal(TimeSpan.FromMilliseconds(200000), track.Metadata.Duration);
+        Assert.Equal("Recommended for you", page.Playlist.Name);
+    }
+
     private static ProviderExternalResourceId Resource(string id) => new("listenbrainz", ProviderResourceKind.Playlist, id);
     private static string Fixture() => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "ListenBrainz", "playlist.json"));
     private static HttpResponseMessage Json(string value) => new(HttpStatusCode.OK) { Content = new StringContent(value, Encoding.UTF8, "application/json") };

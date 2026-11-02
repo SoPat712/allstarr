@@ -10,7 +10,8 @@ namespace allstarr.Core.Music;
 public sealed partial class PersonalMixService
 {
     internal static bool IsExternalLink(PlaylistLinkRecord link) => link.ImportMode == PlaylistImportMode.Linked &&
-        (link.SourceProviderId == "listenbrainz" && link.SourcePlaylistId.StartsWith("createdfor:", StringComparison.Ordinal) ||
+        (link.SourceProviderId == "listenbrainz" && (link.SourcePlaylistId.StartsWith("createdfor:", StringComparison.Ordinal) ||
+            link.SourcePlaylistId == Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.Recommended) ||
          link.SourceProviderId == "lastfm" && (link.SourcePlaylistId is "loved" or "similar" ||
              link.SourcePlaylistId.StartsWith("top:", StringComparison.Ordinal)));
 
@@ -78,7 +79,8 @@ public sealed partial class PersonalMixService
     { SourceLabel = link.SourceProviderId == "lastfm" ? "Last.fm" : "ListenBrainz" };
 
     private static string ExternalName(PlaylistLinkRecord link) => link.SourceProviderId == "listenbrainz"
-        ? "Created for you · " + link.SourcePlaylistId[11..].Replace('-', ' ')
+        ? link.SourcePlaylistId == Providers.ListenBrainz.ListenBrainzPlaylistCapabilityAdapter.Recommended ? "Recommended for you"
+            : "Created for you · " + link.SourcePlaylistId[11..].Replace('-', ' ')
         : link.SourcePlaylistId switch
         {
             "loved" => "Loved on Last.fm",
