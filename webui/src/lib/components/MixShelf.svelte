@@ -18,7 +18,7 @@
         <div class="cover">
           <button type="button" class="mix-open" aria-label={`${additions.includes(card.id) ? "Add" : "Open"} ${mixName(card.name)}`} disabled={additions.includes(card.id) && (Boolean(busy) || !card.appsAllowed)} onclick={() => onopen(card)}>{@render content(card)}</button>
           {#if onadd && !card.inApps && card.appsAllowed && card.readiness.ready}
-            <button type="button" class="add-chip" aria-label={`Add ${mixName(card.name)}`} disabled={Boolean(busy)} onclick={() => onadd?.(card)}>{busy === card.id ? "Adding…" : "Add"}</button>
+            <button type="button" class="add-chip" aria-label={`Add ${mixName(card.name)}`} disabled={Boolean(busy)} onclick={() => onadd?.(card)}>{busy === card.id ? "Adding…" : "Add to apps"}</button>
           {/if}
         </div>
       </div>

@@ -71,6 +71,7 @@
     settingDefault,
     sourceServerFields,
     supportsPlaybackDiagnostic,
+    sourceDescription,
   } from "$lib/sources";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
 
@@ -342,7 +343,7 @@
       return "Browse the public catalog and connect your personal library with a Media User Token and storefront. Playback, downloads and synced lyrics use the same account after step 2.";
     if (item.id === "spotiflac-apple-music")
       return "Apple Music extension metadata and Media User Token lyrics, including configured translation or pronunciation.";
-    if (item.description) return item.description;
+    if (item.description) return sourceDescription(item.description);
     const uses: Record<string, string> = {
       metadata: "song details",
       streaming: "playback",
@@ -557,7 +558,7 @@
                 <Badge state={!account.enabled ? "disabled" : readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}>
                   {!account.enabled ? "Turned off" : capabilities.length && ready === capabilities.length ? "Working" : `${ready} of ${capabilities.length} ready`}
                 </Badge>
-                {#if cts}<small>CTS {ctsMeasurementLabel(cts)}</small>{/if}
+                {#if cts}<small>Starts in {ctsMeasurementLabel(cts)}</small>{/if}
               </span>
               <ChevronRight class="source-row-chevron" size={18} aria-hidden="true" />
             </a>
@@ -655,7 +656,7 @@
       </div>
       <div class="sources-heading-actions">
         {#if administrator && streams && !sourceNeedsAccount(source)}
-          <Button variant="secondary" disabled={Boolean(action)} onclick={() => void measureSource(source)}>{action === `${source.id}:cts` ? "Measuring…" : "Measure CTS"}</Button>
+          <Button variant="secondary" disabled={Boolean(action)} onclick={() => void measureSource(source)}>{action === `${source.id}:cts` ? "Measuring…" : "Measure start time"}</Button>
         {/if}
         {#if canConnectAccounts && usesAccounts && source.id !== "audiomuse-ai"}
           <Button onclick={() => { connectProviderId = source.id; connectOpen = true; }}><Plus size={16} aria-hidden="true" />{sourceAccounts.length ? "Connect another account" : "Connect account"}</Button>
@@ -720,7 +721,7 @@
                 </Badge>
                 <span class="service-account-actions">
                   {#if administrator && account.canManage}<Button variant="secondary" size="sm" disabled={!account.enabled || Boolean(action)} onclick={() => void test(account)}>{action === `${account.id}:all` ? "Testing…" : "Test connection"}</Button>{/if}
-                  {#if administrator && account.canManage && streams}<Button variant="secondary" size="sm" disabled={!account.enabled || Boolean(action)} onclick={() => void measure(account)}>{action === `${account.id}:cts` ? "Measuring…" : "Measure CTS"}</Button>{/if}
+                  {#if administrator && account.canManage && streams}<Button variant="secondary" size="sm" disabled={!account.enabled || Boolean(action)} onclick={() => void measure(account)}>{action === `${account.id}:cts` ? "Measuring…" : "Measure start time"}</Button>{/if}
                   {#if account.canManage}<Button size="sm" onclick={() => configure(account)}>Edit configuration</Button>{/if}
                   {#if account.canManage || account.canChangeAudience}
                     <DropdownMenu.Root>
@@ -918,7 +919,7 @@
                 <Badge state={state}>{state === "degraded" ? sourceProblemLabel(item, accounts, health) ?? sourceStatusLabel(state) : sourceStatusLabel(state)}</Badge>
                 {#if isRanked(item.useMode) && scoreOf(item.id) != null}<small class="source-row-score">Score {scoreOf(item.id)} of 100{#if qualityOf(item.id)} · {qualityOf(item.id)}{/if}</small>{/if}
                 <small>{metrics.checkedAt ? `${metrics.passing} of ${metrics.total || 0} checks passed · ${relativeTime(metrics.checkedAt)}` : "Not checked yet"}</small>
-                <small class="source-row-timing">{connected.length ? `${connected.filter((account) => account.enabled).length} of ${connected.length} account${connected.length === 1 ? "" : "s"} on · ` : ""}{timing}{#if cts} · CTS {ctsMeasurementLabel(cts)}{/if}</small>
+                <small class="source-row-timing">{connected.length ? `${connected.filter((account) => account.enabled).length} of ${connected.length} account${connected.length === 1 ? "" : "s"} on · ` : ""}{timing}{#if cts} · Starts in {ctsMeasurementLabel(cts)}{/if}</small>
               </span>
               {/if}
               <ChevronRight class="source-row-chevron" size={18} aria-hidden="true" />

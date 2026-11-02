@@ -650,7 +650,8 @@
                 {#if !playlist.enabled}<Badge state="suggested">Paused</Badge>{/if}
                 {#if isServiceMix(playlist)}<span class="mix-remove"><Button variant="ghost" aria-label={`Remove ${playlist.name} from my apps`} onclick={() => { removeError = ""; removingMix = playlist; }}>Remove from my apps</Button></span>{/if}
               </span>
-              <CoverageBar {...playlistMatchCounts(playlist.metrics)} compact />
+              <!-- A finished playlist already says 100% beside it; the bar is only drawn where something is left to do. -->
+              {#if !(playlist.trackCount > 0 && confirmedPercent === 100 && playlist.playableCount === playlist.trackCount)}<CoverageBar {...playlistMatchCounts(playlist.metrics)} compact />{/if}
             </div>
           {/if}
         {:else}

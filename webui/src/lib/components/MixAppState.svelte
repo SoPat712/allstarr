@@ -6,7 +6,7 @@
   {#if added}
     <span class="added">✓ In your apps</span><a href="#/library/playlists">Manage in Playlists</a>
   {:else}
-    <Button variant="secondary" disabled={busy || !allowed} aria-busy={busy} onclick={onadd}>Add</Button>
+    <Button variant="secondary" disabled={busy || !allowed} aria-busy={busy} onclick={onadd}>Add to apps</Button>
   {/if}
 </div>
 <style>

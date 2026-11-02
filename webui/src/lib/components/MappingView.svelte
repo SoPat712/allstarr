@@ -255,6 +255,14 @@
     void load();
   }
 
+  // Searching updates as you type, once typing pauses.
+  $effect(() => {
+    const value = searchInput.trim();
+    if (value === search) return;
+    const timer = setTimeout(submitFilters, 350);
+    return () => clearTimeout(timer);
+  });
+
   function openMatch(match: MatchReviewItem) {
     selected = match;
     dialogOpen = true;

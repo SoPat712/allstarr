@@ -4327,7 +4327,7 @@ test("Apple accounts explain public web-token failures without asking for a deve
   await expect(page.getByText("Apple's web-player token couldn't be fetched. Run this account's test again later.")).toBeVisible();
   await expect(page.getByLabel(/Developer token/i)).toHaveCount(0);
   await expectContainedMobileGeometry(page);
-  await page.locator(".service-account").getByRole("button", { name: "Measure CTS" }).click();
+  await page.locator(".service-account").getByRole("button", { name: "Measure start time" }).click();
   await expect(page.getByText("Apple Music click-to-stream measured.")).toBeVisible();
   expect(appleCtsRequest).toEqual({ providerId: "apple-musickit", providerAccountId: "account", quality: 0 });
 });
@@ -4386,7 +4386,7 @@ test("Integrations keep primary actions visible and report scoped degradation", 
   await expect(page.locator(".source-row").filter({ hasText: "Apple Music" })).toHaveCount(0);
   await page.getByRole("button", { name: /^All available/ }).click();
   await page.locator(".source-row").filter({ hasText: "Apple Music" }).getByRole("link").first().click();
-  await expect(page.getByRole("button", { name: "Measure CTS" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Measure start time" })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Apple Music setup" })).toBeVisible();
   await page.getByText("Advanced server settings", { exact: true }).click();
   await expect(page.getByLabel("Optional playback gateway URL")).toBeVisible();
@@ -6483,7 +6483,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     } }));
     await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
     await page.goto("#/integrations/services/lumen-audio");
-    const action = page.locator(".service-account").getByRole("button", { name: "Measure CTS", exact: true });
+    const action = page.locator(".service-account").getByRole("button", { name: "Measure start time", exact: true });
     const region = page.getByRole("region", { name: "Notifications" });
     await expect(action).toBeEnabled();
     await page.clock.pauseAt(new Date("2026-01-01T01:00:00Z"));
@@ -6516,7 +6516,7 @@ test("Playback diagnostic errors stay readable and persistent", async ({ page })
     stage: "first-byte", failureCode: "endpoint-unreachable", error: "raw-private-provider-payload",
   } }));
   await page.goto("#/integrations/services/lumen-audio");
-  await page.getByRole("button", { name: "Measure CTS", exact: true }).click();
+  await page.getByRole("button", { name: "Measure start time", exact: true }).click();
   const notification = page.getByRole("alert").filter({ hasText: "audio" });
   await expect(notification).toBeVisible(); await expect(page.getByText("raw-private-provider-payload")).toHaveCount(0);
   await page.clock.runFor(10000); await expect(notification).toBeVisible();
@@ -7694,7 +7694,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     })) }));
     await page.goto("#/integrations/services/signed-audio");
     await expect(page.locator(".service-head-meta")).toContainText("Needs verification");
-    await expect(page.locator(".source-title .origin-badge")).toHaveText("SpotiFLAC");
+    await expect(page.locator(".source-title .origin-badge")).toHaveText("Extension");
     await expect(page.getByText("Degraded", { exact: true })).toHaveCount(0);
     await expect(page.getByText(/Setup needed/)).toHaveCount(0);
     const check = page.locator(".service-check").filter({ hasText: "Streaming" }).first();
@@ -7733,7 +7733,7 @@ test("Cross-service links explain built-in lookups and preserve the optional mas
   await expect(card).toContainText("Deezer, Apple Music and enabled sources");
   await expect(card).toContainText("Song.link Web, UniTune, MusicBrainz and Squigly");
   await expect(card).toContainText("With a key, the official API is tried first");
-  const key = card.getByLabel(/^Optional song\.link API key/);
+  const key = card.getByLabel(/^song\.link API key/);
   await expect(key).toHaveAttribute("type", "password");
   await card.getByRole("button", { name: "Save and restart" }).click();
   await expect.poll(() => writes.length).toBe(1);

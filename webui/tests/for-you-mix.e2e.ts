@@ -27,7 +27,7 @@ test("Song feedback and preference undo", async ({ page }) => {
 test("Adding a mix is one click and playlists is the place to manage it", async ({ page }) => {
   const state = await mockForYou(page); state.cards[0].inApps = false;
   await page.goto("/#/for-you?mix=daily-1");
-  await page.getByRole("dialog").getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Add to apps", exact: true }).click();
   await expect(page.getByRole("dialog").getByText("✓ In your apps", { exact: true })).toBeVisible();
   await expect(page.getByRole("dialog").getByRole("link", { name: "Manage in Playlists", exact: true })).toHaveAttribute("href", "#/library/playlists");
   expect(state.calls.filter(call => call.path.endsWith("/in-apps"))).toEqual([{ path: "/api/admin/mixes/daily-1/in-apps", method: "POST", body: null }]);
@@ -36,10 +36,10 @@ test("Adding a mix is one click and playlists is the place to manage it", async 
 for (const admin of [false, true]) test(`Household availability gates adding for ${admin ? "administrators" : "listeners"}`, async ({ page }) => {
   const state = await mockForYou(page, { admin, publish: false }); state.cards[0].inApps = false;
   await page.goto("/#/for-you?mix=daily-1");
-  await expect(page.getByRole("dialog").getByRole("button", { name: "Add", exact: true })).toBeDisabled();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Add to apps", exact: true })).toBeDisabled();
   await expect(page.getByRole("dialog").getByText("Your admin hasn't allowed adding mixes.", { exact: true })).toBeVisible();
   state.publish = true; await page.getByRole("button", { name: "Refresh mix", exact: true }).click();
-  await expect(page.getByRole("dialog").getByRole("button", { name: "Add", exact: true })).toBeEnabled();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Add to apps", exact: true })).toBeEnabled();
   expect(state.calls.some(call => call.path === "/api/admin/mixes/publish-setting")).toBe(false);
 });
 test("Added state survives the household gate and readiness", async ({ page }) => {
@@ -52,7 +52,7 @@ test("An add failure leaves the action available for retry", async ({ page }) =>
   const state = await mockForYou(page); state.cards[0].inApps = false; let failing = true;
   await page.route("**/api/admin/mixes/daily-1/in-apps", route => failing ? route.fulfill({ status: 503, json: {} }) : route.fallback());
   await page.goto("/#/for-you?mix=daily-1");
-  const add = page.getByRole("dialog").getByRole("button", { name: "Add", exact: true }); await add.click();
+  const add = page.getByRole("dialog").getByRole("button", { name: "Add to apps", exact: true }); await add.click();
   await expect(page.getByRole("alert")).toContainText("Your mix could not be updated. Try again.");
   await expect(add).toBeEnabled(); failing = false; await add.click();
   await expect(page.getByRole("dialog").getByText("✓ In your apps", { exact: true })).toBeVisible();
@@ -69,7 +69,7 @@ test("Not-ready mix artwork keeps its colour and explanation", async ({ page }) 
   const state = await mockForYou(page, { partial: true }); state.cards.find(card => card.id === "daily-4")!.inApps = false; await page.goto("/#/for-you?mix=daily-4");
   await expect(page.getByRole("dialog").locator("canvas")).toHaveCSS("opacity", "1");
   await expect(page.getByText("Play about 80 more songs, or import your listening history.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("dialog").getByRole("button", { name: "Add", exact: true })).toBeEnabled();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Add to apps", exact: true })).toBeEnabled();
 });
 test("Refresh throttle stays in effect after a rejected request", async ({ page }) => {
   await mockForYou(page); await page.goto("/#/for-you?mix=daily-1");

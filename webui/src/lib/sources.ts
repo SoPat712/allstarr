@@ -264,20 +264,29 @@ export function sourceMetrics(
 export const supportsPlaybackDiagnostic = (health: ProviderHealth[]) =>
   health.some((item) => ["streaming", "download"].includes(item.capability.toLowerCase()) && item.supported);
 
+// Times past a second read better in seconds.
+export const durationLabel = (milliseconds: number) =>
+  milliseconds < 1000 ? `${Number(milliseconds.toFixed(1))} ms` : `${(milliseconds / 1000).toFixed(milliseconds < 10_000 ? 1 : 0)} s`;
+
+// Some extensions describe themselves in terms of the app they were written for.
+export const sourceDescription = (text: string) =>
+  text.replace(/\s+for (?:Mornye|SpotiFLAC)(?: Mobile)?\b/gi, "").replace(/\s+\(https?:\/\/[^)]+\)/g, "");
+
 export const ctsMeasurementLabel = (measurement: CtsMeasurement) =>
-  measurement.health === "healthy" ? `${measurement.latencyMs} ms` :
+  measurement.health === "healthy" ? durationLabel(measurement.latencyMs) :
     measurement.health === "degraded" ? checkGuide(measurement.failureCode)?.label ?? "Failed" : "Not measured yet";
 
+// The catalog an extension came from means little to most people; that it's an extension is what matters.
 export const sourceOriginLabel = (provider: ProviderDefinition) =>
-  provider.originName || (provider.implementationOrigin === "extension" ? "Extension" : "Built-in");
+  provider.implementationOrigin === "extension" ? "Extension" : provider.originName || "Built-in";
 
 export function sourceTimingLabel(provider: ProviderDefinition, summary?: ProviderSummary) {
   if (summary?.p95LatencyMilliseconds != null)
-    return `${summary.p95LatencyMilliseconds} ms typical`;
+    return `${durationLabel(summary.p95LatencyMilliseconds)} typical`;
   const latest = (provider.runtimeCapabilities ?? [])
     .filter((item) => item.latencyMilliseconds != null)
     .toSorted((left, right) => String(right.testedAt ?? "").localeCompare(String(left.testedAt ?? "")))[0];
-  if (latest?.latencyMilliseconds != null) return `${latest.latencyMilliseconds} ms at last check`;
+  if (latest?.latencyMilliseconds != null) return `${durationLabel(latest.latencyMilliseconds)} at last check`;
   if ((provider.runtimeCapabilities ?? []).some((item) => item.canTest && item.testedAt))
     return "Checked";
   if ((provider.runtimeCapabilities ?? []).some((item) => item.canTest)) return "Not measured yet";

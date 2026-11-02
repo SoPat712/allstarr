@@ -72,7 +72,7 @@ test("Cover Add is one click, keeps card height, and the card opens separately",
   const state = await mockForYou(page, { partial: true }); await openHome(page);
   const card = page.getByRole("group", { name: "Blend 2", exact: true });
   const add = card.getByRole("button", { name: "Add Blend 2", exact: true });
-  await expect(add).toHaveText("Add");
+  await expect(add).toHaveText("Add to apps");
   expect(await add.evaluate(button => button.parentElement === button.parentElement?.querySelector(".mix-open")?.parentElement)).toBe(true);
   const height = (await card.boundingBox())!.height;
   await add.click();

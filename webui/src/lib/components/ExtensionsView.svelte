@@ -22,7 +22,7 @@
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import { availablePackages, currentPackages, extensionFailureReason, valueChanges } from "$lib/extensions";
-  import { humanize } from "$lib/sources";
+  import { humanize, sourceDescription } from "$lib/sources";
 
   let {
     view = "attention",
@@ -375,7 +375,7 @@
     <ProviderArtwork id={item.extensionId} definition={definition(item)} />
     <div class="extension-copy">
       <span class="extension-title"><strong>{item.displayName}</strong><small>Version {item.version}{item.author ? ` · ${item.author}` : ""}</small></span>
-      <p>{item.description || "No description from the publisher."}</p>
+      <p>{item.description ? sourceDescription(item.description) : "No description from the publisher."}</p>
       {#if item.state.toLowerCase() === "failed"}<p class="extension-failure" role="status"><CircleAlert size={14} aria-hidden="true" />{extensionFailureReason(item.failureCode)}</p>{/if}
       <div class="source-row-capabilities">{#each item.capabilities ?? [] as capability}<span>{humanize(capability)}</span>{/each}</div>
     </div>
@@ -429,7 +429,7 @@
                   <ProviderArtwork id={item.id} definition={definition(item)} />
                   <div class="extension-copy">
                     <span class="extension-title"><strong>{item.displayName}</strong><small>Version {item.version}{item.author ? ` · ${item.author}` : ""}</small></span>
-                    <p>{item.description || "No description from the publisher."}</p>
+                    <p>{item.description ? sourceDescription(item.description) : "No description from the publisher."}</p>
                   </div>
                   <span></span>
                   <div class="extension-actions">

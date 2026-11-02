@@ -198,7 +198,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(rows.filter({ hasText: keptMix.name })).toHaveCount(0);
     await capture(page, "playlist-after-remove", width, theme);
     await page.goto(`/#/for-you?mix=${keptMix.id}`);
-    await page.getByRole("dialog").getByRole("button", { name: "Add", exact: true }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Add to apps", exact: true }).click();
     await page.getByRole("dialog").getByRole("link", { name: "Manage in Playlists", exact: true }).click();
     await expect(rows.filter({ hasText: keptMix.name })).toHaveCount(1);
     await capture(page, "playlist-after-readd", width, theme);
@@ -223,7 +223,7 @@ test("Removing a mix from playlists keeps it available to add again", async ({ p
   await expect(page.locator(".playlist-row")).toHaveCount(0);
   expect(reads).toContain(`DELETE /api/admin/mixes/${keptMix.id}/in-apps`);
   await page.goto(`/#/for-you?mix=${keptMix.id}`);
-  await page.getByRole("dialog").getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Add to apps", exact: true }).click();
   await expect(page.getByRole("dialog").getByText("✓ In your apps", { exact: true })).toBeVisible();
   await page.getByRole("dialog").getByRole("link", { name: "Manage in Playlists", exact: true }).click();
   await expect(page.locator(".playlist-row")).toHaveCount(1);

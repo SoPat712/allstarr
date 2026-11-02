@@ -11,7 +11,7 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { playbackProgress, playbackSeekLabel, playbackSourceIssues, summarizeHome, type HomeSnapshot } from "$lib/home";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
-  import { accountSubtitle, findProviderDefinition, providerDisplayName } from "$lib/sources";
+  import { accountSubtitle, findProviderDefinition, providerDisplayName, sourceNeedsAccount } from "$lib/sources";
   import { reportHref } from "$lib/support";
 
   let { administrator }: { administrator: boolean } = $props();
@@ -171,7 +171,12 @@
     return name && name !== "Unknown source" ? `${name} · ` : "";
   };
 
-  const visibleActivity = $derived((snapshot?.activity ?? []).filter((item) => !isRoutineActivity(item)).slice(0, 8));
+  // A source that takes no sign-in has nothing to connect, so a zero count would only look like a problem.
+  const accountsAt = (providerId: string) => {
+    const definition = providerDefinition(providerId);
+    return definition ? sourceNeedsAccount(definition) : true;
+  };
+    const visibleActivity = $derived((snapshot?.activity ?? []).filter((item) => !isRoutineActivity(item)).slice(0, 8));
 
   const attention = $derived.by(() => {
     if (!snapshot || !summary) return [];
@@ -453,7 +458,9 @@
                 <small>
                   {provider.connectedAccounts?.length
                     ? provider.connectedAccounts.map(accountSubtitle).join("; ")
-                    : plural(provider.enabledAccountCount, "connected account")}
+                    : provider.enabledAccountCount || accountsAt(provider.providerId)
+                      ? plural(provider.enabledAccountCount, "connected account")
+                      : "No account needed"}
                 </small>
               </span>
               <span class="provider-result" class:attention={provider.failedCapabilityCount > 0} class:healthy={provider.capabilityTotal > 0 && provider.failedCapabilityCount === 0}>

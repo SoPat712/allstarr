@@ -21,6 +21,8 @@
   };
   // Category icons ("extension", "lyrics") name no mark of their own, so the source's id picks it.
   const generic = new Set(["extension", "lyrics"]);
+  // These are places Allstarr already looks, not outside services, so they have no logo to load.
+  const markless = new Set(["mediaserverlyrics", "keptlrc"]);
   const icon = $derived(
     definition?.icon && !generic.has(definition.icon)
       ? definition.icon
@@ -37,7 +39,7 @@
 
 <span class="provider-mark" class:provider-mark--monogram={!loaded} style={`--route-color:${providerColor(id)}`}>
   {#if !loaded}<span class="provider-monogram" aria-hidden="true">{(label.trim() || id)[0]?.toUpperCase() ?? "?"}</span>{/if}
-  {#if !failed}
+  {#if !failed && !markless.has(icon)}
     <img src={source} alt="" hidden={!loaded} onload={() => { loaded = true; }} onerror={() => { failed = true; loaded = false; }} />
   {/if}
   <span class="sr-only">{label}</span>
