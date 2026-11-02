@@ -7,6 +7,7 @@ namespace allstarr.Controllers.ClientApi;
 public sealed class ProviderIconsController : ClientApiControllerBase
 {
     [HttpGet]
+    [EndpointName("getProviderIcon")]
     [ProducesResponseType(typeof(byte[]), 200, "image/svg+xml", "image/png", "image/jpeg", "image/webp", "image/x-icon")]
     [ProducesResponseType(304)]
     public async Task<IActionResult> Get(string providerId, CancellationToken cancellationToken)

@@ -10,6 +10,7 @@
         "tags": [
           "Capabilities"
         ],
+        "operationId": "getCapabilities",
         "responses": {
           "400": {
             "description": "Bad Request",
@@ -89,6 +90,7 @@
         "tags": [
           "ItemDetails"
         ],
+        "operationId": "getItemDetails",
         "requestBody": {
           "content": {
             "application/json": {
@@ -101,7 +103,7 @@
                 "$ref": "#/components/schemas/ItemDetailsRequest"
               }
             },
-            "application/*+json": {
+            "application/*\u002Bjson": {
               "schema": {
                 "$ref": "#/components/schemas/ItemDetailsRequest"
               }
@@ -188,6 +190,7 @@
         "tags": [
           "ProviderIcons"
         ],
+        "operationId": "getProviderIcon",
         "parameters": [
           {
             "name": "providerId",
@@ -262,7 +265,7 @@
           "200": {
             "description": "OK",
             "content": {
-              "image/svg+xml": {
+              "image/svg\u002Bxml": {
                 "schema": {
                   "type": "string",
                   "format": "binary"
@@ -519,7 +522,7 @@
             "type": "string"
           },
           "progress": {
-            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d\u002B)?(?:[eE][\u002B-]?\\d\u002B)?$",
             "type": [
               "null",
               "number",
@@ -566,7 +569,7 @@
             "type": "string"
           },
           "confidence": {
-            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d\u002B)?(?:[eE][\u002B-]?\\d\u002B)?$",
             "type": [
               "null",
               "number",

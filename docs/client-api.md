@@ -76,5 +76,6 @@ restrictions. Unknown providers and providers without an icon return 404
 
 When enabled, the OpenAPI document is public at `/allstarr/v1/openapi.json`.
 Its checked-in copy is `apis/specifications/allstarr/client-v1.json`.
+OpenAPI operation names are stable for generated clients.
 The contract test compares normalized JSON. Set `ALLSTARR_UPDATE_CLIENT_SPEC=1`
 when running that test to refresh the copy after an intentional change.

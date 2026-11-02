@@ -7,6 +7,7 @@ namespace allstarr.Controllers.ClientApi;
 public sealed class ItemDetailsController(ItemDetailsReader reader) : ClientApiControllerBase
 {
     [HttpPost]
+    [EndpointName("getItemDetails")]
     [ProducesResponseType<ItemDetailsResponse>(200)]
     public async Task<ActionResult<ItemDetailsResponse>> Post([FromBody] ItemDetailsRequest request)
     {

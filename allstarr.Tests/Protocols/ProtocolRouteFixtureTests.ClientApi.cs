@@ -301,6 +301,27 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public async Task ClientApi_OpenApiOperationIdsAreNonEmptyAndUnique()
+    {
+        using var factory = ClientApiFactory(_ => throw new InvalidOperationException("Unexpected upstream request"));
+        using var client = CreateClientApiClient(factory);
+        using var response = await client.GetAsync("/allstarr/v1/openapi.json");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var paths = document.RootElement.GetProperty("paths");
+        Assert.False(paths.TryGetProperty("/allstarr/v1/openapi.json", out _));
+        var operations = paths.EnumerateObject().SelectMany(path => path.Value.EnumerateObject()).Where(item =>
+            new[] { "get", "post", "put", "patch", "delete", "head", "options", "trace" }.Contains(item.Name)).ToArray();
+        Assert.NotEmpty(operations);
+        var operationIds = operations.Select(operation => operation.Value.GetProperty("operationId").GetString()).ToArray();
+        Assert.All(operationIds, operationId => Assert.False(string.IsNullOrWhiteSpace(operationId)));
+        Assert.Equal(operationIds.Length, operationIds.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal("getCapabilities", paths.GetProperty("/allstarr/v1/capabilities").GetProperty("get").GetProperty("operationId").GetString());
+        Assert.Equal("getItemDetails", paths.GetProperty("/allstarr/v1/items/details").GetProperty("post").GetProperty("operationId").GetString());
+        Assert.Equal("getProviderIcon", paths.GetProperty("/allstarr/v1/providers/{providerId}/icon").GetProperty("get").GetProperty("operationId").GetString());
+    }
+
+    [Fact]
     public async Task ClientApi_OpenApiContainsOnlyClientOperationsAndCamelCaseSchemasWithErrors()
     {
         using var factory = ClientApiFactory(_ => throw new InvalidOperationException("Unexpected upstream request"));
