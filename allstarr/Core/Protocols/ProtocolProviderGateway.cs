@@ -1,3 +1,4 @@
+using System.Text.Json;
 using allstarr.Core.Playback;
 using System.Net;
 using System.Diagnostics;
@@ -422,17 +423,16 @@ public sealed partial class ProtocolProviderGateway(
                 candidate, query, fetchLimit, songLimit > 0, albumLimit > 0, artistLimit > 0, settings);
             return (Snapshot: snapshot, CompletedAfter: clock.GetElapsedTime(searchStarted));
         }).ToArray();
-        try
+        bool Useful(int index)
         {
-            var remaining = searchBudget - clock.GetElapsedTime(searchStarted);
-            await Task.WhenAll(searchTasks).WaitAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero,
-                clock, protocol.CancellationToken);
+            if (!searchTasks[index].IsCompletedSuccessfully || searchTasks[index].Result.Snapshot is not { } answer) return false;
+            return answer.Result.Songs.Count > 0 && playableProviders.Contains(NormalizeProvider(plan.Candidates[index].Provider.Id)) ||
+                answer.Result.Albums.Count > 0 || answer.Result.Artists.Count > 0;
         }
-        catch (TimeoutException)
-        {
-            logger?.LogDebug("Provider search response budget expired with {PendingCount} sources still pending",
-                searchTasks.Count(task => !task.IsCompleted));
-        }
+        await WaitForFirstAnswersAsync(searchTasks, () => Enumerable.Range(0, searchTasks.Length).Any(Useful), settings, protocol.CancellationToken);
+        logger?.LogInformation("Search answered after {Milliseconds} ms with {Answered} of {Sources} sources; still working: {Pending}",
+            (long)clock.GetElapsedTime(searchStarted).TotalMilliseconds, searchTasks.Count(task => task.IsCompleted), searchTasks.Length,
+            string.Join(", ", plan.Candidates.Where((_, index) => !searchTasks[index].IsCompleted).Select(candidate => candidate.Provider.Id)));
 
         for (var index = 0; index < searchTasks.Length; index++)
         {
@@ -475,6 +475,22 @@ public sealed partial class ProtocolProviderGateway(
             Artists = MergeSearch(routed.Artists, artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
                 item => item.ExternalProvider, item => SearchRelevanceRanker.Score(query, item.Name), providerOrder)
         };
+    }
+
+    // Apps wait for one whole answer, so it can't be held back for the slowest of many sources. Once the first window has
+    // passed, any useful answer goes out; whatever arrives later still fills the cache for the next search.
+    private async Task WaitForFirstAnswersAsync(IReadOnlyList<Task> work, Func<bool> hasUsefulAnswer, CacheSettings settings, CancellationToken cancellationToken)
+    {
+        var clock = timeProvider ?? TimeProvider.System;
+        var latest = Task.Delay(settings.SearchBudget, clock, cancellationToken);
+        var soon = settings.SearchFirstAnswer < settings.SearchBudget ? Task.Delay(settings.SearchFirstAnswer, clock, cancellationToken) : latest;
+        while (!latest.IsCompleted && work.Any(task => !task.IsCompleted))
+        {
+            if (soon.IsCompleted && hasUsefulAnswer()) break;
+            var waits = work.Where(task => !task.IsCompleted).Append(latest);
+            await Task.WhenAny(soon.IsCompleted ? waits : waits.Append(soon));
+        }
+        cancellationToken.ThrowIfCancellationRequested();
     }
 
     private async Task<IReadOnlyList<Song>> CollapseVerifiedSearchTracksAsync(
@@ -988,34 +1004,47 @@ public sealed partial class ProtocolProviderGateway(
             "protocol-playlist-search",
             providerIds: providerOrder,
             sourceTrackId: null));
-        using var playlistSearchGate = new SemaphoreSlim(ProviderSearchConcurrency);
-        var playlistTasks = plan.Candidates.Select(async candidate =>
+        var settings = SearchSettings;
+        var gate = new SemaphoreSlim(ProviderSearchConcurrency);
+        var searches = plan.Candidates.Select(candidate => SearchPlaylistsCachedAsync(candidate, query, limit, settings, gate)).ToArray();
+        await WaitForFirstAnswersAsync(searches, () => searches.Any(task => task.IsCompletedSuccessfully && task.Result.Count > 0),
+            settings, protocol.CancellationToken);
+        return searches.Where(task => task.IsCompletedSuccessfully).SelectMany(task => task.Result).Take(limit).ToList();
+    }
+
+    private async Task<List<ExternalPlaylist>> SearchPlaylistsCachedAsync(ProviderRouteCandidate<IProviderPlaylistCapability> candidate,
+        string query, int limit, CacheSettings settings, SemaphoreSlim gate)
+    {
+        var context = candidate.Context;
+        var key = CacheKeyBuilder.BuildProviderSearchKey(candidate.Provider.Id, context.Account?.AccountId, context.Account?.Revision,
+            JsonSerializer.Serialize(new { context.Actor, context.Policy, Kind = "playlists" }), query, limit, false, false, false);
+        var clock = timeProvider ?? TimeProvider.System;
+        try
         {
-            await playlistSearchGate.WaitAsync(protocol.CancellationToken);
+            if (applicationCache?.IsEnabled == true && await applicationCache.GetStringAsync(key) is { } cached &&
+                JsonSerializer.Deserialize<List<ExternalPlaylist>>(cached) is { } known) return known;
+            // A late answer is still worth keeping, so this outlives the request that started it.
+            using var timeout = new CancellationTokenSource(settings.SearchBackgroundWindow, clock);
+            await gate.WaitAsync(timeout.Token);
+            ProviderOutcome<ProviderPage<ProviderPlaylistSummary>> outcome;
             try
             {
-                return await candidate.Implementation.SearchPlaylistsAsync(
-                    candidate.Context,
+                outcome = await candidate.Implementation.SearchPlaylistsAsync(new ProviderExecutionContext(context.Actor, context.ProviderId,
+                    context.Account, context.Policy, context.OperationId, context.CorrelationId, clock.GetUtcNow() + settings.SearchBackgroundWindow, timeout.Token),
                     new ProviderPlaylistSearchRequest(query, new ProviderPageRequest(limit)));
             }
-            finally
-            {
-                playlistSearchGate.Release();
-            }
-        }).ToList();
-
-        var playlistOutcomes = await Task.WhenAll(playlistTasks);
-        var routed = new List<ExternalPlaylist>();
-
-        foreach (var outcome in playlistOutcomes)
-        {
-            if (outcome.IsSuccess)
-            {
-                routed.AddRange(outcome.RequireValue().Items.Select(Map));
-            }
+            finally { gate.Release(); }
+            if (!outcome.IsSuccess) return [];
+            var playlists = outcome.RequireValue().Items.Select(Map).ToList();
+            if (applicationCache?.IsEnabled == true)
+                await applicationCache.SetStringAsync(key, JsonSerializer.Serialize(playlists), settings.SearchResultsTTL);
+            return playlists;
         }
-
-        return routed.Take(limit).ToList();
+        catch (Exception error)
+        {
+            logger?.LogDebug("Playlist search failed for {ProviderId} ({ErrorType})", candidate.Provider.Id, error.GetType().Name);
+            return [];
+        }
     }
 
     public async Task<ExternalPlaylist?> GetPlaylistAsync(

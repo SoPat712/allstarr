@@ -97,21 +97,52 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var artists = kind == "artists" ? 10 : 0;
 
         var search = gateway.SearchAsync(context, "Track", songs, albums, artists);
-        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(8), TimeSpan.FromMilliseconds(3500));
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(8), TimeSpan.FromMilliseconds(1200));
         await writes.Reader.ReadAsync(guard.Token);
         Assert.False(search.IsCompleted);
-        clock.Advance(TimeSpan.FromMilliseconds(3500));
+        clock.Advance(TimeSpan.FromMilliseconds(1200));
         var result = await search;
         Assert.Equal(["deezer"], SearchProviders(result));
 
         requestCancellation.Cancel();
-        clock.Advance(TimeSpan.FromMilliseconds(4500));
+        clock.Advance(TimeSpan.FromMilliseconds(6800));
         await writes.Reader.ReadAsync(guard.Token);
         var repeated = await BudgetGateway(clock, cache, fast.Object, slow.Object)
             .SearchAsync(WithSearchCancellation(context, CancellationToken.None), "Track", songs, albums, artists);
         Assert.Equal(["deezer", "qobuz"], SearchProviders(repeated));
         VerifySearchCount(fast, kind, 1);
         VerifySearchCount(slow, kind, 1);
+    }
+
+    [Fact]
+    public async Task MetadataSearch_AnswersAsSoonAsAnySourceHasResultsAfterTheFirstWindow()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var empty = DelayedSearchProvider("deezer", clock, TimeSpan.Zero);
+        empty.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("deezer", [])));
+        var slowest = DelayedSearchProvider("qobuz", clock, TimeSpan.FromSeconds(8));
+        var useful = DelayedSearchProvider("monochrome", clock, TimeSpan.FromSeconds(2));
+        var gateway = BudgetGateway(clock, new TestMemoryApplicationCache(), empty.Object, slowest.Object, useful.Object);
+
+        var search = gateway.SearchAsync(Context(), "Track", 10, 0, 0);
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(2), TimeSpan.FromMilliseconds(1200));
+        clock.Advance(TimeSpan.FromMilliseconds(1200));
+        await Task.Delay(50, guard.Token);
+        Assert.False(search.IsCompleted);
+        clock.Advance(TimeSpan.FromMilliseconds(800));
+        var result = await search.WaitAsync(guard.Token);
+        Assert.Equal(["monochrome"], SearchProviders(result));
+    }
+
+    [Fact]
+    public async Task MetadataSearch_DoesNotWaitOutTheWindowWhenEverySourceHasAnswered()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var gateway = BudgetGateway(clock, new TestMemoryApplicationCache(), DelayedSearchProvider("deezer", clock, TimeSpan.Zero).Object);
+        Assert.Single((await gateway.SearchAsync(Context(), "Track", 10, 0, 0).WaitAsync(guard.Token)).Songs);
     }
 
     [Theory]

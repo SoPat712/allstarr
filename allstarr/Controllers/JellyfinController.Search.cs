@@ -290,7 +290,7 @@ public partial class JellyfinController
                 new MusicSearchWindow(externalSearchLimits.SongLimit),
                 new MusicSearchWindow(externalSearchLimits.AlbumLimit),
                 new MusicSearchWindow(externalSearchLimits.ArtistLimit),
-                _settings.EnableExternalPlaylists && !artistSearch ? new MusicSearchWindow(integratedFetchLimit) : MusicSearchWindow.None,
+                _settings.EnableExternalPlaylists && externalSearchLimits.AlbumLimit > 0 && !artistSearch ? new MusicSearchWindow(integratedFetchLimit) : MusicSearchWindow.None,
                 IncludeProviders: !favoritesOnlyRequest,
                 HideProviderArtistsNamedLikeNative: true),
             new JellyfinNativeMusicSearch(

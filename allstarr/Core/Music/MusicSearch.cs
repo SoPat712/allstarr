@@ -89,7 +89,8 @@ public interface INativeMusicSearch<TPayload>
 public sealed class MusicSearchService(
     IProtocolProviderGateway providers,
     ILibraryIndexService? libraryIndex = null,
-    SavedLibraryReader? savedLibrary = null)
+    SavedLibraryReader? savedLibrary = null,
+    ILogger<MusicSearchService>? logger = null)
 {
     internal static bool MetadataRecordingsMatch(Song left, Song right, bool allowSparse = false)
     {
@@ -177,7 +178,15 @@ public sealed class MusicSearchService(
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(native);
 
-        var nativeTask = native.SearchAsync(cancellationToken);
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        long Elapsed() => (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+        async Task<T> Timed<T>(Task<T> work, long[] finished, int slot)
+        {
+            try { return await work; }
+            finally { finished[slot] = Elapsed(); }
+        }
+        var phases = new long[3];
+        var nativeTask = Timed(native.SearchAsync(cancellationToken), phases, 0);
         var providerTask = request.IncludeProviders
             ? providers.SearchAsync(
                 context,
@@ -186,10 +195,13 @@ public sealed class MusicSearchService(
                 request.Albums.Fetch,
                 request.Artists.Fetch)
             : Task.FromResult(new SearchResult());
+        providerTask = Timed(providerTask, phases, 1);
         var playlistTask = request.IncludeProviders && request.Playlists.Fetch > 0
             ? providers.SearchPlaylistsAsync(context, request.Query, request.Playlists.Fetch)
             : Task.FromResult(new List<ExternalPlaylist>());
+        playlistTask = Timed(playlistTask, phases, 2);
         await Task.WhenAll(nativeTask, providerTask, playlistTask);
+        var gathered = Elapsed();
 
         var nativeRows = await nativeTask;
         var nativeSongs = nativeRows.Where(item => item.Kind == MusicItemKind.Song &&
@@ -213,6 +225,8 @@ public sealed class MusicSearchService(
         }
         albums = request.Albums.Apply(MusicAlbumReleases.Collapse(albums)).ToList();
         await PreferOwnedSongsAsync(context, songs, nativeSongs, native, cancellationToken);
+        logger?.LogInformation("Search timing: library {Library} ms, sources {Sources} ms, playlists {Playlists} ms, matching to your library {Owned} ms, total {Total} ms",
+            phases[0], phases[1], phases[2], Elapsed() - gathered, Elapsed());
         return Merge(
             request.Query,
             nativeSongs.Concat(nativeAlbums).Concat(nativeArtists),

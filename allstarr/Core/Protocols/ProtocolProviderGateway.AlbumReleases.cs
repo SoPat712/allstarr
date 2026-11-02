@@ -23,35 +23,39 @@ public sealed partial class ProtocolProviderGateway
         var deadline = clock.GetUtcNow().AddSeconds(3);
         if (protocol.Deadline < deadline) deadline = protocol.Deadline;
         if (deadline <= clock.GetUtcNow()) return albums;
-        using var timeout = new CancellationTokenSource(deadline - clock.GetUtcNow(), clock);
-        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(protocol.CancellationToken, timeout.Token);
-        var enriched = await Task.WhenAll(incomplete.Select(async album =>
+        // Evidence tidies up duplicate releases, but it isn't worth holding an answer for. What arrives late is cached for next time.
+        var timeout = new CancellationTokenSource(deadline - clock.GetUtcNow(), clock);
+        var work = Task.WhenAll(incomplete.Select(async album =>
         {
             var candidate = candidates.FirstOrDefault(item => NormalizeProvider(item.Provider.Id) == NormalizeProvider(album.ExternalProvider!));
             if (candidate == null) return (Original: album, Full: (Album?)null);
             try
             {
                 var cached = await ReadCachedMetadataAsync<Album>(candidate.Context.Actor, candidate.Provider.Id,
-                    ProviderResourceKind.Album, album.ExternalId!, true, candidate.Context.Account).WaitAsync(cancellation.Token);
+                    ProviderResourceKind.Album, album.ExternalId!, true, candidate.Context.Account).WaitAsync(timeout.Token);
                 if (cached != null && MusicAlbumReleases.HasTrackEvidence(cached))
                     return (Original: album, Full: cached);
                 if (cached != null && !MusicAlbumReleases.HasReleaseEvidence(album) && MusicAlbumReleases.HasReleaseEvidence(cached))
                     return (Original: album, Full: cached);
                 var context = new ProviderExecutionContext(candidate.Context.Actor, candidate.Provider.Id, candidate.Context.Account,
-                    candidate.Context.Policy, "album-release-evidence", candidate.Context.CorrelationId, deadline, cancellation.Token);
+                    candidate.Context.Policy, "album-release-evidence", candidate.Context.CorrelationId, deadline, timeout.Token);
                 var id = new ProviderExternalResourceId(candidate.Provider.Id, ProviderResourceKind.Album, album.ExternalId!);
-                var outcome = await candidate.Implementation.GetAlbumAsync(context, new(id)).WaitAsync(cancellation.Token);
+                var outcome = await candidate.Implementation.GetAlbumAsync(context, new(id)).WaitAsync(timeout.Token);
                 if (!outcome.IsSuccess || outcome.RequireValue().Id != id) return (Original: album, Full: (Album?)null);
                 var full = Map(outcome.RequireValue());
                 await CacheResourcesAsync(context, [full], [], true);
                 return (Original: album, Full: (Album?)full);
             }
-            catch (Exception) when (!protocol.CancellationToken.IsCancellationRequested)
+            catch (Exception)
             {
                 return (Original: album, Full: (Album?)null);
             }
         }));
+        _ = work.ContinueWith(_ => timeout.Dispose(), TaskScheduler.Default);
+        await Task.WhenAny(work, Task.Delay(TimeSpan.FromMilliseconds(500), clock, protocol.CancellationToken));
         protocol.CancellationToken.ThrowIfCancellationRequested();
+        if (!work.IsCompletedSuccessfully) return albums;
+        var enriched = work.Result;
         return albums.Select(album => enriched.FirstOrDefault(item => ReferenceEquals(item.Original, album)).Full ?? album).ToList();
     }
 }
