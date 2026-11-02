@@ -17,9 +17,9 @@
         <AssemblyVersion>$(AppVersionCore).0</AssemblyVersion>
         <FileVersion>$(AppVersionCore).0</FileVersion>
 
-        <!-- Allstarr is idle most of the time. Adaptive sizing lets the collector shrink to one heap when idle instead of
-             keeping one per core, each with its own reserve. -->
-        <GarbageCollectionAdaptationMode>1</GarbageCollectionAdaptationMode>
+        <!-- Allstarr holds about 600 MB of live data and is idle most of the time. Server collection kept a heap and a
+             reserve per core, 1.2 GB committed for that 600 MB, and adaptive sizing did not shrink it. -->
+        <ServerGarbageCollection>false</ServerGarbageCollection>
     </PropertyGroup>
 
     <ItemGroup>
