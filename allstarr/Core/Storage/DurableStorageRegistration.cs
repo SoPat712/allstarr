@@ -36,8 +36,11 @@ public static class DurableStorageRegistration
         services.AddSingleton<SqlitePragmaInterceptor>();
         services.AddSingleton<DurableBackupService>();
         services.AddDbContextFactory<AllstarrDbContext>((provider, builder) =>
-            builder.UseSqlite(options.ConnectionString, sqlite =>
-                    sqlite.CommandTimeout(options.CommandTimeoutSeconds))
+            // Lists of IDs go to SQLite as one JSON value. EF Core 10 otherwise spreads each into a parameter per value,
+            // which made queries over thousands of IDs take tenths of a second instead of milliseconds.
+            builder.UseSqlite(options.ConnectionString, sqlite => sqlite
+                    .CommandTimeout(options.CommandTimeoutSeconds)
+                    .UseParameterizedCollectionMode(ParameterTranslationMode.Parameter))
                 .AddInterceptors(provider.GetRequiredService<SqlitePragmaInterceptor>()));
         services.AddSingleton<DurableStorageInitializer>();
         if (initializeOnStart) services.AddHostedService(provider => provider.GetRequiredService<DurableStorageInitializer>());
