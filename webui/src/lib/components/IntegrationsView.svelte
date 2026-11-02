@@ -36,8 +36,8 @@
       label="Source sections"
       active={section === "accounts" ? "accounts" : "services"}
       items={[
-        { id: "services", label: administrator ? "Services" : "Available services", href: "#/integrations/services" },
-        { id: "accounts", label: administrator ? "Accounts" : "My accounts", href: "#/integrations/accounts" },
+        { id: "services", label: administrator ? "Services" : "Available services", href: "#/sources/services" },
+        { id: "accounts", label: administrator ? "Accounts" : "My accounts", href: "#/sources/accounts" },
       ]}
     />
   {/if}

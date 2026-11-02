@@ -725,7 +725,7 @@
                   <DropdownMenu.Trigger class="track-menu-trigger" disabled={Boolean(action)} aria-label={`More actions for ${match.title || "track"}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
                   <DropdownMenu.Portal>
                     <DropdownMenu.Content class="bits-menu" sideOffset={4} align="end">
-                      <DropdownMenu.Item class="bits-menu-item" onSelect={() => window.location.hash = reportHref({ externalSnapshotId: match.externalSnapshotId }, "/library/mappings")}>Report a problem</DropdownMenu.Item>
+                      <DropdownMenu.Item class="bits-menu-item" onSelect={() => window.location.hash = reportHref({ externalSnapshotId: match.externalSnapshotId }, "/library/matches")}>Report a problem</DropdownMenu.Item>
                       <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void rematch(match)}>Rematch</DropdownMenu.Item>
                       <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action) || !canEditAuthorityScope(match, "personal")} onSelect={() => confirm("reject", match)}>Reject candidate</DropdownMenu.Item>
                       {#each match.manualAuthorities ?? [] as authority (authority.id)}

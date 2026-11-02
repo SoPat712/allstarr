@@ -246,7 +246,7 @@
     {:else if error}<p class="notice-error" role="alert">{error}</p>{/if}
     {#if (!status || runState === "choosing") && (accounts.length || runId || !error)}
       {#if !accounts.length && !runId && !error}
-        <article class="settings-card"><div class="import-body"><p>Connect your Spotify account first.</p><Button href="#/integrations/services">Connect Spotify</Button></div></article>
+        <article class="settings-card"><div class="import-body"><p>Connect your Spotify account first.</p><Button href="#/sources/services">Connect Spotify</Button></div></article>
       {:else if !runId}
         <article class="settings-card"><div class="import-body">
           <SelectField value={accountId} options={accounts.map(item => ({ value: item.id, label: item.displayName }))} label="Spotify account" disabled={busy} onchange={changeAccount} />

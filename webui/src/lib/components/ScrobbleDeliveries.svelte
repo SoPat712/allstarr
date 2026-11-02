@@ -93,7 +93,7 @@
           </div>
           {#if item.state === "permanentfailure" || uncertain(item)}
             <div class="scrobble-delivery-actions">
-              {#if !account}<a href={`#/integrations/services/${item.targetId}`}>Connect this service</a>{/if}
+              {#if !account}<a href={`#/sources/services/${item.targetId}`}>Connect this service</a>{/if}
               {#if item.requiresReauthentication && account?.canManage}<Button variant="secondary" disabled={busy} onclick={() => onConfigure(account)}>Reconnect saved account</Button>{/if}
               {#if uncertain(item)}<Button variant="secondary" disabled={busy} onclick={() => choose(item, "confirm-delivered")}>Already in history</Button>{/if}
               <Button disabled={busy || !account?.enabled || !account.secret.configured || account.secret.revoked} onclick={() => choose(item, "retry")}>Retry saved listen</Button>

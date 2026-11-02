@@ -113,8 +113,8 @@ public class AdminUiController : ControllerBase
                 [
                     Route("home", "#/", "Home", "home"),
                     Route("playlists", "#/library/playlists", "Playlists", "library"),
-                    Route("mappings", "#/library/mappings", "Mappings", "library"),
-                    Route("sources", "#/integrations/services", "Integrations", "sources"),
+                    Route("mappings", "#/library/matches", "Matches", "library"),
+                    Route("sources", "#/sources/services", "Sources", "sources"),
                     Route("activity", "#/activity", "Activity", "activity"),
                     Route("preferences", "#/preferences", "Listening preferences", "system")
                 ]

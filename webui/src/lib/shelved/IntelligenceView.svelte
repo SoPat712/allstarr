@@ -383,7 +383,7 @@
                 : openLibraryAccess(connectableSubsonicTarget)}
             >{indexingTargetId ? "Indexing…" : connectableSubsonicTarget.credentialReferenceId ? "Start indexing" : "Connect access"}</Button>
           {:else}
-            <Button variant="secondary" size="sm" href="#/integrations/services">Open services</Button>
+            <Button variant="secondary" size="sm" href="#/sources/services">Open services</Button>
           {/if}
         </span>
       {/if}
@@ -565,7 +565,7 @@
             </ol>
           {:else if !data.policy?.enabled}<div class="compact-empty"><strong>Recommendations are off</strong><p><a class="touch-link" href="#/intelligence?section=automation">Turn on automatic history</a>, then import retained history or complete a play.</p></div>
           {:else if readyRecommendationSources}<div class="compact-empty"><strong>No recommendations yet</strong><p>Your sources are ready. Complete a play or import history inside the retention window, then refresh recommendations.</p></div>
-          {:else}<div class="compact-empty"><strong>No recommendation sources are ready</strong><p><a class="touch-link" href="#/integrations/services">Connect or configure a source</a>, then refresh.</p></div>{/if}
+          {:else}<div class="compact-empty"><strong>No recommendation sources are ready</strong><p><a class="touch-link" href="#/sources/services">Connect or configure a source</a>, then refresh.</p></div>{/if}
         </section>
 
         <aside class="side-stack">

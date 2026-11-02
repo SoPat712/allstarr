@@ -429,7 +429,7 @@ for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"] as c
 test("report review keeps saved-match links and hides unavailable lyric actions", async ({ page }) => {
   const fixture = await mockReportLyrics(page, { snapshot: true, known: false });
   await page.goto(`/#/activity?view=reports&report=${reportId}`);
-  await expect(page.getByRole("link", { name: "Review match", exact: true })).toHaveAttribute("href", `#/library/mappings?review=${snapshotId}`);
+  await expect(page.getByRole("link", { name: "Review match", exact: true })).toHaveAttribute("href", `#/library/matches?review=${snapshotId}`);
   await expect(page.getByRole("button", { name: "Review lyrics", exact: true })).toHaveCount(0);
   expect(fixture.scopes).toEqual([]);
   expect(fixture.state.updates).toEqual([]);

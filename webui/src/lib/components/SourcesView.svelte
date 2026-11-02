@@ -222,7 +222,7 @@
     ["degraded", "needs_verification", "needs_config", "partial_config"].includes(sourceStatus(item, accounts, health))));
   const pageId = $derived(serviceId || (initialSource && !(initialConnect && mode === "accounts") ? initialSource : ""));
   const pageSource = $derived(pageId ? provider(pageId) ?? null : null);
-  const backHref = $derived(from === "accounts" ? "#/integrations/accounts" : "#/integrations/services");
+  const backHref = $derived(from === "accounts" ? "#/sources/accounts" : "#/sources/services");
   const backLabel = $derived(from === "accounts" ? "Accounts" : "Sources");
 
   $effect(() => {
@@ -234,7 +234,7 @@
     if (listFilter === "accounts") query.set("from", "accounts");
     if (account) query.set("account", account);
     const search = query.toString();
-    return `#/integrations/services/${encodeURIComponent(id)}${search ? `?${search}` : ""}`;
+    return `#/sources/services/${encodeURIComponent(id)}${search ? `?${search}` : ""}`;
   }
   const canManageAllAccounts = $derived(administrator);
 
@@ -592,7 +592,7 @@
   {@const guide = check.ready ? null : checkGuide(check.reasonCode)}
   <li class="service-check">
     <span class="service-check-name">{label}</span>
-    <span class="service-check-status"><Badge state={checkStatusState(check)}>{checkStatusLabel(check)}</Badge>{#if guide}<small>{guide.step}</small>{#if guide.signIn}<button type="button" class="text-button" onclick={goToSignIn}>Go to sign-in</button>{/if}{/if}{#if check.reasonCode === "apple-download-sign-in-required"}{#if administrator}<button type="button" class="text-button" onclick={() => appleDownloadOpen = true}>Open step 2: Apple Music sign-in</button>{:else}<a href="#/integrations/services/apple-musickit">See step 2: Apple Music sign-in</a>{/if}{/if}</span>
+    <span class="service-check-status"><Badge state={checkStatusState(check)}>{checkStatusLabel(check)}</Badge>{#if guide}<small>{guide.step}</small>{#if guide.signIn}<button type="button" class="text-button" onclick={goToSignIn}>Go to sign-in</button>{/if}{/if}{#if check.reasonCode === "apple-download-sign-in-required"}{#if administrator}<button type="button" class="text-button" onclick={() => appleDownloadOpen = true}>Open step 2: Apple Music sign-in</button>{:else}<a href="#/sources/services/apple-musickit">See step 2: Apple Music sign-in</a>{/if}{/if}</span>
     {#if result?.bars != null}<ConnectivityBars bars={result.healthy ?? result.success ? result.bars : 0} latency={result.latencyMs} />{:else}<span></span>{/if}
     {#if (canTest && onTest) || onTry}
       <span class="service-check-actions">

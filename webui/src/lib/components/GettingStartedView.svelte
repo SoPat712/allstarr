@@ -132,7 +132,7 @@
 
     <details class="settings-card connect-app connect-tips">
       <summary><span><strong>Tips for getting more from Allstarr</strong><small>Hearts, offline listening and beta limits</small></span><ChevronDown class="disclosure-chevron" size={18} aria-hidden="true" /></summary>
-      <div class="settings-row"><div><strong>Manual-only sources</strong><small>These appear in search and matching for you to choose. Automatic playback uses sources set to On.</small></div><Button variant="secondary" href="#/integrations/services">View sources</Button></div>
+      <div class="settings-row"><div><strong>Manual-only sources</strong><small>These appear in search and matching for you to choose. Automatic playback uses sources set to On.</small></div><Button variant="secondary" href="#/sources/services">View sources</Button></div>
       <div class="settings-row"><div><strong>Hearts and playlists</strong><small>Favorite provider songs or add them to your playlists to find them in normal browsing. Your listening history alone does not add them to that saved view.</small></div></div>
       <div class="settings-row"><div><strong>Offline listening</strong><small>Download or cache a song in your music app to keep a copy on that device. Check it plays with the device offline before you travel.</small></div></div>
       <div class="settings-row"><div><strong>Temporary source limits</strong><small>Some services can rate-limit requests or ask for verification. Choose another available source or wait a few minutes.</small></div></div>

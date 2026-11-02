@@ -97,14 +97,14 @@ describe("event log presentation", () => {
     expect(humanize("reviewrequired")).toBe("Review Required");
     expect(relativeTime(null, "Never")).toBe("Never");
     expect(activityLink({ ...item("1", "Song A"), sourceTitle: "Song A" }))
-      .toBe("#/library/mappings?search=Song%20A");
+      .toBe("#/library/matches?search=Song%20A");
     expect(activityLink({ ...item("2", "Cached"), kind: "caching" }))
       .toBe("#/library/cached");
     expect(activityLink({
       ...item("3", "Provider unhealthy"),
       kind: "provider_health",
       providerId: "lumen-audio",
-    })).toBe("#/integrations/services/lumen-audio");
+    })).toBe("#/sources/services/lumen-audio");
     expect(activityLink({
       ...item("4", "Local library"),
       kind: "library",

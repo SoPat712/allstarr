@@ -102,7 +102,7 @@
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
       </div>
       <footer class="dialog-actions">
-        <Button variant="secondary" href="#/integrations/services/apple-musickit" onclick={() => open = false}>Provider settings</Button>
+        <Button variant="secondary" href="#/sources/services/apple-musickit" onclick={() => open = false}>Provider settings</Button>
         <Button variant="secondary" disabled={Boolean(action)} onclick={() => void load()}>Refresh status</Button>
       </footer>
     </Dialog.Content>

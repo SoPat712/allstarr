@@ -3614,7 +3614,7 @@ test("Event log groups matching work and preserves actionable history", async ({
   await expect(streamedGroup.locator(":scope > summary").getByText("New live event", { exact: true })).toBeVisible();
   await expect(group).toHaveAttribute("open", "");
   await group.getByRole("link", { name: "Review match" }).first().click();
-  await expect(page).toHaveURL(/#\/library\/mappings\?search=Song%200$/);
+  await expect(page).toHaveURL(/#\/library\/matches\?search=Song%200$/);
 });
 
 test("Cached and Kept keep media facts and actions readable on mobile", async ({ page }) => {
@@ -5445,7 +5445,7 @@ test("Segmented navigation and unified provider filters support keyboard use", a
   await page.goto("#/library/playlists");
   await page.getByRole("tab", { name: "Playlists" }).focus();
   await page.keyboard.press("ArrowRight");
-  await expect(page).toHaveURL(/#\/library\/mappings$/);
+  await expect(page).toHaveURL(/#\/library\/matches$/);
   await expect(page.getByRole("tab", { name: "Matches" })).toHaveAttribute("aria-selected", "true");
 
   await page.getByRole("button", { name: "Interactive search" }).click();
@@ -6007,7 +6007,7 @@ test("Source deep links are consumed once and account actions expose their pendi
   const sourceDetails = page.getByRole("heading", { name: "Lumen Audio", level: 2 });
   await expect(sourceDetails).toBeVisible();
   await page.getByRole("link", { name: "Sources", exact: true }).last().click();
-  await expect(page).toHaveURL(/#\/integrations\/services$/);
+  await expect(page).toHaveURL(/#\/sources\/services$/);
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
   await expect(sourceDetails).toBeHidden();

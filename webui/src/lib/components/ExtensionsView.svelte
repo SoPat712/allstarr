@@ -387,7 +387,7 @@
       {:else if item.state.toLowerCase() === "staged"}<Button disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</Button>
       {:else if item.state.toLowerCase() === "disabled" && item.hasPermissions}<Button disabled={Boolean(action)} onclick={() => confirmPermissionReview(item)}>Review and enable</Button>
       {:else if item.state.toLowerCase() === "disabled"}<Button disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</Button>
-      {:else if item.active && showOpen}<Button variant="secondary" href={`#/integrations/services/${encodeURIComponent(item.extensionId)}`}>Open source</Button>
+      {:else if item.active && showOpen}<Button variant="secondary" href={`#/sources/services/${encodeURIComponent(item.extensionId)}`}>Open source</Button>
       {/if}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger class="icon-button" aria-label="Manage extension" title={`More actions for ${item.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>

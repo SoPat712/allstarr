@@ -22,9 +22,9 @@
     { href: "#/", label: "Home", mobileLabel: "Home", icon: "home", mobile: true },
     { href: "#/library/playlists", prefix: "/library/", label: "Library", mobileLabel: "Library", icon: "library", mobile: true },
     { href: "#/for-you", label: "For you", mobileLabel: "For you", icon: "headphones", mobile: true },
-    { href: "#/integrations/services", prefix: "/integrations/", label: "Sources", mobileLabel: "Sources", icon: "sources", mobile: false },
+    { href: "#/sources/services", prefix: "/integrations/", label: "Sources", mobileLabel: "Sources", icon: "sources", mobile: false },
     { href: "#/activity", label: "Activity", mobileLabel: "Activity", icon: "activity", mobile: true },
-    { href: "#/getting-started", label: "Connect apps", mobileLabel: "Connect apps", icon: "guide", mobile: false },
+    { href: "#/connect", prefix: "/getting-started", label: "Connect apps", mobileLabel: "Connect apps", icon: "guide", mobile: false },
     { href: "#/settings", label: "Settings", mobileLabel: "Settings", icon: "settings", mobile: false },
   ];
   const preferencesDestination: (typeof destinations)[number] = {
@@ -36,7 +36,7 @@
   };
   const allLibrarySections = [
     { id: "playlists", label: "Playlists", href: "#/library/playlists" },
-    { id: "mappings", label: "Matches", href: "#/library/mappings" },
+    { id: "mappings", label: "Matches", href: "#/library/matches" },
     { id: "cached", label: "Cached", href: "#/library/cached" },
     { id: "kept", label: "Kept", href: "#/library/kept" },
     { id: "import", label: "Import", href: "#/library/import" },
@@ -90,7 +90,11 @@
     ? allLibrarySections
     : allLibrarySections.filter((item) => item.id === "playlists" || item.id === "mappings" || item.id === "import"));
 
-  function currentRoute(path: string) {
+  // Addresses read like the labels people see; the older ones still open the same pages.
+  function currentRoute(path: string): string {
+    if (path === "/library/matches") return "/library/mappings";
+    if (path === "/connect") return "/getting-started";
+    if (path.startsWith("/sources/")) return currentRoute("/integrations/" + path.slice("/sources/".length));
     if (path === "/intelligence" && !developmentIntelligence) return "/for-you";
     if (path === "/home") return "/";
     if (["/library", "/library/link", "/library/injected", "/library/external"].includes(path)) {
@@ -751,7 +755,7 @@
                 <span class="nav-icon"><UiIcon name={destination.icon} /></span>
                 <span>
                   <strong>{destination.label}</strong>
-                  <small>{destination.href === "#/preferences" ? "Content and track labels for your account" : destination.href === "#/getting-started" ? "Connect music apps and get help" : destination.label === "Sources" ? (administrator ? "Music services, accounts and extensions" : "Music services and your accounts") : "Deployment and operator controls"}</small>
+                  <small>{destination.href === "#/preferences" ? "Content and track labels for your account" : destination.href === "#/connect" ? "Connect music apps and get help" : destination.label === "Sources" ? (administrator ? "Music services, accounts and extensions" : "Music services and your accounts") : "Deployment and operator controls"}</small>
                 </span>
               </a>
             {/each}

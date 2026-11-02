@@ -39,7 +39,7 @@
     <footer class="panel-heading-actions">
       {#if context.song?.externalSnapshotId}
         {#if onReviewMatch}<Button variant="secondary" disabled={matchLoading} onclick={(event) => onReviewMatch?.(event.currentTarget)}>{matchLoading ? "Loading match…" : "Review match"}</Button>
-        {:else}<Button variant="secondary" href={`#/library/mappings?review=${encodeURIComponent(context.song.externalSnapshotId)}`}>Review match</Button>{/if}
+        {:else}<Button variant="secondary" href={`#/library/matches?review=${encodeURIComponent(context.song.externalSnapshotId)}`}>Review match</Button>{/if}
       {/if}
       {#if context.song?.canonicalRecordingId && onReviewLyrics}<Button variant="secondary" onclick={(event) => onReviewLyrics?.(event.currentTarget)}>Review lyrics</Button>{/if}
     </footer>

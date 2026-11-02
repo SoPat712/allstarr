@@ -221,10 +221,10 @@ export function activityLink(item: ActivityItem) {
   if (item.kind === "caching") return "#/library/cached";
   if (item.kind === "matching") {
     const search = item.sourceTitle || item.sourceProviderTrackId || item.detail;
-    return `#/library/mappings?search=${encodeURIComponent(search)}`;
+    return `#/library/matches?search=${encodeURIComponent(search)}`;
   }
   if (item.providerId && item.providerId !== "library")
-    return `#/integrations/services/${encodeURIComponent(item.providerId)}`;
+    return `#/sources/services/${encodeURIComponent(item.providerId)}`;
   return null;
 }
 
@@ -283,7 +283,7 @@ export function validJobId(value?: string | null) {
   return Boolean(value && /^(?:[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i.test(value));
 }
 export function internalActivityLink(value?: string | null) {
-  return Boolean(value && /^#\/(?:activity(?:\?|$)|library\/(?:playlists|mappings|cached|kept)(?:[/?]|$)|integrations\/(?:services|accounts|routing)(?:[/?]|$)|settings\/(?:health|backups|setup)(?:[/?]|$))/.test(value));
+  return Boolean(value && /^#\/(?:activity(?:\?|$)|library\/(?:playlists|mappings|matches|cached|kept)(?:[/?]|$)|(?:integrations|sources)\/(?:services|accounts|routing)(?:[/?]|$)|settings\/(?:health|backups|setup)(?:[/?]|$))/.test(value));
 }
 const opaqueReference = /\b(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{24,})\b/gi;
 export function activityText(value?: string | null) {

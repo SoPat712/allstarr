@@ -186,7 +186,7 @@
         key: "unresolved",
         title: `${plural(summary.unresolved, "song")} ${summary.unresolved === 1 ? "is" : "are"} waiting for a match`,
         detail: "Listeners can see them, but they can't play until a match is confirmed.",
-        href: "#/library/mappings",
+        href: "#/library/matches",
         action: "Review matches",
       });
     if (administrator)
@@ -195,7 +195,7 @@
           key: `source:${issue.providerId}`,
           title: `${issue.providerName} can't play songs`,
           detail: humanize(issue.reason),
-          href: `#/integrations/services/${encodeURIComponent(issue.providerId)}`,
+          href: `#/sources/services/${encodeURIComponent(issue.providerId)}`,
           action: `Open ${issue.providerName}`,
         });
     const storageReadiness = snapshot.status?.durableStorage?.readiness;
@@ -214,7 +214,7 @@
         key: `health:${failing[0].providerId}`,
         title: `${providerName(failing[0].providerId)} is failing ${plural(failing[0].failedCapabilityCount, "check")}`,
         detail: `${failing[0].healthyCapabilityCount} of ${failing[0].capabilityTotal} checks passed ${relativeTime(failing[0].lastCheckedAt, "")}`.trim(),
-        href: `#/integrations/services/${encodeURIComponent(failing[0].providerId)}`,
+        href: `#/sources/services/${encodeURIComponent(failing[0].providerId)}`,
         action: "Open service",
       });
     else if (failing.length > 1)
@@ -222,7 +222,7 @@
         key: "health:several",
         title: `${failing.length} sources are failing checks`,
         detail: failing.map((provider) => providerName(provider.providerId)).join(", "),
-        href: "#/integrations/services",
+        href: "#/sources/services",
         action: "Review sources",
       });
     return items;
@@ -363,7 +363,7 @@
         <div>
           <h2>Nothing is playing</h2>
           <p>{administrator ? "When someone plays music through Allstarr, it shows up here." : "When you play music through Allstarr, it shows up here."}</p>
-          {#if !snapshot.stats?.currentWeekListens}<Button variant="secondary" href="#/getting-started">Connect a music app</Button>{/if}
+          {#if !snapshot.stats?.currentWeekListens}<Button variant="secondary" href="#/connect">Connect a music app</Button>{/if}
         </div>
       </div>
     {/if}
@@ -412,7 +412,7 @@
         <ChevronRight size={16} aria-hidden="true" />
       </a>
       {#if summary.playable + summary.unresolved > 0}
-      <a href="#/library/mappings">
+      <a href="#/library/matches">
         <dt>Playable songs</dt>
         <dd>{summary.playable.toLocaleString()} of {(summary.playable + summary.unresolved).toLocaleString()}</dd>
         <ChevronRight size={16} aria-hidden="true" />
@@ -429,7 +429,7 @@
           <dd>{snapshot.stats?.cacheTracks == null ? "—" : `${(snapshot.stats.cacheTracks + (snapshot.stats.keptTracks ?? 0)).toLocaleString()} (${snapshot.stats.cacheTracks} cached, ${snapshot.stats.keptTracks ?? 0} kept)`}</dd>
           <ChevronRight size={16} aria-hidden="true" />
         </a>
-        <a href="#/integrations/services">
+        <a href="#/sources/services">
           <dt>Media server</dt>
           <dd>{snapshot.status?.backendType ?? "Unknown"}</dd>
           <ChevronRight size={16} aria-hidden="true" />
@@ -442,13 +442,13 @@
     <article class="panel home-panel">
       <header>
         <h2>{administrator ? "Sources" : "Your accounts"}</h2>
-        <a href={administrator ? "#/integrations/services" : "#/integrations/accounts"}>Manage</a>
+        <a href={administrator ? "#/sources/services" : "#/sources/accounts"}>Manage</a>
       </header>
 
       {#if snapshot.providers?.length}
         <div class="provider-list">
           {#each snapshot.providers.slice(0, 6) as provider}
-            <a class="provider-line" href={`#/integrations/services/${encodeURIComponent(provider.providerId)}`}>
+            <a class="provider-line" href={`#/sources/services/${encodeURIComponent(provider.providerId)}`}>
               <ProviderMark
                 id={provider.providerId}
                 definition={providerDefinition(provider.providerId)}
@@ -477,11 +477,11 @@
           {#if administrator}
             <strong>No sources connected</strong>
             <p>Connect a music service to play songs you don't have locally.</p>
-            <Button variant="secondary" size="sm" href="#/integrations/services">Connect a source</Button>
+            <Button variant="secondary" size="sm" href="#/sources/services">Connect a source</Button>
           {:else}
             <strong>Your music is ready to play</strong>
             <p>You're using your household's services. Connect your own account to bring your library and playlists.</p>
-            <Button variant="secondary" size="sm" href="#/integrations/accounts">Connect an account</Button>
+            <Button variant="secondary" size="sm" href="#/sources/accounts">Connect an account</Button>
           {/if}
         </div>
       {/if}

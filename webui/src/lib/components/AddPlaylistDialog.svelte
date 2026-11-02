@@ -561,7 +561,7 @@
         {:else if step === 1}
           {#if !accounts.length && !publicProviders.length && !loading}
             {#if !linkPreview}
-              <div class="compact-empty"><strong>Connect your music account first</strong><p>Your Spotify or other playlist account is encrypted, owned by you, and kept separate from other listeners.</p><Button href="#/integrations/accounts?source=spotify&connect=1">Connect Spotify</Button></div>
+              <div class="compact-empty"><strong>Connect your music account first</strong><p>Your Spotify or other playlist account is encrypted, owned by you, and kept separate from other listeners.</p><Button href="#/sources/accounts?source=spotify&connect=1">Connect Spotify</Button></div>
             {/if}
           {:else}
             <section class="pl-section">
@@ -653,7 +653,7 @@
             {/if}
           {/if}
           {#if !hasLastfmAccount}
-            <section class="pl-section"><p class="pl-help">Import your loved, top, or similar tracks from Last.fm.</p><Button variant="secondary" href="#/integrations/accounts?source=lastfm&connect=1">Connect Last.fm</Button></section>
+            <section class="pl-section"><p class="pl-help">Import your loved, top, or similar tracks from Last.fm.</p><Button variant="secondary" href="#/sources/accounts?source=lastfm&connect=1">Connect Last.fm</Button></section>
           {/if}
         {:else if step === 2}
           <section class="pl-section">

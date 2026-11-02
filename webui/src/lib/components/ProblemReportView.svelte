@@ -80,7 +80,7 @@
 <section class="settings-content" aria-label="Report a problem">
   <header class="panel-heading"><div><h2>{receipt ? "Report saved" : "Tell us what went wrong"}</h2><p>Reports stay inside Allstarr for your administrator to review.</p></div><div class="panel-heading-actions"><Button variant="secondary" href={back}>{receipt ? "Back to music" : "Cancel"}</Button></div></header>
   {#if receipt}
-    <article class="settings-card"><header><h3>Your report was saved.</h3></header><p class="settings-impact" role="status">Your administrator can review it in Activity → Reports.</p><footer><Button href="#/getting-started">Getting started</Button></footer></article>
+    <article class="settings-card"><header><h3>Your report was saved.</h3></header><p class="settings-impact" role="status">Your administrator can review it in Activity → Reports.</p><footer><Button href="#/connect">Getting started</Button></footer></article>
   {:else}
     {#if selectionError || contextError}
       <div class="degraded-banner" role="alert"><p>{selectionError || contextError}</p>

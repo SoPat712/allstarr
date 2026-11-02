@@ -188,7 +188,7 @@ test("Source availability keeps link import and offers a personal Last.fm connec
   await page.goto("/#/library/playlists");
   await page.getByRole("button", { name: "Import playlist", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Import a playlist" });
-  await expect(dialog.getByRole("link", { name: "Connect Last.fm", exact: true })).toHaveAttribute("href", "#/integrations/accounts?source=lastfm&connect=1");
+  await expect(dialog.getByRole("link", { name: "Connect Last.fm", exact: true })).toHaveAttribute("href", "#/sources/accounts?source=lastfm&connect=1");
   await expect(dialog.getByRole("radio", { name: /Public ListenBrainz playlist/ })).toHaveCount(0);
   await expect(dialog.getByRole("textbox", { name: "Paste a link" })).toBeVisible();
   await expect(dialog.getByRole("radio", { name: /Loved tracks/ })).toHaveCount(0);
