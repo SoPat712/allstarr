@@ -287,5 +287,19 @@ def run(argv: list[str]) -> int:
     return result
 
 
+def wait_for_arguments() -> int:
+    """Load GAMDL first, then wait for one song's arguments, so the song doesn't pay for loading it."""
+    importlib.import_module("gamdl.cli.cli")
+    try:
+        request = json.loads(sys.stdin.readline())
+        arguments, cwd = request["argv"], request["cwd"]
+        if not isinstance(cwd, str) or not isinstance(arguments, list) or not all(isinstance(item, str) for item in arguments):
+            raise ValueError()
+        os.chdir(cwd)
+    except (ValueError, KeyError, TypeError, OSError):
+        return ACCOUNT_UNAVAILABLE_EXIT
+    return run(arguments)
+
+
 if __name__ == "__main__":
-    raise SystemExit(run(sys.argv[1:]))
+    raise SystemExit(wait_for_arguments() if sys.argv[1:] == ["--wait-for-arguments"] else run(sys.argv[1:]))

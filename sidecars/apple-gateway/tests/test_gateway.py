@@ -1245,3 +1245,40 @@ def test_lossless_within_the_requested_tier_is_left_alone(settings):
         assert client.get("/api/audio/101", params={"quality": "alac-16-44"}).status_code == 200
     assert runner.ceiling_checked.bit_depth == 16
     assert runner.applied_ceiling is None
+
+
+@pytest.mark.asyncio
+async def test_songs_after_the_first_use_a_helper_started_ahead_of_time(settings: Settings, tmp_path: Path):
+    import sys
+    helper = tmp_path / "helper.py"
+    helper.write_text(
+        "import json, os, sys\n"
+        "if sys.argv[1:] == ['--wait-for-arguments']:\n"
+        "    request = json.loads(sys.stdin.readline())\n"
+        "    os.chdir(request['cwd'])\n"
+        "    print('ready', os.path.basename(os.getcwd()), *request['argv'])\n"
+        "else:\n"
+        "    print('started', os.path.basename(os.getcwd()), *sys.argv[1:])\n"
+    )
+
+    class HelperRunner(BoundedProcessRunner):
+        WARM_COMMAND = (sys.executable, str(helper))
+
+    runner = HelperRunner(settings)
+    work = tmp_path / "work"
+    work.mkdir()
+    try:
+        first = await runner.execute([sys.executable, str(helper), "one"], work)
+        assert first.stdout.split() == ["started", "work", "one"]
+        await runner._warming
+        second = await runner.execute([sys.executable, str(helper), "two"], work)
+        assert second.stdout.split() == ["ready", "work", "two"]
+        other = await runner.execute([sys.executable, "-c", "print('unrelated')"], work)
+        assert other.stdout.strip() == "unrelated"
+        await runner._warming
+        waiting = runner._warm
+        assert waiting is not None and waiting.returncode is None
+    finally:
+        await runner.close()
+    assert waiting.returncode is not None
+

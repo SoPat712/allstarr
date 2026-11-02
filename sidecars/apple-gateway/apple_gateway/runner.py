@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import math
@@ -75,20 +76,71 @@ class ProcessFailure(RuntimeError):
 
 
 class BoundedProcessRunner:
+    # Python and GAMDL take over a second to load, which every song paid. One helper is started ahead of time and
+    # waits for its song's arguments; each song still runs alone in its own process.
+    WARM_COMMAND: tuple[str, ...] = (sys.executable, "-m", "apple_gateway.account_cli")
+
     def __init__(self, settings: Settings):
         self._settings = settings
         self._semaphore = asyncio.Semaphore(settings.max_concurrency)
+        self._warm: asyncio.subprocess.Process | None = None
+        self._warming: asyncio.Task | None = None
 
-    async def execute(self, argv: list[str], cwd: Path) -> ProcessResult:
-        async with self._semaphore:
-            process = await asyncio.create_subprocess_exec(
-                *argv,
-                cwd=cwd,
-                stdin=asyncio.subprocess.DEVNULL,
+    async def _start_warm(self) -> None:
+        if self._warm is None or self._warm.returncode is not None:
+            self._warm = await asyncio.create_subprocess_exec(
+                *self.WARM_COMMAND, "--wait-for-arguments",
+                cwd=self._settings.data_root,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
             )
+
+    def _prepare_warm(self) -> None:
+        if self._warming is None or self._warming.done():
+            self._warming = asyncio.create_task(self._start_warm())
+
+    async def _hand_to_warm(self, arguments: list[str], cwd: Path) -> asyncio.subprocess.Process | None:
+        process, self._warm = self._warm, None
+        if process is None or process.returncode is not None or process.stdin is None:
+            return None
+        try:
+            process.stdin.write((json.dumps({"argv": arguments, "cwd": str(cwd)}) + "\n").encode())
+            await process.stdin.drain()
+            process.stdin.close()
+            return process
+        except (BrokenPipeError, ConnectionResetError):
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            await process.wait()
+            return None
+
+    async def close(self) -> None:
+        if self._warming is not None and not self._warming.done():
+            self._warming.cancel()
+            await asyncio.gather(self._warming, return_exceptions=True)
+        process, self._warm = self._warm, None
+        if process is not None and process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            await process.wait()
+
+    async def execute(self, argv: list[str], cwd: Path) -> ProcessResult:
+        async with self._semaphore:
+            process = None
+            if tuple(argv[:len(self.WARM_COMMAND)]) == self.WARM_COMMAND:
+                process = await self._hand_to_warm(argv[len(self.WARM_COMMAND):], cwd)
+                self._prepare_warm()
+            if process is None:
+                process = await asyncio.create_subprocess_exec(
+                    *argv,
+                    cwd=cwd,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    start_new_session=True,
+                )
             stdout_task = asyncio.create_task(self._read_limited(process.stdout))
             stderr_task = asyncio.create_task(self._read_limited(process.stderr, retain_tail=True))
             try:

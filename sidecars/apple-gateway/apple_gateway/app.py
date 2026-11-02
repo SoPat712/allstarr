@@ -134,6 +134,8 @@ def create_app(
             for task in tasks:
                 task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+        if close := getattr(process_runner, "close", None):
+            await close()
         await wrapper_client.close()
 
     application = FastAPI(
