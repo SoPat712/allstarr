@@ -198,7 +198,6 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
         record.CoverArtReference = ValidateReference(input.CoverArtReference);
         record.SourceModifiedAt = input.SourceModifiedAt;
         record.IndexedAt = now;
-        record.UpdatedAt = now;
         if (created)
         {
             db.LibraryTracks.Add(record);
@@ -229,6 +228,8 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
         var changed = created || previous != TrackFingerprint(record) || enrichment != "unchanged";
         if (changed)
         {
+            // Other work treats this as "the song changed", and every index pass visits every song.
+            record.UpdatedAt = now;
             db.AuditEvents.Add(new AuditEventRecord
             {
                 Id = Guid.CreateVersion7(),
@@ -256,7 +257,8 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
         string.Join('\n',
             record.FilePath, record.Title, record.Artist, record.Album, record.AlbumArtist,
             record.DurationMilliseconds, record.Isrc, record.MusicBrainzRecordingId,
-            record.CanonicalRecordingId, record.ProviderIdsJson, record.SourceModifiedAt.UtcTicks);
+            record.CanonicalRecordingId, record.ProviderIdsJson, record.SourceModifiedAt.UtcTicks,
+            record.MusicBrainzReleaseId, record.MusicBrainzArtistId, record.CoverArtReference);
 
     public async Task<IReadOnlyList<IndexedLibraryTrack>> ListAsync(
         ProtocolExecutionContext executionContext,

@@ -130,7 +130,7 @@ public sealed partial class PersonalMixServiceTests
         var repeat = (await service.GenerateAsync(owner)).Single(item => item.Kind == "on-repeat");
         await service.ListAsync(owner, "UTC");
         await using var db = factory.CreateDbContext();
-        var before = await db.ExternalMetadataSnapshots.CountAsync(item => item.ResourceKind == "personal-mixes");
+        var before = await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "personal-mixes").MaxAsync(item => item.SnapshotVersion);
         clock.UtcNow += TimeSpan.FromMinutes(16);
         var polls = 0;
         access.Setup(item => item.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
@@ -144,7 +144,7 @@ public sealed partial class PersonalMixServiceTests
         var result = (await service.GenerateAsync(owner, repeat.Id, timeZoneId: "UTC").WaitAsync(CompletionDeadline)).Single(item => item.Id == repeat.Id);
         Assert.Equal(2, polls);
         Assert.Equal(repeat.Generation + 1, result.Generation);
-        Assert.Equal(before + 3, await db.ExternalMetadataSnapshots.CountAsync(item => item.ResourceKind == "personal-mixes"));
+        Assert.Equal(before + 3, await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "personal-mixes").MaxAsync(item => item.SnapshotVersion));
     }
 
     [Theory]

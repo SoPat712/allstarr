@@ -122,13 +122,12 @@ public sealed class AuditEventRetentionService(
                     maximumRows);
             }
 
-            var deletedJobs = await PruneRoutineJobsAsync(cutoff, cancellationToken);
+            var deletedJobs = await PruneRoutineJobsAsync(now - (jobHistoryRetention < retention ? jobHistoryRetention : retention), cancellationToken);
             if (deletedJobs > 0)
             {
                 logger.LogInformation(
-                    "Pruned {Count} unreferenced finished routine jobs older than {Cutoff}.",
-                    deletedJobs,
-                    cutoff);
+                    "Pruned {Count} unreferenced finished routine jobs.",
+                    deletedJobs);
             }
             if (taskActivity != null) await taskActivity.CompletedAsync("event-retention", true, cancellationToken);
         }
@@ -152,7 +151,7 @@ public sealed class AuditEventRetentionService(
             await using var scope = scopeFactory.CreateAsyncScope();
             var database = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
             var candidates = await Deletable(database)
-                .Where(item => (item.Category == JobHistoryCategory || item.Category == "managed-storage") && item.CreatedAt < cutoff)
+                .Where(item => (item.Category == JobHistoryCategory || item.Category == "job-progress" || item.Category == "managed-storage") && item.CreatedAt < cutoff)
                 .OrderBy(item => item.CreatedAt)
                 .ThenBy(item => item.Id)
                 .Take(batchSize)

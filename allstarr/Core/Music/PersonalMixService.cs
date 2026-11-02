@@ -53,6 +53,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
 {
     public const string PublishKey = "Mixes:PublishToApps", JobType = "mixes.refresh";
     private const string ResourceKind = "personal-mixes";
+    private const int KeptDocuments = 3;
     private readonly SemaphoreSlim writes = new(1, 1);
     private readonly SemaphoreSlim generations = new(1, 1);
     private static string Hash(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
@@ -176,6 +177,10 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             RetrievedAt = clock.UtcNow
         });
         await db.SaveChangesAsync(token);
+        // Only the newest is ever read, and each one holds every mix.
+        var oldest = (previous?.SnapshotVersion ?? 0) + 1 - KeptDocuments;
+        await db.ExternalMetadataSnapshots.Where(item => item.OwnerUserId == user.Id && item.ProviderId == "allstarr" && item.ResourceKind == kind &&
+            item.ExternalIdHash == Scope(user) && item.SnapshotVersion <= oldest).ExecuteDeleteAsync(token);
     }
 
     private async Task<(UserRecord User, PersonalMixDocument Document, int Version)> SnapshotAsync(

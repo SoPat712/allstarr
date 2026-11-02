@@ -174,6 +174,27 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         Assert.Equal(1, await db.LibraryTracks.CountAsync());
     }
 
+    [Fact]
+    public async Task ReindexingAnUnchangedSongDoesNotMarkItChanged()
+    {
+        var viewer = Context(_userA, "principal-a");
+        await _service.UpsertAsync(viewer, Input());
+        await using var db = await _factory.CreateDbContextAsync();
+        var first = await db.LibraryTracks.AsNoTracking().SingleAsync();
+
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(30);
+        await _service.UpsertAsync(viewer, Input());
+        var repeated = await db.LibraryTracks.AsNoTracking().SingleAsync();
+
+        Assert.Equal(first.UpdatedAt, repeated.UpdatedAt);
+        Assert.Equal(_clock.UtcNow, repeated.IndexedAt);
+
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(30);
+        await _service.UpsertAsync(viewer, Input() with { Title = "Renamed" });
+
+        Assert.Equal(_clock.UtcNow, (await db.LibraryTracks.AsNoTracking().SingleAsync()).UpdatedAt);
+    }
+
     [Theory]
     [InlineData(ProviderUseMode.ManualOnly)]
     [InlineData(ProviderUseMode.Off)]

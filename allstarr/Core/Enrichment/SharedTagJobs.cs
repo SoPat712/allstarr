@@ -193,7 +193,6 @@ public sealed class SharedTagJobHandler(IDbContextFactory<AllstarrDbContext> fac
                     .Append(library?.UpdatedAt ?? DateTimeOffset.MinValue).Append(kept?.UpdatedAt ?? DateTimeOffset.MinValue).Max(),
                 historyCaptured: history != null && (refreshed || knownTags));
             if (queue != null) await queue.RefreshListenersAsync(recording.Id, token);
-            await execution.ReportProgressAsync(new("recording-tags", "Styles collected for this song.", 1, 1), token);
             return DurableJobCompletion.Success();
         }
         catch (MusicBrainzLookupException error)
