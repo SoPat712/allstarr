@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using allstarr.Core.Health;
 using allstarr.Core.Configuration;
 using allstarr.Core.Extensions;
@@ -256,7 +257,9 @@ public class AdminUiController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "A linked Allstarr user is required" });
         }
 
+        var timings = new List<(string Step, long At)> { ("start", Stopwatch.GetTimestamp()) };
         var schema = (await GetSchema(cancellationToken) as OkObjectResult)?.Value as AdminUiSchemaResponse;
+        timings.Add(("schema", Stopwatch.GetTimestamp()));
         if (schema == null) return StatusCode(StatusCodes.Status500InternalServerError);
         var services = HttpContext.RequestServices;
         var contextFactory = services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
@@ -282,6 +285,7 @@ public class AdminUiController : ControllerBase
                 return await scope.ServiceProvider.GetRequiredService<DurablePlaylistProjectionReader>().ReadHomeCountsAsync(countsOwner, linkIds, countsViewer, token);
             }, cancellationToken)
             : await services.GetRequiredService<DurablePlaylistProjectionReader>().ReadHomeCountsAsync(countsOwner, linkIds, countsViewer, cancellationToken);
+        timings.Add(("playlists", Stopwatch.GetTimestamp()));
         var activeJobs = await jobsQuery.CountAsync(item =>
             item.State != DurableJobState.Succeeded && item.State != DurableJobState.Failed &&
             item.State != DurableJobState.Cancelled, cancellationToken);
@@ -311,6 +315,7 @@ public class AdminUiController : ControllerBase
         var previousWeekListens = await listensQuery.CountAsync(item =>
             item.State == ListeningEventState.Completed && item.ListenedAt >= previousWeekStart &&
             item.ListenedAt < currentWeekStart, cancellationToken);
+        timings.Add(("listening", Stopwatch.GetTimestamp()));
         int? cacheTracks = null;
         int? keptTracks = null;
         if (session.IsAdministrator)
@@ -320,12 +325,17 @@ public class AdminUiController : ControllerBase
                 _configuration["Library:KeptPath"] ?? Path.Combine(downloadRoot, "kept");
             (cacheTracks, keptTracks) = await ReadExistingStorageCountsAsync(context, downloadRoot, keptRoot, cancellationToken);
         }
+        timings.Add(("storage", Stopwatch.GetTimestamp()));
         var storage = services.GetService<DurableStorageState>()?.GetSnapshot();
         var providerHealth = session.IsAdministrator
             ? (await GetProviderSummaries(cancellationToken) as OkObjectResult)?.Value
             : new { providers = Array.Empty<object>() };
+        timings.Add(("sources", Stopwatch.GetTimestamp()));
         // Home leaves out routine work, so it asks for enough to still have something to show.
         var activity = (await GetDashboardActivity(40, cancellationToken: cancellationToken) as OkObjectResult)?.Value;
+        timings.Add(("activity", Stopwatch.GetTimestamp()));
+        services.GetService<ILogger<AdminUiController>>()?.LogInformation("Home timing: {Steps}", string.Join(", ", timings.Skip(1).Select((item, index) =>
+            $"{item.Step} {(int)Stopwatch.GetElapsedTime(timings[index].At, item.At).TotalMilliseconds} ms")));
 
         return Ok(new
         {
@@ -431,10 +441,12 @@ public class AdminUiController : ControllerBase
         limit = Math.Clamp(limit, 1, 100);
         var scanLimit = Math.Min(500, limit * 5);
         var contextFactory = HttpContext.RequestServices.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
+        var activityTimings = new List<(string Step, long At)> { ("start", Stopwatch.GetTimestamp()) };
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var accounts = await context.ProviderAccounts.AsNoTracking()
             .Where(item => session.IsAdministrator || item.OwnerUserId == userId || item.OwnerUserId == null)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
+        activityTimings.Add(("accounts", Stopwatch.GetTimestamp()));
         var jobs = await ActivityJobPresentation.HistoryJobs(context.Jobs.AsNoTracking())
             .Where(item => (everyone || item.OwnerUserId == userId) &&
                 (!before.HasValue || item.UpdatedAt < before.Value ||
@@ -442,6 +454,7 @@ public class AdminUiController : ControllerBase
             .OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
+        activityTimings.Add(("jobs", Stopwatch.GetTimestamp()));
         var playlistRuns = await context.PlaylistSyncRuns.AsNoTracking()
             .Where(item => (everyone || item.OwnerUserId == userId) &&
                 (!before.HasValue || (item.CompletedAt ?? item.StartedAt) < before.Value ||
@@ -466,6 +479,7 @@ public class AdminUiController : ControllerBase
                     .ThenByDescending(item => item.RetrievedAt).First())
                 .ToListAsync(cancellationToken))
                 .ToDictionary(item => (item.OwnerUserId, item.PlaylistLinkId));
+        activityTimings.Add(("playlists", Stopwatch.GetTimestamp()));
         var matchActivity = await _trackMatches.GetActivityDataAsync(
             new TrackMatchActor(userId, everyone),
             before,
@@ -483,6 +497,7 @@ public class AdminUiController : ControllerBase
             .GroupBy(item => item.CanonicalRecordingId)
             .ToDictionary(group => group.Key, group => group.ToArray());
         var libraryTracks = matchActivity.LibraryTracks;
+        activityTimings.Add(("matches", Stopwatch.GetTimestamp()));
         var audits = await ActivityJobPresentation.HistoryAudits(context)
             .Where(item => item.Category != allstarr.Core.Playback.PlaybackStartTimingStore.Category)
             .Where(item => (everyone || item.ActorUserId == userId) &&
@@ -491,12 +506,14 @@ public class AdminUiController : ControllerBase
             .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
+        activityTimings.Add(("audits", Stopwatch.GetTimestamp()));
         var extensionLogs = await context.ExtensionLogs.AsNoTracking()
             .Where(item => everyone && (!before.HasValue || item.CreatedAt < before.Value ||
                 (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
+        activityTimings.Add(("extension logs", Stopwatch.GetTimestamp()));
         var downloadArtifacts = await context.ProviderDownloadArtifacts.AsNoTracking()
             .Where(item => (everyone || item.OwnerUserId == userId) &&
                 (!before.HasValue || item.VerifiedAt < before.Value ||
@@ -504,6 +521,7 @@ public class AdminUiController : ControllerBase
             .OrderByDescending(item => item.VerifiedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
+        activityTimings.Add(("downloads", Stopwatch.GetTimestamp()));
         var auditJobIds = audits.Select(AuditJobReference).OfType<Guid>();
         var knownJobIds = jobs.Select(item => item.Id).ToHashSet();
         var relatedIds = auditJobIds.Concat(downloadArtifacts.Select(item => item.DurableJobId)).Concat(playlistRuns.Select(item => item.JobId).OfType<Guid>())
@@ -513,7 +531,9 @@ public class AdminUiController : ControllerBase
             .OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit * 3).ToArrayAsync(cancellationToken);
         var activityJobs = jobs.Concat(relatedJobs).ToDictionary(item => item.Id);
+        activityTimings.Add(("related jobs", Stopwatch.GetTimestamp()));
         var jobDisplays = await ActivityJobPresentation.ResolveAsync(context, activityJobs.Values.ToArray(), cancellationToken, session.IsAdministrator);
+        activityTimings.Add(("job names", Stopwatch.GetTimestamp()));
         var artifactAccountIds = downloadArtifacts.Select(item => item.ProviderAccountId).OfType<Guid>().Distinct().ToArray();
         var artifactProviderIds = downloadArtifacts.Select(item => item.ProviderId).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var artifactExternalIds = downloadArtifacts.Select(item => item.SourceExternalTrackId).OfType<string>()
@@ -770,6 +790,9 @@ public class AdminUiController : ControllerBase
                 ProviderId = library ? "library" : item.ProviderId
             };
         }).ToArray();
+        activityTimings.Add(("assembly", Stopwatch.GetTimestamp()));
+        HttpContext.RequestServices.GetService<ILogger<AdminUiController>>()?.LogInformation("Activity timing: {Steps}", string.Join(", ",
+            activityTimings.Skip(1).Select((item, index) => $"{item.Step} {(int)Stopwatch.GetElapsedTime(activityTimings[index].At, item.At).TotalMilliseconds} ms")));
         return Ok(new
         {
             items,
