@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { taste, type TasteNudge, type TasteProfile } from "$lib/api";
-  import { nudgeMarker, nudgeName, steeringNames, tasteSummary } from "$lib/for-you";
+  import { taste, type SoundProfile, type TasteNudge, type TasteProfile } from "$lib/api";
+  import { formatCount } from "$lib/intelligence";
+  import { nudgeMarker, nudgeName, soundSummary, steeringNames, tasteSummary } from "$lib/for-you";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button, buttonVariants } from "$lib/components/ui/button";
@@ -14,6 +15,7 @@
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   let profile = $state<TasteProfile | null>(null), loading = $state(true), error = $state("");
+  let sound = $state<SoundProfile | null>(null);
   let action = $state(false), resetOpen = $state(false), clearNudges = $state(false), resetError = $state("");
   let selected = $state(""), duration = $state("today");
   let pending: Promise<void> | null = null, disposed = false;
@@ -31,6 +33,8 @@
   async function load() {
     if (pending) return pending;
     pending = (async () => {
+      // The sound card is extra: it appears when AudioMuse has analyzed enough of the songs this listener plays.
+      void taste.sound().then(next => { if (!disposed) sound = next.profile; }).catch(() => {});
       try { const next = await taste.get(); if (!disposed) { profile = next; error = ""; } }
       catch { if (!disposed) error = "Your taste could not be loaded. Refresh to try again."; }
       finally { if (!disposed) loading = false; pending = null; }
@@ -64,6 +68,16 @@
   {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
   {#if loading}<Skeleton class="skeleton-panel" aria-label="Loading your taste" />{:else if profile}
     <section class="settings-card summary"><p>{#each summaryParts as part}{#if summaryTags.includes(part)}<strong>{part}</strong>{:else}{part}{/if}{/each}</p><small>{profile.latelyWeight >= .5 ? "Today's listening counts most right now." : "Your usual taste counts most right now."}</small></section>
+    {#if sound}
+      <section class="settings-card taste-section sound-profile" aria-labelledby="sound-heading">
+        <h2 id="sound-heading">Your sound</h2>
+        <p class="sound-summary">{soundSummary(sound)}</p>
+        <div class="sound-traits">{#each sound.traits as trait (trait.name)}
+          <div class="taste-strength"><span class="sound-trait"><strong>{trait.name}</strong><small>{trait.value}</small></span><Progress value={Math.max(0, Math.min(100, trait.value))} aria-label={`${trait.name} ${trait.value} out of 100`} /></div>
+        {/each}</div>
+        <small>From AudioMuse's analysis of {formatCount(sound.songs)} songs you've finished{sound.skippedSongs ? ` and ${formatCount(sound.skippedSongs)} you mostly skip` : ""}.</small>
+      </section>
+    {/if}
     <section class="panel taste-section"><h2>Steer your mixes</h2><p>Tap a style to hear more or less of it.</p>{@render chips("tag", tags)}<h3>Artists</h3>{@render chips("artist", artists)}</section>
     <section class="panel taste-section" aria-label="Hidden"><h2>Hidden</h2>
       {#if profile.nudges.some(item => item.mode === "never")}<ul>{#each profile.nudges.filter(item => item.mode === "never") as item (`${item.kind}:${item.name}`)}<li><span>{nudgeName(item)}</span><Button variant="ghost" disabled={action} aria-label={`Undo ${nudgeName(item)}`} onclick={() => update(() => taste.remove(item.kind, item.name))}>Undo</Button></li>{/each}</ul>{:else}<p>Nothing hidden.</p>{/if}
@@ -103,5 +117,8 @@
   .settings-toggle :global([data-slot="checkbox"]:focus-visible) { outline: 2px solid var(--md-sys-color-primary); }
   .settings-toggle :global([data-slot="checkbox-indicator"]) { width: 20px; height: 20px; border: 2px solid var(--md-sys-color-on-surface-variant); border-radius: 3px; }
   .settings-toggle :global([data-checked] [data-slot="checkbox-indicator"]) { border-color: var(--md-sys-color-primary); background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
+  .sound-summary { margin-top: var(--space-2); }
+  .sound-traits { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); column-gap: var(--space-6); margin-block: var(--space-2); }
+  .sound-trait { display: flex; justify-content: space-between; gap: var(--space-2); }
   @media (max-width: 600px) { .taste-layers { grid-template-columns: minmax(0, 1fr); } }
 </style>

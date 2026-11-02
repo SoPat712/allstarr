@@ -12,8 +12,13 @@ namespace allstarr.Controllers;
 [ApiController]
 [Route("api/admin/taste")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public sealed class TasteController(TasteService taste, IDbContextFactory<AllstarrDbContext> factory) : ControllerBase
+public sealed class TasteController(TasteService taste, IDbContextFactory<AllstarrDbContext> factory,
+    SoundProfileService? sound = null) : ControllerBase
 {
+    [HttpGet("sound")]
+    public Task<IActionResult> Sound(CancellationToken token) => ExecuteAsync(async user =>
+        new { profile = sound == null ? null : await sound.GetAsync(user, token) });
+
     [HttpGet]
     public Task<IActionResult> Get(CancellationToken token) => ExecuteAsync(async user => await taste.GetAsync(user, token));
 

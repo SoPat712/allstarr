@@ -2454,8 +2454,12 @@ export const mixes = {
   },
 };
 
+export type SoundTrait = { name: string; value: number; lean: number | null };
+export type SoundProfile = { songs: number; skippedSongs: number; traits: SoundTrait[]; tempo: number | null; at: string };
+
 export const taste = {
   get: () => json<TasteProfile>("/api/admin/taste"),
+  sound: () => json<{ profile: SoundProfile | null }>("/api/admin/taste/sound"),
   nudge: (kind: TasteNudge["kind"], name: string, mode: TasteNudge["mode"], todayOnly: boolean, timeZoneId: string) => json<TasteProfile>("/api/admin/taste/nudge", {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kind, name, mode, todayOnly, timeZoneId }),
   }),

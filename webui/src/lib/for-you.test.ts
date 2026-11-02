@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { steeringNames, greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep } from "./for-you";
+import { soundSummary, steeringNames, greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep } from "./for-you";
 
 describe("personal mix presentation", () => {
   it("describes each mix without repeating its name", () => {
@@ -84,5 +84,17 @@ describe("steeringNames", () => {
   });
   it("stops at the limit", () => {
     expect(steeringNames(["a", "b"], ["x", "y"], 3)).toEqual(["x", "a", "y"]);
+  });
+});
+
+describe("soundSummary", () => {
+  const trait = (name: string, value: number, lean: number | null = null) => ({ name, value, lean });
+  it("names the two strongest traits and the pace", () => {
+    expect(soundSummary({ traits: [trait("Relaxed", 30), trait("Energetic", 72), trait("Danceable", 65)], tempo: 121 }))
+      .toBe("Mostly energetic and danceable, around 121 BPM.");
+  });
+  it("adds the clearest difference from skipped songs", () => {
+    expect(soundSummary({ traits: [trait("Energetic", 72, 3), trait("Melancholy", 40, -12), trait("Happy", 55, 8)], tempo: null }))
+      .toBe("Mostly energetic and happy. You skip melancholy songs more than you finish them.");
   });
 });

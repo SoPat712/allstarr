@@ -83,6 +83,7 @@ builder.Services.AddSingleton<OdesliApiKeySettingsService>();
 builder.Services.AddSingleton<allstarr.Core.AudioMuse.AudioMuseSettings>();
 builder.Services.AddSingleton<allstarr.Core.AudioMuse.AudioMuseClient>();
 builder.Services.AddSingleton<allstarr.Core.AudioMuse.AudioMuseDiscovery>();
+builder.Services.AddSingleton<allstarr.Core.Music.SoundProfileService>();
 builder.Services.AddPlatformIdentity(builder.Configuration);
 var releaseComposition = ReleaseComposition.Resolve(builder.Configuration);
 builder.Services.AddSingleton(releaseComposition);

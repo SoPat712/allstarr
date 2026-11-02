@@ -6,7 +6,7 @@ namespace allstarr.Core.Music;
 // Taste reads a listener's whole history whenever it changed, which is seconds for a long one. Doing that shortly after
 // start and then every few minutes means a visit after a restart or after listening is as quick as the rest.
 public sealed class TasteWarmUp(TasteService taste, IDbContextFactory<AllstarrDbContext> factory, DurableStorageState storage,
-    ILogger<TasteWarmUp> logger) : BackgroundService
+    ILogger<TasteWarmUp> logger, SoundProfileService? sound = null) : BackgroundService
 {
     private static readonly TimeSpan Every = TimeSpan.FromMinutes(10);
 
@@ -32,7 +32,11 @@ public sealed class TasteWarmUp(TasteService taste, IDbContextFactory<AllstarrDb
             users = await db.Users.AsNoTracking().Where(user => user.Enabled && !user.IsSynthetic).Select(user => user.Id).ToArrayAsync(stoppingToken);
         foreach (var user in users)
         {
-            try { await taste.GetAsync(user, stoppingToken); }
+            try
+            {
+                await taste.GetAsync(user, stoppingToken);
+                if (sound != null) await sound.GetAsync(user, stoppingToken);
+            }
             catch (Exception error) when (error is not OperationCanceledException) { logger.LogDebug("Taste warm-up skipped a listener ({ErrorType})", error.GetType().Name); }
         }
     }

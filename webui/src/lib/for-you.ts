@@ -91,3 +91,14 @@ export function mixExclusions(excluded: Record<string, number>) {
   // The API client lowercases the first letter of every response key.
   return Object.entries(excluded).filter(([, count]) => count > 0).map(([label, count]) => `${count} ${labels[label.toLowerCase()] ?? "left out"}`).join(" · ");
 }
+
+// One sentence a listener can recognise: their two strongest traits, the pace, and what they skip or keep.
+export function soundSummary(profile: { traits: { name: string; value: number; lean: number | null }[]; tempo: number | null }) {
+  const strongest = [...profile.traits].sort((a, b) => b.value - a.value).slice(0, 2).map(trait => trait.name.toLowerCase());
+  const leans = profile.traits.filter(trait => trait.lean !== null && Math.abs(trait.lean) >= 5).sort((a, b) => Math.abs(b.lean!) - Math.abs(a.lean!));
+  const lean = leans[0];
+  return [
+    strongest.length ? `Mostly ${strongest.join(" and ")}${profile.tempo ? `, around ${profile.tempo} BPM` : ""}.` : "",
+    lean ? lean.lean! < 0 ? `You skip ${lean.name.toLowerCase()} songs more than you finish them.` : `You finish ${lean.name.toLowerCase()} songs more than you skip them.` : "",
+  ].filter(Boolean).join(" ");
+}
