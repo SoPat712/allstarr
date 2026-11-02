@@ -49,7 +49,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
     private const int RecentThreshold = 5;
     private const double RecentBlend = .8;
     private static readonly TimeSpan LoadedFor = TimeSpan.FromMinutes(30);
-    private sealed record LoadedTaste(long Revision, int Plays, DateTimeOffset At, TasteDocument Document);
+    private sealed record LoadedTaste(long Revision, int Plays, long Tags, DateTimeOffset At, TasteDocument Document);
     private readonly ConcurrentDictionary<Guid, LoadedTaste> loaded = new();
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> loading = new();
     private readonly SemaphoreSlim writes = new(1, 1);
@@ -83,7 +83,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
         TasteDocument? Known()
         {
             var now = clock.UtcNow;
-            return loaded.TryGetValue(user, out var known) && known.Revision == revision && known.Plays == plays && now - known.At < LoadedFor &&
+            return loaded.TryGetValue(user, out var known) && known.Revision == revision && known.Plays == plays && known.Tags == SharedTagStore.Changes && now - known.At < LoadedFor &&
                 !known.Document.Nudges.Any(item => item.ExpiresAt <= now) ? known.Document : null;
         }
         if (Known() is { } current) return current;
@@ -92,12 +92,13 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
         try
         {
             if (Known() is { } finished) return finished;
+            var tagChanges = SharedTagStore.Changes;
             var document = Read(row);
             await RememberPlaybackAsync(db, user, document, token);
             Prune(document);
             if (!document.Paused) await AddListeningHistoryAsync(db, user, document, token);
             document.Scales = Scales(document);
-            loaded[user] = new(revision, plays, clock.UtcNow, document);
+            loaded[user] = new(revision, plays, tagChanges, clock.UtcNow, document);
             return document;
         }
         finally { gate.Release(); }

@@ -56,9 +56,14 @@ public sealed class SharedTagStore(IDbContextFactory<AllstarrDbContext> factory,
             if (capturedAt != null) row.CapturedAt = capturedAt.Value;
             if (refreshed) row.RefreshedAt = clock.UtcNow;
             await db.SaveChangesAsync(token);
+            Interlocked.Increment(ref changes);
         }
         finally { writes.Release(); }
     }
+
+    // Anything that keeps results built from tags can compare this to know when they changed.
+    private static long changes;
+    internal static long Changes => Interlocked.Read(ref changes);
 
     public async Task<SharedSongTags> GetTags(Guid recording, CancellationToken token = default) =>
         (await GetTags([recording], token))[recording];
