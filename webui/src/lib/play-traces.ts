@@ -19,7 +19,8 @@ export function playStart(milliseconds?: number | null): string {
 export function playPhase(phase: string): string {
   return ({ route: "Choosing where to play", account: "Choosing an account", lease: "Waiting for a turn", source: "Opening the source",
     verify: "Checking the audio", retry: "Trying again", segments: "Loading audio pieces", process: "Preparing the audio",
-    headers: "Ready to send audio", firstbyte: "Sending the first audio", preparation: "Getting the song ready" } as Record<string, string>)[phase.toLowerCase()] ?? "Preparing playback";
+    headers: "Ready to send audio", firstbyte: "Sending the first audio", preparation: "Getting the song ready",
+    kept: "Checking saved copies", match: "Finding the song at each source" } as Record<string, string>)[phase.toLowerCase()] ?? "Preparing playback";
 }
 
 export function playSource(provider: string | null | undefined, cached: boolean | null | undefined, providers: { id: string; name: string }[]): string {

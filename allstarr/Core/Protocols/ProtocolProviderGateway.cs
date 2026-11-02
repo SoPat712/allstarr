@@ -1232,7 +1232,9 @@ public sealed partial class ProtocolProviderGateway(
             (pinnedDownload == null || pinnedDownload.ManagedFileId != null) &&
             (providerId == "allstarr" || IsAutomaticProvider(providerId, effectivePolicy)))
         {
-            var kept = await OpenHouseholdKeptAsync(protocol, trackId, quality, headOnly);
+            ProtocolProviderStream? kept;
+            using (PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Kept))
+                kept = await OpenHouseholdKeptAsync(protocol, trackId, quality, headOnly);
             if (kept != null)
             {
                 if (pinnedDownload != null && kept.ServingManagedFileId != pinnedDownload.ManagedFileId)

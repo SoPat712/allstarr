@@ -18,8 +18,8 @@ describe("play history wording", () => {
     expect(playStart(null)).toBe("Start time not recorded");
   });
   it("names every start step without exposing phase keys", () => {
-    const phases = ["Route", "Account", "Lease", "Source", "Verify", "Retry", "Segments", "Process", "Headers", "FirstByte", "Preparation"];
-    expect(phases.map(playPhase)).toEqual(["Choosing where to play", "Choosing an account", "Waiting for a turn", "Opening the source", "Checking the audio", "Trying again", "Loading audio pieces", "Preparing the audio", "Ready to send audio", "Sending the first audio", "Getting the song ready"]);
+    const phases = ["Route", "Account", "Lease", "Source", "Verify", "Retry", "Segments", "Process", "Headers", "FirstByte", "Preparation", "Kept", "Match"];
+    expect(phases.map(playPhase)).toEqual(["Choosing where to play", "Choosing an account", "Waiting for a turn", "Opening the source", "Checking the audio", "Trying again", "Loading audio pieces", "Preparing the audio", "Ready to send audio", "Sending the first audio", "Getting the song ready", "Checking saved copies", "Finding the song at each source"]);
     expect(playPhase("future_step")).toBe("Preparing playback");
   });
   it("uses familiar source and outcome names", () => {

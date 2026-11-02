@@ -2,6 +2,7 @@ using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Health;
 using allstarr.Core.Matching;
+using allstarr.Core.Playback;
 using allstarr.Core.Storage;
 using allstarr.Core.Settings;
 
@@ -301,6 +302,7 @@ public sealed class ProviderRouter(
             {
                 if (request.SourceTrackId.ProviderId == "allstarr")
                 {
+                    using var matchTiming = PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Match);
                     var target = Guid.TryParse(request.SourceTrackId.Value, out var recordingId)
                         ? await identities.ResolveTargetAsync(context, recordingId,
                             new ProviderTrackIdentityTarget(provider.Id, ProviderResourceKind.Track, state.TrackCatalog),
@@ -322,6 +324,7 @@ public sealed class ProviderRouter(
                 }
                 else
                 {
+                    using var matchTiming = PlaybackStartTimings.Current?.Measure(PlaybackStartPhase.Match);
                     sourceContext ??= await CreateSourceContextAsync(request);
                     if (sourceContext == null)
                     {

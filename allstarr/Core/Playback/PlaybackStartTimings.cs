@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 namespace allstarr.Core.Playback;
 
 [JsonConverter(typeof(JsonStringEnumConverter<PlaybackStartPhase>))]
-public enum PlaybackStartPhase { Route, Account, Lease, Source, Verify, Retry, Segments, Process, Headers, FirstByte, Preparation }
+public enum PlaybackStartPhase { Route, Account, Lease, Source, Verify, Retry, Segments, Process, Headers, FirstByte, Preparation, Kept, Match }
 
 public sealed record PlaybackStartPhaseTiming(PlaybackStartPhase Phase, string? Provider, double StartedMs, double ElapsedMs);
 public sealed record PlaybackStartSample(Guid Id, DateTimeOffset StartedAt, string Outcome, string? Provider,
