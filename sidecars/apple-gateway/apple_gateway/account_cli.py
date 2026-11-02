@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import importlib
 import io
 import json
+import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -17,6 +20,9 @@ from .security import diagnostic_tail
 
 ACCOUNT_MISMATCH_EXIT = 78
 ACCOUNT_UNAVAILABLE_EXIT = 79
+# Apple names each lossless stream by sample rate and bit depth, e.g. audio-alac-stereo-96000-24.
+ALAC_STREAM = re.compile(r"audio-alac-stereo-(\d+)-(\d+)")
+STREAM_NAME = re.compile(r"audio-[A-Za-z0-9-]{1,48}")
 
 
 class AccountFailure(RuntimeError):
@@ -36,18 +42,52 @@ def _account_id(api: Any) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
 
 
-def account_api_type(cookie_path: Path, failures: list[str]) -> type[AppleMusicApi]:
+def cached_web_token(path: Path) -> str | None:
+    """Apple's web player token is public and lasts for months; reuse it until an hour before it expires."""
+    try:
+        token = path.read_text().strip()
+        claims = token.split(".")[1]
+        expires = json.loads(base64.urlsafe_b64decode(claims + "=" * (-len(claims) % 4))).get("exp")
+        return token if type(expires) in (int, float) and expires > time.time() + 3600 else None
+    except (OSError, ValueError, IndexError, AttributeError):
+        return None
+
+
+def save_web_token(path: Path, token: str) -> None:
+    partial = path.with_name(f"{path.name}.{os.getpid()}.partial")
+    with contextlib.suppress(OSError):
+        partial.write_text(token)
+        os.chmod(partial, 0o600)
+        partial.replace(path)
+    with contextlib.suppress(OSError):
+        partial.unlink(missing_ok=True)
+
+
+def account_api_type(cookie_path: Path, failures: list[str], token_path: Path | None = None) -> type[AppleMusicApi]:
+    async def selected_api(*args, **kwargs):
+        create = AppleMusicApi.create_from_netscape_cookies
+        if token_path is None or "token" in kwargs:
+            return await create(cookies_path=str(cookie_path), *args, **kwargs)
+        # Without a token GAMDL reads Apple's whole web player script for one, on every song.
+        if cached := cached_web_token(token_path):
+            with contextlib.suppress(Exception):
+                return await create(cookies_path=str(cookie_path), *args, token=cached, **kwargs)
+        token = await AppleMusicApi.get_token()
+        save_web_token(token_path, token)
+        return await create(cookies_path=str(cookie_path), *args, token=token, **kwargs)
+
     class AccountAppleMusicApi(AppleMusicApi):
         @classmethod
         async def create_from_wrapper(cls, wrapper_api, *args, **kwargs):
-            selected = None
-            comparison = None
+            # The selected account and the wrapper's account are looked up together; neither waits on the other.
+            tasks = [
+                asyncio.ensure_future(selected_api(*args, **kwargs)),
+                asyncio.ensure_future(AppleMusicApi.create_from_wrapper(wrapper_api, *args, **kwargs)),
+            ]
             accepted = False
             try:
-                selected = await AppleMusicApi.create_from_netscape_cookies(
-                    cookies_path=str(cookie_path), *args, **kwargs
-                )
-                comparison = await AppleMusicApi.create_from_wrapper(wrapper_api, *args, **kwargs)
+                await asyncio.wait(tasks)
+                selected, comparison = tasks[0].result(), tasks[1].result()
                 selected_id = _account_id(selected)
                 wrapper_id = _account_id(comparison)
                 if selected_id is None or wrapper_id is None or selected_id != wrapper_id:
@@ -61,12 +101,14 @@ def account_api_type(cookie_path: Path, failures: list[str]) -> type[AppleMusicA
                 failures.append(code)
                 raise AccountFailure(code) from None
             finally:
-                if comparison is not None:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                for index, task in enumerate(tasks):
+                    if task.cancelled() or task.exception() is not None or index == 0 and accepted:
+                        continue
                     with contextlib.suppress(Exception):
-                        await comparison.client.aclose()
-                if selected is not None and not accepted:
-                    with contextlib.suppress(Exception):
-                        await selected.client.aclose()
+                        await task.result().client.aclose()
 
     return AccountAppleMusicApi
 
@@ -87,11 +129,32 @@ class _DiagnosticBuffer(io.TextIOBase):
 
 
 @contextlib.contextmanager
-def song_preparation(cli, started: float | None = None):
+def song_preparation(cli, started: float | None = None, ceiling: tuple[int, int] | None = None,
+        stream: dict | None = None):
     from gamdl.interface.enums import CoverFormat
     started = time.monotonic() if started is None else started
     phases = []
     originals = []
+    select = vars(cli.AppleMusicSongInterface).get("_get_playlist_from_codec_enhanced")
+    if select is not None and stream is not None:
+        # GAMDL takes the largest lossless stream Apple offers. Within a quality limit the largest stream that fits is
+        # enough, and a smaller file downloads and decrypts sooner. With none that fits, conversion still applies it.
+        def choose(self, m3u8_data, codec):
+            chosen = select(self, m3u8_data, codec)
+            playlists = m3u8_data.get("playlists", [])
+            if getattr(codec, "value", None) == "alac" and ceiling is not None:
+                fitting = [playlist for playlist in playlists
+                    if (match := ALAC_STREAM.fullmatch(str(playlist.get("stream_info", {}).get("audio") or "")))
+                    and int(match.group(2)) <= ceiling[0] and int(match.group(1)) <= ceiling[1]]
+                if fitting:
+                    chosen = max(fitting, key=lambda playlist: playlist["stream_info"].get("average_bandwidth") or 0)
+            names = {playlist.get("stream_info", {}).get("audio") for playlist in playlists}
+            stream["offered"] = sorted(name for name in names if isinstance(name, str) and STREAM_NAME.fullmatch(name))[:16]
+            stream["chosen"] = chosen.get("stream_info", {}).get("audio") if chosen else None
+            return chosen
+
+        originals.append((cli.AppleMusicSongInterface, "_get_playlist_from_codec_enhanced", select))
+        cli.AppleMusicSongInterface._get_playlist_from_codec_enhanced = choose
 
     def measure(target, name, phase):
         original = vars(target)[name]
@@ -159,10 +222,27 @@ def song_preparation(cli, started: float | None = None):
             setattr(target, name, original)
 
 
+def _take_option(argv: list[str], name: str) -> str | None:
+    if name not in argv:
+        return None
+    index = argv.index(name)
+    value = argv[index + 1]
+    del argv[index:index + 2]
+    return value
+
+
 def run(argv: list[str]) -> int:
     started = time.monotonic()
     failures: list[str] = []
     try:
+        argv = list(argv)
+        # Gateway options are read here and never reach GAMDL.
+        limit = _take_option(argv, "--allstarr-alac-ceiling")
+        ceiling = None if limit is None else tuple(int(part) for part in limit.split("-", 1))
+        if ceiling is not None and len(ceiling) != 2:
+            raise ValueError()
+        token_option = _take_option(argv, "--allstarr-web-token")
+        token_path = None if token_option is None else Path(token_option)
         if argv.count("--cookies-path") != 1 or "--use-wrapper" not in argv or "--no-config-file" not in argv:
             raise ValueError()
         cookie_path = Path(argv[argv.index("--cookies-path") + 1])
@@ -176,12 +256,13 @@ def run(argv: list[str]) -> int:
     original_writer = cli.CustomOutputWriter
     # This replacement happens only in the short-lived command process, never
     # when this module is imported by the ASGI gateway.
-    cli.AppleMusicApi = account_api_type(cookie_path, failures)
+    cli.AppleMusicApi = account_api_type(cookie_path, failures, token_path)
     diagnostics = _DiagnosticBuffer()
     phases = []
+    stream: dict = {}
     result = 0
     try:
-        with song_preparation(cli, started) as phases, \
+        with song_preparation(cli, started, ceiling, stream) as phases, \
                 contextlib.redirect_stdout(diagnostics), contextlib.redirect_stderr(diagnostics):
             # Supply the bounded stream to the writer's captured stdout as well.
             cli.CustomOutputWriter = lambda: original_writer(streams=[diagnostics])
@@ -194,8 +275,10 @@ def run(argv: list[str]) -> int:
     if failures:
         return ACCOUNT_MISMATCH_EXIT if "account_mismatch" in failures else ACCOUNT_UNAVAILABLE_EXIT
     if phases:
-        sys.stdout.write(json.dumps({"elapsed_ms": round((time.monotonic() - started) * 1000, 3),
-            "phases": phases}) + "\n")
+        report = {"elapsed_ms": round((time.monotonic() - started) * 1000, 3), "phases": phases}
+        if stream:
+            report["stream"] = stream
+        sys.stdout.write(json.dumps(report) + "\n")
     token = next((line.split("\t")[-1] for line in cookie_path.read_text().splitlines()
         if "\tmedia-user-token\t" in line), "")
     tail = diagnostic_tail(diagnostics.tail(), token)

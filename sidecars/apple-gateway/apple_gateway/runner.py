@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import os
+import re
 import signal
 import sys
 import tempfile
@@ -43,6 +44,13 @@ def _log_preparation(stdout: str, quality: str, elapsed_ms: float) -> None:
             phases.append({key: phase[key] for key in ("phase", "started_ms", "elapsed_ms")})
     logger.info("Song preparation quality=%s wait_process_ms=%.3f entry_ms=%s phases=%s",
         quality, elapsed_ms, payload["elapsed_ms"], json.dumps(phases))
+    stream = payload.get("stream") if isinstance(payload.get("stream"), dict) else {}
+    name = re.compile(r"audio-[A-Za-z0-9-]{1,48}")
+    offered = [item for item in stream.get("offered", []) if isinstance(item, str) and name.fullmatch(item)][:16] \
+        if isinstance(stream.get("offered"), list) else []
+    chosen = stream.get("chosen") if isinstance(stream.get("chosen"), str) and name.fullmatch(stream["chosen"]) else None
+    if chosen or offered:
+        logger.info("Song stream chosen=%s offered=%s", chosen, ",".join(offered))
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,9 +123,11 @@ class BoundedProcessRunner:
         return retained.decode("utf-8", errors="replace")
 
     async def download(
-        self, url: str, quality: str, output: Path, temporary: Path, *, media_user_token: str
+        self, url: str, quality: str, output: Path, temporary: Path, *, media_user_token: str,
+        ceiling: str | None = None,
     ) -> list[Path]:
-        return await self._download(url, quality, output, temporary, media_user_token, lyrics_only=False)
+        return await self._download(url, quality, output, temporary, media_user_token, lyrics_only=False,
+            ceiling=ceiling)
 
     async def download_lyrics(
         self, url: str, output: Path, temporary: Path, *, media_user_token: str
@@ -132,6 +142,7 @@ class BoundedProcessRunner:
         temporary: Path,
         media_user_token: str,
         lyrics_only: bool,
+        ceiling: str | None = None,
     ) -> list[Path]:
         # Revalidate before serializing the value into a Netscape cookie line.
         if not valid_media_token(media_user_token):
@@ -154,7 +165,10 @@ class BoundedProcessRunner:
             "--song-codec-priority", quality,
             "--artist-auto-select", "all-albums",
             "--cookies-path", str(cookie_path),
+            "--allstarr-web-token", str(self._settings.data_root / "web-token"),
         ]
+        if ceiling:
+            argv += ["--allstarr-alac-ceiling", ceiling]
         if lyrics_only:
             argv.append("--synced-lyrics-only")
         argv.append(url)

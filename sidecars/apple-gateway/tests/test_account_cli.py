@@ -15,7 +15,9 @@ from apple_gateway.account_cli import (
     AccountFailure,
     AppleMusicApi,
     account_api_type,
+    cached_web_token,
     run,
+    song_preparation,
 )
 
 
@@ -234,3 +236,108 @@ def test_cli_emits_bounded_numeric_phases_and_restores_methods(monkeypatch, tmp_
     assert "private" not in output.out + output.err
     assert cli.AppleMusicSongDownloader.download is original_download
     assert cli.AppleMusicBaseInterface.get_cover_bytes is get_cover_bytes
+
+
+def web_token(expires_in: float) -> str:
+    import base64
+    import time
+    claims = base64.urlsafe_b64encode(json.dumps({"exp": time.time() + expires_in}).encode()).decode().rstrip("=")
+    return f"eyJhbGciOiJFUzI1NiJ9.{claims}.signature"
+
+
+def test_web_token_is_reused_until_an_hour_before_it_expires(tmp_path):
+    path = tmp_path / "web-token"
+    assert cached_web_token(path) is None
+    fresh = web_token(86400)
+    path.write_text(fresh)
+    assert cached_web_token(path) == fresh
+    path.write_text(web_token(600))
+    assert cached_web_token(path) is None
+    path.write_text("not-a-token")
+    assert cached_web_token(path) is None
+
+
+@pytest.mark.asyncio
+async def test_account_factory_uses_the_saved_web_token_and_looks_both_accounts_up_together(monkeypatch, tmp_path):
+    selected = api("same-fixture-account")
+    comparison = api("same-fixture-account")
+    both_started = asyncio.Event()
+    started = []
+
+    calls = []
+
+    async def selected_factory(*args, **kwargs):
+        calls.append(kwargs)
+        started.append("selected")
+        await asyncio.wait_for(both_started.wait(), 1)
+        return selected
+
+    async def comparison_factory(*args, **kwargs):
+        started.append("comparison")
+        both_started.set()
+        return comparison
+
+    monkeypatch.setattr(AppleMusicApi, "create_from_netscape_cookies", selected_factory)
+    monkeypatch.setattr(AppleMusicApi, "create_from_wrapper", comparison_factory)
+    monkeypatch.setattr(AppleMusicApi, "get_token", AsyncMock(side_effect=AssertionError("token was saved")))
+    token = web_token(86400)
+    (tmp_path / "web-token").write_text(token)
+
+    actual = await account_api_type(tmp_path / "account.cookies", [], tmp_path / "web-token").create_from_wrapper(object())
+
+    assert actual is selected
+    assert sorted(started) == ["comparison", "selected"]
+    assert calls[0]["token"] == token
+    comparison.client.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_account_factory_fetches_and_saves_a_web_token_when_none_is_saved(monkeypatch, tmp_path):
+    selected = api("same-fixture-account")
+    selected_factory = AsyncMock(return_value=selected)
+    monkeypatch.setattr(AppleMusicApi, "create_from_netscape_cookies", selected_factory)
+    monkeypatch.setattr(AppleMusicApi, "create_from_wrapper", AsyncMock(return_value=api("same-fixture-account")))
+    token = web_token(86400)
+    monkeypatch.setattr(AppleMusicApi, "get_token", AsyncMock(return_value=token))
+
+    await account_api_type(tmp_path / "account.cookies", [], tmp_path / "web-token").create_from_wrapper(object())
+
+    assert selected_factory.await_args.kwargs["token"] == token
+    assert (tmp_path / "web-token").read_text() == token
+
+
+def test_stream_choice_takes_the_largest_lossless_stream_within_the_limit():
+    cli = importlib.import_module("gamdl.cli.cli")
+    from gamdl.interface.enums import SongCodec
+
+    def playlist(name, bandwidth):
+        return {"stream_info": {"audio": name, "average_bandwidth": bandwidth}}
+
+    manifest = {"playlists": [
+        playlist("audio-stereo-256", 256000), playlist("audio-alac-stereo-44100-16", 900000),
+        playlist("audio-alac-stereo-48000-24", 1400000), playlist("audio-alac-stereo-96000-24", 2800000),
+        playlist("audio-alac-stereo-192000-24", 5600000),
+    ]}
+    original = cli.AppleMusicSongInterface._get_playlist_from_codec_enhanced
+    for ceiling, expected in [((16, 44100), "audio-alac-stereo-44100-16"), ((24, 96000), "audio-alac-stereo-96000-24"),
+            (None, "audio-alac-stereo-192000-24"), ((16, 22050), "audio-alac-stereo-192000-24")]:
+        stream = {}
+        with song_preparation(cli, ceiling=ceiling, stream=stream):
+            chosen = cli.AppleMusicSongInterface._get_playlist_from_codec_enhanced(None, manifest, SongCodec.ALAC)
+        assert chosen["stream_info"]["audio"] == expected
+        assert stream["chosen"] == expected
+        assert "audio-alac-stereo-44100-16" in stream["offered"]
+    assert cli.AppleMusicSongInterface._get_playlist_from_codec_enhanced is original
+
+
+def test_gateway_options_never_reach_gamdl(monkeypatch, tmp_path):
+    cli = importlib.import_module("gamdl.cli.cli")
+    seen = []
+    monkeypatch.setattr(cli.main, "main", lambda args, standalone_mode: seen.append(list(args)))
+    arguments = argv(tmp_path)
+    arguments[-1:-1] = ["--allstarr-alac-ceiling", "16-44100", "--allstarr-web-token", str(tmp_path / "web-token")]
+
+    assert run(arguments) == 0
+    assert not any(item.startswith("--allstarr-") for item in seen[0])
+    assert seen[0][-1] == "https://music.apple.com/us/song/101"
+

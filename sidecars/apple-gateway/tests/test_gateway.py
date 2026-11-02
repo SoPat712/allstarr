@@ -61,7 +61,7 @@ class FakeRunner:
         self.transcodes: list[str] = []
         self.tokens: list[str] = []
 
-    async def download(self, url: str, quality: str, output: Path, temporary: Path, *, media_user_token: str) -> list[Path]:
+    async def download(self, url: str, quality: str, output: Path, temporary: Path, *, media_user_token: str, **_) -> list[Path]:
         self.calls.append((url, quality))
         self.tokens.append(media_user_token)
         output.mkdir(parents=True, exist_ok=False)
@@ -72,7 +72,7 @@ class FakeRunner:
         lyrics.write_text("[00:01.00]Fixture lyrics\n", encoding="utf-8")
         return [artifact, lyrics]
 
-    async def download_lyrics(self, url: str, output: Path, temporary: Path, *, media_user_token: str) -> list[Path]:
+    async def download_lyrics(self, url: str, output: Path, temporary: Path, *, media_user_token: str, **_) -> list[Path]:
         self.calls.append((url, "lyrics"))
         self.tokens.append(media_user_token)
         output.mkdir(parents=True, exist_ok=False)
@@ -243,7 +243,7 @@ async def test_song_stream_sends_prelude_then_waits_for_preparation_and_sends_ac
             self.release = asyncio.Event()
 
         async def download(
-            self, url: str, quality: str, output: Path, temporary: Path, *, media_user_token: str
+            self, url: str, quality: str, output: Path, temporary: Path, *, media_user_token: str, **_
         ) -> list[Path]:
             self.started.set()
             await self.release.wait()
@@ -269,7 +269,7 @@ async def test_song_stream_sends_prelude_then_waits_for_preparation_and_sends_ac
 
 def test_song_stream_falls_back_to_web_aac_when_lossless_is_unavailable(settings):
     class FallbackRunner(FakeRunner):
-        async def download(self, url: str, quality: str, output: Path, temporary: Path, *, media_user_token: str) -> list[Path]:
+        async def download(self, url: str, quality: str, output: Path, temporary: Path, *, media_user_token: str, **_) -> list[Path]:
             self.calls.append((url, quality))
             if quality == "alac":
                 raise ProcessFailure("artifact_missing")
@@ -303,7 +303,7 @@ def test_song_stream_reuses_prepared_source(settings):
 @pytest.mark.asyncio
 async def test_simultaneous_song_streams_share_preparation(settings):
     class BlockingRunner(FakeRunner):
-        async def download(self, url: str, quality: str, output: Path, temporary: Path, *, media_user_token: str) -> list[Path]:
+        async def download(self, url: str, quality: str, output: Path, temporary: Path, *, media_user_token: str, **_) -> list[Path]:
             await asyncio.sleep(0.01)
             return await super().download(url, quality, output, temporary, media_user_token=media_user_token)
 
@@ -559,7 +559,7 @@ def test_head_validates_account_without_preparing_artifacts(client, kind):
 @pytest.mark.asyncio
 async def test_simultaneous_lyrics_for_same_account_coalesce(settings):
     class BlockingRunner(FakeRunner):
-        async def download_lyrics(self, url, output, temporary, *, media_user_token):
+        async def download_lyrics(self, url, output, temporary, *, media_user_token, **_):
             await asyncio.sleep(0.01)
             return await super().download_lyrics(url, output, temporary, media_user_token=media_user_token)
 
@@ -580,7 +580,7 @@ async def test_simultaneous_accounts_do_not_share_preparation(settings):
     both_entered = asyncio.Event()
 
     class BlockingRunner(FakeRunner):
-        async def download(self, url, quality, output, temporary, *, media_user_token):
+        async def download(self, url, quality, output, temporary, *, media_user_token, **_):
             nonlocal entered
             entered += 1
             if entered == 2:
@@ -607,7 +607,7 @@ async def test_last_canceled_stream_waiter_cancels_account_preparation(settings)
     canceled = asyncio.Event()
 
     class BlockingRunner(FakeRunner):
-        async def download(self, url, quality, output, temporary, *, media_user_token):
+        async def download(self, url, quality, output, temporary, *, media_user_token, **_):
             started.set()
             try:
                 await asyncio.Future()

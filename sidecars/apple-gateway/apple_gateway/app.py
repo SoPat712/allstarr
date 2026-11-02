@@ -57,7 +57,7 @@ def _authenticated(payload: Any) -> bool:
     )
 
 
-# Apple serves one lossless stream per song, often 24-bit; the requested tier is a ceiling.
+# The requested tier is a ceiling: GAMDL picks the largest stream within it, and conversion covers songs without one.
 AUDIO_CEILINGS = {"alac-16-44": AudioCeiling(16, 44100), "alac-24-96": AudioCeiling(24, 96000)}
 
 
@@ -226,8 +226,10 @@ def create_app(
         used_quality = quality
         try:
             try:
+                limit = AUDIO_CEILINGS.get(quality.lower()) if _codec(quality) == "alac" else None
                 artifacts = await process_runner.download(
-                    url, _codec(quality), root / "output", root / "temporary", media_user_token=account.token
+                    url, _codec(quality), root / "output", root / "temporary", media_user_token=account.token,
+                    **({"ceiling": f"{limit.bit_depth}-{limit.sample_rate}"} if limit else {}),
                 )
             except ProcessFailure as exc:
                 if fallback_quality is None or exc.code not in {"artifact_missing", "audio_artifact_missing", "gamdl_failed"}:
