@@ -19,11 +19,8 @@ public sealed class DurationProjectionContractTests
             PayloadJson = """{"Title":"Track","Artists":["Artist"],"DurationMilliseconds":196456}""",
             RetrievedAt = retrievedAt
         };
-        var method = typeof(TrackMatchesController).GetMethod(
-            "Row",
-            BindingFlags.Static | BindingFlags.NonPublic)!;
         var emptyLibrary = new Dictionary<Guid, LibraryTrackRecord>();
-        var source = Value(method.Invoke(null,
+        var source = Value(Row(
         [
             snapshot,
             null,
@@ -55,7 +52,7 @@ public sealed class DurationProjectionContractTests
             State = TrackMatchState.Accepted,
             LibraryTrackId = localId
         };
-        var target = Value(method.Invoke(null,
+        var target = Value(Row(
         [
             snapshot,
             decision,
@@ -91,9 +88,7 @@ public sealed class DurationProjectionContractTests
     public void MappingRow_AllowsMissingOptionalCandidateEvidence()
     {
         var candidateId = Guid.CreateVersion7();
-        var row = typeof(TrackMatchesController).GetMethod(
-            "Row",
-            BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null,
+        var row = Row(
         [
             new ExternalMetadataSnapshotRecord
             {
@@ -120,9 +115,18 @@ public sealed class DurationProjectionContractTests
         Assert.Single(Value(row).GetProperty("candidates").EnumerateArray());
     }
 
+    // The row builder takes the page's library and source order prepared once.
+    private static object Row(object?[] arguments)
+    {
+        var controller = typeof(TrackMatchesController);
+        arguments[4] = Activator.CreateInstance(controller.GetNestedType("RowLibrary", BindingFlags.NonPublic)!, arguments[4]);
+        arguments = [.. arguments[..7], ((IEnumerable<string>)arguments[6]!).ToHashSet(StringComparer.Ordinal), .. arguments[7..]];
+        return controller.GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, arguments)!;
+    }
+
     private static JsonElement Value(object row)
     {
-        var value = row.GetType().GetProperty("Value")!.GetValue(row);
+        var value = ((Func<object>)row.GetType().GetProperty("Value")!.GetValue(row)!)();
         return JsonSerializer.SerializeToElement(value, new JsonSerializerOptions
         {
             PropertyNamingPolicy = null

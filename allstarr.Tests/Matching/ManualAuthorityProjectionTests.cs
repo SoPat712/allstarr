@@ -65,10 +65,13 @@ public sealed class ManualAuthorityProjectionTests
     private static JsonElement Row(ExternalMetadataSnapshotRecord snapshot, ManualTrackOverrideLayers layers,
         Guid viewer, bool administrator)
     {
-        var row = typeof(TrackMatchesController).GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!
-            .Invoke(null, [snapshot, null, layers, null, new Dictionary<Guid, LibraryTrackRecord>(),
-                new Dictionary<Guid, ProviderTrackIdentityRecord[]>(), new[] { "deezer" }, viewer, administrator, null, null])!;
-        return JsonSerializer.SerializeToElement(row.GetType().GetProperty("Value")!.GetValue(row),
+        var controller = typeof(TrackMatchesController);
+        var library = Activator.CreateInstance(controller.GetNestedType("RowLibrary", BindingFlags.NonPublic)!,
+            new Dictionary<Guid, LibraryTrackRecord>());
+        var row = controller.GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, [snapshot, null, layers, null, library, new Dictionary<Guid, ProviderTrackIdentityRecord[]>(),
+                new[] { "deezer" }, new HashSet<string>(StringComparer.Ordinal) { "deezer" }, viewer, administrator, null, null])!;
+        return JsonSerializer.SerializeToElement(((Func<object>)row.GetType().GetProperty("Value")!.GetValue(row)!)(),
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }
 }

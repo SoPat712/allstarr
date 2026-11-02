@@ -255,16 +255,18 @@ public sealed class ProviderTargetProjectionTests
     private static JsonElement Row(ProviderTrackIdentityRecord source, TrackMatchRecord decision,
         ProviderTrackIdentityRecord[] identities)
     {
-        var row = typeof(TrackMatchesController).GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!
+        var controller = typeof(TrackMatchesController);
+        var library = Activator.CreateInstance(controller.GetNestedType("RowLibrary", BindingFlags.NonPublic)!,
+            new Dictionary<Guid, LibraryTrackRecord>());
+        var row = controller.GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!
             .Invoke(null, [new ExternalMetadataSnapshotRecord
             {
                 Id = Guid.NewGuid(), ProviderId = "spotify", ProviderTrackIdentityId = source.Id,
                 ExternalIdHash = source.ExternalIdHash, PayloadJson = "{}"
-            }, decision, new ManualTrackOverrideLayers(null, null), source,
-                new Dictionary<Guid, LibraryTrackRecord>(),
+            }, decision, new ManualTrackOverrideLayers(null, null), source, library,
                 new Dictionary<Guid, ProviderTrackIdentityRecord[]> { [source.CanonicalRecordingId] = identities },
-                new[] { "apple-musickit" }, Guid.NewGuid(), true, null, null])!;
-        return JsonSerializer.SerializeToElement(row.GetType().GetProperty("Value")!.GetValue(row),
+                new[] { "apple-musickit" }, new HashSet<string>(StringComparer.Ordinal) { "apple-musickit" }, Guid.NewGuid(), true, null, null])!;
+        return JsonSerializer.SerializeToElement(((Func<object>)row.GetType().GetProperty("Value")!.GetValue(row)!)(),
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }
 
