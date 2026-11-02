@@ -102,11 +102,14 @@ __pycache__/
 /.apple-provider/
 /apple-downloads/
 
-# Keep only the exact versioned OpenAPI artifact. Local feature notes, raw captures, cloned repositories,
+# Keep only the exact versioned OpenAPI artifacts. Local feature notes, raw captures, cloned repositories,
 # ad-hoc scripts, and credentials under apis/ are intentionally ignored.
 apis/*
 !apis/specifications/
 apis/specifications/*
+!apis/specifications/allstarr/
+apis/specifications/allstarr/*
+!apis/specifications/allstarr/client-v1.json
 !apis/specifications/jellyfin/
 apis/specifications/jellyfin/*
 !apis/specifications/jellyfin/openapi-12.0.0.json

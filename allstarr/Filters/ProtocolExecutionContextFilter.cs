@@ -1,4 +1,5 @@
 using allstarr.Core.Protocols;
+using allstarr.Core.ClientApi;
 using allstarr.Core.Settings;
 using allstarr.Services.Common;
 using allstarr.Services.Subsonic;
@@ -16,15 +17,18 @@ public sealed class ProtocolExecutionContextFilter : IAsyncActionFilter
     private readonly ProtocolExecutionContextFactory _factory;
     private readonly ILogger<ProtocolExecutionContextFilter> _logger;
     private readonly IEffectiveProviderPolicyResolver _policies;
+    private readonly ClientApiAvailability? _clientApi;
 
     public ProtocolExecutionContextFilter(
         ProtocolExecutionContextFactory factory,
         ILogger<ProtocolExecutionContextFilter> logger,
-        IEffectiveProviderPolicyResolver policies)
+        IEffectiveProviderPolicyResolver policies,
+        ClientApiAvailability? clientApi = null)
     {
         _factory = factory;
         _logger = logger;
         _policies = policies;
+        _clientApi = clientApi;
     }
 
     public async Task OnActionExecutionAsync(
@@ -80,6 +84,20 @@ public sealed class ProtocolExecutionContextFilter : IAsyncActionFilter
             {
                 Policy = await _policies.ResolveForUserAsync(principal.UserId,
                     context.HttpContext.RequestAborted)
+            };
+        }
+        if (context.HttpContext.Connection.LocalPort != 5275 &&
+            context.HttpContext.Request.Headers["X-Allstarr-Title-Markers"].ToString() == "none" &&
+            context.HttpContext.GetProtocolExecutionContext() is { } requestExecution &&
+            _clientApi != null && await _clientApi.IsEnabledAsync(context.HttpContext))
+        {
+            var policy = requestExecution.Policy ?? await _policies.ResolveAsync(context.HttpContext.RequestAborted);
+            items[ProtocolExecutionContextFactory.HttpContextItemKey] = requestExecution with
+            {
+                Policy = policy with
+                {
+                    Preferences = policy.Preferences with { ShowExternalLabel = false, ShowExplicitLabel = false }
+                }
             };
         }
         await next();

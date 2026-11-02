@@ -29,6 +29,30 @@ namespace allstarr.Tests;
 
 public class ConfigControllerAuthorizationTests : IAsyncLifetime
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientApiOptInRequiresAnAdministratorAndDoesNotRequireRestart(bool administrator)
+    {
+        var controller = CreateController(CreateHttpContextWithSession(administrator));
+        var settings = controller.HttpContext.RequestServices.GetRequiredService<IDurableRuntimeSettings>();
+        Assert.False(Assert.IsType<bool>((await settings.GetAsync("ClientApi:Enabled")).Value));
+        var result = await controller.UpdateConfig(new() { Updates = new() { ["CLIENT_API_ENABLED"] = "true" } });
+        if (!administrator)
+        {
+            AssertForbidden(result);
+            Assert.False(Assert.IsType<bool>((await settings.GetAsync("ClientApi:Enabled")).Value));
+            return;
+        }
+        var updated = Assert.IsType<OkObjectResult>(result);
+        using var response = JsonDocument.Parse(JsonSerializer.Serialize(updated.Value));
+        Assert.False(response.RootElement.GetProperty("requiresRestart").GetBoolean());
+        Assert.True(Assert.IsType<bool>((await settings.GetAsync("ClientApi:Enabled")).Value));
+        var config = Assert.IsType<OkObjectResult>(await controller.GetConfig());
+        using var body = JsonDocument.Parse(JsonSerializer.Serialize(config.Value));
+        Assert.True(body.RootElement.GetProperty("clientApi").GetProperty("enabled").GetBoolean());
+    }
+
     [Fact]
     public async Task PublicStreamingProbeUsesTheSameMediaMeasurement()
     {

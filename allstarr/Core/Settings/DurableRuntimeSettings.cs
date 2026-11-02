@@ -128,6 +128,8 @@ public static class RuntimeSettingCatalog
             items.Add(new(key, RuntimeSettingValueType.String, key,
                 Choices: choices.ToHashSet(Comparer), AllowEmpty: allowEmpty));
         items.AddRange(OperatorSettingPolicy.Definitions);
+        items.Add(new(allstarr.Core.ClientApi.ClientApiAvailability.SettingKey, RuntimeSettingValueType.Boolean,
+            allstarr.Core.ClientApi.ClientApiAvailability.SettingKey, DefaultValue: "false"));
         items.Add(new("Mixes:PublishToApps", RuntimeSettingValueType.Boolean, "Mixes:PublishToApps", DefaultValue: "true"));
         items.Add(new("Promotion:Roots", RuntimeSettingValueType.String, "Promotion:Roots", MaximumLength: 4000, DefaultValue: "[]"));
         items.Add(new("Storage:BackupEnabled", RuntimeSettingValueType.Boolean, "Storage:BackupEnabled", DefaultValue: "true"));

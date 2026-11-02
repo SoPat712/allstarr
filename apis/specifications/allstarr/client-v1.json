@@ -1,0 +1,177 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Allstarr Client API",
+    "version": "1"
+  },
+  "paths": {
+    "/allstarr/v1/capabilities": {
+      "get": {
+        "tags": [
+          "Capabilities"
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientCapabilities"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ClientApiError": {
+        "required": [
+          "code",
+          "error"
+        ],
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "ClientCapabilities": {
+        "required": [
+          "serverVersion",
+          "apiVersion",
+          "features"
+        ],
+        "type": "object",
+        "properties": {
+          "serverVersion": {
+            "type": "string"
+          },
+          "apiVersion": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          },
+          "features": {
+            "$ref": "#/components/schemas/ClientFeatures"
+          }
+        }
+      },
+      "ClientFeatures": {
+        "type": "object",
+        "properties": {
+          "titleMarkers": {
+            "type": "boolean"
+          },
+          "itemDetails": {
+            "type": "boolean"
+          },
+          "playback": {
+            "type": "boolean"
+          },
+          "lyricsRich": {
+            "type": "boolean"
+          },
+          "lyricsSources": {
+            "type": "boolean"
+          },
+          "fixesMatch": {
+            "type": "boolean"
+          },
+          "reports": {
+            "type": "boolean"
+          },
+          "mixes": {
+            "type": "boolean"
+          },
+          "releases": {
+            "type": "boolean"
+          },
+          "follow": {
+            "type": "boolean"
+          },
+          "lyricsSearch": {
+            "type": "boolean"
+          },
+          "events": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Capabilities"
+    }
+  ]
+}

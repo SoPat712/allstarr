@@ -45,8 +45,12 @@ using allstarr.Core.Downloads;
 using allstarr.Core.Playback;
 using allstarr.Core.Settings;
 using allstarr.Core.Configuration;
+using allstarr.Core.ClientApi;
+using allstarr.Controllers.ClientApi;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Http;
+using Microsoft.AspNetCore.OpenApi;
+using Microsoft.OpenApi;
 using System.Net;
 using System.IO;
 using System.Reflection;
@@ -361,6 +365,17 @@ builder.Services.AddHttpClient(JellyfinProxyService.HttpClientName)
     });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddOpenApi("v1", options =>
+{
+    options.ShouldInclude = description => description.GroupName == ClientApiContract.GroupName;
+    options.AddDocumentTransformer((document, context, cancellationToken) =>
+    {
+        document.Info.Title = "Allstarr Client API";
+        document.Info.Version = "1";
+        document.Servers = [];
+        return Task.CompletedTask;
+    });
+});
 builder.Services.AddHttpContextAccessor();
 var dataProtectionKeysPath = Path.Combine(builder.Configuration["Storage:DataDirectory"] ?? "/app/data", "data-protection");
 var dataProtectionKeysDirectory = new DirectoryInfo(dataProtectionKeysPath);
@@ -373,6 +388,10 @@ builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddProblemDetails();
 
 builder.Services.AddScoped<allstarr.Filters.AdminPortFilter>();
+builder.Services.AddScoped<MusicPortFilter>();
+builder.Services.AddScoped<ClientApiListenerFilter>();
+builder.Services.AddScoped<ClientApiResultFilter>();
+builder.Services.AddSingleton<ClientApiAvailability>();
 
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminHelperService>();
 builder.Services.AddSingleton<allstarr.Services.Admin.IAdminAuthSessionStore, allstarr.Services.Admin.EfAdminAuthSessionStore>();
@@ -622,6 +641,7 @@ builder.Services.AddCors(options =>
         }
     });
 });
+builder.Services.AddSingleton<Microsoft.AspNetCore.Cors.Infrastructure.ICorsPolicyProvider, AllstarrCorsPolicyProvider>();
 
 var app = builder.Build();
 app.Services.GetRequiredService<ProviderTryMediaStore>();
@@ -633,6 +653,7 @@ app.UseMiddleware<AdminResponseHeadersMiddleware>();
 
 // Downstream policies must see only the forwarded identity accepted by the trust policy.
 app.UseForwardedHeaders();
+app.UseMiddleware<ClientApiMiddleware>();
 
 // Drop high-confidence scanner paths before they hit the proxy or request logging.
 app.UseMiddleware<BotProbeBlockMiddleware>();
@@ -666,6 +687,8 @@ if (builder.Configuration.GetValue<bool>("HttpsRedirection:Enabled"))
 // Keep admin assets and authentication on the admin listener.
 app.UseMiddleware<allstarr.Middleware.AdminNetworkAllowlistMiddleware>();
 app.UseMiddleware<allstarr.Middleware.AdminBasePathMiddleware>();
+// Recheck the namespace after the dashboard prefix has been normalized.
+app.UseMiddleware<ClientApiMiddleware>();
 // Select endpoints after stripping the admin prefix, before authentication.
 app.UseRouting();
 app.UseRateLimiter();
@@ -686,6 +709,17 @@ app.UseAuthorization();
 app.UseCors();
 
 app.MapControllers();
+if (backendType == BackendType.Jellyfin)
+{
+    app.MapGet("/allstarr/v1/openapi.json", async (
+        [FromKeyedServices("v1")] IOpenApiDocumentProvider documents, CancellationToken cancellationToken) =>
+    {
+        var document = await documents.GetOpenApiDocumentAsync(cancellationToken);
+        return Results.Content(await document.SerializeAsJsonAsync(OpenApiSpecVersion.OpenApi3_1, cancellationToken), "application/json");
+    }).AllowAnonymous().ExcludeFromDescription();
+}
+app.Map("/allstarr/{**rest}", (HttpContext context) => ClientApiError.WriteAsync(context, 404))
+    .WithOrder(99).ExcludeFromDescription();
 
 app.MapGet("/health/live", () => Results.Ok(new
 {
@@ -734,6 +768,8 @@ class BackendControllerFeatureProvider : Microsoft.AspNetCore.Mvc.Controllers.Co
         {
             return false;
         }
+        if (typeof(ClientApiControllerBase).IsAssignableFrom(typeInfo))
+            return _backendType == BackendType.Jellyfin;
 
         // Only protocol catch-alls are conditional; an allowlist would send
         // future controllers into the selected catch-all.

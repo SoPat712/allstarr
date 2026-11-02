@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Core.Playlists;
+using allstarr.Core.ClientApi;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 
@@ -14,11 +15,13 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
     public async Task InvokeAsync(
         HttpContext context,
         JellyfinProxyService proxyService,
-        IApplicationCache cache)
+        IApplicationCache cache,
+        ClientApiAvailability availability)
     {
         // The administration application is separately protected by its port, network,
         // and session middleware. This policy governs only the public Jellyfin proxy.
-        if (context.Connection.LocalPort == 5275 || IsInfrastructureRoute(context.Request.Path))
+        if (context.Connection.LocalPort == 5275 || IsInfrastructureRoute(context.Request.Path) ||
+            IsClientHeaderPreflight(context.Request) && await availability.IsEnabledAsync(context))
         {
             await next(context);
             return;
@@ -145,6 +148,13 @@ public sealed class JellyfinMusicEndpointPolicyMiddleware(
 
     private static bool IsInfrastructureRoute(PathString path) =>
         path.StartsWithSegments("/health");
+
+    private static bool IsClientHeaderPreflight(HttpRequest request) =>
+        HttpMethods.IsOptions(request.Method) && request.Headers.Origin.Count > 0 &&
+        request.Headers.AccessControlRequestMethod.Count > 0 &&
+        request.Headers.AccessControlRequestHeaders.ToString()
+            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+            .Any(header => header.StartsWith("X-Allstarr-", StringComparison.OrdinalIgnoreCase));
 
     private static IHeaderDictionary? ClientAuthHeaders(HttpRequest request) =>
         AuthHeaderHelper.HasAuthentication(request.Headers)

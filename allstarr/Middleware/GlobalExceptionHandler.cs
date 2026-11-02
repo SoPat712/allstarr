@@ -21,6 +21,13 @@ public class GlobalExceptionHandler : IExceptionHandler
         Exception exception,
         CancellationToken cancellationToken)
     {
+        if (httpContext.Request.Path.StartsWithSegments("/allstarr"))
+        {
+            _logger.LogError(exception, "Client request failed");
+            await allstarr.Core.ClientApi.ClientApiError.WriteAsync(httpContext, 503);
+            return true;
+        }
+
         if (exception is AdminBackendSessionUnavailableException &&
             httpContext.Connection.LocalPort == 5275 &&
             (httpContext.Request.Path.Value?.StartsWith("/api/admin", StringComparison.OrdinalIgnoreCase) == true))

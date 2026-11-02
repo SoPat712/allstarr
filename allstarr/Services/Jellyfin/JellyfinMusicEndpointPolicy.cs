@@ -66,6 +66,9 @@ public static class JellyfinMusicEndpointPolicy
         var path = Normalize(request.Path.Value);
         var method = request.Method;
 
+        if (MatchesPrefix(path, "allstarr"))
+            return Control("The client API owns this namespace.");
+
         if (path.Equals("web/configurationpage", StringComparison.OrdinalIgnoreCase) ||
             path.Equals("web/configurationpages", StringComparison.OrdinalIgnoreCase))
         {

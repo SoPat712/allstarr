@@ -151,6 +151,7 @@ public class ConfigController : ControllerBase
         return Ok(new
         {
             backendType,
+            clientApi = new { enabled = RuntimeBool(allstarr.Core.ClientApi.ClientApiAvailability.SettingKey, false) },
             providerAccounts = new
             {
                 listenersCanConnectOwnAccounts = RuntimeBool(ProviderAccountOptions.ListenerConnectionsKey,

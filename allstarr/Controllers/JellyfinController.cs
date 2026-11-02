@@ -1213,6 +1213,10 @@ public partial class JellyfinController : ControllerBase
     [NativeSignInFallback]
     public async Task<IActionResult> ProxyRequest(string path)
     {
+        if (path.Equals("allstarr", StringComparison.OrdinalIgnoreCase) ||
+            path.StartsWith("allstarr/", StringComparison.OrdinalIgnoreCase))
+            return NotFound(allstarr.Core.ClientApi.ClientApiError.ForStatus(404));
+
         // Admin controllers own this namespace; never forward it upstream.
         if (path.StartsWith("api/admin", StringComparison.OrdinalIgnoreCase))
         {

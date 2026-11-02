@@ -87,6 +87,7 @@ public static class LegacyEnvParser
             ["CORS_ALLOW_CREDENTIALS"] = "Cors:AllowCredentials",
             ["CORS__ALLOW_CREDENTIALS"] = "Cors:AllowCredentials",
             ["LISTENERS_CAN_CONNECT_OWN_ACCOUNTS"] = "ProviderAccounts:ListenersCanConnectOwnAccounts",
+            ["CLIENT_API_ENABLED"] = "ClientApi:Enabled",
             ["EXPLICIT_FILTER"] = "Library:ExplicitFilter",
             ["DOWNLOAD_MODE"] = "Library:DownloadMode",
             ["STORAGE_MODE"] = "Library:StorageMode",

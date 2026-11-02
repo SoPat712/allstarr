@@ -43,6 +43,26 @@ public sealed class AdminUiSourceSettingsTests
         Assert.True(field.Required);
         Assert.Equal("password", field.Type);
         Assert.Equal("needs_config", source.Status);
+        var clientApi = Assert.Single(schema.ConfigSections.SelectMany(item => item.Fields), item => item.Key == "CLIENT_API_ENABLED");
+        Assert.Equal("Client API for apps", clientApi.Label);
+        Assert.Equal("Lets apps signed in with a music account use Allstarr's extra features (song details, synced lyrics, mixes). Off unless you turn it on.", clientApi.HelpText);
+        Assert.Equal("clientApi.enabled", clientApi.ValuePath);
+        Assert.False(clientApi.RequiresRestart);
+        Assert.False(clientApi.ReadOnly);
+        Assert.Equal("durable", clientApi.Ownership);
+        var session = Assert.IsType<AdminAuthSession>(controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey]);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            SessionId = session.SessionId,
+            UserId = session.UserId,
+            UserName = session.UserName,
+            JellyfinAccessToken = session.JellyfinAccessToken,
+            IsAdministrator = false,
+            AllstarrUserId = session.AllstarrUserId,
+            ExpiresAtUtc = session.ExpiresAtUtc
+        };
+        var listenerSchema = Assert.IsType<AdminUiSchemaResponse>(Assert.IsType<OkObjectResult>(await controller.GetSchema()).Value);
+        Assert.Empty(listenerSchema.ConfigSections);
     }
 
     [Theory]

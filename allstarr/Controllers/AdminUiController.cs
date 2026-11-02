@@ -1804,6 +1804,8 @@ public class AdminUiController : ControllerBase
             .ToList()),
         Section("general", "Defaults for everyone",
         [
+            Field("CLIENT_API_ENABLED", "Client API for apps", "toggle", "clientApi.enabled",
+                helpText: "Lets apps signed in with a music account use Allstarr's extra features (song details, synced lyrics, mixes). Off unless you turn it on."),
             Field(
                 "AUDIO_QUALITY",
                 "Audio quality",
