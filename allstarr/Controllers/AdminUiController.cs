@@ -498,14 +498,15 @@ public class AdminUiController : ControllerBase
             .ToDictionary(group => group.Key, group => group.ToArray());
         var libraryTracks = matchActivity.LibraryTracks;
         activityTimings.Add(("matches", Stopwatch.GetTimestamp()));
-        var audits = await ActivityJobPresentation.HistoryAudits(context)
+        var auditsQuery = ActivityJobPresentation.HistoryAudits(context)
             .Where(item => item.Category != allstarr.Core.Playback.PlaybackStartTimingStore.Category)
             .Where(item => (everyone || item.ActorUserId == userId) &&
                 (!before.HasValue || item.CreatedAt < before.Value ||
                 (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
-            .Take(scanLimit)
-            .ToListAsync(cancellationToken);
+            .Take(scanLimit);
+        HttpContext.RequestServices.GetService<ILogger<AdminUiController>>()?.LogInformation("Activity audit query: {Sql}", auditsQuery.ToQueryString());
+        var audits = await auditsQuery.ToListAsync(cancellationToken);
         activityTimings.Add(("audits", Stopwatch.GetTimestamp()));
         var extensionLogs = await context.ExtensionLogs.AsNoTracking()
             .Where(item => everyone && (!before.HasValue || item.CreatedAt < before.Value ||
