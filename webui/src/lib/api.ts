@@ -2431,6 +2431,16 @@ export const audioMuse = {
   }),
 };
 
+function mixSeed(row: MatchTarget): MixSeed {
+  const id = row.backendItemId || (row.externalProvider && row.externalId ? `ext-${row.externalProvider}-song-${row.externalId}` : "");
+  return { id, title: row.title, artist: row.artist ?? "", artworkUrl: row.artworkUrl ?? null, kind: "song" };
+}
+// The first row for an id stays, so rows already on screen never move or change.
+function uniqueSeeds(rows: MixSeed[]) {
+  const seen = new Set<string>();
+  return rows.filter(row => row.id && !seen.has(row.id) && seen.add(row.id));
+}
+
 export const mixes = {
   list: () => json<MixCard[]>(`/api/admin/mixes?${new URLSearchParams({ timeZoneId: Intl.DateTimeFormat().resolvedOptions().timeZone })}`),
   get: (id: string) => json<MixDetail>(`/api/admin/mixes/${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(20_000) }),
@@ -2444,14 +2454,14 @@ export const mixes = {
   external: (source: string, kind: string) => json<MixCard & { initialJobId: string }>("/api/admin/mixes/external", intelligenceBody({ source, kind })),
   publishSetting: () => json<{ enabled: boolean }>("/api/admin/mixes/publish-setting"),
   setPublishSetting: (enabled: boolean) => json<unknown>("/api/admin/mixes/publish-setting", intelligenceBody({ enabled }, "PUT")),
-  seeds: async (query: string): Promise<MixSeed[]> => {
-    const results = await Promise.allSettled([matchReview.searchLocal(query, ""), matchReview.searchProviders(query, "")]);
+  // The library answers in a moment while services can take seconds, so library rows are handed to onLibrary first.
+  // The full list keeps those rows in place and adds service rows after them.
+  seeds: async (query: string, onLibrary?: (rows: MixSeed[]) => void): Promise<MixSeed[]> => {
+    const library = matchReview.searchLocal(query, "").then(result => { const rows = uniqueSeeds(result.tracks.map(mixSeed)); onLibrary?.(rows); return rows; });
+    const services = matchReview.searchProviders(query, "", false, true).then(result => result.tracks.map(mixSeed));
+    const results = await Promise.allSettled([library, services]);
     if (results.every(result => result.status === "rejected")) throw new Error("Search unavailable");
-    const rows = results.flatMap(result => result.status === "fulfilled" ? result.value.tracks : []);
-    return [...new Map(rows.map(row => {
-      const id = row.backendItemId || (row.externalProvider && row.externalId ? `ext-${row.externalProvider}-song-${row.externalId}` : "");
-      return [id, { id, title: row.title, artist: row.artist ?? "", artworkUrl: row.artworkUrl ?? null, kind: "song" as const }] as const;
-    })).values()].filter(row => row.id);
+    return uniqueSeeds(results.flatMap(result => result.status === "fulfilled" ? result.value : []));
   },
 };
 
@@ -2717,8 +2727,10 @@ export const matchReview = {
     json<{ tracks: MatchTarget[] }>(
       `/api/admin/track-matches/targets/local?query=${encodeURIComponent(query)}&backendLibraryId=${encodeURIComponent(backendLibraryId)}&externalSnapshotId=${encodeURIComponent(externalSnapshotId)}`,
     ),
-  searchProviders: (query: string, externalSnapshotId: string, includeLocal = false) => {
+  // Match review waits for every service; fast takes the services that answer first, for quick picks.
+  searchProviders: (query: string, externalSnapshotId: string, includeLocal = false, fast = false) => {
     const params = new URLSearchParams({ query, externalSnapshotId, limit: "50", includeLocal: String(includeLocal) });
+    if (fast) params.set("answer", "fast");
     return json<{ tracks: MatchTarget[]; providers: string[]; partialSearch?: boolean }>(
       `/api/admin/track-matches/targets/provider?${params}`,
     );

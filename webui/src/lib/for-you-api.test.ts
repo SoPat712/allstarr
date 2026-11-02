@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { activityWork, mixes, playlistLinks, taste } from "./api";
+import { activityWork, matchReview, mixes, playlistLinks, taste } from "./api";
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 describe("mix requests", () => {
   it("times out a stalled mix detail and allows a fresh retry", async () => {
@@ -36,6 +36,26 @@ describe("mix requests", () => {
     vi.stubGlobal("fetch", fetch);
     expect((await mixes.seeds("summer")).map(row => row.id)).toEqual(["local/song", "ext-catalog-song-45"]);
     expect(fetch.mock.calls.every(([path]) => !path.includes("mixes/search"))).toBe(true);
+  });
+  it("hands over library seeds before services answer and keeps them first", async () => {
+    let answer!: (response: Response) => void;
+    const services = new Promise<Response>(resolve => { answer = resolve; });
+    const fetch = vi.fn((path: string) => path.includes("/local?")
+      ? Promise.resolve(Response.json({ tracks: [{ id: "a", backendItemId: "local/a", title: "Home" }, { id: "b", backendItemId: "local/b", title: "Away" }] }))
+      : services);
+    vi.stubGlobal("fetch", fetch);
+    const early: string[][] = [];
+    const seeds = mixes.seeds("juice", rows => early.push(rows.map(row => row.id)));
+    await vi.waitFor(() => expect(early).toEqual([["local/a", "local/b"]]));
+    answer(Response.json({ tracks: [{ externalProvider: "catalog", externalId: "1", title: "Lucid" }, { externalProvider: "catalog", externalId: "1", title: "Lucid again" }, { title: "No identity" }] }));
+    expect((await seeds).map(row => [row.id, row.title])).toEqual([["local/a", "Home"], ["local/b", "Away"], ["ext-catalog-song-1", "Lucid"]]);
+    const provider = new URL(fetch.mock.calls.find(([path]) => path.includes("/provider?"))![0], "http://localhost");
+    expect(provider.searchParams.get("answer")).toBe("fast");
+  });
+  it("asks match review searches for every service", async () => {
+    const fetch = vi.fn(async (_path: string) => Response.json({ tracks: [], providers: [] })); vi.stubGlobal("fetch", fetch);
+    await matchReview.searchProviders("song", "snapshot", true);
+    expect(new URL(fetch.mock.calls[0][0], "http://localhost").searchParams.has("answer")).toBe(false);
   });
   it("retains results from one search when the other is unavailable", async () => {
     vi.stubGlobal("fetch", vi.fn(async (path: string) => path.includes("/local?")

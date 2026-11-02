@@ -11,19 +11,24 @@
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import MixSongs from "$lib/components/MixSongs.svelte";
   let { onsaved, initialQuery = "" }: { onsaved: () => Promise<void>; initialQuery?: string } = $props();
-  let query = $state(""), results = $state<MixSeed[]>([]), searching = $state(false), searchError = $state("");
+  let query = $state(""), results = $state<MixSeed[]>([]), searching = $state(false), searchError = $state(""), servicesPending = $state(false);
   let seed = $state<MixSeed | null>(null), preview = $state<MixPreview | null>(null), open = $state(false), busy = $state(false), saving = $state(false), error = $state("");
   let length = $state("25"), name = $state(""), request = 0, previewRequest = 0, disposed = false;
   // A song or artist handed over from Recap starts the search.
   $effect(() => { if (initialQuery) query = initialQuery; });
   $effect(() => {
     const value = query.trim(), version = ++request;
-    results = []; searchError = ""; searching = value.length >= 2;
+    results = []; searchError = ""; searching = value.length >= 2; servicesPending = false;
     if (value.length < 2) return;
+    const current = () => !disposed && version === request;
     const timer = setTimeout(async () => {
-      try { const next = await mixes.seeds(value); if (!disposed && version === request) { results = next; if (!next.length) searchError = "No songs found. Try another search."; } }
-      catch { if (!disposed && version === request) searchError = "Search is unavailable. Try again."; }
-      finally { if (!disposed && version === request) searching = false; }
+      try {
+        // Library songs show as soon as they arrive; service songs are added below them later.
+        const next = await mixes.seeds(value, rows => { if (current() && rows.length) { results = rows; searching = false; servicesPending = true; } });
+        if (current()) { results = next; if (!next.length) searchError = "No songs found. Try another search."; }
+      }
+      catch { if (current()) searchError = "Search is unavailable. Try again."; }
+      finally { if (current()) { searching = false; servicesPending = false; } }
     }, 300);
     return () => clearTimeout(timer);
   });
@@ -34,7 +39,8 @@
     catch { if (!disposed && version === previewRequest) error = "The preview is unavailable. Try again."; }
     finally { if (!disposed && version === previewRequest) busy = false; }
   }
-  function choose(value: MixSeed) { seed = value; name = `${value.title} Mix`.slice(0, 200); open = true; results = []; void loadPreview(); }
+  // A song can be picked before services answer, so their late rows are dropped instead of reopening the list.
+  function choose(value: MixSeed) { request++; seed = value; name = `${value.title} Mix`.slice(0, 200); open = true; results = []; servicesPending = false; void loadPreview(); }
   async function save() {
     if (busy || !preview?.readiness.ready || !name.trim()) return;
     busy = true; saving = true; error = "";
@@ -52,7 +58,9 @@
 <section aria-label="Start a mix">
   <h2>Start a mix</h2><SearchField bind:value={query} label="Start a mix from a song or artist" placeholder="Start a mix from a song or artist" hiddenLabel />
   {#if searching}<p role="status">Searching…</p>{/if}{#if searchError}<p role="status">{searchError}</p>{/if}
-  {#if results.length}<div class="settings-card seed-results">{#each results.slice(0, 8) as row, index (`${index}:${row.id}`)}<button type="button" onclick={() => choose(row)} aria-label={`${row.title} by ${row.artist}`}><MediaArtwork url={row.artworkUrl} /><span><strong>{row.title}</strong><small>{row.artist}</small></span></button>{/each}</div>{/if}
+  {#if results.length}<div class="settings-card seed-results">{#each results.slice(0, 8) as row, index (`${index}:${row.id}`)}<button type="button" onclick={() => choose(row)} aria-label={`${row.title} by ${row.artist}`}><MediaArtwork url={row.artworkUrl} /><span><strong>{row.title}</strong><small>{row.artist}</small></span></button>{/each}
+    <!-- Only while service rows could still fit in the list. -->
+    {#if servicesPending && results.length < 8}<p class="seed-pending" role="status">Still searching services…</p>{/if}</div>{/if}
 </section>
 <Dialog.Root bind:open={() => open, value => { if (!saving) open = value; }}><Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog mix-preview">
   <header><div><Dialog.Title>Mix from {seed?.title}</Dialog.Title><Dialog.Description>Songs that fit with {seed?.title}</Dialog.Description></div><Dialog.Close type="button" class="icon-button" aria-label="Close preview" disabled={saving}>×</Dialog.Close></header>
@@ -72,6 +80,7 @@
   .seed-results button:focus-visible { outline: 2px solid var(--color-signal); border-radius: var(--radius-md); }
   .seed-results :global(.media-art) { width: 44px; height: 44px; flex: 0 0 44px; }
   .seed-results span { min-width: 0; } strong, small { display: block; overflow-wrap: anywhere; } small { color: var(--color-ink-muted); }
+  .seed-pending { padding: var(--space-2); color: var(--color-ink-muted); font-size: var(--text-sm); }
   :global(.mix-preview) { display: flex; flex-direction: column; overflow: hidden; }
   .preview-body { padding: var(--surface-gutter); overflow-y: auto; min-height: 0; }
   footer label { flex: 1 1 100%; min-width: 0; } footer input { width: 100%; margin-top: var(--space-2); }

@@ -504,12 +504,16 @@ public sealed class TrackMatchesController(
         [FromQuery] Guid? externalSnapshotId = null,
         [FromQuery] int limit = 20,
         CancellationToken cancellationToken = default,
-        [FromQuery] bool includeLocal = false)
+        [FromQuery] bool includeLocal = false,
+        [FromQuery] string? answer = null)
     {
         if (!TrySession(out var session, out var error)) return error!;
         query = query?.Trim() ?? string.Empty;
         if (query.Length < 2) return BadRequest(new { error = "Enter at least two characters" });
         limit = Math.Clamp(limit, 1, 50);
+        // Match review compares every source, so it waits for all of them. A quick pick such as starting a mix
+        // takes the sources that answer first, like app search; the rest finish in the background and fill the cache.
+        var answerFast = string.Equals(answer, "fast", StringComparison.OrdinalIgnoreCase);
 
         var userId = session!.AllstarrUserId!.Value;
         var streamingOrder = await ProviderOrderAsync(
@@ -596,19 +600,23 @@ public sealed class TrackMatchesController(
         var scores = orderedScores.ToDictionary(item => item.LibraryTrackId);
         var automaticOrder = orderedScores.Select((score, index) => (score.LibraryTrackId, Index: index))
             .ToDictionary(item => item.LibraryTrackId, item => item.Index);
+        // With no source song to score against, a quick search keeps its own best-match-first order.
+        var keepSearchOrder = answerFast && source == null;
         var ranked = candidates
-            .Select(item => new
+            .Select((item, index) => new
             {
                 item.Song,
                 item.LocalTrack,
                 item.Candidate,
                 Score = scores.GetValueOrDefault(item.Candidate.LibraryTrackId),
                 AutomaticOrder = automaticOrder.GetValueOrDefault(item.Candidate.LibraryTrackId, int.MaxValue),
+                SearchOrder = keepSearchOrder ? index : 0,
                 RoutingPriority = item.Candidate.IsLocal ? 0 : ProviderRoutingPriority(item.Song!.ExternalProvider!, streamingOrder),
                 MatchesSourceAlbum = MatchesSourceAlbum(source?.Album, item.Candidate.Album)
             })
             .OrderBy(item => item.AutomaticOrder)
             .ThenByDescending(item => item.Score?.Confidence)
+            .ThenBy(item => item.SearchOrder)
             .ThenBy(item => item.RoutingPriority ?? int.MaxValue)
             .ThenByDescending(item => item.MatchesSourceAlbum == true)
             .ThenBy(item => OrderKey(item.Song?.ExternalProvider), StringComparer.Ordinal)
@@ -652,7 +660,9 @@ public sealed class TrackMatchesController(
         });
 
         async Task<Song[]> SearchAsync(string searchQuery) =>
-            (await providerGateway.SearchPlayableSongsAsync(execution, searchQuery, limit))
+            (answerFast
+                ? (await providerGateway.SearchAsync(execution, searchQuery, limit, 0, 0)).Songs
+                : await providerGateway.SearchPlayableSongsAsync(execution, searchQuery, limit))
                 .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
                     playableProviders.Any(item => SameProvider(item, song.ExternalProvider)))
                 .Take(limit)

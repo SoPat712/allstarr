@@ -8,6 +8,7 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
+using allstarr.Models.Search;
 using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -75,6 +76,79 @@ public sealed class TrackMatchesProviderSearchTests : IAsyncLifetime
         var best = Assert.Single(tracks, item => item.GetProperty("isBestVersion").GetBoolean());
         Assert.Equal("v3", best.GetProperty("externalId").GetString());
         Assert.Contains(best.GetProperty("reasons").EnumerateArray(), item => item.GetString() == "ArtistGrid best version +5");
+    }
+
+    [Fact]
+    public async Task FastAnswerUsesTheFirstAnswerSearchAndKeepsItsBestMatchOrder()
+    {
+        Song Seed(string id, string provider, string title) => new()
+        {
+            ExternalId = id,
+            ExternalProvider = provider,
+            Title = title,
+            Artist = "Juice WRLD",
+            Duration = 240
+        };
+        _gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-musickit", "deezer"]);
+        _gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Juice WRLD", 50, 0, 0, null))
+            .ReturnsAsync(new SearchResult
+            {
+                Songs = [Seed("lucid", "deezer", "Lucid Dreams"), Seed("robbery", "apple-download", "Robbery"), Seed("off", "off", "Wishing Well")]
+            });
+
+        var result = Assert.IsType<OkObjectResult>(await Controller()
+            .SearchProviderTargets(" Juice WRLD ", null, 50, answer: "fast"));
+        var tracks = JsonSerializer.SerializeToElement(result.Value).GetProperty("tracks").EnumerateArray().ToArray();
+
+        // The search's own order wins over source priority, and only playable sources come back.
+        Assert.Equal(new[] { "lucid", "robbery" }, tracks.Select(item => item.GetProperty("externalId").GetString()));
+        Assert.Equal("deezer", tracks[0].GetProperty("externalProvider").GetString());
+        Assert.Equal("Lucid Dreams", tracks[0].GetProperty("title").GetString());
+        Assert.Equal("Juice WRLD", tracks[0].GetProperty("artist").GetString());
+        Assert.Equal(240000, tracks[0].GetProperty("durationMilliseconds").GetInt32());
+        Assert.All(tracks, item => Assert.Equal(JsonValueKind.Null, item.GetProperty("confidence").ValueKind));
+        _gateway.Verify(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Juice WRLD", 50, 0, 0, null), Times.Once);
+        _gateway.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming), Times.Once);
+        _gateway.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Download), Times.Once);
+        _gateway.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("complete")]
+    public async Task MatchReviewStillWaitsForEverySourceUnlessAFastAnswerIsAsked(string? answer)
+    {
+        _gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Communicate", 20))
+            .ReturnsAsync(Versions());
+
+        var result = Assert.IsType<OkObjectResult>(await Controller()
+            .SearchProviderTargets("Communicate", _snapshot, answer: answer));
+
+        AssertVersions(JsonSerializer.SerializeToElement(result.Value).GetProperty("tracks").EnumerateArray().ToArray());
+        _gateway.Verify(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Communicate", 20), Times.Once);
+        _gateway.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming), Times.Once);
+        _gateway.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Download), Times.Once);
+        _gateway.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task FastAnswerStillScoresAgainstAReviewedSong()
+    {
+        var source = await PowerTripSourceAsync("IsExplicit", true);
+        var stronger = PowerTrip("stronger", "deezer", "Born Sinner");
+        var preferred = PowerTrip("preferred", "apple-download", "Born Sinner (Deluxe Version)");
+        preferred.Title = "Power Trip live";
+        _gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-musickit", "deezer"]);
+        _gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Power Trip", 20, 0, 0, null))
+            .ReturnsAsync(new SearchResult { Songs = [preferred, stronger] });
+
+        var result = Assert.IsType<OkObjectResult>(await Controller()
+            .SearchProviderTargets("Power Trip", source, answer: "fast"));
+        var tracks = JsonSerializer.SerializeToElement(result.Value).GetProperty("tracks").EnumerateArray().ToArray();
+
+        Assert.Equal(new[] { "stronger", "preferred" }, tracks.Select(item => item.GetProperty("externalId").GetString()));
+        Assert.True(tracks[0].GetProperty("confidence").GetDouble() > tracks[1].GetProperty("confidence").GetDouble());
     }
 
     [Theory]
