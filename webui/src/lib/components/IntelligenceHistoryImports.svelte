@@ -340,4 +340,5 @@
   .recheck-list small { color: var(--color-ink-muted); font-size: var(--text-sm); }
   .recheck-list .history-state { color: var(--color-ink-muted); }
   @media (max-width: 600px) { .history-imports :global(.settings-row) { grid-template-columns: minmax(0, 1fr); } .history-actions { justify-content: start; } }
+  @media (max-width: 650px) { .recheck-list li { padding-inline: var(--space-4); } }
 </style>
