@@ -58,9 +58,10 @@ public sealed partial class ListeningHistoryResolution
             var selected = candidates.FirstOrDefault(item => item.LibraryTrackId == decision.SelectedLibraryTrackId);
             var shown = selected ?? candidates[0];
             // The matcher accepts a title that contains the other, so "A Man Without Love" passed as "Lonely Is a Man
-            // Without Love"; it also doubts the same song on another album. What decides is whether title, version and
-            // main artist agree, plus the matcher's own doubt about a version note such as "Taylor's Version".
-            if (SameTitle(play, shown) && SameEdition(play.Title, shown.Title) && SameArtist(play, shown) &&
+            // Without Love"; it also doubts the same song on another album. What decides is whether title and version
+            // agree, plus the matcher's own doubt about a version note such as "Taylor's Version". Artist names are left
+            // out: their spellings differ too often between services to tell anything.
+            if (SameTitle(play, shown) && SameEdition(play.Title, shown.Title) &&
                 !decision.Warnings.Contains("title_annotation_mismatch_review")) continue;
             var accepted = selected != null && Accepted(decision) && SameEdition(play.Title, selected.Title);
             doubtful.Add(new(recording, song.Key.Title ?? "", song.Key.Artist, song.Key.Album, shown.Title, shown.Artist, shown.Album,
@@ -145,10 +146,6 @@ public sealed partial class ListeningHistoryResolution
         await transaction.CommitAsync(token);
         return count;
     }
-
-    private static bool SameArtist(ListeningEventRecord play, LocalTrackMatchCandidate matched) =>
-        FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(play.Artist).FirstOrDefault() ?? "") ==
-        FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(matched.Artist).FirstOrDefault() ?? "");
 
     private static bool SameTitle(ListeningEventRecord play, LocalTrackMatchCandidate matched) =>
         FuzzyMatcher.NormalizeTitleForMatching(play.Title ?? "", play.Artist, matched.Artist) ==
