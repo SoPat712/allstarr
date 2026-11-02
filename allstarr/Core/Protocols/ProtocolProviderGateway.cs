@@ -1157,6 +1157,8 @@ public sealed partial class ProtocolProviderGateway(
         return (routed.Candidate, null);
     }
 
+    private static readonly TimeSpan QuickAvailabilityWait = TimeSpan.FromMilliseconds(200);
+
     public async Task<ProtocolProviderStream?> OpenStreamAsync(
         ProtocolExecutionContext protocol,
         string providerId,
@@ -1350,8 +1352,15 @@ public sealed partial class ProtocolProviderGateway(
                     {
                         await RememberPlayedTrackAsync(candidate.Context, source, itemId);
                         await identities.RememberPlaybackMetadataAsync(candidate.Context, source, song, protocol.CancellationToken);
-                        if (await TryResolvePlaybackAvailabilityAsync(plan, availabilityOrder, trackId,
-                            exactRouteMissKey, effectivePolicy, quality, TimeSpan.FromSeconds(1)))
+                        // Looking for other sources of a song known at only one used to hold up its first play by up to a
+                        // second, and it rarely finished in time. It now runs alongside the play: a link found at once still
+                        // counts for this play, and anything found later helps a retry and every later play.
+                        var lookup = TryResolvePlaybackAvailabilityAsync(plan, availabilityOrder, trackId,
+                            exactRouteMissKey, effectivePolicy, quality);
+                        _ = lookup.ContinueWith(task => _ = task.Exception, CancellationToken.None,
+                            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                        if (await Task.WhenAny(lookup, Task.Delay(QuickAvailabilityWait, timeProvider ?? TimeProvider.System, protocol.CancellationToken)) == lookup &&
+                            lookup.IsCompletedSuccessfully && lookup.Result)
                             plan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
                     }
                 }
