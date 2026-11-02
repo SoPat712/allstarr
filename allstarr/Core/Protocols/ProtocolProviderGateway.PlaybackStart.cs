@@ -29,12 +29,20 @@ public sealed partial class ProtocolProviderGateway
             .DistinctBy(candidate => (candidate.Provider.Id, candidate.Context.Account?.AccountId,
                 (candidate.TrackId ?? requestedTrack).Value)).Take(32).ToArray();
         var mode = policy.Preferences.PlaybackStart ?? "Balanced";
-        var facts = new List<PlaybackStartCandidate>();
-        for (var index = 0; index < eligible.Length; index++)
+        // Each source's checks read stored facts. One after another they cost most of a second before the first request,
+        // so they run side by side, a few at a time.
+        using var checks = new SemaphoreSlim(8);
+        var gathered = await Task.WhenAll(eligible.Select(async (candidate, index) =>
         {
-            var candidate = eligible[index];
+            await checks.WaitAsync(protocol.CancellationToken);
+            try { return await StartFactsAsync(candidate, index); }
+            finally { checks.Release(); }
+        }));
+        var facts = gathered.OfType<PlaybackStartCandidate>().ToList();
+        async Task<PlaybackStartCandidate?> StartFactsAsync(ProviderRouteCandidate<IProviderStreamingCapability> candidate, int index)
+        {
             var track = candidate.TrackId ?? requestedTrack;
-            if (!await AllowsCleanPlaybackAsync(protocol, track, candidate.Context)) continue;
+            if (!await AllowsCleanPlaybackAsync(protocol, track, candidate.Context)) return null;
             var measurement = outcomes?.GetPlaybackStart(candidate.Context, quality);
             var media = measurement?.Media;
             var cached = await AvailableCachedMediaAsync(protocol, candidate.Context, track, quality, protocol.CancellationToken);
@@ -52,8 +60,8 @@ public sealed partial class ProtocolProviderGateway
                     media = new(AudioMediaFacts.Mime(song.Container ?? "unknown"), song.Container ?? "unknown", song.Codec,
                         song.Bitrate, song.SampleRate, song.BitDepth, song.Channels);
             }
-            if (cached != null || outcomes?.IsPlaybackCoolingDown(candidate.Context, track, quality) != true)
-                facts.Add(new(index, media, measurement?.MedianStart, cached != null));
+            return cached != null || outcomes?.IsPlaybackCoolingDown(candidate.Context, track, quality) != true
+                ? new PlaybackStartCandidate(index, media, measurement?.MedianStart, cached != null) : null;
         }
         var order = PlaybackStartPolicy.Order(mode, facts);
         var startReason = mode switch
