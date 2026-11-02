@@ -72,7 +72,9 @@ public sealed partial class PersonalMixService
         var parsed = LocalLibraryService.ParseExternalResource(request.SeedId);
         Song? seed = null;
         Artist? artist = null;
-        var local = library.SingleOrDefault(track => track.BackendItemId == request.SeedId);
+        // The library keeps a copy of a shared song for each listener, so the seed can match several rows; the listener's own wins.
+        var local = library.Where(track => track.BackendItemId == request.SeedId)
+            .OrderByDescending(track => track.OwnerUserId == context.Actor?.EffectiveUserId).ThenBy(track => track.Id).FirstOrDefault();
         if (request.SeedKind == "song")
         {
             if (parsed.isExternal && parsed.type == "song") seed = await providers.GetSongAsync(context, parsed.provider!, parsed.externalId!);

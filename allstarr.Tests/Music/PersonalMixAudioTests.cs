@@ -63,6 +63,30 @@ public sealed class PersonalMixAudioTests
         Assert.All(mix.Songs, item => { Assert.True(item.Song.IsLocal); Assert.Equal(kind switch { "workout" => "Energetic sound", "party" => "Party sound", _ => "Calm sound" }, item.Reason); });
     }
 
+    [Fact]
+    public async Task Local_seed_shared_with_another_listener_starts_from_the_listeners_own_copy()
+    {
+        await using var f = await ReadyAsync();
+        await AddAsync(f, Track("seed", "Seed"));
+        var other = Guid.NewGuid();
+        await using (var db = f.Factory.CreateDbContext())
+        {
+            db.Users.Add(new allstarr.Core.Storage.UserRecord
+            {
+                Id = other, BackendType = "jellyfin", BackendInstanceId = "primary", BackendPrincipalId = "other",
+                DisplayName = "other", Enabled = true
+            });
+            var copy = Track("seed", "Seed");
+            copy.OwnerUserId = other;
+            db.LibraryTracks.Add(copy);
+            await db.SaveChangesAsync();
+        }
+
+        var preview = await Service(f, new()).StartAsync(f.Actor.AllstarrUserId!.Value, new("song", "seed", 25));
+
+        Assert.Equal("Library seed", preview.SeedName);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
