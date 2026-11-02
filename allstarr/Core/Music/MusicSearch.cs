@@ -92,6 +92,11 @@ public sealed class MusicSearchService(
     SavedLibraryReader? savedLibrary = null,
     ILogger<MusicSearchService>? logger = null)
 {
+    /// <summary>Two songs can only be the same recording when this matches, which makes it a cheap way to narrow down comparisons.</summary>
+    internal static string RecordingKey(Song song) =>
+        FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(song.Artist).FirstOrDefault() ?? "") + "\u001f" +
+        FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(song.Title));
+
     internal static bool MetadataRecordingsMatch(Song left, Song right, bool allowSparse = false)
     {
         var leftDuration = RecordingDuration(left);
@@ -123,6 +128,19 @@ public sealed class MusicSearchService(
     {
         var rows = songs.ToArray();
         var groups = new List<List<Song>>();
+        var keys = rows.ToDictionary(song => song, RecordingKey, ReferenceEqualityComparer.Instance as IEqualityComparer<Song>);
+        var groupsByKey = new Dictionary<string, List<List<Song>>>(StringComparer.Ordinal);
+        List<List<Song>> GroupsFor(Song song)
+        {
+            if (!groupsByKey.TryGetValue(keys[song], out var known)) groupsByKey[keys[song]] = known = [];
+            return known;
+        }
+        void Start(Song song)
+        {
+            List<Song> group = [song];
+            groups.Add(group);
+            GroupsFor(song).Add(group);
+        }
         bool Compatible(Song left, Song right, bool sparse) =>
             (allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(left.ExternalProvider ?? "") !=
              allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(right.ExternalProvider ?? "") ||
@@ -130,15 +148,15 @@ public sealed class MusicSearchService(
             MetadataRecordingsMatch(left, right, sparse) && compatibleEvidence?.Invoke(left, right) != false;
         foreach (var song in rows.Where(song => RecordingDuration(song) is > 0))
         {
-            var group = groups.FirstOrDefault(members => members.All(member => Compatible(member, song, false)));
-            if (group == null) groups.Add([song]);
+            var group = GroupsFor(song).FirstOrDefault(members => members.All(member => Compatible(member, song, false)));
+            if (group == null) Start(song);
             else group.Add(song);
         }
         foreach (var song in rows.Where(song => RecordingDuration(song) is not > 0))
         {
-            var group = groups.FirstOrDefault(members => members.Any(member => RecordingDuration(member) is > 0) &&
+            var group = GroupsFor(song).FirstOrDefault(members => members.Any(member => RecordingDuration(member) is > 0) &&
                 members.All(member => Compatible(member, song, true)));
-            if (group == null) groups.Add([song]);
+            if (group == null) Start(song);
             else group.Add(song);
         }
         return groups;
@@ -202,6 +220,7 @@ public sealed class MusicSearchService(
         playlistTask = Timed(playlistTask, phases, 2);
         await Task.WhenAll(nativeTask, providerTask, playlistTask);
         var gathered = Elapsed();
+        long savedAt = gathered;
 
         var nativeRows = await nativeTask;
         var nativeSongs = nativeRows.Where(item => item.Kind == MusicItemKind.Song &&
@@ -224,9 +243,10 @@ public sealed class MusicSearchService(
             songs = songs.DistinctBy(song => song.Id, StringComparer.Ordinal).ToList();
         }
         albums = request.Albums.Apply(MusicAlbumReleases.Collapse(albums)).ToList();
+        savedAt = Elapsed();
         await PreferOwnedSongsAsync(context, songs, nativeSongs, native, cancellationToken);
-        logger?.LogInformation("Search timing: library {Library} ms, sources {Sources} ms, playlists {Playlists} ms, matching to your library {Owned} ms, total {Total} ms",
-            phases[0], phases[1], phases[2], Elapsed() - gathered, Elapsed());
+        logger?.LogInformation("Search timing: library {Library} ms, sources {Sources} ms, playlists {Playlists} ms, saved songs {Saved} ms, owned songs {Owned} ms, total {Total} ms",
+            phases[0], phases[1], phases[2], savedAt - gathered, Elapsed() - savedAt, Elapsed());
         return Merge(
             request.Query,
             nativeSongs.Concat(nativeAlbums).Concat(nativeArtists),

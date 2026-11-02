@@ -429,7 +429,9 @@ public sealed partial class ProtocolProviderGateway(
             return answer.Result.Songs.Count > 0 && playableProviders.Contains(NormalizeProvider(plan.Candidates[index].Provider.Id)) ||
                 answer.Result.Albums.Count > 0 || answer.Result.Artists.Count > 0;
         }
-        await WaitForFirstAnswersAsync(searchTasks, () => Enumerable.Range(0, searchTasks.Length).Any(Useful), settings, protocol.CancellationToken);
+        // The preferred source and two others are plenty, so a search answered from cache doesn't sit out the window.
+        await WaitForFirstAnswersAsync(searchTasks, () => Enumerable.Range(0, searchTasks.Length).Any(Useful), settings, protocol.CancellationToken,
+            () => searchTasks[0].IsCompleted && Enumerable.Range(0, searchTasks.Length).Count(Useful) >= 3);
         logger?.LogInformation("Search answered after {Milliseconds} ms with {Answered} of {Sources} sources; still working: {Pending}",
             (long)clock.GetElapsedTime(searchStarted).TotalMilliseconds, searchTasks.Count(task => task.IsCompleted), searchTasks.Length,
             string.Join(", ", plan.Candidates.Where((_, index) => !searchTasks[index].IsCompleted).Select(candidate => candidate.Provider.Id)));
@@ -462,6 +464,8 @@ public sealed partial class ProtocolProviderGateway(
             routed.Songs.Where(song => effectivePolicy?.Includes(song) != false).ToArray(),
             trackLookups.Where(item => effectivePolicy?.Includes(item.Song) != false).ToArray(),
             playableOrder, effectivePolicy, protocol);
+        logger?.LogInformation("Search results merged at {Milliseconds} ms from {Rows} rows",
+            (long)clock.GetElapsedTime(searchStarted).TotalMilliseconds, routed.Songs.Count + routed.Albums.Count + routed.Artists.Count);
         var knownDurationTitles = songs.Where(song => song.Duration is > 0)
             .Select(song => SearchRelevanceRanker.RecordingTitle(song.Title, song.Artist, song.AlbumArtist))
             .ToHashSet(StringComparer.Ordinal);
@@ -479,14 +483,15 @@ public sealed partial class ProtocolProviderGateway(
 
     // Apps wait for one whole answer, so it can't be held back for the slowest of many sources. Once the first window has
     // passed, any useful answer goes out; whatever arrives later still fills the cache for the next search.
-    private async Task WaitForFirstAnswersAsync(IReadOnlyList<Task> work, Func<bool> hasUsefulAnswer, CacheSettings settings, CancellationToken cancellationToken)
+    private async Task WaitForFirstAnswersAsync(IReadOnlyList<Task> work, Func<bool> hasUsefulAnswer, CacheSettings settings, CancellationToken cancellationToken,
+        Func<bool>? hasEnough = null)
     {
         var clock = timeProvider ?? TimeProvider.System;
         var latest = Task.Delay(settings.SearchBudget, clock, cancellationToken);
         var soon = settings.SearchFirstAnswer < settings.SearchBudget ? Task.Delay(settings.SearchFirstAnswer, clock, cancellationToken) : latest;
         while (!latest.IsCompleted && work.Any(task => !task.IsCompleted))
         {
-            if (soon.IsCompleted && hasUsefulAnswer()) break;
+            if (soon.IsCompleted && hasUsefulAnswer() || hasEnough?.Invoke() == true) break;
             var waits = work.Where(task => !task.IsCompleted).Append(latest);
             await Task.WhenAny(soon.IsCompleted ? waits : waits.Append(soon));
         }

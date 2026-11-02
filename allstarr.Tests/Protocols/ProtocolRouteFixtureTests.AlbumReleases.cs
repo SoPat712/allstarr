@@ -153,7 +153,9 @@ public sealed partial class ProtocolRouteFixtureTests
             Upc = "0012345678905",
             IsExplicit = false
         };
-        await reader.PreferSavedIdsAsync(execution, [], [unknownSavedExplicit, unknownSavedClean], default);
+        // A new reader, because searches may reuse an index built before this direct edit.
+        await ActivatorUtilities.CreateInstance<SavedLibraryReader>(factory.Services)
+            .PreferSavedIdsAsync(execution, [], [unknownSavedExplicit, unknownSavedClean], default);
         Assert.Equal("explicit-source", unknownSavedExplicit.Id);
         Assert.Equal("clean-source", unknownSavedClean.Id);
         await using var check = storage.CreateDbContext();

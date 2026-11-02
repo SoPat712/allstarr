@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Favorites;
@@ -14,9 +15,68 @@ namespace allstarr.Core.Music;
 
 public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> factory,
     IBackendPlaylistTargetResolver? targets = null, IEffectiveProviderPolicyResolver? effectivePolicies = null,
-    ITrackIdentityService? identities = null)
+    ITrackIdentityService? identities = null, TimeProvider? timeProvider = null)
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
+    private static readonly TimeSpan SearchIndexFreshFor = TimeSpan.FromMinutes(1);
+    private readonly ConcurrentDictionary<(Guid Owner, string Protocol, string Instance, string Principal), SearchIndexEntry> searchIndexes = new();
+
+    private sealed record IndexedTrack(int Order, FavoriteViewItem Item, Song Song);
+    private sealed record IndexedAlbum(int Order, FavoriteViewItem Item, Album Album);
+
+    private sealed record SearchIndex(ILookup<string, IndexedTrack> TracksById, ILookup<string, IndexedTrack> TracksByRecording,
+        ILookup<string, IndexedAlbum> AlbumsByFamily);
+
+    private sealed class SearchIndexEntry(Task<SearchIndex> index, DateTimeOffset loadedAt, int favoriteEvents)
+    {
+        public Task<SearchIndex> Index { get; } = index;
+        public DateTimeOffset LoadedAt { get; } = loadedAt;
+        public int FavoriteEvents { get; } = favoriteEvents;
+        public int Refreshing;
+    }
+
+    private async Task<SearchIndex> LoadSearchIndexAsync(ProtocolExecutionContext execution)
+    {
+        var saved = await ReadAsync(execution, CancellationToken.None);
+        var tracks = saved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Track)
+            .Select((item, order) => new IndexedTrack(order, item, item.Song())).ToArray();
+        var albums = saved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Album).Select((item, order) =>
+        {
+            var album = item.Album();
+            album.SongCount = null;
+            return new IndexedAlbum(order, item, album);
+        }).ToArray();
+        return new(tracks.ToLookup(track => track.Item.ItemId, StringComparer.Ordinal),
+            tracks.ToLookup(track => MusicSearchService.RecordingKey(track.Song), StringComparer.Ordinal),
+            albums.ToLookup(album => MusicAlbumReleases.FamilyKey(album.Album), StringComparer.Ordinal));
+    }
+
+    // Searches run far more often than a saved library changes, and loading it means reading every playlist's members. A search
+    // uses the index it finds and an old one refreshes behind the scenes. A new heart replaces it straight away, since that's visible.
+    private async Task<SearchIndex> SearchIndexAsync(ProtocolExecutionContext execution, Guid owner, CancellationToken cancellationToken)
+    {
+        var clock = timeProvider ?? TimeProvider.System;
+        var protocol = execution.Principal?.BackendType ?? "";
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var favoriteEvents = await db.Set<FavoriteEventRecord>().AsNoTracking().CountAsync(item => item.OwnerUserId == owner &&
+            item.Protocol == protocol && item.BackendInstanceId == execution.BackendInstanceId, cancellationToken);
+        var key = (owner, protocol, execution.BackendInstanceId, execution.VerifiedBackendPrincipalId ?? "");
+        var entry = searchIndexes.AddOrUpdate(key, _ => new(LoadSearchIndexAsync(execution), clock.GetUtcNow(), favoriteEvents),
+            (_, known) => known.Index.IsFaulted || known.Index.IsCanceled || known.FavoriteEvents != favoriteEvents
+                ? new(LoadSearchIndexAsync(execution), clock.GetUtcNow(), favoriteEvents) : known);
+        if (clock.GetUtcNow() - entry.LoadedAt >= SearchIndexFreshFor && entry.Index.IsCompletedSuccessfully &&
+            Interlocked.Exchange(ref entry.Refreshing, 1) == 0)
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var index = await LoadSearchIndexAsync(execution);
+                    searchIndexes[key] = new(Task.FromResult(index), clock.GetUtcNow(), favoriteEvents);
+                }
+                catch (Exception) { Volatile.Write(ref entry.Refreshing, 0); }
+            });
+        return await entry.Index.WaitAsync(cancellationToken);
+    }
 
     public Task<IReadOnlyList<FavoriteViewItem>> ReadForRequestAsync(HttpContext http)
     {
@@ -272,18 +332,23 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
         IReadOnlyList<Album> albums, CancellationToken cancellationToken)
     {
         if (songs.Count == 0 && albums.Count == 0 || execution.Actor?.EffectiveUserId is not { } owner) return;
-        var saved = await ReadAsync(execution, cancellationToken);
+        var saved = await SearchIndexAsync(execution, owner, cancellationToken);
         var policy = effectivePolicies == null ? null : await effectivePolicies.ResolveForUserAsync(owner, cancellationToken);
         foreach (var song in songs.Where(song => policy?.IsAutomatic(ProviderKey(song.ExternalProvider ?? "")) != false))
         {
-            var match = saved.FirstOrDefault(item => item.Resource.ResourceKind == ProviderResourceKind.Track &&
-                (item.Resource.ProviderId == "allstarr" || policy?.IsAutomatic(ProviderKey(item.Resource.ProviderId)) != false) &&
-                (song.ExplicitContentLyrics is not (0 or 1 or 3) || item.Display.IsExplicit != null || item.ItemId == song.Id ||
-                 ProviderKey(item.Resource.ProviderId) == ProviderKey(song.ExternalProvider ?? "") && item.Resource.Value == song.ExternalId) &&
-                (item.ItemId == song.Id ||
-                 (ProviderKey(item.Resource.ProviderId) != ProviderKey(song.ExternalProvider ?? "") || item.Resource.Value == song.ExternalId) &&
-                 (item.Display.DurationMilliseconds is > 0 || song.PreciseDuration?.TotalSeconds is > 0 || song.Duration is > 0) &&
-                 MusicSearchService.MetadataRecordingsMatch(item.Song(), song, allowSparse: true)));
+            // Only the same title and artist can match, so nothing else in the library needs comparing.
+            var match = saved.TracksById[song.Id].Concat(saved.TracksByRecording[MusicSearchService.RecordingKey(song)])
+                .OrderBy(track => track.Order).FirstOrDefault(track =>
+                {
+                    var item = track.Item;
+                    return (item.Resource.ProviderId == "allstarr" || policy?.IsAutomatic(ProviderKey(item.Resource.ProviderId)) != false) &&
+                        (song.ExplicitContentLyrics is not (0 or 1 or 3) || item.Display.IsExplicit != null || item.ItemId == song.Id ||
+                         ProviderKey(item.Resource.ProviderId) == ProviderKey(song.ExternalProvider ?? "") && item.Resource.Value == song.ExternalId) &&
+                        (item.ItemId == song.Id ||
+                         (ProviderKey(item.Resource.ProviderId) != ProviderKey(song.ExternalProvider ?? "") || item.Resource.Value == song.ExternalId) &&
+                         (item.Display.DurationMilliseconds is > 0 || song.PreciseDuration?.TotalSeconds is > 0 || song.Duration is > 0) &&
+                         MusicSearchService.MetadataRecordingsMatch(track.Song, song, allowSparse: true));
+                })?.Item;
             if (match == null || match.ItemId == song.Id) continue;
             var recording = identities == null ? null : await identities.ResolveRecordingAsync(execution.Actor!, match.ItemId, cancellationToken);
             song.Id = match.ItemId;
@@ -298,16 +363,14 @@ public sealed class SavedLibraryReader(IDbContextFactory<AllstarrDbContext> fact
         }
         foreach (var album in albums.Where(album => policy?.IsAutomatic(ProviderKey(album.ExternalProvider ?? "")) != false))
         {
-            var match = saved.Where(item => item.Resource.ResourceKind == ProviderResourceKind.Album).FirstOrDefault(item =>
+            var match = saved.AlbumsByFamily[MusicAlbumReleases.FamilyKey(album)].OrderBy(known => known.Order).FirstOrDefault(known =>
             {
-                if (policy?.IsAutomatic(ProviderKey(item.Resource.ProviderId)) == false) return false;
-                var known = item.Album();
-                known.SongCount = null;
-                return MusicAlbumReleases.SameRelease(known, album) &&
-                    (known.IsExplicit != null || album.IsExplicit == null || MusicAlbumReleases.SameCatalog(known, album) ||
+                if (policy?.IsAutomatic(ProviderKey(known.Item.Resource.ProviderId)) == false) return false;
+                return MusicAlbumReleases.SameRelease(known.Album, album) &&
+                    (known.Album.IsExplicit != null || album.IsExplicit == null || MusicAlbumReleases.SameCatalog(known.Album, album) ||
                      !albums.Any(other => other.IsExplicit != null && other.IsExplicit != album.IsExplicit &&
                          MusicAlbumReleases.NormalizeUpc(album.Upc) is { } upc && MusicAlbumReleases.NormalizeUpc(other.Upc) == upc));
-            });
+            })?.Item;
             if (match != null) album.Id = match.ItemId;
         }
     }

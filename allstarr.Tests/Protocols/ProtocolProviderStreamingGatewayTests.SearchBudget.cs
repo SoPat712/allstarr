@@ -136,6 +136,32 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Equal(["monochrome"], SearchProviders(result));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MetadataSearch_AnswersEarlyOnlyOnceThePreferredSourceAndTwoOthersHaveResults(bool preferredIsSlow)
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var preferred = DelayedSearchProvider("deezer", clock, preferredIsSlow ? TimeSpan.FromSeconds(8) : TimeSpan.Zero);
+        var second = DelayedSearchProvider("qobuz", clock, TimeSpan.Zero);
+        var third = DelayedSearchProvider("monochrome", clock, TimeSpan.Zero);
+        var slowest = DelayedSearchProvider("spotiflac-tidal-web", clock, TimeSpan.FromSeconds(8));
+        var gateway = BudgetGateway(clock, new TestMemoryApplicationCache(), preferred.Object, second.Object, third.Object, slowest.Object);
+
+        var search = gateway.SearchAsync(Context(), "Track", 10, 0, 0);
+        if (!preferredIsSlow)
+        {
+            Assert.Equal(3, SearchProviders(await search.WaitAsync(guard.Token)).Length);
+            return;
+        }
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(8), TimeSpan.FromMilliseconds(1200));
+        await Task.Delay(50, guard.Token);
+        Assert.False(search.IsCompleted);
+        clock.Advance(TimeSpan.FromMilliseconds(1200));
+        Assert.Equal(2, SearchProviders(await search.WaitAsync(guard.Token)).Length);
+    }
+
     [Fact]
     public async Task MetadataSearch_DoesNotWaitOutTheWindowWhenEverySourceHasAnswered()
     {
