@@ -16,7 +16,7 @@ public sealed record SoundProfile(int Songs, int SkippedSongs, IReadOnlyList<Sou
 // How a listener's music sounds, from AudioMuse's analysis of the library songs they finish, set against the ones they
 // skip. It reads stored analysis only, takes a few seconds for a long history, and is kept for hours.
 public sealed class SoundProfileService(IDbContextFactory<AllstarrDbContext> factory, IEffectiveProviderPolicyResolver policies,
-    IPlatformClock clock, AudioMuseDiscovery? audioMuse = null)
+    IPlatformClock clock, AudioMuseDiscovery? audioMuse = null, ILogger<SoundProfileService>? logger = null)
 {
     private const int FinishedSongs = 250, SkippedSongs = 100, MinimumSongs = 20, MinimumSkipped = 10;
     private static readonly TimeSpan KeptFor = TimeSpan.FromHours(6);
@@ -68,11 +68,16 @@ public sealed class SoundProfileService(IDbContextFactory<AllstarrDbContext> fac
             user.BackendPrincipalId, new AllstarrPrincipal(user.Id, user.BackendType, user.BackendInstanceId, user.BackendPrincipalId,
                 user.DisplayName, user.IsAdmin), "sound-profile", clock.UtcNow.AddMinutes(5), token)
         { Policy = await policies.ResolveForUserAsync(user.Id, token), IsReadOnly = true };
-        var features = await audioMuse.MixFeaturesAsync(context, favourites.Concat(skips).Select(item => item.Key).ToArray(), token);
+        // AudioMuse is asked about 150 songs at a time.
+        var features = new Dictionary<string, AudioMuseScores>(StringComparer.Ordinal);
+        foreach (var batch in favourites.Concat(skips).Select(item => item.Key).Chunk(150))
+            foreach (var item in await audioMuse.MixFeaturesAsync(context, batch, token)) features[item.Key] = item.Value;
         // A song played a hundred times says more than one played once, but not a hundred times more.
         var liked = favourites.Where(item => features.ContainsKey(item.Key))
             .Select(item => (Scores: features[item.Key], Weight: 1 + Math.Log(item.Value))).ToArray();
         var disliked = skips.Where(item => features.ContainsKey(item.Key)).Select(item => (Scores: features[item.Key], Weight: 1d)).ToArray();
+        logger?.LogInformation("Sound profile: {Finished} finished and {Skipped} skipped library songs, {Analyzed} analyzed",
+            favourites.Length, skips.Length, features.Count);
         if (liked.Length < MinimumSongs) return null;
         var traits = Traits.Select(trait =>
         {
