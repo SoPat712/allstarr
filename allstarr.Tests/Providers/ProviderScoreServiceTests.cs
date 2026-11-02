@@ -72,6 +72,59 @@ public sealed class ProviderScoreServiceTests
     }
 
     [Fact]
+    public void EachFeatureIsJudgedOnlyOnItsOwnChecks()
+    {
+        var rows = Enumerable.Range(0, 10).SelectMany(day => new[]
+        {
+            Row("apple", day, true, 184, "metadata"),
+            Row("apple", day, true, 200, "playlist"),
+            Row("apple", day, true, 7146, "streaming"),
+            Row("apple", day, true, 7103, "download"),
+        });
+        var samples = Enumerable.Range(0, 5).Select(_ => new ProviderScoreService.AudioSample("apple", "alac", 24, 44100, null));
+        var score = Assert.Single(ProviderScoreService.ForTest(rows, Now, samples));
+        ProviderCapabilityScore Feature(string name) => score.Capabilities.Single(item => item.Capability == name);
+        Assert.Equal(100, Feature("metadata").Score);
+        Assert.Equal(100, Feature("playlist").Score);
+        Assert.Equal((20, 0), (Feature("metadata").Parts!.Speed, Feature("metadata").Parts!.QualityOutOf));
+        Assert.Equal(82, Feature("streaming").Score);
+        Assert.Equal(30, Feature("streaming").Parts!.Quality);
+        Assert.Equal(82, Feature("download").Score);
+        Assert.Equal(score.Score, Feature("streaming").Score);
+    }
+
+    [Fact]
+    public void ABrokenPlaylistFeatureDoesNotLowerHowASourcePlays()
+    {
+        var rows = Enumerable.Range(0, 10).SelectMany(day => new[]
+        {
+            Row("source", day, false, 300, "playlist", "unreachable"),
+            Row("source", day, true, 500, "streaming"),
+        });
+        var samples = Enumerable.Range(0, 5).Select(_ => new ProviderScoreService.AudioSample("source", "flac", 16, 44100, null));
+        var score = Assert.Single(ProviderScoreService.ForTest(rows, Now, samples));
+        Assert.Equal(100, score.Score);
+        Assert.Equal(100, score.Capabilities.Single(item => item.Capability == "streaming").Score);
+        Assert.Equal(20, score.Capabilities.Single(item => item.Capability == "playlist").Score);
+    }
+
+    [Fact]
+    public void LossyAudioCeilingOnlyAppliesToPlayingAndDownloading()
+    {
+        var rows = Enumerable.Range(0, 10).SelectMany(day => new[]
+        {
+            Row("deezer", day, true, 177, "metadata"),
+            Row("deezer", day, true, 267, "download"),
+            Row("deezer", day, true, 779, "streaming"),
+        });
+        var samples = Enumerable.Range(0, 5).Select(_ => new ProviderScoreService.AudioSample("deezer", "mp3", null, null, 128_000));
+        var score = Assert.Single(ProviderScoreService.ForTest(rows, Now, samples));
+        Assert.Equal(100, score.Capabilities.Single(item => item.Capability == "metadata").Score);
+        Assert.Equal(60, score.Capabilities.Single(item => item.Capability == "download").Score);
+        Assert.Equal(60, score.Capabilities.Single(item => item.Capability == "streaming").Score);
+    }
+
+    [Fact]
     public void TooFewChecksGiveNoScoreInsteadOfAGuess()
     {
         var score = Assert.Single(ProviderScoreService.ForTest(Enumerable.Range(0, ProviderScoreService.MinimumChecks - 1).Select(day => Row("a", day, true)), Now));

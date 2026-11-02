@@ -8,21 +8,25 @@ const score = (overall: number | null, lyrics?: number): ProviderScore => ({
 });
 
 describe("provider scores", () => {
-  it("explains the same score the chip shows", () => {
-    const overall = { earned: 82, reliability: 50, reliabilityOutOf: 50, speed: 2, speedOutOf: 20, quality: 30, qualityOutOf: 30, cappedAt: null, typicalMilliseconds: 7146 };
-    const lyrics = { earned: 100, reliability: 80, reliabilityOutOf: 80, speed: 20, speedOutOf: 20, quality: 0, qualityOutOf: 0, cappedAt: null, typicalMilliseconds: 8 };
-    const value = score(82, 100);
-    value.parts = overall;
-    value.capabilities[0].parts = lyrics;
-    expect(scoreParts(value, "streaming")).toBe(overall);
-    expect(scoreParts(value, "lyrics")).toBe(lyrics);
-    expect(scoreParts(score(90), "streaming")).toBeNull();
+  it("judges each order only on its own feature", () => {
+    const value = score(82);
+    const row = (capability: string, points: number) => ({ capability, score: points, uptimePercent: 100, checks: 10, failures: 0, typicalLatencyMilliseconds: null, lastFailureCode: null });
+    value.capabilities = [row("metadata", 100), row("streaming", 82)];
+    expect(capabilityScore(value, "metadata")).toBe(100);
+    expect(capabilityScore(value, "streaming")).toBe(82);
+    expect(capabilityScore(value, "playlist")).toBeNull();
+    expect(capabilityScore(undefined, "metadata")).toBeNull();
   });
 
-  it("uses the overall score except for lyrics", () => {
-    expect(capabilityScore(score(60, 95), "metadata")).toBe(60);
-    expect(capabilityScore(score(60, 95), "lyrics")).toBe(95);
-    expect(capabilityScore(undefined, "metadata")).toBeNull();
+  it("explains the same score the chip shows", () => {
+    const streaming = { earned: 82, reliability: 50, reliabilityOutOf: 50, speed: 2, speedOutOf: 20, quality: 30, qualityOutOf: 30, cappedAt: null, typicalMilliseconds: 7146 };
+    const lyrics = { earned: 100, reliability: 80, reliabilityOutOf: 80, speed: 20, speedOutOf: 20, quality: 0, qualityOutOf: 0, cappedAt: null, typicalMilliseconds: 8 };
+    const value = score(82, 100);
+    value.capabilities[0].parts = lyrics;
+    value.capabilities.push({ ...value.capabilities[0], capability: "streaming", score: 82, parts: streaming });
+    expect(scoreParts(value, "streaming")).toBe(streaming);
+    expect(scoreParts(value, "lyrics")).toBe(lyrics);
+    expect(scoreParts(value, "metadata")).toBeNull();
   });
 
   it("ranks only sources Allstarr can pick by itself", () => {

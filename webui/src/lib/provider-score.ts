@@ -1,19 +1,15 @@
 import type { ProviderScore, ProviderUseMode } from "./api";
 
-/** Lyrics are judged on lyrics alone. Every other order decides which source plays, so it uses the overall score. */
-export function capabilityScore(score: ProviderScore | undefined, capability: string) {
-  if (!score) return null;
-  return capability === "lyrics"
-    ? score.capabilities.find((item) => item.capability === capability)?.score ?? score.score
-    : score.score;
-}
+const feature = (score: ProviderScore | undefined, capability: string) =>
+  score?.capabilities.find((item) => item.capability === capability);
 
-/** How the score shown for this order was earned, so the parts always add up to the number on the chip. */
-export function scoreParts(score: ProviderScore, capability: string) {
-  return (capability === "lyrics"
-    ? score.capabilities.find((item) => item.capability === capability)?.parts ?? score.parts
-    : score.parts) ?? null;
-}
+/** Each order is judged only on the feature it orders, so a slow song start never lowers a metadata score. */
+export const capabilityScore = (score: ProviderScore | undefined, capability: string) =>
+  feature(score, capability)?.score ?? null;
+
+/** How that score was earned, so the parts always add up to the number on the chip. */
+export const scoreParts = (score: ProviderScore | undefined, capability: string) =>
+  feature(score, capability)?.parts ?? null;
 
 /** Only sources Allstarr can pick by itself compete on score. Manual and turned-off sources are never ranked. */
 export const isRanked = (useMode?: ProviderUseMode | null) => useMode !== "manualOnly" && useMode !== "off";

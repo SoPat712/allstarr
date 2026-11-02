@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { scoreParts } from "$lib/provider-score";
+  import { capabilityScore, scoreParts } from "$lib/provider-score";
   import { checkGuide, humanize } from "$lib/sources";
 
   import type { ProviderScore } from "$lib/api";
@@ -9,12 +9,15 @@
   const seconds = (value: number | null) => value == null ? "—" : value < 1000 ? `${value} ms` : `${(value / 1000).toFixed(1)} s`;
   const days = $derived(score.days.slice(-14));
   const parts = $derived(ranked ? scoreParts(score, capability) : null);
-  const scope = $derived(capability === "lyrics" ? score.capabilities.find(item => item.capability === capability) ?? score : score);
+  const feature = $derived(score.capabilities.find(item => item.capability === capability));
+  const featureName = $derived(humanize(capability).toLowerCase());
   const playsAudio = $derived(Boolean(parts?.qualityOutOf));
   const timing = $derived(parts?.typicalMilliseconds ?? null);
+  const speedDetail = $derived(timing == null ? "Not timed yet" :
+    `${capability === "streaming" ? "Songs start in about" : capability === "download" ? "Downloads take about" : "Answers in about"} ${seconds(timing)}`);
   const shares = $derived(parts ? [
-    { label: "Reliability", points: parts.reliability, outOf: parts.reliabilityOutOf, detail: `Passed ${scope.uptimePercent}% of ${scope.checks.toLocaleString()} checks` },
-    { label: "Speed", points: parts.speed, outOf: parts.speedOutOf, detail: timing == null ? "Not timed yet" : `${playsAudio ? "Songs start" : "Answers"} in about ${seconds(timing)}` },
+    { label: "Reliability", points: parts.reliability, outOf: parts.reliabilityOutOf, detail: `Passed ${feature?.uptimePercent}% of ${feature?.checks.toLocaleString()} checks` },
+    { label: "Speed", points: parts.speed, outOf: parts.speedOutOf, detail: speedDetail },
     ...(playsAudio ? [{ label: "Quality", points: parts.quality, outOf: parts.qualityOutOf, detail: score.quality?.lossless ? "Lossless" : "Lossy" }] : []),
   ] : []);
 </script>
@@ -22,9 +25,9 @@
 <div class="score-details">
   <p class="score-summary">
     {#if !ranked}You choose this source yourself and Allstarr never picks it automatically, so it isn't scored or ranked. It passed {score.uptimePercent}% of {score.checks.toLocaleString()} checks in the last 30 days.
-    {:else if score.score == null}Not rated yet. A score needs at least 5 checks; this source has {score.checks}.
-    {:else if playsAudio}Measured over the last 30 days, with the last week counting double. Speed earns full points at 0.5 s and none at 8 s. Lossy sources are held to a ceiling: 60 at low bitrates, up to 80 at 256 kbps or more.
-    {:else}Measured over the last 30 days, with the last week counting double. Speed earns full points at 0.5 s and none at 8 s.{/if}
+    {:else if capabilityScore(score, capability) == null}Not rated for {featureName} yet. A score needs at least 5 {featureName} checks; this source has {feature?.checks ?? 0}.
+    {:else if playsAudio}Only {featureName} checks count here, measured over the last 30 days with the last week counting double. Speed earns full points at 0.5 s and none at 8 s. Lossy sources are held to a ceiling: 60 at low bitrates, up to 80 at 256 kbps or more.
+    {:else}Only {featureName} checks count here, measured over the last 30 days with the last week counting double. Speed earns full points at 0.5 s and none at 8 s.{/if}
   </p>
   {#if shares.length}
     <div class="score-parts">
@@ -40,10 +43,11 @@
   {#if parts?.cappedAt != null}
     <p class="score-cap">Earned {parts.earned}, held at {parts.cappedAt} because this source delivers {score.quality?.typical ?? "lossy audio"}.</p>
   {/if}
-  {#if score.quality}
+  {#if score.quality && (playsAudio || !ranked)}
     <p class="score-quality"><strong>Delivers {score.quality.typical}</strong>{#if score.quality.best}{" · "}up to {score.quality.best}{/if} <small>from {score.quality.samples} playback tests</small></p>
   {/if}
   {#if days.length}
+    <span class="score-rows-title">All checks, last {days.length} days</span>
     <div class="score-days" role="img" aria-label={`Daily check results for the last ${days.length} days`}>
       {#each days as day (day.day)}
         <span title={`${day.day}: ${day.passed} passed, ${day.failed} failed`} style={`--passed:${day.passed + day.failed ? day.passed / (day.passed + day.failed) * 100 : 0}%`}></span>

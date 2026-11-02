@@ -146,12 +146,15 @@ public sealed class ProviderScoreService(IDbContextFactory<AllstarrDbContext> fa
                 var rows = provider.ToArray();
                 var samples = audio.GetValueOrDefault(provider.Key) ?? [];
                 var quality = Quality(samples);
-                var parts = Parts(rows, now, quality == null ? null : QualityValue(quality, samples));
+                (double Earned, int Ceiling)? qualityValue = quality == null ? null : QualityValue(quality, samples);
+                // A source that plays audio is rated on playing it. Its other features are rated separately below.
+                var streaming = rows.Where(check => check.Capability == "streaming").ToArray();
+                var parts = Parts(qualityValue != null && streaming.Length >= MinimumChecks ? streaming : rows, now, qualityValue);
                 return new ProviderScore(provider.Key, Score(parts), Uptime(rows), rows.Length,
                     rows.GroupBy(check => check.Capability, StringComparer.OrdinalIgnoreCase).Select(group =>
                     {
                         var capability = group.ToArray();
-                        var capabilityParts = Parts(capability, now);
+                        var capabilityParts = Parts(capability, now, group.Key is "streaming" or "download" ? qualityValue : null);
                         return new ProviderCapabilityScore(group.Key, Score(capabilityParts), Uptime(capability), capability.Length,
                             capability.Count(check => !check.Passed), Typical(capability),
                             capability.Where(check => !check.Passed).OrderByDescending(check => check.At).FirstOrDefault().Reason, capabilityParts);
@@ -170,8 +173,8 @@ public sealed class ProviderScoreService(IDbContextFactory<AllstarrDbContext> fa
         return latencies.Length == 0 ? null : latencies[latencies.Length / 2];
     }
 
-    // Reliability, with the last week counting double, and speed. Sources that play audio also earn a share for
-    // the quality they deliver, and lossy sources have a ceiling however dependable they are.
+    // Reliability, with the last week counting double, and speed, both judged on the checks passed in. Playing and
+    // downloading also earn a share for the quality delivered, with a ceiling for lossy sources however dependable they are.
     private static ProviderScoreParts? Parts(IReadOnlyCollection<Check> rows, DateTimeOffset now, (double Earned, int Ceiling)? quality = null)
     {
         if (rows.Count < MinimumChecks) return null;
