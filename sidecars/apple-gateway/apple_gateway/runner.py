@@ -101,6 +101,10 @@ class BoundedProcessRunner:
         if self._warming is None or self._warming.done():
             self._warming = asyncio.create_task(self._start_warm())
 
+    def warm_up(self) -> None:
+        """Start the first helper with the gateway, so the first song after a restart is as quick as the rest."""
+        self._prepare_warm()
+
     async def _hand_to_warm(self, arguments: list[str], cwd: Path) -> asyncio.subprocess.Process | None:
         process, self._warm = self._warm, None
         if process is None or process.returncode is not None or process.stdin is None:

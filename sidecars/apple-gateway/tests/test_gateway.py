@@ -1282,3 +1282,21 @@ async def test_songs_after_the_first_use_a_helper_started_ahead_of_time(settings
         await runner.close()
     assert waiting.returncode is not None
 
+
+@pytest.mark.asyncio
+async def test_the_first_helper_starts_with_the_gateway(settings: Settings, tmp_path: Path):
+    import sys
+    helper = tmp_path / "helper.py"
+    helper.write_text("import sys\nsys.stdin.readline()\n")
+
+    class HelperRunner(BoundedProcessRunner):
+        WARM_COMMAND = (sys.executable, str(helper))
+
+    runner = HelperRunner(settings)
+    application = create_app(settings, FakeWrapper(), runner)
+    async with application.router.lifespan_context(application):
+        await runner._warming
+        waiting = runner._warm
+        assert waiting is not None and waiting.returncode is None
+    assert waiting.returncode is not None
+

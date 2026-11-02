@@ -128,6 +128,9 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         config.prepare()
+        # A waiting helper holds about 80 MB.
+        if warm_up := getattr(process_runner, "warm_up", None):
+            warm_up()
         yield
         async with preparation_lock:
             tasks = [entry.task for entry in preparations.values()]
