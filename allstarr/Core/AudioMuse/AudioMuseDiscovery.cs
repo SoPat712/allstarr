@@ -223,8 +223,12 @@ public sealed class AudioMuseDiscovery(IDbContextFactory<AllstarrDbContext> fact
         await using var db = await factory.CreateDbContextAsync(token);
         var allowed = await access.ResolveAsync(context, token);
         var rows = await LibraryTrackAccess.Query(db, context, allowed).Where(r => ids.Contains(r.BackendItemId)).ToArrayAsync(token);
-        var byId = rows.GroupBy(r => r.BackendItemId, StringComparer.Ordinal).Where(g => g.Count() == 1).ToDictionary(g => g.Key, g => g.Single(), StringComparer.Ordinal);
         if (context.Principal == null) throw new UnauthorizedAccessException();
+        // The library index keeps a copy of each song for every listener. Dropping songs with several rows matched
+        // nothing once a second listener existed; the viewer's own copy is the one to use.
+        var viewer = context.Principal.UserId;
+        var byId = rows.GroupBy(r => r.BackendItemId, StringComparer.Ordinal).ToDictionary(g => g.Key,
+            g => g.OrderByDescending(r => r.OwnerUserId == viewer).ThenBy(r => r.Id).First(), StringComparer.Ordinal);
         if ((await policies.ResolveForUserAsync(context.Principal.UserId, token)).Preferences.ExplicitFilter == "CleanOnly" && byId.Count > 0)
         {
             using var request = await permissions.CreateRequestAsync(context, token);
