@@ -173,6 +173,27 @@ public sealed class ExtensionAutomaticVerificationTests : IDisposable
     }
 
     [Fact]
+    public async Task NeverSignedInServiceSignsInAutomaticallyUnlessSignedOutOnPurpose()
+    {
+        var client = Client();
+        var key = await client.AutomaticVerificationExpiryAsync(default);
+        Assert.NotNull(key);
+        var challenge = await client.PrepareAutomaticVerificationAsync(key, default);
+
+        Assert.NotNull(challenge);
+        var view = await client.CompleteAutomaticVerificationAsync(challenge, "browser-grant", _ => Task.FromResult(true), default);
+        Assert.Equal(ExtensionSessionStates.SignedIn, view.State);
+        Assert.True(view.Restored);
+        Assert.Equal("browser-grant", _handler.LastGrant);
+
+        await client.ClearViewAsync(default);
+        Assert.Null(await Client().AutomaticVerificationExpiryAsync(default));
+        await Client().CompleteGrantViewAsync("manual-grant", default);
+        _clock.Advance(TimeSpan.FromDays(2));
+        Assert.Equal(_handler.RenewedExpiry, await Client().AutomaticVerificationExpiryAsync(default));
+    }
+
+    [Fact]
     public async Task UnapprovedChallengeOriginNeverReachesTheBrowser()
     {
         var client = await ExpiredClientAsync();

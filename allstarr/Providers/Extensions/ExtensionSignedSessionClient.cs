@@ -65,6 +65,9 @@ internal sealed class ExtensionSignedSessionClient
     private ExtensionSessionChallenge? _automaticChallenge;
     private bool _pendingForRenewal;
     private string? _renewalExpiresAt;
+    // Stands in for an expiry when a service was never signed in here, so the first sign-in goes through the same automatic
+    // steps as renewing an expired one.
+    private const string FirstSignIn = "1970-01-01T00:00:00Z";
     private readonly Action<string, string, string>? _logSink;
     internal bool SupportsAutomaticVerification => ExtensionSessionVerificationClient.Supports(_config.BaseUrl.AbsoluteUri);
 
@@ -231,6 +234,10 @@ internal sealed class ExtensionSignedSessionClient
     private string? AutomaticVerificationExpiry(SessionRecord record)
     {
         if (_pendingAuthUrl != null && !_pendingForRenewal) return null;
+        // A new install, or a service moved to another catalog, starts without a sign-in. Signing it in needs nobody, unless
+        // an administrator signed it out on purpose.
+        if (string.IsNullOrEmpty(record.SessionId) && record.RenewalExpiresAt == null && _renewalExpiresAt == null)
+            return record.SignedOutByAdministrator ? null : FirstSignIn;
         var expiry = record.ExpiresAt ?? record.RenewalExpiresAt ?? _renewalExpiresAt;
         return (!string.IsNullOrEmpty(record.SessionId) || record.RenewalExpiresAt != null || _renewalExpiresAt != null) &&
             DateTimeOffset.TryParse(expiry, out var date) && (date <= _timeProvider.GetUtcNow() ||
@@ -324,7 +331,8 @@ internal sealed class ExtensionSignedSessionClient
             SessionId = null,
             SessionSecret = null,
             ExpiresAt = null,
-            RenewalExpiresAt = call == "user_clear" ? null : record.ExpiresAt ?? record.RenewalExpiresAt
+            RenewalExpiresAt = call == "user_clear" ? null : record.ExpiresAt ?? record.RenewalExpiresAt,
+            SignedOutByAdministrator = call == "user_clear"
         };
         Save(cleared);
         if (call != "user_clear") _renewalExpiresAt = record.ExpiresAt;
@@ -406,7 +414,8 @@ internal sealed class ExtensionSignedSessionClient
                 SessionId = exchanged.SessionId,
                 SessionSecret = exchanged.SessionSecret,
                 ExpiresAt = exchanged.ExpiresAt,
-                RenewalExpiresAt = null
+                RenewalExpiresAt = null,
+                SignedOutByAdministrator = false
             });
             _pendingAuthUrl = null;
             _lastRenewalFailure = null;
@@ -500,7 +509,7 @@ internal sealed class ExtensionSignedSessionClient
                     return SessionResult.Failed("unexpected_response", "The renewed sign-in did not extend its expiry.");
                 if (authorizeBeforeSave != null && !await authorizeBeforeSave(cancellationToken))
                     return SessionResult.Failed("context_changed", "The connection changed before sign-in completed.");
-                Save(record with { SessionId = boot.SessionId, SessionSecret = boot.SessionSecret, ExpiresAt = boot.ExpiresAt, RenewalExpiresAt = null });
+                Save(record with { SessionId = boot.SessionId, SessionSecret = boot.SessionSecret, ExpiresAt = boot.ExpiresAt, RenewalExpiresAt = null, SignedOutByAdministrator = false });
                 _pendingAuthUrl = null;
                 _lastRenewalFailure = null;
                 return SessionResult.Authenticated;
@@ -919,7 +928,8 @@ internal sealed class ExtensionSignedSessionClient
     private static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     private sealed record SessionRecord(string InstallId, string? SessionId, string? SessionSecret, string? ExpiresAt,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RenewalExpiresAt = null);
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? RenewalExpiresAt = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool SignedOutByAdministrator = false);
     private sealed record ResponseData(HttpStatusCode StatusCode, string Body, IReadOnlyDictionary<string, object> Headers,
         int RetryAfterSeconds, TimeSpan? RetryDelta, DateTimeOffset? RetryDate)
     {
