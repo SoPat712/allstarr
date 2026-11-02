@@ -447,8 +447,10 @@ public class AdminUiController : ControllerBase
             .Where(item => session.IsAdministrator || item.OwnerUserId == userId || item.OwnerUserId == null)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         activityTimings.Add(("accounts", Stopwatch.GetTimestamp()));
+        // The owner is compared through a default so SQLite walks the newest-first index and stops at the limit,
+        // instead of reading every row of a listener with a long history and sorting them all.
         var jobs = await ActivityJobPresentation.HistoryJobs(context.Jobs.AsNoTracking())
-            .Where(item => (everyone || item.OwnerUserId == userId) &&
+            .Where(item => (everyone || (item.OwnerUserId ?? Guid.Empty) == userId) &&
                 (!before.HasValue || item.UpdatedAt < before.Value ||
                 (item.UpdatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id)
@@ -498,15 +500,14 @@ public class AdminUiController : ControllerBase
             .ToDictionary(group => group.Key, group => group.ToArray());
         var libraryTracks = matchActivity.LibraryTracks;
         activityTimings.Add(("matches", Stopwatch.GetTimestamp()));
-        var auditsQuery = ActivityJobPresentation.HistoryAudits(context)
+        var audits = await ActivityJobPresentation.HistoryAudits(context)
             .Where(item => item.Category != allstarr.Core.Playback.PlaybackStartTimingStore.Category)
-            .Where(item => (everyone || item.ActorUserId == userId) &&
+            .Where(item => (everyone || (item.ActorUserId ?? Guid.Empty) == userId) &&
                 (!before.HasValue || item.CreatedAt < before.Value ||
                 (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
-            .Take(scanLimit);
-        HttpContext.RequestServices.GetService<ILogger<AdminUiController>>()?.LogInformation("Activity audit query: {Sql}", auditsQuery.ToQueryString());
-        var audits = await auditsQuery.ToListAsync(cancellationToken);
+            .Take(scanLimit)
+            .ToListAsync(cancellationToken);
         activityTimings.Add(("audits", Stopwatch.GetTimestamp()));
         var extensionLogs = await context.ExtensionLogs.AsNoTracking()
             .Where(item => everyone && (!before.HasValue || item.CreatedAt < before.Value ||
