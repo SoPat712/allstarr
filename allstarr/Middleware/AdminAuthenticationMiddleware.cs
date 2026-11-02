@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using allstarr.Services.Admin;
 
 namespace allstarr.Middleware;
@@ -10,9 +9,6 @@ namespace allstarr.Middleware;
 public class AdminAuthenticationMiddleware
 {
     private const int AdminPort = 5275;
-    private static readonly Regex PlaylistLinkRoute = new(
-        @"^/api/admin/jellyfin/playlists/[^/]+/(link|unlink)$",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
     private readonly RequestDelegate _next;
     private readonly AdminAuthSessionService _sessionService;
@@ -166,6 +162,7 @@ public class AdminAuthenticationMiddleware
             if (segments.Length < 3 || !segments[2].Equals("taste", StringComparison.OrdinalIgnoreCase)) return false;
             return segments.Length == 3 && HttpMethods.IsGet(method) ||
                 segments.Length == 4 && (segments[3] == "nudge" && (HttpMethods.IsPut(method) || HttpMethods.IsDelete(method)) ||
+                    segments[3] == "sound" && HttpMethods.IsGet(method) ||
                     segments[3] == "imported-history" && HttpMethods.IsPut(method) ||
                     segments[3] is "pause" or "resume" or "reset" && HttpMethods.IsPost(method)) ||
                 segments.Length == 5 && segments[3] == "explain" && Guid.TryParse(segments[4], out _) && HttpMethods.IsGet(method);
@@ -179,19 +176,16 @@ public class AdminAuthenticationMiddleware
                 promotionSegments.Length == 5 && Guid.TryParse(promotionSegments[3], out _) &&
                     promotionSegments[4] is "approve" or "cancel" && HttpMethods.IsPost(method);
 
-        if (HttpMethods.IsGet(method) &&
-            path.Equals("/api/admin/jellyfin/playlists", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
+        // Which sources a listener uses for themselves; the controller refuses household changes from listeners.
+        var useSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (useSegments.Length >= 4 && useSegments[2].Equals("providers", StringComparison.OrdinalIgnoreCase) &&
+            useSegments[3].Equals("use", StringComparison.OrdinalIgnoreCase))
+            return useSegments.Length == 4 && HttpMethods.IsGet(method) ||
+                useSegments.Length == 5 && HttpMethods.IsPut(method);
 
-        if (HttpMethods.IsPost(method) || HttpMethods.IsDelete(method))
-        {
-            if (PlaylistLinkRoute.IsMatch(path))
-            {
-                return true;
-            }
-        }
+        if (HttpMethods.IsGet(method) &&
+            path.TrimEnd('/').Equals("/api/admin/activity/tasks", StringComparison.OrdinalIgnoreCase))
+            return true;
 
         if (HttpMethods.IsGet(method) &&
             (path.Equals("/api/admin/ui/schema", StringComparison.OrdinalIgnoreCase) ||
@@ -224,12 +218,6 @@ public class AdminAuthenticationMiddleware
                 Guid.TryParse(deliverySegments[5], out _) && deliverySegments[6] == "resolve";
 
         if (IsPlaylistSelfServiceRoute(path, method))
-        {
-            return true;
-        }
-
-        if ((path.Equals("/api/admin/favorite-action-policies", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsGet(method)) ||
-            (path.Equals("/api/admin/favorite-action-policies/me", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsPut(method)))
         {
             return true;
         }
@@ -280,7 +268,8 @@ public class AdminAuthenticationMiddleware
         if (Guid.TryParse(segments[4], out _))
             return segments.Length == 5 && (HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method)) ||
                 segments.Length == 6 && (HttpMethods.IsPost(method) && segments[5] is "refresh" or "run" or "schedules" ||
-                    HttpMethods.IsPatch(method) && segments[5] == "state" || HttpMethods.IsGet(method) && segments[5] == "preview");
+                    HttpMethods.IsPatch(method) && segments[5] == "state" || HttpMethods.IsGet(method) && segments[5] is "preview" or "missing-songs");
+        if (segments.Length == 5 && segments[4] == "resolve-url") return HttpMethods.IsPost(method);
         return segments.Length == 6 && (
                 segments[4] == "rematch" && (segments[5] == "preview" && HttpMethods.IsGet(method) ||
                                              segments[5] == "apply" && HttpMethods.IsPost(method)) ||

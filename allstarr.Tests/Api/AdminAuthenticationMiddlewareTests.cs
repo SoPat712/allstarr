@@ -61,7 +61,7 @@ public class AdminAuthenticationMiddlewareTests
             NullLogger<AdminAuthenticationMiddleware>.Instance);
 
         var context = CreateContext(
-            path: "/api/admin/jellyfin/playlists",
+            path: "/api/admin/ui/home",
             method: HttpMethods.Get,
             localPort: 5275,
             sessionIdCookie: session.SessionId);
@@ -117,6 +117,10 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/taste/pause", "POST")]
     [InlineData("/api/admin/taste/resume", "POST")]
     [InlineData("/api/admin/taste/reset", "POST")]
+    [InlineData("/api/admin/taste/sound", "GET")]
+    [InlineData("/api/admin/providers/use", "GET")]
+    [InlineData("/api/admin/providers/use/deezer", "PUT")]
+    [InlineData("/api/admin/activity/tasks", "GET")]
     [InlineData("/api/admin/recordings/019f48f2-5f28-7b11-b42d-0d9b76b73b40/lyrics", "GET")]
     [InlineData("/api/admin/recordings/019f48f2-5f28-7b11-b42d-0d9b76b73b40/lyrics", "PUT")]
     [InlineData("/api/admin/recordings/019f48f2-5f28-7b11-b42d-0d9b76b73b40/lyrics", "DELETE")]
@@ -186,6 +190,8 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/playlist-links/019f48f2-5f28-7b11-b42d-0d9b76b73b40", "PUT")]
     [InlineData("/api/admin/playlist-links/019f48f2-5f28-7b11-b42d-0d9b76b73b40", "DELETE")]
     [InlineData("/api/admin/playlist-links/rematch/preview", "GET")]
+    [InlineData("/api/admin/playlist-links/resolve-url", "POST")]
+    [InlineData("/api/admin/playlist-links/019f48f2-5f28-7b11-b42d-0d9b76b73b40/missing-songs", "GET")]
     public async Task InvokeAsync_NonAdminUser_PlaylistSelfServiceRoutesPassToScopedControllers(
         string path,
         string method)
@@ -298,6 +304,11 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/access/oidc", "PUT")]
     [InlineData("/api/admin/access/backend", "GET")]
     [InlineData("/api/admin/access/backend", "PUT")]
+    [InlineData("/api/admin/providers/use/deezer/extra", "PUT")]
+    [InlineData("/api/admin/providers/use", "DELETE")]
+    [InlineData("/api/admin/activity/tasks/anything", "GET")]
+    [InlineData("/api/admin/favorite-action-policies", "GET")]
+    [InlineData("/api/admin/jellyfin/playlists", "GET")]
     public async Task InvokeAsync_NonAdminUser_RemainsBlockedFromAdminAndInvalidAccountRoutes(
         string path,
         string method)
@@ -333,8 +344,6 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/jobs/019f48f2-5f28-7b11-b42d-0d9b76b73b40/cancel", "POST")]
     [InlineData("/api/admin/spotify-likes/import", "POST")]
     [InlineData("/api/admin/spotify-likes/019f48f2-5f28-7b11-b42d-0d9b76b73b40", "GET")]
-    [InlineData("/api/admin/favorite-action-policies", "GET")]
-    [InlineData("/api/admin/favorite-action-policies/me", "PUT")]
     [InlineData("/api/admin/updates/stream", "GET")]
     public async Task InvokeAsync_NonAdminUser_OwnJobRoutesPassToControllerScopeChecks(
         string path,
