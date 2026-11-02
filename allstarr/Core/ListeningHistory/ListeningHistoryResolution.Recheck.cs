@@ -1,6 +1,7 @@
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Intelligence;
@@ -54,12 +55,19 @@ public sealed partial class ListeningHistoryResolution
             };
             var decision = matcher.Decide(matchScope, Source("recheck", play), candidates, null);
             var selected = candidates.FirstOrDefault(item => item.LibraryTrackId == decision.SelectedLibraryTrackId);
-            if (selected != null && Accepted(decision) && SameEdition(play.Title, selected.Title)) continue;
+            var accepted = selected != null && Accepted(decision) && SameEdition(play.Title, selected.Title);
+            // The matcher accepts a title that contains the other, so "A Man Without Love" passed as "Lonely Is a Man
+            // Without Love". The titles themselves, without credits and version notes, must agree as well.
+            if (accepted && SameTitle(play, selected!)) continue;
             var shown = selected ?? candidates[0];
             doubtful.Add(new(song.Key.Title ?? "", song.Key.Artist, song.Key.Album, shown.Title, shown.Artist, shown.Album,
-                selected != null && Accepted(decision) ? "edition" : decision.Warnings.FirstOrDefault() ?? decision.State.ToString(), song.Plays));
+                accepted ? "different-title" : selected != null && Accepted(decision) ? "edition" : decision.Warnings.FirstOrDefault() ?? decision.State.ToString(), song.Plays));
         }
         return new(matched.Length, unread, doubtful.Count, doubtful.Sum(item => item.Plays),
             doubtful.OrderByDescending(item => item.Plays).ThenBy(item => item.Title, StringComparer.Ordinal).Take(200).ToArray());
     }
+
+    private static bool SameTitle(ListeningEventRecord play, LocalTrackMatchCandidate matched) =>
+        FuzzyMatcher.NormalizeTitleForMatching(play.Title ?? "", play.Artist, matched.Artist) ==
+        FuzzyMatcher.NormalizeTitleForMatching(matched.Title, matched.Artist, play.Artist);
 }
