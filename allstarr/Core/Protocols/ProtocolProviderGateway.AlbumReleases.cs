@@ -25,7 +25,8 @@ public sealed partial class ProtocolProviderGateway
         if (deadline <= clock.GetUtcNow()) return albums;
         // Evidence tidies up duplicate releases, but it isn't worth holding an answer for. What arrives late is cached for next time.
         var timeout = new CancellationTokenSource(deadline - clock.GetUtcNow(), clock);
-        var work = Task.WhenAll(incomplete.Select(async album =>
+        // Some sources do real work before their first await, so this runs off the request to keep the wait below honest.
+        var work = Task.WhenAll(incomplete.Select(album => Task.Run(async () =>
         {
             var candidate = candidates.FirstOrDefault(item => NormalizeProvider(item.Provider.Id) == NormalizeProvider(album.ExternalProvider!));
             if (candidate == null) return (Original: album, Full: (Album?)null);
@@ -50,7 +51,7 @@ public sealed partial class ProtocolProviderGateway
             {
                 return (Original: album, Full: (Album?)null);
             }
-        }));
+        })));
         _ = work.ContinueWith(_ => timeout.Dispose(), TaskScheduler.Default);
         await Task.WhenAny(work, Task.Delay(TimeSpan.FromMilliseconds(500), clock, protocol.CancellationToken));
         protocol.CancellationToken.ThrowIfCancellationRequested();

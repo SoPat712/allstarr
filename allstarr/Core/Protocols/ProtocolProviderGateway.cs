@@ -460,12 +460,13 @@ public sealed partial class ProtocolProviderGateway(
 
         if (albumLimit > 0 && routed.Albums.Count > 1 && effectivePolicy?.Preferences.ExplicitFilter != "CleanOnly")
             routed.Albums = await EnrichAlbumReleasesAsync(protocol, routed.Albums, plan.Candidates);
+        var albumsChecked = (long)clock.GetElapsedTime(searchStarted).TotalMilliseconds;
         var songs = await CollapseVerifiedSearchTracksAsync(
             routed.Songs.Where(song => effectivePolicy?.Includes(song) != false).ToArray(),
             trackLookups.Where(item => effectivePolicy?.Includes(item.Song) != false).ToArray(),
             playableOrder, effectivePolicy, protocol);
-        logger?.LogInformation("Search results merged at {Milliseconds} ms from {Rows} rows",
-            (long)clock.GetElapsedTime(searchStarted).TotalMilliseconds, routed.Songs.Count + routed.Albums.Count + routed.Artists.Count);
+        logger?.LogInformation("Search results merged at {Milliseconds} ms from {Rows} rows (albums checked at {AlbumsChecked} ms)",
+            (long)clock.GetElapsedTime(searchStarted).TotalMilliseconds, routed.Songs.Count + routed.Albums.Count + routed.Artists.Count, albumsChecked);
         var knownDurationTitles = songs.Where(song => song.Duration is > 0)
             .Select(song => SearchRelevanceRanker.RecordingTitle(song.Title, song.Artist, song.AlbumArtist))
             .ToHashSet(StringComparer.Ordinal);
