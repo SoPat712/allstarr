@@ -119,6 +119,6 @@
   .settings-toggle :global([data-checked] [data-slot="checkbox-indicator"]) { border-color: var(--md-sys-color-primary); background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
   .sound-summary { margin-top: var(--space-2); }
   .sound-traits { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); column-gap: var(--space-6); margin-block: var(--space-2); }
-  .sound-trait { display: flex; justify-content: space-between; gap: var(--space-2); }
+  .sound-trait { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
   @media (max-width: 600px) { .taste-layers { grid-template-columns: minmax(0, 1fr); } }
 </style>
