@@ -29,7 +29,10 @@ public sealed class JobsController(IDbContextFactory<AllstarrDbContext> contextF
         limit = Math.Clamp(limit, 1, 500);
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var query = db.Jobs.AsNoTracking();
-        if (!everyone) query = query.Where(x => x.OwnerUserId == session.AllstarrUserId);
+        // The owner is compared through a default so SQLite picks the state index: the queue is a handful of jobs, while
+        // the owner index would walk a listener's whole history.
+        var owner = session.AllstarrUserId.Value;
+        if (!everyone) query = query.Where(x => (x.OwnerUserId ?? Guid.Empty) == owner);
         if (view == "queue") query = query.Where(x => x.State == DurableJobState.Pending || x.State == DurableJobState.Running || x.State == DurableJobState.RetryScheduled);
         if (view == "history") query = query.Where(x => x.State == DurableJobState.Succeeded || x.State == DurableJobState.Failed || x.State == DurableJobState.Cancelled);
         if (!string.IsNullOrWhiteSpace(state))
