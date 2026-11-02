@@ -64,8 +64,12 @@ public sealed partial class ListeningHistoryResolution
             doubtful.Add(new(recording, song.Key.Title ?? "", song.Key.Artist, song.Key.Album, shown.Title, shown.Artist, shown.Album,
                 accepted ? "different-title" : selected != null && Accepted(decision) ? "edition" : decision.Warnings.FirstOrDefault() ?? decision.State.ToString(), song.Plays));
         }
-        return new(matched.Length, unread, doubtful.Count, doubtful.Sum(item => item.Plays),
-            doubtful.OrderByDescending(item => item.Plays).ThenBy(item => item.Title, StringComparer.Ordinal).Take(200).ToArray());
+        // Plays of one song can come from several album versions; unmatching acts on all of them, so they show as one.
+        var songs = doubtful.GroupBy(item => (item.RecordingId, item.Title, item.Artist))
+            .Select(group => group.OrderByDescending(item => item.Plays).First() with { Plays = group.Sum(item => item.Plays) })
+            .ToArray();
+        return new(matched.Length, unread, songs.Length, songs.Sum(item => item.Plays),
+            songs.OrderByDescending(item => item.Plays).ThenBy(item => item.Title, StringComparer.Ordinal).Take(200).ToArray());
     }
 
     // The listener said these plays are not this song. They return to unmatched and are never matched again, since the
