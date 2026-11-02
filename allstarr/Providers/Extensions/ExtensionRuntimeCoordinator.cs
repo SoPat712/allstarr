@@ -434,7 +434,10 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
         "patternedFileTransform@1",
         "downloadSegments@1",
         "sessionGrant@1",
-        "preparedContext@1"
+        "preparedContext@1",
+        // Search results carry placeholder preview links that the extension resolves only when a preview plays. Allstarr
+        // never plays previews or reads those links, so nothing more is needed.
+        "deferredPreview@1"
     };
 
     public async Task<ExtensionSessionView> SignedSessionStatusAsync(Guid packageId,

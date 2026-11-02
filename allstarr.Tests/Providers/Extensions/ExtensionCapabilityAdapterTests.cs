@@ -2016,6 +2016,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
         Assert.Contains("downloadSegments@1", ExtensionRuntimeCoordinator.SupportedRuntimeFeatures);
         Assert.Contains("signedSession@2", ExtensionRuntimeCoordinator.SupportedRuntimeFeatures);
         Assert.Contains("signedSession@3", ExtensionRuntimeCoordinator.SupportedRuntimeFeatures);
+        Assert.Contains("deferredPreview@1", ExtensionRuntimeCoordinator.SupportedRuntimeFeatures);
         Assert.DoesNotContain("unknownFeature@1", ExtensionRuntimeCoordinator.SupportedRuntimeFeatures);
     }
 

@@ -1,19 +1,20 @@
 {
   "name": "qobuz-web",
   "displayName": "Qobuz",
-  "version": "1.2.21",
+  "version": "1.2.25",
   "description": "Qobuz metadata and download provider for SpotiFLAC Mobile with resilient album search and track recovery, complete release metadata, credits, multi-disc totals, and original artwork.",
   "homepage": "https://github.com/zarzet/SpotiFLAC-Mobile",
   "type": [
     "metadata_provider",
     "download_provider"
   ],
-  "minAppVersion": "4.9.1",
+  "minAppVersion": "5.3.0",
   "skipMetadataEnrichment": true,
   "requiredRuntimeFeatures": [
     "signedSession@3",
     "sessionGrant@1",
-    "preparedContext@1"
+    "preparedContext@1",
+    "deferredPreview@1"
   ],
   "signedSession": {
     "namespace": "zarz-v2",
