@@ -9,6 +9,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
 using Microsoft.Extensions.Configuration;
 using Moq;
 
@@ -412,6 +413,44 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         fixture.VerifyLookups(2);
     }
 
+    [Fact]
+    public async Task RecordingAvailability_SourceFoundDuringASlowLoneStartRacesIt()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstStopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lookupStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var found = new TaskCompletionSource<ProviderOutcome<ProviderRecordingAvailability>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fixture = new AvailabilityFixture("qobuz,pandora", verifiedFirst: true, effectiveOrder: "qobuz,pandora", clock: clock,
+            firstStart: async context =>
+            {
+                firstStarted.TrySetResult();
+                try { await Task.Delay(Timeout.InfiniteTimeSpan, context.CancellationToken); }
+                catch (OperationCanceledException) { firstStopped.TrySetResult(); throw; }
+                return ProviderOutcome<ProviderStreamLease>.Failure(new(ProviderErrorKind.Canceled));
+            });
+        fixture.Resolve = _ =>
+        {
+            lookupStarted.TrySetResult();
+            return found.Task;
+        };
+        await fixture.RememberSongAsync("qobuz", "target-track");
+        var opening = fixture.Open();
+        await lookupStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await clock.WaitForTimersAsync(TimeSpan.FromMilliseconds(200));
+        clock.Advance(TimeSpan.FromMilliseconds(200));
+        await firstStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(2));
+        clock.Advance(TimeSpan.FromSeconds(2));
+        found.SetResult(ProviderOutcome<ProviderRecordingAvailability>.Success(new(new("pandora", ProviderResourceKind.Track, "target-track"))));
+        var stream = await opening.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.NotNull(stream);
+        using var response = stream.Response;
+        Assert.Equal("pandora", stream.ServingProviderId);
+        await firstStopped.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Single(fixture.Links);
+    }
+
     private sealed class AvailabilityDownloadHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -427,6 +466,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         private readonly ProtocolProviderGateway gateway;
         private readonly ProtocolExecutionContext protocol = Context();
         private readonly Mock<IProviderDownloadStreamingCapability> download = new();
+        private readonly TestMemoryApplicationCache cache = new();
         public Guid RecordingId { get; } = Guid.CreateVersion7();
         public List<TrackIdentityLinkRequest> Links { get; } = [];
         public bool Linked { get; set; }
@@ -440,7 +480,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
 
         public AvailabilityFixture(string order, bool verifiedFirst = false, bool accountBound = false,
             string? restriction = null, bool conflict = false, ProviderErrorKind? firstError = null, bool explicitDenied = false, string? effectiveOrder = null, TimeProvider? clock = null,
-            IProviderDownloadStreamingCapability? implementation = null, string providerId = "pandora", bool includeMonochrome = false)
+            IProviderDownloadStreamingCapability? implementation = null, string providerId = "pandora", bool includeMonochrome = false,
+            Func<ProviderExecutionContext, Task<ProviderOutcome<ProviderStreamLease>>>? firstStart = null)
         {
             var provider = implementation?.ProviderId ?? providerId;
             download.SetupGet(item => item.ProviderId).Returns(provider);
@@ -465,6 +506,9 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     ProbeMediaKnown ? new("audio/flac", "flac", "flac") : null)));
             var first = Capability("qobuz", firstError is { } error
                 ? ProviderOutcome<ProviderStreamLease>.Failure(new(error)) : ProviderOutcome<ProviderStreamLease>.Success(lease));
+            if (firstStart != null)
+                first.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+                    .Returns((ProviderExecutionContext context, ProviderStreamLeaseRequest _) => firstStart(context));
             var streaming = new List<IProviderStreamingCapability> { first.Object, implementation ?? download.Object };
             if (includeMonochrome)
             {
@@ -548,8 +592,15 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     { UserId = protocol.RequireActor().EffectiveUserId, Preferences = new(explicitDenied ? "CleanOnly" : "All") }
                 };
             gateway = new(router, registry, new HttpClientFactory(), configuration,
-                applicationCache: new TestMemoryApplicationCache(), identities: identities.Object, timeProvider: clock, audioVerifier: FixtureAudioVerifier.Instance);
+                applicationCache: cache, identities: identities.Object, timeProvider: clock, audioVerifier: FixtureAudioVerifier.Instance);
         }
+
+        // Songs reach playback from search results, which leave their details in the cache.
+        public Task RememberSongAsync(string provider, string externalId) => cache.SetStringAsync(
+            CacheKeyBuilder.BuildProtocolMetadataKey(provider,
+                JsonSerializer.Serialize(new { Actor = protocol.RequireActor(), AccountId = (Guid?)null, AccountRevision = (long?)null }),
+                nameof(ProviderResourceKind.Track), externalId),
+            JsonSerializer.Serialize(new Song { Title = "Retained title", Artist = "Artist", ExternalProvider = provider, ExternalId = externalId }));
 
         public Task<ProtocolProviderStream?> Open(string? range = null, CancellationToken cancellation = default,
             TimeSpan? remaining = null, ProviderAudioQuality requestedQuality = ProviderAudioQuality.Lossless, bool headOnly = false) =>

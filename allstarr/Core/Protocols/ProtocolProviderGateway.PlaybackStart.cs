@@ -19,7 +19,8 @@ public sealed partial class ProtocolProviderGateway
         CancellationToken streamCancellation,
         Func<ProtocolProviderStream, ProviderExecutionContext?, ProviderExternalResourceId?, Task<ProtocolProviderStream>> opened,
         Func<Task<ProviderRoutePlan<IProviderStreamingCapability>?>> resolveAvailability,
-        HashSet<(string Provider, Guid? Account, string Track)>? attempted = null)
+        HashSet<(string Provider, Guid? Account, string Track)>? attempted = null,
+        Func<CancellationToken, Task<ProviderRoutePlan<IProviderStreamingCapability>?>>? laterSources = null)
     {
         var clock = timeProvider ?? TimeProvider.System;
         attempted ??= [];
@@ -89,9 +90,12 @@ public sealed partial class ProtocolProviderGateway
                         hedged = true;
                         return StartAsync(current + 1, token, abandonment);
                     },
-                    item => item.Stream != null || item.Error?.Code == LocalCapacityException.Code || item.Error?.Kind is ProviderErrorKind.Unauthorized or ProviderErrorKind.Forbidden,
-                    item => item.Dispose(), PlaybackStartPolicy.HedgeDelay(mode, quality, orderedMedia[current + 1]), clock, protocol.CancellationToken)
-                : await StartAsync(current, protocol.CancellationToken, CancellationToken.None);
+                    Ready, item => item.Dispose(), PlaybackStartPolicy.HedgeDelay(mode, quality, orderedMedia[current + 1]), clock, protocol.CancellationToken)
+                : index == 0 && count == 1 && laterSources != null
+                    ? await PlaybackStartHedge.FirstReadyAsync(
+                        (token, abandonment) => StartAsync(current, token, abandonment), StartLaterSourceAsync,
+                        Ready, item => item.Dispose(), PlaybackStartPolicy.HedgeDelay(mode), clock, protocol.CancellationToken)
+                    : await StartAsync(current, protocol.CancellationToken, CancellationToken.None);
             if (result.Stream != null)
             {
                 var stream = result.TakeStream();
@@ -111,6 +115,32 @@ public sealed partial class ProtocolProviderGateway
         }
         ThrowRouteFailure(lastFailure ?? new(ProviderErrorKind.TransientFailure));
         return null;
+
+        static bool Ready(PlaybackStartResult item) =>
+            item.Stream != null || item.Error?.Code == LocalCapacityException.Code || item.Error?.Kind is ProviderErrorKind.Unauthorized or ProviderErrorKind.Forbidden;
+
+        // A song known at only one source waits for that source alone. When another source is found while it is still
+        // starting, that source races it the way a second known source would.
+        async Task<PlaybackStartResult> StartLaterSourceAsync(CancellationToken cancellation, CancellationToken abandonment)
+        {
+            var only = plan.Candidates[0];
+            var none = new PlaybackStartResult(0, null, only.Context, only.TrackId ?? requestedTrack,
+                new(ProviderErrorKind.TransientFailure), null);
+            ProviderRoutePlan<IProviderStreamingCapability>? found;
+            try { found = await laterSources!(cancellation); }
+            catch (Exception error) when (!cancellation.IsCancellationRequested)
+            {
+                logger?.LogDebug("Other playback sources are unavailable ({ErrorType})", error.GetType().Name);
+                return none;
+            }
+            var added = found?.Candidates.FirstOrDefault(candidate => IsAutomaticProvider(candidate.Provider.Id, policy) &&
+                !attempted.Contains((candidate.Provider.Id, candidate.Context.Account?.AccountId, (candidate.TrackId ?? requestedTrack).Value)));
+            if (added == null || await StartFactsAsync(added, plan.Candidates.Count) is not { } fact) return none;
+            var patience = PlaybackStartPolicy.HedgeDelay(mode, quality, fact.Media) - PlaybackStartPolicy.HedgeDelay(mode);
+            if (patience > TimeSpan.Zero) await Task.Delay(patience, clock, cancellation);
+            plan = plan with { Candidates = [.. plan.Candidates, added] };
+            return await StartAsync(plan.Candidates.Count - 1, cancellation, abandonment);
+        }
 
         async Task<PlaybackStartResult> StartAsync(int index, CancellationToken cancellation, CancellationToken abandonment)
         {

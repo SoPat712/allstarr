@@ -1336,6 +1336,7 @@ public sealed partial class ProtocolProviderGateway(
             }
         }
         var availabilityAttempted = false;
+        Task<bool>? laterLookup = null;
         if (plan.Candidates.Count == 1 && !resuming && !headOnly && !protocol.IsOriginalDownload &&
             !protocol.IsReadOnly && !protocol.IsPreparation && hasPlaybackIdentity && identities != null && applicationCache?.IsEnabled == true &&
             (providerId == "allstarr" || IsAutomaticProvider(providerId, effectivePolicy)))
@@ -1353,14 +1354,15 @@ public sealed partial class ProtocolProviderGateway(
                         await RememberPlayedTrackAsync(candidate.Context, source, itemId);
                         await identities.RememberPlaybackMetadataAsync(candidate.Context, source, song, protocol.CancellationToken);
                         // Looking for other sources of a song known at only one used to hold up its first play by up to a
-                        // second, and it rarely finished in time. It now runs alongside the play: a link found at once still
-                        // counts for this play, and anything found later helps a retry and every later play.
+                        // second, and it rarely finished in time. It now runs alongside the play: a source found at once
+                        // joins the start, one found later can still race a slow start, and either helps later plays.
                         var lookup = TryResolvePlaybackAvailabilityAsync(plan, availabilityOrder, trackId,
                             exactRouteMissKey, effectivePolicy, quality);
                         _ = lookup.ContinueWith(task => _ = task.Exception, CancellationToken.None,
                             TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-                        if (await Task.WhenAny(lookup, Task.Delay(QuickAvailabilityWait, timeProvider ?? TimeProvider.System, protocol.CancellationToken)) == lookup &&
-                            lookup.IsCompletedSuccessfully && lookup.Result)
+                        if (await Task.WhenAny(lookup, Task.Delay(QuickAvailabilityWait, timeProvider ?? TimeProvider.System, protocol.CancellationToken)) != lookup)
+                            laterLookup = lookup;
+                        else if (lookup.IsCompletedSuccessfully && lookup.Result)
                             plan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
                     }
                 }
@@ -1427,7 +1429,9 @@ public sealed partial class ProtocolProviderGateway(
             return await OpenWithStartPreferenceAsync(protocol, plan, trackId, quality,
                 effectivePolicy, startDeadline, DownloadTransferDeadline(streamOpeningStartedAt, protocolDeadline),
                 parsedRange, openingTimeout.Token, streamCancellation, OpenedAsync,
-                async () => await ResolveAvailabilityAsync() ? plan : null);
+                async () => await ResolveAvailabilityAsync() ? plan : null,
+                laterSources: laterLookup == null ? null : async token => await laterLookup.WaitAsync(token)
+                    ? await router.PlanAsync<IProviderStreamingCapability>(streamRequest) : null);
         }
 
         string? fallbackReason = null;
