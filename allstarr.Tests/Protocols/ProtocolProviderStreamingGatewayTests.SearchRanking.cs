@@ -401,10 +401,13 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry,
                 capabilities.Select(capability => registry.GetRequiredCapability<IProviderStreamingCapability>(
                     capability.ProviderId, ProviderCapabilityKind.Streaming)).ToArray()));
+        // Ranking compares every source's answer. On a busy machine a source can miss the early answer, so these tests
+        // wait for all of them; the early answer has its own tests.
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["Providers:MetadataOrder"] = metadataOrder,
-            ["Providers:StreamingOrder"] = streamingOrder
+            ["Providers:StreamingOrder"] = streamingOrder,
+            ["Cache:SearchFirstAnswerMilliseconds"] = "30000"
         }).Build();
         return (new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration, audioVerifier: FixtureAudioVerifier.Instance), router);
     }
