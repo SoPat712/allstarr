@@ -611,6 +611,24 @@ public sealed partial class MusixmatchLyricsCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task RichsyncProjectsAbsoluteWordTimesWithoutPerformerNames()
+    {
+        var value = (await CreateAdapter(new FixtureHttpHandler { Payload = PayloadWithRichsync(RichsyncWithSegmentsBody) }, new FixtureSecretAccessor())
+            .FetchLyricsAsync(Context(AccountA), LyricsRequest())).RequireValue();
+        var rich = allstarr.Core.Music.RichLyricsMapper.Map(new allstarr.Models.Lyrics.LyricsInfo
+        { Source = value.Source, SyncedLyrics = value.Content, TimedLines = value.TimedLines })!;
+        Assert.Equal("word", rich.Format);
+        Assert.Equal(new[] { 1234L, 1359L, 1555L }, rich.Lines[0].Words.Select(word => word.StartMs));
+        Assert.Equal(new[] { 1359L, 1555L, 2750L }, rich.Lines[0].Words.Select(word => word.EndMs!.Value));
+        Assert.All(rich.Lines, line =>
+        {
+            Assert.Equal("lead", line.Part);
+            Assert.Null(line.Voice);
+            Assert.Null(line.Singer);
+        });
+    }
+
+    [Fact]
     public async Task RichsyncTiming_PreservesLineDurationAndAbsoluteSegmentOffsets()
     {
         var handler = new FixtureHttpHandler

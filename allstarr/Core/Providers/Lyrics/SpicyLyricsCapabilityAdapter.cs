@@ -26,7 +26,7 @@ public sealed class SpicyLyricsCapabilityAdapter(
     private sealed record CachedLyrics(ProviderLyricsResult Result, DateTimeOffset FetchedAtUtc, DateTimeOffset ExpiresAtUtc);
     private sealed record Loaded(ProviderOutcome<ProviderLyricsResult> Outcome, CachedLyrics? Fresh = null);
     private sealed record Segment(string Text, TimeSpan? Start, TimeSpan? End, bool Background);
-    private sealed record Row(string Text, TimeSpan? Start, TimeSpan? End, IReadOnlyList<Segment>? Segments = null);
+    private sealed record Row(string Text, TimeSpan? Start, TimeSpan? End, IReadOnlyList<Segment>? Segments = null, bool? Background = null, string? Voice = null);
 
     ValueTask<LyricsSourceSnapshot> IInternalLyricsCapability.CaptureSourceAsync(CancellationToken token) =>
         ValueTask.FromResult(LyricsAwait.Static(ProviderId, LyricsSpeculationMode.RecentHealthy));
@@ -214,6 +214,19 @@ public sealed class SpicyLyricsCapabilityAdapter(
             return ContractFailure();
         ValidateRange(Time(body, "StartTime"), Time(body, "EndTime"));
         var rows = new List<Row>();
+        var performers = new Dictionary<string, string>(StringComparer.Ordinal);
+        string? Voice(JsonElement item, string? inherited = null)
+        {
+            var reference = Text(item, "Agent");
+            if (!string.IsNullOrWhiteSpace(reference))
+            {
+                if (!performers.TryGetValue(reference, out var voice))
+                    performers[reference] = voice = "v" + (performers.Count + 1).ToString(CultureInfo.InvariantCulture);
+                return voice;
+            }
+            return item.TryGetProperty("OppositeAligned", out var opposite) && opposite.ValueKind is JsonValueKind.True or JsonValueKind.False
+                ? opposite.GetBoolean() ? "v2" : "v1" : inherited;
+        }
         var elements = 0;
         foreach (var item in content.EnumerateArray())
         {
@@ -227,16 +240,18 @@ public sealed class SpicyLyricsCapabilityAdapter(
                     var start = Time(item, "StartTime");
                     var end = Time(item, "EndTime");
                     ValidateRange(start, end);
-                    rows.Add(new(RequiredText(item, "Text"), start, end));
+                    rows.Add(new(RequiredText(item, "Text"), start, end, Voice: Voice(item)));
                 }
                 else
                 {
                     if (!item.TryGetProperty("Lead", out var lead)) return ContractFailure();
-                    rows.Add(ReadGroup(lead, false, ref elements));
+                    var voice = Voice(lead, Voice(item));
+                    rows.Add(ReadGroup(lead, false, ref elements) with { Voice = voice });
                     if (item.TryGetProperty("Background", out var background))
                     {
                         if (background.ValueKind != JsonValueKind.Array) return ContractFailure();
-                        foreach (var group in background.EnumerateArray()) rows.Add(ReadGroup(group, true, ref elements));
+                        foreach (var group in background.EnumerateArray())
+                            rows.Add(ReadGroup(group, true, ref elements) with { Voice = Voice(group, voice) });
                     }
                 }
             }
@@ -250,12 +265,12 @@ public sealed class SpicyLyricsCapabilityAdapter(
         IReadOnlyList<ProviderLyricsTimedLine>? lines = timed ? rows.Select(row => new ProviderLyricsTimedLine(row.Text,
             row.Start!.Value, Duration(row.Start, row.End), words ? row.Segments!.Select(segment =>
                 new ProviderLyricsTimedSegment(segment.Text, segment.Start!.Value, Duration(segment.Start, segment.End),
-                    segment.Background ? true : null)).ToArray() : null)).ToArray() : null;
+                    segment.Background ? true : null)).ToArray() : null, row.Background, row.Voice)).ToArray() : null;
         var text = string.Join('\n', rows.Select(row => !timed ? row.Text : "[" + Stamp(row.Start!.Value) + "]" +
             (words ? string.Concat(row.Segments!.Select(segment => "<" + Stamp(segment.Start!.Value) + ">" + segment.Text +
                 (segment.End is { } end ? "<" + Stamp(end) + ">" : ""))) : row.Text)));
         var attribution = Attribution(body);
-        var revision = "sha256:" + Hash(JsonSerializer.Serialize(new { Content = text, TimedLines = lines, Attribution = attribution }));
+        var revision = "sha256:" + Hash(JsonSerializer.Serialize(new { Content = text, TimedLines = LyricsTimingRevision.Lines(lines), Attribution = attribution }));
         return ProviderOutcome<ProviderLyricsResult>.Success(new(ProviderLyricsAvailabilityState.Available,
             StableProviderId, format, text, revision, lines, attribution));
     }
@@ -287,7 +302,7 @@ public sealed class SpicyLyricsCapabilityAdapter(
         var groupStart = Time(group, "StartTime");
         var groupEnd = Time(group, "EndTime");
         ValidateRange(groupStart, groupEnd);
-        return new(string.Concat(segments.Select(segment => segment.Text)), groupStart, groupEnd, segments);
+        return new(string.Concat(segments.Select(segment => segment.Text)), groupStart, groupEnd, segments, background ? true : null);
     }
 
     private static ProviderLyricsAttribution Attribution(JsonElement body)

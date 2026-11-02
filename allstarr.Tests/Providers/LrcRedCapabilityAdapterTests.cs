@@ -20,6 +20,53 @@ public sealed class LrcRedCapabilityAdapterTests
         """;
 
     [Fact]
+    public async Task RichTtmlInheritsPerformerAndKeepsUntimedBackgroundWordsEmpty()
+    {
+        const string xml = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <body ttm:agent="solo"><div><p begin="1s" end="3s">Lead<span ttm:role="x-bg">echo</span></p></div></body></tt>
+            """;
+        var value = (await Adapter(new Handler((_, _) => Response(xml))).FetchLyricsAsync(Context(), Request("USABC1234567"))).RequireValue();
+        var rich = allstarr.Core.Music.RichLyricsMapper.Map(new allstarr.Models.Lyrics.LyricsInfo
+        { SyncedLyrics = value.Content, TimedLines = value.TimedLines })!;
+        Assert.Equal("line", rich.Format);
+        Assert.Equal(new[] { "lead", "background" }, rich.Lines.Select(line => line.Part));
+        Assert.Equal(new[] { "Lead", "echo" }, rich.Lines.Select(line => line.Text));
+        Assert.All(rich.Lines, line =>
+        {
+            Assert.Empty(line.Words);
+            Assert.Equal("v1", line.Voice);
+            Assert.Null(line.Singer);
+        });
+    }
+
+    [Fact]
+    public async Task RichTtmlSeparatesPerformersAndOverlappingBackground()
+    {
+        const string xml = """
+            <tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata">
+            <head><metadata><ttm:agent xml:id="voice1"><ttm:name>First singer</ttm:name></ttm:agent>
+            <ttm:agent xml:id="voice2"><ttm:name>Second singer</ttm:name></ttm:agent></metadata></head>
+            <body><div><p begin="1s" end="3s" ttm:agent="voice1"><span begin="1s" end="2s">Hello </span><span begin="2s" end="3s">world</span><span ttm:role="x-bg" ttm:agent="voice2" begin="1.2s" end="2.4s"><span begin="1.2s" end="1.6s">oh </span><span begin="1.8s" end="2.4s">yes</span></span></p>
+            <p begin="4s" end="5s" ttm:agent="voice2">Second</p><p begin="6s" end="7s" ttm:agent="voice1">Again</p></div></body></tt>
+            """;
+        var value = (await Adapter(new Handler((_, _) => Response(xml))).FetchLyricsAsync(Context(), Request("USABC1234567"))).RequireValue();
+        var rich = allstarr.Core.Music.RichLyricsMapper.Map(new allstarr.Models.Lyrics.LyricsInfo
+        { Source = value.Source, SyncedLyrics = value.Content, TimedLines = value.TimedLines })!;
+        Assert.Equal("word", rich.Format);
+        Assert.Equal(new[] { "v1", "v2", "v2", "v1" }, rich.Lines.Select(line => line.Voice));
+        Assert.Equal(new[] { "First singer", "Second singer", "Second singer", "First singer" }, rich.Lines.Select(line => line.Singer));
+        Assert.Equal("Hello world", rich.Lines[0].Text);
+        Assert.Equal((1200L, 2400L, "oh yes", "background"), (rich.Lines[1].StartMs, rich.Lines[1].EndMs, rich.Lines[1].Text, rich.Lines[1].Part));
+        Assert.Equal(2, rich.Lines[1].Words.Count);
+        Assert.Empty(rich.Lines[2].Words);
+        var unnamed = (await Adapter(new Handler((_, _) => Response(xml.Replace("<ttm:name>First singer</ttm:name>", ""))))
+            .FetchLyricsAsync(Context(), Request("USABC1234567"))).RequireValue();
+        Assert.Equal(value.Revision, unnamed.Revision);
+        Assert.Null(unnamed.TimedLines![0].VocalParts![0].Singer);
+    }
+
+    [Fact]
     public async Task IsrcSuccessPreservesWordsSpacesBackgroundAndRevision()
     {
         var handler = new Handler((_, _) => Response(Words));
@@ -34,7 +81,7 @@ public sealed class LrcRedCapabilityAdapterTests
         Assert.True(line.Segments![2].IsBackground);
         Assert.Equal(TimeSpan.FromMilliseconds(2500), line.Segments![2].Start);
         Assert.Equal(TimeSpan.FromSeconds(1), line.Segments![2].Duration);
-        Assert.StartsWith("sha256:", value.Revision);
+        Assert.Equal("sha256:87beda894f53f01c36fbe84aaa3687a7f5b402477a2d8387c69be8b020d08529", value.Revision);
     }
 
     [Fact]

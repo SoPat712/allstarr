@@ -48,6 +48,54 @@ public sealed class LyricsPlusCapabilityAdapterTests
         """;
 
     [Fact]
+    public async Task LineOnlyDuetRetainsVoicesWithoutInventingWords()
+    {
+        const string payload = """
+            {"type":"Line","lyrics":[{"time":1000,"text":"First","element":{"singer":"voice-a"}},
+                {"time":2000,"text":"Second","element":{"singer":"voice-b"}},
+                {"time":3000,"text":"Again","element":{"singer":"voice-a"}}]}
+            """;
+        var value = (await Adapter(new Handler((_, _) => Response(HttpStatusCode.OK, payload)), endpoint: "http://lyrics:3000")
+            .FetchLyricsAsync(Context(), Request())).RequireValue();
+        var rich = allstarr.Core.Music.RichLyricsMapper.Map(new allstarr.Models.Lyrics.LyricsInfo
+        { Source = value.Source, SyncedLyrics = value.Content, TimedLines = value.TimedLines })!;
+        Assert.Equal("line", rich.Format);
+        Assert.Equal(new[] { "v1", "v2", "v1" }, rich.Lines.Select(line => line.Voice));
+        Assert.All(rich.Lines, line =>
+        {
+            Assert.Empty(line.Words);
+            Assert.Null(line.Singer);
+        });
+    }
+
+    [Fact]
+    public async Task RichWordsRetainSeparateBackgroundAndNamedVoices()
+    {
+        const string payload = """
+            {"type":"Word","metadata":{"agents":{"voice1":{"name":"First singer","alias":"v1"},"voice2":{"name":"Second singer","alias":"v2"}}},
+             "lyrics":[{"time":1000,"duration":2000,"text":"Hello echo","element":{"singer":"v1"},"syllabus":[
+                {"time":1000,"duration":1500,"text":"Hello "},{"time":1100,"duration":500,"text":"echo","isBackground":true}]},
+                {"time":4000,"duration":1000,"text":"Duet","element":{"singer":"v2"},"syllabus":[{"time":4000,"duration":1000,"text":"Duet"}]},
+                {"time":6000,"duration":1000,"text":"Again","element":{"singer":"v1"},"syllabus":[{"time":6000,"duration":1000,"text":"Again"}]}]}
+            """;
+        var value = (await Adapter(new Handler((_, _) => Response(HttpStatusCode.OK, payload)), endpoint: "http://lyrics:3000")
+            .FetchLyricsAsync(Context(), Request())).RequireValue();
+        var rich = allstarr.Core.Music.RichLyricsMapper.Map(new allstarr.Models.Lyrics.LyricsInfo
+        { Source = value.Source, SyncedLyrics = value.Content, TimedLines = value.TimedLines })!;
+        Assert.Equal("word", rich.Format);
+        Assert.Equal(new[] { "lead", "background", "lead", "lead" }, rich.Lines.Select(line => line.Part));
+        Assert.Equal(new[] { "v1", "v1", "v2", "v1" }, rich.Lines.Select(line => line.Voice));
+        Assert.Equal("First singer", rich.Lines[0].Singer);
+        Assert.Equal("Second singer", rich.Lines[2].Singer);
+        Assert.Equal((1100L, 1600L, "echo"), (rich.Lines[1].StartMs, rich.Lines[1].EndMs, rich.Lines[1].Text));
+        Assert.Equal("Hello", rich.Lines[0].Text);
+        var unnamed = (await Adapter(new Handler((_, _) => Response(HttpStatusCode.OK, payload.Replace("First singer", ""))), endpoint: "http://lyrics:3000")
+            .FetchLyricsAsync(Context(), Request())).RequireValue();
+        Assert.Null(unnamed.TimedLines![0].Singer);
+        Assert.Equal(value.Revision, unnamed.Revision);
+    }
+
+    [Fact]
     public async Task PublicMirrorOrderMatchesTheReference()
     {
         var handler = new Handler((_, _) => Response(HttpStatusCode.ServiceUnavailable));
@@ -133,6 +181,7 @@ public sealed class LyricsPlusCapabilityAdapterTests
 
         Assert.True(result.IsSuccess, result.Error?.SafeMessage);
         var value = result.RequireValue();
+        Assert.Equal("sha256:dc218fb104fd2435c97875c76b4310da585f9cea630ffd666a6abc249b6053a9", value.Revision);
         Assert.Equal(ProviderLyricsFormat.LineTimed, value.Format);
         Assert.Equal("[00:01.234]Synthetic first\n[00:02.500]Synthetic second", value.Content);
         Assert.NotNull(value.TimedLines);

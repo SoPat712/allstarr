@@ -100,7 +100,8 @@ public sealed record ProviderLyricsTimedSegment
 public sealed record ProviderLyricsTimedLine
 {
     public ProviderLyricsTimedLine(string text, TimeSpan start, TimeSpan? duration = null,
-        IReadOnlyList<ProviderLyricsTimedSegment>? segments = null)
+        IReadOnlyList<ProviderLyricsTimedSegment>? segments = null, bool? isBackground = null,
+        string? voice = null, string? singer = null, IReadOnlyList<ProviderLyricsTimedLine>? vocalParts = null)
     {
         LyricsTimingLimits.ValidateText(text);
         LyricsTimingLimits.ValidateTime(start, duration);
@@ -110,11 +111,26 @@ public sealed record ProviderLyricsTimedLine
         if (segments is { Count: > LyricsTimingLimits.MaximumElements } || segments?.Any(item => item == null) == true)
             throw new ArgumentException("Lyric segments exceed the supported bounds.", nameof(segments));
         Segments = segments is { Count: > 0 } ? Array.AsReadOnly(segments.ToArray()) : null;
+        IsBackground = isBackground;
+        Voice = ProviderContractValidation.OptionalText(voice, nameof(voice), 200);
+        Singer = ProviderContractValidation.OptionalText(singer, nameof(singer), 1_000);
+        if (vocalParts is { Count: > LyricsTimingLimits.MaximumElements } ||
+            vocalParts?.Any(part => part == null || part.VocalParts != null) == true)
+            throw new ArgumentException("Vocal parts exceed the supported bounds.", nameof(vocalParts));
+        VocalParts = vocalParts is { Count: > 0 } ? Array.AsReadOnly(vocalParts.ToArray()) : null;
     }
     public string Text { get; }
     public TimeSpan Start { get; }
     public TimeSpan? Duration { get; }
     public IReadOnlyList<ProviderLyricsTimedSegment>? Segments { get; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? IsBackground { get; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Voice { get; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Singer { get; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<ProviderLyricsTimedLine>? VocalParts { get; }
 }
 
 public sealed record ProviderLyricsContributor
@@ -205,8 +221,11 @@ public sealed record ProviderLyricsResult
                 throw new ArgumentException("Lyric lines exceed the supported bounds.", nameof(timedLines));
             var characters = Content.Length;
             var segments = 0;
-            foreach (var line in timedLines)
+            var lineCount = 0;
+            foreach (var line in timedLines.SelectMany(line => new[] { line }.Concat(line.VocalParts ?? [])))
             {
+                if (++lineCount > LyricsTimingLimits.MaximumElements)
+                    throw new ArgumentException("Lyric lines exceed the supported bounds.", nameof(timedLines));
                 characters = checked(characters + line.Text.Length);
                 if (characters > LyricsTimingLimits.MaximumCharacters)
                     throw new ArgumentException("Lyric timing content is too large.", nameof(timedLines));
@@ -236,6 +255,41 @@ public sealed record ProviderLyricsResult
 
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public IReadOnlyList<ProviderLyricsTimedLine>? TimedLines { get; }
+}
+
+public sealed record RichLyrics(
+    [property: JsonPropertyName("source")] RichLyricsSource Source,
+    [property: JsonPropertyName("format")] string Format,
+    [property: JsonPropertyName("lines")] IReadOnlyList<RichLyricsLine> Lines);
+
+public sealed record RichLyricsSource(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("name")] string Name);
+
+public sealed record RichLyricsLine(
+    [property: JsonPropertyName("startMs")] long? StartMs,
+    [property: JsonPropertyName("endMs")] long? EndMs,
+    [property: JsonPropertyName("text")] string Text,
+    [property: JsonPropertyName("part")] string Part,
+    [property: JsonPropertyName("words")] IReadOnlyList<RichLyricsWord> Words,
+    [property: JsonPropertyName("voice"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Voice = null,
+    [property: JsonPropertyName("singer"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? Singer = null);
+
+public sealed record RichLyricsWord(
+    [property: JsonPropertyName("startMs")] long StartMs,
+    [property: JsonPropertyName("endMs")] long? EndMs,
+    [property: JsonPropertyName("text")] string Text);
+
+internal static class LyricsTimingRevision
+{
+    // Keep the serialized timing content used by existing revisions.
+    public static object? Lines(IReadOnlyList<ProviderLyricsTimedLine>? lines) => lines?.Select(line => new
+    {
+        line.Text,
+        line.Start,
+        line.Duration,
+        line.Segments
+    }).ToArray();
 }
 
 internal static class LyricsTimingLimits

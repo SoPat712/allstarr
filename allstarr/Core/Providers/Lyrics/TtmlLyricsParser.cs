@@ -23,6 +23,15 @@ internal static partial class TtmlLyricsParser
         var elements = document.Descendants().Take(LyricsTimingLimits.MaximumElements + 1).ToArray();
         if (elements.Length > LyricsTimingLimits.MaximumElements || elements.Any(element => element.Ancestors().Take(65).Count() > 64))
             throw new XmlException("Timed text exceeds supported bounds.");
+        var performers = new Dictionary<string, (string Voice, string? Singer)>(StringComparer.Ordinal);
+        foreach (var person in elements.Where(element => element.Name == Metadata + "agent"))
+        {
+            var id = (string?)person.Attribute(XNamespace.Xml + "id");
+            if (string.IsNullOrWhiteSpace(id) || performers.ContainsKey(id)) continue;
+            var name = person.Elements(Metadata + "name").FirstOrDefault()?.Value.Trim();
+            performers[id] = ("v" + (performers.Count + 1).ToString(CultureInfo.InvariantCulture),
+                string.IsNullOrWhiteSpace(name) ? null : name);
+        }
         var lines = new List<ProviderLyricsTimedLine>();
         var plain = new List<string>();
         foreach (var paragraph in elements.Where(element => element.Name.LocalName == "p" &&
@@ -38,7 +47,13 @@ internal static partial class TtmlLyricsParser
             if (start == null) continue;
             var end = ReadTime(paragraph, "end");
             var duration = end.HasValue ? end - start : ReadTime(paragraph, "dur");
-            lines.Add(new(words, start.Value, duration, segments.Count == 0 ? null : segments));
+            var parts = new List<ProviderLyricsTimedLine>();
+            var inheritedPerformer = paragraph.Ancestors().Select(parent => (string?)parent.Attribute(Metadata + "agent"))
+                .FirstOrDefault(value => value != null);
+            var inheritedBackground = paragraph.Ancestors().Any(parent => (string?)parent.Attribute(Metadata + "role") == "x-bg");
+            ReadVocalParts(paragraph, inheritedBackground, inheritedPerformer, start.Value,
+                duration.HasValue ? start + duration : null, performers, parts);
+            lines.Add(new(words, start.Value, duration, segments.Count == 0 ? null : segments, vocalParts: parts));
         }
         if (plain.Count == 0)
             return ProviderOutcome<ProviderLyricsResult>.Success(new(ProviderLyricsAvailabilityState.Unavailable, source));
@@ -49,9 +64,45 @@ internal static partial class TtmlLyricsParser
             return FormattableString.Invariant($"[{ms / 60_000:00}:{ms / 1000 % 60:00}.{ms % 1000:000}]{line.Text}");
         })) : string.Join('\n', plain);
         var revision = "sha256:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
-            Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { Content = content, Lines = lines }))));
+            Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { Content = content, Lines = LyricsTimingRevision.Lines(lines) }))));
         return ProviderOutcome<ProviderLyricsResult>.Success(new(ProviderLyricsAvailabilityState.Available, source,
             timed ? ProviderLyricsFormat.LineTimed : ProviderLyricsFormat.PlainText, content, revision, timed ? lines : null));
+    }
+
+    private static readonly XNamespace Metadata = "http://www.w3.org/ns/ttml#metadata";
+
+    private static void ReadVocalParts(XElement element, bool background, string? inheritedPerformer,
+        TimeSpan fallbackStart, TimeSpan? fallbackEnd, Dictionary<string, (string Voice, string? Singer)> performers,
+        List<ProviderLyricsTimedLine> parts)
+    {
+        var reference = (string?)element.Attribute(Metadata + "agent") ?? inheritedPerformer;
+        background |= (string?)element.Attribute(Metadata + "role") == "x-bg";
+        var boundaries = element.Descendants().Where(child =>
+            (string?)child.Attribute(Metadata + "role") == "x-bg" ||
+            child.Attribute(Metadata + "agent") is { } performer && performer.Value != reference).ToHashSet();
+        var children = boundaries.Where(child => !child.Ancestors().TakeWhile(parent => parent != element).Any(boundaries.Contains)).ToArray();
+        var text = new StringBuilder();
+        var segments = new List<ProviderLyricsTimedSegment>();
+        ReadNodes(Copy(element), text, segments, background);
+        var start = ReadTime(element, "begin") ?? (segments.Count > 0 ? segments.Min(segment => segment.Start) : fallbackStart);
+        var end = ReadTime(element, "end") ?? (ReadTime(element, "dur") is { } duration ? start + duration :
+            segments.Count > 0 && segments.All(segment => segment.Duration.HasValue)
+                ? segments.Max(segment => segment.Start + segment.Duration!.Value) : fallbackEnd);
+        (string? Voice, string? Singer) identity = (null, null);
+        if (!string.IsNullOrWhiteSpace(reference))
+        {
+            if (!performers.TryGetValue(reference, out var known))
+                performers[reference] = known = ("v" + (performers.Count + 1).ToString(CultureInfo.InvariantCulture), null);
+            identity = known;
+        }
+        var words = text.ToString().Trim();
+        if (!string.IsNullOrWhiteSpace(words))
+            parts.Add(new(words, start, end - start, segments, background ? true : null, identity.Voice, identity.Singer));
+        foreach (var child in children)
+            ReadVocalParts(child, background, reference, start, end, performers, parts);
+
+        XElement Copy(XElement node) => new(node.Name, node.Attributes(), node.Nodes().Select(child =>
+            child is XElement nested ? boundaries.Contains(nested) ? null : (object)Copy(nested) : child));
     }
 
     private static void ReadNodes(XElement element, StringBuilder text, List<ProviderLyricsTimedSegment> segments, bool background)

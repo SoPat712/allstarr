@@ -13,6 +13,17 @@ namespace allstarr.Tests;
 public sealed class ProtocolLyricsTimingTests
 {
     [Fact]
+    public async Task RichServiceReturnsNullWhenTheResolverHasNoLyrics()
+    {
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", "listener", null,
+            "empty", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(Array.Empty<string>());
+        var resolver = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance);
+        Assert.Null(await resolver.GetRichLyricsAsync(context, new Song { Title = "Fixture" }, "fixture"));
+    }
+
+    [Fact]
     public async Task SharedSelectionRetainsTimingWhileProtocolsKeepLineResponses()
     {
         var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", "listener",

@@ -28,6 +28,9 @@ public sealed record ProtocolLyricsCandidate(string SourceId, LyricsInfo? Lyrics
 
 public interface IProtocolLyricsResolver
 {
+    Task<RichLyrics?> GetRichLyricsAsync(ProtocolExecutionContext context, Song song, string resourceKey,
+        ProtocolLyricsSources? sources = null);
+
     Task<IReadOnlyList<ProtocolLyricsCandidate>> FindAllAsync(ProtocolExecutionContext protocol, Song song,
         string resourceKey, ProtocolLyricsSources? sources = null);
 
@@ -54,6 +57,10 @@ public sealed partial class ProtocolLyricsResolver(
     ITrackIdentityService? identities = null,
     TimeProvider? timeProvider = null, IHostApplicationLifetime? lifetime = null) : IProtocolLyricsResolver, IHostedService
 {
+    public async Task<RichLyrics?> GetRichLyricsAsync(ProtocolExecutionContext context, Song song, string resourceKey,
+        ProtocolLyricsSources? sources = null) => RichLyricsMapper.Map(await FindAsync(
+            context, MusicLyrics.ForLookup(song), resourceKey, sources ?? new ProtocolLyricsSources()));
+
     public async Task<IReadOnlyList<ProtocolLyricsCandidate>> FindAllAsync(ProtocolExecutionContext protocol, Song song,
         string resourceKey, ProtocolLyricsSources? sources = null)
     {

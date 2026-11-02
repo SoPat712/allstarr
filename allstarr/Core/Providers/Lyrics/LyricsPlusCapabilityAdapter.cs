@@ -171,6 +171,22 @@ public sealed class LyricsPlusCapabilityAdapter(
         }
         var format = timed && request.PreferredFormat != ProviderLyricsFormat.PlainText
             ? ProviderLyricsFormat.LineTimed : ProviderLyricsFormat.PlainText;
+        var performers = new Dictionary<string, (string Voice, string? Singer)>(StringComparer.Ordinal);
+        var performerCount = 0;
+        if (metadata.ValueKind == JsonValueKind.Object && metadata.TryGetProperty("agents", out var people) && people.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var person in people.EnumerateObject())
+            {
+                if (person.Value.ValueKind != JsonValueKind.Object) continue;
+                var voice = "v" + (++performerCount).ToString(CultureInfo.InvariantCulture);
+                var name = person.Value.TryGetProperty("name", out var display) && display.ValueKind == JsonValueKind.String
+                    ? display.GetString() : null;
+                var singer = string.IsNullOrWhiteSpace(name) ? null : name;
+                performers[person.Name] = (voice, singer);
+                if (person.Value.TryGetProperty("alias", out var alias) && alias.ValueKind == JsonValueKind.String &&
+                    !string.IsNullOrWhiteSpace(alias.GetString())) performers[alias.GetString()!] = (voice, singer);
+            }
+        }
         var output = new List<string>();
         var timedLines = timed ? new List<ProviderLyricsTimedLine>() : null;
         var hasSegments = false;
@@ -210,19 +226,32 @@ public sealed class LyricsPlusCapabilityAdapter(
                 }
             }
 
+            (string? Voice, string? Singer) performer = (null, null);
+            if (line.TryGetProperty("element", out var element) && element.ValueKind == JsonValueKind.Object &&
+                element.TryGetProperty("singer", out var reference) && reference.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(reference.GetString()))
+            {
+                var id = reference.GetString()!;
+                if (!performers.TryGetValue(id, out var known))
+                {
+                    known = ("v" + (++performerCount).ToString(CultureInfo.InvariantCulture), null);
+                    performers[id] = known;
+                }
+                performer = known;
+            }
             if (timed)
                 timedLines!.Add(new(
                     words,
                     TimeSpan.FromMilliseconds(ms),
                     duration,
-                    segments));
+                    segments, voice: performer.Voice, singer: performer.Singer));
             output.Add(format == ProviderLyricsFormat.LineTimed
                 ? FormattableString.Invariant($"[{ms / 60_000:00}:{ms / 1000 % 60:00}.{ms % 1000:000}]{words}") : words);
         }
         if (!hasWords) return Unavailable();
         var content = string.Join('\n', output);
         IReadOnlyList<ProviderLyricsTimedLine>? retainedTiming =
-            timed && hasSegments && !invalidSegments ? timedLines : null;
+            timed && (hasSegments || timedLines!.Any(line => line.Voice != null)) && !invalidSegments ? timedLines : null;
         return Available(format, content, retainedTiming);
     }
 
@@ -233,7 +262,7 @@ public sealed class LyricsPlusCapabilityAdapter(
         {
             return ProviderOutcome<ProviderLyricsResult>.Success(new(
                 ProviderLyricsAvailabilityState.Available, "lyricsplus", format, content,
-                Revision(content, timedLines), timedLines));
+                Revision(content, timedLines?.Any(line => line.Segments is { Count: > 0 }) == true ? timedLines : null), timedLines));
         }
         catch (ArgumentException)
         {
@@ -329,7 +358,7 @@ public sealed class LyricsPlusCapabilityAdapter(
     {
         var input = timedLines == null
             ? content
-            : JsonSerializer.Serialize(new { Content = content, TimedLines = timedLines });
+            : JsonSerializer.Serialize(new { Content = content, TimedLines = LyricsTimingRevision.Lines(timedLines) });
         return "sha256:" + Hash(input);
     }
 

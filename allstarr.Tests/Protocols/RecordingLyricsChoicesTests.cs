@@ -1,3 +1,7 @@
+using allstarr.Core.Capabilities;
+using allstarr.Models.Domain;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using allstarr.Core.Identity;
 using allstarr.Core.Matching;
 using allstarr.Core.Music;
@@ -47,6 +51,58 @@ public sealed class RecordingLyricsChoicesTests : IAsyncLifetime
         state.Set(DurableStorageReadiness.Ready, "lyrics-choice-fixture");
         _identities = new TrackIdentityService(_factory, state, _clock);
         _choices = new RecordingLyricsChoices(_factory, _identities, _clock);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RichLyricsHonourAnExistingStoredPinWithoutRewritingIt(bool personal)
+    {
+        var recording = await CreateRecordingAsync(_userAId);
+        var context = Context(_userAId);
+        var savedId = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.RecordingLyricsChoices.Add(new RecordingLyricsChoiceRecord
+            {
+                Id = savedId,
+                CanonicalRecordingId = recording,
+                OwnerUserId = personal ? _userAId : null,
+                SourceId = "lyricsplus",
+                Revision = 7,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["spotify", "lyricsplus"]);
+        providers.Setup(item => item.GetLyricsAsync(context, "lyricsplus", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+            "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null)).ReturnsAsync(new ProviderLyricsResult(
+                ProviderLyricsAvailabilityState.Available, "lyricsplus", ProviderLyricsFormat.LineTimed, "[00:01.000]Chosen", "old-revision",
+                [new("Chosen", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1),
+                    [new("Chosen", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1))], voice: "v2", singer: "Performer")]));
+        IProtocolLyricsResolver resolver = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance, choices: _choices);
+        var rich = await resolver.GetRichLyricsAsync(context, new Song
+        {
+            Id = "ext-allstarr-song-" + recording,
+            CanonicalRecordingId = recording,
+            Title = "Fixture",
+            Artist = "Artist",
+            Album = "Album",
+            Duration = 120
+        }, recording.ToString("N"));
+        Assert.Equal("lyricsplus", rich?.Source.Id);
+        Assert.Equal("v2", Assert.Single(rich!.Lines).Voice);
+        Assert.Equal("word", rich.Format);
+        await using var verify = await _factory.CreateDbContextAsync();
+        var pin = await verify.RecordingLyricsChoices.SingleAsync();
+        Assert.Equal(savedId, pin.Id);
+        Assert.Equal(7, pin.Revision);
+        Assert.Equal(_clock.UtcNow, pin.UpdatedAt);
+        Assert.Null(pin.RevokedAt);
+        providers.VerifyAll();
+        providers.VerifyNoOtherCalls();
     }
 
     [Fact]

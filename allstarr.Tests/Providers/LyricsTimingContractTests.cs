@@ -6,6 +6,26 @@ namespace allstarr.Tests;
 public sealed class LyricsTimingContractTests
 {
     [Fact]
+    public void CachedVocalPartsKeepIndependentWordsAndPerformerIdentity()
+    {
+        var result = new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "fixture",
+            ProviderLyricsFormat.LineTimed, "[00:01.000]Lead echo", timedLines:
+            [new("Lead echo", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), vocalParts:
+                [new("Lead", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2),
+                    [new("Lead", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1))], voice: "v1", singer: "First singer"),
+                 new("echo", TimeSpan.FromMilliseconds(1200), TimeSpan.FromMilliseconds(600),
+                    [new("echo", TimeSpan.FromMilliseconds(1200), TimeSpan.FromMilliseconds(600), true)], true, "v2")])]);
+        var restored = JsonSerializer.Deserialize<ProviderLyricsResult>(JsonSerializer.Serialize(result))!;
+        var parts = Assert.Single(restored.TimedLines!).VocalParts!;
+        Assert.Equal("v1", parts[0].Voice);
+        Assert.Equal("First singer", parts[0].Singer);
+        Assert.True(parts[1].IsBackground);
+        Assert.Equal("v2", parts[1].Voice);
+        Assert.Equal(TimeSpan.FromMilliseconds(1200), Assert.Single(parts[1].Segments!).Start);
+        Assert.Null(parts[1].Singer);
+    }
+
+    [Fact]
     public void SpicyAttributionSurvivesSerializationWithoutChangingOlderPayloads()
     {
         var credits = new ProviderLyricsAttribution("spicylyrics", "spicy_lyrics", new("Uploader", "https://spicylyrics.org/uid/1001"));

@@ -15,6 +15,54 @@ namespace allstarr.Tests;
 public sealed class SpicyLyricsCapabilityAdapterTests
 {
     [Fact]
+    public async Task ExplicitPerformerReferencesCanDifferForBackgroundVocals()
+    {
+        var node = JsonNode.Parse(SpicyLyricsTestData.Payload("syllable"))!;
+        var vocal = node["Body"]!["Content"]![0]!;
+        vocal["Agent"] = "first";
+        vocal["Background"]![0]!["Agent"] = "second";
+        using var handler = new SpicyLyricsTestHandler(node.ToJsonString());
+        using var http = new HttpClient(handler);
+        var value = (await new SpicyLyricsCapabilityAdapter(http, new SpicyLyricsTestSecrets())
+            .FetchLyricsAsync(SpicyLyricsTestData.Context(), SpicyLyricsTestData.Request())).RequireValue();
+        Assert.Equal(new[] { "v1", "v2" }, value.TimedLines!.Select(line => line.Voice));
+        Assert.All(value.TimedLines!, line => Assert.Null(line.Singer));
+    }
+
+    [Fact]
+    public async Task RichSyllablesKeepBackgroundTimingAndDuetVoices()
+    {
+        var node = JsonNode.Parse(SpicyLyricsTestData.Payload("syllable"))!;
+        var content = node["Body"]!["Content"]!.AsArray();
+        content[0]!["OppositeAligned"] = false;
+        var second = content[0]!.DeepClone();
+        second["OppositeAligned"] = true;
+        content.Add(second);
+        using var handler = new SpicyLyricsTestHandler(node.ToJsonString());
+        using var http = new HttpClient(handler);
+        var value = (await new SpicyLyricsCapabilityAdapter(http, new SpicyLyricsTestSecrets())
+            .FetchLyricsAsync(SpicyLyricsTestData.Context(), SpicyLyricsTestData.Request())).RequireValue();
+        var rich = allstarr.Core.Music.RichLyricsMapper.Map(new allstarr.Models.Lyrics.LyricsInfo
+        { Source = value.Source, SyncedLyrics = value.Content, TimedLines = value.TimedLines })!;
+        Assert.Equal("word", rich.Format);
+        Assert.Equal(new[] { "v1", "v2", "v1", "v2" }, rich.Lines.Select(line => line.Voice));
+        var background = rich.Lines[2];
+        Assert.Equal((1100L, 1800L, "oh yes", "background"), (background.StartMs, background.EndMs, background.Text, background.Part));
+        Assert.Equal(new[] { "oh ", "yes" }, background.Words.Select(word => word.Text));
+        Assert.All(rich.Lines, line => Assert.Null(line.Singer));
+        Assert.Equal(value.Revision, (await FetchWithoutVoices()).Revision);
+
+        async Task<ProviderLyricsResult> FetchWithoutVoices()
+        {
+            foreach (var item in content) item!.AsObject().Remove("OppositeAligned");
+            using var plainHandler = new SpicyLyricsTestHandler(node.ToJsonString());
+            using var plainHttp = new HttpClient(plainHandler);
+            return (await new SpicyLyricsCapabilityAdapter(plainHttp, new SpicyLyricsTestSecrets())
+                .FetchLyricsAsync(SpicyLyricsTestData.Context(), SpicyLyricsTestData.Request())).RequireValue();
+        }
+    }
+
+    [Fact]
     public async Task SpicyBrokenCacheStillUsesAnAuthorizedFreshResponse()
     {
         using var handler = new SpicyLyricsTestHandler(SpicyLyricsTestData.Payload("static"));
@@ -71,6 +119,7 @@ public sealed class SpicyLyricsCapabilityAdapterTests
         Assert.Equal(1, handler.Calls);
         if (fixture == "syllable")
         {
+            Assert.Equal("sha256:b9acfb737a2ddf5077afd59e07de926fcad4a1b1695e835d59e7c3f84ec21e03", value.Revision);
             Assert.Equal(2, value.TimedLines!.Count);
             Assert.Equal(3, value.TimedLines[0].Segments!.Count);
             Assert.Equal(TimeSpan.FromSeconds(1.2), value.TimedLines[0].Segments![0].Start + value.TimedLines[0].Segments![0].Duration);
