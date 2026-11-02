@@ -138,8 +138,10 @@ public sealed partial class TrackMatchCommandService
         }
         timings.Add(("snapshots", Stopwatch.GetTimestamp()));
         var snapshotIds = snapshots.Select(item => item.Id).ToArray();
+        // These lists hold thousands of values. Sent as a single JSON value they cost a few milliseconds in the database;
+        // spread into one parameter per value they cost a tenth of a second or more per query.
         var decisionQuery = db.TrackMatches.AsNoTracking()
-            .Where(item => snapshotIds.Contains(item.ExternalSnapshotId));
+            .Where(item => EF.Parameter(snapshotIds).Contains(item.ExternalSnapshotId));
         var latestVersions = decisionQuery
             .GroupBy(item => item.ExternalSnapshotId)
             .Select(group => new
@@ -177,8 +179,8 @@ public sealed partial class TrackMatchCommandService
             actor,
             db.ProviderTrackIdentities.AsNoTracking()
                 .Where(item => item.ResourceKind == ProviderResourceKind.Track &&
-                               (sourceIdentityIds.Contains(item.Id) ||
-                                sourceExternalIdHashes.Contains(item.ExternalIdHash))),
+                               (EF.Parameter(sourceIdentityIds).Contains(item.Id) ||
+                                EF.Parameter(sourceExternalIdHashes).Contains(item.ExternalIdHash))),
             visibleAccountIds,
             cancellationToken);
         timings.Add(("source identities", Stopwatch.GetTimestamp()));
@@ -188,9 +190,9 @@ public sealed partial class TrackMatchCommandService
             .Distinct()
             .ToArray();
         var libraryQuery = (await AccessibleTracksAsync(db, actor, cancellationToken))
-            .Where(item => libraryIds.Contains(item.Id) ||
+            .Where(item => EF.Parameter(libraryIds).Contains(item.Id) ||
                            item.CanonicalRecordingId.HasValue &&
-                           canonicalIds.Contains(item.CanonicalRecordingId.Value));
+                           EF.Parameter(canonicalIds).Contains(item.CanonicalRecordingId.Value));
         if (!string.IsNullOrWhiteSpace(backendLibraryId))
             libraryQuery = libraryQuery.Where(item => item.BackendLibraryId == backendLibraryId.Trim());
         var library = await libraryQuery.ToListAsync(cancellationToken);
@@ -199,7 +201,7 @@ public sealed partial class TrackMatchCommandService
             db,
             actor,
             db.ProviderTrackIdentities.AsNoTracking()
-                .Where(item => canonicalIds.Contains(item.CanonicalRecordingId))
+                .Where(item => EF.Parameter(canonicalIds).Contains(item.CanonicalRecordingId))
                 .OrderBy(item => item.ProviderId)
                 .ThenBy(item => item.ExternalId),
             visibleAccountIds,
@@ -208,8 +210,8 @@ public sealed partial class TrackMatchCommandService
         var hashes = snapshots.Select(item => item.ExternalIdHash).Distinct().ToArray();
         var owners = snapshots.Select(item => item.OwnerUserId).Distinct().ToArray();
         var mediaSnapshots = await db.ExternalMetadataSnapshots.AsNoTracking()
-            .Where(item => item.ResourceKind == "track-media" && hashes.Contains(item.ExternalIdHash) &&
-                owners.Contains(item.OwnerUserId) &&
+            .Where(item => item.ResourceKind == "track-media" && EF.Parameter(hashes).Contains(item.ExternalIdHash) &&
+                EF.Parameter(owners).Contains(item.OwnerUserId) &&
                 (item.ProviderAccountId == null || db.ProviderAccounts.Any(account =>
                     account.Id == item.ProviderAccountId && account.ProviderId == item.ProviderId && account.Enabled &&
                     (account.OwnerUserId == null || account.OwnerUserId == item.OwnerUserId) &&
