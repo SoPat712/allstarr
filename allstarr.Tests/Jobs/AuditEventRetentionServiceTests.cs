@@ -107,7 +107,7 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
             database.Jobs.AddRange(
                 expired,
                 Job("playback.signal.process", DurableJobState.Cancelled, now.AddDays(-31), "cancelled"),
-                Job("playback.signal.process", DurableJobState.Succeeded, now.AddDays(-6), "recent"),
+                Job("playback.signal.process", DurableJobState.Succeeded, now.AddDays(-1), "recent"),
                 Job("playback.signal.process", DurableJobState.Failed, now.AddDays(-31), "failed"),
                 Job("playback.signal.process", DurableJobState.Pending, now.AddDays(-31), "pending"),
                 Job("playlist.sync", DurableJobState.Succeeded, now.AddDays(-31), "other-type"));
@@ -153,7 +153,7 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
             context.Jobs.AddRange(
                 referenced, audited,
                 Job("recording.tags.refresh", DurableJobState.Cancelled, now.AddDays(-31), "cancelled"),
-                Job("recording.tags.refresh", DurableJobState.Succeeded, now.AddDays(-6), "recent"),
+                Job("recording.tags.refresh", DurableJobState.Succeeded, now.AddDays(-1), "recent"),
                 Job("recording.tags.refresh", DurableJobState.Failed, now.AddDays(-31), "failed"),
                 Job("recording.tags.refresh", DurableJobState.Pending, now.AddDays(-31), "pending"),
                 Job("recording.tags.refresh", DurableJobState.Running, now.AddDays(-31), "running"),

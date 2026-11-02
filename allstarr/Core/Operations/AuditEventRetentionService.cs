@@ -57,7 +57,8 @@ public sealed class AuditEventRetentionService(
             var now = timeProvider.GetUtcNow();
             var cutoff = now - retention;
             var deleted = await PruneJobHistoryAsync(
-                now - (jobHistoryRetention < retention ? jobHistoryRetention : retention), cancellationToken);
+                now - (jobHistoryRetention < retention ? jobHistoryRetention : retention), [JobHistoryCategory, "managed-storage"], cancellationToken);
+            deleted += await PruneJobHistoryAsync(now - JobProgressRetention, ["job-progress"], cancellationToken);
 
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -122,7 +123,7 @@ public sealed class AuditEventRetentionService(
                     maximumRows);
             }
 
-            var deletedJobs = await PruneRoutineJobsAsync(now - (jobHistoryRetention < retention ? jobHistoryRetention : retention), cancellationToken);
+            var deletedJobs = await PruneRoutineJobsAsync(now - (JobProgressRetention < retention ? JobProgressRetention : retention), cancellationToken);
             if (deletedJobs > 0)
             {
                 logger.LogInformation(
@@ -142,8 +143,10 @@ public sealed class AuditEventRetentionService(
     }
 
     private const string JobHistoryCategory = "job-attempt";
+    // Progress only matters while a job runs and shortly after. It's also the one thing keeping a finished routine job's record around.
+    private static readonly TimeSpan JobProgressRetention = TimeSpan.FromDays(2);
 
-    private async Task<int> PruneJobHistoryAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)
+    private async Task<int> PruneJobHistoryAsync(DateTimeOffset cutoff, string[] categories, CancellationToken cancellationToken)
     {
         var deleted = 0;
         while (!cancellationToken.IsCancellationRequested)
@@ -151,7 +154,7 @@ public sealed class AuditEventRetentionService(
             await using var scope = scopeFactory.CreateAsyncScope();
             var database = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
             var candidates = await Deletable(database)
-                .Where(item => (item.Category == JobHistoryCategory || item.Category == "job-progress" || item.Category == "managed-storage") && item.CreatedAt < cutoff)
+                .Where(item => categories.Contains(item.Category) && item.CreatedAt < cutoff)
                 .OrderBy(item => item.CreatedAt)
                 .ThenBy(item => item.Id)
                 .Take(batchSize)
