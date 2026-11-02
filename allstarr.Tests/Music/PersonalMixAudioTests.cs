@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Text.Json;
 using allstarr.Core.AudioMuse;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Enrichment;
 using allstarr.Core.Favorites;
 using allstarr.Core.Jobs;
@@ -11,6 +12,7 @@ using allstarr.Core.Releases;
 using allstarr.Core.Routing;
 using allstarr.Core.Settings;
 using allstarr.Models.Domain;
+using allstarr.Models.Search;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -19,8 +21,64 @@ using static allstarr.Tests.AudioMuseDiscoveryTests;
 
 namespace allstarr.Tests;
 
-public sealed class PersonalMixAudioTests
+public sealed partial class PersonalMixAudioTests
 {
+    [Fact]
+    public async Task Local_start_fills_radio_after_a_provider_without_similar_tracks()
+    {
+        await using var f = await ReadyAsync();
+        var sound = Enumerable.Range(0, 25).Select(index => Track("sound-" + index, "Sound artist " + index)).ToArray();
+        var own = Enumerable.Range(0, 3).Select(index => Track("own-" + index, "Artist A")).ToArray();
+        foreach (var track in own) track.DurationMilliseconds = 180000;
+        var seedTrack = Track("seed", "Artist A");
+        seedTrack.DurationMilliseconds = 180000;
+        await AddAsync(f, sound.Concat(own).Append(seedTrack).ToArray());
+        var original = f.Respond;
+        f.Respond = request => request.RequestUri!.AbsolutePath == "/api/similar_tracks"
+            ? Fixture.Json(JsonSerializer.Serialize(sound.Select(track => new { item_id = track.BackendItemId }))) : original(request);
+        var radioSongs = Enumerable.Range(0, 20).Select(index => new Song
+        {
+            Id = "ext-deezer-song-radio-" + index,
+            ExternalProvider = "deezer",
+            ExternalId = "radio-" + index,
+            Title = "Radio " + index,
+            Artist = "Related artist " + index
+        }).ToList();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Metadata)).Returns(["apple-musickit", "deezer"]);
+        foreach (var provider in new[] { "apple-musickit", "deezer" })
+        {
+            var seed = new Song { Title = seedTrack.Title, Artist = seedTrack.Artist, Duration = 180, ExternalProvider = provider, ExternalId = "seed" };
+            gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), provider, seedTrack.Title + " Artist A", 3))
+                .ReturnsAsync(ProviderOutcome<IReadOnlyList<Song>>.Success([seed]));
+            gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Artist A", 0, 0, 3, provider))
+                .ReturnsAsync(new SearchResult { Artists = [new() { Name = "Artist A", ExternalProvider = provider, ExternalId = "artist" }] });
+        }
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), seedTrack.Title + " Artist A", 3))
+            .ReturnsAsync([new() { Title = seedTrack.Title, Artist = "Artist A", Duration = 180, ExternalProvider = "apple-musickit", ExternalId = "seed" }]);
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", 100)).ReturnsAsync(radioSongs);
+        gateway.Setup(item => item.GetArtistTracksAsync(It.Is<ProtocolExecutionContext>(context => !context.IsReadOnly), "deezer", "artist"))
+            .ReturnsAsync(own.Select(track => new Song
+            {
+                Id = "ext-deezer-song-" + track.BackendItemId,
+                ExternalProvider = "deezer",
+                ExternalId = track.BackendItemId,
+                Title = track.Title,
+                Artist = track.Artist,
+                Duration = 180
+            }).ToList());
+        gateway.Setup(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>())).ReturnsAsync(true);
+        var logger = new SoundMixLogger();
+
+        var preview = await Service(f, gateway, logger: logger).StartAsync(f.Actor.AllstarrUserId!.Value, new("song", "seed", 25));
+
+        Assert.Equal(25, preview.Songs.Count);
+        var message = Assert.Single(logger.Messages);
+        Assert.True(message.Contains("seed resolved=1, seed search found=2, provider similar=20, artist tracks=3", StringComparison.Ordinal), message);
+        Assert.True(message.Contains("radio[found=23,without-seed=23,unique=20", StringComparison.Ordinal), message);
+        Assert.True(message.Contains("selected seed/related/sound/general=2/15/8/0; sound allowance=10, related shortfall=0", StringComparison.Ordinal), message);
+    }
+
     private static PersonalMixService Service(Fixture f, Mock<IProtocolProviderGateway> gateway, IPlatformClock? clock = null, ILogger<PersonalMixService>? logger = null)
     {
         clock ??= new SystemPlatformClock();
@@ -132,6 +190,9 @@ public sealed class PersonalMixAudioTests
             .ReturnsAsync(new Artist { Name = "Artist A" });
         gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed")).ReturnsAsync([seed]);
         gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Library seed Artist A", 3)).ReturnsAsync([seed]);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Metadata)).Returns(["deezer"]);
+        gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "Library seed Artist A", 3))
+            .ReturnsAsync(ProviderOutcome<IReadOnlyList<Song>>.Success([seed]));
         gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", 100)).ReturnsAsync(radioSongs.ToList());
         gateway.Setup(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>())).ReturnsAsync(true);
         var original = f.Respond;
@@ -177,6 +238,9 @@ public sealed class PersonalMixAudioTests
         var gateway = new Mock<IProtocolProviderGateway>();
         var seed = new Song { Id = "ext-deezer-song-seed", ExternalProvider = "deezer", ExternalId = "seed", Title = "Library seed", Artist = "Artist A", Duration = 180 };
         gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Library seed Artist A", 3)).ReturnsAsync([seed]);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Metadata)).Returns(["deezer"]);
+        gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "Library seed Artist A", 3))
+            .ReturnsAsync(ProviderOutcome<IReadOnlyList<Song>>.Success([seed]));
         gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", 100))
             .ReturnsAsync([seed, new Song { Id = "ext-deezer-song-radio", Title = "Radio", Artist = "Related artist", ExternalProvider = "deezer", ExternalId = "radio" },
                 new Song { Id = "ext-deezer-song-secondary", Title = "Secondary", Artist = "Secondary related artist", ExternalProvider = "deezer", ExternalId = "secondary" }]);
@@ -244,14 +308,15 @@ public sealed class PersonalMixAudioTests
                 return new BackendLibraryAccess(true, ["allowed"]);
             });
         var gateway = new Mock<IProtocolProviderGateway>();
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Library seed Artist A", 3))
-            .Returns(async (ProtocolExecutionContext context, string _, int _) =>
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Metadata)).Returns(["deezer"]);
+        gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "Library seed Artist A", 3))
+            .Returns(async (ProtocolExecutionContext context, string _, string _, int _) =>
             {
                 var at = clock.UtcNow;
                 radioStarted.SetResult();
                 await radioRelease.Task.WaitAsync(context.CancellationToken);
                 clock.Complete(at.AddSeconds(3));
-                return new List<Song>();
+                return ProviderOutcome<IReadOnlyList<Song>>.Success([]);
             });
         var start = Service(f, gateway, clock).StartAsync(f.Actor.AllstarrUserId!.Value, new("song", "seed", 25));
         bool overlapped;
@@ -341,8 +406,63 @@ public sealed class PersonalMixAudioTests
         var mix = (await service.GenerateAsync(f.Actor.AllstarrUserId!.Value)).Single(item => item.Kind == kind);
         Assert.True(mix.Readiness.Ready);
         Assert.Equal(25, mix.Songs.Count);
-        Assert.Equal("moods-v3", mix.RecipeVersion);
+        Assert.Equal("moods-v4", mix.RecipeVersion);
         Assert.All(mix.Songs, item => { Assert.True(item.Song.IsLocal); Assert.Equal(kind switch { "workout" => "Energetic sound", "party" => "Party sound", _ => "Calm sound" }, item.Reason); });
+    }
+
+    [Theory]
+    [InlineData("workout", "hip-hop", 0)]
+    [InlineData("focus", "ambient", 1)]
+    public async Task Partial_analysis_keeps_tagged_library_history_on_regeneration(string kind, string style, int measured)
+    {
+        await using var f = await ReadyAsync();
+        var tracks = Enumerable.Range(0, 40).Select(i => Track(i.ToString("D2"), "Artist " + i)).ToArray();
+        foreach (var track in tracks) track.CanonicalRecordingId = Guid.NewGuid();
+        await using (var db = f.Factory.CreateDbContext())
+        {
+            foreach (var track in tracks) db.CanonicalRecordings.Add(new() { Id = track.CanonicalRecordingId!.Value, CreatedByUserId = f.Actor.AllstarrUserId!.Value });
+            await db.SaveChangesAsync();
+        }
+        await AddAsync(f, tracks);
+        await using (var db = f.Factory.CreateDbContext())
+        {
+            foreach (var track in tracks) db.ListeningEvents.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = f.Actor.AllstarrUserId!.Value,
+                Protocol = "jellyfin",
+                BackendInstanceId = "primary",
+                OccurrenceKey = track.BackendItemId,
+                TrackReference = track.BackendItemId,
+                LibraryTrackId = track.Id,
+                Title = track.Title,
+                Artist = track.Artist,
+                State = allstarr.Core.Intelligence.ListeningEventState.Completed,
+                SourceKind = "protocol",
+                ListenedAt = DateTimeOffset.UtcNow.AddDays(-1),
+                UpdatedAt = DateTimeOffset.UtcNow.AddDays(-1)
+            });
+            await db.SaveChangesAsync();
+        }
+        var tags = new SharedTagStore(f.Factory, new SystemPlatformClock());
+        foreach (var track in tracks) await tags.SaveAsync(SharedTagStore.RecordingKey(track.CanonicalRecordingId!.Value),
+            [new("provider", [new(style)], DateTimeOffset.UtcNow)], [], false, default);
+        var original = f.Respond;
+        var partial = false;
+        f.Respond = request => request.RequestUri!.AbsolutePath == "/external/get_score" ? Fixture.Json(JsonSerializer.Serialize(new
+        {
+            item_id = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query)["id"].ToString(),
+            other_features = partial ? "relaxed:0.8,danceable:0.8" + (measured == 1 && request.RequestUri.Query.Contains("id=00", StringComparison.Ordinal) ? ",aggressive:0.1" : "") : kind == "workout" ? "relaxed:0.3,danceable:0.8,aggressive:0.8" : "relaxed:0.8,aggressive:0.1",
+            mood_vector = style + ":0.8"
+        })) : original(request);
+        var service = Service(f, new());
+        var first = (await service.GenerateAsync(f.Actor.AllstarrUserId!.Value)).Single(x => x.Kind == kind);
+        Assert.Equal(40, first.Songs.Count);
+        partial = true;
+        var next = (await service.GenerateAsync(f.Actor.AllstarrUserId.Value)).Single(x => x.Kind == kind);
+        Assert.Equal(40, next.Songs.Count);
+        Assert.Equal(measured, next.Songs.Count(x => x.Source == "audiomuse"));
+        Assert.True(next.Readiness.Ready);
     }
 
     [Fact]

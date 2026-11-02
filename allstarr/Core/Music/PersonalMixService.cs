@@ -494,10 +494,10 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             var ready = selected.Count >= (mood ? 25 : 1);
             var shortfall = selected.Count >= recipe.Target ? null : inputs.Playable.Length == 0
                 ? "No music service is enabled; only your eligible music was available."
-                : inputs.Reads >= MixRecipes.GenerationReads || inputs.RecipeReads.GetValueOrDefault(kind) >= MixRecipes.RecipeReads ? "No more songs were found within this mix’s service allowance."
+                : inputs.SharedReads >= MixRecipes.GenerationReads || inputs.RecipeReads.GetValueOrDefault(kind) >= MixRecipes.RecipeReads ? "No more songs were found within this mix’s service allowance."
                 : inputs.Failures > 0 ? "Some music services did not respond; eligible songs from the other sources are kept."
                 : "No more songs met this recipe's rules in the available music and services.";
-            if (kind == "release-radar" && selected.Count == 0) shortfall = $"Your release inbox contained {inputs.InboxEntries} entries. No eligible release track was found within this generation's service allowance.";
+            if (kind == "release-radar" && selected.Count == 0) shortfall = $"Your release inbox contained {inputs.InboxEntries} entries. No playable release track met this recipe and your listening policy.";
             var generation = mix.Generation + 1;
             var items = selected.Select(item => new PersonalMixItem(mix.Id, generation, SafeSong(item.Song), item.Source,
                 mood ? PersonalMixMoods.Reason(kind, item, item.Song.IsLocal ? "your library" : SourceName(item.Song.ExternalProvider)) : kind switch
@@ -527,7 +527,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 Evidence = new(recipe, completed.Count(item => item.SourceKind == "protocol"), completed.Count(item => item.SourceKind != "protocol"),
                     completed.Select(item => item.ListenedAt).Min(), completed.Select(item => item.ListenedAt).Max(), kind == "on-repeat" ? historical : null,
                     kind == "on-repeat" ? primary : 0, kind == "on-repeat" ? fallback.Length : 0, inputs.Offered, pool.Length, selected.Count,
-                    selected.Count(item => !item.ProviderFilled), selected.Count(item => item.ProviderFilled), excluded.Where(item => item.Value > 0).ToDictionary(),
+                    selected.Count(item => item.Song.IsLocal), selected.Count(item => !item.Song.IsLocal), excluded.Where(item => item.Value > 0).ToDictionary(),
                     inputs.Reads, inputs.Failures, shortfall, kind == "release-radar" ? inputs.InboxEntries : null, inputs.TagChartStatus)
             };
             if (kind == "discover-weekly") foreach (var key in selected.SelectMany(item => PersonalMixRules.IdentityKeys(item.Song))) document.DiscoverPicks[key] = clock.UtcNow;
@@ -565,7 +565,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         return document.Mixes.Values.Select(mix =>
         {
             var visible = mix.Songs.Where(item => !blocked.Contains(item.Song) && policy.Includes(item.Song)).ToArray();
-            var readiness = PersonalMixMoods.Kinds.Contains(mix.Kind) && mix.Generation > 0 && visible.Length < 25
+            var readiness = PersonalMixMoods.Kinds.Contains(mix.Kind) && mix.Generation > 0 && visible.Length < 25 && visible.Length < mix.Songs.Count
                 ? new MixReadiness(false, mix.Evidence != null ? "Fewer than 25 songs remain under your current listening policy. Refresh to look for more." : PersonalMixMoods.Readiness(visible.Length).Message) : mix.Readiness;
             if (readiness.Ready && visible.Length == 0)
                 readiness = new(false, "No playable songs are available for this mix yet. Refresh after more listening or new releases.");

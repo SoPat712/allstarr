@@ -28,9 +28,19 @@ public sealed partial class PersonalMixService
         internal Dictionary<string, int> RecipeReads = [];
         // Finding your own top songs at a service is shared groundwork, so it has its own allowance. Charged to whichever
         // mix came first, a long history used that mix's whole allowance before it could look for anything new.
-        internal const string HistoryLookups = "history-lookups";
-        internal bool CanRead => (Kind == HistoryLookups ? ReadKinds is not { Count: 0 } : ReadKinds == null || ReadKinds.Contains(Kind)) &&
-            Reads < MixRecipes.GenerationReads && RecipeReads.GetValueOrDefault(Kind) < (Kind == HistoryLookups ? MixRecipes.HistoryLookupReads : MixRecipes.RecipeReads);
+        internal const string HistoryLookups = "history-lookups", InboxLookups = "release-inbox", PlaybackChecks = "playback-checks", InboxPlaybackChecks = "release-playback-checks";
+        internal int InboxLimit;
+        internal int SharedReads => Reads - RecipeReads.GetValueOrDefault(InboxLookups) - RecipeReads.GetValueOrDefault(InboxPlaybackChecks);
+        internal bool CanRead => (Kind == HistoryLookups ? ReadKinds is not { Count: 0 } : Kind == PlaybackChecks ? Playable.Length > 0
+            : ReadKinds == null || ReadKinds.Contains(Kind == InboxLookups || Kind == InboxPlaybackChecks ? "release-radar" : Kind)) &&
+            (Kind == InboxLookups || Kind == InboxPlaybackChecks || SharedReads < MixRecipes.GenerationReads) && RecipeReads.GetValueOrDefault(Kind) < (Kind switch
+            {
+                HistoryLookups => MixRecipes.HistoryLookupReads,
+                InboxLookups => InboxLimit,
+                InboxPlaybackChecks => InboxLimit * 2,
+                PlaybackChecks => MixRecipes.PlaybackCheckReads,
+                _ => MixRecipes.RecipeReads
+            });
         internal string[] Playable = [];
         internal Dictionary<string, int> Excluded = [];
         internal Dictionary<string, DateTimeOffset> ReleaseDates = [];
@@ -71,7 +81,12 @@ public sealed partial class PersonalMixService
             .ThenBy(item => item.BackendItemId).Take(600).ToArrayAsync(token);
         var rows = new List<(Song Song, string Source, DateTimeOffset? Release)>();
         var hearts = (await new FavoriteViewReader(factory).ReadAsync(context, token)).Where(item => item.Display.Kind == "song").Take(300).ToArray();
-        rows.AddRange(hearts.Select(item => (item.Song(), "heart", (DateTimeOffset?)null)));
+        rows.AddRange(hearts.Select(item =>
+        {
+            var song = item.Song();
+            song.Genres = item.Display.Genres.ToList();
+            return (song, "heart", (DateTimeOffset?)null);
+        }));
         rows.AddRange(library.Select(track => (LibrarySong(track), "library", (DateTimeOffset?)null)));
         inputs ??= new();
         var historyRecordings = events.Select(play => play.CanonicalRecordingId).OfType<Guid>().ToHashSet();
@@ -80,49 +95,83 @@ public sealed partial class PersonalMixService
             row.Song.CanonicalRecordingId is { } id && historyRecordings.Contains(id)).Select(row => (row.Song, row.Source, row.Release)));
         var recent = RecentHistory(events);
         inputs.Playable = (await providers.GetPlayableProviderOrderAsync(context.Actor!, token) ?? []).Where(provider => context.Policy?.IsAutomatic(provider) != false).ToArray();
+        async Task<Song?> ResolveHistorySong(ListeningEventRecord play)
+        {
+            if (play.LibraryTrackId != null || string.IsNullOrWhiteSpace(play.Title) || string.IsNullOrWhiteSpace(play.Artist)) return null;
+            var seed = new Song
+            {
+                Title = play.Title,
+                Artist = play.Artist,
+                Album = play.Album ?? "",
+                Duration = (int?)(play.DurationMilliseconds / 1000),
+                Isrc = play.Isrc
+            };
+            foreach (var provider in inputs.Playable)
+            {
+                var found = await inputs.ReadAsync(context, c => providers.SearchAutomaticProviderSongsAsync(c, provider, play.Title + " " + play.Artist, 3), token);
+                if (found?.IsSuccess == true)
+                {
+                    var song = found.RequireValue().FirstOrDefault(candidate => MusicSearchService.MetadataRecordingsMatch(seed, candidate));
+                    if (song != null) { inputs.FreshSongs.Add(song.Id); return song; }
+                }
+                else if (found != null) inputs.Failures++;
+            }
+            return null;
+        }
         var recipeKind = inputs.Kind;
+        var unresolvedRoutes = new List<(ListeningEventRecord Play, Song Song)>();
         inputs.Kind = GenerationInputs.HistoryLookups;
-        foreach (var group in events.Where(item => item.State == ListeningEventState.Completed)
-            .GroupBy(item => item.CanonicalRecordingId?.ToString("D") ?? item.TrackReference)
-            .OrderByDescending(group => group.Count(play => recent.Contains(play.Id))).ThenByDescending(group => group.Count()).ThenBy(group => group.Key, StringComparer.Ordinal).Take(PersonalMixRules.TopSongs))
+        var history = events.Where(item => item.State == ListeningEventState.Completed)
+            .GroupBy(item => item.CanonicalRecordingId?.ToString("D") ?? item.TrackReference).ToArray();
+        var rotation = history.OrderByDescending(group => group.Count(play => recent.Contains(play.Id)))
+            .ThenByDescending(group => group.Count(play => play.ListenedAt >= clock.UtcNow.AddDays(-MixRecipes.RotationDays)))
+            .ThenByDescending(group => group.Count()).ThenBy(group => group.Key, StringComparer.Ordinal).Take(PersonalMixRules.TopSongs);
+        var lost = history.Where(group => group.Count() >= MixRecipes.LostPlays &&
+                group.Max(play => play.ListenedAt ?? play.UpdatedAt) <= clock.UtcNow.AddMonths(-MixRecipes.LostMonths))
+            .OrderByDescending(group => group.Count()).ThenBy(group => group.Key, StringComparer.Ordinal).Take(PersonalMixRules.TopSongs);
+        var metadataProviders = providers.GetProviderOrder(allstarr.Core.Capabilities.ProviderCapabilityKind.Metadata) ?? [];
+        foreach (var group in rotation.Concat(lost).DistinctBy(group => group.Key))
         {
             var play = group.OrderByDescending(item => item.ListenedAt).First();
-            if (rows.Any(item => item.Song.Id == play.TrackReference || play.CanonicalRecordingId != null &&
-                item.Song.CanonicalRecordingId == play.CanonicalRecordingId)) continue;
+            var existing = rows.Where(item => item.Song.Id == play.TrackReference || play.CanonicalRecordingId != null &&
+                item.Song.CanonicalRecordingId == play.CanonicalRecordingId).Select(item => item.Song).ToArray();
+            if (existing.Length > 0)
+            {
+                unresolvedRoutes.AddRange(existing.Where(song => !song.IsLocal && !inputs.Playable.Contains(song.ExternalProvider)).Select(song => (play, song)));
+                continue;
+            }
             var parsed = LocalLibraryService.ParseExternalResource(play.TrackReference);
             Song? song = play.CanonicalRecordingId is { } recording
                 ? await providers.GetStoredSongAsync(context, "allstarr", recording.ToString("D")) : null;
             if (song == null && parsed.isExternal && parsed.type == "song")
             {
                 song = await providers.GetStoredSongAsync(context, parsed.provider!, parsed.externalId!);
-                if (song == null)
+                if (song == null && (inputs.Playable.Contains(parsed.provider) || metadataProviders.Contains(parsed.provider)))
                 {
                     song = await inputs.ReadAsync(context, c => providers.GetSongAsync(c, parsed.provider!, parsed.externalId!), token);
                     if (song != null) inputs.FreshSongs.Add(song.Id);
                 }
             }
-            else if (song == null && play.LibraryTrackId == null && !string.IsNullOrWhiteSpace(play.Title) && !string.IsNullOrWhiteSpace(play.Artist))
-            {
-                var seed = new Song
-                {
-                    Title = play.Title,
-                    Artist = play.Artist,
-                    Album = play.Album ?? "",
-                    Duration = (int?)(play.DurationMilliseconds / 1000),
-                    Isrc = play.Isrc
-                };
-                foreach (var provider in inputs.Playable)
-                {
-                    var found = await inputs.ReadAsync(context, c => providers.SearchAutomaticProviderSongsAsync(c, provider, play.Title + " " + play.Artist, 3), token);
-                    if (found?.IsSuccess == true) song = found.RequireValue().FirstOrDefault(candidate => MusicSearchService.MetadataRecordingsMatch(seed, candidate));
-                    else if (found != null) inputs.Failures++;
-                    if (song != null) { inputs.FreshSongs.Add(song.Id); break; }
-                }
-            }
+            if (song == null) song = await ResolveHistorySong(play);
+            else if (!song.IsLocal && !inputs.Playable.Contains(song.ExternalProvider)) unresolvedRoutes.Add((play, song));
             if (song != null) { song.CanonicalRecordingId ??= play.CanonicalRecordingId; rows.Add((song, "history", null)); }
         }
         inputs.Kind = recipeKind;
-        return (await RankCandidatesAsync(rows, context, user, events, hearts, token, inputs), null);
+        var unavailableRoutes = new List<Song>();
+        var ranked = (await RankCandidatesAsync(rows, context, user, events, hearts, token, inputs, unavailableRoutes: unavailableRoutes)).ToList();
+        inputs.Kind = GenerationInputs.HistoryLookups;
+        var resolved = new List<(Song Song, string Source, DateTimeOffset? Release)>();
+        foreach (var (play, original) in unresolvedRoutes)
+        {
+            if (!unavailableRoutes.Contains(original)) continue;
+            var song = await ResolveHistorySong(play);
+            if (song == null) continue;
+            song.CanonicalRecordingId ??= play.CanonicalRecordingId;
+            resolved.Add((song, "history", null));
+        }
+        if (resolved.Count > 0) ranked.AddRange(await RankCandidatesAsync(resolved, context, user, events, hearts, token, inputs));
+        inputs.Kind = recipeKind;
+        return (ranked, null);
     }
 
     private async Task<IReadOnlyList<MixCandidate>> FillAsync(UserRecord user, IReadOnlyList<MixCandidate> own,
@@ -171,7 +220,7 @@ public sealed partial class PersonalMixService
         }
         IReadOnlyList<MixCandidate> Selected(string kind) => selections.TryGetValue(kind, out var cached) ? cached : selections[kind] = PersonalMixRules.Select(kind,
             RecipePool(kind, document.Mixes[kind].CoverTag, all, features, all), clock.UtcNow, previous);
-        var shortKinds = kinds.Where(kind => Selected(kind).Count < MixRecipes.For(kind).Target)
+        var shortKinds = kinds.Where(kind => kind == "release-radar" || Selected(kind).Count < MixRecipes.For(kind).Target)
             .OrderBy(kind => Selected(kind).Count >= (PersonalMixMoods.Kinds.Contains(kind) ? 25 : 1)).ToArray();
         foreach (var kind in shortKinds)
         {
@@ -194,7 +243,7 @@ public sealed partial class PersonalMixService
                 foreach (var song in songs)
                 {
                     // Discard results this recipe cannot use before recording comparisons or ranking.
-                    if (context.Policy?.Includes(song) == false || selected.Count(row => string.Equals(row.Song.Artist, song.Artist, StringComparison.OrdinalIgnoreCase)) >= recipe.ArtistLimit) continue;
+                    if (context.Policy?.Includes(song) == false || kind != "release-radar" && selected.Count(row => string.Equals(row.Song.Artist, song.Artist, StringComparison.OrdinalIgnoreCase)) >= recipe.ArtistLimit) continue;
                     if (kind.StartsWith("daily-", StringComparison.Ordinal) && !playedNames.Contains(song.Artist)) continue;
                     var native = recordings.Find(song);
                     var id = native?.Id ?? song.Id;
@@ -210,9 +259,20 @@ public sealed partial class PersonalMixService
                     if (native != null) continue;
                     inputs.Filled.Add(song.Id);
                     rows.Add((song, source, release));
-                    recordings.Add(song);
+                    if (kind != "release-radar") recordings.Add(song);
                 }
-                if (rows.Count > 0) all.AddRange(await RankCandidatesAsync(rows, context, user, events, [], token, inputs));
+                if (kind == "release-radar")
+                {
+                    foreach (var row in rows)
+                    {
+                        var ranked = await RankCandidatesAsync([row], context, user, events, [], token, inputs);
+                        if (ranked.Count == 0) continue;
+                        all.Add(ranked[0]);
+                        recordings.Add(ranked[0].Song);
+                        break;
+                    }
+                }
+                else if (rows.Count > 0) all.AddRange(await RankCandidatesAsync(rows, context, user, events, [], token, inputs));
                 ApplyEvidence();
             }
             async Task FindRelated()
@@ -284,6 +344,21 @@ public sealed partial class PersonalMixService
             }
             if (NeedsSongs() && (kind.StartsWith("daily-", StringComparison.Ordinal) || PersonalMixMoods.Kinds.Contains(kind))) await FindRelated();
             if (kind != "release-radar") continue;
+            inputs.InboxLimit = Math.Min(inbox!.Entries.Count, recipe.Target);
+            inputs.Kind = GenerationInputs.InboxLookups;
+            foreach (var entry in inbox.Entries.OrderByDescending(item => item.ReleaseDate, StringComparer.Ordinal).ThenBy(item => item.Id, StringComparer.Ordinal)
+                .Where(item => ReleaseDate(item.ReleaseDate) >= clock.UtcNow.AddDays(-recipe.WindowDays)).Take(recipe.Target))
+            {
+                if (!inputs.CanRead) break;
+                var source = entry.Sources.Where(source => context.Policy?.IsAutomatic(source.ProviderId) != false)
+                    .OrderByDescending(source => inputs.Playable.Contains(source.ProviderId)).FirstOrDefault();
+                if (source == null) continue;
+                var found = await inputs.ReadAsync(context, c => providers.GetAlbumAsync(c, source.ProviderId, source.AlbumId), token);
+                await Add((found?.Songs ?? []).OrderBy(song => song.Track ?? int.MaxValue).ThenBy(song => song.Id, StringComparer.Ordinal),
+                    source.ProviderId, release: ReleaseDate(entry.ReleaseDate), releaseKey: source.Key);
+            }
+            inputs.Kind = kind;
+            var inboxSources = inbox.Entries.SelectMany(entry => entry.Sources).Select(source => source.Key).ToHashSet(StringComparer.Ordinal);
             var releaseArtists = followed.Select(artist => (Name: artist.DisplayName, Provider: (string?)artist.ProviderId, Id: (string?)artist.ArtistId))
                 .Concat(playedArtists.Where(group => group.Count() >= recipe.MinimumPlays).Select(group => (Name: group.Key, Provider: (string?)null, Id: (string?)null)))
                 .DistinctBy(artist => artist.Name, StringComparer.OrdinalIgnoreCase);
@@ -295,7 +370,10 @@ public sealed partial class PersonalMixService
                     var artistSongs = found.Where(song => string.Equals(song.Artist, seed.Name, StringComparison.OrdinalIgnoreCase)).ToArray();
                     foreach (var song in artistSongs)
                         if (ReleaseDate(song.ReleaseDate) is { } at && at >= clock.UtcNow.AddDays(-recipe.WindowDays) && song.AlbumId != null)
-                            await Add([song], provider, release: at, releaseKey: provider + ":" + song.AlbumId);
+                        {
+                            var key = provider + ":" + (LocalLibraryService.ParseExternalResource(song.AlbumId).externalId ?? song.AlbumId);
+                            if (!inboxSources.Contains(key)) await Add([song], provider, release: at, releaseKey: key);
+                        }
                     if (NeedsSongs() && (artistSongs.Length == 0 || artistSongs.Any(song => ReleaseDate(song.ReleaseDate) == null)))
                     {
                         var artistId = seed.Id ?? artistSongs.SelectMany(song => song.ArtistIds)
@@ -313,23 +391,14 @@ public sealed partial class PersonalMixService
                                 if (!NeedsSongs()) break;
                                 if (ReleaseDate(album.ReleaseDate) is not { } at || at < clock.UtcNow.AddDays(-recipe.WindowDays)) continue;
                                 var id = album.ExternalId ?? LocalLibraryService.ParseExternalResource(album.Id).externalId;
-                                if (id == null) continue;
+                                if (id == null || inboxSources.Contains(provider + ":" + id)) continue;
                                 var release = await inputs.ReadAsync(context, c => providers.GetAlbumAsync(c, provider, id), token);
                                 await Add((release?.Songs ?? []).Where(song => string.Equals(song.Artist, seed.Name, StringComparison.OrdinalIgnoreCase))
-                                    .OrderBy(song => song.Track ?? int.MaxValue).ThenBy(song => song.Id, StringComparer.Ordinal).Take(1),
+                                    .OrderBy(song => song.Track ?? int.MaxValue).ThenBy(song => song.Id, StringComparer.Ordinal),
                                     provider, release: at, releaseKey: provider + ":" + id);
                             }
                     }
                     if (found.Count > 0 || seed.Id != null) break;
-                }
-            foreach (var entry in inbox!.Entries.OrderByDescending(item => item.ReleaseDate))
-                foreach (var source in entry.Sources)
-                {
-                    if (!NeedsSongs()) break;
-                    if (ReleaseDate(entry.ReleaseDate) is not { } at || at < clock.UtcNow.AddDays(-recipe.WindowDays)) continue;
-                    var found = await inputs.ReadAsync(context, c => providers.GetAlbumAsync(c, source.ProviderId, source.AlbumId), token);
-                    await Add((found?.Songs ?? []).OrderBy(song => song.Track ?? int.MaxValue).ThenBy(song => song.Id, StringComparer.Ordinal),
-                        source.ProviderId, release: at, releaseKey: source.ProviderId + ":" + source.AlbumId);
                 }
         }
         return all;
@@ -363,15 +432,15 @@ public sealed partial class PersonalMixService
 
     private async Task<IReadOnlyList<MixCandidate>> RankCandidatesAsync(List<(Song Song, string Source, DateTimeOffset? Release)> rows,
         ProtocolExecutionContext context, UserRecord user, ListeningEventRecord[] events, FavoriteViewItem[] hearts, CancellationToken token, GenerationInputs? inputs = null, bool recount = false,
-        SeedMixDiagnostics? diagnostics = null)
+        SeedMixDiagnostics? diagnostics = null, bool deferPlayback = false, ICollection<Song>? unavailableRoutes = null)
     {
         using var phase = diagnostics?.Phase("rank");
         if (inputs != null && !recount) inputs.Offered += rows.Count;
         var unique = new List<(Song Song, string Source, DateTimeOffset? Release)>();
         var recordings = new RecordingIndex();
         foreach (var row in rows.OrderByDescending(item => item.Release).ThenByDescending(item => item.Song.IsLocal).ThenBy(item => item.Song.Id, StringComparer.Ordinal))
-            if (unique.Count < 1000 && recordings.Find(row.Song) == null) { unique.Add(row); recordings.Add(row.Song); }
-            else if (!recount) inputs?.Exclude(unique.Count >= 1000 ? "Candidate limit" : "Duplicate recordings");
+            if (inputs != null) unique.Add(row);
+            else if (unique.Count < 1000 && recordings.Find(row.Song) == null) { unique.Add(row); recordings.Add(row.Song); }
         var songs = unique.ToArray();
         foreach (var row in songs) diagnostics?.Count(row.Source, "unique");
         var profiles = await tags.GetTags(songs.Select(item => item.Song.CanonicalRecordingId).OfType<Guid>().Distinct().ToArray(), token);
@@ -400,15 +469,27 @@ public sealed partial class PersonalMixService
             diagnostics?.Count(row.Source, "policy");
             if (score.Blocked) { inputs?.Exclude("Never"); continue; }
             diagnostics?.Count(row.Source, "never");
+            if (inputs != null && (recordings.Find(row.Song) != null || result.Count >= 1000))
+            {
+                if (!recount) inputs.Exclude(result.Count >= 1000 ? "Candidate limit" : "Duplicate recordings");
+                continue;
+            }
             try
             {
-                using var playback = diagnostics?.Phase("playback");
-                var playable = row.Song.IsLocal || (inputs != null ? inputs.Playable.Contains(row.Song.ExternalProvider)
+                using var playback = !deferPlayback ? diagnostics?.Phase("playback") : null;
+                var playable = deferPlayback || row.Song.IsLocal || (inputs != null ? recount || inputs.Playable.Contains(row.Song.ExternalProvider)
                     : await providers.CanPlaySongAsync(context, row.Song));
-                if (!playable) { inputs?.Exclude("No playable route"); continue; }
+                if (!playable && inputs != null)
+                {
+                    var kind = inputs.Kind;
+                    inputs.Kind = kind == GenerationInputs.InboxLookups ? GenerationInputs.InboxPlaybackChecks : GenerationInputs.PlaybackChecks;
+                    try { playable = await inputs.ReadAsync(context, async c => await providers.CanPlaySongAsync(c, row.Song) ? row.Song : null, token) != null; }
+                    finally { inputs.Kind = kind; }
+                }
+                if (!playable) { inputs?.Exclude("No playable route"); unavailableRoutes?.Add(row.Song); continue; }
             }
-            catch (Exception) when (!token.IsCancellationRequested) { failed = true; inputs?.Exclude("No playable route"); continue; }
-            diagnostics?.Count(row.Source, "playable");
+            catch (Exception) when (!token.IsCancellationRequested) { failed = true; inputs?.Exclude("No playable route"); unavailableRoutes?.Add(row.Song); continue; }
+            if (!deferPlayback || row.Song.IsLocal) diagnostics?.Count(row.Source, "playable");
             var matched = PersonalMixRules.IdentityKeys(row.Song).SelectMany(key => listening.GetValueOrDefault(key) ?? [])
                 .DistinctBy(play => play.Id).ToArray();
             var played = matched.Where(play => play.State == ListeningEventState.Completed).ToArray();
@@ -433,6 +514,7 @@ public sealed partial class PersonalMixService
             var less = nudges.Any(nudge => nudge.Mode == "less" && (nudge.Kind == "song" && nudge.Name == PersonalMixRules.Key(row.Song) ||
                 nudge.Kind == "artist" && string.Equals(nudge.Name, row.Song.Artist, StringComparison.OrdinalIgnoreCase) ||
                 nudge.Kind == "tag" && features.ContainsKey(nudge.Name)));
+            if (inputs != null) recordings.Add(row.Song);
             result.Add(new(inputs == null ? row.Song.WithTasteReason(row.Song.TasteReason ?? score.Reasons.FirstOrDefault()) : row.Song, features, played.Length, played.Count(play => recentIds.Contains(play.Id)),
                 matched.Select(play => (DateTimeOffset?)(play.ListenedAt ?? play.UpdatedAt)).DefaultIfEmpty().Max(),
                 false, row.Source, inputs == null ? score.Score : 0, row.Release, matched.Length > 0, hearts.Any(item => item.ItemId == row.Song.Id),

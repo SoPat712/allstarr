@@ -15,6 +15,8 @@ public sealed record MixStartRequest(string SeedKind, string SeedId, int Length 
 
 public sealed partial class PersonalMixService
 {
+    private const int StartPlaybackBatch = 4, StartPlaybackMargin = 8;
+
     private sealed record CustomSeed(List<(Song Song, string Source, DateTimeOffset? Release)> Rows,
         string Name, Song? Song, string Artist, string[] Genres);
 
@@ -42,6 +44,7 @@ public sealed partial class PersonalMixService
                 (events, history) = await HistoryAsync(db, user, token);
             }
             var (fetched, seedName) = await CandidatesAsync(db, user, events, token, request, diagnostics: diagnostics);
+            var fetchedCount = fetched.Count(row => row.PlaybackQualified);
             var id = Guid.CreateVersion7();
             for (var attempt = 0; attempt < 3; attempt++)
             {
@@ -49,6 +52,7 @@ public sealed partial class PersonalMixService
                 var revision = await InputRevisionAsync(db, owner, token);
                 var candidates = await RevalidateAsync(user, fetched, token, diagnostics);
                 var selected = PersonalMixRules.Select("custom", candidates, clock.UtcNow, [], request.Length, diagnostics);
+                var qualifiedCount = candidates.Count(row => row.PlaybackQualified);
                 var preview = new PersonalMix(id, "custom", "Your mix", "Songs like your seed", 0, clock.UtcNow,
                     new(selected.Count > 0, selected.Count > 0 ? "Ready" : "No eligible playable songs found."), false,
                     selected.Select(row => new PersonalMixItem(id, 0, SafeSong(row.Song), row.Source,
@@ -57,11 +61,11 @@ public sealed partial class PersonalMixService
                     Evidence = new(MixRecipes.For("custom") with { Sentence = "Songs selected from " + seedName + ".", Target = request.Length },
                         events.Count(item => item.State == allstarr.Core.Intelligence.ListeningEventState.Completed && item.SourceKind == "protocol"),
                         events.Count(item => item.State == allstarr.Core.Intelligence.ListeningEventState.Completed && item.SourceKind != "protocol"),
-                        null, null, null, 0, 0, fetched.Count, candidates.Count, selected.Count,
+                        null, null, null, 0, 0, fetchedCount, qualifiedCount, selected.Count,
                         selected.Count(item => item.Song.IsLocal), selected.Count(item => !item.Song.IsLocal), new Dictionary<string, int>
                         {
-                            ["Artist and size limits"] = candidates.Count - selected.Count,
-                            ["Choices changed"] = fetched.Count - candidates.Count
+                            ["Artist and size limits"] = qualifiedCount - selected.Count,
+                            ["Choices changed"] = fetchedCount - qualifiedCount
                         }.Where(item => item.Value > 0).ToDictionary(), null, null, null),
                     SeedName = seedName,
                     CoverTag = selected.SelectMany(row => row.Tags).GroupBy(tag => tag.Key)
@@ -108,20 +112,34 @@ public sealed partial class PersonalMixService
         seed.Rows.AddRange(related.Select(track => (LibrarySong(track), "library", (DateTimeOffset?)null)));
         var radioRecordings = new RecordingIndex();
         foreach (var row in seed.Rows.Where(row => row.Source == "radio")) radioRecordings.Add(row.Song);
-        var candidates = (await RankCandidatesAsync(WithoutSeed(seed.Rows), context, user, events, [], token, diagnostics: diagnostics)).Select(Relationship).ToList();
-        var selected = PersonalMixRules.Select("custom", candidates, clock.UtcNow, [], request.Length);
+        var rows = WithoutSeed(seed.Rows);
+        var relatedRows = new List<(Song Song, string Source, DateTimeOffset? Release)>();
+        var relatedRecordings = new RecordingIndex();
+        foreach (var row in rows.Where(row => row.Source != "audiomuse")
+            .OrderByDescending(row => SeedArtist(row.Song)).ThenByDescending(row => row.Song.IsLocal))
+            if (relatedRows.Count < MusicMixService.SeedCandidateLimit &&
+                (!SeedArtist(row.Song) || relatedRows.Count(item => SeedArtist(item.Song)) < MusicMixService.SeedArtistCandidateLimit) && relatedRecordings.Find(row.Song) == null)
+            { relatedRows.Add(row); relatedRecordings.Add(row.Song); }
+        diagnostics?.Add("related-capped", relatedRows.Count);
+        var relatedCount = relatedRows.Count;
+        var seedArtistCount = relatedRows.Count(row => SeedArtist(row.Song));
+        var candidates = (await RankCandidatesAsync(rows.Where(row => row.Source == "audiomuse").Concat(relatedRows).ToList(),
+            context, user, events, [], token, diagnostics: diagnostics, deferPlayback: true)).Select(Relationship).ToList();
+        var playbackChecks = new Dictionary<string, (bool Playable, bool Failed)>(StringComparer.Ordinal);
+        var qualified = await QualifyAsync();
+        var selected = PersonalMixRules.Select("custom", qualified, clock.UtcNow, [], request.Length);
         if (selected.Count == request.Length && selected.Count(row => row.Source != "audiomuse") >= Math.Ceiling(request.Length * .6))
-            return (candidates, seed.Name);
+            return (qualified, seed.Name);
 
         FavoriteViewItem[] hearts;
         using (diagnostics?.Phase("hearts"))
             hearts = (await new FavoriteViewReader(factory).ReadAsync(context, token)).Where(item => item.Display.Kind == "song").Take(300).ToArray();
         var heartRows = hearts.Select(item => (Song: item.Song(), Source: "heart", Release: (DateTimeOffset?)null)).ToArray();
         await AddAsync(heartRows.Where(row => RelatedArtist(row.Song) || radioRecordings.Find(row.Song) != null).ToList());
-        if (!candidates.Any(row => row.Source == "audiomuse" || row.RelatedTo != null)) return ([], seed.Name);
-        if (PersonalMixRules.Select("custom", candidates, clock.UtcNow, [], request.Length).Count == request.Length) return (candidates, seed.Name);
+        if (!qualified.Any(row => row.PlaybackQualified && (row.Source == "audiomuse" || row.RelatedTo != null))) return ([], seed.Name);
+        if (PersonalMixRules.Select("custom", qualified, clock.UtcNow, [], request.Length).Count == request.Length) return (qualified, seed.Name);
         await AddAsync(heartRows.Where(row => !RelatedArtist(row.Song) && radioRecordings.Find(row.Song) == null).ToList());
-        if (PersonalMixRules.Select("custom", candidates, clock.UtcNow, [], request.Length).Count < request.Length)
+        if (PersonalMixRules.Select("custom", qualified, clock.UtcNow, [], request.Length).Count < request.Length)
         {
             var known = events.Select(item => item.LibraryTrackId).OfType<Guid>().Distinct().ToArray();
             LibraryTrackRecord[] fallback;
@@ -129,7 +147,7 @@ public sealed partial class PersonalMixService
                 fallback = await query.OrderByDescending(item => known.Contains(item.Id)).ThenBy(item => item.BackendItemId).Take(600).ToArrayAsync(token);
             await AddAsync(fallback.Select(track => (LibrarySong(track), "library", (DateTimeOffset?)null)).ToList());
         }
-        return (candidates, seed.Name);
+        return (qualified, seed.Name);
 
         List<(Song Song, string Source, DateTimeOffset? Release)> WithoutSeed(List<(Song Song, string Source, DateTimeOffset? Release)> rows)
         {
@@ -139,6 +157,8 @@ public sealed partial class PersonalMixService
         }
 
         bool RelatedArtist(Song song) => song.Artists.Append(song.Artist).Any(name => artists.Contains(name.Trim().ToLowerInvariant()));
+
+        bool SeedArtist(Song song) => song.Artists.Append(song.Artist).Any(name => string.Equals(name.Trim(), seed.Artist, StringComparison.OrdinalIgnoreCase));
 
         MixCandidate Relationship(MixCandidate row)
         {
@@ -157,11 +177,72 @@ public sealed partial class PersonalMixService
         {
             foreach (var row in rows) diagnostics?.Count(row.Source, "found");
             var recordings = new RecordingIndex();
-            foreach (var row in candidates) recordings.Add(row.Song);
-            var additional = WithoutSeed(rows).Where(row => recordings.Find(row.Song) == null).Take(Math.Max(0, 1000 - candidates.Count)).ToList();
+            foreach (var row in candidates.Where(row => row.Song.IsLocal || !playbackChecks.TryGetValue(row.Song.Id, out var check) || check.Playable)) recordings.Add(row.Song);
+            var additional = new List<(Song Song, string Source, DateTimeOffset? Release)>();
+            foreach (var row in WithoutSeed(rows))
+            {
+                if (candidates.Count + additional.Count >= 1000) break;
+                if (recordings.Find(row.Song) != null) continue;
+                if (!row.Song.IsLocal && playbackChecks.TryGetValue(row.Song.Id, out var previous) && !previous.Playable) continue;
+                var isRelated = RelatedArtist(row.Song) || radioRecordings.Find(row.Song) != null;
+                var isSeedArtist = SeedArtist(row.Song);
+                var newRecording = relatedRecordings.Find(row.Song) == null;
+                if (newRecording && (isRelated && relatedCount >= MusicMixService.SeedCandidateLimit || isSeedArtist && seedArtistCount >= MusicMixService.SeedArtistCandidateLimit)) continue;
+                additional.Add(row);
+                recordings.Add(row.Song);
+                if (isRelated && newRecording) { relatedCount++; relatedRecordings.Add(row.Song); diagnostics?.Add("related-capped", 1); }
+                if (isSeedArtist && newRecording) seedArtistCount++;
+            }
             if (additional.Count == 0) return;
-            candidates.AddRange((await RankCandidatesAsync(additional, context, user, events, hearts, token, diagnostics: diagnostics)).Select(Relationship));
+            candidates.AddRange((await RankCandidatesAsync(additional, context, user, events, hearts, token, diagnostics: diagnostics, deferPlayback: true)).Select(Relationship));
+            qualified = await QualifyAsync();
         }
+
+        async Task<IReadOnlyList<MixCandidate>> QualifyAsync()
+        {
+            while (true)
+            {
+                var available = candidates.Where(row => row.Song.IsLocal || !playbackChecks.TryGetValue(row.Song.Id, out var check) || check.Playable).ToArray();
+                var next = PersonalMixRules.Select("custom", available, clock.UtcNow, [], request.Length,
+                    selectionLimit: request.Length + StartPlaybackMargin, includeUnqualified: true)
+                    .Where(row => !row.Song.IsLocal && !playbackChecks.ContainsKey(row.Song.Id))
+                    .Take(Math.Min(StartPlaybackBatch, Math.Max(0, request.Length + StartPlaybackMargin - playbackChecks.Count))).ToArray();
+                if (next.Length == 0) break;
+                var checks = await CheckStartPlaybackAsync(next.Select(row => row.Song).ToArray(), context, token, diagnostics);
+                foreach (var row in next)
+                {
+                    var check = checks[row.Song];
+                    playbackChecks[row.Song.Id] = check;
+                    if (check.Playable) diagnostics?.Count(row.Source, "playable");
+                }
+            }
+            var playable = candidates.Where(row => row.Song.IsLocal || !playbackChecks.TryGetValue(row.Song.Id, out var check) || check.Playable)
+                .Select(row => row with { PlaybackQualified = row.Song.IsLocal || playbackChecks.TryGetValue(row.Song.Id, out var check) && check.Playable }).ToArray();
+            if (!playable.Any(row => row.PlaybackQualified) && playbackChecks.Values.Any(check => check.Failed))
+                throw new InvalidOperationException("Mix sources are unavailable. Try again later.");
+            return playable;
+        }
+    }
+
+    private async Task<IReadOnlyDictionary<Song, (bool Playable, bool Failed)>> CheckStartPlaybackAsync(IReadOnlyList<Song> songs,
+        ProtocolExecutionContext context, CancellationToken token, SeedMixDiagnostics? diagnostics)
+    {
+        using var phase = diagnostics?.Phase("playback");
+        using var slots = new SemaphoreSlim(StartPlaybackBatch);
+        var results = new System.Collections.Concurrent.ConcurrentDictionary<Song, (bool Playable, bool Failed)>();
+        await Task.WhenAll(songs.Select(async song =>
+        {
+            if (song.IsLocal) { results[song] = (true, false); return; }
+            await slots.WaitAsync(token);
+            try
+            {
+                diagnostics?.Add("playback-checks", 1);
+                results[song] = (await providers.CanPlaySongAsync(context, song).WaitAsync(token), false);
+            }
+            catch (Exception) when (!token.IsCancellationRequested) { results[song] = (false, true); }
+            finally { slots.Release(); }
+        }));
+        return results;
     }
 
     private async Task<CustomSeed> SeedRowsAsync(ProtocolExecutionContext context,
@@ -212,7 +293,7 @@ public sealed partial class PersonalMixService
         {
             using var phase = diagnostics?.Phase("radio");
             return await radio.SeedCandidatesAsync(context, seed, artist, parsed.isExternal ? parsed.provider : null,
-                parsed.isExternal ? parsed.externalId : null, token, diagnostics);
+                parsed.isExternal ? parsed.externalId : null, token, diagnostics, capCandidates: true);
         }
     }
 

@@ -4,7 +4,7 @@ namespace allstarr.Core.Music;
 
 internal static class PersonalMixMoods
 {
-    internal const string RecipeVersion = "moods-v3";
+    internal const string RecipeVersion = "moods-v4";
     internal static readonly string[] Kinds = ["chill", "focus", "workout", "party", "sleep"];
     internal static MixReadiness Readiness(int count) => count >= 25 ? new(true, "Ready") :
         new(false, $"Add about {25 - count} more qualifying analyzed or tagged songs.");
@@ -18,15 +18,24 @@ internal static class PersonalMixMoods
         var result = new List<(MixCandidate Row, double Score)>();
         foreach (var row in rows)
         {
-            var measured = row.Song.IsLocal && features.TryGetValue(row.Song.Id, out _);
+            var measured = row.Song.IsLocal && features.TryGetValue(row.Song.Id, out var sound) && HasMeasurements(kind, sound);
             // A style is only a hint, so it counts for songs the listener knows, not for picks from a service.
             var score = measured ? Score(kind, features[row.Song.Id]) :
-                TagScore(kind, row.Tags, fitting: row.Song.IsLocal || row.Plays > 0);
+                TagScore(kind, row.Tags, fitting: row.Song.IsLocal || row.Plays > 0 || row.Loved);
             if (score != null) result.Add((row with { Source = measured ? "audiomuse" : row.Source }, score.Value));
         }
         // Songs that plainly carry the mood come before songs that only share a fitting style.
         return result.OrderByDescending(item => item.Score >= 1).Select(item => item.Row).ToList();
     }
+
+    private static bool HasMeasurements(string kind, AudioMuseScores scores) => kind switch
+    {
+        "chill" => scores.Relaxed != null && scores.Happy != null,
+        "focus" => scores.Relaxed != null && scores.Aggressive != null,
+        "sleep" => scores.Relaxed != null && scores.Sad != null,
+        "workout" => scores.Aggressive != null && scores.Danceable != null,
+        _ => scores.Party != null && scores.Danceable != null && scores.Happy != null
+    };
 
     internal static string[] Wanted(string kind) => kind switch
     {
@@ -52,8 +61,8 @@ internal static class PersonalMixMoods
         "sleep" => "relaxed ≥ 0.65, sad ≥ 0.5; energy ≤ 0.35 when known.",
         "workout" => "aggressive and danceable ≥ 0.6; energy ≥ 0.6 and tempo 120–170 when known.",
         _ => "party and danceable ≥ 0.6, happy ≥ 0.5."
-    }) + " Otherwise, one of these tags: " + string.Join(", ", Wanted(kind)) + "." +
-        (Fitting(kind) is { Length: > 0 } fitting ? " After those, songs in fitting styles: " + string.Join(", ", fitting) + "." : "");
+    }) + " When required measurements are missing, one of these saved or evidenced tags: " + string.Join(", ", Wanted(kind)) + "." +
+        (Fitting(kind) is { Length: > 0 } fitting ? " Library songs and service songs you played or saved also qualify in fitting styles: " + string.Join(", ", fitting) + "." : "");
 
     // Feature thresholds qualify; missing optional measurements stay unknown.
     internal static double? Score(string kind, AudioMuseScores s)

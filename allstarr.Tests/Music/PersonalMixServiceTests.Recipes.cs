@@ -118,8 +118,8 @@ public sealed partial class PersonalMixServiceTests
         Assert.True(chill.Added);
         Assert.Equal(before.Id, chill.Id);
         Assert.All(before.Songs, song => Assert.Contains(chill.Songs, item => item.Song.Id == song.Song.Id));
-        Assert.Equal(3, chill.Evidence!.FromMusic);
-        Assert.Equal(25, chill.Evidence.FromServices);
+        Assert.Equal(0, chill.Evidence!.FromMusic);
+        Assert.Equal(28, chill.Evidence.FromServices);
         Assert.Equal(28, chill.Songs.Count);
         Assert.DoesNotContain(chill.Songs, x => x.Song.ExplicitContentLyrics != 0 || x.Song.Artist == "Fresh artist 1");
         Assert.Equal(15, chill.Evidence!.ProviderFailures);

@@ -44,7 +44,8 @@ public sealed partial class PersonalMixServiceTests
         var entry = Assert.Single(logger.Entries);
         Assert.Equal(LogLevel.Information, entry.Level);
         Assert.Contains("seed resolved=1, seed search found=0, provider similar=9", entry.Message);
-        Assert.Contains("radio[found=9,without-seed=8,unique=7,details=6,policy=5,never=4,playable=3,skips=2,filters=2,evidence=2,revalidated-never=2,revalidated-policy=2,access=2,eligible=2,artist-checked=2,artist-kept=2,selected=2]", entry.Message);
+        Assert.Contains("related capped=7; playback checks=3", entry.Message);
+        Assert.Contains("radio[found=7,without-seed=7,unique=7,details=6,policy=5,never=4,playable=2,skips=3,filters=3,evidence=3,revalidated-never=2,revalidated-policy=2,access=2,eligible=2,artist-checked=2,artist-kept=2,selected=2]", entry.Message);
         Assert.Contains("sound neighbours=0, preferred=0", entry.Message);
         Assert.Contains("selected seed/related/sound/general=0/2/0/0", entry.Message);
         Assert.Contains("completed=1", entry.Message);

@@ -50,6 +50,40 @@ public sealed class PersonalMixRecipeTests
         Assert.Equal(["002", "001"], PersonalMixRules.Select("chill", pool, Now, []).Select(row => row.Song.Id));
     }
 
+    [Theory]
+    [InlineData("on-repeat")]
+    [InlineData("rewind")]
+    [InlineData("daily-1")]
+    public void Familiar_service_songs_use_the_same_play_order_as_library_songs(string kind)
+    {
+        var rows = new[] { Row(1, 5) with { Song = new Song { Id = "library", Title = "Local", Artist = "Local", IsLocal = true } },
+            Row(2, 20) with { ProviderFilled = true } };
+        Assert.Equal("002", PersonalMixRules.Select(kind, rows, Now, [])[0].Song.Id);
+    }
+
+    [Fact]
+    public void Blends_put_saved_familiar_songs_before_unplayed_songs()
+    {
+        var rows = new[] { Row(1), Row(2) with { Loved = true } };
+        Assert.Equal("002", PersonalMixRules.Select("daily-1", rows, Now, [])[0].Song.Id);
+    }
+
+    [Fact]
+    public void Rewind_uses_its_three_song_artist_limit_for_service_history()
+    {
+        var rows = Enumerable.Range(1, 4).Select(id => Row(id, 10, "Same") with { ProviderFilled = true }).ToArray();
+        Assert.Equal(3, PersonalMixRules.Select("rewind", rows, Now, []).Count);
+    }
+
+    [Fact]
+    public void Mood_and_discovery_library_order_uses_the_songs_actual_source()
+    {
+        var rows = new[] { Row(1, 20), Row(2, 1) with { Song = new Song { Id = "local", IsLocal = true } } };
+        Assert.Equal("local", PersonalMixRules.Select("chill", rows, Now, [])[0].Song.Id);
+        var fresh = rows.Select(row => row with { Plays = 0 }).ToArray();
+        Assert.Equal("local", PersonalMixRules.Select("discover-weekly", fresh, Now, [])[0].Song.Id);
+    }
+
     [Fact]
     public void Recording_buckets_preserve_identity_and_metadata_matches_at_library_scale()
     {

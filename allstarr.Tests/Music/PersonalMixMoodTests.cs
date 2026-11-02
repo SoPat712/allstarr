@@ -65,6 +65,15 @@ public sealed class PersonalMixMoodTests
         Assert.Single(PersonalMixMoods.Qualify("chill", [row with { Song = new Song { Id = "stream" } }], new Dictionary<string, AudioMuseScores>()));
     }
 
+    [Fact]
+    public void Saved_service_songs_qualify_by_fitting_style_without_plays()
+    {
+        var song = new MixCandidate(new Song { Id = "saved" }, new Dictionary<string, double> { ["hip-hop"] = 1 },
+            0, 0, null, false, "heart", 0, Loved: true);
+        Assert.Single(PersonalMixMoods.Qualify("workout", [song], new Dictionary<string, AudioMuseScores>()));
+        Assert.Empty(PersonalMixMoods.Qualify("workout", [song with { Loved = false }], new Dictionary<string, AudioMuseScores>()));
+    }
+
     [Theory]
     [InlineData(24, false)]
     [InlineData(25, true)]
