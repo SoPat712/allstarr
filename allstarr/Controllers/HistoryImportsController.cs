@@ -15,8 +15,14 @@ public sealed class HistoryImportsController(
     ListeningHistoryImportService imports,
     IDbContextFactory<AllstarrDbContext> factory,
     IPlatformClock clock,
-    ListeningHistoryImportOptions options) : ControllerBase
+    ListeningHistoryImportOptions options,
+    ListeningHistoryResolution? resolution = null) : ControllerBase
 {
+    // Lists past plays whose matched song no longer passes the matcher, without changing anything.
+    [HttpGet("recheck")]
+    public Task<IActionResult> Recheck(CancellationToken token) => ExecuteAsync(async scope =>
+        resolution == null ? NotFound() : Ok(await resolution.RecheckAsync(scope, token)), token);
+
     [HttpPost]
     [RequestSizeLimit(ListeningHistoryImportOptions.UploadLimitBytes)]
     public Task<IActionResult> Upload([FromQuery] string fileName, CancellationToken token) => ExecuteAsync(async scope =>

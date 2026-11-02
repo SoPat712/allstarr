@@ -119,7 +119,8 @@ public static class ListeningHistoryImportRegistration
         services.AddSingleton<ListeningHistoryImportService>();
         services.AddSingleton<ListeningHistoryRetentionSweeper>();
         services.AddSingleton<IDurableJobHandler, ListeningHistoryImportJobHandler>();
-        services.AddSingleton<IDurableJobHandler, ListeningHistoryResolution>();
+        services.AddSingleton<ListeningHistoryResolution>();
+        services.AddSingleton<IDurableJobHandler>(provider => provider.GetRequiredService<ListeningHistoryResolution>());
         services.AddHostedService<ListeningHistoryImportCleanupService>();
         return services;
     }

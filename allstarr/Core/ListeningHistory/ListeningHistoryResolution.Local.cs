@@ -42,7 +42,8 @@ public sealed partial class ListeningHistoryResolution
 
     private static async Task<(Dictionary<string, LocalTrackMatchCandidate[]> Metadata,
         Dictionary<Guid, StoredTarget> Targets, Dictionary<string, LocalTrackMatchCandidate[]> Spotify)> StoredIndexAsync(
-        AllstarrDbContext db, ProtocolExecutionContext context, LibraryTrackRecord[] tracks, CancellationToken token)
+        AllstarrDbContext db, ProtocolExecutionContext context, LibraryTrackRecord[] tracks, CancellationToken token,
+        bool includeHistory = true)
     {
         var user = context.RequireActor().EffectiveUserId;
         var candidates = new List<LocalTrackMatchCandidate>();
@@ -81,7 +82,7 @@ public sealed partial class ListeningHistoryResolution
         }
         var events = await db.ListeningEvents.AsNoTracking().Where(item => item.OwnerUserId == user &&
             item.Protocol == context.Protocol.ToString().ToLower() && item.BackendInstanceId == context.BackendInstanceId &&
-            item.CanonicalRecordingId != null && db.CanonicalRecordings.Any(recording => recording.Id == item.CanonicalRecordingId && recording.MergedIntoId == null))
+            includeHistory && item.CanonicalRecordingId != null && db.CanonicalRecordings.Any(recording => recording.Id == item.CanonicalRecordingId && recording.MergedIntoId == null))
             .Select(item => new { item.CanonicalRecordingId, item.Title, item.Artist, item.Album, item.DurationMilliseconds, item.Isrc, item.ProviderTrackReference })
             .Distinct().ToArrayAsync(token);
         foreach (var play in events.DistinctBy(item => (item.CanonicalRecordingId, item.Title, item.Artist)))
