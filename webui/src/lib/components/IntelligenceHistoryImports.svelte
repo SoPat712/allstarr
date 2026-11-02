@@ -334,7 +334,7 @@
   .recheck-row { border-top: 1px solid var(--color-edge); }
   .recheck-row small { display: block; color: var(--color-ink-muted); }
   .recheck-list { list-style: none; margin: 0; padding: 0; max-height: min(60vh, 560px); overflow-y: auto; }
-  .recheck-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); padding-block: var(--space-3); }
+  .recheck-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-6); }
   .recheck-list li + li { border-top: 1px solid var(--color-edge); }
   .recheck-list li > div { display: grid; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
   .recheck-list small { color: var(--color-ink-muted); font-size: var(--text-sm); }
