@@ -2095,6 +2095,27 @@ test("provider readiness separates provider names from account labels", async ({
     await page.locator(".home-panel").filter({ hasText: "Provider readiness" }).screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/provider-readiness.png` });
 });
 
+test("Home shows no account count for sources that need no account", async ({ page }) => {
+  await mockApi(page);
+  const definitions = [
+    { id: "artistgrid", name: "ArtistGrid" }, { id: "genius", name: "Genius" },
+    { id: "deezer", name: "Deezer" }, { id: "spotify", name: "Spotify" },
+  ];
+  // Spotify leaves the answer out, so Home falls back to its sign-in fields.
+  const needsAccount: Record<string, boolean | undefined> = { artistgrid: false, genius: false, deezer: true };
+  await page.route("**/api/admin/ui/home", (route) => route.fulfill({ json: {
+    ...(responses["/api/admin/ui/home"] as Record<string, unknown>), schema: { ...schema, providers: definitions },
+    providerHealth: { providers: definitions.map((provider) => ({
+      providerId: provider.id, needsAccount: needsAccount[provider.id], connectedAccounts: [],
+      enabledAccountCount: 0, capabilityTotal: 0, healthyCapabilityCount: 0, failedCapabilityCount: 0,
+    })) },
+  } }));
+  await page.goto("#/");
+  await expect(page.locator(".provider-line strong + small")).toHaveText([
+    "No account needed", "No account needed", "0 connected accounts", "0 connected accounts",
+  ]);
+});
+
 test("account titles use provider definitions and keep custom labels in subtitles", async ({ page }) => {
   await mockApi(page);
   const accountResponse = responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[] };

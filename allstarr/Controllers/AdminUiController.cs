@@ -220,9 +220,20 @@ public class AdminUiController : ControllerBase
                     : group.Count > 0 ? [] : publicStatuses.Where(item => item.Provider == providerId).ToList();
                 var samples = statuses.Where(item => item.HasCheckResult &&
                     _providerStatusManager.CanTestCapability(item.Provider, item.Capability)).ToList();
+                // Home shows no account count for a source that works fully without one. The status
+                // table also covers scrobbling, which provider descriptors don't declare.
+                var requirements = (_providerRegistry?.TryGet(providerId, out var descriptor) == true
+                        ? descriptor!.Capabilities.Select(item => item.AccountRequirement)
+                        : [])
+                    .Concat(_providerStatusManager.GetAccountRequirements(providerId))
+                    .ToList();
+                bool? needsAccount = requirements.Count == 0
+                    ? null
+                    : requirements.Contains(ProviderAccountRequirement.Required);
                 return new
                 {
                     providerId,
+                    needsAccount,
                     connectedAccountName = enabled
                         .Select(item => ProviderAccountNames.DisplayName(item, _providerRegistry)).FirstOrDefault(),
                     connectedAccounts = enabled.OrderBy(item => item.Id).Select(item => new

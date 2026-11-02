@@ -172,6 +172,7 @@
   };
 
   // A source that takes no sign-in has nothing to connect, so a zero count would only look like a problem.
+  // Used when the server doesn't say whether the source needs an account.
   const accountsAt = (providerId: string) => {
     const definition = providerDefinition(providerId);
     return definition ? sourceNeedsAccount(definition) : true;
@@ -458,7 +459,7 @@
                 <small>
                   {provider.connectedAccounts?.length
                     ? provider.connectedAccounts.map(accountSubtitle).join("; ")
-                    : provider.enabledAccountCount || accountsAt(provider.providerId)
+                    : provider.enabledAccountCount || (provider.needsAccount ?? accountsAt(provider.providerId))
                       ? plural(provider.enabledAccountCount, "connected account")
                       : "No account needed"}
                 </small>

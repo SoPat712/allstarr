@@ -218,6 +218,7 @@ export type ActivityResponse = {
 
 export type ProviderSummary = {
   providerId: string;
+  needsAccount?: boolean | null;
   connectedAccountName?: string | null;
   connectedAccounts?: { scope: "Personal" | "Shared"; customLabel?: string | null }[];
   enabledAccountCount: number;

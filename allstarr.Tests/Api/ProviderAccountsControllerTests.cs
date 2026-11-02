@@ -60,6 +60,35 @@ public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
         Assert.Equal("healthy", row.GetProperty("health").GetString());
     }
 
+    [Fact]
+    public async Task ProviderSummariesSayWhetherASourceNeedsAnAccount()
+    {
+        var status = new ProviderStatusManager(new ConfigurationBuilder().Build(), Mock.Of<IHttpClientFactory>(),
+            NullLogger<ProviderStatusManager>.Instance, Options.Create(new SpotifyApiSettings()),
+            Options.Create(new AppleDownloadSettings()), Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()));
+        await using var services = new ServiceCollection()
+            .AddSingleton<IDbContextFactory<AllstarrDbContext>>(_factory)
+            .AddSingleton(status).AddSingleton(new ProviderRuntimeHealth()).BuildServiceProvider();
+        var http = new DefaultHttpContext { RequestServices = services };
+        http.Items[AdminAuthSessionService.HttpContextSessionItemKey] = Session(_userId, administrator: true);
+        var controller = new AdminUiController(new ConfigurationBuilder().Build(),
+            Options.Create(new SpotifyApiSettings()), Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()),
+            Options.Create(new AppleDownloadSettings()), Options.Create(new MusicBrainzSettings()), null!, status,
+            new ProviderAccountOptions(), null!)
+        { ControllerContext = new ControllerContext { HttpContext = http } };
+        using var summaries = JsonDocument.Parse(JsonSerializer.Serialize(
+            Assert.IsType<OkObjectResult>(await controller.GetProviderSummaries()).Value));
+        var needsAccount = summaries.RootElement.GetProperty("providers").EnumerateArray().ToDictionary(
+            item => item.GetProperty("providerId").GetString()!, item => item.GetProperty("needsAccount"));
+
+        Assert.False(needsAccount["genius"].GetBoolean());
+        // An optional account still leaves the source usable without one.
+        Assert.False(needsAccount["musixmatch"].GetBoolean());
+        Assert.True(needsAccount["deezer"].GetBoolean());
+        // Scrobbling needs an account even though public playlists don't.
+        Assert.True(needsAccount["listenbrainz"].GetBoolean());
+    }
+
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),
         "allstarr-tests",

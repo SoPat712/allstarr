@@ -214,6 +214,12 @@ public class ProviderStatusManager
         IsKnownBuiltInProvider(Normalize(providerId)) ||
         ProviderRegistry?.TryGet(Normalize(providerId), out _) == true;
 
+    public IReadOnlyList<ProviderAccountRequirement> GetAccountRequirements(string providerId) =>
+        RuntimeCapabilities()
+            .Where(item => string.Equals(item.Provider, Normalize(providerId), StringComparison.OrdinalIgnoreCase))
+            .Select(item => item.AccountRequirement)
+            .ToList();
+
     private static bool IsStreamingCapability(string capability) =>
         capability.Equals("stream", StringComparison.OrdinalIgnoreCase) ||
         capability.Equals("streaming", StringComparison.OrdinalIgnoreCase);
