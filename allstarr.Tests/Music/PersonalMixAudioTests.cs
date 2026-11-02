@@ -1,7 +1,6 @@
 using System.Collections.Immutable;
 using System.Text.Json;
 using allstarr.Core.AudioMuse;
-using allstarr.Core.Capabilities;
 using allstarr.Core.Enrichment;
 using allstarr.Core.Favorites;
 using allstarr.Core.Jobs;
@@ -12,7 +11,6 @@ using allstarr.Core.Releases;
 using allstarr.Core.Routing;
 using allstarr.Core.Settings;
 using allstarr.Models.Domain;
-using allstarr.Models.Search;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -23,62 +21,6 @@ namespace allstarr.Tests;
 
 public sealed class PersonalMixAudioTests
 {
-    [Fact]
-    public async Task Local_start_fills_radio_after_a_provider_without_similar_tracks()
-    {
-        await using var f = await ReadyAsync();
-        var sound = Enumerable.Range(0, 25).Select(index => Track("sound-" + index, "Sound artist " + index)).ToArray();
-        var own = Enumerable.Range(0, 3).Select(index => Track("own-" + index, "Artist A")).ToArray();
-        foreach (var track in own) track.DurationMilliseconds = 180000;
-        var seedTrack = Track("seed", "Artist A");
-        seedTrack.DurationMilliseconds = 180000;
-        await AddAsync(f, sound.Concat(own).Append(seedTrack).ToArray());
-        var original = f.Respond;
-        f.Respond = request => request.RequestUri!.AbsolutePath == "/api/similar_tracks"
-            ? Fixture.Json(JsonSerializer.Serialize(sound.Select(track => new { item_id = track.BackendItemId }))) : original(request);
-        var radioSongs = Enumerable.Range(0, 20).Select(index => new Song
-        {
-            Id = "ext-deezer-song-radio-" + index,
-            ExternalProvider = "deezer",
-            ExternalId = "radio-" + index,
-            Title = "Radio " + index,
-            Artist = "Related artist " + index
-        }).ToList();
-        var gateway = new Mock<IProtocolProviderGateway>();
-        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Metadata)).Returns(["apple-musickit", "deezer"]);
-        foreach (var provider in new[] { "apple-musickit", "deezer" })
-        {
-            var seed = new Song { Title = seedTrack.Title, Artist = seedTrack.Artist, Duration = 180, ExternalProvider = provider, ExternalId = "seed" };
-            gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), provider, seedTrack.Title + " Artist A", 3))
-                .ReturnsAsync(ProviderOutcome<IReadOnlyList<Song>>.Success([seed]));
-            gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Artist A", 0, 0, 3, provider))
-                .ReturnsAsync(new SearchResult { Artists = [new() { Name = "Artist A", ExternalProvider = provider, ExternalId = "artist" }] });
-        }
-        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), seedTrack.Title + " Artist A", 3))
-            .ReturnsAsync([new() { Title = seedTrack.Title, Artist = "Artist A", Duration = 180, ExternalProvider = "apple-musickit", ExternalId = "seed" }]);
-        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", 100)).ReturnsAsync(radioSongs);
-        gateway.Setup(item => item.GetArtistTracksAsync(It.Is<ProtocolExecutionContext>(context => !context.IsReadOnly), "deezer", "artist"))
-            .ReturnsAsync(own.Select(track => new Song
-            {
-                Id = "ext-deezer-song-" + track.BackendItemId,
-                ExternalProvider = "deezer",
-                ExternalId = track.BackendItemId,
-                Title = track.Title,
-                Artist = track.Artist,
-                Duration = 180
-            }).ToList());
-        gateway.Setup(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>())).ReturnsAsync(true);
-        var logger = new SoundMixLogger();
-
-        var preview = await Service(f, gateway, logger: logger).StartAsync(f.Actor.AllstarrUserId!.Value, new("song", "seed", 25));
-
-        Assert.Equal(25, preview.Songs.Count);
-        var message = Assert.Single(logger.Messages);
-        Assert.True(message.Contains("seed resolved=1, seed search found=2, provider similar=20, artist tracks=3", StringComparison.Ordinal), message);
-        Assert.True(message.Contains("radio[found=23,without-seed=23,unique=20", StringComparison.Ordinal), message);
-        Assert.True(message.Contains("selected seed/related/sound/general=2/15/8/0; sound allowance=10, related shortfall=0", StringComparison.Ordinal), message);
-    }
-
     private static PersonalMixService Service(Fixture f, Mock<IProtocolProviderGateway> gateway, IPlatformClock? clock = null, ILogger<PersonalMixService>? logger = null)
     {
         clock ??= new SystemPlatformClock();
@@ -190,9 +132,6 @@ public sealed class PersonalMixAudioTests
             .ReturnsAsync(new Artist { Name = "Artist A" });
         gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed")).ReturnsAsync([seed]);
         gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Library seed Artist A", 3)).ReturnsAsync([seed]);
-        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Metadata)).Returns(["deezer"]);
-        gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "Library seed Artist A", 3))
-            .ReturnsAsync(ProviderOutcome<IReadOnlyList<Song>>.Success([seed]));
         gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", 100)).ReturnsAsync(radioSongs.ToList());
         gateway.Setup(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>())).ReturnsAsync(true);
         var original = f.Respond;
@@ -238,9 +177,6 @@ public sealed class PersonalMixAudioTests
         var gateway = new Mock<IProtocolProviderGateway>();
         var seed = new Song { Id = "ext-deezer-song-seed", ExternalProvider = "deezer", ExternalId = "seed", Title = "Library seed", Artist = "Artist A", Duration = 180 };
         gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Library seed Artist A", 3)).ReturnsAsync([seed]);
-        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Metadata)).Returns(["deezer"]);
-        gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "Library seed Artist A", 3))
-            .ReturnsAsync(ProviderOutcome<IReadOnlyList<Song>>.Success([seed]));
         gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", 100))
             .ReturnsAsync([seed, new Song { Id = "ext-deezer-song-radio", Title = "Radio", Artist = "Related artist", ExternalProvider = "deezer", ExternalId = "radio" },
                 new Song { Id = "ext-deezer-song-secondary", Title = "Secondary", Artist = "Secondary related artist", ExternalProvider = "deezer", ExternalId = "secondary" }]);
@@ -308,15 +244,14 @@ public sealed class PersonalMixAudioTests
                 return new BackendLibraryAccess(true, ["allowed"]);
             });
         var gateway = new Mock<IProtocolProviderGateway>();
-        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Metadata)).Returns(["deezer"]);
-        gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "Library seed Artist A", 3))
-            .Returns(async (ProtocolExecutionContext context, string _, string _, int _) =>
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Library seed Artist A", 3))
+            .Returns(async (ProtocolExecutionContext context, string _, int _) =>
             {
                 var at = clock.UtcNow;
                 radioStarted.SetResult();
                 await radioRelease.Task.WaitAsync(context.CancellationToken);
                 clock.Complete(at.AddSeconds(3));
-                return ProviderOutcome<IReadOnlyList<Song>>.Success([]);
+                return new List<Song>();
             });
         var start = Service(f, gateway, clock).StartAsync(f.Actor.AllstarrUserId!.Value, new("song", "seed", 25));
         bool overlapped;

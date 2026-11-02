@@ -1,5 +1,4 @@
 using allstarr.Core.Capabilities;
-using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
 using allstarr.Models.Domain;
@@ -9,35 +8,6 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
-    [Fact]
-    public async Task RadioSeed_ArtistDiscoveryFetchesColdRelationshipsForACustomStart()
-    {
-        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
-        metadata.SetupGet(item => item.ProviderId).Returns("deezer");
-        metadata.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
-        metadata.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProviderExecutionContext>(),
-                It.Is<ProviderArtistItemsRequest>(request => request.Id.Value == "artist")))
-            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("deezer",
-                [new(new("deezer", ProviderResourceKind.Track, "track"), "Track", [new("Artist")])])));
-        metadata.Setup(item => item.GetSimilarArtistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderSimilarArtistsRequest>()))
-            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderArtistMetadata>>.Success(new("deezer", [])));
-        metadata.Setup(item => item.GetSimilarTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderSimilarTracksRequest>()))
-            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("deezer", [])));
-        var registry = MetadataRegistry(metadata.Object);
-        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
-        router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
-            .ReturnsAsync((ProviderRouteRequest request) => MetadataPlan(request, registry, metadata.Object));
-        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory());
-        using var radio = new MusicMixService(gateway);
-        var context = Context() with { IsReadOnly = true };
-
-        var result = await radio.SeedCandidatesAsync(context, null, new Artist { Name = "Artist" }, "deezer", "artist", default);
-
-        Assert.Equal("ext-deezer-song-track", Assert.Single(result).Id);
-        Assert.True(context.IsReadOnly);
-        metadata.Verify(item => item.GetArtistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderArtistItemsRequest>()), Times.Once);
-    }
-
     [Theory]
     [InlineData(true, true)]
     [InlineData(true, false)]

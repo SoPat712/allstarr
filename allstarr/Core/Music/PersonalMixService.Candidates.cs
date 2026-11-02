@@ -363,7 +363,7 @@ public sealed partial class PersonalMixService
 
     private async Task<IReadOnlyList<MixCandidate>> RankCandidatesAsync(List<(Song Song, string Source, DateTimeOffset? Release)> rows,
         ProtocolExecutionContext context, UserRecord user, ListeningEventRecord[] events, FavoriteViewItem[] hearts, CancellationToken token, GenerationInputs? inputs = null, bool recount = false,
-        SeedMixDiagnostics? diagnostics = null, bool parallelPlayback = false)
+        SeedMixDiagnostics? diagnostics = null)
     {
         using var phase = diagnostics?.Phase("rank");
         if (inputs != null && !recount) inputs.Offered += rows.Count;
@@ -388,9 +388,6 @@ public sealed partial class PersonalMixService
             .ToDictionary(group => group.Key, group => group.Select(item => item.Play).ToArray());
         var recentIds = RecentHistory(events);
         var nudges = (await taste.GetAsync(user.Id, token)).Nudges;
-        var playbackChecks = parallelPlayback ? await CheckStartPlaybackAsync(songs.Where(row =>
-            !string.IsNullOrWhiteSpace(row.Song.Id) && !string.IsNullOrWhiteSpace(row.Song.Title) && !string.IsNullOrWhiteSpace(row.Song.Artist) &&
-            context.Policy?.Includes(row.Song) != false && !scores[row.Song].Blocked).Select(row => row.Song).ToArray(), context, token, diagnostics) : null;
         var result = new List<MixCandidate>();
         var failed = false;
         foreach (var row in songs)
@@ -405,11 +402,9 @@ public sealed partial class PersonalMixService
             diagnostics?.Count(row.Source, "never");
             try
             {
-                using var playback = playbackChecks == null ? diagnostics?.Phase("playback") : null;
-                var check = playbackChecks?.GetValueOrDefault(row.Song);
-                failed |= check?.Failed == true;
-                var playable = check?.Playable ?? (row.Song.IsLocal || (inputs != null ? inputs.Playable.Contains(row.Song.ExternalProvider)
-                    : await providers.CanPlaySongAsync(context, row.Song)));
+                using var playback = diagnostics?.Phase("playback");
+                var playable = row.Song.IsLocal || (inputs != null ? inputs.Playable.Contains(row.Song.ExternalProvider)
+                    : await providers.CanPlaySongAsync(context, row.Song));
                 if (!playable) { inputs?.Exclude("No playable route"); continue; }
             }
             catch (Exception) when (!token.IsCancellationRequested) { failed = true; inputs?.Exclude("No playable route"); continue; }

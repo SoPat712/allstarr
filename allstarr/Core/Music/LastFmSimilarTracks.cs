@@ -42,8 +42,6 @@ public sealed class LastFmSimilarTracks(
         CancellationToken cancellationToken)
     {
         if (!_playback.LastFmSimilarEnabled) return [];
-        artist = MusicLyrics.StripPresentationLabels(artist);
-        title = MusicLyrics.StripPresentationLabels(title);
         if (context.Actor?.EffectiveUserId is not { } owner ||
             string.IsNullOrWhiteSpace(artist) || string.IsNullOrWhiteSpace(title)) return [];
         var scope = new IntelligenceScope(owner, context.Protocol.ToString().ToLowerInvariant(), context.BackendInstanceId);

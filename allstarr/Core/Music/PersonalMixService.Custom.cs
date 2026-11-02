@@ -108,7 +108,7 @@ public sealed partial class PersonalMixService
         seed.Rows.AddRange(related.Select(track => (LibrarySong(track), "library", (DateTimeOffset?)null)));
         var radioRecordings = new RecordingIndex();
         foreach (var row in seed.Rows.Where(row => row.Source == "radio")) radioRecordings.Add(row.Song);
-        var candidates = (await RankCandidatesAsync(WithoutSeed(seed.Rows), context, user, events, [], token, diagnostics: diagnostics, parallelPlayback: true)).Select(Relationship).ToList();
+        var candidates = (await RankCandidatesAsync(WithoutSeed(seed.Rows), context, user, events, [], token, diagnostics: diagnostics)).Select(Relationship).ToList();
         var selected = PersonalMixRules.Select("custom", candidates, clock.UtcNow, [], request.Length);
         if (selected.Count == request.Length && selected.Count(row => row.Source != "audiomuse") >= Math.Ceiling(request.Length * .6))
             return (candidates, seed.Name);
@@ -160,25 +160,8 @@ public sealed partial class PersonalMixService
             foreach (var row in candidates) recordings.Add(row.Song);
             var additional = WithoutSeed(rows).Where(row => recordings.Find(row.Song) == null).Take(Math.Max(0, 1000 - candidates.Count)).ToList();
             if (additional.Count == 0) return;
-            candidates.AddRange((await RankCandidatesAsync(additional, context, user, events, hearts, token, diagnostics: diagnostics, parallelPlayback: true)).Select(Relationship));
+            candidates.AddRange((await RankCandidatesAsync(additional, context, user, events, hearts, token, diagnostics: diagnostics)).Select(Relationship));
         }
-    }
-
-    private async Task<IReadOnlyDictionary<Song, (bool Playable, bool Failed)>> CheckStartPlaybackAsync(IReadOnlyList<Song> songs,
-        ProtocolExecutionContext context, CancellationToken token, SeedMixDiagnostics? diagnostics)
-    {
-        using var phase = diagnostics?.Phase("playback");
-        using var slots = new SemaphoreSlim(4);
-        var results = new System.Collections.Concurrent.ConcurrentDictionary<Song, (bool Playable, bool Failed)>();
-        await Task.WhenAll(songs.Select(async song =>
-        {
-            if (song.IsLocal) { results[song] = (true, false); return; }
-            await slots.WaitAsync(token);
-            try { results[song] = (await providers.CanPlaySongAsync(context, song).WaitAsync(token), false); }
-            catch (Exception) when (!token.IsCancellationRequested) { results[song] = (false, true); }
-            finally { slots.Release(); }
-        }));
-        return results;
     }
 
     private async Task<CustomSeed> SeedRowsAsync(ProtocolExecutionContext context,
