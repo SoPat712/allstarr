@@ -241,7 +241,7 @@ public sealed partial class ProblemReportService
         if (descriptor!.Capabilities.Any(item => item.Capability == ProviderCapabilityKind.Metadata && item.HasUsableImplementation &&
             item.AccountRequirement is ProviderAccountRequirement.None or ProviderAccountRequirement.Optional)) return true;
         var accounts = await db.ProviderAccounts.AsNoTracking().Where(item => item.Enabled && item.ProviderId == descriptor.Id &&
-            (item.OwnerUserId == null || item.OwnerUserId == owner.Id)).Take(32).ToArrayAsync(token);
+            (item.OwnerUserId == null || item.OwnerUserId == owner.Id)).OrderBy(item => item.Id).Take(32).ToArrayAsync(token);
         foreach (var account in accounts)
             if (await CurrentAccountAsync(db, account.Id, account.ProviderId, owner.Id, token) != null) return true;
         return false;

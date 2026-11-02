@@ -127,11 +127,11 @@ public sealed partial class RecordingKeptFiles
                                join recording in db.CanonicalRecordings.AsNoTracking()
                                    on route.CanonicalRecordingId equals recording.Id
                                where artifact.ProviderId == parsed.provider && artifact.SourceExternalTrackId == parsed.externalId
-                               select recording.MergedIntoId ?? recording.Id).Distinct().Take(2).ToArrayAsync(cancellationToken);
+                               select recording.MergedIntoId ?? recording.Id).Distinct().OrderBy(id => id).Take(2).ToArrayAsync(cancellationToken);
         var adopted = await (from adoption in db.Set<LegacyMediaAdoptionRecord>().AsNoTracking()
                              join recording in db.CanonicalRecordings.AsNoTracking() on adoption.CanonicalRecordingId equals (Guid?)recording.Id
                              where adoption.ProviderId == parsed.provider && adoption.ExternalId == parsed.externalId
-                             select recording.MergedIntoId ?? recording.Id).Distinct().Take(2).ToArrayAsync(cancellationToken);
+                             select recording.MergedIntoId ?? recording.Id).Distinct().OrderBy(id => id).Take(2).ToArrayAsync(cancellationToken);
         var candidates = published.Concat(adopted).Distinct().Take(2).ToArray();
         return candidates.Length == 1 ? candidates[0] : null;
     }

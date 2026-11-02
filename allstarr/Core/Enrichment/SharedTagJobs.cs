@@ -39,7 +39,7 @@ public sealed class SharedTagQueue(IDbContextFactory<AllstarrDbContext> factory,
                     play.BackendInstanceId == user.BackendInstanceId && play.CanonicalRecordingId == recording) &&
                 db.ExternalMetadataSnapshots.Any(item => item.OwnerUserId == user.Id && item.Protocol == user.BackendType &&
                     item.BackendInstanceId == user.BackendInstanceId && item.ResourceKind == "personal-mixes"))
-                .Select(user => user.Id).Take(100).ToArrayAsync(token);
+                .OrderBy(user => user.Id).Select(user => user.Id).Take(100).ToArrayAsync(token);
             var batch = clock.UtcNow.ToUnixTimeSeconds() / 900;
             foreach (var owner in owners)
             {
