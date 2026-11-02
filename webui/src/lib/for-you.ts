@@ -24,6 +24,7 @@ export function shortReadiness(message: string) {
   const songs = message.match(/^Add about (\d+) more qualifying analyzed or tagged songs/i);
   if (songs) return `Needs about ${songs[1]} more songs`;
   if (/^No playable songs are available/i.test(message)) return "No songs yet";
+  if (/^Fewer than \d+ songs remain/i.test(message)) return "Not enough matching songs yet";
   if (message === "Connect a service with recommendations, or add unheard tagged songs to your library.") return "No new songs to suggest yet";
   if (/play about|listening|history/i.test(message)) return "Needs more listening";
   if (/^Follow/i.test(message)) return "Follow more artists";

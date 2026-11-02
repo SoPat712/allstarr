@@ -148,7 +148,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 .AnyAsync(item => item.State == ListeningEventState.Completed, token);
             if (hasNewHistory && before.Mixes.Values.Any(mix => PersonalMixRules.Kinds.Contains(mix.Kind) && (!mix.Readiness.Ready || mix.Songs.Count == 0)))
                 await queue.EnqueueAsync(new DurableJobEnqueueRequest<Guid>(JobType,
-                    $"history-tags:{owner:N}:{clock.UtcNow.ToUnixTimeSeconds() / 900}", Guid.Empty, owner,
+                    $"history-resolution:{owner:N}:{clock.UtcNow.ToUnixTimeSeconds() / 900}", Guid.Empty, owner,
                     Priority: -100, AvailableAt: clock.UtcNow.AddMinutes(15)), token);
         }
         finally { writes.Release(); }
@@ -311,7 +311,8 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     }
 
     public async Task<IReadOnlyList<PersonalMix>> GenerateAsync(Guid owner, Guid? mixId = null, bool dryRun = false,
-        string? timeZoneId = null, CancellationToken token = default, bool scheduled = false, bool allowProviderReads = true)
+        string? timeZoneId = null, CancellationToken token = default, bool scheduled = false, bool allowProviderReads = true,
+        bool afterNewHistory = false)
     {
         await generations.WaitAsync(token);
         try
@@ -329,8 +330,11 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 ? PersonalMixRules.Kinds.Where(kind => kind.StartsWith("daily-", StringComparison.Ordinal)).ToArray() : [requested.Kind];
             var due = kinds.Where(kind => !scheduled || !captured.FillReadAt.TryGetValue(kind, out var lastRead) ||
                 DurableScheduleEngine.GetNextOccurrence(PersonalMixRules.Cron(kind), captured.TimeZoneId, lastRead) <= clock.UtcNow).ToArray();
-            var readKinds = allowProviderReads && !dryRun && (scheduled || requested != null)
-                ? due.Where(kind => !scheduled || !captured.FillReadAt.TryGetValue(kind, out var at) || at <= clock.UtcNow.AddDays(-1)).ToHashSet() : [];
+            // Newly matched history can change who a listener's top artists are, which leaves picks made for the old ones
+            // outside the recipe. An empty mix may then look again, once a day at most.
+            var readKinds = allowProviderReads && !dryRun && (scheduled || requested != null || afterNewHistory)
+                ? due.Where(kind => !scheduled && !afterNewHistory || !captured.FillReadAt.TryGetValue(kind, out var at) || at <= clock.UtcNow.AddDays(-1))
+                    .Where(kind => !afterNewHistory || !captured.Mixes[kind].Readiness.Ready || captured.Mixes[kind].Songs.Count == 0).ToHashSet() : [];
             var inputs = new GenerationInputs
             {
                 Kind = readKinds.FirstOrDefault() ?? kinds[0],
@@ -414,9 +418,10 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         var key = await db.Jobs.Where(job => job.Id == claim.JobId).Select(job => job.IdempotencyKey).SingleAsync(token);
         var scheduled = key.StartsWith("schedule:", StringComparison.Ordinal);
         var manual = key.StartsWith("mix-refresh:", StringComparison.Ordinal);
+        var afterNewHistory = key.StartsWith("history-resolution:", StringComparison.Ordinal);
         await GenerateAsync(claim.OwnerUserId!.Value, request.MixId == Guid.Empty ? null : request.MixId,
             request.DryRun, request.TimeZoneId, token, scheduled: scheduled,
-            allowProviderReads: claim.AttemptNumber == 1 && (scheduled || manual));
+            allowProviderReads: claim.AttemptNumber == 1 && (scheduled || manual || afterNewHistory), afterNewHistory: afterNewHistory);
     }
 
     private static string[] TopStyles(IReadOnlyList<MixCandidate> rows) => rows.Where(row => row.Plays > 0)

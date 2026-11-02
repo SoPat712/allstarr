@@ -44,7 +44,7 @@ public sealed class SharedTagQueue(IDbContextFactory<AllstarrDbContext> factory,
             foreach (var owner in owners)
             {
                 if (await db.Jobs.AsNoTracking().AnyAsync(item => item.Type == Music.PersonalMixService.JobType && item.OwnerUserId == owner &&
-                    item.IdempotencyKey.StartsWith("history-tags:") && (item.CreatedAt > clock.UtcNow.AddMinutes(-15) ||
+                    (item.IdempotencyKey.StartsWith("history-tags:") || item.IdempotencyKey.StartsWith("history-resolution:")) && (item.CreatedAt > clock.UtcNow.AddMinutes(-15) ||
                         item.State == DurableJobState.Pending || item.State == DurableJobState.Running || item.State == DurableJobState.RetryScheduled), token)) continue;
                 await jobs.EnqueueAsync(new DurableJobEnqueueRequest<Guid>(Music.PersonalMixService.JobType,
                     $"history-tags:{owner:N}:{batch}", Guid.Empty, owner,
