@@ -135,9 +135,8 @@ public sealed class ExtensionController(
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
             value is not AdminAuthSession)
             return Unauthorized(new { error = "Authentication required" });
-        var package = (await _controlPlane.ListPackagesAsync(extensionId, cancellationToken))
-            .FirstOrDefault(item => item.State == ExtensionPackageState.Active);
-        return package == null ? NotFound() : ServePackageIcon(package);
+        var icon = await ProviderArtworkResolver.ResolveExtensionIconAsync(_controlPlane, extensionId, cancellationToken);
+        return icon == null ? NotFound() : PhysicalFile(icon.File.PhysicalPath!, icon.ContentType);
     }
 
     private IActionResult ServePackageIcon(ExtensionPackageRecord package)

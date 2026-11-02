@@ -20,7 +20,7 @@ public sealed record ClientCapabilities(
 public sealed record ClientFeatures
 {
     [JsonPropertyName("titleMarkers")] public bool TitleMarkers { get; init; } = true;
-    [JsonPropertyName("itemDetails")] public bool ItemDetails { get; init; }
+    [JsonPropertyName("itemDetails")] public bool ItemDetails { get; init; } = true;
     [JsonPropertyName("playback")] public bool Playback { get; init; }
     [JsonPropertyName("lyricsRich")] public bool LyricsRich { get; init; }
     [JsonPropertyName("lyricsSources")] public bool LyricsSources { get; init; }

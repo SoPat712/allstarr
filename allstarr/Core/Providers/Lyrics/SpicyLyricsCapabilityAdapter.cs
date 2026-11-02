@@ -23,7 +23,7 @@ public sealed class SpicyLyricsCapabilityAdapter(
     public string ProviderId => StableProviderId;
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Lyrics;
 
-    private sealed record CachedLyrics(ProviderLyricsResult Result, DateTimeOffset FetchedAtUtc, DateTimeOffset ExpiresAtUtc);
+    internal sealed record CachedLyrics(ProviderLyricsResult Result, DateTimeOffset FetchedAtUtc, DateTimeOffset ExpiresAtUtc);
     private sealed record Loaded(ProviderOutcome<ProviderLyricsResult> Outcome, CachedLyrics? Fresh = null);
     private sealed record Segment(string Text, TimeSpan? Start, TimeSpan? End, bool Background);
     private sealed record Row(string Text, TimeSpan? Start, TimeSpan? End, IReadOnlyList<Segment>? Segments = null, bool? Background = null, string? Voice = null);
@@ -139,10 +139,11 @@ public sealed class SpicyLyricsCapabilityAdapter(
             !key.Any(character => char.IsControl(character) || char.IsWhiteSpace(character));
     }
 
-    private static string CacheKey(ProviderExecutionContext context, string trackId)
+    private static string CacheKey(ProviderExecutionContext context, string trackId) =>
+        StoredCacheKey(context.Actor, context.Account!, context.ProviderId, trackId);
+
+    internal static string StoredCacheKey(ProviderActorContext actor, ProviderAccountContext account, string providerId, string trackId)
     {
-        var actor = context.Actor;
-        var account = context.Account!;
         var binding = JsonSerializer.Serialize(new
         {
             actor.Kind,
@@ -150,7 +151,7 @@ public sealed class SpicyLyricsCapabilityAdapter(
             actor.EffectiveUserId,
             actor.BackendPrincipal,
             actor.ActingForUserId,
-            context.ProviderId,
+            ProviderId = providerId,
             account.AccountId,
             account.Scope,
             account.OwnerUserId,

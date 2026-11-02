@@ -100,7 +100,7 @@ public sealed partial class SpotifyPlaylistCapabilityAdapter
         return null;
     }
 
-    private static string LyricsCacheKey(ProviderAccountContext account, ProviderLyricsRequest request)
+    internal static string LyricsCacheKey(ProviderAccountContext account, ProviderLyricsRequest request)
     {
         var trackHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(request.ProviderTrackId.Value)))
             .ToLowerInvariant();

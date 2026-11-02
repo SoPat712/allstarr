@@ -31,6 +31,22 @@ public sealed class LyricsPlusCapabilityAdapter(
         var value = await settings.GetAsync("LyricsPlus:BaseUrl", token);
         return new(value.NormalizedValue, value.Origin + ":" + value.Revision + ":" + value.NormalizedValue, value.Revision ?? 0);
     }
+
+    internal static string StoredCacheKey(string configuredEndpoint, ProviderLyricsRequest request) =>
+        CacheKey((string.IsNullOrWhiteSpace(configuredEndpoint) ? PublicEndpoints : [configuredEndpoint])
+            .Select(endpoint => OutboundRequestGuard.TryCreateConfiguredServiceUri(endpoint, out var uri, out _)
+                ? uri! : throw new ArgumentException("Lyrics endpoint is unavailable.")).ToArray(), request);
+
+    private static string CacheKey(IReadOnlyList<Uri> endpoints, ProviderLyricsRequest request) =>
+        "lyrics:v3:lyricsplus:" + Hash(JsonSerializer.Serialize(new
+        {
+            Endpoints = endpoints.Select(uri => uri.AbsoluteUri),
+            request.TrackTitle,
+            request.ArtistNames,
+            request.AlbumTitle,
+            request.DurationSeconds,
+            request.PreferredFormat
+        }));
     private static bool CanSolve(Uri endpoint) => endpoint.Scheme == "https" && endpoint.IsDefaultPort &&
         endpoint.UserInfo.Length == 0 && endpoint.IdnHost.Equals("lyricsplus.binimum.org", StringComparison.OrdinalIgnoreCase);
     async ValueTask<LyricsSourceSnapshot> IInternalLyricsCapability.CaptureSourceAsync(CancellationToken token) => await CaptureAsync(token);
@@ -76,15 +92,7 @@ public sealed class LyricsPlusCapabilityAdapter(
         try
         {
             var bases = snapshot.Endpoints;
-            var key = "lyrics:v3:lyricsplus:" + Hash(JsonSerializer.Serialize(new
-            {
-                Endpoints = bases.Select(uri => uri.AbsoluteUri),
-                request.TrackTitle,
-                request.ArtistNames,
-                request.AlbumTitle,
-                request.DurationSeconds,
-                request.PreferredFormat
-            }));
+            var key = CacheKey(bases, request);
             try
             {
                 var cached = cache == null ? null : await LyricsAwait.CompleteAsync(cache.GetAsync<ProviderLyricsResult>(key), completion, token);

@@ -140,7 +140,7 @@ public sealed partial class ProtocolProviderGateway
         await ReadCachedMetadataAsync<Song>(actor, provider, ProviderResourceKind.Track, externalId, true, account) ??
         await ReadCachedMetadataAsync<Song>(actor, provider, ProviderResourceKind.Track, externalId, false, account);
 
-    private static string MetadataCacheKey(ProviderActorContext actor, string provider,
+    internal static string MetadataCacheKey(ProviderActorContext actor, string provider,
         ProviderResourceKind kind, string externalId, bool detail = false, ProviderAccountContext? account = null) => CacheKeyBuilder.BuildProtocolMetadataKey(
             NormalizeProvider(provider), JsonSerializer.Serialize(new { Actor = actor, AccountId = account?.AccountId, AccountRevision = account?.Revision }), detail ? $"{kind}:detail" : kind.ToString(), externalId);
 }

@@ -19,9 +19,8 @@ public sealed class ProviderArtworkController(IMediaAssetResolver assets) : Cont
         try { provider = ProviderContractValidation.ProviderId(provider, nameof(provider)); }
         catch (ArgumentException) { return NotFound(); }
         var dimension = size is > 0 and <= 96 ? 96 : 600;
-        var asset = await assets.ResolveAsync(new(null, null, provider, "provider-cover", provider, Width: dimension, Height: dimension),
-            token => ProviderArtworkFallback.ReadAsync(HttpContext.RequestServices, provider, dimension, token),
-            2 * 1024 * 1024, HttpContext.RequestAborted);
+        var asset = await ProviderArtworkResolver.ResolveCoverAsync(HttpContext.RequestServices,
+            assets, provider, dimension, HttpContext.RequestAborted);
         if (asset == null) return NotFound();
         var etag = ImageConditionalRequestHelper.ComputeStrongETag(asset.Bytes);
         Response.Headers.ETag = etag;

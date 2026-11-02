@@ -1100,7 +1100,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         return operation;
     }
 
-    private static string BuildCacheKey(
+    internal static string BuildCacheKey(
         ProviderAccountContext? account,
         ProviderLyricsRequest request)
     {

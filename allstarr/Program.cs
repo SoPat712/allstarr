@@ -375,6 +375,18 @@ builder.Services.AddOpenApi("v1", options =>
         document.Servers = [];
         return Task.CompletedTask;
     });
+    options.AddOperationTransformer((operation, context, cancellationToken) =>
+    {
+        if (context.Description.RelativePath != "allstarr/v1/providers/{providerId}/icon") return Task.CompletedTask;
+        if (operation.Responses?.TryGetValue("200", out var image) == true && image.Content != null)
+        {
+            image.Content.Remove("application/json");
+            foreach (var content in image.Content.Values)
+                content.Schema = new OpenApiSchema { Type = JsonSchemaType.String, Format = "binary" };
+        }
+        if (operation.Responses?.TryGetValue("304", out var unchanged) == true) unchanged.Content?.Clear();
+        return Task.CompletedTask;
+    });
 });
 builder.Services.AddHttpContextAccessor();
 var dataProtectionKeysPath = Path.Combine(builder.Configuration["Storage:DataDirectory"] ?? "/app/data", "data-protection");
@@ -392,6 +404,7 @@ builder.Services.AddScoped<MusicPortFilter>();
 builder.Services.AddScoped<ClientApiListenerFilter>();
 builder.Services.AddScoped<ClientApiResultFilter>();
 builder.Services.AddSingleton<ClientApiAvailability>();
+builder.Services.AddScoped<ItemDetailsReader>();
 
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminHelperService>();
 builder.Services.AddSingleton<allstarr.Services.Admin.IAdminAuthSessionStore, allstarr.Services.Admin.EfAdminAuthSessionStore>();

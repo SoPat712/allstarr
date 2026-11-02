@@ -31,6 +31,12 @@ public sealed class KeptLyricsReader(
 {
     private const int MaximumLyricsBytes = 2 * 1024 * 1024;
 
+    internal static async Task<LyricsInfo?> ReadStoredSidecarAsync(Song song, string audioPath, CancellationToken token)
+    {
+        var text = await ReadKeptSidecarAsync(audioPath, token);
+        return text == null ? null : ParseCandidate(song, text, token, out _);
+    }
+
     public Task<LyricsInfo?> ReadHouseholdAsync(ProtocolExecutionContext context, Song song,
         IReadOnlyList<KeptLyricsIdentity> identities) => ReadCoreAsync(context, song, identities, householdOnly: true);
 
@@ -187,11 +193,12 @@ public sealed class KeptLyricsReader(
         return CreateLyrics(song, plain, synced: false);
     }
 
-    private static async Task<string?> ReadKeptSidecarAsync(
-        KeptRecordingFile kept,
-        CancellationToken cancellationToken)
+    private static Task<string?> ReadKeptSidecarAsync(KeptRecordingFile kept, CancellationToken cancellationToken) =>
+        ReadKeptSidecarAsync(kept.Path, cancellationToken);
+
+    private static async Task<string?> ReadKeptSidecarAsync(string path, CancellationToken cancellationToken)
     {
-        if (!TryGetTrustedKeptPath(kept.Path, out var audioPath) || !File.Exists(audioPath))
+        if (!TryGetTrustedKeptPath(path, out var audioPath) || !File.Exists(audioPath))
             return null;
 
         var sidecarCandidate = Path.ChangeExtension(audioPath, ".lrc");
