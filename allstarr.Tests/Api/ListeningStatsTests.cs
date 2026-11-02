@@ -285,6 +285,51 @@ public sealed class ListeningStatsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task OpenedRecapsAreReadAgainInTheBackgroundAfterNewPlaysAndBeforeTheyExpire()
+    {
+        await Add(Play("2025-01-01T12:00:00Z"));
+        await stats.GetAsync(Session(), null, 2025, default);
+        await Add(Play("2025-02-01T12:00:00Z"));
+        await stats.WarmAsync(default);
+        // A rename leaves the play counts alone, so a visit answers from what the background read.
+        await Rename("Renamed");
+        var visit = await stats.GetAsync(Session(), null, 2025, default);
+        Assert.Equal(2, visit.PlayCount);
+        Assert.Equal("Song", Assert.Single(visit.TopSongs).Title);
+        Assert.Same(visit, await stats.GetAsync(Session(), null, 2025, default));
+
+        clock.UtcNow = clock.UtcNow.AddMinutes(9);
+        await stats.WarmAsync(default);
+        var refreshed = await stats.GetAsync(Session(), null, 2025, default);
+        Assert.Equal(2, refreshed.PlayCount);
+        Assert.Equal("Renamed", Assert.Single(refreshed.TopSongs).Title);
+    }
+
+    [Fact]
+    public async Task RecapsNotOpenedForADayOrPushedOutByNewerOnesAreNotReadAgain()
+    {
+        await Add(Play("2025-01-01T12:00:00Z"));
+        await stats.GetAsync(Session(), null, 2025, default);
+        clock.UtcNow = clock.UtcNow.AddDays(1);
+        await Add(Play("2025-02-01T12:00:00Z"));
+        await stats.WarmAsync(default);
+        await Rename("Renamed");
+        Assert.Equal("Renamed", Assert.Single((await stats.GetAsync(Session(), null, 2025, default)).TopSongs).Title);
+
+        foreach (var year in Enumerable.Range(2000, 24))
+        {
+            clock.UtcNow = clock.UtcNow.AddSeconds(1);
+            await stats.GetAsync(Session(), null, year, default);
+        }
+        await Add(Play("2025-03-01T12:00:00Z"));
+        await stats.WarmAsync(default);
+        await Rename("Again");
+        var visit = await stats.GetAsync(Session(), null, 2025, default);
+        Assert.Equal(3, visit.PlayCount);
+        Assert.Equal("Again", Assert.Single(visit.TopSongs).Title);
+    }
+
+    [Fact]
     public async Task RecapDescribesWhenAndHowOftenInTheListenersTimeZone()
     {
         await Add(Play("2025-03-01T02:30:00Z"), Play("2025-03-01T03:30:00Z"), Play("2025-03-01T15:00:00Z"), Play("2025-05-10T15:00:00Z"));
@@ -425,6 +470,13 @@ public sealed class ListeningStatsTests : IAsyncLifetime
     {
         await using var db = factory.CreateDbContext();
         db.ListeningEvents.AddRange(plays);
+        await db.SaveChangesAsync();
+    }
+
+    private async Task Rename(string title)
+    {
+        await using var db = factory.CreateDbContext();
+        foreach (var play in await db.ListeningEvents.ToListAsync()) play.Title = title;
         await db.SaveChangesAsync();
     }
 

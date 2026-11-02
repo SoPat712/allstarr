@@ -509,6 +509,7 @@ builder.Services.AddHttpClient(nameof(allstarr.Core.Music.ListenBrainzSimilarTra
 builder.Services.AddSingleton<allstarr.Core.Music.ListenBrainzSimilarTracks>();
 builder.Services.AddSingleton<allstarr.Core.Music.TasteService>();
 builder.Services.AddHostedService<allstarr.Core.Music.TasteWarmUp>();
+builder.Services.AddHostedService<allstarr.Core.Playback.ListeningStatsWarmUp>();
 builder.Services.AddSingleton<allstarr.Core.Music.PersonalMixService>();
 builder.Services.AddSingleton<allstarr.Core.Music.MixCoverImageService>();
 builder.Services.AddSingleton<IDurableJobHandler, allstarr.Core.Music.PersonalMixJobHandler>();

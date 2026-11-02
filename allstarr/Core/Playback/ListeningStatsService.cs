@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using allstarr.Core.Enrichment;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Operations;
@@ -46,7 +47,14 @@ public sealed record ListeningStats(ListeningStatsPeriod Period, long PlayCount,
 public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, SharedTagStore? tags = null) : IDisposable
 {
     private const int TopLimit = 50;
+    public static readonly TimeSpan WarmEvery = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan KeptFor = TimeSpan.FromMinutes(10);
+    // Recaps opened lately are read again in the background; the list is bounded so odd years cannot pile up work.
+    private const int RememberedRecaps = 24;
+    private static readonly TimeSpan RememberedFor = TimeSpan.FromDays(1);
+    private sealed record OpenedRecap(IntelligenceScope Scope, string? Period, int? Year, TimeZoneInfo Zone);
     private readonly MemoryCache cache = new(new MemoryCacheOptions { SizeLimit = 256 });
+    private readonly ConcurrentDictionary<OpenedRecap, DateTimeOffset> opened = new();
 
     public async Task<ListeningStats> GetAsync(AdminAuthSession session, string? period, int? year, CancellationToken token, string? timeZoneId = null)
     {
@@ -67,17 +75,50 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
             catch (Exception error) when (error is TimeZoneNotFoundException or InvalidTimeZoneException) { throw new ArgumentException("The time zone is invalid."); }
         }
         var interval = CreatePeriod(period, year, clock.UtcNow, zone);
+        opened[new(scope, period, year, zone)] = clock.UtcNow;
+        if (opened.Count > RememberedRecaps) opened.TryRemove(opened.MinBy(item => item.Value));
+        return await CachedAsync(db, scope, interval, zone, actor.IsSynthetic, TimeSpan.Zero, token);
+    }
+
+    // A recap opened lately is read again once the listener's plays changed or its answer is about to expire, so the next
+    // visit answers from memory even right after listening. A visit before that still reads it fresh.
+    public async Task WarmAsync(CancellationToken token)
+    {
+        foreach (var (recap, at) in opened)
+        {
+            if (at <= clock.UtcNow - RememberedFor)
+            {
+                opened.TryRemove(KeyValuePair.Create(recap, at));
+                continue;
+            }
+            await using var db = await factory.CreateDbContextAsync(token);
+            var synthetic = await db.Users.AsNoTracking().Where(user => user.Id == recap.Scope.OwnerUserId && user.Enabled)
+                .Select(user => (bool?)user.IsSynthetic).SingleOrDefaultAsync(token);
+            if (synthetic == null)
+            {
+                opened.TryRemove(KeyValuePair.Create(recap, at));
+                continue;
+            }
+            var interval = CreatePeriod(recap.Period, recap.Year, clock.UtcNow, recap.Zone);
+            await CachedAsync(db, recap.Scope, interval, recap.Zone, synthetic.Value, 2 * WarmEvery, token);
+        }
+    }
+
+    private async Task<ListeningStats> CachedAsync(AllstarrDbContext db, IntelligenceScope scope, ListeningStatsPeriod interval,
+        TimeZoneInfo zone, bool synthetic, TimeSpan ahead, CancellationToken token)
+    {
         // Reading a long history takes a moment, so an answer is kept until the listener's plays change.
+        var owner = scope.OwnerUserId;
         var plays = await db.ListeningEvents.AsNoTracking().LongCountAsync(item => item.OwnerUserId == owner, token);
         var finished = await db.ListeningEvents.AsNoTracking().LongCountAsync(item => item.OwnerUserId == owner && item.State == ListeningEventState.Completed, token);
-        var key = (scope, interval, actor.IsSynthetic, plays, finished);
-        if (cache.TryGetValue(key, out (ListeningStats Stats, DateTimeOffset ExpiresAt) cached) && cached.ExpiresAt > clock.UtcNow)
+        var key = (scope, interval, synthetic, plays, finished);
+        if (cache.TryGetValue(key, out (ListeningStats Stats, DateTimeOffset ExpiresAt) cached) && cached.ExpiresAt > clock.UtcNow + ahead)
             return cached.Stats;
         var result = await ReadAsync(db, scope, interval, zone, token, clock.UtcNow, tags);
-        cache.Set(key, (result, clock.UtcNow.AddMinutes(10)), new MemoryCacheEntryOptions
+        cache.Set(key, (result, clock.UtcNow + KeptFor), new MemoryCacheEntryOptions
         {
             Size = 1,
-            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10)
+            AbsoluteExpirationRelativeToNow = KeptFor
         });
         return result;
     }
@@ -138,16 +179,18 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
         var firstPlayAt = await qualified.OrderBy(item => item.ListenedAt ?? item.StartedAt).Select(item => item.ListenedAt ?? item.StartedAt).FirstOrDefaultAsync(token);
         var selected = qualified.Where(item => (item.ListenedAt ?? item.StartedAt) < period.To);
         if (period.From is { } from) selected = selected.Where(item => (item.ListenedAt ?? item.StartedAt) >= from);
-        var imported = await selected.LongCountAsync(item => item.SourceKind == "import" || item.ImportProvenance != null, token);
         var uncounted = listened.Where(item => (item.ListenedAt ?? item.StartedAt) < period.To && item.State != ListeningEventState.Completed && !(item.PositionTicks >= CountedPlayTicks));
         if (period.From is { } start) uncounted = uncounted.Where(item => (item.ListenedAt ?? item.StartedAt) >= start);
         var shortPlays = await uncounted.LongCountAsync(token);
+        // Every imported play is among these, so they are counted from this one read instead of another pass over the history.
         var plays = await selected.Where(item => item.SourceKind == "protocol" || item.SourceKind == "listenbrainz-api" ||
                 item.SourceKind == "import" || item.ImportProvenance != null)
             .Select(item => new StatsPlay((item.ListenedAt ?? item.StartedAt)!.Value, item.TrackReference, item.CanonicalRecordingId,
                 item.RecordingMusicBrainzId, item.Title, item.Artist, item.Album, item.AlbumArtist,
-                item.DurationMilliseconds ?? item.PositionTicks / TimeSpan.TicksPerMillisecond))
+                item.DurationMilliseconds ?? item.PositionTicks / TimeSpan.TicksPerMillisecond,
+                item.SourceKind == "import" || item.ImportProvenance != null))
             .ToListAsync(token);
+        var imported = plays.LongCount(item => item.Imported);
         var knownSongs = plays.Where(item => !string.IsNullOrWhiteSpace(item.Title) && !string.IsNullOrWhiteSpace(item.Artist)).ToArray();
         var songGroups = knownSongs.GroupBy(SongKey).ToArray();
         var songs = songGroups.Select(group =>
@@ -265,7 +308,7 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
 
     private static string Normalize(string value) => value.Trim().ToUpperInvariant();
     private sealed record StatsPlay(DateTimeOffset At, string TrackReference, Guid? CanonicalRecordingId,
-        string? RecordingMusicBrainzId, string? Title, string? Artist, string? Album, string? AlbumArtist, long? DurationMilliseconds);
+        string? RecordingMusicBrainzId, string? Title, string? Artist, string? Album, string? AlbumArtist, long? DurationMilliseconds, bool Imported);
 
     public void Dispose() => cache.Dispose();
 }
