@@ -54,7 +54,7 @@
       if (linkResult.status === "fulfilled") { links = linkResult.value.playlistLinks ?? []; addedSuggestions = []; }
       if (importResult.status === "fulfilled") imported = importResult.value.some(item => importPhase(item) === "completed");
       if (soundResult.status === "fulfilled") status = soundResult.value;
-      if (releaseResult.status === "fulfilled") releases = releaseResult.value.entries.slice(0, 8).map(entry => ({ id: entry.id, kind: "release", name: entry.title, description: `${entry.artist} · ${entry.type === "album" ? "Album" : entry.type === "single" ? "Single" : "Release"}${/^\d{4}-\d{2}-\d{2}$/.test(entry.releaseDate ?? "") ? ` · ${new Date(`${entry.releaseDate}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" })}` : ""}`, section: "madeForYou", sortOrder: 0, sourceLabel: null, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, inApps: false, appsAllowed: false, coverArtwork: [] }));
+      if (releaseResult.status === "fulfilled") releases = releaseResult.value.entries.slice(0, 8).map(entry => ({ id: entry.id, kind: "release", name: entry.title, description: `${entry.artist} · ${entry.type === "album" ? "Album" : entry.type === "single" ? "Single" : "Release"}${/^\d{4}-\d{2}-\d{2}$/.test(entry.releaseDate ?? "") ? ` · ${new Date(`${entry.releaseDate}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" })}` : ""}`, section: "madeForYou", sortOrder: 0, sourceLabel: null, recipeVersion: null, updatedAt: null, readiness: { ready: true, message: "Ready" }, inApps: false, appsAllowed: false, coverArtwork: entry.artworkUrl ? [entry.artworkUrl] : [] }));
       loading = false;
     })().finally(() => { pending = null; });
     return pending;

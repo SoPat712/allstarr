@@ -1,18 +1,24 @@
+using System.Net;
 using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Favorites;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
+using allstarr.Core.Protocols;
 using allstarr.Core.Releases;
 using allstarr.Core.Routing;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
 using allstarr.Services.Admin;
+using allstarr.Services.Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using SkiaSharp;
 
 namespace allstarr.Tests;
 
@@ -32,6 +38,8 @@ public sealed class NewReleasesTests : IAsyncLifetime
     private readonly Dictionary<Guid, ProviderAccountContext> _accounts = new();
     private ProviderAlbumMetadata[] _albums = [];
     private int _calls;
+    private readonly MediaAssetResolver _covers = new(new TestMemoryApplicationCache(), NullLogger<MediaAssetResolver>.Instance);
+    private readonly CoverHandler _coverSource = new();
 
     public async Task InitializeAsync()
     {
@@ -468,8 +476,118 @@ public sealed class NewReleasesTests : IAsyncLifetime
         Assert.Equal("date-unknown", Assert.Single(inbox.Excluded).ExclusionReason);
     }
 
+    [Fact]
+    public async Task Cached_releases_link_a_cover_from_their_source_album_without_polling_again()
+    {
+        await Follow(_first);
+        _albums = [Album()];
+        await Poll(_first);
+        var entry = Assert.Single((await NewService().ReadAsync(_first)).Entries);
+        Assert.Equal("/api/admin/releases/artwork/deezer/one", entry.ArtworkUrl);
+        Assert.Equal(1, _calls);
+    }
+
+    [Fact]
+    public async Task Release_cover_uses_kept_album_details_before_the_source_and_is_kept_once_found()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetStoredAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "kept"))
+            .ReturnsAsync(new Album { CoverArtUrl = "https://covers.example.test/kept.jpg" });
+        gateway.Setup(item => item.GetAlbumAsync(It.Is<ProtocolExecutionContext>(context => context.VerifiedBackendPrincipalId == _first.ToString()),
+                "deezer", "one"))
+            .ReturnsAsync(new Album { CoverArtUrl = "https://covers.example.test/one.jpg" });
+        var listener = Listener(_first, _first.ToString());
+        Assert.Equal("image/png", Assert.IsType<FileContentResult>(await Artwork(gateway.Object, listener).Get("deezer", "kept", default)).ContentType);
+        var controller = Artwork(gateway.Object, listener);
+        Assert.IsType<FileContentResult>(await controller.Get("deezer", "one", default));
+        Assert.Equal("private, max-age=604800", controller.Response.Headers.CacheControl.ToString());
+        Assert.IsType<FileContentResult>(await Artwork(gateway.Object, listener).Get("deezer", "one", default));
+        Assert.Equal(["https://covers.example.test/kept.jpg", "https://covers.example.test/one.jpg"],
+            _coverSource.Requests.Select(item => item.AbsoluteUri));
+        gateway.Verify(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "kept"), Times.Never);
+        gateway.Verify(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "one"), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("/api/admin/providers/deezer/cover")]
+    [InlineData("http://127.0.0.1/cover.jpg")]
+    public async Task Release_without_a_usable_cover_answers_empty_so_the_placeholder_stays(string? cover)
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "one"))
+            .ReturnsAsync(new Album { CoverArtUrl = cover });
+        gateway.Setup(item => item.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "off"))
+            .ThrowsAsync(new UnauthorizedAccessException());
+        foreach (var album in new[] { "one", "off", "missing" })
+        {
+            var controller = Artwork(gateway.Object, Listener(_first, _first.ToString()));
+            Assert.IsType<NoContentResult>(await controller.Get("deezer", album, default));
+            Assert.Equal("private, max-age=3600", controller.Response.Headers.CacheControl.ToString());
+        }
+        Assert.Empty(_coverSource.Requests);
+    }
+
+    [Fact]
+    public async Task Release_cover_requires_a_linked_enabled_listener()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        Assert.IsType<UnauthorizedResult>(await Artwork(gateway.Object, null).Get("deezer", "one", default));
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await Artwork(gateway.Object, Listener(null, "unlinked")).Get("deezer", "one", default)).StatusCode);
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await Artwork(gateway.Object, Listener(_first, _second.ToString())).Get("deezer", "one", default)).StatusCode);
+        Assert.IsType<BadRequestResult>(await Artwork(gateway.Object, Listener(_first, _first.ToString())).Get("deezer", "one\ntwo", default));
+        await using (var db = _factory.CreateDbContext())
+        {
+            (await db.Users.SingleAsync(item => item.Id == _second)).Enabled = false;
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await Artwork(gateway.Object, Listener(_second, _second.ToString())).Get("deezer", "one", default)).StatusCode);
+        Assert.Empty(_coverSource.Requests);
+    }
+
+    private ReleaseArtworkController Artwork(IProtocolProviderGateway gateway, AdminAuthSession? session)
+    {
+        var controller = new ReleaseArtworkController(new(_factory, _clock), gateway, _covers, new CoverClients(_coverSource),
+            NullLogger<ReleaseArtworkController>.Instance);
+        controller.ControllerContext = new() { HttpContext = new DefaultHttpContext() };
+        if (session != null) controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = session;
+        return controller;
+    }
+
+    private static AdminAuthSession Listener(Guid? user, string principal) => new()
+    {
+        SessionId = "fixture",
+        UserId = principal,
+        UserName = "Listener",
+        IsAdministrator = false,
+        BackendType = "subsonic",
+        BackendInstanceId = "main",
+        AllstarrUserId = user,
+        JellyfinAccessToken = "",
+        ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+    };
+
     public Task DisposeAsync() => _database.DisposeAsync().AsTask();
     private sealed class Clock : IPlatformClock { public DateTimeOffset UtcNow { get; set; } = new(2026, 10, 28, 12, 0, 0, TimeSpan.Zero); }
+    private sealed class CoverClients(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(handler, false);
+    }
+    private sealed class CoverHandler : HttpMessageHandler
+    {
+        public List<Uri> Requests { get; } = [];
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request.RequestUri!);
+            using var bitmap = new SKBitmap(32, 32);
+            bitmap.Erase(SKColors.Teal);
+            using var image = SKImage.FromBitmap(bitmap);
+            using var png = image.Encode(SKEncodedImageFormat.Png, 100);
+            var content = new ByteArrayContent(png.ToArray());
+            content.Headers.ContentType = new("image/png");
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        }
+    }
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     {
         public AllstarrDbContext CreateDbContext() => new(options);

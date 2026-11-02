@@ -1430,7 +1430,7 @@ export type HistoryImport = {
 
 export type FollowedReleaseArtist = { providerId: string; artistId: string; displayName: string; musicBrainzArtistId?: string | null };
 export type ReleaseSource = { providerId: string; albumId: string; title: string; artist: string; releaseDate: string | null; datePrecision: string; type: string; isExplicit: boolean | null; edition: string; upc: string | null; isrcs: string[]; aliases: string[]; exclusionReason: string | null };
-export type ReleaseInboxEntry = { id: string; title: string; artist: string; releaseDate: string | null; datePrecision: string; type: string; isExplicit: boolean | null; edition: string; exclusionReason: string | null; sources: ReleaseSource[] };
+export type ReleaseInboxEntry = { id: string; title: string; artist: string; releaseDate: string | null; datePrecision: string; type: string; isExplicit: boolean | null; edition: string; exclusionReason: string | null; sources: ReleaseSource[]; artworkUrl: string };
 export type ReleaseInbox = { entries: ReleaseInboxEntry[]; excluded: ReleaseInboxEntry[]; coverage: Array<{ artist: FollowedReleaseArtist; status: string; checkedAt: string | null }> };
 
 export type ListeningHistoryStats = {

@@ -16,7 +16,7 @@ public sealed record ReleaseSource(string ProviderId, string AlbumId, string Tit
 }
 public sealed record ReleaseInboxEntry(string Id, string Title, string Artist, string? ReleaseDate,
     string DatePrecision, string Type, bool? IsExplicit, string Edition, string? ExclusionReason,
-    IReadOnlyList<ReleaseSource> Sources);
+    IReadOnlyList<ReleaseSource> Sources, string ArtworkUrl);
 public sealed record ReleaseCoverage(FollowedReleaseArtist Artist, string Status, DateTimeOffset? CheckedAt);
 public sealed record ReleaseInbox(IReadOnlyList<ReleaseInboxEntry> Entries,
     IReadOnlyList<ReleaseInboxEntry> Excluded, IReadOnlyList<ReleaseCoverage> Coverage);
@@ -75,9 +75,13 @@ internal static class ReleaseInboxProjection
             var first = group.OrderBy(item => item.Type == "unknown").ThenByDescending(item => item.ReleaseDate, StringComparer.Ordinal).First();
             return new ReleaseInboxEntry(NewReleasesService.Hash(string.Join("|", group.Select(item => item.Key).Order(StringComparer.Ordinal))),
                 first.Title, first.Artist, first.ReleaseDate, first.DatePrecision, first.Type, first.IsExplicit,
-                first.Edition, first.ExclusionReason, group);
+                first.Edition, first.ExclusionReason, group, ArtworkUrl(first));
         }).OrderByDescending(item => item.ReleaseDate, StringComparer.Ordinal).ThenBy(item => item.Id, StringComparer.Ordinal).ToArray();
     }
+
+    // The cover is looked up from the release's own source when shown, so catalogs cached before covers were linked show art too.
+    internal static string ArtworkUrl(ReleaseSource source) =>
+        $"/api/admin/releases/artwork/{Uri.EscapeDataString(source.ProviderId)}/{Uri.EscapeDataString(source.AlbumId)}";
 
     private static string Alias(string provider, string id)
     {

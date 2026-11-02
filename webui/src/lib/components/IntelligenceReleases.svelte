@@ -168,7 +168,7 @@
           <div class="release-cards">
             {#each group.items as entry, index (`${index}:${entry.id}`)}
               <article id={`release-${entry.id}`} class="settings-card release-card" aria-label={`${entry.title} by ${entry.artist}`}>
-                <MediaArtwork class="release-art" fallback="♫" />
+                <MediaArtwork class="release-art" url={entry.artworkUrl} fallback="♫" />
                 <div class="release-info">
                   <h3>{entry.title}</h3><p>{entry.artist}</p>
                   <p>{releaseType(entry.type)} · {entry.isExplicit === true ? "Explicit" : entry.isExplicit === false ? "Clean" : "Explicit status unknown"}</p>

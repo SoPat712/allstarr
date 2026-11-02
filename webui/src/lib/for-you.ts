@@ -8,7 +8,8 @@ export function mosaicArtwork(references: string[]) {
   const valid = references.filter(Boolean);
   return valid.length >= 4 ? valid.slice(0, 4) : valid.slice(0, 1);
 }
-export const artworkUrl = (id: string) => `/api/admin/downloads/artwork/${encodeURIComponent(id)}`;
+// Release covers arrive as ready-made Allstarr paths; every other reference is a library or provider item id.
+export const artworkUrl = (id: string) => id.startsWith("/api/") ? id : `/api/admin/downloads/artwork/${encodeURIComponent(id)}`;
 export function reasonLabel(reason: string) {
   if (/^Played \d+ times/.test(reason)) return "You play this a lot";
   if (reason.startsWith("New release")) return "New release";

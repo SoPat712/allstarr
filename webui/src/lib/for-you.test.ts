@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { soundDifference, soundSummary, steeringNames, greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep } from "./for-you";
+import { artworkUrl, soundDifference, soundSummary, steeringNames, greeting, mixDescription, mosaicArtwork, reasonLabel, shortReadiness, tasteSummary, nudgeMarker, mixName, mixNextStep } from "./for-you";
 
 describe("personal mix presentation", () => {
   it("describes each mix without repeating its name", () => {
@@ -18,6 +18,10 @@ describe("personal mix presentation", () => {
     expect(greeting(12)).toBe("Good afternoon");
     expect(greeting(17)).toBe("Good evening");
     expect(greeting(0, "  ")).toBe("Good evening");
+  });
+  it("keeps release cover paths and looks item ids up as artwork", () => {
+    expect(artworkUrl("/api/admin/releases/artwork/deezer/42")).toBe("/api/admin/releases/artwork/deezer/42");
+    expect(artworkUrl("ext-deezer-song-1")).toBe("/api/admin/downloads/artwork/ext-deezer-song-1");
   });
   it("uses four artwork references or one for a short mosaic", () => {
     expect(mosaicArtwork([])).toEqual([]);

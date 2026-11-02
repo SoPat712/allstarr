@@ -307,7 +307,13 @@ public sealed partial class PersonalMixServiceTests
         clock.UtcNow += TimeSpan.FromSeconds(3);
         await releases.PollAsync(owner, Guid.NewGuid(), default);
         var ownInbox = await ReadSuccess(await client.GetAsync("/api/admin/releases"));
-        var entryId = Assert.Single(ownInbox.GetProperty("entries").EnumerateArray()).GetProperty("id").GetString();
+        var ownEntry = Assert.Single(ownInbox.GetProperty("entries").EnumerateArray());
+        var entryId = ownEntry.GetProperty("id").GetString();
+        using (var cover = await client.GetAsync(ownEntry.GetProperty("artworkUrl").GetString()))
+        {
+            Assert.Equal(HttpStatusCode.OK, cover.StatusCode);
+            Assert.Equal("image/png", cover.Content.Headers.ContentType?.MediaType);
+        }
         var foreignEntry = Assert.Single((await releases.ReadAsync(owner)).Entries);
         Assert.Equal(HttpStatusCode.NotFound, (await client.DeleteAsync($"/api/admin/releases/{foreignEntry.Id}")).StatusCode);
         (await client.DeleteAsync($"/api/admin/releases/{entryId}")).EnsureSuccessStatusCode();
@@ -412,6 +418,8 @@ public sealed partial class PersonalMixServiceTests
                 gateway.Object, new(factory, clock), factory, null!, media.Object, new(), null!));
             services.AddScoped(_ => new DownloadActivityController([], [artwork.Object], media.Object,
                 NullLogger<DownloadActivityController>.Instance, access.Object));
+            services.AddScoped(_ => new ReleaseArtworkController(new(factory, clock), gateway.Object, media.Object,
+                Mock.Of<IHttpClientFactory>(), NullLogger<ReleaseArtworkController>.Instance));
             services.AddScoped<AdminPortFilter>();
             services.AddSingleton(new AdminUpdateFeed(factory));
             services.AddControllers().AddApplicationPart(typeof(MixesController).Assembly).AddControllersAsServices();

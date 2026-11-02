@@ -11,7 +11,7 @@ const followedArtists: FollowedReleaseArtist[] = [
 
 function release(id: string, overrides: Partial<ReleaseInboxEntry> = {}): ReleaseInboxEntry {
   return { id, title: id, artist: "North", releaseDate: "2026-10-27", datePrecision: "day",
-    type: "album", isExplicit: false, edition: "", exclusionReason: null, sources: [], ...overrides };
+    type: "album", isExplicit: false, edition: "", exclusionReason: null, sources: [], artworkUrl: `/api/admin/releases/artwork/qobuz/${encodeURIComponent(id)}`, ...overrides };
 }
 
 function populatedInbox(): ReleaseInbox {
