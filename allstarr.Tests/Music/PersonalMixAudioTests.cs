@@ -2,12 +2,15 @@ using System.Collections.Immutable;
 using System.Text.Json;
 using allstarr.Core.AudioMuse;
 using allstarr.Core.Enrichment;
+using allstarr.Core.Favorites;
+using allstarr.Core.Jobs;
 using allstarr.Core.Music;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Releases;
 using allstarr.Core.Routing;
 using allstarr.Core.Settings;
+using allstarr.Models.Domain;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 using static allstarr.Tests.AudioMuseTests;
@@ -17,9 +20,9 @@ namespace allstarr.Tests;
 
 public sealed class PersonalMixAudioTests
 {
-    private static PersonalMixService Service(Fixture f, Mock<IProtocolProviderGateway> gateway)
+    private static PersonalMixService Service(Fixture f, Mock<IProtocolProviderGateway> gateway, IPlatformClock? clock = null)
     {
-        var clock = new SystemPlatformClock();
+        clock ??= new SystemPlatformClock();
         var tags = new SharedTagStore(f.Factory, clock);
         var policy = new Mock<IEffectiveProviderPolicyResolver>();
         policy.Setup(item => item.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
@@ -33,6 +36,243 @@ public sealed class PersonalMixAudioTests
         return new(f.Factory, clock, tags, new(f.Factory, tags, clock), new(gateway.Object), gateway.Object,
             new NewReleasesService(f.Factory, clock, Mock.Of<IProviderRouter>(), settings.Object),
             settings.Object, policy.Object, f.Access.Object, f.Discovery);
+    }
+
+    [Theory]
+    [InlineData("song", false)]
+    [InlineData("song", true)]
+    [InlineData("artist", true)]
+    public async Task Starts_keep_seed_sound_radio_and_related_library_ahead_of_general_favourites(string kind, bool external)
+    {
+        await using var f = await ReadyAsync();
+        var sound = Enumerable.Range(0, 41).Select(index => Track(index == 40 ? "zz-compatible" : "00-sound-" + index.ToString("D2"), "Sound artist " + index)).ToArray();
+        var own = Enumerable.Range(0, 3).Select(index => Track("own-" + index, "Artist A")).ToArray();
+        var related = Enumerable.Range(0, 6).Select(index => Track("related-" + index, "Related artist " + index)).ToArray();
+        var unrelated = Enumerable.Range(0, 80).Select(index => Track("unrelated-" + index, "Unrelated artist " + index)).ToArray();
+        var seedTrack = Track("seed", "Artist A");
+        seedTrack.DurationMilliseconds = 180000;
+        seedTrack.CanonicalRecordingId = Guid.NewGuid();
+        sound[^1].CanonicalRecordingId = Guid.NewGuid();
+        await using (var db = f.Factory.CreateDbContext())
+        {
+            foreach (var recording in new[] { seedTrack.CanonicalRecordingId.Value, sound[^1].CanonicalRecordingId!.Value })
+                db.CanonicalRecordings.Add(new() { Id = recording, CreatedByUserId = f.Actor.AllstarrUserId!.Value });
+            await db.SaveChangesAsync();
+        }
+        await AddAsync(f, sound.Concat(own).Concat(related).Concat(unrelated).Append(seedTrack).ToArray());
+        var clock = new SystemPlatformClock();
+        var tags = new SharedTagStore(f.Factory, clock);
+        foreach (var recording in new[] { seedTrack.CanonicalRecordingId.Value, sound[^1].CanonicalRecordingId!.Value })
+            await tags.SaveAsync(SharedTagStore.RecordingKey(recording), [new("provider", [new("hip-hop")], clock.UtcNow)], [], false, default);
+        var radioSongs = Enumerable.Range(0, 20).Select(index => new Song
+        {
+            Id = "ext-deezer-song-radio-" + index,
+            ExternalProvider = "deezer",
+            ExternalId = "radio-" + index,
+            Title = "Radio " + index,
+            Artist = "Related artist " + index
+        }).ToArray();
+        await AddHeartsAsync(f, Enumerable.Range(0, 80).Select(index => new Song
+        { Id = "ext-deezer-song-heart-" + index, Title = "Heart " + index, Artist = "Unrelated artist " + index }));
+        var seed = new Song
+        {
+            Id = "ext-deezer-song-seed",
+            ExternalProvider = "deezer",
+            ExternalId = "seed",
+            Title = "Library seed",
+            Artist = "Artist A",
+            CanonicalRecordingId = seedTrack.CanonicalRecordingId,
+            Duration = 180
+        };
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed")).ReturnsAsync(seed);
+        gateway.Setup(item => item.GetArtistAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed"))
+            .ReturnsAsync(new Artist { Name = "Artist A" });
+        gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed")).ReturnsAsync([seed]);
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Library seed Artist A", 3)).ReturnsAsync([seed]);
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", 100)).ReturnsAsync(radioSongs.ToList());
+        gateway.Setup(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>())).ReturnsAsync(true);
+        var original = f.Respond;
+        f.Respond = request => request.RequestUri!.AbsolutePath == "/api/similar_tracks"
+            ? Fixture.Json(JsonSerializer.Serialize(sound.Select(track => new { item_id = track.BackendItemId }))) : original(request);
+        var taste = new TasteService(f.Factory, tags, clock);
+        await taste.PutNudgeAsync(f.Actor.AllstarrUserId!.Value, new("artist", "Unrelated artist 0", "more"));
+
+        var preview = await Service(f, gateway).StartAsync(f.Actor.AllstarrUserId.Value,
+            new(kind, external ? "ext-deezer-" + kind + "-seed" : "seed", 25));
+
+        Assert.Equal(25, preview.Songs.Count);
+        Assert.DoesNotContain(preview.Songs, item => item.Song.Artist.StartsWith("Unrelated", StringComparison.Ordinal));
+        Assert.Contains(preview.Songs, item => item.Source == "library" && item.Song.Artist == "Artist A");
+        Assert.Contains(preview.Songs, item => item.Source == "library" && item.Song.Artist.StartsWith("Related", StringComparison.Ordinal));
+        if (!external)
+        {
+            Assert.Equal(8, preview.Songs.Count(item => item.Source == "audiomuse"));
+            Assert.Contains(preview.Songs, item => item.Song.Id == "zz-compatible");
+            Assert.True(preview.Songs.Take(3).Select(item => item.Source).Distinct().Count() > 1);
+        }
+        if (kind == "song") Assert.DoesNotContain(preview.Songs, item => item.Song.Title == seed.Title);
+        Assert.All(preview.Songs.GroupBy(item => item.Song.Artist), group => Assert.True(group.Count() <= 2));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Local_start_tops_up_only_after_eligible_related_songs_and_artist_limits(bool generalHearts)
+    {
+        await using var f = await ReadyAsync();
+        var own = Enumerable.Range(0, 4).Select(index => Track("own-" + index, "Artist A")).ToArray();
+        var unrelated = Enumerable.Range(0, 40).Select(index => Track("unrelated-" + index, "Unrelated artist " + index)).ToArray();
+        var denied = Track("denied", "Artist A");
+        denied.BackendLibraryId = "restricted";
+        var seedTrack = Track("seed", "Artist A");
+        seedTrack.DurationMilliseconds = 180000;
+        await AddAsync(f, own.Concat(unrelated).Append(seedTrack).Append(Track("sound", "Sound artist"))
+            .Append(Track("related", "Related artist")).Append(denied).ToArray());
+        await AddHeartsAsync(f, Enumerable.Range(0, generalHearts ? 40 : 0).Select(index => new Song
+        { Id = "ext-deezer-song-heart-" + index, Title = "Heart " + index, Artist = "Favourite artist " + index })
+            .Append(new Song { Id = "ext-deezer-song-companion", Title = "Companion", Artist = "Secondary related artist" }));
+        var gateway = new Mock<IProtocolProviderGateway>();
+        var seed = new Song { Id = "ext-deezer-song-seed", ExternalProvider = "deezer", ExternalId = "seed", Title = "Library seed", Artist = "Artist A", Duration = 180 };
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Library seed Artist A", 3)).ReturnsAsync([seed]);
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", 100))
+            .ReturnsAsync([seed, new Song { Id = "ext-deezer-song-radio", Title = "Radio", Artist = "Related artist", ExternalProvider = "deezer", ExternalId = "radio" },
+                new Song { Id = "ext-deezer-song-secondary", Title = "Secondary", Artist = "Secondary related artist", ExternalProvider = "deezer", ExternalId = "secondary" }]);
+        gateway.Setup(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>())).ReturnsAsync(true);
+        var original = f.Respond;
+        f.Respond = request => request.RequestUri!.AbsolutePath == "/api/similar_tracks"
+            ? Fixture.Json("[{\"item_id\":\"sound\"},{\"item_id\":\"denied\"}]") : original(request);
+
+        var preview = await Service(f, gateway).StartAsync(f.Actor.AllstarrUserId!.Value, new("song", "seed", 25));
+
+        Assert.Equal(25, preview.Songs.Count);
+        Assert.All(preview.Songs.Take(7), item => Assert.Contains(item.Song.Artist, new[] { "Artist A", "Sound artist", "Related artist", "Secondary related artist" }));
+        Assert.All(preview.Songs.Skip(7), item => Assert.DoesNotContain(item.Song.Artist, new[] { "Artist A", "Sound artist", "Related artist", "Secondary related artist" }));
+        Assert.Equal(2, preview.Songs.Count(item => item.Song.Artist == "Artist A"));
+        Assert.Contains(preview.Songs.Take(7), item => item.Source == "heart" && item.Song.Artist == "Secondary related artist");
+        Assert.All(preview.Songs.Skip(7), item => Assert.Equal(generalHearts ? "heart" : "library", item.Source));
+        Assert.DoesNotContain(preview.Songs, item => item.Song.Id is "seed" or "denied" || item.Song.Title == seed.Title);
+        Assert.Equal(preview.Songs.Count, preview.Songs.Select(item => item.Song.Id).Distinct().Count());
+        Assert.All(preview.Songs.GroupBy(item => item.Song.Artist), group => Assert.True(group.Count() <= 2));
+    }
+
+    [Fact]
+    public async Task Sound_filled_start_does_not_check_playback_for_unrelated_hearts()
+    {
+        await using var f = await ReadyAsync();
+        var sound = Enumerable.Range(0, 25).Select(index => Track("sound-" + index, "Sound artist " + index)).ToArray();
+        await AddAsync(f, sound.Append(Track("seed", "Artist A")).ToArray());
+        await AddHeartsAsync(f, Enumerable.Range(0, 40).Select(index => new Song
+        { Id = "ext-deezer-song-heart-" + index, Title = "Heart " + index, Artist = "Favourite artist " + index }));
+        var original = f.Respond;
+        f.Respond = request => request.RequestUri!.AbsolutePath == "/api/similar_tracks"
+            ? Fixture.Json(JsonSerializer.Serialize(sound.Select(track => new { item_id = track.BackendItemId }))) : original(request);
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>())).ReturnsAsync(true);
+
+        var preview = await Service(f, gateway).StartAsync(f.Actor.AllstarrUserId!.Value, new("song", "seed", 25));
+
+        Assert.Equal(25, preview.Songs.Count);
+        Assert.All(preview.Songs, item => Assert.Equal("audiomuse", item.Source));
+        gateway.Verify(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Local_start_overlaps_sound_and_radio_reads()
+    {
+        await using var f = await ReadyAsync();
+        await AddAsync(f, Track("seed", "Artist A"));
+        var clock = new SeedClock();
+        var startedAt = clock.UtcNow;
+        var soundStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var soundRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var radioStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var radioRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        f.Access.Setup(item => item.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
+            .Returns(async (ProtocolExecutionContext _, CancellationToken token) =>
+            {
+                if (Interlocked.Increment(ref reads) == 2)
+                {
+                    var at = clock.UtcNow;
+                    soundStarted.SetResult();
+                    await soundRelease.Task.WaitAsync(token);
+                    clock.Complete(at.AddSeconds(2));
+                }
+                return new BackendLibraryAccess(true, ["allowed"]);
+            });
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Library seed Artist A", 3))
+            .Returns(async (ProtocolExecutionContext context, string _, int _) =>
+            {
+                var at = clock.UtcNow;
+                radioStarted.SetResult();
+                await radioRelease.Task.WaitAsync(context.CancellationToken);
+                clock.Complete(at.AddSeconds(3));
+                return new List<Song>();
+            });
+        var start = Service(f, gateway, clock).StartAsync(f.Actor.AllstarrUserId!.Value, new("song", "seed", 25));
+        bool overlapped;
+        try
+        {
+            await soundStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            overlapped = radioStarted.Task.IsCompleted;
+            soundRelease.TrySetResult();
+            await radioStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        finally { soundRelease.TrySetResult(); radioRelease.TrySetResult(); }
+        await start.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(overlapped, $"Sound and radio reads ran in sequence; source time was {(clock.UtcNow - startedAt).TotalSeconds} seconds.");
+        Assert.Equal(TimeSpan.FromSeconds(3), clock.UtcNow - startedAt);
+    }
+
+    private sealed class SeedClock : IPlatformClock
+    {
+        private readonly object gate = new();
+        private DateTimeOffset now = DateTimeOffset.UtcNow;
+        public DateTimeOffset UtcNow { get { lock (gate) return now; } }
+        internal void Complete(DateTimeOffset at) { lock (gate) { if (at > now) now = at; } }
+    }
+
+    private static async Task AddHeartsAsync(Fixture f, IEnumerable<Song> songs)
+    {
+        var clock = new SystemPlatformClock();
+        var options = new DurableJobOptions();
+        var queue = new DurableJobQueue(f.Factory, options, new(options), clock);
+        var owner = f.Actor.AllstarrUserId!.Value;
+        var job = await queue.EnqueueAsync(new DurableJobEnqueueRequest<object>("favorite.change", "hearts", new { }, owner));
+        await using var db = f.Factory.CreateDbContext();
+        foreach (var song in songs)
+        {
+            var accepted = new FavoriteEventRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = owner,
+                Protocol = "jellyfin",
+                BackendInstanceId = "primary",
+                BackendPrincipalId = "listener",
+                ItemId = song.Id,
+                Operation = FavoriteOperation.Favorite,
+                EventKey = Guid.NewGuid().ToString(),
+                JobId = job.JobId,
+                CreatedAt = clock.UtcNow
+            };
+            db.FavoriteEvents.Add(accepted);
+            db.FavoriteStates.Add(new()
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = owner,
+                Protocol = "jellyfin",
+                BackendInstanceId = "primary",
+                ItemId = song.Id,
+                LastEventId = accepted.Id,
+                IsFavorite = true,
+                DisplayMetadataJson = JsonSerializer.Serialize(new FavoriteDisplaySnapshot(1, song.Id, "song", song.Title, [song.Artist]),
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            });
+        }
+        await db.SaveChangesAsync();
     }
 
     [Theory]

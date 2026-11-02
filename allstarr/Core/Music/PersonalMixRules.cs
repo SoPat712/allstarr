@@ -35,7 +35,7 @@ internal static class PersonalMixRules
         DateTimeOffset now, IReadOnlyCollection<string> previous, int? length = null)
     {
         var recipe = MixRecipes.For(kind);
-        var rows = candidates.Where(item => !item.EarlySkipped).DistinctBy(item => Key(item.Song)).Where(item => kind switch
+        IEnumerable<MixCandidate> rows = candidates.Where(item => !item.EarlySkipped).DistinctBy(item => Key(item.Song)).Where(item => kind switch
         {
             "on-repeat" => item.RecentPlays > 0 || item.NinetyPlays > 0,
             "rewind" => item.Plays >= recipe.MinimumPlays && item.LastPlayed <= now.AddMonths(-recipe.InactiveMonths),
@@ -49,6 +49,7 @@ internal static class PersonalMixRules
             .ThenByDescending(item => kind == "custom" ? item.Score : 0)
             .ThenBy(item => item.ReleaseKey, StringComparer.Ordinal)
             .ThenBy(item => kind == "release-radar" ? item.Song.Track ?? int.MaxValue : 0).ThenBy(item => item.Song.Id, StringComparer.Ordinal);
+        if (kind == "custom") rows = CustomOrder(rows, length ?? recipe.Target);
         var selected = new List<MixCandidate>();
         var artists = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var fills = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -73,6 +74,34 @@ internal static class PersonalMixRules
             if (selected.Count == (length ?? recipe.Target)) break;
         }
         return selected;
+    }
+
+    private static IEnumerable<MixCandidate> CustomOrder(IEnumerable<MixCandidate> rows, int length)
+    {
+        var ranked = rows.ToArray();
+        var sources = ranked.Where(row => row.Source != "audiomuse" && row.RelatedTo != null)
+            .GroupBy(row => row.Source).Select(group => new Queue<MixCandidate>(group.OrderByDescending(SeedArtist)))
+            .OrderByDescending(source => SeedArtist(source.Peek())).ThenBy(source => source.Peek().Source, StringComparer.Ordinal).ToArray();
+        using var primary = Interleave().GetEnumerator();
+        using var sound = ranked.Where(row => row.Source == "audiomuse").OrderByDescending(row => row.RelatedTo != null).GetEnumerator();
+        var count = 0; var sounds = 0;
+        while (primary.MoveNext())
+        {
+            yield return primary.Current;
+            if (++count % 2 == 0 && sounds < length * 2 / 5 && sound.MoveNext()) { sounds++; yield return sound.Current; }
+        }
+        while (sound.MoveNext()) yield return sound.Current;
+        foreach (var row in ranked.Where(row => row.Source != "audiomuse" && row.RelatedTo == null)) yield return row;
+
+        static bool SeedArtist(MixCandidate row) => row.Song.Artists.Append(row.Song.Artist)
+            .Any(artist => string.Equals(artist.Trim(), row.RelatedTo, StringComparison.OrdinalIgnoreCase));
+
+        IEnumerable<MixCandidate> Interleave()
+        {
+            while (sources.Any(source => source.Count > 0))
+                foreach (var source in sources)
+                    if (source.TryDequeue(out var row)) yield return row;
+        }
     }
 
     internal static string Key(Song song) => song.CanonicalRecordingId?.ToString("D") ?? song.Id;

@@ -58,20 +58,15 @@ public sealed partial class PersonalMixService
     {
         var context = await ContextAsync(user, token);
         var access = await libraryAccess.ResolveAsync(context, token);
+        if (start != null) return await StartCandidatesAsync(db, context, access, user, events, start, token);
         var known = events.Select(item => item.LibraryTrackId).OfType<Guid>().Distinct().ToArray();
         var query = LibraryTrackAccess.Query(db, context, access);
-        if (start != null) query = query.Where(item => item.BackendItemId == start.SeedId);
         var library = await query.OrderByDescending(item => known.Contains(item.Id))
             .ThenBy(item => item.BackendItemId).Take(600).ToArrayAsync(token);
         var rows = new List<(Song Song, string Source, DateTimeOffset? Release)>();
         var hearts = (await new FavoriteViewReader(factory).ReadAsync(context, token)).Where(item => item.Display.Kind == "song").Take(300).ToArray();
         rows.AddRange(hearts.Select(item => (item.Song(), "heart", (DateTimeOffset?)null)));
         rows.AddRange(library.Select(track => (LibrarySong(track), "library", (DateTimeOffset?)null)));
-        if (start != null)
-        {
-            var seed = await SeedRowsAsync(context, library, start, token);
-            return (await RankCandidatesAsync(seed.Rows, context, user, events, hearts, token), seed.Name);
-        }
         inputs ??= new();
         var historyRecordings = events.Select(play => play.CanonicalRecordingId).OfType<Guid>().ToHashSet();
         var historyReferences = events.Select(play => play.TrackReference).ToHashSet();

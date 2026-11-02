@@ -89,4 +89,64 @@ public sealed class PersonalMixRulesTests
         Assert.DoesNotContain(PersonalMixRules.Select("discover-weekly", rows, Now, []), item => item.Loved);
     }
 
+    [Theory]
+    [InlineData(30, 25)]
+    [InlineData(60, 50)]
+    [InlineData(8, 25)]
+    [InlineData(8, 50)]
+    public void Custom_UsesSeedRelationshipsBeforeUnrelatedFavourites(int relatedCount, int length)
+    {
+        var related = Enumerable.Range(1, relatedCount).Select(id => Candidate(id, plays: 0, recent: 0,
+            artist: id <= 2 ? "Artist A" : "Related artist " + id) with
+        {
+            Source = id <= 2 ? "library" : id % 2 == 0 ? "audiomuse" : "radio",
+            RelatedTo = "Artist A",
+            Less = id == 1
+        }).ToArray();
+        var unrelated = Enumerable.Range(100, 100).Select(id => Candidate(id, score: 100) with
+        { Source = id % 2 == 0 ? "heart" : "library", Loved = true }).ToArray();
+
+        var selected = PersonalMixRules.Select("custom", unrelated.Concat(related).ToArray(), Now, [], length);
+
+        Assert.Equal(length, selected.Count);
+        Assert.Equal(Math.Min(relatedCount, length), selected.Count(item => item.RelatedTo != null));
+        Assert.All(selected.Take(Math.Min(relatedCount, length)), item => Assert.Equal("Artist A", item.RelatedTo));
+        Assert.All(selected.GroupBy(item => item.Song.Artist), group => Assert.True(group.Count() <= 2));
+        if (relatedCount < length) Assert.All(selected.Skip(relatedCount), item => Assert.Null(item.RelatedTo));
+    }
+
+    [Theory]
+    [InlineData(30, 10, 25)]
+    [InlineData(5, 20, 25)]
+    [InlineData(60, 20, 50)]
+    public void Custom_InterleavesRadioWithSoundAndUsesExtraSoundOnlyForShortfalls(int radioCount, int maximumSound, int length)
+    {
+        var radio = Enumerable.Range(1, radioCount).Select(id => Candidate(id) with { Source = "radio", RelatedTo = "Artist A" });
+        var sound = Enumerable.Range(100, 60).Select(id => Candidate(id, score: 100) with { Source = "audiomuse" }).ToArray();
+        sound[^1] = sound[^1] with { RelatedTo = "Artist A", Score = 0 };
+
+        var selected = PersonalMixRules.Select("custom", sound.Concat(radio).ToArray(), Now, [], length);
+
+        Assert.Equal(length, selected.Count);
+        var soundCount = selected.Count(item => item.Source == "audiomuse");
+        Assert.True(soundCount <= maximumSound);
+        Assert.Equal(Math.Min(radioCount, length - soundCount), selected.Count(item => item.Source == "radio"));
+        Assert.Contains(selected.Take(3), item => item.Source == "radio");
+        Assert.Contains(selected.Take(3), item => item.Source == "audiomuse");
+        Assert.Contains(selected, item => item.Song.Id == sound[^1].Song.Id);
+    }
+
+    [Fact]
+    public void Custom_ExtraSoundFillsTheGapAfterTheArtistLimit()
+    {
+        var radio = Enumerable.Range(1, 20).Select(id => Candidate(id, artist: "Artist A") with { Source = "radio", RelatedTo = "Artist A" });
+        var sound = Enumerable.Range(100, 50).Select(id => Candidate(id) with { Source = "audiomuse" });
+
+        var selected = PersonalMixRules.Select("custom", radio.Concat(sound).ToArray(), Now, [], 25);
+
+        Assert.Equal(25, selected.Count);
+        Assert.Equal(2, selected.Count(item => item.Source == "radio"));
+        Assert.Equal(23, selected.Count(item => item.Source == "audiomuse"));
+    }
+
 }
