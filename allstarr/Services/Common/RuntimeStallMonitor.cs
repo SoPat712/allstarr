@@ -8,6 +8,7 @@ public sealed class RuntimeStallMonitor(ILogger<RuntimeStallMonitor> logger) : I
 {
     private static readonly TimeSpan Tick = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan WorthLogging = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan MemoryEvery = TimeSpan.FromMinutes(15);
     private readonly CancellationTokenSource stopping = new();
     private Thread? thread;
 
@@ -30,6 +31,7 @@ public sealed class RuntimeStallMonitor(ILogger<RuntimeStallMonitor> logger) : I
         var pause = GC.GetTotalPauseDuration();
         var collections = GC.CollectionCount(2);
         var last = clock.Elapsed;
+        var memoryAt = TimeSpan.FromMinutes(2) - MemoryEvery;
         var poolSent = TimeSpan.Zero;
         var poolAnswered = 0L;
         while (!stopping.Token.WaitHandle.WaitOne(Tick))
@@ -58,6 +60,24 @@ public sealed class RuntimeStallMonitor(ILogger<RuntimeStallMonitor> logger) : I
             }
             pause = totalPause;
             collections = fullCollections;
+            if (now - memoryAt >= MemoryEvery)
+            {
+                memoryAt = now;
+                LogMemory();
+            }
         }
+    }
+
+    // How much of the process is live data, how much the collector keeps in reserve, and how much is outside it.
+    private void LogMemory()
+    {
+        const double Mb = 1024 * 1024;
+        var info = GC.GetGCMemoryInfo();
+        var settings = GC.GetConfigurationVariables();
+        using var process = Process.GetCurrentProcess();
+        logger.LogInformation(
+            "Runtime memory: process {Process:F0} MB, collector committed {Committed:F0} MB, live {Heap:F0} MB, fragmented {Fragmented:F0} MB, heaps {Heaps}, adaptive {Adaptive}, server mode {Server}",
+            process.WorkingSet64 / Mb, info.TotalCommittedBytes / Mb, info.HeapSizeBytes / Mb, info.FragmentedBytes / Mb,
+            settings.GetValueOrDefault("HeapCount"), settings.GetValueOrDefault("DynamicAdaptationMode"), System.Runtime.GCSettings.IsServerGC);
     }
 }
