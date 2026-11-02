@@ -111,7 +111,8 @@ public sealed partial class ProtocolProviderGateway
         var key = CacheKeyBuilder.BuildProviderSearchKey(candidate.Provider.Id, context.Account?.AccountId,
             context.Account?.Revision, scope, query, limit, songs, albums, artists);
         var workKey = Intelligence.HistoryRequestBudget.Current == null ? key : key + ":history";
-        var work = searchWork.GetOrAdd(workKey, _ => new(() => SearchAsync()));
+        // Some sources do real work before their first await, so each starts on its own and can't hold up the others.
+        var work = searchWork.GetOrAdd(workKey, _ => new(() => Task.Run(SearchAsync)));
         var serialized = await work.Value;
         if (serialized == null) return null;
         var snapshot = JsonSerializer.Deserialize<SearchSnapshot>(serialized)!;

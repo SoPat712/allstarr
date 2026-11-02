@@ -1012,7 +1012,7 @@ public sealed partial class ProtocolProviderGateway(
             sourceTrackId: null));
         var settings = SearchSettings;
         var gate = new SemaphoreSlim(ProviderSearchConcurrency);
-        var searches = plan.Candidates.Select(candidate => SearchPlaylistsCachedAsync(candidate, query, limit, settings, gate)).ToArray();
+        var searches = plan.Candidates.Select(candidate => Task.Run(() => SearchPlaylistsCachedAsync(candidate, query, limit, settings, gate))).ToArray();
         await WaitForFirstAnswersAsync(searches, () => searches.Any(task => task.IsCompletedSuccessfully && task.Result.Count > 0),
             settings, protocol.CancellationToken);
         return searches.Where(task => task.IsCompletedSuccessfully).SelectMany(task => task.Result).Take(limit).ToList();
