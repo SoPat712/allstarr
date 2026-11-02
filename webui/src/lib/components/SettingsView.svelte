@@ -81,6 +81,12 @@
     "MATCHING_LOCAL_PREFERENCE_PERCENT",
   ]);
   const shellPreferenceKeys = new Set(["THEME"]);
+  // Stored values stay as they are; the choices read as what they do.
+  const optionLabels: Record<string, Record<string, string>> = {
+    DOWNLOAD_MODE: { Track: "Just the song", Album: "The whole album" },
+    EXPLICIT_FILTER: { All: "Show everything", ExplicitOnly: "Hide clean/edited versions", CleanOnly: "Clean only" },
+  };
+  const optionLabel = (key: string, value: string) => optionLabels[key]?.[value] ?? value;
 
   let schema = $state<UiSchema | null>(null);
   let config = $state<Record<string, unknown>>({});
@@ -376,13 +382,13 @@
                     {#if deploymentOwned(field)}<small class="settings-owned"><Lock size={12} aria-hidden="true" />Deployment-owned · change it in your deployment config</small>{/if}
                   </div>
                   {#if deploymentOwned(field)}
-                    <output>{isToggle(field) ? (fieldEnabled(field) ? "On" : "Off") : String(fieldValue(config, field)) || "Not set"}</output>
+                    <output>{isToggle(field) ? (fieldEnabled(field) ? "On" : "Off") : optionLabel(field.key, String(fieldValue(config, field))) || "Not set"}</output>
                   {:else if field.type === "select"}
                     <SelectField
                       name={field.key}
                       label={field.label}
                       value={String(fieldValue(config, field))}
-                      options={field.options ?? []}
+                      options={(field.options ?? []).map((value) => ({ value, label: optionLabel(field.key, value) }))}
                       onchange={() => markDirty(item.id)}
                     />
                   {:else if isToggle(field)}

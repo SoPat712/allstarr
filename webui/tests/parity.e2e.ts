@@ -3818,7 +3818,7 @@ test("Settings fields share columns, control baselines, and a compact action rai
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/settings-aligned-fields-mobile.png`, fullPage: true });
   await section.getByRole("button", { name: "Download mode" }).click();
-  await page.getByRole("option", { name: "Album" }).click();
+  await page.getByRole("option", { name: "The whole album" }).click();
   await expect(saveButton).toBeEnabled();
 });
 

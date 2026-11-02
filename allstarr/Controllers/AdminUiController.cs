@@ -1766,7 +1766,7 @@ public class AdminUiController : ControllerBase
                 sensitive: true, requiresRestart: true,
                 helpText: "Stored encrypted. Optional; blank clears a saved key. Allstarr restarts after saving."))
             .ToList()),
-        Section("general", "General",
+        Section("general", "Defaults for everyone",
         [
             Field(
                 "AUDIO_QUALITY",
@@ -1778,10 +1778,11 @@ public class AdminUiController : ControllerBase
             Field("LISTENERS_CAN_CONNECT_OWN_ACCOUNTS", "Listeners can connect their own accounts", "boolean",
                 "providerAccounts.listenersCanConnectOwnAccounts",
                 helpText: "Allows listeners to add Personal provider accounts. Existing accounts remain usable and removable when turned off."),
-            DeploymentField("BACKEND_TYPE", "Backend", "select", "backendType", ["Jellyfin", "Subsonic"]),
+            DeploymentField("BACKEND_TYPE", "Music server", "select", "backendType", ["Jellyfin", "Subsonic"]),
             Field("STORAGE_MODE", "Storage mode", "select", "library.storageMode", ["Permanent", "Cache"]),
-            Field("DOWNLOAD_MODE", "Download mode", "select", "library.downloadMode", ["Track", "Album"]),
-            Field("EXPLICIT_FILTER", "Explicit filter", "select", "explicitFilter", ["All", "ExplicitOnly", "CleanOnly"]),
+            Field("DOWNLOAD_MODE", "Downloads", "select", "library.downloadMode", ["Track", "Album"],
+                helpText: "What a download saves: just the song, or the whole album it is on."),
+            Field("EXPLICIT_FILTER", "Explicit songs", "select", "explicitFilter", ["All", "ExplicitOnly", "CleanOnly"]),
             Field(
                 "MATCHING_LOCAL_PREFERENCE_PERCENT",
                 "Prefer your own music when unsure",
@@ -1859,10 +1860,10 @@ public class AdminUiController : ControllerBase
     {
         "ChallengeSolver:Url" => "Challenge solver URL",
         "ChallengeSolver:TimeoutSeconds" => "Solver timeout",
-        "Backend:MusicLibraryIds" => "Music library identifiers (blank selects all permitted libraries)",
+        "Backend:MusicLibraryIds" => "Libraries to use (empty uses every library the server allows)",
         "Extensions:AllowRemoteInstall" => "Allow remote extension installation",
         "Odesli:Enabled" => "Enable cross-service song links",
-        "Odesli:RateLimitMs" => "Optional song.link request interval (ms)",
+        "Odesli:RateLimitMs" => "Wait between song.link requests (ms)",
         "Cors:AllowedOrigins" => "Browser origins (comma separated)",
         "Cors:AllowedMethods" => "Browser HTTP methods (blank uses defaults)",
         "Cors:AllowedHeaders" => "Browser request headers (blank uses defaults)",
