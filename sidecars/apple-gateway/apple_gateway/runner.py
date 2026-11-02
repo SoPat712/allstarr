@@ -85,6 +85,7 @@ class BoundedProcessRunner:
         self._semaphore = asyncio.Semaphore(settings.max_concurrency)
         self._warm: asyncio.subprocess.Process | None = None
         self._warming: asyncio.Task | None = None
+        self._probed: dict[str, dict[str, str]] = {}
 
     async def _start_warm(self) -> None:
         if self._warm is None or self._warm.returncode is not None:
@@ -266,29 +267,35 @@ class BoundedProcessRunner:
             raise ProcessFailure("transcode_failed")
         return target.resolve()
 
-    async def audio_codec(self, source: Path) -> str:
-        if source.suffix.lower() == ".flac":
-            return "flac"
-        result = await self.execute([
-            str(Path(self._settings.ffmpeg_path).with_name("ffprobe")),
-            "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name",
-            "-of", "default=noprint_wrappers=1:nokey=1", str(source),
-        ], source.parent)
-        codec = result.stdout.strip()
-        if result.return_code != 0 or codec not in {"aac", "alac", "flac"}:
-            raise ProcessFailure("audio_artifact_missing")
-        return codec
-
-    async def exceeds_ceiling(self, source: Path, ceiling: AudioCeiling) -> bool:
+    async def _probe(self, source: Path) -> dict[str, str]:
+        # One ffprobe answers both the codec and the quality-limit questions; each run costs about 50 ms.
+        if facts := self._probed.pop(str(source), None):
+            return facts
         result = await self.execute([
             str(Path(self._settings.ffmpeg_path).with_name("ffprobe")),
             "-v", "error", "-select_streams", "a:0",
-            "-show_entries", "stream=sample_rate,bits_per_raw_sample",
+            "-show_entries", "stream=codec_name,sample_rate,bits_per_raw_sample",
             "-of", "default=noprint_wrappers=1", str(source),
         ], source.parent)
         if result.return_code != 0:
             raise ProcessFailure("audio_artifact_missing")
-        facts = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        return dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+
+    async def audio_codec(self, source: Path) -> str:
+        if source.suffix.lower() == ".flac":
+            return "flac"
+        facts = await self._probe(source)
+        codec = facts.get("codec_name", "").strip()
+        if codec not in {"aac", "alac", "flac"}:
+            raise ProcessFailure("audio_artifact_missing")
+        if codec != "aac":
+            while len(self._probed) >= 16:
+                self._probed.pop(next(iter(self._probed)))
+            self._probed[str(source)] = facts
+        return codec
+
+    async def exceeds_ceiling(self, source: Path, ceiling: AudioCeiling) -> bool:
+        facts = await self._probe(source)
         depth = int(facts["bits_per_raw_sample"]) if facts.get("bits_per_raw_sample", "").isdigit() else 0
         rate = int(facts["sample_rate"]) if facts.get("sample_rate", "").isdigit() else 0
         return depth > ceiling.bit_depth or rate > ceiling.sample_rate

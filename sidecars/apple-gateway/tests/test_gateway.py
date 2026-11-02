@@ -21,7 +21,7 @@ from apple_gateway.app import (
 )
 from apple_gateway.config import Settings
 from apple_gateway.security import media_account
-from apple_gateway.runner import BoundedProcessRunner, ProcessFailure
+from apple_gateway.runner import AudioCeiling, BoundedProcessRunner, ProcessFailure
 from apple_gateway.wrapper import WrapperClient, WrapperResponse
 
 
@@ -954,6 +954,32 @@ def test_audio_failure_log_redacts_sensitive_stderr(settings, caplog):
     assert "fixture-account-token" not in caplog.text
     assert "private-cookie" not in caplog.text
     assert "private.example" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_one_probe_answers_codec_and_quality_limit(settings, tmp_path):
+    import shutil
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        pytest.skip("ffmpeg and ffprobe are required")
+    runner = BoundedProcessRunner(replace(settings, ffmpeg_path=shutil.which("ffmpeg")))
+    source = tmp_path / "source.m4a"
+    await runner.execute([
+        shutil.which("ffmpeg"), "-v", "error", "-f", "lavfi", "-i",
+        "sine=frequency=440:sample_rate=96000:duration=0.1", "-sample_fmt", "s32p", "-c:a", "alac", str(source),
+    ], tmp_path)
+    probes = []
+    execute = runner.execute
+
+    async def counted(argv, cwd):
+        probes.append(argv[0])
+        return await execute(argv, cwd)
+
+    runner.execute = counted
+    assert await runner.audio_codec(source) == "alac"
+    assert await runner.exceeds_ceiling(source, AudioCeiling(16, 44100))
+    assert len(probes) == 1
+    assert not await runner.exceeds_ceiling(source, AudioCeiling(24, 96000))
+    assert len(probes) == 2
 
 
 @pytest.mark.asyncio
