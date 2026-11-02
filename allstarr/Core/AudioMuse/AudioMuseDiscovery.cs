@@ -28,7 +28,7 @@ public sealed record AudioMuseSaved(string? Reason, string? PlaylistId = null);
 public sealed class AudioMuseDiscovery(IDbContextFactory<AllstarrDbContext> factory, AudioMuseSettings settings,
     AudioMuseClient client, IBackendLibraryAccessResolver access, IEffectiveProviderPolicyResolver policies,
     IBackendLibraryPermissionSource permissions, IHttpClientFactory clients, IBackendPlaylistTargetResolver targets,
-    IConfiguration configuration, SharedTagStore tags)
+    IConfiguration configuration, SharedTagStore tags, ILogger<AudioMuseDiscovery>? logger = null)
 {
     private const string PreviewKind = "audiomuse-preview";
     private readonly SemaphoreSlim _save = new(1, 1);
@@ -108,17 +108,23 @@ public sealed class AudioMuseDiscovery(IDbContextFactory<AllstarrDbContext> fact
         var result = new Dictionary<string, AudioMuseScores>(StringComparer.Ordinal);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(TimeSpan.FromSeconds(20));
+        var (asked, found, analyzed, reason) = (0, 0, 0, (string?)null);
         try
         {
             var (endpoint, server, _) = await BoundAsync(context, deadline.Token);
-            foreach (var row in await ResolveAsync(context, ids.Select(id => new AudioMuseTrack(id)).ToArray(), deadline.Token))
+            var rows = await ResolveAsync(context, ids.Select(id => new AudioMuseTrack(id)).ToArray(), deadline.Token);
+            (asked, found) = (ids.Count(), rows.Length);
+            foreach (var row in rows)
             {
                 if (!await client.AnalyzedAsync(endpoint, server, row.BackendItemId, deadline.Token)) continue;
+                analyzed++;
                 try { result[row.BackendItemId] = await client.ScoresAsync(endpoint, server, row.BackendItemId, deadline.Token); }
                 catch (AudioMuseUnavailable error) when (error.Reason == "song_not_analyzed") { }
             }
         }
-        catch (Exception error) when (Unavailable(error, token) != null) { }
+        catch (Exception error) when (Unavailable(error, token) != null) { reason = Unavailable(error, token); }
+        logger?.LogInformation("AudioMuse features: {Asked} asked, {Found} in the library, {Analyzed} analyzed, {Scored} scored{Reason}",
+            asked, found, analyzed, result.Count, reason == null ? "" : "; stopped: " + reason);
         return result;
     }
 
