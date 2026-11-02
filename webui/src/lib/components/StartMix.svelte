@@ -10,10 +10,12 @@
   import SelectField from "$lib/components/SelectField.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import MixSongs from "$lib/components/MixSongs.svelte";
-  let { onsaved }: { onsaved: () => Promise<void> } = $props();
+  let { onsaved, initialQuery = "" }: { onsaved: () => Promise<void>; initialQuery?: string } = $props();
   let query = $state(""), results = $state<MixSeed[]>([]), searching = $state(false), searchError = $state("");
   let seed = $state<MixSeed | null>(null), preview = $state<MixPreview | null>(null), open = $state(false), busy = $state(false), saving = $state(false), error = $state("");
   let length = $state("25"), name = $state(""), request = 0, previewRequest = 0, disposed = false;
+  // A song or artist handed over from Recap starts the search.
+  $effect(() => { if (initialQuery) query = initialQuery; });
   $effect(() => {
     const value = query.trim(), version = ++request;
     results = []; searchError = ""; searching = value.length >= 2;

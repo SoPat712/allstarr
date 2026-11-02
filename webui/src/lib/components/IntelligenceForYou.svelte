@@ -23,6 +23,8 @@
   let pending: Promise<void> | null = null, disposed = false;
   const matching = new Set<() => void>();
   const storageKey = $derived(`allstarr.mix-checklist.${listenerId}`);
+  // Recap can send a song or artist here to start a mix from it.
+  const startQuery = typeof location === "undefined" ? "" : new URLSearchParams(location.hash.split("?")[1] ?? "").get("start") ?? "";
   const made = $derived(cards.filter(item => item.section === "madeForYou").sort((a, b) => Number(b.readiness.ready) - Number(a.readiness.ready) || mixOrder.indexOf(a.kind) - mixOrder.indexOf(b.kind)));
   const moods = $derived(cards.filter(item => item.section === "moods").sort((a, b) => mixOrder.indexOf(a.kind) - mixOrder.indexOf(b.kind)));
   const custom = $derived(cards.filter(item => item.section === "custom"));
@@ -138,7 +140,7 @@
     {#if !error && !made.some(item => item.readiness.ready)}<div class="settings-card empty"><p>Your mixes will appear here. Play some music, or import your history to start right away.</p></div>{/if}
     <MixShelf title="Made for you" cards={made} onopen={openMix} {busy} onadd={card => void add(card)} />
     <MixShelf title="Moods" cards={moods} onopen={openMix} {busy} onadd={card => void add(card)} />
-    <StartMix onsaved={async () => { await pending; await load(); }} />
+    <StartMix initialQuery={startQuery} onsaved={async () => { await pending; await load(); }} />
     {#if custom.length}<MixShelf title="Your mixes" cards={custom} onopen={openMix} {busy} onadd={card => void add(card)} />{/if}
     {#if releases.length}<MixShelf title="New releases" cards={releases} albumArt seeAll="#/for-you?section=releases" onopen={card => { void goto(`#/for-you?section=releases&release=${encodeURIComponent(card.id)}`, { keepFocus: true, noScroll: true }); }} />{/if}
     {#if cards.length && !cards.some(card => card.appsAllowed)}<p class="muted apps-hint">Your admin hasn't allowed adding mixes.</p>{/if}

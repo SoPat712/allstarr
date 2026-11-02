@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { listeningStats, type ListeningStats } from "$lib/api";
+  import { goto } from "$app/navigation";
+  import { listeningStats, releaseInbox, type ListeningStats } from "$lib/api";
+  import { toast } from "$lib/toasts";
+  import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
+  import UiIcon from "$lib/components/UiIcon.svelte";
   import { formatCount, listeningTime, recapClock, recapTimeline } from "$lib/intelligence";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -31,9 +35,9 @@
     return [{ value: "", label: "Past years" }, ...Array.from({ length: Math.max(1, current - first) }, (_, i) => ({ value: String(current - i - 1), label: String(current - i - 1) }))];
   });
   const lists = $derived(stats ? [
-    { title: "Top songs", empty: "No songs yet.", round: false, rows: stats.topSongs.map(item => ({ name: item.title, detail: item.artist, count: item.playCount, artworkUrl: item.artworkUrl })) },
-    { title: "Top artists", empty: "No artists yet.", round: true, rows: stats.topArtists.map(item => ({ name: item.artist, detail: "", count: item.playCount, artworkUrl: item.artworkUrl })) },
-    { title: "Top albums", empty: "No albums yet.", round: false, rows: stats.topAlbums.map(item => ({ name: item.album, detail: item.artist, count: item.playCount, artworkUrl: item.artworkUrl })) },
+    { title: "Top songs", empty: "No songs yet.", round: false, rows: stats.topSongs.map(item => ({ name: item.title, detail: item.artist, count: item.playCount, artworkUrl: item.artworkUrl, seed: `${item.title} ${item.artist}`, artist: "" })) },
+    { title: "Top artists", empty: "No artists yet.", round: true, rows: stats.topArtists.map(item => ({ name: item.artist, detail: "", count: item.playCount, artworkUrl: item.artworkUrl, seed: item.artist, artist: item.artist })) },
+    { title: "Top albums", empty: "No albums yet.", round: false, rows: stats.topAlbums.map(item => ({ name: item.album, detail: item.artist, count: item.playCount, artworkUrl: item.artworkUrl, seed: "", artist: item.artist })) },
   ] : []);
   const heroArtist = $derived(stats?.topArtists[0]);
   const timeline = $derived(recapTimeline(stats?.timeline ?? [], stats?.timelineUnit ?? "month"));
@@ -44,6 +48,19 @@
     const total = milliseconds / 3_600_000;
     return total >= 1 ? `${formatCount(Math.round(total))} ${Math.round(total) === 1 ? "hour" : "hours"}` : listeningTime(milliseconds);
   };
+
+  let following = $state("");
+  async function follow(name: string) {
+    if (following) return;
+    following = name;
+    try {
+      const match = (await releaseInbox.search(name)).find(item => item.displayName.toLowerCase() === name.toLowerCase());
+      if (!match) { toast.error(`${name} couldn't be found to follow.`); return; }
+      await releaseInbox.follow(match);
+      toast.success(`Following ${name} for new releases`);
+    } catch { toast.error(`${name} couldn't be followed. Try again.`); }
+    finally { following = ""; }
+  }
 
   async function load() {
     const current = ++request;
@@ -124,7 +141,15 @@
         {@const open = expanded === list.title}
         <section class="panel" aria-label={list.title}>
           <h2>{list.title}</h2>
-          <ol>{#each open ? list.rows : list.rows.slice(0, 10) as row, index}<li><span class="rank">{index + 1}</span><MediaArtwork url={row.artworkUrl} class={list.round ? "list-art round" : "list-art"} /><div class="stats-name"><strong>{row.name}</strong><small>{#if row.detail}{row.detail}{" · "}{/if}{formatCount(row.count)} {row.count === 1 ? "play" : "plays"}</small></div></li>{/each}</ol>
+          <ol>{#each open ? list.rows : list.rows.slice(0, 10) as row, index}<li><span class="rank">{index + 1}</span><MediaArtwork url={row.artworkUrl} class={list.round ? "list-art round" : "list-art"} /><div class="stats-name"><strong>{row.name}</strong><small>{#if row.detail}{row.detail}{" · "}{/if}{formatCount(row.count)} {row.count === 1 ? "play" : "plays"}</small></div>
+            {#if row.seed || row.artist}
+              <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button row-menu" aria-label={`Actions for ${row.name}`}><UiIcon name="more" /></DropdownMenu.Trigger>
+                <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end">
+                  {#if row.seed}<DropdownMenu.Item class="bits-menu-item" onSelect={() => void goto(`#/for-you?start=${encodeURIComponent(row.seed)}`)}>Start a mix from this</DropdownMenu.Item>{/if}
+                  {#if row.artist}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(following)} onSelect={() => void follow(row.artist)}>Follow {row.artist} for new releases</DropdownMenu.Item>{/if}
+                </DropdownMenu.Content></DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            {/if}</li>{/each}</ol>
           {#if !list.rows.length}<p>{list.empty}</p>{/if}
           {#if list.rows.length > 10}<Button variant="ghost" onclick={() => expanded = open ? "" : list.title}>{open ? "Show fewer" : `Show all ${list.rows.length}`}</Button>{/if}
         </section>
@@ -183,6 +208,7 @@
   .stats-lists :global(.list-art.round) { border-radius: 50%; }
   .stats-lists :global(.list-art img) { width: 100%; height: 100%; object-fit: cover; }
   .stats-name { min-width: 0; flex: 1; }
+  .stats-lists :global(.row-menu) { flex: none; width: 44px; height: 44px; }
   .stats-name strong, .stats-name small { display: block; overflow-wrap: break-word; }
   .stats-name strong { font-size: var(--text-sm); font-weight: 600; line-height: 1.3; }
   .plays-count { color: var(--color-ink-muted); font-size: var(--text-sm); white-space: nowrap; font-variant-numeric: tabular-nums; }
