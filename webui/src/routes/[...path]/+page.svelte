@@ -294,6 +294,7 @@
           ActiveView = view;
           loadedViewKey = key;
           loadedRoute = path;
+          try { sessionStorage.removeItem(updateReloadKey); } catch { /* Browser storage is optional. */ }
         }
       })
       .catch((cause) => {
@@ -341,7 +342,20 @@
     }
   }
 
+  // A release replaces the page's files while it stays open, so the next view asks for files that are gone. Reloading
+  // once picks up the new release; the saved flag keeps a lasting failure from reloading again and again.
+  const updateReloadKey = "allstarr.reloaded-for-update";
+  function reloadForUpdate(event: Event) {
+    try {
+      if (sessionStorage.getItem(updateReloadKey)) return;
+      sessionStorage.setItem(updateReloadKey, "1");
+    } catch { return; }
+    event.preventDefault();
+    location.reload();
+  }
+
   onMount(() => {
+    window.addEventListener("vite:preloadError", reloadForUpdate);
     const compactSidebar = matchMedia("(min-width: 761px) and (max-width: 900px)");
     const mobileNavigation = matchMedia("(max-width: 760px)");
     const colorScheme = matchMedia("(prefers-color-scheme: dark)");
@@ -360,6 +374,7 @@
     const removeRipple = installRipple();
 
     return () => {
+      window.removeEventListener("vite:preloadError", reloadForUpdate);
       removeRipple();
       compactSidebar.removeEventListener("change", applySidebarBreakpoint);
       mobileNavigation.removeEventListener("change", closeDesktopMenu);
