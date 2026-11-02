@@ -38,7 +38,8 @@ public sealed class RecapArtworkController(AdminProtocolExecutionContextFactory 
         // Some sources hold a blank picture for an artist; the placeholder looks better than a black circle.
         var usable = asset is { Bytes.Length: >= MinimumBytes };
         Response.Headers.CacheControl = usable ? "private, max-age=604800" : "private, max-age=3600";
-        return usable ? File(asset!.Bytes, asset.ContentType) : NotFound();
+        // An empty answer shows the placeholder without an error in the browser for each missing cover.
+        return usable ? File(asset!.Bytes, asset.ContentType) : NoContent();
     }
 
     private async Task<string?> FindAsync(AdminAuthSession session, string artist, string? title, string? album, CancellationToken token)
