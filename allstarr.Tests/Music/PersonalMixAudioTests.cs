@@ -73,8 +73,12 @@ public sealed class PersonalMixAudioTests
         {
             db.Users.Add(new allstarr.Core.Storage.UserRecord
             {
-                Id = other, BackendType = "jellyfin", BackendInstanceId = "primary", BackendPrincipalId = "other",
-                DisplayName = "other", Enabled = true
+                Id = other,
+                BackendType = "jellyfin",
+                BackendInstanceId = "primary",
+                BackendPrincipalId = "other",
+                DisplayName = "other",
+                Enabled = true
             });
             var copy = Track("seed", "Seed");
             copy.OwnerUserId = other;
