@@ -4107,21 +4107,6 @@
     gap: 0.65rem;
   }
 
-  .setting-field .audio-quality-control > input[type="range"] {
-    width: 100%;
-    min-height: 1.5rem;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    padding: 0;
-    accent-color: var(--color-signal-text);
-  }
-
-  .setting-field .audio-quality-control > input[type="range"]:focus-visible {
-    outline: 2px solid var(--color-signal-text);
-    outline-offset: 0.25rem;
-  }
-
   .audio-quality-steps {
     display: grid;
     grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -4129,11 +4114,6 @@
     color: var(--color-ink-muted);
     font-size: var(--text-xs);
     text-align: center;
-  }
-
-  .audio-quality-steps .active {
-    color: var(--color-ink);
-    font-weight: 700;
   }
 
   .audio-quality-control p {

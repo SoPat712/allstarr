@@ -154,7 +154,7 @@ public sealed class ProviderScoreService(IDbContextFactory<AllstarrDbContext> fa
                     rows.GroupBy(check => check.Capability, StringComparer.OrdinalIgnoreCase).Select(group =>
                     {
                         var capability = group.ToArray();
-                        var capabilityParts = Parts(capability, now, group.Key is "streaming" or "download" ? qualityValue : null);
+                        var capabilityParts = Parts(capability, now, group.Key is "streaming" or "download" ? qualityValue : null, group.Key != "download");
                         return new ProviderCapabilityScore(group.Key, Score(capabilityParts), Uptime(capability), capability.Length,
                             capability.Count(check => !check.Passed), Typical(capability),
                             capability.Where(check => !check.Passed).OrderByDescending(check => check.At).FirstOrDefault().Reason, capabilityParts);
@@ -173,9 +173,10 @@ public sealed class ProviderScoreService(IDbContextFactory<AllstarrDbContext> fa
         return latencies.Length == 0 ? null : latencies[latencies.Length / 2];
     }
 
-    // Reliability, with the last week counting double, and speed, both judged on the checks passed in. Playing and
-    // downloading also earn a share for the quality delivered, with a ceiling for lossy sources however dependable they are.
-    private static ProviderScoreParts? Parts(IReadOnlyCollection<Check> rows, DateTimeOffset now, (double Earned, int Ceiling)? quality = null)
+    // Reliability, with the last week counting double, and speed, both judged on the checks passed in. Nobody waits on a
+    // download, so its time doesn't count. Playing and downloading also earn a share for the quality delivered, with a
+    // ceiling for lossy sources however dependable they are.
+    private static ProviderScoreParts? Parts(IReadOnlyCollection<Check> rows, DateTimeOffset now, (double Earned, int Ceiling)? quality = null, bool speedCounts = true)
     {
         if (rows.Count < MinimumChecks) return null;
         var recent = now.AddDays(-7);
@@ -192,16 +193,19 @@ public sealed class ProviderScoreService(IDbContextFactory<AllstarrDbContext> fa
             ? rows.Where(check => check.Capability == "streaming") : rows;
         var typicalTime = Typical(timed);
         var speed = typicalTime is { } typical ? Math.Clamp(1 - (typical - 500) / 7500d, 0, 1) : 1;
-        var speedPoints = (int)Math.Round(20 * speed);
-        if (quality is not { } value)
+        var (reliabilityShare, speedShare, qualityShare) = (speedCounts, quality != null) switch
         {
-            var total = (int)Math.Round(100 * (0.8 * reliability + 0.2 * speed));
-            return new(total, Math.Max(0, total - speedPoints), 80, speedPoints, 20, 0, 0, null, typicalTime);
-        }
-        var qualityPoints = (int)Math.Round(30 * value.Earned);
-        var earnedTotal = (int)Math.Round(100 * (0.5 * reliability + 0.2 * speed + 0.3 * value.Earned));
-        return new(earnedTotal, Math.Max(0, earnedTotal - speedPoints - qualityPoints), 50, speedPoints, 20, qualityPoints, 30,
-            earnedTotal > value.Ceiling ? value.Ceiling : null, typicalTime);
+            (true, true) => (50, 20, 30),
+            (true, false) => (80, 20, 0),
+            (false, true) => (60, 0, 40),
+            (false, false) => (100, 0, 0)
+        };
+        var qualityEarned = quality?.Earned ?? 0;
+        var total = (int)Math.Round(reliabilityShare * reliability + speedShare * speed + qualityShare * qualityEarned);
+        var speedPoints = (int)Math.Round(speedShare * speed);
+        var qualityPoints = (int)Math.Round(qualityShare * qualityEarned);
+        return new(total, Math.Max(0, total - speedPoints - qualityPoints), reliabilityShare, speedPoints, speedShare, qualityPoints, qualityShare,
+            quality is { } value && total > value.Ceiling ? value.Ceiling : null, typicalTime);
     }
 
     private static int? Score(ProviderScoreParts? parts) => parts == null ? null : parts.CappedAt ?? parts.Earned;

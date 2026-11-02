@@ -4598,6 +4598,52 @@ test("Maintenance stages a backup restore only after keyboard confirmation", asy
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
+test("Score details open from the whole row, close again, and dim what does not count", async ({ page }) => {
+  await mockApi(page);
+  const parts = (speedOutOf: number, qualityOutOf: number) => ({ earned: 82, reliability: 50, reliabilityOutOf: 50, speed: speedOutOf ? 2 : 0, speedOutOf, quality: qualityOutOf, qualityOutOf, cappedAt: null, typicalMilliseconds: 7146 });
+  const feature = (capability: string, value: number, speedOutOf: number, qualityOutOf: number) => ({
+    capability, score: value, uptimePercent: 100, checks: 10, failures: 0, typicalLatencyMilliseconds: 7146, lastFailureCode: null, parts: parts(speedOutOf, qualityOutOf),
+  });
+  await page.route("**/api/admin/providers/scores", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ providers: [{
+      providerId: "lumen-audio", score: 82, uptimePercent: 100, checks: 20, days: [],
+      quality: { typical: "Lossless 16-bit/44.1 kHz", best: null, lossless: true, samples: 5 },
+      capabilities: [feature("download", 100, 0, 40), feature("streaming", 82, 20, 30)],
+    }] }),
+  }));
+  await page.goto("#/integrations/routing");
+  const row = page.locator(".routing-group li.has-score").first();
+  const chip = row.locator(".score-chip");
+  await expect(chip).toContainText("82");
+  await expect(chip).toContainText("Details");
+  await expect(chip).toHaveAttribute("aria-expanded", "false");
+
+  await row.locator(".routing-copy").click();
+  const details = row.locator(".score-details");
+  await expect(details).toBeVisible();
+  await expect(chip).toContainText("Hide");
+  await expect(details.locator(".score-row.current")).toContainText("Streaming");
+  await expect(details.locator(".score-row.dimmed")).toContainText("Download");
+
+  await details.getByRole("button", { name: "Hide details" }).click();
+  await expect(details).toHaveCount(0);
+  await chip.click();
+  await expect(details).toBeVisible();
+  await chip.click();
+  await expect(details).toHaveCount(0);
+});
+
+test("Audio quality labels choose a step and the track follows", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("#/integrations/routing");
+  const slider = page.getByRole("slider", { name: "Audio quality" });
+  await page.locator(".audio-quality-steps button", { hasText: "CD lossless" }).click();
+  await expect(slider).toHaveAttribute("aria-valuetext", /CD lossless/);
+  await expect(page.locator(".audio-quality-steps .active")).toHaveText("CD lossless");
+  await expect(page.locator(".quality-slider")).toHaveAttribute("style", /--position:\s*0\.5/);
+});
+
 test("Audio quality supports keyboard changes, provider outcomes, save, and reload", async ({ page }) => {
   await mockApi(page);
   let quality = "BestAvailable";

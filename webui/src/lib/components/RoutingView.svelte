@@ -18,6 +18,7 @@
 
   let scores = $state<ProviderScore[]>([]);
   let openScore = $state("");
+  const toggleScore = (key: string) => { openScore = openScore === key ? "" : key; };
   const scoreFor = (providerId: string) => scores.find((item) => item.providerId.toLowerCase() === providerId.toLowerCase());
 
   // Manual sources sink to the bottom whatever their score. Nothing saves until Save order.
@@ -221,9 +222,13 @@
               {@const definition = provider(providerId)}
               {@const label = group.id === "lyrics" ? lyricsSourceDisplayName(schema?.providers ?? [], providerId) : definition?.name ?? providerId}
               {@const fixed = group.id === "lyrics" && providerId === "kept"}
+              {@const scoreKey = `${group.id}:${providerId}`}
+              <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
               <li
                 draggable={!fixed}
                 class:pinned={fixed}
+                class:has-score={Boolean(scoreFor(providerId))}
+                onclick={(event) => { if (scoreFor(providerId) && !(event.target as Element).closest("button, a, input, .score-details")) toggleScore(scoreKey); }}
                 class:dragging={dragging?.groupId === group.id && dragging.index === index}
                 ondragstart={(event) => { if (fixed) event.preventDefault(); else dragging = { groupId: group.id, index }; }}
                 ondragover={(event) => event.preventDefault()}
@@ -236,18 +241,20 @@
                 {#if scoreFor(providerId)}
                   {@const ranked = isRanked(definition?.useMode)}
                   {@const value = ranked ? capabilityScore(scoreFor(providerId), group.id) : null}
-                  <button type="button" class="score-chip" data-tier={scoreTier(value)} aria-expanded={openScore === `${group.id}:${providerId}`}
-                    aria-label={ranked ? `${label} score ${value ?? "not rated yet"}. Show details.` : `${label} is ${definition?.useMode === "off" ? "turned off" : "manual only"} and isn't scored. Show details.`}
-                    onclick={() => openScore = openScore === `${group.id}:${providerId}` ? "" : `${group.id}:${providerId}`}>
-                    {ranked ? value ?? "New" : definition?.useMode === "off" ? "Off" : "Manual"}<ChevronDown size={14} aria-hidden="true" />
+                  <button type="button" class="score-chip" data-tier={scoreTier(value)} aria-expanded={openScore === scoreKey}
+                    aria-label={ranked ? `${label} score ${value ?? "not rated yet"}. ${openScore === scoreKey ? "Hide" : "Show"} details.` : `${label} is ${definition?.useMode === "off" ? "turned off" : "manual only"} and isn't scored. ${openScore === scoreKey ? "Hide" : "Show"} details.`}
+                    onclick={() => toggleScore(scoreKey)}>
+                    <strong>{ranked ? value ?? "New" : definition?.useMode === "off" ? "Off" : "Manual"}</strong>
+                    <span class="score-chip-action">{openScore === scoreKey ? "Hide" : "Details"}</span>
+                    <ChevronDown size={16} aria-hidden="true" />
                   </button>
                 {/if}
                 <span class="routing-actions">
                   <Button variant="ghost" size="icon" aria-label={`Move ${label} up`} disabled={fixed || index === 0 || group.id === "lyrics" && orders[group.id]?.[index - 1] === "kept"} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
                   <Button variant="ghost" size="icon" aria-label={`Move ${label} down`} disabled={fixed || index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
                 </span>
-                {#if openScore === `${group.id}:${providerId}` && scoreFor(providerId)}
-                  <ProviderScoreDetails score={scoreFor(providerId)!} capability={group.id} ranked={isRanked(definition?.useMode)} />
+                {#if openScore === scoreKey && scoreFor(providerId)}
+                  <ProviderScoreDetails score={scoreFor(providerId)!} capability={group.id} ranked={isRanked(definition?.useMode)} onclose={() => toggleScore(scoreKey)} />
                 {/if}
               </li>
             {/each}
@@ -272,7 +279,12 @@
   .routing-quality-label { color: var(--color-ink-muted); font-size: var(--text-xs); }
   .routing-quality-label.lossy { color: var(--on-warning-container); }
   :global(.dark) .routing-quality-label.lossy { color: var(--warning); }
-  .score-chip { display: inline-flex; align-items: center; gap: 2px; min-height: 2rem; padding-inline: var(--space-3) var(--space-2); border: 1px solid transparent; border-radius: 999px; font-size: var(--text-sm); font-weight: 600; cursor: pointer; transition: background-color 160ms var(--ease-standard), scale 160ms var(--ease-standard); }
+  :global(.routing-group li.has-score) { cursor: pointer; transition: background-color 200ms var(--ease-emphasized); }
+  :global(.routing-group li.has-score:hover) { background: color-mix(in srgb, var(--color-ink) 4%, transparent); }
+  .score-chip { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 2.25rem; padding-inline: var(--space-3) var(--space-2); border: 1px solid transparent; border-radius: 999px; font-size: var(--text-sm); cursor: pointer; transition: filter 200ms var(--ease-emphasized), scale 200ms var(--ease-emphasized); }
+  .score-chip:hover { filter: brightness(1.12); }
+  .score-chip strong { font-weight: 700; }
+  .score-chip-action { min-width: 2.75rem; font-size: 0.8125rem; font-weight: 500; text-align: left; }
   .score-chip :global(svg) { transition: transform 240ms var(--ease-emphasized); }
   .score-chip[aria-expanded="true"] :global(svg) { transform: rotate(180deg); }
   .score-chip[data-tier="great"] { background: var(--success-container); color: var(--on-success-container); }

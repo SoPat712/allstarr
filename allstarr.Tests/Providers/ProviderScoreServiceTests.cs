@@ -89,8 +89,22 @@ public sealed class ProviderScoreServiceTests
         Assert.Equal((20, 0), (Feature("metadata").Parts!.Speed, Feature("metadata").Parts!.QualityOutOf));
         Assert.Equal(82, Feature("streaming").Score);
         Assert.Equal(30, Feature("streaming").Parts!.Quality);
-        Assert.Equal(82, Feature("download").Score);
+        Assert.Equal(100, Feature("download").Score);
         Assert.Equal(score.Score, Feature("streaming").Score);
+    }
+
+    [Theory]
+    [InlineData(300)]
+    [InlineData(60_000)]
+    public void HowLongADownloadTakesNeverChangesItsScore(long milliseconds)
+    {
+        var rows = Enumerable.Range(0, 10).Select(day => Row("source", day, true, milliseconds, "download"));
+        var samples = Enumerable.Range(0, 5).Select(_ => new ProviderScoreService.AudioSample("source", "flac", 16, 44100, null));
+        var download = Assert.Single(Assert.Single(ProviderScoreService.ForTest(rows, Now, samples)).Capabilities);
+        var parts = download.Parts!;
+        Assert.Equal(100, download.Score);
+        Assert.Equal((60, 60, 0, 0, 40, 40), (parts.Reliability, parts.ReliabilityOutOf, parts.Speed, parts.SpeedOutOf, parts.Quality, parts.QualityOutOf));
+        Assert.Equal(milliseconds, parts.TypicalMilliseconds);
     }
 
     [Fact]
