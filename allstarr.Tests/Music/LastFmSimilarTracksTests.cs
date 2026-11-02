@@ -3,6 +3,7 @@ using System.Text.Json;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Music;
 using allstarr.Models.Settings;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -11,6 +12,49 @@ namespace allstarr.Tests;
 
 public sealed class LastFmSimilarTracksTests
 {
+    [Theory]
+    [InlineData("single", 1)]
+    [InlineData("empty", 0)]
+    [InlineData("api-error", 0)]
+    [InlineData("odd", 0)]
+    public async Task Similar_responses_distinguish_single_suggestions_from_empty_or_unusable_answers(string mode, int expected)
+    {
+        using var handler = new FixtureHandler(mode);
+        using var client = new HttpClient(handler);
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient(nameof(LastFmSimilarTracks))).Returns(client);
+        var service = new LastFmSimilarTracks(clients.Object, new FixtureAccounts(), NullLogger<LastFmSimilarTracks>.Instance);
+
+        Assert.Equal(expected, (await service.FindAsync(MusicObservationsTests.Context(), "Artist", "Title", 5, default)).Count);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Theory]
+    [InlineData("Juice WRLD [A]", "⭐ Up Up and Away [A]/[E]", "Juice WRLD", "Up Up and Away")]
+    [InlineData("Main feat. Guest [E]", "Song (feat. Guest) [A]", "Main feat. Guest", "Song (feat. Guest)")]
+    public async Task Similar_request_removes_presentation_labels_and_preserves_credits(string artist, string title, string expectedArtist, string expectedTitle)
+    {
+        using var handler = new FixtureHandler("ok");
+        using var client = new HttpClient(handler);
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient(nameof(LastFmSimilarTracks))).Returns(client);
+        var service = new LastFmSimilarTracks(clients.Object, new FixtureAccounts(), NullLogger<LastFmSimilarTracks>.Instance);
+
+        Assert.Equal(2, (await service.FindAsync(MusicObservationsTests.Context(), artist, title, 100, default)).Count);
+
+        var uri = Assert.IsType<Uri>(handler.RequestUri);
+        Assert.Equal("https", uri.Scheme);
+        Assert.Equal("ws.audioscrobbler.com", uri.Host);
+        var query = QueryHelpers.ParseQuery(uri.Query);
+        Assert.Equal("track.getsimilar", query["method"]);
+        Assert.Equal("1", query["autocorrect"]);
+        Assert.Equal("json", query["format"]);
+        Assert.Equal("50", query["limit"]);
+        Assert.Equal(expectedArtist, query["artist"]);
+        Assert.Equal(expectedTitle, query["track"]);
+        Assert.Equal("fixture-key", query["api_key"]);
+    }
+
     [Fact]
     public async Task NoAccountDoesNotResolveSecretsOrCreateAnHttpClient()
     {
@@ -111,19 +155,29 @@ public sealed class LastFmSimilarTracksTests
     private sealed class FixtureHandler(string mode) : HttpMessageHandler
     {
         public int Calls { get; private set; }
+        public Uri? RequestUri { get; private set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Calls++;
+            RequestUri = request.RequestUri;
             if (mode == "timeout") await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             if (mode == "exception") throw new HttpRequestException("fixture");
             return new HttpResponseMessage(mode == "http" ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK)
             {
-                Content = new StringContent(mode == "json" ? "invalid" : """
+                Content = new StringContent(mode switch
+                {
+                    "json" => "invalid",
+                    "single" => """{"similartracks":{"track":{"name":"Only song","artist":{"name":"Only artist"}}}}""",
+                    "empty" => """{"similartracks":{"track":[]}}""",
+                    "api-error" => """{"error":6,"message":"Track not found"}""",
+                    "odd" => """{"similartracks":{"track":"unexpected"}}""",
+                    _ => """
                     {"similartracks":{"track":[
                       {"name":"First song","artist":{"name":"First artist"}},
                       {"name":"Second song","artist":{"name":"Second artist"}}
                     ]}}
-                    """)
+                    """
+                })
             };
         }
     }
