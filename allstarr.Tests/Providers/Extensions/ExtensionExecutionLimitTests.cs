@@ -2,7 +2,9 @@ using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Extensions;
+using allstarr.Core.Routing;
 using allstarr.Services.Common;
 using Jint.Runtime;
 using Microsoft.Extensions.Logging;
@@ -138,6 +140,67 @@ public sealed class ExtensionExecutionLimitTests : IDisposable
         AssertWarning("memory");
     }
 
+    [Fact]
+    public async Task Hooks_RunOutsideTheSharedThreadPool()
+    {
+        var handler = new WatchedHandler();
+        var (sandbox, manifest) = CreateWithNetwork(handler);
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
+
+        var outcome = await adapter.SearchTracksAsync(Context(), new("Song", new()));
+
+        Assert.True(outcome.IsSuccess);
+        Assert.False(handler.OnPoolThread);
+    }
+
+    [Fact]
+    public async Task InvokeJson_CallerThatGivesUpStopsQueueingForTheEngine()
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new WatchedHandler(release.Task);
+        var (sandbox, _) = CreateWithNetwork(handler);
+        var holding = OnOwnThread(() => sandbox.InvokeJson("searchTracks", "{}"));
+        try
+        {
+            await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
+
+            var queued = OnOwnThread(() => sandbox.InvokeJson("searchTracks", "{}", cancellation.Token));
+
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => queued.WaitAsync(TimeSpan.FromSeconds(30)));
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+        Assert.Equal("{\"items\":[]}", await holding);
+    }
+
+    private static Task<string?> OnOwnThread(Func<string?> work) =>
+        Task.Factory.StartNew(work, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+    private static ProviderExecutionContext Context() =>
+        new(new(ProviderActorKind.User, Guid.NewGuid(), new("jellyfin", "fixture", "listener")), "fixture", null,
+            new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
+                true, false, true, ["fixture"]), "search", "search", DateTimeOffset.UtcNow.AddMinutes(1), default);
+
+    private (ExtensionSandbox Sandbox, ExtensionSdkManifest Manifest) CreateWithNetwork(HttpMessageHandler handler)
+    {
+        Directory.CreateDirectory(root);
+        const string manifest = """
+            {"id":"fixture","name":"Fixture","displayName":"Fixture","version":"1.0.0","sdkVersion":"1","entryPoint":"index.js",
+             "capabilities":[{"kind":"Metadata","hooks":["searchTracks"],"accountScopes":[],"accountRequired":false}],"permissions":[]}
+            """;
+        return (new ExtensionSandbox(root, manifest, """
+            registerExtension({searchTracks: function() {
+              fetch('https://catalog.example.test/search');
+              return {items:[]};
+            }});
+            """, new HandlerFactory(handler), logger,
+            new ExtensionRuntimePermissionSet(new HashSet<string>(["https://catalog.example.test/"]), new HashSet<string>(), new HashSet<string>()),
+            runtimeStateDirectory: root), ExtensionSdkV1.ParseManifest(manifest));
+    }
+
     private ExtensionSandbox Create(string script, TimeSpan? timeout = null)
     {
         Directory.CreateDirectory(root);
@@ -179,6 +242,25 @@ public sealed class ExtensionExecutionLimitTests : IDisposable
             {
                 Content = new StringContent(payload, Encoding.UTF8, "application/json")
             });
+    }
+
+    private sealed class HandlerFactory(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
+    private sealed class WatchedHandler(Task? hold = null) : HttpMessageHandler
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool? OnPoolThread { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            OnPoolThread = Thread.CurrentThread.IsThreadPoolThread;
+            Entered.TrySetResult();
+            if (hold != null) await hold;
+            return new(HttpStatusCode.OK) { Content = new StringContent("{}", Encoding.UTF8, "application/json") };
+        }
     }
 
     private sealed class CaptureLogger : ILogger

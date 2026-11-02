@@ -51,6 +51,11 @@ using System.Net;
 using System.IO;
 using System.Reflection;
 
+// The pool adds only about one thread a second once it runs short, which turns a burst of blocking work into seconds of
+// waiting for every request. Idle threads cost little and retire on their own.
+ThreadPool.GetMinThreads(out var minimumWorkers, out var minimumIo);
+ThreadPool.SetMinThreads(Math.Max(minimumWorkers, 64), minimumIo);
+
 var builder = WebApplication.CreateBuilder(args);
 RuntimeEnvConfiguration.AddBootstrapOverrides(builder.Configuration, builder.Environment);
 ContainerStorageLayout.Configure(builder.Configuration,

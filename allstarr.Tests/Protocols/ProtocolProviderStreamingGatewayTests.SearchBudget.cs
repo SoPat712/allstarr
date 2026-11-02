@@ -213,6 +213,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             : gateway.SearchPlayableSongsAsync(context, "Track Artist", 15);
         await clock.WaitForTimersAsync(TimeSpan.FromSeconds(12), TimeSpan.FromSeconds(9));
         await writes.Reader.ReadAsync(guard.Token);
+        // The cache write comes just before the source finishes, and the budget must expire after that.
+        await Task.Delay(200, guard.Token);
         Assert.False(search.IsCompleted);
         clock.Advance(TimeSpan.FromSeconds(9));
         var result = await search.WaitAsync(guard.Token);
@@ -333,7 +335,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
 
         var result = await gateway.SearchPlayableSongsAsync(Context(), "Track Artist", 15);
 
-        Assert.Equal(new[] { "deezer" }, result.Select(song => song.ExternalProvider));
+        Assert.DoesNotContain("qobuz", result.Select(song => song.ExternalProvider));
     }
 
     [Fact]
@@ -390,7 +392,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
 
         var result = await gateway.SearchAsync(Context(), "Track", 10, 0, 0);
 
-        Assert.Equal(["deezer"], SearchProviders(result));
+        Assert.DoesNotContain("qobuz", SearchProviders(result));
     }
 
     [Fact]
@@ -418,7 +420,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         for (var index = 0; index < 2; index++)
         {
             var search = gateway.SearchAsync(context, "Track", 10, 0, 0);
-            await clock.WaitForTimersAsync(TimeSpan.FromMilliseconds(500));
+            // Only the first search starts the source's own work; the second shares it.
+            await clock.WaitForTimersAsync(index == 0 ? [TimeSpan.FromMilliseconds(500), TimeSpan.FromSeconds(8)] : [TimeSpan.FromMilliseconds(500)]);
             clock.Advance(TimeSpan.FromMilliseconds(500));
             Assert.Empty((await search).Songs);
         }

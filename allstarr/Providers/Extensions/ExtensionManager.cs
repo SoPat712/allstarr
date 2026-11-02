@@ -914,7 +914,7 @@ public class ExtensionSandbox
     {
         if (string.IsNullOrWhiteSpace(hook)) throw new ArgumentException("A hook name is required.", nameof(hook));
         if (requestJson.Length > 1024 * 1024) throw new InvalidOperationException("Extension request is too large.");
-        using (EnterEngine())
+        using (EnterEngine(ExtensionArtifactInvocationScope.Current?.CancellationToken ?? cancellationToken))
         {
             var callerToken = ExtensionArtifactInvocationScope.Current?.CancellationToken ?? cancellationToken;
             var historyScope = allstarr.Core.Intelligence.HistoryRequestBudget.Current;
@@ -963,16 +963,20 @@ public class ExtensionSandbox
         }
     }
 
-    private EngineLease EnterEngine()
+    private EngineLease EnterEngine(CancellationToken cancellationToken = default)
     {
-        if (allstarr.Core.Intelligence.HistoryRequestBudget.Current != null) Monitor.Enter(_engineLock);
-        else
+        var history = allstarr.Core.Intelligence.HistoryRequestBudget.Current;
+        while (!Monitor.TryEnter(_engineLock, 10))
         {
-            while (!Monitor.TryEnter(_engineLock, 10))
+            // A caller that gave up stops queueing, so a long download can't pile abandoned searches up behind it.
+            cancellationToken.ThrowIfCancellationRequested();
+            if (history != null)
             {
-                try { Volatile.Read(ref _historyInvocation)?.Cancel(); }
-                catch (ObjectDisposedException) { }
+                history.Token.ThrowIfCancellationRequested();
+                continue;
             }
+            try { Volatile.Read(ref _historyInvocation)?.Cancel(); }
+            catch (ObjectDisposedException) { }
         }
         return new(_engineLock);
     }

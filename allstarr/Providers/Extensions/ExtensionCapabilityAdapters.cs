@@ -140,14 +140,17 @@ public abstract class ExtensionCapabilityAdapterBase : IProviderUrlCapability
                 return ProviderOutcome<T>.Success(map(document.RootElement));
             }
 
-            // Hooks and host calls are synchronous; keep them off the request's search fan-out.
+            // Hooks block for their whole network call and queue behind one engine, so each gets its own thread. On the
+            // shared pool, one search across these sources leaves nothing for the rest of the app to run on.
+            Task<ProviderOutcome<T>> RunOnOwnThread() => Task.Factory.StartNew(Run, context.CancellationToken,
+                TaskCreationOptions.LongRunning, TaskScheduler.Default);
             if (_accountValueKeys.Count == 0 || context.Account == null)
-                return await Task.Run(Run, context.CancellationToken);
+                return await RunOnOwnThread();
             if (_secrets == null) return Failure<T>(ProviderErrorKind.AccountNeedsConfiguration);
             return await _secrets.UseAsync(context.Account, async value =>
             {
                 using var scope = ExtensionInvocationSecretScope.Open(ParseAccountValues(value));
-                return await Task.Run(Run, context.CancellationToken);
+                return await RunOnOwnThread();
             }, context.CancellationToken);
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested || Intelligence.HistoryRequestBudget.Current != null)

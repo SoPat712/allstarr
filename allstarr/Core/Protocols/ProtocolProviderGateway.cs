@@ -490,11 +490,13 @@ public sealed partial class ProtocolProviderGateway(
         var clock = timeProvider ?? TimeProvider.System;
         var latest = Task.Delay(settings.SearchBudget, clock, cancellationToken);
         var soon = settings.SearchFirstAnswer < settings.SearchBudget ? Task.Delay(settings.SearchFirstAnswer, clock, cancellationToken) : latest;
-        while (!latest.IsCompleted && work.Any(task => !task.IsCompleted))
+        while (!latest.IsCompleted)
         {
+            // Listed before the checks below, so a source finishing in between still wakes this loop.
+            var pending = work.Where(task => !task.IsCompleted).Append(latest).ToArray();
+            if (pending.Length == 1) break;
             if (soon.IsCompleted && hasUsefulAnswer() || hasEnough?.Invoke() == true) break;
-            var waits = work.Where(task => !task.IsCompleted).Append(latest);
-            await Task.WhenAny(soon.IsCompleted ? waits : waits.Append(soon));
+            await Task.WhenAny(soon.IsCompleted ? pending : pending.Append(soon));
         }
         cancellationToken.ThrowIfCancellationRequested();
     }
