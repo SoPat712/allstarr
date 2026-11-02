@@ -460,6 +460,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             .Where(item => item.BackendInstanceId == link.TargetBackendInstanceId &&
                            targetProtocols.Contains(item.Protocol))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var libraryRoutes = new TrackRouteLibrary(libraryTracks.Values);
         var providerPriority = _providerGateway == null
             ? new[] { link.SourceProviderId }
                 .Concat(resolution.ProviderIdentities.Select(item => item.ProviderId))
@@ -516,7 +517,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
                 ? canonicalIdentities
                 : [];
             var projection = TrackRouteProjector.Project(external, match, manual, sourceIdentity,
-                libraryTracks.Values, routeIdentities, providerPriority, providerPolicy);
+                libraryRoutes, routeIdentities, providerPriority, providerPolicy);
             var classification = projection.Classification;
             var library = projection.LibraryTrack;
             var route = classification.RouteKind switch

@@ -25,10 +25,8 @@ public sealed class TrackMatchesControllerContractTests
             BackendInstanceId = "fixture",
             PayloadJson = $$"""{"Title":"Power Trip (feat. Miguel)","Artists":["J. Cole","Miguel"],"{{field}}":{{raw}}}"""
         };
-        var row = typeof(TrackMatchesController).GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null,
-            [source, null, new ManualTrackOverrideLayers(null, null), null, new Dictionary<Guid, LibraryTrackRecord>(),
-                new Dictionary<Guid, ProviderTrackIdentityRecord[]>(), Array.Empty<string>(), Guid.NewGuid(), false, null, null])!;
-        var value = JsonSerializer.SerializeToElement(row.GetType().GetProperty("Value")!.GetValue(row));
+        var value = ReviewRow(source, null, new ManualTrackOverrideLayers(null, null), null, new Dictionary<Guid, LibraryTrackRecord>(),
+                new Dictionary<Guid, ProviderTrackIdentityRecord[]>(), Array.Empty<string>(), Guid.NewGuid(), false, null, null);
         var actual = value.GetProperty("isExplicit");
         if (expected.HasValue) Assert.Equal(expected.Value, actual.GetBoolean());
         else Assert.Equal(JsonValueKind.Null, actual.ValueKind);
@@ -57,12 +55,10 @@ public sealed class TrackMatchesControllerContractTests
             DurationProvenance = "jellyfin",
             DurationRetrievedAt = localRetrievedAt
         };
-        var row = typeof(TrackMatchesController).GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null,
-            [source, new TrackMatchRecord { State = TrackMatchState.Accepted, LibraryTrackId = localId },
+        var value = ReviewRow(source, new TrackMatchRecord { State = TrackMatchState.Accepted, LibraryTrackId = localId },
                 new ManualTrackOverrideLayers(null, null), null,
                 new Dictionary<Guid, LibraryTrackRecord> { [localId] = local },
-                new Dictionary<Guid, ProviderTrackIdentityRecord[]>(), Array.Empty<string>(), Guid.NewGuid(), false, null, null])!;
-        var value = JsonSerializer.SerializeToElement(row.GetType().GetProperty("Value")!.GetValue(row));
+                new Dictionary<Guid, ProviderTrackIdentityRecord[]>(), Array.Empty<string>(), Guid.NewGuid(), false, null, null);
 
         Assert.Equal(182000, value.GetProperty("durationMilliseconds").GetInt64());
         Assert.Equal("listenbrainz", value.GetProperty("durationProvenance").GetString());
@@ -160,17 +156,35 @@ public sealed class TrackMatchesControllerContractTests
             ["title_fuzzy"], ["review_needed"], new Dictionary<string, double> { ["title"] = .7, ["artist"] = .6 },
             Title: "Silk & Cologne", Artist: "Ei8ht", IsLocal: !provider,
             ProviderTrackIds: provider ? new Dictionary<string, string> { ["deezer"] = "alternate", ["qobuz"] = "target" } : null) });
-        var row = typeof(TrackMatchesController).GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!
-            .Invoke(null, [new ExternalMetadataSnapshotRecord { Id = Guid.NewGuid(), ProviderId = "spotify", BackendInstanceId = "server", PayloadJson = """{"title":"Silk & Cologne","artist":"Ei8ht"}""" },
-                new TrackMatchRecord { State = TrackMatchState.Suggested, LibraryTrackId = provider ? null : localId,
-                    CanonicalRecordingId = canonicalId, Confidence = .76, CandidateResultsJson = savedEvidence ? evidence : "[]",
-                    ReasonsJson = """["title_fuzzy"]""", WarningsJson = """["review_needed"]""" },
-                new ManualTrackOverrideLayers(null, null), new ProviderTrackIdentityRecord
-                { Id = Guid.NewGuid(), CanonicalRecordingId = canonicalId, ProviderId = "spotify", ExternalId = "source", ResourceKind = ProviderResourceKind.Track },
-                new Dictionary<Guid, LibraryTrackRecord> { [localId] = local },
-                new Dictionary<Guid, ProviderTrackIdentityRecord[]> { [canonicalId] = [identity] },
-                new[] { "qobuz", "deezer" }, Guid.NewGuid(), false, null, null])!;
-        var value = JsonSerializer.SerializeToElement(row.GetType().GetProperty("Value")!.GetValue(row));
+        var source = new ExternalMetadataSnapshotRecord
+        {
+            Id = Guid.NewGuid(),
+            ProviderId = "spotify",
+            BackendInstanceId = "server",
+            PayloadJson = """{"title":"Silk & Cologne","artist":"Ei8ht"}"""
+        };
+        var decision = new TrackMatchRecord
+        {
+            State = TrackMatchState.Suggested,
+            LibraryTrackId = provider ? null : localId,
+            CanonicalRecordingId = canonicalId,
+            Confidence = .76,
+            CandidateResultsJson = savedEvidence ? evidence : "[]",
+            ReasonsJson = """["title_fuzzy"]""",
+            WarningsJson = """["review_needed"]"""
+        };
+        var sourceIdentity = new ProviderTrackIdentityRecord
+        {
+            Id = Guid.NewGuid(),
+            CanonicalRecordingId = canonicalId,
+            ProviderId = "spotify",
+            ExternalId = "source",
+            ResourceKind = ProviderResourceKind.Track
+        };
+        var value = ReviewRow(source, decision, new ManualTrackOverrideLayers(null, null), sourceIdentity,
+            new Dictionary<Guid, LibraryTrackRecord> { [localId] = local },
+            new Dictionary<Guid, ProviderTrackIdentityRecord[]> { [canonicalId] = [identity] },
+            new[] { "qobuz", "deezer" }, Guid.NewGuid(), false, null, null);
         var candidate = Assert.Single(value.GetProperty("candidates").EnumerateArray());
         Assert.True(candidate.GetProperty("isCurrent").GetBoolean());
         Assert.Equal(.76, candidate.GetProperty("confidence").GetDouble());
@@ -266,5 +280,15 @@ public sealed class TrackMatchesControllerContractTests
         Assert.False(Filter(TrackMatchState.Accepted, manualRejection: true));
         Assert.False(Filter(TrackMatchState.Pinned));
         Assert.False(Filter(TrackMatchState.Suggested));
+    }
+
+    // The row builder takes the page's library and source order prepared once, and builds its details on demand.
+    private static JsonElement ReviewRow(params object?[] arguments)
+    {
+        var controller = typeof(TrackMatchesController);
+        arguments[4] = Activator.CreateInstance(controller.GetNestedType("RowLibrary", BindingFlags.NonPublic)!, arguments[4]);
+        arguments = [.. arguments[..7], ((IEnumerable<string>)arguments[6]!).ToHashSet(StringComparer.Ordinal), .. arguments[7..]];
+        var row = controller.GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, arguments)!;
+        return JsonSerializer.SerializeToElement(((Func<object>)row.GetType().GetProperty("Value")!.GetValue(row)!)());
     }
 }

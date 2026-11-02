@@ -316,10 +316,11 @@ public sealed class DurablePlaylistProjectionReader(
                     item.BackendInstanceId == link.TargetBackendInstanceId &&
                     (link.TargetProtocol == "jellyfin" ? item.Protocol == "jellyfin" :
                         item.Protocol is "subsonic" or "opensubsonic" or "navidrome")).ToDictionary(item => item.Id);
+                var currentRoutes = new TrackRouteLibrary(currentLibrary.Values);
                 var projected = currentEntries.Select(entry => ProjectEntry(entry, currentExternal[entry.ExternalMetadataSnapshotId],
                     currentSources, currentIdentities, currentOrder,
                     entry.PublishedTrackMatchId is { } id ? currentMatches.GetValueOrDefault(id) : null,
-                    currentOverrides, currentLibrary, policy, durations)).ToArray();
+                    currentOverrides, currentRoutes, policy, durations)).ToArray();
                 var run = runs.SingleOrDefault(item => item.PlaylistSourceSnapshotId == snapshot.Id &&
                     item.PlaylistLinkId == link.Id && item.OwnerUserId == snapshot.OwnerUserId);
                 result[link.Id] = new(link.Id, snapshot.Id, snapshot.SnapshotVersion, snapshot.Name,
@@ -593,7 +594,7 @@ public sealed class DurablePlaylistProjectionReader(
                 : new Dictionary<Guid, ProviderTrackIdentityRecord> { [row.External.Id] = sourceIdentity };
             projected[row.Entry.Id] = ProjectEntry(row.Entry, row.External, sourceMap,
                 entryIdentities, providerOrder, match,
-                new Dictionary<Guid, ManualTrackOverrideLayers> { [row.External.Id] = layers }, entryLibrary, providerPolicy);
+                new Dictionary<Guid, ManualTrackOverrideLayers> { [row.External.Id] = layers }, new TrackRouteLibrary(entryLibrary.Values), providerPolicy);
         }
         return projected;
     }
@@ -830,6 +831,7 @@ public sealed class DurablePlaylistProjectionReader(
         var recordingDurations = await database.CanonicalRecordings.AsNoTracking()
             .Where(item => matchedCanonicalIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, item => item.DurationMilliseconds, cancellationToken);
+        var routes = new TrackRouteLibrary(library.Values);
         var projectedEntries = entries.Select(entry => ProjectEntry(
                 entry,
                 external[entry.ExternalMetadataSnapshotId],
@@ -840,7 +842,7 @@ public sealed class DurablePlaylistProjectionReader(
                     ? publishedMatches.GetValueOrDefault(matchId)
                     : null,
                 overrides,
-                library, providerPolicy, recordingDurations))
+                routes, providerPolicy, recordingDurations))
             .ToArray();
         if (!includeHistory)
             return new(link.Id, snapshot.Id, snapshot.SnapshotVersion, snapshot.Name,
@@ -1081,14 +1083,14 @@ public sealed class DurablePlaylistProjectionReader(
         IReadOnlyList<string> providerOrder,
         TrackMatchRecord? match,
         IReadOnlyDictionary<Guid, ManualTrackOverrideLayers> overrides,
-        IReadOnlyDictionary<Guid, LibraryTrackRecord> library,
+        TrackRouteLibrary library,
         EffectiveProviderPolicySnapshot? providerPolicy = null,
         IReadOnlyDictionary<Guid, long?>? recordingDurations = null)
     {
         var manual = overrides.GetValueOrDefault(external.Id)?.Effective;
         var identity = sourceIdentities.GetValueOrDefault(external.Id);
         var route = TrackRouteProjector.Project(
-            external, match, manual, identity, library.Values, identities, providerOrder, providerPolicy);
+            external, match, manual, identity, library, identities, providerOrder, providerPolicy);
         var classification = route.Classification;
         var local = route.LibraryTrack;
         var backendItemId = local?.BackendItemId;

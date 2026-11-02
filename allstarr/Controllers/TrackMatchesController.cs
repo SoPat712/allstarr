@@ -351,6 +351,8 @@ public sealed class TrackMatchesController(
         var providerPolicy = effectivePolicies == null ? execution.Policy :
             await effectivePolicies.ResolveForUserAsync(userId, cancellationToken);
 
+        var rowLibrary = new RowLibrary(library);
+        var playableProviderSet = playableProviders.ToHashSet(StringComparer.Ordinal);
         var allRows = review.Snapshots
             .GroupBy(snapshot => new
             {
@@ -379,9 +381,10 @@ public sealed class TrackMatchesController(
                     decision,
                     layers,
                     sourceIdentity,
-                    library,
+                    rowLibrary,
                     identities,
                     playableProviders,
+                    playableProviderSet,
                     userId, session.IsAdministrator, providerPolicy, review.MediaSnapshots.GetValueOrDefault(snapshot.Id));
             })
             .ToArray();
@@ -403,7 +406,7 @@ public sealed class TrackMatchesController(
         await new TrackMatchTargetResolver(contextFactory, applicationCache, enrichment).EnrichAsync(
             new(userId, session.IsAdministrator),
             pageRows.Select(row => row.TargetLookup).OfType<TrackMatchTargetLookup>().ToArray(), cancellationToken);
-        var items = pageRows.Select(row => row.Value).ToArray();
+        var items = pageRows.Select(row => row.Value()).ToArray();
         return Ok(new
         {
             matches = items,
@@ -910,9 +913,9 @@ public sealed class TrackMatchesController(
 
     private static MatchRow Row(ExternalMetadataSnapshotRecord snapshot, TrackMatchRecord? decision,
         ManualTrackOverrideLayers layers, ProviderTrackIdentityRecord? sourceIdentity,
-        IReadOnlyDictionary<Guid, LibraryTrackRecord> library,
+        RowLibrary library,
         IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord[]> identities,
-        IReadOnlyCollection<string> playableProviders, Guid viewerUserId, bool isAdministrator,
+        IReadOnlyCollection<string> playableProviders, IReadOnlySet<string> playableProviderSet, Guid viewerUserId, bool isAdministrator,
         EffectiveProviderPolicySnapshot? providerPolicy = null,
         ExternalMetadataSnapshotRecord? mediaSnapshot = null)
     {
@@ -927,11 +930,10 @@ public sealed class TrackMatchesController(
             decision,
             manual,
             sourceIdentity,
-            library.Values,
+            library.Routes,
             routeIdentities,
             playableProviders, providerPolicy);
-        var playableProviderSet = playableProviders.ToHashSet(StringComparer.Ordinal);
-        var indexedLibraryTrackIds = library.Keys.ToHashSet();
+        var indexedLibraryTrackIds = library.Ids;
         var state = projection.ReviewState;
         var track = projection.LibraryTrack;
         var trackId = track?.Id;
@@ -965,103 +967,106 @@ public sealed class TrackMatchesController(
             authority.TargetExternalId)).ToList();
         var hasManualMatch = manualAuthorities.Any(item => item.Kind != "rejection");
         var hasManualRejection = manualAuthorities.Any(item => item.Kind == "rejection");
-        var metadata = Metadata(snapshot.PayloadJson);
-        var measured = new Song();
-        if (mediaSnapshot != null)
+        // Only the rows on the page are shown, so only they read their full details.
+        object Details()
         {
-            try
+            var metadata = Metadata(snapshot.PayloadJson);
+            var measured = new Song();
+            if (mediaSnapshot != null)
             {
-                if (JsonSerializer.Deserialize<allstarr.Core.Music.TrackMediaFacts>(mediaSnapshot.PayloadJson) is { Media: not null } facts)
-                    facts.Apply(measured);
+                try
+                {
+                    if (JsonSerializer.Deserialize<allstarr.Core.Music.TrackMediaFacts>(mediaSnapshot.PayloadJson) is { Media: not null } facts)
+                        facts.Apply(measured);
+                }
+                catch (JsonException) { }
             }
-            catch (JsonException) { }
-        }
-        var measuredDuration = measured.PreciseDuration is { } duration ? (long?)Math.Round(duration.TotalMilliseconds) : null;
-        var sourceDuration = measuredDuration ?? metadata.DurationMilliseconds;
-        var sourceArtworkUrl = metadata.ArtworkUrl == null
-            ? ProviderArtworkFallback.CoverPath(snapshot.ProviderId)
-            : SourceArtworkUrl(snapshot.Id);
-        var candidateArtworkUrl = track?.CoverArtReference == null
-            ? null
-            : LocalArtworkUrl(track.BackendItemId);
-        var value = new
-        {
-            externalSnapshotId = snapshot.Id,
-            providerId = snapshot.ProviderId,
-            providerAccountId = snapshot.ProviderAccountId,
-            state = state.ToString().ToLowerInvariant(),
-            decisionSource = manualAuthorities.Count > 0
-                ? "manual_authority"
-                : decision != null
-                    ? "track_match_decision"
-                    : sourceIdentity != null
-                        ? "canonical_provider_identity"
-                        : "unresolved",
-            confidence = decision?.Confidence,
-            threshold = decision?.Threshold,
-            decisionVersion = decision?.DecisionVersion,
-            algorithmVersion = decision?.MatcherVersion,
-            policyVersion = decision?.PolicyVersion,
-            sourceSnapshotVersion = decision?.SourceSnapshotVersion,
-            libraryIndexRevision = decision?.LibraryIndexRevision,
-            canonicalRecordingId = canonicalId,
-            libraryTrackId = trackId,
-            overrideId = manual?.Id,
-            overrideRevision = manual?.Revision,
-            manualAuthorities,
-            allowedAuthorityScopes = isAdministrator ? new[] { "personal", "household" } : ["personal"],
-            effectiveAuthorityScope = layers.EffectiveScope,
-            title = metadata.Title,
-            searchQuery = metadata.Title ?? string.Empty,
-            artist = metadata.Artist,
-            album = metadata.Album,
-            artworkUrl = metadata.ArtworkUrl == null ? candidateArtworkUrl ?? sourceArtworkUrl : sourceArtworkUrl,
-            sourceArtworkUrl,
-            candidateArtworkUrl,
-            isrc = metadata.Isrc,
-            isExplicit = metadata.IsExplicit,
-            durationMilliseconds = sourceDuration,
-            media = ReportedMedia(measured),
-            durationProvenance = sourceDuration.HasValue
-                ? metadata.DurationProvenance ?? snapshot.ProviderId
-                : null,
-            durationRetrievedAt = sourceDuration.HasValue
-                ? (DateTimeOffset?)(measuredDuration.HasValue ? mediaSnapshot!.RetrievedAt : snapshot.RetrievedAt)
-                : null,
-            localTrack = track == null ? null : new
-            {
-                id = track.Id,
-                backendItemId = track.BackendItemId,
-                backendLibraryId = track.BackendLibraryId,
-                title = track.Title,
-                artist = track.Artist,
-                album = track.Album,
-                durationMilliseconds = track.DurationMilliseconds,
-                durationProvenance = track.DurationProvenance,
-                durationRetrievedAt = track.DurationRetrievedAt,
-                artworkUrl = candidateArtworkUrl,
-                providerIds = ParseObject(track.ProviderIdsJson)
-            },
-            target,
-            providerIdentities,
-            candidates = ReviewCandidates(
-                snapshot, decision, projection, library, playableProviderSet, indexedLibraryTrackIds),
-            reasons = decision == null && sourceIdentity != null
-                ? ["Existing canonical provider identity is available."]
-                : ParseArray(decision?.ReasonsJson),
-            warnings = ParseArray(decision?.WarningsJson),
-            decidedAt = decision?.DecidedAt,
-            reviewedAt = manualAuthorities.Count == 0
+            var measuredDuration = measured.PreciseDuration is { } duration ? (long?)Math.Round(duration.TotalMilliseconds) : null;
+            var sourceDuration = measuredDuration ?? metadata.DurationMilliseconds;
+            var sourceArtworkUrl = metadata.ArtworkUrl == null
+                ? ProviderArtworkFallback.CoverPath(snapshot.ProviderId)
+                : SourceArtworkUrl(snapshot.Id);
+            var candidateArtworkUrl = track?.CoverArtReference == null
                 ? null
-                : (DateTimeOffset?)manualAuthorities.Max(item => item.CreatedAt)
-        };
+                : LocalArtworkUrl(track.BackendItemId);
+            return new
+            {
+                externalSnapshotId = snapshot.Id,
+                providerId = snapshot.ProviderId,
+                providerAccountId = snapshot.ProviderAccountId,
+                state = state.ToString().ToLowerInvariant(),
+                decisionSource = manualAuthorities.Count > 0
+                    ? "manual_authority"
+                    : decision != null
+                        ? "track_match_decision"
+                        : sourceIdentity != null
+                            ? "canonical_provider_identity"
+                            : "unresolved",
+                confidence = decision?.Confidence,
+                threshold = decision?.Threshold,
+                decisionVersion = decision?.DecisionVersion,
+                algorithmVersion = decision?.MatcherVersion,
+                policyVersion = decision?.PolicyVersion,
+                sourceSnapshotVersion = decision?.SourceSnapshotVersion,
+                libraryIndexRevision = decision?.LibraryIndexRevision,
+                canonicalRecordingId = canonicalId,
+                libraryTrackId = trackId,
+                overrideId = manual?.Id,
+                overrideRevision = manual?.Revision,
+                manualAuthorities,
+                allowedAuthorityScopes = isAdministrator ? new[] { "personal", "household" } : ["personal"],
+                effectiveAuthorityScope = layers.EffectiveScope,
+                title = metadata.Title,
+                searchQuery = metadata.Title ?? string.Empty,
+                artist = metadata.Artist,
+                album = metadata.Album,
+                artworkUrl = metadata.ArtworkUrl == null ? candidateArtworkUrl ?? sourceArtworkUrl : sourceArtworkUrl,
+                sourceArtworkUrl,
+                candidateArtworkUrl,
+                isrc = metadata.Isrc,
+                isExplicit = metadata.IsExplicit,
+                durationMilliseconds = sourceDuration,
+                media = ReportedMedia(measured),
+                durationProvenance = sourceDuration.HasValue
+                    ? metadata.DurationProvenance ?? snapshot.ProviderId
+                    : null,
+                durationRetrievedAt = sourceDuration.HasValue
+                    ? (DateTimeOffset?)(measuredDuration.HasValue ? mediaSnapshot!.RetrievedAt : snapshot.RetrievedAt)
+                    : null,
+                localTrack = track == null ? null : new
+                {
+                    id = track.Id,
+                    backendItemId = track.BackendItemId,
+                    backendLibraryId = track.BackendLibraryId,
+                    title = track.Title,
+                    artist = track.Artist,
+                    album = track.Album,
+                    durationMilliseconds = track.DurationMilliseconds,
+                    durationProvenance = track.DurationProvenance,
+                    durationRetrievedAt = track.DurationRetrievedAt,
+                    artworkUrl = candidateArtworkUrl,
+                    providerIds = ParseObject(track.ProviderIdsJson)
+                },
+                target,
+                providerIdentities,
+                candidates = ReviewCandidates(
+                    snapshot, decision, projection, library.Tracks, playableProviderSet, indexedLibraryTrackIds),
+                reasons = decision == null && sourceIdentity != null
+                    ? ["Existing canonical provider identity is available."]
+                    : ParseArray(decision?.ReasonsJson),
+                warnings = ParseArray(decision?.WarningsJson),
+                decidedAt = decision?.DecidedAt,
+                reviewedAt = manualAuthorities.Count == 0
+                    ? null
+                    : (DateTimeOffset?)manualAuthorities.Max(item => item.CreatedAt)
+            };
+        }
         return new(
             state,
             decision?.Confidence,
-            $"{metadata.Title} {metadata.Artist} {metadata.Album} {snapshot.ProviderId} {track?.Title} {track?.Artist}",
             hasManualMatch,
             hasManualRejection,
-            value,
+            Details,
             target == null ? null : new(canonicalId, snapshot.OwnerUserId, target, snapshot,
                 projection.PrimaryProviderRoute?.IsManual == true));
     }
@@ -1451,11 +1456,16 @@ public sealed class TrackMatchesController(
     private sealed record MatchRow(
         TrackMatchState State,
         double? Confidence,
-        string SearchText,
         bool HasManualMatch,
         bool HasManualRejection,
-        object Value,
+        Func<object> Value,
         TrackMatchTargetLookup? TargetLookup = null);
+
+    private sealed record RowLibrary(IReadOnlyDictionary<Guid, LibraryTrackRecord> Tracks)
+    {
+        public TrackRouteLibrary Routes { get; } = new(Tracks.Values);
+        public IReadOnlySet<Guid> Ids { get; } = Tracks.Keys.ToHashSet();
+    }
 
     private sealed record ManualAuthorityRow(
         Guid Id,

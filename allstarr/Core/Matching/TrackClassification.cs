@@ -43,6 +43,37 @@ public sealed record TrackRouteProjection(
         LibraryTrack == null ? Classification.PrimaryProviderRoute : null;
 }
 
+// The listener's library arranged once for projecting many songs, so each song doesn't rescan all of it.
+public sealed class TrackRouteLibrary(IEnumerable<LibraryTrackRecord> tracks)
+{
+    private readonly Dictionary<string, Backend> backends = tracks
+        .GroupBy(item => item.BackendInstanceId, StringComparer.Ordinal)
+        .ToDictionary(group => group.Key, group => new Backend(group), StringComparer.Ordinal);
+    private static readonly Backend None = new([]);
+
+    internal Backend For(string backendInstanceId) => backends.GetValueOrDefault(backendInstanceId) ?? None;
+
+    internal sealed class Backend
+    {
+        public Backend(IEnumerable<LibraryTrackRecord> tracks)
+        {
+            ById = tracks.ToDictionary(item => item.Id);
+            Ids = ById.Keys.ToHashSet();
+            FirstByRecording = ById.Values.Where(item => item.CanonicalRecordingId.HasValue)
+                .GroupBy(item => item.CanonicalRecordingId!.Value)
+                .ToDictionary(group => group.Key, group => group
+                    .OrderBy(item => item.BackendLibraryId, StringComparer.Ordinal)
+                    .ThenBy(item => item.BackendItemId, StringComparer.Ordinal)
+                    .ThenBy(item => item.Id)
+                    .First());
+        }
+
+        public Dictionary<Guid, LibraryTrackRecord> ById { get; }
+        public HashSet<Guid> Ids { get; }
+        public Dictionary<Guid, LibraryTrackRecord> FirstByRecording { get; }
+    }
+}
+
 public static class TrackRouteProjector
 {
     public static TrackRouteProjection Project(
@@ -51,6 +82,19 @@ public static class TrackRouteProjector
         ManualTrackOverrideRecord? manual,
         ProviderTrackIdentityRecord? sourceIdentity,
         IEnumerable<LibraryTrackRecord> accessibleLibraryTracks,
+        IEnumerable<ProviderTrackIdentityRecord> providerIdentities,
+        IReadOnlyCollection<string>? providerPriority = null,
+        EffectiveProviderPolicySnapshot? providerPolicy = null) =>
+        Project(snapshot, decision, manual, sourceIdentity,
+            new TrackRouteLibrary(accessibleLibraryTracks.Where(item => item.BackendInstanceId == snapshot.BackendInstanceId)),
+            providerIdentities, providerPriority, providerPolicy);
+
+    public static TrackRouteProjection Project(
+        ExternalMetadataSnapshotRecord snapshot,
+        TrackMatchRecord? decision,
+        ManualTrackOverrideRecord? manual,
+        ProviderTrackIdentityRecord? sourceIdentity,
+        TrackRouteLibrary library,
         IEnumerable<ProviderTrackIdentityRecord> providerIdentities,
         IReadOnlyCollection<string>? providerPriority = null,
         EffectiveProviderPolicySnapshot? providerPolicy = null)
@@ -65,31 +109,22 @@ public static class TrackRouteProjector
             .Select(providerId => providerId.Trim().ToLowerInvariant())
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        var scopedLibrary = accessibleLibraryTracks
-            .Where(item =>
-                item.BackendInstanceId == snapshot.BackendInstanceId)
-            .ToArray();
-        var libraryById = scopedLibrary.ToDictionary(item => item.Id);
+        var scopedLibrary = library.For(snapshot.BackendInstanceId);
         var classification = TrackClassifier.Classify(
             manual,
             decision,
             sourceIdentity,
             identities,
             providerOrder,
-            libraryById.Keys.ToHashSet(), providerPolicy, snapshot.ProviderId);
-        libraryById.TryGetValue(classification.LibraryTrackId ?? Guid.Empty, out var local);
+            scopedLibrary.Ids, providerPolicy, snapshot.ProviderId);
+        scopedLibrary.ById.TryGetValue(classification.LibraryTrackId ?? Guid.Empty, out var local);
         canonicalId ??= local?.CanonicalRecordingId;
         if (local == null &&
             classification.PrimaryProviderRoute?.IsManual != true &&
             classification.ReviewState is TrackMatchState.Accepted or TrackMatchState.Pinned &&
             canonicalId.HasValue)
         {
-            local = scopedLibrary
-                .Where(item => item.CanonicalRecordingId == canonicalId.Value)
-                .OrderBy(item => item.BackendLibraryId, StringComparer.Ordinal)
-                .ThenBy(item => item.BackendItemId, StringComparer.Ordinal)
-                .ThenBy(item => item.Id)
-                .FirstOrDefault();
+            local = scopedLibrary.FirstByRecording.GetValueOrDefault(canonicalId.Value);
             if (local != null) classification = classification with { LibraryTrackId = local.Id };
         }
         return new(classification, canonicalId, local, identities);
