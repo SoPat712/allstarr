@@ -12,10 +12,16 @@
   import ProviderScoreDetails from "$lib/components/ProviderScoreDetails.svelte";
   import { capabilityScore, isRanked, scoreTier, sortByScore as orderByScore } from "$lib/provider-score";
   import RouteError from "$lib/components/RouteError.svelte";
+  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import { canonicalProviderId, humanize, lyricsSourceDisplayName, sourceOriginLabel } from "$lib/sources";
   import { fieldValue, keptLyricsFirst, mergeRoutingOrders, move } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
 
+  // One order at a time; five near-identical lists in a row were hard to tell apart.
+  const tabNames: Record<string, string> = { metadata: "Search", download: "Downloads", streaming: "Streaming", playlist: "Playlists", lyrics: "Lyrics" };
+  const tabKey = "allstarr.routing-tab";
+  let tab = $state((() => { try { return localStorage.getItem(tabKey) ?? ""; } catch { return ""; } })());
+  function chooseTab(id: string) { tab = id; try { localStorage.setItem(tabKey, id); } catch { /* Remembering the tab is optional. */ } }
   let scores = $state<ProviderScore[]>([]);
   let qualityTarget = $state<string | undefined>();
   const loadScores = () => void sources.scores().then((result) => { scores = result.providers ?? []; qualityTarget = result.qualityTarget; }).catch(() => {});
@@ -34,6 +40,8 @@
   }
 
   let schema = $state<UiSchema | null>(null);
+  const groups = $derived(schema?.priorityGroups ?? []);
+  const shown = $derived(groups.some((item) => item.id === tab) ? tab : groups[0]?.id);
   let config = $state<Record<string, unknown>>({});
   let orders = $state<Record<string, string[]>>({});
   let loading = $state(true);
@@ -205,11 +213,15 @@
         </footer>
       </form>
     {/if}
+    {#if groups.length > 1}
+      <SegmentedNav label="Source orders" items={groups.map((item) => ({ id: item.id, label: tabNames[item.id] ?? item.label.replace(/ (?:priority |search |discovery )?order$/i, "") }))}
+        active={shown ?? ""} onchange={chooseTab} />
+    {/if}
     <div class="routing-groups">
-      {#each schema.priorityGroups ?? [] as group}
+      {#each groups.filter((item) => item.id === shown) as group}
         <section class="settings-card routing-group">
           <header>
-            <div><h3>{group.label.replace(/ order$/i, "")} order</h3><small>{group.id === "lyrics" ? "Your saved choice for a song takes precedence, then Kept LRC. Other sources follow this order, with a short priority window for slower services." : group.description || "Drag services, or use the arrows, to change the order Allstarr tries them."}</small></div>
+            <div><h3>{tabNames[group.id] ?? group.label.replace(/ order$/i, "")} order</h3><small>{group.id === "lyrics" ? "Your saved choice for a song takes precedence, then Kept LRC. Other sources follow this order, with a short priority window for slower services." : group.description || "Drag services, or use the arrows, to change the order Allstarr tries them."}</small></div>
             {#if scores.length && group.id !== "lyrics"}<Button variant="ghost" onclick={() => sortByScore(group)}><Sparkles size={16} aria-hidden="true" />Sort by score</Button>{/if}
             <Button aria-label={`Save ${group.label}`} disabled={Boolean(action) || !dirtyOrderIds.includes(group.id)} onclick={() => void saveOrder(group)}>{action === group.id ? "Saving…" : "Save order"}</Button>
           </header>
