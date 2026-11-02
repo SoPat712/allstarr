@@ -2506,6 +2506,11 @@ export const releaseInbox = {
   artists: () => json<FollowedReleaseArtist[]>("/api/admin/releases/artists"),
   followFromHearts: () => json<{ followed: number }>("/api/admin/releases/artists/from-hearts", { method: "POST" }),
   followFromHistory: () => json<{ followed: number }>("/api/admin/releases/artists/from-history", { method: "POST" }),
+  search: (query: string) => json<FollowedReleaseArtist[]>(`/api/admin/releases/artists/search?${new URLSearchParams({ query })}`),
+  follow: (artist: FollowedReleaseArtist) => json<void>("/api/admin/releases/artists", {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ providerId: artist.providerId, artistId: artist.artistId, displayName: artist.displayName }),
+  }),
   unfollow: (providerId: string, artistId: string) => json<void>(`/api/admin/releases/artists/${encodeURIComponent(providerId)}/${encodeURIComponent(artistId)}`, { method: "DELETE" }),
   dismiss: (id: string) => json<void>(`/api/admin/releases/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

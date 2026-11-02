@@ -131,13 +131,7 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
             .Where(item => item.Plays >= FollowMinimumPlays).OrderByDescending(item => item.Plays).ThenBy(item => item.Name, StringComparer.Ordinal)
             .Take(FollowTopArtists).Select(item => item.Name).ToArray();
         if (names.Length == 0) return 0;
-        var principal = new ProviderBackendPrincipal(user.BackendType, user.BackendInstanceId, user.BackendPrincipalId);
-        var policy = new ProviderExecutionPolicy(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, false),
-            ProviderExplicitContentPolicy.Allow, false, true, false, FollowSources);
-        var plan = await router.PlanAsync<IProviderMetadataCapability>(new(ProviderCapabilityKind.Metadata, new(ProviderActorKind.User, user.Id, principal), policy,
-            "releases-follow-top", "releases", DateTimeOffset.UtcNow.AddSeconds(60), FollowSources, cancellationToken: token));
-        var sources = plan.Candidates.Where(item => item.Descriptor.Hooks.Contains("getArtistAlbums", StringComparer.Ordinal))
-            .OrderBy(item => Array.IndexOf(FollowSources, item.Provider.Id)).ToArray();
+        var sources = await FollowSourcesAsync(user, token);
         if (sources.Length == 0) return 0;
         using var searches = new SemaphoreSlim(4);
         var found = await Task.WhenAll(names.Select(async name =>
@@ -177,6 +171,32 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
             return added;
         }
         finally { Gate.Release(); }
+    }
+
+    /// <summary>Finds artists by name in the sources that can list their releases, for a listener choosing whom to follow.</summary>
+    public async Task<IReadOnlyList<FollowedReleaseArtist>> SearchArtistsAsync(Guid owner, string query, CancellationToken token = default)
+    {
+        if (string.IsNullOrWhiteSpace(query) || query.Length > 200) throw new ArgumentException("A search is required.");
+        await using var db = await factory.CreateDbContextAsync(token);
+        var user = await UserAsync(db, owner, token);
+        foreach (var source in await FollowSourcesAsync(user, token))
+        {
+            var outcome = await source.Implementation.SearchArtistsAsync(source.Context, new(query.Trim(), new(8)));
+            if (outcome.IsSuccess && outcome.RequireValue().Items.Count > 0)
+                return outcome.RequireValue().Items.Select(item => new FollowedReleaseArtist(item.Id.ProviderId, item.Id.Value, item.Name)).ToArray();
+        }
+        return [];
+    }
+
+    private async Task<ProviderRouteCandidate<IProviderMetadataCapability>[]> FollowSourcesAsync(UserRecord user, CancellationToken token)
+    {
+        var principal = new ProviderBackendPrincipal(user.BackendType, user.BackendInstanceId, user.BackendPrincipalId);
+        var policy = new ProviderExecutionPolicy(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, false),
+            ProviderExplicitContentPolicy.Allow, false, true, false, FollowSources);
+        var plan = await router.PlanAsync<IProviderMetadataCapability>(new(ProviderCapabilityKind.Metadata, new(ProviderActorKind.User, user.Id, principal), policy,
+            "releases-follow", "releases", DateTimeOffset.UtcNow.AddSeconds(60), FollowSources, cancellationToken: token));
+        return plan.Candidates.Where(item => item.Descriptor.Hooks.Contains("getArtistAlbums", StringComparer.Ordinal))
+            .OrderBy(item => Array.IndexOf(FollowSources, item.Provider.Id)).ToArray();
     }
 
     public async Task<ReleaseInbox> ReadAsync(Guid owner, CancellationToken token = default)

@@ -110,7 +110,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.getByRole("button", { name: "Following (4)", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Followed artists (4)", exact: true });
     await expect(dialog.getByRole("button", { name: "Unfollow North", exact: true })).toBeVisible();
-    await expect(dialog.getByRole("searchbox")).toHaveCount(0);
+    await expect(dialog.getByRole("searchbox", { name: "Find an artist to follow" })).toHaveCount(1);
     await capture(page, "followed-artists", width, theme);
     await dialog.getByRole("button", { name: "Done", exact: true }).click();
     expect(state.mutations).toEqual([]);

@@ -14,6 +14,7 @@
   import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
+  import SearchField from "$lib/components/SearchField.svelte";
 
   let { initialRelease = "" }: { initialRelease?: string } = $props();
   let radar = $state("");
@@ -55,6 +56,33 @@
       toast.success(`Following ${result.followed} new artists`);
       await load();
     } catch { if (!disposed) followError = "Artists could not be followed. Try again."; }
+    finally { if (!disposed) action = ""; }
+  }
+  let artistQuery = $state(""), found = $state<FollowedReleaseArtist[]>([]), searching = $state(false);
+  // Looks artists up once typing pauses; older answers are dropped if the search has moved on.
+  let searchRequest = 0;
+  $effect(() => {
+    const query = artistQuery.trim();
+    if (query.length < 2) { found = []; searching = false; return; }
+    searching = true;
+    const request = ++searchRequest;
+    const timer = setTimeout(async () => {
+      try { const next = await releaseInbox.search(query); if (request === searchRequest) found = next; }
+      catch { if (request === searchRequest) found = []; }
+      finally { if (request === searchRequest) searching = false; }
+    }, 300);
+    return () => clearTimeout(timer);
+  });
+  const isFollowed = (artist: FollowedReleaseArtist) => artists.some(item => item.providerId === artist.providerId && item.artistId === artist.artistId);
+  async function followArtist(artist: FollowedReleaseArtist) {
+    if (action) return;
+    action = `follow:${artist.artistId}`;
+    try {
+      await releaseInbox.follow(artist);
+      if (disposed) return;
+      toast.success(`Following ${artist.displayName}`);
+      await load();
+    } catch { if (!disposed) toast.error(`${artist.displayName} could not be followed. Try again.`); }
     finally { if (!disposed) action = ""; }
   }
   async function followTop() {
@@ -128,7 +156,10 @@
     {#if !inbox.entries.length}
       <div class="settings-card release-empty">
         <p>{artists.length ? "Nothing new from the artists you follow yet." : "Follow artists to see their new music here."}</p>
-        {#if !artists.length}<Button disabled={Boolean(action)} onclick={() => void followTop()}>{action === "follow-top" ? "Finding your top artists…" : "Follow my top artists"}</Button>{/if}
+        <div class="release-empty-actions">
+          {#if !artists.length}<Button disabled={Boolean(action)} onclick={() => void followTop()}>{action === "follow-top" ? "Finding your top artists…" : "Follow my top artists"}</Button>{/if}
+          <Button variant="secondary" onclick={() => artistsOpen = true}>Find an artist</Button>
+        </div>
       </div>
     {:else}
       {#each groups as group (group.label)}
@@ -168,6 +199,17 @@
         <Dialog.Close class="icon-button" aria-label="Close followed artists"><X size={18} aria-hidden="true" /></Dialog.Close>
       </header>
       <div class="artists-body">
+        <SearchField bind:value={artistQuery} label="Find an artist to follow" placeholder="Find an artist to follow" hiddenLabel />
+        {#if artistQuery.trim().length >= 2}
+          <ul class="followed-artists found-artists" aria-label="Artists found">
+            {#each found as artist (`${artist.providerId}:${artist.artistId}`)}
+              <li><MediaArtwork url={`/api/admin/stats/art?${new URLSearchParams({ artist: artist.displayName })}`} class="found-art" /><strong>{artist.displayName}</strong>
+                <Button variant="secondary" disabled={isFollowed(artist) || Boolean(action)} onclick={() => void followArtist(artist)}>{isFollowed(artist) ? "Following" : "Follow"}</Button></li>
+            {:else}
+              <li><span>{searching ? "Searching…" : "No artists found."}</span></li>
+            {/each}
+          </ul>
+        {/if}
         {#if artists.length}
           <ul class="followed-artists">{#each artists as artist, index (`${index}:${artist.providerId}:${artist.artistId}`)}
             <li><strong>{artist.displayName}</strong><Button variant="secondary" disabled={Boolean(action)} aria-label={`Unfollow ${artist.displayName}`} onclick={() => void unfollow(artist)}>Unfollow</Button></li>
@@ -193,6 +235,8 @@
   .release-info { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .release-info p { margin-top: var(--space-1); font-size: var(--text-sm); }
   .release-disclosure, .release-empty { padding: var(--surface-gutter); }
+  .release-empty { display: grid; gap: var(--space-3); justify-items: start; }
+  .release-empty-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .release-disclosure ul { display: grid; gap: var(--space-2); margin-top: var(--space-3); padding-left: var(--space-5); overflow-wrap: anywhere; }
   .release-disclosure p { margin-top: var(--space-3); }
   .release-disclosure summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; }
@@ -200,4 +244,8 @@
   .followed-artists { display: grid; gap: var(--space-3); list-style: none; padding: 0; margin: 0; }
   .followed-artists li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
   .followed-artists strong { overflow-wrap: anywhere; min-width: 0; }
+  .found-artists { margin-bottom: var(--space-4); padding-bottom: var(--space-4); border-bottom: 1px solid var(--color-edge); }
+  .found-artists strong { flex: 1; }
+  .found-artists :global(.found-art) { flex: none; width: 40px; height: 40px; border-radius: 50%; overflow: hidden; }
+  .found-artists :global(.found-art img) { width: 100%; height: 100%; object-fit: cover; }
 </style>

@@ -34,6 +34,10 @@ public sealed class NewReleasesController(NewReleasesService releases) : Control
     public Task<IActionResult> FollowHearted(CancellationToken cancellationToken) => ExecuteAsync(async owner =>
         Ok(new { followed = await releases.FollowHeartedArtistsAsync(owner, cancellationToken) }));
 
+    [HttpGet("artists/search")]
+    public Task<IActionResult> Search([FromQuery] string? query, CancellationToken cancellationToken) => ExecuteAsync(async owner =>
+        Ok(await releases.SearchArtistsAsync(owner, query ?? "", cancellationToken)));
+
     [HttpPost("artists/from-history")]
     public Task<IActionResult> FollowFromHistory(CancellationToken cancellationToken) => ExecuteAsync(async owner =>
         Ok(new { followed = await releases.FollowTopArtistsAsync(owner, cancellationToken) }));
