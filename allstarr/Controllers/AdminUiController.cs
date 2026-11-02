@@ -510,6 +510,7 @@ public class AdminUiController : ControllerBase
             .Where(id => !knownJobIds.Contains(id)).Distinct().ToArray();
         var relatedJobs = relatedIds.Length == 0 ? [] : await context.Jobs.AsNoTracking()
             .Where(item => relatedIds.Contains(item.Id) && (everyone || item.OwnerUserId == userId))
+            .OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit * 3).ToArrayAsync(cancellationToken);
         var activityJobs = jobs.Concat(relatedJobs).ToDictionary(item => item.Id);
         var jobDisplays = await ActivityJobPresentation.ResolveAsync(context, activityJobs.Values.ToArray(), cancellationToken, session.IsAdministrator);
