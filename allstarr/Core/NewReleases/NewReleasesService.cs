@@ -139,13 +139,7 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
             await searches.WaitAsync(token);
             try
             {
-                foreach (var source in sources)
-                {
-                    var outcome = await source.Implementation.SearchArtistsAsync(source.Context, new(name, new(5)));
-                    if (outcome.IsSuccess && outcome.RequireValue().Items.FirstOrDefault(item => item.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) is { } artist)
-                        return new FollowedReleaseArtist(artist.Id.ProviderId, artist.Id.Value, artist.Name);
-                }
-                return null;
+                return await FindArtistByNameAsync(sources, name);
             }
             finally { searches.Release(); }
         }));
@@ -171,6 +165,26 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
             return added;
         }
         finally { Gate.Release(); }
+    }
+
+    public async Task<FollowedReleaseArtist?> ResolveArtistByNameAsync(Guid owner, string name, CancellationToken token = default)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name.Length > 300 || name.Any(char.IsControl)) return null;
+        await using var db = await factory.CreateDbContextAsync(token);
+        var user = await UserAsync(db, owner, token);
+        return await FindArtistByNameAsync(await FollowSourcesAsync(user, token), name.Trim());
+    }
+
+    private static async Task<FollowedReleaseArtist?> FindArtistByNameAsync(
+        ProviderRouteCandidate<IProviderMetadataCapability>[] sources, string name)
+    {
+        foreach (var source in sources)
+        {
+            var outcome = await source.Implementation.SearchArtistsAsync(source.Context, new(name, new(5)));
+            if (outcome.IsSuccess && outcome.RequireValue().Items.FirstOrDefault(item => item.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) is { } artist)
+                return new(artist.Id.ProviderId, artist.Id.Value, artist.Name);
+        }
+        return null;
     }
 
     /// <summary>Finds artists by name in the sources that can list their releases, for a listener choosing whom to follow.</summary>

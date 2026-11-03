@@ -411,6 +411,11 @@ builder.Services.AddScoped<ItemDetailsReader>();
 builder.Services.AddScoped<ItemLyricsReader>();
 builder.Services.AddScoped<ItemMatchReader>();
 builder.Services.AddScoped<PlaybackReader>();
+builder.Services.AddScoped<MixReader>();
+builder.Services.AddScoped<ReleaseReader>();
+builder.Services.AddScoped(provider => new allstarr.Core.Releases.ReleaseArtworkReader(
+    provider.GetRequiredService<IProtocolProviderGateway>(), provider.GetRequiredService<IMediaAssetResolver>(),
+    provider.GetRequiredService<IHttpClientFactory>(), provider.GetRequiredService<ILogger<allstarr.Core.Releases.ReleaseArtworkReader>>()));
 
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminHelperService>();
 builder.Services.AddSingleton<allstarr.Services.Admin.IAdminAuthSessionStore, allstarr.Services.Admin.EfAdminAuthSessionStore>();

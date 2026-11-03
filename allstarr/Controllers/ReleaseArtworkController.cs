@@ -1,6 +1,6 @@
 using allstarr.Core.Protocols;
 using allstarr.Filters;
-using allstarr.Models.Domain;
+using allstarr.Core.Releases;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
@@ -15,8 +15,6 @@ namespace allstarr.Controllers;
 public sealed class ReleaseArtworkController(AdminProtocolExecutionContextFactory contexts, IProtocolProviderGateway gateway,
     IMediaAssetResolver media, IHttpClientFactory clients, ILogger<ReleaseArtworkController> logger) : ControllerBase
 {
-    private const int MaximumBytes = 8 * 1024 * 1024;
-
     [HttpGet("{providerId}/{albumId}")]
     public async Task<IActionResult> Get(string providerId, string albumId, CancellationToken token)
     {
@@ -26,39 +24,11 @@ public sealed class ReleaseArtworkController(AdminProtocolExecutionContextFactor
         ProtocolExecutionContext protocol;
         try { protocol = await contexts.CreateAsync(session, HttpContext.TraceIdentifier, token); }
         catch (UnauthorizedAccessException) { return StatusCode(403, new { error = "A linked listener is required." }); }
-        var asset = await media.ResolveAsync(new(owner, null, providerId, "album", albumId, Width: 384),
-            cancel => FetchAsync(protocol, providerId, albumId, cancel), MaximumBytes, token);
+        var asset = await new ReleaseArtworkReader(gateway, media, clients, logger).ReadAsync(owner, protocol, providerId, albumId, token);
         // An empty answer shows the placeholder without a broken image, and a missing cover is asked for again later.
         Response.Headers.CacheControl = asset == null ? "private, max-age=3600" : "private, max-age=604800";
         return asset == null ? NoContent() : File(asset.Bytes, asset.ContentType);
     }
-
-    private async Task<MediaAssetSource?> FetchAsync(ProtocolExecutionContext protocol, string providerId, string albumId, CancellationToken token)
-    {
-        try
-        {
-            // Album details already kept for this listener answer without asking the source again.
-            var url = Cover(await gateway.GetStoredAlbumAsync(protocol, providerId, albumId), providerId) ??
-                Cover(await gateway.GetAlbumAsync(protocol, providerId, albumId), providerId);
-            if (!OutboundRequestGuard.TryCreateSafeHttpUri(url, out var uri, out _) || uri == null) return null;
-            using var response = await clients.CreateClient().GetAsync(uri, token);
-            var contentType = response.Content.Headers.ContentType?.MediaType;
-            if (!response.IsSuccessStatusCode || contentType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true ||
-                response.Content.Headers.ContentLength > MaximumBytes) return null;
-            await response.Content.LoadIntoBufferAsync(MaximumBytes, token);
-            return new(await response.Content.ReadAsByteArrayAsync(token), contentType);
-        }
-        catch (Exception exception) when (!token.IsCancellationRequested)
-        {
-            // A source that is turned off or failing for this listener leaves the placeholder.
-            logger.LogDebug(exception, "Release artwork lookup failed for provider {ProviderId}", providerId);
-            return null;
-        }
-    }
-
-    // Albums without art carry the source's logo instead; a release keeps its placeholder rather than show that.
-    private static string? Cover(Album? album, string providerId) =>
-        album == null || ProviderArtworkFallback.IsFallback(providerId, album.CoverArtUrl, "album") ? null : album.CoverArtUrl;
 
     private static bool Valid(string value, int maximumLength) =>
         !string.IsNullOrWhiteSpace(value) && value.Length <= maximumLength && !value.Any(char.IsControl);

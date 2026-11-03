@@ -13,6 +13,8 @@ public sealed record ReleaseSource(string ProviderId, string AlbumId, string Tit
     string? Upc, string[] Isrcs, string[] Aliases, string? ExclusionReason)
 {
     public string Key => ProviderId + ":" + AlbumId;
+    public string? ArtistId { get; init; }
+    public string? ArtistProviderId { get; init; }
 }
 public sealed record ReleaseInboxEntry(string Id, string Title, string Artist, string? ReleaseDate,
     string DatePrecision, string Type, bool? IsExplicit, string Edition, string? ExclusionReason,
@@ -49,7 +51,11 @@ internal static class ReleaseInboxProjection
         return new(album.Id.ProviderId, album.Id.Value, album.Title, album.Artists[0].Name, album.ReleaseDate,
             precision, type, album.IsExplicit, edition, MusicAlbumReleases.NormalizeUpc(album.Upc),
             complete ? album.Tracks.Select(item => item.Isrc!.Trim().ToUpperInvariant()).Order(StringComparer.Ordinal).ToArray() : [],
-            aliases, exclusion);
+            aliases, exclusion)
+        {
+            ArtistId = album.Artists[0].ArtistId?.Value ?? (album.Artists[0].Name.Equals(artist.DisplayName, StringComparison.OrdinalIgnoreCase) ? artist.ArtistId : null),
+            ArtistProviderId = album.Artists[0].ArtistId?.ProviderId ?? artist.ProviderId
+        };
     }
 
     internal static IReadOnlyList<ReleaseInboxEntry> Group(IEnumerable<ReleaseSource> sources, DateTimeOffset now)
@@ -72,7 +78,7 @@ internal static class ReleaseInboxProjection
         }
         return groups.Select(group =>
         {
-            var first = group.OrderBy(item => item.Type == "unknown").ThenByDescending(item => item.ReleaseDate, StringComparer.Ordinal).First();
+            var first = PrimarySource(group);
             return new ReleaseInboxEntry(NewReleasesService.Hash(string.Join("|", group.Select(item => item.Key).Order(StringComparer.Ordinal))),
                 first.Title, first.Artist, first.ReleaseDate, first.DatePrecision, first.Type, first.IsExplicit,
                 first.Edition, first.ExclusionReason, group, ArtworkUrl(first));
@@ -82,6 +88,9 @@ internal static class ReleaseInboxProjection
     // The cover is looked up from the release's own source when shown, so catalogs cached before covers were linked show art too.
     internal static string ArtworkUrl(ReleaseSource source) =>
         $"/api/admin/releases/artwork/{Uri.EscapeDataString(source.ProviderId)}/{Uri.EscapeDataString(source.AlbumId)}";
+
+    internal static ReleaseSource PrimarySource(IEnumerable<ReleaseSource> sources) =>
+        sources.OrderBy(item => item.Type == "unknown").ThenByDescending(item => item.ReleaseDate, StringComparer.Ordinal).First();
 
     private static string Alias(string provider, string id)
     {

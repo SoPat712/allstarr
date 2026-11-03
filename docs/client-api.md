@@ -19,7 +19,8 @@ receive the same personal scope as other listeners.
 `GET /allstarr/v1/capabilities` returns `serverVersion`, `apiVersion`, and a
 `features` object. Check feature flags before using optional routes.
 `titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, `lyricsSources`,
-`fixesMatch`, and `reports` are available; the other flags remain false until supported.
+`fixesMatch`, `reports`, `mixes`, `releases`, and `follow` are available;
+the other flags remain false until supported.
 The version in the path identifies the contract. Compatible additions stay
 within v1; incompatible changes use a new path version.
 
@@ -29,8 +30,9 @@ JSON uses camelCase. Every error has this shape:
 {"code":"unauthorized","error":"A valid Jellyfin user token is required."}
 ```
 
-Codes are `unauthorized`, `forbidden`, `not_found`, `invalid_request`, `conflict`,
-and `unavailable`. Unknown `/allstarr` paths return `not_found`.
+Codes are `unauthorized`, `forbidden`, `not_found`, `artist_not_found`,
+`invalid_request`, `conflict`, and `unavailable`. Unknown `/allstarr` paths
+return `not_found`.
 
 Send `X-Allstarr-Title-Markers: none` on any music request to omit both `[A]`
 and `[E]` title markers. This also works on normal Jellyfin routes. It changes
@@ -240,3 +242,63 @@ null in both their `type` and `enum`. Nullable object references declare
 `type: ["object", "null"]` and use `anyOf` with the reference and a null schema,
 preserving referenced-object validation while accepting null. Response JSON is
 unchanged.
+
+`GET /allstarr/v1/mixes` returns `{"mixes":[...]}` in the same order as the
+listener's For you page. An optional `timeZoneId` uses the dashboard's time zone
+validation and saved preference. Reads use stored mixes and never generate or
+refresh them. Synthetic listeners cannot read mixes.
+
+Each mix has `mixId`, `kind`, `name`, `description`, `state`, `itemCount`,
+`durationMs`, `updatedAt`, `coverUrl`, `inApps`, and `playlistId`. `kind` preserves
+the dashboard's stable IDs, including `on-repeat`, `rewind`, `release-radar`,
+`discover-weekly`, `daily-1` through `daily-4`, mood IDs, `custom`, and `external`.
+The typed state maps dashboard readiness to `ready`; pending linked-playlist
+matching to `building`; requests for more plays, listening, or history to
+`needs-listening`; and other unready cards to `empty`. Uninitialized cards and
+cards without playable songs are `empty`.
+
+`itemCount` and `durationMs` describe the stored songs visible through the
+listener's library access and listening policy. Unknown song durations add
+zero to the total. `updatedAt` is null before a mix has been built. `inApps`
+requires a published generation, the listener's publication choice, and the
+server's mix publication setting; `playlistId` is its Jellyfin playlist ID,
+or null when unpublished.
+
+`GET /allstarr/v1/mixes/{mixId}/items` returns `{mixId,updatedAt,items}`. Items
+retain mix order and include `itemId`, `title`, `artist`, `album`, `albumId`,
+`artistId`, `durationMs`, `isExternal`, `provider`, and the stored per-song
+`reason`. Provider metadata has the same `{id,name,iconUrl}` shape as item
+details; library songs have a null provider. Missing relationships and durations
+are null. Library songs no longer visible to the caller's token are omitted.
+Song, album, and artist IDs use the Jellyfin surface, including native
+library IDs, service `ext-...` IDs, stored recording IDs, and Apple catalog
+aliases. These JSON routes use `Cache-Control: no-store`.
+
+`GET /allstarr/v1/mixes/{mixId}/cover` serves the same generated PNG as the
+dashboard. It uses a private cache with revalidation and returns 304 for a
+matching `If-None-Match`. Unknown mixes and other listeners' mixes return 404,
+including conditional cover requests.
+
+`GET /allstarr/v1/releases` returns `{releases,followedArtists}` from the
+listener's stored New releases inbox and follows, without polling providers.
+Each release includes `releaseId`, `title`, `kind`, `releaseDate`,
+`artist:{name,artistId}`, `albumId`, and `coverUrl`. Dates preserve the inbox's
+precision. Excluded and dismissed entries are omitted. Followed artists have
+`artistId` and `name`. Artist and album IDs use the Jellyfin surface; an older
+cached release without a recoverable artist relationship has a null artist ID.
+Responses use `Cache-Control: no-store`.
+
+`GET /allstarr/v1/releases/{releaseId}/cover` serves the inbox entry's source
+album artwork using the same loader and image cache as the dashboard. Available
+covers use a private seven-day cache, ETag, and 304 revalidation. A release with
+no usable cover returns 204 with a private one-hour cache. A release outside the
+listener's inbox returns 404.
+
+Follow an artist with `PUT /allstarr/v1/artists/{artistId}/follow` and unfollow
+with `DELETE` on the same path. No body is required. Both are idempotent and
+return `{followed,artist:{artistId,name}}`, preserving the requested Jellyfin
+artist ID. Service artist IDs map directly to their provider artist. A native
+library artist first passes a Jellyfin lookup with the caller's token, then
+uses the exact-name source lookup shared with the dashboard's follow-from-history
+action. An unresolvable artist returns 404 `artist_not_found`. Writes affect
+only this listener and use `Cache-Control: no-store`.

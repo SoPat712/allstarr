@@ -2544,7 +2544,7 @@ public sealed partial class ProtocolProviderGateway(
         id.ProviderId == "apple-musickit" && !allstarr.Core.Providers.AppleMusicKit.AppleMusicKitMetadataCapabilityAdapter.IsLibrary(id.Value)
             ? "apple-download" : id.ProviderId;
 
-    private static string ProtocolItemId(ProviderExternalResourceId id) =>
+    internal static string ProtocolItemId(ProviderExternalResourceId id) =>
         $"ext-{PublicProviderId(id)}-{id.ResourceKind switch
         {
             ProviderResourceKind.Track => "song",

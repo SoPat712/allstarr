@@ -5,6 +5,184 @@
     "version": "1"
   },
   "paths": {
+    "/allstarr/v1/artists/{artistId}/follow": {
+      "put": {
+        "tags": [
+          "ArtistFollow"
+        ],
+        "operationId": "followArtist",
+        "parameters": [
+          {
+            "name": "artistId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientArtistFollow"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "ArtistFollow"
+        ],
+        "operationId": "unfollowArtist",
+        "parameters": [
+          {
+            "name": "artistId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientArtistFollow"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v1/capabilities": {
       "get": {
         "tags": [
@@ -989,6 +1167,285 @@
         }
       }
     },
+    "/allstarr/v1/mixes": {
+      "get": {
+        "tags": [
+          "Mixes"
+        ],
+        "operationId": "listMixes",
+        "parameters": [
+          {
+            "name": "timeZoneId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientMixes"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v1/mixes/{mixId}/items": {
+      "get": {
+        "tags": [
+          "Mixes"
+        ],
+        "operationId": "listMixItems",
+        "parameters": [
+          {
+            "name": "mixId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientMixItems"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v1/mixes/{mixId}/cover": {
+      "get": {
+        "tags": [
+          "Mixes"
+        ],
+        "operationId": "getMixCover",
+        "parameters": [
+          {
+            "name": "mixId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "application/json": {}
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v1/playback/{requestId}": {
       "get": {
         "tags": [
@@ -1277,6 +1734,214 @@
         }
       }
     },
+    "/allstarr/v1/releases": {
+      "get": {
+        "tags": [
+          "Releases"
+        ],
+        "operationId": "listReleases",
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientReleases"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v1/releases/{releaseId}/cover": {
+      "get": {
+        "tags": [
+          "Releases"
+        ],
+        "operationId": "getReleaseCover",
+        "parameters": [
+          {
+            "name": "releaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "image/gif": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "image/avif": {
+                "schema": {
+                  "type": "string",
+                  "format": "byte"
+                }
+              },
+              "application/json": {}
+            }
+          },
+          "204": {
+            "description": "No Content",
+            "content": {
+              "application/json": {}
+            }
+          },
+          "304": {
+            "description": "Not Modified",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v1/reports": {
       "post": {
         "tags": [
@@ -1403,6 +2068,21 @@
           },
           "error": {
             "type": "string"
+          }
+        }
+      },
+      "ClientArtistFollow": {
+        "required": [
+          "followed",
+          "artist"
+        ],
+        "type": "object",
+        "properties": {
+          "followed": {
+            "type": "boolean"
+          },
+          "artist": {
+            "$ref": "#/components/schemas/ClientReleaseArtist"
           }
         }
       },
@@ -1735,6 +2415,185 @@
           }
         }
       },
+      "ClientMix": {
+        "required": [
+          "mixId",
+          "kind",
+          "name",
+          "description",
+          "state",
+          "itemCount",
+          "durationMs",
+          "updatedAt",
+          "coverUrl",
+          "inApps",
+          "playlistId"
+        ],
+        "type": "object",
+        "properties": {
+          "mixId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ClientMixState"
+          },
+          "itemCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "durationMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "updatedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "coverUrl": {
+            "type": "string"
+          },
+          "inApps": {
+            "type": "boolean"
+          },
+          "playlistId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "ClientMixes": {
+        "required": [
+          "mixes"
+        ],
+        "type": "object",
+        "properties": {
+          "mixes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientMix"
+            }
+          }
+        }
+      },
+      "ClientMixItem": {
+        "required": [
+          "itemId",
+          "title",
+          "artist",
+          "album",
+          "albumId",
+          "artistId",
+          "durationMs",
+          "isExternal",
+          "provider",
+          "reason"
+        ],
+        "type": "object",
+        "properties": {
+          "itemId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "artist": {
+            "type": "string"
+          },
+          "album": {
+            "type": "string"
+          },
+          "albumId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "artistId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "durationMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "isExternal": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItemDetailsProvider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "ClientMixItems": {
+        "required": [
+          "mixId",
+          "updatedAt",
+          "items"
+        ],
+        "type": "object",
+        "properties": {
+          "mixId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "updatedAt": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "date-time"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientMixItem"
+            }
+          }
+        }
+      },
+      "ClientMixState": {
+        "enum": [
+          "ready",
+          "empty",
+          "building",
+          "needs-listening"
+        ],
+        "type": "string"
+      },
       "ClientPlayback": {
         "required": [
           "provider",
@@ -1804,6 +2663,83 @@
           "startedAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "ClientRelease": {
+        "required": [
+          "releaseId",
+          "title",
+          "kind",
+          "releaseDate",
+          "artist",
+          "albumId",
+          "coverUrl"
+        ],
+        "type": "object",
+        "properties": {
+          "releaseId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "releaseDate": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "artist": {
+            "$ref": "#/components/schemas/ClientReleaseArtist"
+          },
+          "albumId": {
+            "type": "string"
+          },
+          "coverUrl": {
+            "type": "string"
+          }
+        }
+      },
+      "ClientReleaseArtist": {
+        "required": [
+          "artistId",
+          "name"
+        ],
+        "type": "object",
+        "properties": {
+          "artistId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "ClientReleases": {
+        "required": [
+          "releases",
+          "followedArtists"
+        ],
+        "type": "object",
+        "properties": {
+          "releases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientRelease"
+            }
+          },
+          "followedArtists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientReleaseArtist"
+            }
           }
         }
       },
@@ -2317,6 +3253,9 @@
   },
   "tags": [
     {
+      "name": "ArtistFollow"
+    },
+    {
       "name": "Capabilities"
     },
     {
@@ -2329,10 +3268,16 @@
       "name": "ItemMatch"
     },
     {
+      "name": "Mixes"
+    },
+    {
       "name": "Playback"
     },
     {
       "name": "ProviderIcons"
+    },
+    {
+      "name": "Releases"
     },
     {
       "name": "Reports"
