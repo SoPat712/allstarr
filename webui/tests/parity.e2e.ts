@@ -3678,8 +3678,11 @@ test("Event log groups matching work and preserves actionable history", async ({
   await page.goto("#/activity");
 
   await expect(page.getByText("Matched 3 songs in 2 playlists")).toBeVisible();
+  const group = page.locator(".event-log-group").filter({ hasText: "Matched 3 songs" });
   await expect(page.locator(".event-log-group summary .event-kind-icon img")).toHaveCount(0);
-  await expect(page.locator(".event-log-group summary .event-kind-icon svg")).toBeVisible();
+  await expect(group.locator("summary .event-kind-icon svg")).toBeVisible();
+  await expect(page.getByText("Playlist sync", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Load earlier events" })).toHaveCount(0);
   await expect.poll(() => page.evaluate(() =>
     document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
@@ -3689,9 +3692,6 @@ test("Event log groups matching work and preserves actionable history", async ({
   await expect(page.getByText("Nothing matches these filters")).toBeVisible();
   await page.getByRole("button", { name: "Clear filters" }).click();
 
-  await page.getByRole("button", { name: "Load earlier events" }).click();
-  await expect(page.getByText("Playlist sync", { exact: true }).first()).toBeVisible();
-  const group = page.locator(".event-log-group").filter({ hasText: "Matched 3 songs" });
   await group.locator(":scope > summary").focus();
   await page.keyboard.press("Enter");
   await expect(group.locator(".event-child .event-art > span").first()).toBeVisible();
@@ -7163,7 +7163,7 @@ for (const width of [390, 1280]) {
         if (view === "Jobs") {
           await expect(page.getByText("Writing playlist", { exact: true })).toBeVisible();
           await expect(page.getByRole("progressbar", { name: /50%/ })).toBeVisible();
-          for (const state of ["Waiting", "Running", "Retrying", "Deferred"])
+          for (const state of ["Waiting", "Running", "Retry scheduled", "Deferred"])
             await expect(page.getByText(state, { exact: true }).first()).toBeVisible();
           await page.getByRole("button", { name: "Cancel job" }).first().click();
           await page.getByRole("alertdialog", { name: "Cancel this job?" }).getByRole("button", { name: "Cancel job", exact: true }).click();
