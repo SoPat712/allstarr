@@ -276,7 +276,11 @@ public sealed partial class TrackMatchCommandService
                 Enum.Parse<TrackMatchReviewState>(input.State.ToString(), true), selected, input.Confidence));
         }
 
+        var changed = db.ChangeTracker.Entries<TrackMatchRecord>().Where(item => item.State == EntityState.Added)
+            .Select(item => item.Entity).ToArray();
         await db.SaveChangesAsync(cancellationToken);
+        if (events != null)
+            foreach (var item in changed) await events.MatchAsync(item.ExternalSnapshotId, item.OwnerUserId, automatic: true);
         if (crossLinks != null)
             foreach (var snapshot in snapshots)
                 await crossLinks.EnqueueAsync(snapshot.OwnerUserId, snapshot.ProviderTrackIdentityId!.Value,

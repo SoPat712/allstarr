@@ -283,7 +283,8 @@ public sealed partial class TrackMatchCommandService(
     RecordingOdesliEnrichmentQueue? crossLinks = null, IProviderRegistry? registry = null,
     IConfiguration? configuration = null, MatchLibrarySearch? librarySearch = null,
     ILibraryIndexService? libraryIndex = null,
-    ILogger<TrackMatchCommandService>? logger = null) : ITrackMatchRepository
+    ILogger<TrackMatchCommandService>? logger = null,
+    allstarr.Core.ClientEvents.IClientEventChanges? events = null) : ITrackMatchRepository
 {
     private const int ConcurrentWriteRetries = 3;
 

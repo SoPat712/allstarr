@@ -53,7 +53,8 @@ public sealed partial class RecordingKeptFiles(
     ILogger<RecordingKeptFiles>? logger = null,
     DurableJobQueue? jobs = null,
     allstarr.Core.Protocols.IBackendLibraryAccessResolver? libraryAccess = null,
-    allstarr.Core.Music.IProviderAudioVerifier? audioVerifier = null)
+    allstarr.Core.Music.IProviderAudioVerifier? audioVerifier = null,
+    allstarr.Core.ClientEvents.IClientEventChanges? events = null)
 {
     public async Task<KeptRecordingFile> PublishAsync(KeptRecordingPublication publication,
         CancellationToken cancellationToken = default)
@@ -220,6 +221,7 @@ public sealed partial class RecordingKeptFiles(
                 result = ToResult(recording.Id, serving, mime);
             }
             if (provisional) await CleanupPendingAsync(prepared, pendingKey);
+            if (events != null) await events.KeptAsync(result.RecordingId);
             await EnsureLyricsAsync(result, publication.InitiatingUserId, proof.CorrelationId, cancellationToken);
             return result;
         }

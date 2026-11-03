@@ -82,13 +82,17 @@ public sealed partial class DurableJobQueue
     private readonly IPlatformClock _clock;
     private readonly DurableJobContextAuthorizer _contextAuthorizer;
 
+    private readonly allstarr.Core.ClientEvents.IClientEventChanges? _clientEvents;
+
     public DurableJobQueue(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         DurableJobOptions options,
         JobPayloadPolicy payloadPolicy,
         IPlatformClock clock,
-        DurableJobContextAuthorizer? contextAuthorizer = null)
+        DurableJobContextAuthorizer? contextAuthorizer = null,
+        allstarr.Core.ClientEvents.IClientEventChanges? clientEvents = null)
     {
+        _clientEvents = clientEvents;
         _contextFactory = contextFactory;
         _options = options;
         _payloadPolicy = payloadPolicy;
@@ -405,6 +409,8 @@ public sealed partial class DurableJobQueue
             CreatedAt = now
         });
         await context.SaveChangesAsync(cancellationToken);
+        if (_clientEvents != null && job.Type == allstarr.Core.Favorites.FavoriteActionPipeline.JobType)
+            await _clientEvents.KeepProgressAsync(job.Id, total > 0 && completed.HasValue ? (double)completed.Value / total.Value : null);
         return true;
     }
 

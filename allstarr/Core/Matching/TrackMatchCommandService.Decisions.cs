@@ -101,6 +101,9 @@ public sealed partial class TrackMatchCommandService
         try
         {
             await db.SaveChangesAsync(cancellationToken);
+            if (events != null)
+                foreach (var id in records.Where(item => !existing.ContainsKey((item.ExternalSnapshotId, item.DecisionVersion))).Select(item => item.ExternalSnapshotId).Distinct())
+                    await events.MatchAsync(id, snapshots[id].OwnerUserId, automatic: true);
             return records;
         }
         catch (DbUpdateException)

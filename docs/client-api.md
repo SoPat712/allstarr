@@ -19,7 +19,7 @@ receive the same personal scope as other listeners.
 `GET /allstarr/v1/capabilities` returns `serverVersion`, `apiVersion`, and a
 `features` object. Check feature flags before using optional routes.
 `titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, `lyricsSources`,
-`fixesMatch`, `reports`, `mixes`, `releases`, and `follow` are available;
+`fixesMatch`, `reports`, `mixes`, `releases`, `follow`, and `events` are available;
 the other flags remain false until supported.
 The version in the path identifies the contract. Compatible additions stay
 within v1; incompatible changes use a new path version.
@@ -302,3 +302,46 @@ library artist first passes a Jellyfin lookup with the caller's token, then
 uses the exact-name source lookup shared with the dashboard's follow-from-history
 action. An unresolvable artist returns 404 `artist_not_found`. Writes affect
 only this listener and use `Cache-Control: no-store`.
+
+`GET /allstarr/v1/events` (`getEvents`) opens a `text/event-stream` response.
+Use the same Jellyfin user token and `DeviceId` as playback. The stream is
+personal, including for administrators. A missing device identity still receives
+personal changes but cannot receive device playback notifications.
+
+The first flushed frame is always:
+
+```text
+event: ready
+data: {}
+
+```
+
+Subsequent frames carry an event name and one JSON `data:` line. Item IDs are
+the native Jellyfin or `ext-...` IDs accepted by the item routes. Changes may
+invalidate more than one spelling of the same recording; refetch the relevant
+item or collection. Treat revisions as opaque JSON, and fetch the latest lyrics
+sources revision before a write.
+
+| Event | Data |
+| --- | --- |
+| `keep.updated` | `{itemId,state,progress?}`. State is `none`, `inProgress`, `kept`, or `failed`; progress is 0–1 when measured. |
+| `match.updated` | `{itemId,state}` with the effective match state used by the match route. Effective personal choices hide unrelated household and automatic changes. |
+| `lyrics.updated` | `{itemId,revision}` after a pin/clear or an effective lyrics change. |
+| `mix.updated` | `{mixId}` after regeneration, saving, deletion, or another saved mix change. |
+| `releases.updated` | `{count}` with the current New releases inbox size. |
+| `playback.updated` | `{itemId}` when the serving route changes during the caller's active stream, only on connections with the same `DeviceId`. |
+
+A comment frame `: ping` is flushed every 25 seconds. Allstarr disables response
+buffering and compression for this route and sends `Cache-Control: no-store,
+no-transform` and `X-Accel-Buffering: no`. Configure any additional proxy to allow
+long streaming responses.
+
+Reconnect with backoff and jitter after EOF or a network failure, and refresh
+current state after each `ready`. There is no history or `Last-Event-ID` replay.
+Notifications are hints: duplicate type+item changes within a short burst are
+combined, and slow consumers can lose older notifications. Each connection holds
+at most 64 pending notifications and sends at most 10 per second, with a 100 ms
+coalescing window. There are at most 8 connections per listener and 256 across
+the server; excess connections return 503 `unavailable`. Connections close on
+client disconnect and server shutdown. Clients should share one stream per
+running app and periodically reconcile state through ordinary reads.

@@ -42,6 +42,7 @@ public sealed partial class RecordingKeptFiles
                     candidate.File.ScopeKey, HeartKey(proof.State.Id), clock.UtcNow), cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             var result = ToResult(recordingId.Value, candidate.File, candidate.MimeType);
+            if (events != null) await events.KeepAsync(proof.Event.OwnerUserId, proof.Event.ItemId);
             await EnsureLyricsAsync(result, interest.OwnerUserId, proof.Event.CorrelationId, cancellationToken);
             return result;
         }

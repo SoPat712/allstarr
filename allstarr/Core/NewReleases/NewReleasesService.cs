@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.ClientEvents;
 using allstarr.Core.Favorites;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Jobs;
@@ -15,7 +16,7 @@ using Microsoft.EntityFrameworkCore;
 namespace allstarr.Core.Releases;
 
 public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock,
-    IProviderRouter router, IDurableRuntimeSettings settings)
+    IProviderRouter router, IDurableRuntimeSettings settings, IClientEventPublisher? events = null, ILogger<NewReleasesService>? logger = null)
 {
     public const string JobType = "releases.poll";
     private static readonly SemaphoreSlim Gate = new(1, 1);
@@ -43,6 +44,7 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
         {
             await using var db = await factory.CreateDbContextAsync(token);
             var user = await UserAsync(db, owner, token);
+            var before = await ReadForEventAsync(owner, token);
             var artists = (await FollowsAsync(db, user, token)).ToList();
             var followed = new FollowedReleaseArtist(id.ProviderId, id.Value, artist.DisplayName.Trim(),
                 await KnownArtistMbidAsync(db, user, id, token));
@@ -51,6 +53,7 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
             await SaveAsync(db, user, FollowsKind, Scope(user), artists.ToArray(), token);
             await EnsureScheduleAsync(db, user, token);
             await db.SaveChangesAsync(token);
+            await PublishInboxChangeAsync(owner, before, token);
         }
         finally { Gate.Release(); }
     }
@@ -62,6 +65,7 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
         {
             await using var db = await factory.CreateDbContextAsync(token);
             var user = await UserAsync(db, owner, token);
+            var before = await ReadForEventAsync(owner, token);
             var artists = (await FollowsAsync(db, user, token)).Where(item => item.ProviderId != provider || item.ArtistId != artistId).ToArray();
             await SaveAsync(db, user, FollowsKind, Scope(user), artists, token);
             if (artists.Length == 0)
@@ -70,6 +74,7 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
                 if (schedule != null) { schedule.Enabled = false; schedule.Revision++; schedule.UpdatedAt = clock.UtcNow; }
             }
             await db.SaveChangesAsync(token);
+            await PublishInboxChangeAsync(owner, before, token);
         }
         finally { Gate.Release(); }
     }
@@ -107,9 +112,11 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
             }
             if (added > 0)
             {
+                var before = await ReadForEventAsync(owner, token);
                 await SaveAsync(db, user, FollowsKind, Scope(user), follows.ToArray(), token);
                 await EnsureScheduleAsync(db, user, token);
                 await db.SaveChangesAsync(token);
+                await PublishInboxChangeAsync(owner, before, token);
             }
             return added;
         }
@@ -158,9 +165,11 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
             }
             if (added > 0)
             {
+                var before = await ReadForEventAsync(owner, token);
                 await SaveAsync(db, user, FollowsKind, Scope(user), follows.ToArray(), token);
                 await EnsureScheduleAsync(db, user, token);
                 await db.SaveChangesAsync(token);
+                await PublishInboxChangeAsync(owner, before, token);
             }
             return added;
         }
@@ -252,6 +261,7 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
             var user = await UserAsync(db, owner, token);
             await SaveAsync(db, user, DismissKind, Hash(Scope(user) + entryId), entry.Sources.ToArray(), token);
             await db.SaveChangesAsync(token);
+            await PublishInboxChangeAsync(owner, inbox, token);
             return true;
         }
         finally { Gate.Release(); }
@@ -314,15 +324,70 @@ public sealed class NewReleasesService(IDbContextFactory<AllstarrDbContext> fact
                 var next = page.NextCursor;
                 var stopped = next != null && (seen.Contains(next, StringComparer.Ordinal) || seen.Count >= 19);
                 if (next != null) seen.Add(next);
+                var before = await CatalogInboxesAsync(db, artist, key, token);
                 await SaveAsync(db, user, CatalogKind, key, new ReleaseCatalog(next != null || stopped || page.IsPartial
                     ? "partial" : gathered.Length == 0 ? "unknown" : "known", now,
                     next == null || stopped ? NextDay(now) : now, releases, stopped ? null : next, seen.ToArray()), token);
                 await db.SaveChangesAsync(token);
+                foreach (var inbox in before) await PublishInboxChangeAsync(inbox.Key, inbox.Value, token);
                 if (next != null && !stopped) WaitFor(TimeSpan.FromSeconds(2));
             }
             return pending.HasValue ? Deferred(pending.Value) : DurableJobCompletion.Success();
         }
         finally { Gate.Release(); }
+    }
+
+    private async Task<ReleaseInbox?> ReadForEventAsync(Guid owner, CancellationToken token)
+    {
+        if (events == null) return null;
+        try { return await ReadAsync(owner, token); }
+        catch (Exception exception)
+        {
+            logger?.LogWarning(exception, "Could not read a release inbox for a client update");
+            return null;
+        }
+    }
+
+    private async Task PublishInboxChangeAsync(Guid owner, ReleaseInbox? before, CancellationToken token)
+    {
+        if (events == null || before == null) return;
+        var after = await ReadForEventAsync(owner, token);
+        if (after == null) return;
+        if (JsonSerializer.Serialize(new { before.Entries, before.Excluded }) !=
+            JsonSerializer.Serialize(new { after.Entries, after.Excluded }))
+            events.Publish(owner, ClientEvent.Releases(after.Entries.Count));
+    }
+
+    private async Task<Dictionary<Guid, ReleaseInbox>> CatalogInboxesAsync(AllstarrDbContext db,
+        FollowedReleaseArtist artist, string key, CancellationToken token)
+    {
+        try { return await ReadCatalogInboxesAsync(db, artist, key, token); }
+        catch (Exception exception)
+        {
+            logger?.LogWarning(exception, "Could not read release followers for a client update");
+            return [];
+        }
+    }
+
+    private async Task<Dictionary<Guid, ReleaseInbox>> ReadCatalogInboxesAsync(AllstarrDbContext db,
+        FollowedReleaseArtist artist, string key, CancellationToken token)
+    {
+        var result = new Dictionary<Guid, ReleaseInbox>();
+        if (events == null) return result;
+        var owners = await db.ExternalMetadataSnapshots.AsNoTracking()
+            .Where(item => item.ResourceKind == FollowsKind)
+            .Select(item => item.OwnerUserId).Distinct().ToArrayAsync(token);
+        var users = await db.Users.AsNoTracking().Where(item => item.Enabled && owners.Contains(item.Id)).ToArrayAsync(token);
+        foreach (var user in users)
+        {
+            var followed = (await FollowsAsync(db, user, token)).SingleOrDefault(item =>
+                item.ProviderId == artist.ProviderId && item.ArtistId == artist.ArtistId);
+            if (followed == null) continue;
+            var route = await RouteAsync(user, followed, token);
+            if (route != null && CatalogKey(followed, route.Context) == key)
+                result[user.Id] = await ReadAsync(user.Id, token);
+        }
+        return result;
     }
 
     private async Task<ProviderRouteCandidate<IProviderMetadataCapability>?> RouteAsync(UserRecord user,

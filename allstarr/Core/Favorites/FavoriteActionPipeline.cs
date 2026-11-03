@@ -53,7 +53,8 @@ public sealed partial class FavoriteActionPipeline(
     DurableJobQueue jobs,
     IPlatformClock clock,
     RecordingKeptFiles? keptFiles = null,
-    IProtocolProviderGateway? metadata = null) : IFavoriteActionPipeline
+    IProtocolProviderGateway? metadata = null,
+    allstarr.Core.ClientEvents.IClientEventChanges? events = null) : IFavoriteActionPipeline
 {
     public const string JobType = "favorite.process";
     public const string VirtualLikedAction = "virtual-liked";
@@ -285,6 +286,11 @@ public sealed partial class FavoriteActionPipeline(
             }
             await context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            if (events != null)
+            {
+                await events.KeepAsync(userId, itemId);
+                foreach (var linked in linkedTargets) await events.KeepAsync(linked.OwnerUserId, linked.ItemId);
+            }
             return (new(eventId, job.JobId, true, FavoriteEventState.Pending), spotifyImport);
         }
         catch { await transaction.RollbackAsync(cancellationToken); throw; }

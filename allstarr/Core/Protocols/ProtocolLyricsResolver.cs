@@ -55,7 +55,8 @@ public sealed partial class ProtocolLyricsResolver(
     ILibraryIndexService? libraryIndex = null,
     IRecordingLyricsChoices? choices = null,
     ITrackIdentityService? identities = null,
-    TimeProvider? timeProvider = null, IHostApplicationLifetime? lifetime = null) : IProtocolLyricsResolver, IHostedService
+    TimeProvider? timeProvider = null, IHostApplicationLifetime? lifetime = null,
+    allstarr.Core.ClientEvents.ClientLyricsUpdates? clientUpdates = null) : IProtocolLyricsResolver, IHostedService
 {
     public async Task<RichLyrics?> GetRichLyricsAsync(ProtocolExecutionContext context, Song song, string resourceKey,
         ProtocolLyricsSources? sources = null) => RichLyricsMapper.Map(await FindAsync(
@@ -107,9 +108,18 @@ public sealed partial class ProtocolLyricsResolver(
         {
             var lyrics = candidate.Lyrics;
             if (lyrics == null) continue;
+            Observe(lyrics);
             return lyrics;
         }
+        Observe(null);
         return null;
+
+        void Observe(LyricsInfo? value)
+        {
+            if (protocol.Actor?.EffectiveUserId is { } owner && !protocol.IsPreparation &&
+                sources?.HouseholdOnly != true && sources?.ForPermanentSidecar != true)
+                clientUpdates?.Observe(owner, string.IsNullOrWhiteSpace(protocol.RequestedItemId) ? song.Id : protocol.RequestedItemId, value);
+        }
     }
 
     private async Task<(Guid? RecordingId, string? SourceId)> ResolveChoiceAsync(ProtocolExecutionContext protocol,

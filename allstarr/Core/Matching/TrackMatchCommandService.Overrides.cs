@@ -53,6 +53,7 @@ public sealed partial class TrackMatchCommandService
             actor.EffectiveUserId ?? throw new UnauthorizedAccessException("A user owner is required."),
             input.Decision, overrideTrackId, null, null, input.Reason.Trim(), input.ExpectedAuthority, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        if (events != null) await events.MatchAsync(snapshot.Id, actor.EffectiveUserId);
         return record;
     }
 
@@ -77,6 +78,7 @@ public sealed partial class TrackMatchCommandService
         record.RevokedAt = clock.UtcNow;
         record.Revision++;
         await db.SaveChangesAsync(cancellationToken);
+        if (events != null) await events.MatchAsync(record.ExternalSnapshotId, record.OwnerUserId);
     }
 
     public Task<ManualTrackAuthorityCommandResult> ClearManualAuthorityAsync(
@@ -229,6 +231,7 @@ public sealed partial class TrackMatchCommandService
                 "The manual decision changed; refresh and try again");
         }
         if (transaction != null) await transaction.CommitAsync(cancellationToken);
+        if (events != null) await events.MatchAsync(snapshot.Id, ownerId);
         return new(
             true,
             ExternalSnapshotId: snapshot.Id);

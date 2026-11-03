@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Enrichment;
+using allstarr.Core.ClientEvents;
 using allstarr.Core.Capabilities;
 using allstarr.Core.AudioMuse;
 using allstarr.Core.Intelligence;
@@ -50,7 +51,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     SharedTagStore tags, TasteService taste, MusicMixService radio, IProtocolProviderGateway providers,
     NewReleasesService releases, IDurableRuntimeSettings settings, IEffectiveProviderPolicyResolver policies,
     IBackendLibraryAccessResolver libraryAccess, AudioMuseDiscovery? audioMuse = null, SharedTagSources? tagSources = null, IProviderRegistry? registry = null, LastFmSimilarTracks? similarTracks = null,
-    ILogger<PersonalMixService>? logger = null)
+    ILogger<PersonalMixService>? logger = null, IClientEventPublisher? events = null)
 {
     public const string PublishKey = "Mixes:PublishToApps", JobType = "mixes.refresh";
     // Saved songs carry dozens of empty fields; leaving them out keeps a listener's mixes well under the 1 MB a stored
@@ -60,6 +61,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     private const int KeptDocuments = 3;
     private readonly SemaphoreSlim writes = new(1, 1);
     private readonly SemaphoreSlim generations = new(1, 1);
+    private readonly IClientEventPublisher? clientEvents = events;
     private static string Hash(string text) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
     private static string Scope(UserRecord user) => Hash($"{user.Id}:{user.BackendType}:{user.BackendInstanceId}:{user.BackendPrincipalId}");
     private static Guid Id(UserRecord user, string kind) => new(Convert.FromHexString(Hash(Scope(user) + ":" + kind))[..16]);
@@ -418,7 +420,12 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 using (diagnostics.Phase("select")) GenerateKinds(document, captured, candidates, events, features, kinds, inputs);
                 generated = document;
                 using (diagnostics.Phase("save")) completed = await TrySaveAsync(user, document, version, revision, history, token, dryRun);
-                if (completed) return document.Mixes.Values.ToArray();
+                if (completed)
+                {
+                    if (!dryRun)
+                        foreach (var kind in kinds) clientEvents?.Publish(owner, ClientEvent.Mix(document.Mixes[kind].Id));
+                    return document.Mixes.Values.ToArray();
+                }
             }
             throw new InvalidOperationException("Listener choices changed while building this mix. Refresh again.");
         }
@@ -630,6 +637,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             if (mix.Added == enabled) return;
             document.Mixes[document.Mixes.First(item => item.Value.Id == id).Key] = mix with { Added = enabled };
             await SaveAsync(db, user, document, token);
+            clientEvents?.Publish(owner, ClientEvent.Mix(id));
         }
         finally { writes.Release(); }
     }
@@ -655,6 +663,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             await taste.PutNudgeAsync(owner, nudge, token);
             document.Mixes[document.Mixes.First(item => item.Value.Id == id).Key] = mix with { Songs = mix.Songs.Where(item => item.Song.Id != song.Id).ToArray() };
             await SaveAsync(db, user, document, token);
+            clientEvents?.Publish(owner, ClientEvent.Mix(id));
         }
         finally { writes.Release(); }
     }

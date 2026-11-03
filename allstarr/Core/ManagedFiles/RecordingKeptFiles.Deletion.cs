@@ -186,6 +186,11 @@ public sealed partial class RecordingKeptFiles
             job.Revision++;
             await db.SaveChangesAsync(token);
             await transaction.CommitAsync(token);
+            if (events != null)
+            {
+                await events.KeptAsync(payload.RecordingId);
+                await events.LyricsAsync(payload.RecordingId, null, automatic: true);
+            }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or InvalidOperationException or JsonException)
         {

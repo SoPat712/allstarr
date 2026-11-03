@@ -60,15 +60,17 @@ public sealed class RecordingLyricsChoices : IRecordingLyricsChoices
     private readonly IDbContextFactory<AllstarrDbContext> _factory;
     private readonly ITrackIdentityService _identities;
     private readonly IPlatformClock _clock;
+    private readonly allstarr.Core.ClientEvents.IClientEventChanges? _events;
 
     public RecordingLyricsChoices(
         IDbContextFactory<AllstarrDbContext> factory,
         ITrackIdentityService identities,
-        IPlatformClock clock)
+        IPlatformClock clock, allstarr.Core.ClientEvents.IClientEventChanges? events = null)
     {
         _factory = factory;
         _identities = identities;
         _clock = clock;
+        _events = events;
     }
 
     public async Task<RecordingLyricsChoiceLayers> GetAsync(
@@ -149,6 +151,7 @@ public sealed class RecordingLyricsChoices : IRecordingLyricsChoices
             AddAudit(db, context, authorization, "choice.set", source, targetScope, now);
             await db.SaveChangesAsync(token);
             await transaction.CommitAsync(token);
+            if (_events != null) await _events.LyricsAsync(authorization.CanonicalRecordingId, targetScope == ChoiceScope.Personal ? authorization.UserId : null);
             return Project(personal, household);
         }
         catch (Exception exception) when (IsConflict(exception))
@@ -206,6 +209,7 @@ public sealed class RecordingLyricsChoices : IRecordingLyricsChoices
             AddAudit(db, context, authorization, "choice.clear", source, targetScope, now);
             await db.SaveChangesAsync(token);
             await transaction.CommitAsync(token);
+            if (_events != null) await _events.LyricsAsync(authorization.CanonicalRecordingId, targetScope == ChoiceScope.Personal ? authorization.UserId : null);
             return Project(personal, household);
         }
         catch (Exception exception) when (IsConflict(exception))

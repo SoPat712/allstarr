@@ -1,4 +1,5 @@
 using allstarr.Core.Enrichment;
+using allstarr.Core.ClientEvents;
 using allstarr.Core.Favorites;
 using allstarr.Core.Identity;
 using allstarr.Core.Intelligence;
@@ -352,7 +353,11 @@ public sealed partial class PersonalMixService
             }
             saved = preview with { Evidence = evidence, Name = name.Trim(), Generation = 1, UpdatedAt = clock.UtcNow, Readiness = new(true, "Ready"), Added = true, Songs = items };
             document.Mixes[key] = saved;
-            if (await TrySaveAsync(user, document, version, revision, history, token)) return saved;
+            if (await TrySaveAsync(user, document, version, revision, history, token))
+            {
+                clientEvents?.Publish(owner, ClientEvent.Mix(saved.Id));
+                return saved;
+            }
         }
         throw new InvalidOperationException("Listener choices changed while saving this mix. Save again.");
     }
@@ -370,6 +375,7 @@ public sealed partial class PersonalMixService
             document.Mixes.Remove(row.Key);
             document.Previews.Remove(id);
             await SaveAsync(db, user, document, token);
+            clientEvents?.Publish(owner, ClientEvent.Mix(id));
         }
         finally { writes.Release(); }
     }

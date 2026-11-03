@@ -386,6 +386,7 @@ public sealed partial class TrackMatchCommandService
             }
         }
 
+        if (events != null) await events.MatchAsync(snapshot.Id, snapshot.OwnerUserId, automatic: true);
         if (crossLinks != null && source != null)
             await crossLinks.EnqueueAsync(snapshot.OwnerUserId, source.Id, correlationId, cancellationToken);
         return new(

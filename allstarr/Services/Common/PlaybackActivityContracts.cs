@@ -87,7 +87,8 @@ public sealed record PlaybackStreamSource(
         Protocol == protocol && BackendInstanceId == backendInstanceId;
 }
 
-public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySource, IDisposable
+public sealed class PlaybackDeliveryActivityStore(allstarr.Core.ClientEvents.IClientEventPublisher? events = null,
+    IServiceScopeFactory? scopes = null) : IPlaybackDeliveryActivitySource, IDisposable
 {
     private static readonly TimeSpan Retention = TimeSpan.FromHours(1);
     private readonly object sourceGate = new();
@@ -157,14 +158,27 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
                         ? "byte-range" : "sequential"
         };
         var key = (userId, deviceId, StreamItemKey(itemId));
+        var changed = false;
         lock (sourceGate)
         {
             if (!context.IsOriginalDownload)
             {
+                var previous = _delivered.Get<PlaybackStreamSource>(key);
+                changed = previous != null && previous.Matches(source.Protocol, source.BackendInstanceId) &&
+                    (previous.ProviderId != source.ProviderId || previous.ExternalId != source.ExternalId ||
+                     previous.AccountId != source.AccountId || previous.Cached != source.Cached || previous.ManagedFileId != source.ManagedFileId);
                 Set(key, source);
                 _delivered.Remove((userId, context.Protocol, context.BackendInstanceId, deviceId, StreamItemKey(itemId), "interrupted"));
             }
             Set(ContinuationKey(userId, context, itemId, quality), source);
+        }
+        if (changed && events != null && scopes != null)
+        {
+            using var scope = scopes.CreateScope();
+            if (scope.ServiceProvider.GetServices<IPlaybackActivitySource>().SelectMany(activity => activity.GetActivePlaybackStates(TimeSpan.FromMinutes(5)))
+                .Any(state => state.UserId == userId && state.DeviceId == deviceId && state.BackendUserId == context.VerifiedBackendPrincipalId &&
+                    StreamItemKey(state.ItemId) == StreamItemKey(itemId)))
+                events.Publish(userId, allstarr.Core.ClientEvents.ClientEvent.Playback(itemId), deviceId);
         }
     }
 

@@ -30,7 +30,7 @@ public sealed record ClientFeatures
     [JsonPropertyName("releases")] public bool Releases { get; init; } = true;
     [JsonPropertyName("follow")] public bool Follow { get; init; } = true;
     [JsonPropertyName("lyricsSearch")] public bool LyricsSearch { get; init; }
-    [JsonPropertyName("events")] public bool Events { get; init; }
+    [JsonPropertyName("events")] public bool Events { get; init; } = true;
 }
 
 public sealed record ClientApiError(

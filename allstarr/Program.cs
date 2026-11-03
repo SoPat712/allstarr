@@ -371,6 +371,7 @@ builder.Services.AddOpenApi("v1", options =>
 {
     options.ShouldInclude = description => description.GroupName == ClientApiContract.GroupName;
     options.AddDocumentTransformer<ClientApiSchemaTransformer>();
+    options.AddDocumentTransformer<ClientEventDocumentTransformer>();
     options.AddDocumentTransformer((document, context, cancellationToken) =>
     {
         document.Info.Title = "Allstarr Client API";
@@ -407,6 +408,11 @@ builder.Services.AddScoped<MusicPortFilter>();
 builder.Services.AddScoped<ClientApiListenerFilter>();
 builder.Services.AddScoped<ClientApiResultFilter>();
 builder.Services.AddSingleton<ClientApiAvailability>();
+builder.Services.AddSingleton<allstarr.Core.ClientEvents.ClientEventOptions>();
+builder.Services.AddSingleton<allstarr.Core.ClientEvents.ClientEventHub>();
+builder.Services.AddSingleton<allstarr.Core.ClientEvents.IClientEventPublisher>(services => services.GetRequiredService<allstarr.Core.ClientEvents.ClientEventHub>());
+builder.Services.AddSingleton<allstarr.Core.ClientEvents.IClientEventChanges, allstarr.Core.ClientEvents.ClientEventChanges>();
+builder.Services.AddSingleton<allstarr.Core.ClientEvents.ClientLyricsUpdates>();
 builder.Services.AddScoped<ItemDetailsReader>();
 builder.Services.AddScoped<ItemLyricsReader>();
 builder.Services.AddScoped<ItemMatchReader>();
@@ -689,7 +695,8 @@ app.UseExceptionHandler();
 app.UseMiddleware<CorrelationMiddleware>();
 app.UseMiddleware<PlaybackStartTimingMiddleware>();
 
-app.UseResponseCompression();
+app.UseWhen(context => !context.Request.Path.StartsWithSegments("/allstarr/v1/events", StringComparison.OrdinalIgnoreCase),
+    branch => branch.UseResponseCompression());
 
 app.UseWebSockets(new WebSocketOptions
 {

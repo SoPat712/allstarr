@@ -116,7 +116,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var features = root.GetProperty("features");
         Assert.Equal(["events", "fixesMatch", "follow", "itemDetails", "lyricsRich", "lyricsSearch", "lyricsSources", "mixes", "playback", "releases", "reports", "titleMarkers"],
             features.EnumerateObject().Select(item => item.Name).Order().ToArray());
-        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name is "titleMarkers" or "itemDetails" or "playback" or "lyricsRich" or "lyricsSources" or "fixesMatch" or "reports" or "mixes" or "releases" or "follow", item.Value.GetBoolean()));
+        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name is "titleMarkers" or "itemDetails" or "playback" or "lyricsRich" or "lyricsSources" or "fixesMatch" or "reports" or "mixes" or "releases" or "follow" or "events", item.Value.GetBoolean()));
         Assert.NotNull(observed?.Principal);
         Assert.False(observed.Principal.IsAdministrator);
         Assert.Equal(ProviderActorKind.User, observed.RequireActor().Kind);
@@ -316,6 +316,10 @@ public sealed partial class ProtocolRouteFixtureTests
         var operationIds = operations.Select(operation => operation.Value.GetProperty("operationId").GetString()).ToArray();
         Assert.All(operationIds, operationId => Assert.False(string.IsNullOrWhiteSpace(operationId)));
         Assert.Equal(operationIds.Length, operationIds.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal("getEvents", paths.GetProperty("/allstarr/v1/events").GetProperty("get").GetProperty("operationId").GetString());
+        var stream = paths.GetProperty("/allstarr/v1/events").GetProperty("get").GetProperty("responses").GetProperty("200").GetProperty("content");
+        Assert.Equal(["text/event-stream"], stream.EnumerateObject().Select(item => item.Name).ToArray());
+        Assert.Equal("string", stream.GetProperty("text/event-stream").GetProperty("schema").GetProperty("type").GetString());
         Assert.Equal("getCapabilities", paths.GetProperty("/allstarr/v1/capabilities").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("getItemDetails", paths.GetProperty("/allstarr/v1/items/details").GetProperty("post").GetProperty("operationId").GetString());
         Assert.Equal("getProviderIcon", paths.GetProperty("/allstarr/v1/providers/{providerId}/icon").GetProperty("get").GetProperty("operationId").GetString());

@@ -41,5 +41,6 @@ public sealed partial class RecordingKeptFiles
             correlationId, clock.UtcNow.AddMinutes(1), cancellationToken);
         await writer.EnsureSidecarAsync(file.Path, song, source?.ProviderId, source?.SourceExternalTrackId,
             cancellationToken, protocol);
+        if (events != null) await events.LyricsAsync(file.RecordingId, null, automatic: true);
     }
 }

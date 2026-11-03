@@ -1,4 +1,5 @@
 using allstarr.Core.Jobs;
+using allstarr.Core.ClientEvents;
 using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
@@ -130,6 +131,7 @@ public sealed partial class PersonalMixService
         link.UpdatedAt = clock.UtcNow;
         link.Revision++;
         await db.SaveChangesAsync(token);
+        clientEvents?.Publish(user.Id, ClientEvent.Mix(id));
         return true;
     }
 

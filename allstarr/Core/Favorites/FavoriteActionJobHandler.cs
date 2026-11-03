@@ -17,7 +17,8 @@ public sealed class FavoriteActionJobHandler(
     IRecommendationSignalWriter? recommendationSignals = null,
     ILogger<FavoriteActionJobHandler>? logger = null,
     IProtocolProviderGateway? providerGateway = null, allstarr.Core.Music.TasteService? taste = null,
-    IPlaybackTrackResolver? tasteTracks = null) : IDurableJobHandler
+    IPlaybackTrackResolver? tasteTracks = null,
+    allstarr.Core.ClientEvents.IClientEventChanges? events = null) : IDurableJobHandler
 {
     private const string SupersededCode = "favorite_action_superseded";
 
@@ -275,6 +276,7 @@ public sealed class FavoriteActionJobHandler(
             {
                 await database.SaveChangesAsync(cancellationToken);
                 if (transaction != null) await transaction.CommitAsync(cancellationToken);
+                if (events != null && favorite != null) await events.KeepAsync(favorite.OwnerUserId, favorite.ItemId);
                 return;
             }
             catch (DbUpdateConcurrencyException) when (attempt < 2)

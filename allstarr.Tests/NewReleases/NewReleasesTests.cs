@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Core.Capabilities;
+using allstarr.Core.ClientEvents;
 using allstarr.Core.Favorites;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
@@ -88,7 +89,7 @@ public sealed class NewReleasesTests : IAsyncLifetime
         _service = NewService();
     }
 
-    private NewReleasesService NewService() => new(_factory, _clock, _router.Object, _settings.Object);
+    private NewReleasesService NewService(IClientEventPublisher? events = null) => new(_factory, _clock, _router.Object, _settings.Object, events);
     private Task Follow(Guid user, string provider = "deezer", string artist = "a") =>
         _service.FollowAsync(user, new(provider, artist, "Artist"));
     private Task<DurableJobCompletion> Poll(Guid user) => _service.PollAsync(user, Guid.CreateVersion7(), default);
@@ -100,6 +101,70 @@ public sealed class NewReleasesTests : IAsyncLifetime
             releaseType: type, exclusionReason: exclusion,
             tracks: isrcs?.Select((isrc, index) => new ProviderTrackMetadata(new(provider, ProviderResourceKind.Track, index.ToString()),
                 "Track " + index, [new("Artist")], isrc: isrc, isExplicit: explicitValue)));
+
+    [Fact]
+    public async Task Shared_catalog_changes_publish_committed_inbox_counts_to_affected_listeners()
+    {
+        await Follow(_first);
+        await Follow(_second);
+        var published = new List<(Guid Owner, string Value)>();
+        var publisher = new Mock<IClientEventPublisher>();
+        publisher.Setup(item => item.Publish(It.IsAny<Guid>(), It.IsAny<ClientEvent>(), It.IsAny<string?>()))
+            .Callback<Guid, ClientEvent, string?>((owner, value, device) =>
+            {
+                Assert.Null(device);
+                using var db = _factory.CreateDbContext();
+                Assert.True(db.ExternalMetadataSnapshots.Any(item => item.ResourceKind == "release-catalog"));
+                published.Add((owner, JsonSerializer.Serialize(value)));
+            });
+        _service = NewService(publisher.Object);
+        _albums = [Album()];
+        await Poll(_first);
+        Assert.Equal(new[] { _first, _second }.Order(), published.Select(item => item.Owner).Order());
+        Assert.All(published, item => Assert.Equal(JsonSerializer.Serialize(ClientEvent.Releases(1)), item.Value));
+
+        published.Clear();
+        await Poll(_first);
+        Assert.Empty(published);
+        _clock.UtcNow += TimeSpan.FromDays(1);
+        await Poll(_first);
+        Assert.Empty(published);
+        _clock.UtcNow += TimeSpan.FromDays(1);
+        _failure = new(ProviderErrorKind.TransientFailure);
+        await Poll(_first);
+        Assert.Empty(published);
+    }
+
+    [Fact]
+    public async Task Dismiss_follow_and_unfollow_publish_updated_counts_only_when_inbox_changes()
+    {
+        await Follow(_first);
+        _albums = [Album()];
+        await Poll(_first);
+        var entry = Assert.Single((await _service.ReadAsync(_first)).Entries);
+        var published = new List<(Guid Owner, string Value)>();
+        var publisher = new Mock<IClientEventPublisher>();
+        publisher.Setup(item => item.Publish(It.IsAny<Guid>(), It.IsAny<ClientEvent>(), It.IsAny<string?>()))
+            .Callback<Guid, ClientEvent, string?>((owner, value, _) => published.Add((owner, JsonSerializer.Serialize(value))));
+        _service = NewService(publisher.Object);
+
+        Assert.False(await _service.DismissAsync(_second, entry.Id));
+        Assert.Empty(published);
+        await Follow(_second);
+        Assert.Equal((_second, JsonSerializer.Serialize(ClientEvent.Releases(1))), Assert.Single(published));
+        published.Clear();
+        await Follow(_second);
+        Assert.Empty(published);
+        await _service.UnfollowAsync(_second, "deezer", "a");
+        Assert.Equal((_second, JsonSerializer.Serialize(ClientEvent.Releases(0))), Assert.Single(published));
+
+        published.Clear();
+        Assert.True(await _service.DismissAsync(_first, entry.Id));
+        Assert.Equal((_first, JsonSerializer.Serialize(ClientEvent.Releases(0))), Assert.Single(published));
+        published.Clear();
+        Assert.False(await _service.DismissAsync(_first, entry.Id));
+        Assert.Empty(published);
+    }
 
     [Fact]
     public async Task Proven_copies_group_but_unknown_identity_and_editions_stay_separate()

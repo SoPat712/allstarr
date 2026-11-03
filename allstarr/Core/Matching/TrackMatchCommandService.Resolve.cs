@@ -56,6 +56,7 @@ public sealed partial class TrackMatchCommandService
             activeOverride.Revision++;
         }
         await db.SaveChangesAsync(cancellationToken);
+        if (events != null && activeOverrides.Count != 0) await events.MatchAsync(snapshot.Id, actor.UserId);
         return TrackMatchCommandResult.Success(snapshot.Id);
     }
 
@@ -179,6 +180,7 @@ public sealed partial class TrackMatchCommandService
                 CleanReason(command.Reason, targetType == "reject" ? "Rejected during manual review" : "Selected during manual review"),
                 command.ExpectedAuthority, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            if (events != null) await events.MatchAsync(snapshot.Id, ownerId);
         }
         catch (Exception exception) when (DbErrors.IsUniqueViolation(exception) || DbErrors.IsTransientConflict(exception))
         {
