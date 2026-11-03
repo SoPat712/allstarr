@@ -19,7 +19,7 @@ namespace allstarr.Tests;
 
 public sealed partial class PersonalMixServiceTests
 {
-    private async Task SeedReleaseInbox(bool includeArtistAlbums = false)
+    private async Task SeedReleaseInbox(bool includeArtistAlbums = false, Microsoft.Extensions.Logging.ILogger<PersonalMixService>? logger = null, int olderSingleDays = 2)
     {
         var metadata = new Mock<IProviderMetadataCapability>();
         metadata.Setup(x => x.GetArtistAlbumsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderArtistItemsRequest>()))
@@ -28,7 +28,7 @@ public sealed partial class PersonalMixServiceTests
                     Enumerable.Range(0, request.Id.Value == "kylie" ? 2 : 1).Select(i => new ProviderAlbumMetadata(
                         new("deezer", ProviderResourceKind.Album, request.Id.Value + i), "Release " + i,
                         [new(request.Id.Value == "kylie" ? "Kylie Cantrall" : "FLO", request.Id)],
-                        releaseDate: clock.UtcNow.AddDays(-i - 1).ToString("yyyy-MM-dd"), isExplicit: false,
+                        releaseDate: clock.UtcNow.AddDays(request.Id.Value == "kylie" && i == 1 ? -olderSingleDays : -i - 1).ToString("yyyy-MM-dd"), isExplicit: false,
                         releaseType: request.Id.Value == "kylie" ? "single" : "album")).ToArray()))));
         var router = new Mock<IProviderRouter>();
         router.Setup(x => x.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
@@ -69,7 +69,7 @@ public sealed partial class PersonalMixServiceTests
                 .Returns((ProtocolExecutionContext _, string _, string id) => Task.FromResult(Enumerable.Range(0, id == "kylie" ? 2 : 1)
                     .Select(i => new Album { ExternalId = id + i, ReleaseDate = clock.UtcNow.AddDays(-i - 1).ToString("yyyy-MM-dd") }).ToList()));
         service = new(factory, clock, tags, taste, new(gateway.Object), gateway.Object, releases,
-            settings.Object, policies.Object, access.Object);
+            settings.Object, policies.Object, access.Object, logger: logger);
     }
 
     [Fact]

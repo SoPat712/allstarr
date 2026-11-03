@@ -235,7 +235,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         return Hash(JsonSerializer.Serialize(new { Taste = revision, Controls = controls }));
     }
 
-    private async Task<IReadOnlyList<MixCandidate>> RevalidateAsync(UserRecord user, IReadOnlyList<MixCandidate> candidates, CancellationToken token, SeedMixDiagnostics? diagnostics = null)
+    private async Task<IReadOnlyList<MixCandidate>> RevalidateAsync(UserRecord user, IReadOnlyList<MixCandidate> candidates, CancellationToken token, SeedMixDiagnostics? diagnostics = null, GenerationInputs? inputs = null)
     {
         using var phase = diagnostics?.Phase("revalidate");
         diagnostics?.Reset("revalidated-never", "revalidated-policy", "access");
@@ -252,11 +252,15 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             nudge.Kind == "song" && nudge.Name == PersonalMixRules.Key(item.Song)));
         return candidates.Where(item =>
             {
-                if (scores[item.Song].Blocked || Nudge(item, "never")) return false;
+                if (scores[item.Song].Blocked || Nudge(item, "never")) { inputs?.Exclude("Never", item.Song.Id); return false; }
+                inputs?.Diagnostics.Count("revalidate.never");
                 diagnostics?.Count(item.Source, "revalidated-never");
-                if (!context.Policy!.Includes(item.Song)) return false;
+                if (!context.Policy!.Includes(item.Song)) { inputs?.Exclude("Listening policy", item.Song.Id); return false; }
+                inputs?.Diagnostics.Count("revalidate.policy");
                 diagnostics?.Count(item.Source, "revalidated-policy");
-                if (!(item.Song.IsLocal ? allowed.Contains(item.Song.Id) : context.Policy.IsEnabled(item.Song.ExternalProvider ?? ""))) return false;
+                if (!(item.Song.IsLocal ? allowed.Contains(item.Song.Id) : context.Policy.IsEnabled(item.Song.ExternalProvider ?? "")))
+                { inputs?.Exclude("Current access", item.Song.Id); return false; }
+                inputs?.Diagnostics.Count("revalidate.access");
                 diagnostics?.Count(item.Source, "access");
                 return true;
             })
@@ -329,6 +333,10 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         bool afterNewHistory = false)
     {
         await generations.WaitAsync(token);
+        var diagnostics = new MixGenerationDiagnostics();
+        var generatedKinds = Array.Empty<string>();
+        PersonalMixDocument? generated = null;
+        var completed = false;
         try
         {
             var (user, captured, _) = await SnapshotAsync(owner, token);
@@ -339,9 +347,13 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 throw new InvalidOperationException("Wait 15 minutes before refreshing this mix again.");
             if (!dryRun && timeZoneId != null) await SnapshotAsync(owner, token, timeZoneId);
             await using var db = await factory.CreateDbContextAsync(token);
-            var (events, history) = await HistoryAsync(db, user, token);
+            ListeningEventRecord[] events;
+            string history;
+            using (diagnostics.Phase("history")) (events, history) = await HistoryAsync(db, user, token);
             var kinds = requested == null ? PersonalMixRules.Kinds : scheduled && requested.Kind.StartsWith("daily-", StringComparison.Ordinal)
                 ? PersonalMixRules.Kinds.Where(kind => kind.StartsWith("daily-", StringComparison.Ordinal)).ToArray() : [requested.Kind];
+            generatedKinds = kinds;
+            diagnostics.Count("history.events", events.Length);
             var due = kinds.Where(kind => !scheduled || !captured.FillReadAt.TryGetValue(kind, out var lastRead) ||
                 DurableScheduleEngine.GetNextOccurrence(PersonalMixRules.Cron(kind), captured.TimeZoneId, lastRead) <= clock.UtcNow).ToArray();
             // Newly matched history can change who a listener's top artists are, which leaves picks made for the old ones
@@ -351,6 +363,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                     .Where(kind => !afterNewHistory || !captured.Mixes[kind].Readiness.Ready || captured.Mixes[kind].Songs.Count == 0).ToHashSet() : [];
             var inputs = new GenerationInputs
             {
+                Diagnostics = diagnostics,
                 Kind = readKinds.FirstOrDefault() ?? kinds[0],
                 ReadKinds = readKinds,
                 ReusePicks = readKinds.Count == 0
@@ -365,15 +378,18 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 if (saved.ChartTags.Length > 0) inputs.ChartTags[saved.Song.Id] = saved.ChartTags.ToHashSet();
             }
             if (readKinds.Count > 0) await SaveFillAsync(user, null, readKinds, token);
-            var (fetched, _) = await CandidatesAsync(db, user, events, token, inputs: inputs, saved: captured.FillSongs);
-            var features = audioMuse == null || requested != null && !PersonalMixMoods.Kinds.Contains(requested.Kind)
+            IReadOnlyList<MixCandidate> fetched;
+            using (diagnostics.Phase("candidates")) (fetched, _) = await CandidatesAsync(db, user, events, token, inputs: inputs, saved: captured.FillSongs);
+            IReadOnlyDictionary<string, AudioMuseScores> features;
+            using (diagnostics.Phase("features")) features = audioMuse == null || requested != null && !PersonalMixMoods.Kinds.Contains(requested.Kind)
                 ? new Dictionary<string, AudioMuseScores>() : await audioMuse.MixFeaturesAsync(await ContextAsync(user, token),
                     fetched.Where(item => item.Song.IsLocal).Select(item => item.Song.Id), token);
             var styles = TopStyles(fetched).Take(4).ToArray();
             foreach (var kind in kinds.Where(kind => kind.StartsWith("daily-", StringComparison.Ordinal)))
                 if (captured.Mixes[kind].CoverTag == null && kind[^1] - '1' < styles.Length)
                     captured.Mixes[kind] = captured.Mixes[kind] with { CoverTag = styles[kind[^1] - '1'] };
-            fetched = await FillAsync(user, fetched, events, inputs, kinds, captured, features, token);
+            inputs.Stage = "fill";
+            using (diagnostics.Phase("fill")) fetched = await FillAsync(user, fetched, events, inputs, kinds, captured, features, token);
             if (readKinds.Count > 0)
             {
                 var selected = kinds.SelectMany(kind => PersonalMixRules.Select(kind,
@@ -381,23 +397,36 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                     .Select(row => row.Song.Id).ToHashSet();
                 await SaveFillAsync(user, fetched.OrderByDescending(row => selected.Contains(row.Song.Id)).ToArray(), [], token, inputs.FreshSongs);
             }
+            var exclusions = new Dictionary<string, int>(inputs.Excluded);
             for (var attempt = 0; attempt < 3; attempt++)
             {
+                inputs.Excluded = new(exclusions);
+                inputs.Stage = "final";
+                diagnostics.Count("save attempts");
                 var (_, document, version) = await SnapshotAsync(owner, token);
                 var revision = await InputRevisionAsync(db, owner, token);
                 (events, history) = await HistoryAsync(db, user, token);
                 var context = await ContextAsync(user, token);
                 var hearts = (await new allstarr.Core.Favorites.FavoriteViewReader(factory).ReadAsync(context, token)).Where(item => item.Display.Kind == "song").ToArray();
-                var fresh = await RankCandidatesAsync(fetched.Select(row => (row.Song, row.Source, row.ReleasedAt)).ToList(),
+                IReadOnlyList<MixCandidate> fresh;
+                using (diagnostics.Phase("final rank")) fresh = await RankCandidatesAsync(fetched.Select(row => (row.Song, row.Source, row.ReleasedAt)).ToList(),
                     context, user, events, hearts, token, inputs, recount: true);
-                var candidates = await RevalidateAsync(user, fresh, token);
+                IReadOnlyList<MixCandidate> candidates;
+                inputs.Stage = "revalidate";
+                using (diagnostics.Phase("revalidate")) candidates = await RevalidateAsync(user, fresh, token, inputs: inputs);
                 if (dryRun && timeZoneId != null) document.TimeZoneId = timeZoneId.Trim();
-                GenerateKinds(document, captured, candidates, events, features, kinds, inputs);
-                if (await TrySaveAsync(user, document, version, revision, history, token, dryRun)) return document.Mixes.Values.ToArray();
+                using (diagnostics.Phase("select")) GenerateKinds(document, captured, candidates, events, features, kinds, inputs);
+                generated = document;
+                using (diagnostics.Phase("save")) completed = await TrySaveAsync(user, document, version, revision, history, token, dryRun);
+                if (completed) return document.Mixes.Values.ToArray();
             }
             throw new InvalidOperationException("Listener choices changed while building this mix. Refresh again.");
         }
-        finally { generations.Release(); }
+        finally
+        {
+            generations.Release();
+            foreach (var kind in generatedKinds) diagnostics.Log(logger, kind, generated?.Mixes[kind].Evidence, completed);
+        }
     }
 
     private async Task SaveFillAsync(UserRecord capturedUser, IReadOnlyList<MixCandidate>? rows, IEnumerable<string> readKinds, CancellationToken token,
@@ -415,7 +444,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             {
                 var old = document.FillSongs.ToDictionary(row => row.Song.Id);
                 var kept = document.Mixes.Values.SelectMany(mix => mix.Songs).Select(item => item.Song.Id).ToHashSet();
-                document.FillSongs = rows.Where(row => !row.Song.IsLocal || row.RelatedTo != null)
+                document.FillSongs = rows.Where(row => !row.Song.IsLocal || row.RelatedTo != null || row.ReleasedAt != null && row.ReleaseKey != null)
                     .OrderByDescending(row => kept.Contains(row.Song.Id)).Select(row => new MixFillSong(SafeSong(row.Song),
                         fresh?.Contains(row.Song.Id) == true ? clock.UtcNow : old.GetValueOrDefault(row.Song.Id)?.ReadAt ?? clock.UtcNow, row.Source, row.ProviderFilled,
                         row.Tags.Keys.ToArray(), row.ChartTags ?? [], row.RelatedTo, row.EvidenceSource, row.ReleasedAt, row.ReleaseKey))
@@ -485,7 +514,8 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             var removed = captured.Mixes[kind].Songs.Select(item => PersonalMixRules.Key(item.Song))
                 .Except(mix.Songs.Select(item => PersonalMixRules.Key(item.Song))).ToHashSet(StringComparer.Ordinal);
             var pool = RecipePool(kind, style, candidates, features, candidates)
-                .Where(item => kind != "release-radar" || inputs.ReleaseArtists.Contains(item.Song.Artist))
+                .Where(item => kind != "release-radar" || inputs.ReleaseArtists.Contains(item.Song.Artist) ||
+                    item.ReleaseKey != null && inputs.EligibleReleases.Contains(item.ReleaseKey))
                 .Where(item => kind != "discover-weekly" || relatedSeeds.Contains(item.RelatedTo))
                 .Where(item => !removed.Contains(PersonalMixRules.Key(item.Song)) &&
                     (kind != "discover-weekly" || !PersonalMixRules.IdentityKeys(item.Song).Any(previous.Contains))).ToArray();
@@ -510,10 +540,19 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                     _ => (item.Plays > 0 || item.Loved ? "Familiar" : "New to you") + " · " + style
                 }, 0)).ToArray();
             var excluded = new Dictionary<string, int>(inputs.Excluded);
-            var changed = inputs.Offered - inputs.Excluded.Values.Sum() - candidates.Count;
-            if (changed > 0) excluded["Choices changed during generation"] = changed;
             excluded["Outside this recipe"] = candidates.Count - pool.Length;
             excluded["Artist, release, tier and size limits"] = pool.Length - selected.Count;
+            if (kind == "release-radar")
+                foreach (var entry in inputs.Diagnostics.Inbox)
+                {
+                    var final = candidates.Count(row => row.ReleaseKey != null && entry.Keys.Contains(row.ReleaseKey));
+                    var qualified = pool.Count(row => row.ReleaseKey != null && entry.Keys.Contains(row.ReleaseKey));
+                    entry.Counts["Final candidates"] = final;
+                    entry.Counts["Outside recipe"] = final - qualified;
+                    entry.Counts["Qualified"] = qualified;
+                    entry.Counts["Shown"] = selected.Count(row => row.ReleaseKey != null && entry.Keys.Contains(row.ReleaseKey));
+                    entry.Counts["Release or artist limits"] = qualified - entry.Counts["Shown"];
+                }
             document.Mixes[kind] = mix with
             {
                 Name = PersonalMixRules.Name(kind, style),
