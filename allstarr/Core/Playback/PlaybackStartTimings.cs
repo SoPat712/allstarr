@@ -15,7 +15,8 @@ public enum PlaybackStartPhase { Route, Account, Lease, Source, Verify, Retry, S
 public sealed record PlaybackStartPhaseTiming(PlaybackStartPhase Phase, string? Provider, double StartedMs, double ElapsedMs);
 public sealed record PlaybackStartSample(Guid Id, DateTimeOffset StartedAt, string Outcome, string? Provider,
     string? Title, string? Artist, string? AccountScope, bool Cached, double ElapsedMs,
-    double? HeadersMs, double? FirstByteMs, IReadOnlyList<PlaybackStartPhaseTiming> Phases, int OmittedPhases, PlayTraceData? Trace = null);
+    double? HeadersMs, double? FirstByteMs, IReadOnlyList<PlaybackStartPhaseTiming> Phases, int OmittedPhases, PlayTraceData? Trace = null,
+    string? DeviceId = null);
 
 public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
 {
@@ -30,6 +31,7 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
     private int omitted;
     private string? provider, title, artist, accountScope;
     private bool cached;
+    private string? deviceId;
     private PlayTraceData? play;
     private Func<TrackMediaFacts?>? received;
     private double? headers, firstByte;
@@ -94,6 +96,7 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
         lock (sync)
         {
             if (closed || play != null) return;
+            deviceId = context.Client.DeviceId;
             play = new(context.Principal.UserId, new(context.Protocol.ToString(), PlayTraceText.Reference(itemId),
                 PlayTraceText.Clean(context.Client.ClientId), PlayTraceText.Clean(context.Client.DeviceName), new()), new());
         }
@@ -206,7 +209,7 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
             if (!closed && received?.Invoke() is { } facts && play != null) play = play with { Received = PlayTraceText.Facts(facts) };
             if (complete) { closed = true; received = null; }
             return new(id, startedAt, outcome, provider ?? phases.LastOrDefault(phase => phase.Provider != null)?.Provider, title, artist, accountScope, cached,
-                Elapsed, headers, firstByte, phases.OrderBy(item => item.StartedMs).ToArray(), omitted, play);
+                Elapsed, headers, firstByte, phases.OrderBy(item => item.StartedMs).ToArray(), omitted, play, deviceId);
         }
     }
     public void Dispose() => Ambient.Value = previous;
@@ -224,6 +227,13 @@ public sealed class PlaybackStartTimingStore(IDbContextFactory<AllstarrDbContext
     public const int MaximumSamples = 500;
     public static readonly TimeSpan Retention = TimeSpan.FromDays(7);
     private readonly SemaphoreSlim writing = new(1, 1);
+
+    internal static IQueryable<AuditEventRecord> RecentEvents(AllstarrDbContext db, DateTimeOffset now)
+    {
+        var cutoff = now - Retention;
+        return db.AuditEvents.AsNoTracking().Where(item => item.Category == Category &&
+            item.SubjectType == Category && item.SubjectId == "recent" && item.CreatedAt >= cutoff);
+    }
 
     public async Task RecordAsync(PlaybackStartSample sample)
     {

@@ -28,6 +28,7 @@ public partial class JellyfinSessionManager
             if (session.LastPlayingItemId == null || session.ExternalReport == null ||
                 !JellyfinExternalPlaybackReport.SameOccurrence(session.ExternalReport, report))
             {
+                session.PlaybackStartedAt = current.ReceivedAt;
                 session.LastExplicitStopItemId = null;
                 session.LastExplicitStopAtUtc = null;
             }

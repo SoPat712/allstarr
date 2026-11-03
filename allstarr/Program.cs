@@ -365,6 +365,8 @@ builder.Services.AddHttpClient(JellyfinProxyService.HttpClientName)
     });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.NumberHandling = ClientApiContract.JsonOptions.NumberHandling);
 builder.Services.AddOpenApi("v1", options =>
 {
     options.ShouldInclude = description => description.GroupName == ClientApiContract.GroupName;
@@ -405,6 +407,7 @@ builder.Services.AddScoped<ClientApiListenerFilter>();
 builder.Services.AddScoped<ClientApiResultFilter>();
 builder.Services.AddSingleton<ClientApiAvailability>();
 builder.Services.AddScoped<ItemDetailsReader>();
+builder.Services.AddScoped<PlaybackReader>();
 
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminHelperService>();
 builder.Services.AddSingleton<allstarr.Services.Admin.IAdminAuthSessionStore, allstarr.Services.Admin.EfAdminAuthSessionStore>();

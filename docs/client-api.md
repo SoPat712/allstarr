@@ -18,7 +18,7 @@ receive the same personal scope as other listeners.
 
 `GET /allstarr/v1/capabilities` returns `serverVersion`, `apiVersion`, and a
 `features` object. Check feature flags before using optional routes.
-`titleMarkers` and `itemDetails` are available; the other flags remain false until supported.
+`titleMarkers`, `itemDetails`, and `playback` are available; the other flags remain false until supported.
 The version in the path identifies the contract. Compatible additions stay
 within v1; incompatible changes use a new path version.
 
@@ -38,6 +38,35 @@ values preserve the normal behavior.
 
 Browser clients may send `X-Allstarr-*` headers. Responses expose
 `X-Allstarr-Playback-Request` through CORS.
+
+`GET /allstarr/v1/playback/{requestId}` describes a provider stream. Use the
+`X-Allstarr-Playback-Request` value received on that stream response. Samples
+are retained for seven days, with at most 500 across the server. Unknown,
+expired, and other listeners' or devices' IDs all return 404 `not_found`.
+Samples recorded before device tracking was available also return 404.
+
+`GET /allstarr/v1/playback/current` describes the caller's active playback on
+this device, including tracks from their own Jellyfin library, which have no
+playback request ID. It uses playback reports from the last five minutes;
+stopped or inactive playback returns 404 `not_found`. It never selects another
+device's playback. Send the same `DeviceId` in the MediaBrowser authorization
+header or `deviceId` query parameter used for the stream and playback reports.
+A request without a device identity returns 404.
+
+Both routes return the following fields and use `Cache-Control: no-store`:
+
+| Field | Meaning |
+| --- | --- |
+| `provider` | Serving source `{id,name,iconUrl}`, or `null` for own-library playback. Icons use the authenticated `/allstarr/v1/providers/{id}/icon` route; unavailable icons have a null URL. |
+| `accountScope` | `personal`, `shared`, or `null` when unavailable or account-free. Account names and identifiers are never returned. |
+| `cached` | Whether the stream came from a retained or cached file. |
+| `delivered` | Actual output `{format,codec,bitDepth,sampleRate,bitrate}`, or `null` when unavailable. Individual unknown measurements are null; bitrate is in bits per second. Converted streams describe the converted output. |
+| `routeReason` | Recorded route reason, or `null`. Own-library playback uses `native-local-library`. |
+| `itemId` | Requested item ID, or `null` when unavailable. |
+| `startedAt` | Stream start time in ISO 8601. For own-library playback, the start of the observed playback occurrence. |
+
+The client JSON contract uses strict numeric types; numeric schema properties
+do not accept strings. Responses continue to write numbers as JSON numbers.
 
 `POST /allstarr/v1/items/details` accepts `{"ids":["jellyfin-item-id","ext-deezer-song-123"]}`.
 Send between 1 and 100 IDs; empty or larger batches return 400 `invalid_request`.

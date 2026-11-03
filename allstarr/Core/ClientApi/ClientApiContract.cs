@@ -7,7 +7,7 @@ public static class ClientApiContract
 {
     public const string GroupName = "allstarr-client-v1";
     public static JsonSerializerOptions JsonOptions { get; } = new(JsonSerializerDefaults.Web)
-    { DictionaryKeyPolicy = JsonNamingPolicy.CamelCase };
+    { DictionaryKeyPolicy = JsonNamingPolicy.CamelCase, NumberHandling = JsonNumberHandling.Strict };
 
     public static ClientCapabilities Capabilities { get; } = new(AppVersion.Version, 1, new());
 }
@@ -21,7 +21,7 @@ public sealed record ClientFeatures
 {
     [JsonPropertyName("titleMarkers")] public bool TitleMarkers { get; init; } = true;
     [JsonPropertyName("itemDetails")] public bool ItemDetails { get; init; } = true;
-    [JsonPropertyName("playback")] public bool Playback { get; init; }
+    [JsonPropertyName("playback")] public bool Playback { get; init; } = true;
     [JsonPropertyName("lyricsRich")] public bool LyricsRich { get; init; }
     [JsonPropertyName("lyricsSources")] public bool LyricsSources { get; init; }
     [JsonPropertyName("fixesMatch")] public bool FixesMatch { get; init; }

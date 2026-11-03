@@ -20,7 +20,8 @@ public sealed class JellyfinPlaybackActivitySource(JellyfinSessionManager sessio
                 state.Device)
             {
                 IsPaused = state.IsPaused,
-                PositionUpdatedAt = state.PositionUpdatedAt
+                PositionUpdatedAt = state.PositionUpdatedAt,
+                StartedAt = state.StartedAt
             })
             .ToList();
     }

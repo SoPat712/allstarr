@@ -272,6 +272,7 @@ public partial class JellyfinSessionManager : IDisposable
             };
             var same = previous != null && JellyfinExternalPlaybackReport.SameOccurrence(ObservationIdentity(previous), identity);
             if (stopped && previous is { Stopped: false } && !same) return false;
+            if (!same || previous!.Stopped) session.PlaybackStartedAt = receipt.ReceivedAt;
             var reported = positionTicks is >= 0 ? positionTicks : null;
             var position = reported ?? (same ? previous!.PositionTicks : null);
             var paused = isPaused ?? (same ? previous!.IsPaused : null);
@@ -309,6 +310,8 @@ public partial class JellyfinSessionManager : IDisposable
                 if (!CanApplyPlaybackReceipt(session, current)) return;
                 if (receipt.HasValue && itemId == null && session.HomeObservation is { } observed &&
                     (!observed.Stopped || observed.Receipt.Sequence != current.Sequence)) return;
+                if (itemId != null && (itemId != session.LastPlayingItemId || session.HomeObservation?.Stopped == true))
+                    session.PlaybackStartedAt = current.ReceivedAt;
                 session.PlaybackSequence = current.Sequence;
                 if (!receipt.HasValue)
                     session.HomeObservation = itemId == null
@@ -430,7 +433,8 @@ public partial class JellyfinSessionManager : IDisposable
                     session.LastActivity, session.UserId, session.BackendUserId, session.UserName, session.Client, session.Device)
                 {
                     IsPaused = observation?.IsPaused,
-                    PositionUpdatedAt = observation?.PositionUpdatedAt
+                    PositionUpdatedAt = observation?.PositionUpdatedAt,
+                    StartedAt = session.PlaybackStartedAt
                 });
             }
         }
@@ -813,6 +817,7 @@ public partial class JellyfinSessionManager : IDisposable
         public ClientWebSocket? WebSocket { get; set; }
         public System.Text.Json.Nodes.JsonObject? ExternalReport { get; set; }
         public string? LastPlayingItemId { get; set; }
+        public DateTimeOffset? PlaybackStartedAt { get; set; }
         public long? LastPlayingPositionTicks { get; set; }
         public long PlaybackSequence { get; set; }
         public HomePlaybackObservation? HomeObservation { get; set; }
@@ -839,6 +844,7 @@ public partial class JellyfinSessionManager : IDisposable
     {
         public bool? IsPaused { get; init; }
         public DateTimeOffset? PositionUpdatedAt { get; init; }
+        public DateTimeOffset? StartedAt { get; init; }
     }
 
     private sealed record HomePlaybackObservation(PlaybackReportReceipt Receipt, string ItemId, long? PositionTicks,

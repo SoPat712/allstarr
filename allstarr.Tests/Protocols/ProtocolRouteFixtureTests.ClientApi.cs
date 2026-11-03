@@ -116,7 +116,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var features = root.GetProperty("features");
         Assert.Equal(["events", "fixesMatch", "follow", "itemDetails", "lyricsRich", "lyricsSearch", "lyricsSources", "mixes", "playback", "releases", "reports", "titleMarkers"],
             features.EnumerateObject().Select(item => item.Name).Order().ToArray());
-        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name is "titleMarkers" or "itemDetails", item.Value.GetBoolean()));
+        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name is "titleMarkers" or "itemDetails" or "playback", item.Value.GetBoolean()));
         Assert.NotNull(observed?.Principal);
         Assert.False(observed.Principal.IsAdministrator);
         Assert.Equal(ProviderActorKind.User, observed.RequireActor().Kind);
@@ -319,6 +319,40 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("getCapabilities", paths.GetProperty("/allstarr/v1/capabilities").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("getItemDetails", paths.GetProperty("/allstarr/v1/items/details").GetProperty("post").GetProperty("operationId").GetString());
         Assert.Equal("getProviderIcon", paths.GetProperty("/allstarr/v1/providers/{providerId}/icon").GetProperty("get").GetProperty("operationId").GetString());
+        Assert.Equal("getPlayback", paths.GetProperty("/allstarr/v1/playback/{requestId}").GetProperty("get").GetProperty("operationId").GetString());
+        Assert.Equal("getCurrentPlayback", paths.GetProperty("/allstarr/v1/playback/current").GetProperty("get").GetProperty("operationId").GetString());
+    }
+
+    [Fact]
+    public async Task ClientApi_OpenApiNumericSchemasNeverAllowStrings()
+    {
+        using var factory = ClientApiFactory(_ => throw new InvalidOperationException("Unexpected upstream request"));
+        using var client = CreateClientApiClient(factory);
+        using var response = await client.GetAsync("/allstarr/v1/openapi.json");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var numeric = 0;
+        void Check(JsonElement node)
+        {
+            if (node.ValueKind == JsonValueKind.Object)
+            {
+                if (node.TryGetProperty("type", out var type))
+                {
+                    var types = type.ValueKind == JsonValueKind.Array
+                        ? type.EnumerateArray().Select(value => value.GetString()).ToArray() : [type.GetString()];
+                    if (types.Contains("integer") || types.Contains("number"))
+                    {
+                        numeric++;
+                        Assert.DoesNotContain("string", types);
+                    }
+                }
+                foreach (var property in node.EnumerateObject()) Check(property.Value);
+            }
+            else if (node.ValueKind == JsonValueKind.Array)
+                foreach (var value in node.EnumerateArray()) Check(value);
+        }
+        Check(document.RootElement);
+        Assert.True(numeric > 0);
     }
 
     [Fact]

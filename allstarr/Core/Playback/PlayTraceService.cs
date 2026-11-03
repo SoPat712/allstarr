@@ -67,9 +67,7 @@ public sealed class PlayTraceService(IDbContextFactory<AllstarrDbContext> factor
 
     private IQueryable<AuditEventRecord> Visible(AllstarrDbContext db, AdminAuthSession session)
     {
-        var cutoff = clock.GetUtcNow() - PlaybackStartTimingStore.Retention;
-        return db.AuditEvents.AsNoTracking().Where(item => item.Category == PlaybackStartTimingStore.Category &&
-            item.SubjectType == PlaybackStartTimingStore.Category && item.SubjectId == "recent" && item.CreatedAt >= cutoff &&
+        return PlaybackStartTimingStore.RecentEvents(db, clock.GetUtcNow()).Where(item =>
             item.ActorUserId != null && (session.IsAdministrator || item.ActorUserId == session.AllstarrUserId));
     }
 

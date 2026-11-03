@@ -1,0 +1,111 @@
+using System.Text.Json;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Operations;
+using allstarr.Core.Playback;
+using allstarr.Core.Protocols;
+using allstarr.Core.Storage;
+using allstarr.Services.Common;
+using Microsoft.EntityFrameworkCore;
+
+namespace allstarr.Core.ClientApi;
+
+public sealed class PlaybackReader(
+    IDbContextFactory<AllstarrDbContext> factory,
+    TimeProvider clock,
+    IProviderRegistry registry,
+    IEnumerable<IPlaybackActivitySource> activity,
+    IPlaybackDeliveryActivitySource deliveries)
+{
+    public async Task<ClientPlayback?> ReadAsync(HttpContext http, ProtocolExecutionContext execution, Guid id)
+    {
+        if (execution.Client.DeviceId == null) return null;
+        await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
+        var row = await Visible(db, execution).SingleOrDefaultAsync(item => item.Id == id, execution.CancellationToken);
+        var sample = row == null ? null : Read(row, execution);
+        return sample == null ? null : await ProjectAsync(http, sample);
+    }
+
+    public async Task<ClientPlayback?> CurrentAsync(HttpContext http, ProtocolExecutionContext execution)
+    {
+        if (execution.Client.DeviceId is not { } device) return null;
+        var owner = execution.RequireActor().EffectiveUserId!.Value;
+        var state = activity.SelectMany(source => source.GetActivePlaybackStates(TimeSpan.FromMinutes(5)))
+            .Where(state => state.UserId == owner && state.DeviceId == device &&
+                state.BackendUserId == execution.VerifiedBackendPrincipalId)
+            .OrderByDescending(state => state.LastActivity).FirstOrDefault();
+        if (state == null) return null;
+        await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
+        var rows = await Visible(db, execution).OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
+            .Take(PlaybackStartTimingStore.MaximumSamples).ToArrayAsync(execution.CancellationToken);
+        var stream = deliveries.StreamFor(owner, device, state.ItemId);
+        if (stream != null && !stream.Matches(execution.Protocol.ToString().ToLowerInvariant(), execution.BackendInstanceId)) stream = null;
+        var sample = rows.Select(row => Read(row, execution)).OfType<PlaybackStartSample>()
+            .FirstOrDefault(sample => SameItem(sample.Trace!.Request.ItemId, state.ItemId) &&
+                (stream == null || stream.PlaybackRequestId == sample.Id));
+        if (sample != null) return await ProjectAsync(http, sample);
+        if (stream != null)
+        {
+            var scope = stream.AccountId is { } accountId ? await db.ProviderAccounts.AsNoTracking()
+                .Where(account => account.Id == accountId && (account.OwnerUserId == null || account.OwnerUserId == owner))
+                .Select(account => (ProviderAccountScope?)account.Scope).SingleOrDefaultAsync(execution.CancellationToken) : null;
+            return new(await ProviderAsync(http, stream.ProviderId), Scope(scope?.ToString()), stream.Cached,
+                null, ProblemReportText.Route(stream.SelectionReason), state.ItemId, stream.OpenedAt);
+        }
+        if (ExternalPlaybackMetadataResolver.ParseTrackIdentity(state.ItemId) != null) return null;
+        return new(null, null, false, null, "native-local-library", state.ItemId,
+            state.StartedAt ?? new DateTimeOffset(DateTime.SpecifyKind(state.LastActivity, DateTimeKind.Utc)));
+    }
+
+    private IQueryable<AuditEventRecord> Visible(AllstarrDbContext db, ProtocolExecutionContext execution)
+    {
+        var owner = execution.RequireActor().EffectiveUserId!.Value;
+        return PlaybackStartTimingStore.RecentEvents(db, clock.GetUtcNow()).Where(item => item.ActorUserId == owner);
+    }
+
+    private static PlaybackStartSample? Read(AuditEventRecord row, ProtocolExecutionContext execution)
+    {
+        if (row.DetailsJson.Length > 131072) return null;
+        try
+        {
+            var sample = JsonSerializer.Deserialize<PlaybackStartSample>(row.DetailsJson);
+            return sample?.Trace is { } trace && trace.OwnerUserId == row.ActorUserId &&
+                trace.Request.Protocol == execution.Protocol.ToString() && sample.DeviceId != null &&
+                sample.DeviceId == execution.Client.DeviceId ? sample : null;
+        }
+        catch (JsonException) { return null; }
+    }
+
+    private async Task<ClientPlayback> ProjectAsync(HttpContext http, PlaybackStartSample sample)
+    {
+        var trace = sample.Trace!;
+        var media = trace.Delivery?.Converted == true ? trace.Delivery.Output : trace.Received?.Media;
+        return new(await ProviderAsync(http, trace.Resolution.Provider ?? sample.Provider), Scope(sample.AccountScope),
+            trace.Resolution.Cached ?? sample.Cached, Delivered(media), trace.Resolution.Route, trace.Request.ItemId, sample.StartedAt);
+    }
+
+    private async Task<ItemDetailsProvider?> ProviderAsync(HttpContext http, string? provider)
+    {
+        if (provider == null || !registry.TryGet(provider, out var descriptor)) return null;
+        var icon = await ProviderArtworkResolver.ResolveIconAsync(http.RequestServices, provider, http.RequestAborted);
+        return new(provider, descriptor!.DisplayName, icon == null ? null : $"/allstarr/v1/providers/{Uri.EscapeDataString(provider)}/icon");
+    }
+
+    private static PlaybackAccountScope? Scope(string? value) => value?.ToLowerInvariant() switch
+    {
+        "personal" => PlaybackAccountScope.Personal,
+        "shared" => PlaybackAccountScope.Shared,
+        _ => null
+    };
+
+    private static PlaybackDelivered? Delivered(ProviderMediaFormat? media) => media == null ? null :
+        new(media.Container, media.Codec, media.BitDepth, media.SampleRate, media.Bitrate);
+
+    private static bool SameItem(string? first, string second)
+    {
+        if (string.Equals(first, second, StringComparison.OrdinalIgnoreCase)) return true;
+        if (Guid.TryParse(first, out var firstId) && Guid.TryParse(second, out var secondId)) return firstId == secondId;
+        var firstExternal = first == null ? null : ExternalPlaybackMetadataResolver.ParseTrackIdentity(first);
+        var secondExternal = ExternalPlaybackMetadataResolver.ParseTrackIdentity(second);
+        return firstExternal != null && firstExternal == secondExternal;
+    }
+}

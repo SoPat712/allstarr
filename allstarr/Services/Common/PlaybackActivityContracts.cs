@@ -17,6 +17,7 @@ public sealed record PlaybackActivityState(
 {
     public bool? IsPaused { get; init; }
     public DateTimeOffset? PositionUpdatedAt { get; init; }
+    public DateTimeOffset? StartedAt { get; init; }
 }
 
 public sealed record PlaybackTrackMetadata(
@@ -77,6 +78,7 @@ public sealed record PlaybackStreamSource(
     public ProviderAudioQuality EffectiveQuality { get; init; } = ProviderAudioQuality.Any;
     public ProviderAudioQuality SourceQuality { get; init; } = ProviderAudioQuality.Any;
     public Guid? ManagedFileId { get; init; }
+    internal Guid? PlaybackRequestId { get; init; }
     public string SeekRung { get; init; } = "sequential";
     public string? RejectionReason { get; init; }
     internal object? ObservationToken { get; init; }
@@ -143,6 +145,7 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
             EffectiveQuality = quality,
             SourceQuality = stream.EffectiveQuality,
             ManagedFileId = stream.ServingManagedFileId,
+            PlaybackRequestId = allstarr.Core.Playback.PlaybackStartTimings.Current?.Id,
             ObservationToken = stream.ObservationToken,
             SeekRung = stream.IsCached
                 ? stream.Lease.LeaseId == "managed-progressive-cache"
