@@ -183,7 +183,7 @@ public sealed partial class PersonalMixServiceTests
                 }
                 return new BackendLibraryAccess(true, []);
             });
-        var block = BlockSong("0");
+        var block = BlockSong("0", stored: true);
         var generation = service.GenerateAsync(owner, id);
         try
         {
@@ -197,7 +197,8 @@ public sealed partial class PersonalMixServiceTests
         Assert.True(result.Readiness.Ready);
         Assert.Equal(150, result.Evidence!.ImportedPlays);
         Assert.Equal(3, validations);
-        gateway.Verify(x => x.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0"), Times.Once);
+        gateway.Verify(x => x.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0"), Times.Once);
+        gateway.Verify(x => x.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0"), Times.Never);
     }
 
     [Fact]

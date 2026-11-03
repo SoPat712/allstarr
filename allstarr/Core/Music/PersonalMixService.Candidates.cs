@@ -15,6 +15,8 @@ namespace allstarr.Core.Music;
 
 public sealed partial class PersonalMixService
 {
+    private sealed record HistoryRouteCheck(Song? Song);
+
     private sealed class GenerationInputs
     {
         internal int Reads, Failures, Offered, InboxEntries;
@@ -27,6 +29,7 @@ public sealed partial class PersonalMixService
         internal string? TagChartStatus;
         internal HashSet<string> Filled = [];
         internal HashSet<string> FreshSongs = [];
+        internal Dictionary<string, HashSet<string>> HistoryReferences = [];
         internal HashSet<string> ReleaseArtists = new(StringComparer.OrdinalIgnoreCase);
         internal Dictionary<string, string[]> CachedTags = [];
         internal Dictionary<string, int> RecipeReads = [];
@@ -103,8 +106,10 @@ public sealed partial class PersonalMixService
         }
         if (start != null) return await StartCandidatesAsync(db, context, access, user, events, start, token, diagnostics);
         var known = events.Select(item => item.LibraryTrackId).OfType<Guid>().Distinct().ToArray();
+        var historyRecordings = events.Select(play => play.CanonicalRecordingId).OfType<Guid>().ToHashSet();
         var query = LibraryTrackAccess.Query(db, context, access);
-        var library = await query.OrderByDescending(item => known.Contains(item.Id))
+        var library = await query.OrderByDescending(item => known.Contains(item.Id) ||
+                item.CanonicalRecordingId != null && historyRecordings.Contains(item.CanonicalRecordingId.Value))
             .ThenBy(item => item.BackendItemId).Take(600).ToArrayAsync(token);
         var rows = new List<(Song Song, string Source, DateTimeOffset? Release)>();
         var hearts = (await new FavoriteViewReader(factory).ReadAsync(context, token)).Where(item => item.Display.Kind == "song").Take(300).ToArray();
@@ -119,34 +124,118 @@ public sealed partial class PersonalMixService
         inputs.Diagnostics.Count("library", library.Length);
         inputs.Diagnostics.Count("hearts", hearts.Length);
         inputs.Diagnostics.Count("saved", (saved ?? []).Count);
-        var historyRecordings = events.Select(play => play.CanonicalRecordingId).OfType<Guid>().ToHashSet();
         var historyReferences = events.Select(play => play.TrackReference).ToHashSet();
         rows.AddRange((saved ?? []).Where(row => row.Filled || row.Source != "history" || historyReferences.Contains(row.Song.Id) ||
             row.Song.CanonicalRecordingId is { } id && historyRecordings.Contains(id)).Select(row => (row.Song, row.Source, row.Release)));
         var recent = RecentHistory(events);
         inputs.Playable = (await providers.GetPlayableProviderOrderAsync(context.Actor!, token) ?? []).Where(provider => context.Policy?.IsAutomatic(provider) != false).ToArray();
+        var identities = await db.ProviderTrackIdentities.AsNoTracking().Where(item => historyRecordings.Contains(item.CanonicalRecordingId) &&
+            item.ResourceKind == ProviderResourceKind.Track &&
+            db.CanonicalRecordings.Any(recording => recording.Id == item.CanonicalRecordingId && recording.MergedIntoId == null) &&
+            (item.Scope == ProviderIdentityScope.Catalog || db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId &&
+                account.Enabled && (account.OwnerUserId == user.Id || account.OwnerUserId == null)))).ToArrayAsync(token);
+        var routes = identities.Where(CatalogIdentityPolicy.IsPlaybackEligible).Where(item => inputs.Playable.Contains(item.ProviderId))
+            .GroupBy(item => item.CanonicalRecordingId).ToDictionary(group => group.Key,
+                group => CatalogIdentityPolicy.OrderForPlayback(group).OrderBy(item => Array.IndexOf(inputs.Playable, item.ProviderId)).ToArray());
+        async Task<HistoryRouteCheck?> ResolvedHistorySong(IGrouping<string, ListeningEventRecord> group)
+        {
+            var plays = group.Where(play => play.CanonicalRecordingId != null).OrderByDescending(play => play.ListenedAt).ToArray();
+            var attempted = new HashSet<string>();
+            foreach (var play in plays.DistinctBy(play => play.TrackReference))
+            {
+                var parsed = LocalLibraryService.ParseExternalResource(play.TrackReference);
+                if (parsed.isExternal && parsed.type == "song" && inputs.Playable.Contains(parsed.provider))
+                {
+                    attempted.Add(play.TrackReference);
+                    if (await Route(play, parsed.provider!, parsed.externalId!) is { } song) return new(song);
+                }
+            }
+            var latest = plays.FirstOrDefault();
+            foreach (var identity in latest?.CanonicalRecordingId is { } recording ? routes.GetValueOrDefault(recording) ?? [] : [])
+            {
+                if (!attempted.Add($"ext-{identity.ProviderId}-song-{identity.ExternalId}")) continue;
+                if (await Route(latest!, identity.ProviderId, identity.ExternalId) is { } song) return new(song);
+            }
+            return attempted.Count > 0 ? new((Song?)null) : null;
+
+            async Task<Song?> Route(ListeningEventRecord play, string provider, string id)
+            {
+                var stored = await providers.GetStoredSongAsync(context, provider, id);
+                if (stored == null)
+                {
+                    var kind = inputs.Kind;
+                    inputs.Kind = GenerationInputs.PlaybackChecks;
+                    HistoryRouteCheck? check;
+                    try
+                    {
+                        check = await inputs.ReadAsync(context, async c =>
+                        {
+                            try { return new HistoryRouteCheck(await providers.GetSongAsync(c, provider, id)); }
+                            catch (FileNotFoundException) { return new((Song?)null); }
+                            catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Gone)
+                            { return new((Song?)null); }
+                        }, token, provider);
+                    }
+                    finally { inputs.Kind = kind; }
+                    if (check is { Song: null }) return null;
+                    stored = check?.Song;
+                    if (stored != null) inputs.FreshSongs.Add($"ext-{provider}-song-{id}");
+                }
+                // The saved reference is the selected playback route; cached canonical metadata can prefer a different source.
+                var song = stored?.WithTasteReason(stored.TasteReason) ?? new Song
+                {
+                    Title = MusicLyrics.StripPresentationLabels(play.Title),
+                    Artist = MusicLyrics.StripPresentationLabels(play.Artist),
+                    Album = MusicLyrics.StripPresentationLabels(play.Album),
+                    AlbumArtist = play.AlbumArtist,
+                    Duration = (int?)(play.DurationMilliseconds / 1000),
+                    Isrc = play.Isrc
+                };
+                song.Id = $"ext-{provider}-song-{id}";
+                song.IsLocal = false;
+                song.ExternalProvider = provider;
+                song.ExternalId = id;
+                song.CanonicalRecordingId = play.CanonicalRecordingId;
+                return song;
+            }
+        }
+        var matchScope = new TrackMatchScope(user.Id, user.BackendInstanceId, null, 2, 1, access.LibraryIds.ToHashSet());
+        var historyMatcher = new TrackMatchDecisionEngine().WithLocalPriorityWindow(context.Policy?.LocalPreferenceWindow ?? .07,
+            context.Policy?.Preferences.ExplicitFilter == "CleanOnly" ? ProviderExplicitContentPolicy.CleanOnly : ProviderExplicitContentPolicy.Allow);
         async Task<Song?> ResolveHistorySong(ListeningEventRecord play)
         {
             if (play.LibraryTrackId != null || string.IsNullOrWhiteSpace(play.Title) || string.IsNullOrWhiteSpace(play.Artist)) return null;
-            var seed = new Song
-            {
-                Title = play.Title,
-                Artist = play.Artist,
-                Album = play.Album ?? "",
-                Duration = (int?)(play.DurationMilliseconds / 1000),
-                Isrc = play.Isrc
-            };
+            var seed = new ExternalTrackMatchSnapshot(play.Id.ToString("D"), "history", play.TrackReference,
+                MusicLyrics.StripPresentationLabels(play.Title), MusicLyrics.StripPresentationLabels(play.Artist),
+                MusicLyrics.StripPresentationLabels(play.Album), play.AlbumArtist, play.DurationMilliseconds, play.Isrc,
+                play.RecordingMusicBrainzId, FuzzyMatcher.HasCleanRecordingLabel(play.Title) ? false : null);
+            static bool Accepted(TrackMatchDecision decision) => decision.State == TrackMatchReviewState.Accepted && !decision.RequiresReview;
             foreach (var provider in inputs.Playable)
             {
-                var found = await inputs.ReadAsync(context, c => providers.SearchAutomaticProviderSongsAsync(c, provider, play.Title + " " + play.Artist, 3), token, provider);
+                var found = await inputs.ReadAsync(context, c => providers.SearchAutomaticProviderSongsAsync(c, provider, seed.Title + " " + seed.Artist, 3), token, provider);
                 if (found?.IsSuccess == true)
                 {
                     var matches = found.RequireValue();
                     inputs.Diagnostics.Count("history.search results", matches.Count);
-                    var matching = matches.Where(candidate => MusicSearchService.MetadataRecordingsMatch(seed, candidate, allowSparse: play.DurationMilliseconds == null)).ToArray();
-                    var song = matching.FirstOrDefault();
-                    inputs.Diagnostics.Count("history.metadata mismatch", matches.Count - matching.Length);
-                    if (song != null) { inputs.Diagnostics.Count("history.metadata matched"); inputs.FreshSongs.Add(song.Id); return song; }
+                    var candidates = matches.Where(song => !song.IsLocal && !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
+                            !string.IsNullOrWhiteSpace(song.ExternalId)).DistinctBy(song => (song.ExternalProvider, song.ExternalId))
+                        .Select(song => TrackMatchPlayableSearch.ToCandidate(song, matchScope)).ToArray();
+                    var matching = candidates.Where(candidate => Accepted(historyMatcher.Decide(matchScope, seed, [candidate], providerPriority: inputs.Playable))).ToArray();
+                    var matchingIds = matching.Select(candidate => candidate.LibraryTrackId).ToHashSet();
+                    var decision = historyMatcher.Decide(matchScope, seed, candidates, providerPriority: inputs.Playable);
+                    var selected = Accepted(decision) ? candidates.FirstOrDefault(candidate => candidate.LibraryTrackId == decision.SelectedLibraryTrackId) : null;
+                    var song = selected == null ? null : matches.First(candidate => candidate.ExternalProvider == selected.ExternalProvider && candidate.ExternalId == selected.BackendItemId);
+                    inputs.Diagnostics.Count("history.metadata mismatch", matches.Count(candidate => string.IsNullOrWhiteSpace(candidate.ExternalProvider) ||
+                        string.IsNullOrWhiteSpace(candidate.ExternalId) || !matchingIds.Contains(TrackMatchPlayableSearch.CandidateId(candidate.ExternalProvider, candidate.ExternalId))));
+                    if (song != null)
+                    {
+                        inputs.Diagnostics.Count("history.metadata matched");
+                        if (!inputs.HistoryReferences.TryGetValue(song.Id, out var references)) inputs.HistoryReferences[song.Id] = references = [];
+                        references.Add(play.TrackReference);
+                        inputs.FreshSongs.Add(song.Id);
+                        return song;
+                    }
+                    if (matching.Length > 0) inputs.Diagnostics.Count("history.metadata needs review");
                 }
             }
             return null;
@@ -171,13 +260,28 @@ public sealed partial class PersonalMixService
             if (existing.Length > 0)
             {
                 inputs.Diagnostics.Count("history.existing row");
+                var imported = existing.Any(song => song.IsLocal) ? null : await ResolvedHistorySong(group);
+                if (imported is { Song: null })
+                {
+                    inputs.Diagnostics.Count("history.unavailable resolved route");
+                    rows.RemoveAll(row => existing.Contains(row.Song));
+                    continue;
+                }
+                if (imported?.Song is { } resolvedSong && !existing.Any(song => song.Id == resolvedSong.Id)) rows.Add((resolvedSong, "history", null));
+                if (group.Any(item => item.CanonicalRecordingId != null && item.SourceKind is "import" or "listenbrainz-api") &&
+                    (imported != null || existing.Any(song => song.IsLocal || inputs.Playable.Contains(song.ExternalProvider))))
+                    inputs.Diagnostics.Count("history.resolved from history import");
+                if (imported != null) continue;
                 unresolvedRoutes.AddRange(existing.Where(song => !song.IsLocal && !inputs.Playable.Contains(song.ExternalProvider)).Select(song => (play, song)));
                 continue;
             }
             inputs.Diagnostics.Count("history.lookup");
             var parsed = LocalLibraryService.ParseExternalResource(play.TrackReference);
-            Song? song = play.CanonicalRecordingId is { } recording
-                ? await providers.GetStoredSongAsync(context, "allstarr", recording.ToString("D")) : null;
+            var resolvedHistory = await ResolvedHistorySong(group);
+            if (resolvedHistory is { Song: null }) { inputs.Diagnostics.Count("history.unavailable resolved route"); continue; }
+            Song? song = resolvedHistory?.Song;
+            if (song == null && play.CanonicalRecordingId is { } recording)
+                song = await providers.GetStoredSongAsync(context, "allstarr", recording.ToString("D"));
             if (song == null && parsed.isExternal && parsed.type == "song")
             {
                 song = await providers.GetStoredSongAsync(context, parsed.provider!, parsed.externalId!);
@@ -188,6 +292,8 @@ public sealed partial class PersonalMixService
                 }
             }
             if (song != null) inputs.Diagnostics.Count("history.stored or original route");
+            if (song != null && group.Any(item => item.CanonicalRecordingId != null && item.SourceKind is "import" or "listenbrainz-api") &&
+                (song.IsLocal || inputs.Playable.Contains(song.ExternalProvider))) inputs.Diagnostics.Count("history.resolved from history import");
             if (song == null) song = await ResolveHistorySong(play);
             else if (!song.IsLocal && !inputs.Playable.Contains(song.ExternalProvider)) unresolvedRoutes.Add((play, song));
             if (song != null) { song.CanonicalRecordingId ??= play.CanonicalRecordingId; rows.Add((song, "history", null)); }
@@ -559,7 +665,8 @@ public sealed partial class PersonalMixService
             catch (Exception) when (!token.IsCancellationRequested) { failed = true; inputs?.Exclude("No playable route", row.Song.Id); unavailableRoutes?.Add(row.Song); continue; }
             if (!deferPlayback || row.Song.IsLocal) diagnostics?.Count(row.Source, "playable");
             inputs?.Diagnostics.Count(inputs.Stage + ".playable");
-            var matched = PersonalMixRules.IdentityKeys(row.Song).SelectMany(key => listening.GetValueOrDefault(key) ?? [])
+            var matched = PersonalMixRules.IdentityKeys(row.Song).Concat(inputs?.HistoryReferences.GetValueOrDefault(row.Song.Id) ?? [])
+                .SelectMany(key => listening.GetValueOrDefault(key) ?? [])
                 .DistinctBy(play => play.Id).ToArray();
             var played = matched.Where(play => play.State == ListeningEventState.Completed).ToArray();
             var skipped = matched.Count(play => play.State == ListeningEventState.Skipped && play.UpdatedAt >= clock.UtcNow.AddDays(-PersonalMixRules.SkipDays) &&

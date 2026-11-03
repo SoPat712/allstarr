@@ -3,6 +3,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
+using Microsoft.EntityFrameworkCore;
 using Moq;
 
 namespace allstarr.Tests;
@@ -23,6 +24,8 @@ public sealed partial class PersonalMixServiceTests
     public async Task Generation_counts_http_fanout_through_real_song_relationship_enrichment()
     {
         await Seed(count: 60, plays: 10);
+        await using (var db = factory.CreateDbContext())
+            await db.ListeningEvents.ExecuteUpdateAsync(update => update.SetProperty(item => item.CanonicalRecordingId, (Guid?)null));
         var chart = EnableChart();
         using var handler = new CountingHttp();
         using var http = new HttpClient(handler);
@@ -63,7 +66,12 @@ public sealed partial class PersonalMixServiceTests
         var real = new ProtocolProviderGateway(router.Object, registry, clients.Object);
         gateway.Setup(x => x.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>())).ReturnsAsync((allstarr.Models.Domain.Song?)null);
         gateway.Setup(x => x.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>()))
-            .Returns((ProtocolExecutionContext context, string provider, string id) => real.GetSongAsync(context, provider, id));
+            .Returns(async (ProtocolExecutionContext context, string provider, string id) =>
+            {
+                var song = await real.GetSongAsync(context, provider, id);
+                if (song != null) song.CanonicalRecordingId = songs[id].CanonicalRecordingId;
+                return song;
+            });
         gateway.Setup(x => x.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>(), It.IsAny<int>()))
             .Returns(async (ProtocolExecutionContext context, string _, string query, int _) =>
             {

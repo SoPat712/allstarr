@@ -12,20 +12,24 @@ public sealed partial class PersonalMixServiceTests
 {
     private static readonly TimeSpan CompletionDeadline = TimeSpan.FromSeconds(10);
 
-    private (TaskCompletionSource Entered, TaskCompletionSource Release) BlockSong(string id, bool fail = false, Song? replacement = null)
+    private (TaskCompletionSource Entered, TaskCompletionSource Release) BlockSong(string id, bool fail = false, Song? replacement = null, bool stored = false)
     {
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gateway.Setup(item => item.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", id)).ReturnsAsync((Song?)null);
         gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", id))
-            .Returns(async (ProtocolExecutionContext context, string _, string _) =>
-            {
-                entered.TrySetResult();
-                await release.Task.WaitAsync(context.CancellationToken);
-                if (fail) throw new InvalidOperationException("Provider unavailable.");
-                return replacement ?? songs[id];
-            });
+            .Returns((ProtocolExecutionContext context, string _, string _) => Read(context));
+        if (stored) gateway.Setup(item => item.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", id))
+            .Returns((ProtocolExecutionContext context, string _, string _) => Read(context));
         return (entered, release);
+
+        async Task<Song?> Read(ProtocolExecutionContext context)
+        {
+            entered.TrySetResult();
+            await release.Task.WaitAsync(context.CancellationToken);
+            if (fail) throw new InvalidOperationException("Provider unavailable.");
+            return replacement ?? songs[id];
+        }
     }
 
     private (TaskCompletionSource Entered, TaskCompletionSource Release) BlockPlayback(string id)
@@ -59,7 +63,7 @@ public sealed partial class PersonalMixServiceTests
         var link = await ExternalLink();
         var virtualization = new PlaylistVirtualizationService(factory, new(factory, access.Object), access.Object, personalMixes: service);
         clock.UtcNow += TimeSpan.FromMinutes(16);
-        var block = BlockSong("0");
+        var block = BlockSong("0", stored: true);
         var generation = service.GenerateAsync(owner, repeat.Id, timeZoneId: "UTC");
         try
         {
@@ -109,7 +113,7 @@ public sealed partial class PersonalMixServiceTests
             Artist = songs["0"].Artist,
             ExplicitContentLyrics = 0
         };
-        var block = BlockSong("0", replacement: alias);
+        var block = BlockSong("0", replacement: alias, stored: true);
         var generation = service.GenerateAsync(owner, repeat.Id);
         try
         {
@@ -205,7 +209,7 @@ public sealed partial class PersonalMixServiceTests
         await Seed();
         var repeat = (await service.GenerateAsync(owner)).Single(item => item.Kind == "on-repeat");
         clock.UtcNow += TimeSpan.FromMinutes(16);
-        var block = BlockSong("0");
+        var block = BlockSong("0", stored: true);
         var generation = service.GenerateAsync(owner, repeat.Id);
         try
         {
@@ -331,7 +335,7 @@ public sealed partial class PersonalMixServiceTests
         var repeat = (await service.GenerateAsync(owner)).Single(item => item.Kind == "on-repeat");
         clock.UtcNow += TimeSpan.FromMinutes(16);
         using var cancellation = new CancellationTokenSource();
-        var block = BlockSong("0");
+        var block = BlockSong("0", stored: true);
         gateway.Invocations.Clear();
         var first = service.GenerateAsync(owner, repeat.Id, token: cancellation.Token);
         Task<IReadOnlyList<PersonalMix>>? second = null;
@@ -340,7 +344,8 @@ public sealed partial class PersonalMixServiceTests
             await block.Entered.Task.WaitAsync(CompletionDeadline);
             second = service.GenerateAsync(owner, repeat.Id);
             Assert.False(second.IsCompleted);
-            gateway.Verify(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0"), Times.Once);
+            gateway.Verify(item => item.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0"), Times.Once);
+            gateway.Verify(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0"), Times.Never);
             Assert.Equal(repeat.Generation, (await service.GetAsync(owner, repeat.Id).WaitAsync(CompletionDeadline)).Generation);
             cancellation.Cancel();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first.WaitAsync(CompletionDeadline));

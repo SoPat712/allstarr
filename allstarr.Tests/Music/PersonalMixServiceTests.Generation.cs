@@ -185,7 +185,7 @@ public sealed partial class PersonalMixServiceTests
     }
 
     [Fact]
-    public async Task Rotation_rejects_different_versions_and_albums_when_import_duration_is_missing()
+    public async Task Rotation_uses_import_recording_matches_when_duration_is_missing()
     {
         await Seed(count: 1, plays: 1);
         await using (var db = factory.CreateDbContext())
@@ -199,7 +199,7 @@ public sealed partial class PersonalMixServiceTests
                 new() { Id = "ext-deezer-song-other", ExternalProvider = "deezer", ExternalId = "other", Title = "Song 0", Artist = "Artist 0", Album = "Different album", Duration = 180 }
             ]));
         var id = (await service.ListAsync(owner)).Single(item => item.Kind == "on-repeat").Id;
-        Assert.Empty((await service.GenerateAsync(owner, id)).Single(item => item.Id == id).Songs);
+        Assert.Equal("ext-deezer-song-other", Assert.Single((await service.GenerateAsync(owner, id)).Single(item => item.Id == id).Songs).Song.Id);
     }
 
     [Theory]
