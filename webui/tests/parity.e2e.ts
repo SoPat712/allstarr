@@ -176,6 +176,7 @@ const responses: Record<string, unknown> = {
   "/api/admin/scrobbling/deliveries": { items: [] },
   "/api/admin/provider-favorite-links": { activeProtocol: "jellyfin", items: [], nextCursor: null },
   "/api/admin/provider-favorite-links/members": { activeProtocol: "jellyfin", items: [], nextCursor: null },
+  "/api/admin/auth/playlist-consent": { supported: true, granted: false, updatedAt: null, needsSignIn: false },
   "/api/admin/auth/me": {
     authenticated: true, backend: "Jellyfin",
     features: { intelligence: true },
@@ -5468,7 +5469,7 @@ test("Playlist operations show durable progress and confirm cancellation", async
       detailRequests++;
   });
   await page.goto("#/library/playlists");
-  await page.getByRole("button", { name: /Test playlist/ }).click();
+  await page.getByRole("button", { name: "Open Test playlist playlist details", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Test playlist" });
   const update = page.waitForRequest((item) =>
     item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/playlist-link/run") &&
@@ -7477,7 +7478,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     } }));
     await page.goto("#/library/playlists");
     await expect(page.getByText("Media-server access needed", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: /Test playlist/ }).first().click();
+    await page.getByRole("button", { name: "Open Test playlist playlist details", exact: true }).click();
     const warning = page.getByRole("status").filter({ hasText: "Restore media-server access to resume playlist sync and library scans." });
     await expect(warning).toHaveCount(1);
     const link = warning.getByRole("link", { name: "Open media-server access" });
