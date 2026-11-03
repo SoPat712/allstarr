@@ -325,7 +325,7 @@
     {#if cached}
       <div class="track-cache-link">
         <Badge state={storageMode === "Cache" ? "healthy" : "suggested"}>Playback cache {storageMode === "Cache" ? "on" : "off"}</Badge>
-        <Button variant="ghost" href="#/settings/storage">Cache settings</Button>
+        <Button variant="outline" href="#/settings/storage">Cache settings</Button>
       </div>
     {/if}
   </section>

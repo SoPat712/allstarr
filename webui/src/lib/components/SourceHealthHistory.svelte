@@ -156,7 +156,7 @@
       {/each}
     </ul>
     {#if history.checks.length > visibleCount}
-      <div class="settings-row" style="grid-template-columns: minmax(0, 1fr);"><Button variant="ghost" onclick={() => visibleCount = 24}>Show more checks</Button></div>
+      <div class="settings-row" style="grid-template-columns: minmax(0, 1fr);"><Button variant="text" onclick={() => visibleCount = 24}>Show more checks</Button></div>
     {/if}
   {:else if history}
     <div class="settings-row" style="grid-template-columns: minmax(0, 1fr);"><div><small>No recorded diagnostic checks.</small></div></div>

@@ -255,7 +255,7 @@
       {/if}
       {#if runId}
         <article class="settings-card" aria-label="Choose your music">
-          <header><h3>Choose your music</h3><div class="import-actions"><Button variant="ghost" disabled={busy} onclick={() => selected = Object.fromEntries(choices.map(item => [item.sourceId, true]))}>Select all</Button><Button variant="ghost" disabled={busy} onclick={() => selected = {}}>Clear</Button></div></header>
+          <header><h3>Choose your music</h3><div class="import-actions"><Button variant="text" disabled={busy} onclick={() => selected = Object.fromEntries(choices.map(item => [item.sourceId, true]))}>Select all</Button><Button variant="outline" disabled={busy} onclick={() => selected = {}}>Clear</Button></div></header>
           {#each choices as item (item.sourceId)}
             <div class="import-choice">
               <label class="import-selection"><Checkbox aria-label={`Select ${item.name}`} checked={!!selected[item.sourceId]} disabled={busy} onCheckedChange={value => selected[item.sourceId] = value === true} />
@@ -287,12 +287,12 @@
         {/each}
         <div class="import-actions">
           {#if interrupted}<Button variant="secondary" disabled={busy} onclick={() => command("resume")}>Try again</Button>{/if}
-          {#if runState !== "cancelled"}<Button variant="ghost" disabled={busy} onclick={() => confirmStop = true}>Stop moving</Button>{/if}
+          {#if runState !== "cancelled"}<Button variant="outline" disabled={busy} onclick={() => confirmStop = true}>Stop moving</Button>{/if}
         </div>
       </div></article>
     {/if}
     {#if status && runState === "applying"}
-      <article class="settings-card"><div class="import-body"><h3>{hasResources ? "Adding your music…" : "Adding playlists and hearts…"}</h3><Progress value={null} aria-label="Adding music" /><div class="import-actions"><Button variant="ghost" disabled={busy} onclick={() => confirmStop = true}>Stop moving</Button></div></div></article>
+      <article class="settings-card"><div class="import-body"><h3>{hasResources ? "Adding your music…" : "Adding playlists and hearts…"}</h3><Progress value={null} aria-label="Adding music" /><div class="import-actions"><Button variant="outline" disabled={busy} onclick={() => confirmStop = true}>Stop moving</Button></div></div></article>
     {/if}
     {#if status && runState === "completed"}
       <article class="settings-card" aria-label="Music moved">
@@ -336,7 +336,7 @@
         <div class="import-body">
           <div class="import-actions">
             {#if runState !== "completed" || pendingCount > 0}<Button disabled={busy || reading || !status.total.accepted} onclick={() => command("apply")}>{moveCountLine(runState === "completed" ? pendingCount : status.total.accepted, runState === "completed", hasResources)}</Button>{/if}
-            {#if runState === "review"}<Button variant="ghost" disabled={busy} onclick={() => confirmStop = true}>Stop moving</Button>{/if}
+            {#if runState === "review"}<Button variant="outline" disabled={busy} onclick={() => confirmStop = true}>Stop moving</Button>{/if}
           </div>
           <small>Music that needs a look stays here. You can choose matches and move it later.</small>
         </div>
@@ -368,7 +368,7 @@
           {#if !selectedResource.resource.candidates.length}<p>No matches found. You can skip this one and keep moving your other music.</p>{/if}
           {#if resourceError}<p class="notice-error" role="alert">{resourceError}</p>{/if}
         </div>
-        <footer class="dialog-actions"><Dialog.Close class={buttonVariants({ variant: "secondary" })} disabled={resourceSaving}>Cancel</Dialog.Close><Button variant="ghost" disabled={resourceSaving} onclick={() => saveResource()}>Skip this one</Button></footer>
+        <footer class="dialog-actions"><Dialog.Close class={buttonVariants({ variant: "secondary" })} disabled={resourceSaving}>Cancel</Dialog.Close><Button variant="outline" disabled={resourceSaving} onclick={() => saveResource()}>Skip this one</Button></footer>
       {/if}
     </Dialog.Content>
   </Dialog.Portal>

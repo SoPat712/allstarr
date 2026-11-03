@@ -178,7 +178,7 @@
               </DropdownMenu.Root>
             {/if}</li>{/each}</ol>
           {#if !list.rows.length}<p>{list.empty}</p>{/if}
-          {#if list.rows.length > 10}<Button variant="ghost" onclick={() => expanded = open ? "" : list.title}>{open ? "Show fewer" : `Show all ${list.rows.length}`}</Button>{/if}
+          {#if list.rows.length > 10}<Button variant="text" onclick={() => expanded = open ? "" : list.title}>{open ? "Show fewer" : `Show all ${list.rows.length}`}</Button>{/if}
         </section>
       {/each}
     </div>

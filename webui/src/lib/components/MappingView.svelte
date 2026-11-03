@@ -824,7 +824,7 @@
             {#if bulkShare.length}<Button variant="secondary" disabled={Boolean(action)} onclick={() => void bulkShareHousehold()}>Share with household ({bulkShare.length})</Button>{/if}
             {#if bulkClear.length}<Button variant="secondary" disabled={Boolean(action)} onclick={() => { bulkConfirm = "clear"; bulkConfirmOpen = true; }}>Clear my decisions ({bulkClear.length})</Button>{/if}
             {#if bulkReject.length}<Button variant="secondary" disabled={Boolean(action)} onclick={() => { bulkConfirm = "reject"; bulkConfirmOpen = true; }}>Reject ({bulkReject.length})</Button>{/if}
-            <Button variant="ghost" disabled={Boolean(action)} onclick={() => chosen = new Map()}>Cancel</Button>
+            <Button variant="text" disabled={Boolean(action)} onclick={() => chosen = new Map()}>Cancel</Button>
           </div>
         </div>
       {/if}

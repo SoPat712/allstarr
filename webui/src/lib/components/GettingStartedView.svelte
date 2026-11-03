@@ -101,7 +101,7 @@
           <Button variant="secondary" aria-label="Copy username" onclick={() => void copy(context!.username, usernameField)}><Copy size={16} aria-hidden="true" />Copy</Button>
         </span>
       </div>
-      {#if administrator}<footer><Button variant="ghost" href="#/settings/access">Set the household address</Button></footer>{/if}
+      {#if administrator}<footer><Button variant="outline" href="#/settings/access">Set the household address</Button></footer>{/if}
     </article>
 
     <div class="connect-section-title"><h3>Choose your app</h3><p>Open one for its steps.</p></div>

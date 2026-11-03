@@ -54,7 +54,7 @@
           <div class="flex flex-wrap gap-2">
             <Button disabled={busy} onclick={() => void save("review")}>Reviewed, continue</Button>
             {#if !current.required}<Button variant="secondary" disabled={busy} onclick={() => void save("skip")}>Skip for now</Button>{/if}
-            {#if current.state !== "pending" && !current.required}<Button variant="ghost" disabled={busy} onclick={() => void save("reset")}>Review again later</Button>{/if}
+            {#if current.state !== "pending" && !current.required}<Button variant="text" disabled={busy} onclick={() => void save("reset")}>Review again later</Button>{/if}
           </div>
         </article>
         {#if current.id === "legacy-environment"}<EnvMigrationCard />

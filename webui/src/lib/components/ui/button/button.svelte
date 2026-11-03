@@ -11,6 +11,7 @@
 				outline: "border-[var(--color-edge-strong)] bg-transparent text-[var(--color-signal-text)] hover:bg-[color-mix(in_srgb,var(--color-signal)_8%,transparent)]",
 				secondary: "bg-[var(--md-sys-color-secondary-container)] text-[var(--md-sys-color-on-secondary-container)] hover:shadow-[var(--shadow-sm)]",
 				ghost: "hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50",
+				text: "bg-transparent text-[var(--color-signal-text)] hover:bg-muted aria-expanded:bg-muted dark:hover:bg-muted/50",
 				destructive: "bg-[var(--md-sys-color-error)] text-[var(--md-sys-color-on-error)] hover:shadow-[var(--shadow-sm)] focus-visible:ring-[color-mix(in_srgb,var(--color-danger)_30%,transparent)]",
 				link: "text-primary underline-offset-4 hover:underline",
 			},

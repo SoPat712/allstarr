@@ -84,7 +84,7 @@
     {/if}
     <section class="panel taste-section"><h2>Steer your mixes</h2><p>Tap a style to hear more or less of it.</p>{@render chips("tag", tags)}<h3>Artists</h3>{@render chips("artist", artists)}</section>
     <section class="panel taste-section" aria-label="Hidden"><h2>Hidden</h2>
-      {#if profile.nudges.some(item => item.mode === "never")}<ul>{#each profile.nudges.filter(item => item.mode === "never") as item (`${item.kind}:${item.name}`)}<li><span>{nudgeName(item)}</span><Button variant="ghost" disabled={action} aria-label={`Undo ${nudgeName(item)}`} onclick={() => update(() => taste.remove(item.kind, item.name))}>Undo</Button></li>{/each}</ul>{:else}<p>Nothing hidden.</p>{/if}
+      {#if profile.nudges.some(item => item.mode === "never")}<ul>{#each profile.nudges.filter(item => item.mode === "never") as item (`${item.kind}:${item.name}`)}<li><span>{nudgeName(item)}</span><Button variant="text" disabled={action} aria-label={`Undo ${nudgeName(item)}`} onclick={() => update(() => taste.remove(item.kind, item.name))}>Undo</Button></li>{/each}</ul>{:else}<p>Nothing hidden.</p>{/if}
     </section>
     <section class="panel taste-section" aria-label="Active nudges"><h2>Active nudges</h2>
       <ul>{#each profile.nudges.filter(item => item.mode !== "never") as item (`${item.kind}:${item.name}`)}<li><span>{item.mode === "more" ? "More" : "Less"} {nudgeName(item)} · {item.expiresAt ? "today" : "until I change it"}</span><button class="icon-button" type="button" disabled={action} aria-label={`Remove ${nudgeName(item)}`} onclick={() => update(() => taste.remove(item.kind, item.name))}>×</button></li>{/each}</ul>

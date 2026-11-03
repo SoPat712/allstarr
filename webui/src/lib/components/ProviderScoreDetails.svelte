@@ -88,7 +88,7 @@
     {/each}
   </div>
   {#if onclose}
-    <div class="score-actions"><Button variant="ghost" size="sm" onclick={onclose}><ChevronUp size={16} aria-hidden="true" />Hide details</Button></div>
+    <div class="score-actions"><Button variant="text" size="sm" onclick={onclose}><ChevronUp size={16} aria-hidden="true" />Hide details</Button></div>
   {/if}
 </div>
 

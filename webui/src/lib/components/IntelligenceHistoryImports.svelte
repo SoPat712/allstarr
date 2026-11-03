@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { Trash2 } from "@lucide/svelte";
   import { ApiError, historyImports, type HistoryImport, type HistoryRecheck, type HistoryRecheckSong } from "$lib/api";
   import { formatCount } from "$lib/intelligence";
   import { combineHistoryPreviews, groupHistoryImports, historyBytes, historyDateRange, historyError, historyPlays, historySource, importBatchProgress, importPhase, importProgress, importState, importSummary } from "$lib/history-import";
@@ -213,7 +214,7 @@
               <span class="history-state">{groupState(group.items)}</span>
               {#if group.items.some(active)}<Progress value={group.items.length > 1 ? importBatchProgress(group.items).percent : importProgress(group.items[0])} aria-label={`${source(group.items)} import`} />{/if}
             </div>
-            <div class="history-actions">{#if group.items.some(item => importPhase(item) === "previewed")}<Button variant="secondary" disabled={uploading || action} onclick={() => review(group.items)}>Review</Button>{/if}<Button variant="ghost" disabled={uploading || action} onclick={() => { removing = [...group.items]; deleteError = ""; deleteOpen = true; }}>Delete</Button></div>
+            <div class="history-actions">{#if group.items.some(item => importPhase(item) === "previewed")}<Button variant="secondary" disabled={uploading || action} onclick={() => review(group.items)}>Review</Button>{/if}<Button variant="outline" disabled={uploading || action} onclick={() => { removing = [...group.items]; deleteError = ""; deleteOpen = true; }}><Trash2 data-icon="inline-start" aria-hidden="true" />Delete</Button></div>
           </div>
           {#if group.items.length > 1}
             <details class="history-files"><summary class="disclosure-summary"><DisclosureLabel title="Show files" /></summary>
@@ -275,7 +276,7 @@
               <small>Matched to {song.matchedTitle}{song.matchedArtist && song.matchedArtist !== song.artist ? ` · ${song.matchedArtist}` : ""}</small>
             </div>
             {#if unmatched[songKey(song)]}<span class="history-state">Unmatched</span>
-            {:else}<Button variant="ghost" disabled={Boolean(unmatching)} onclick={() => void unmatch(song)}>{unmatching === songKey(song) ? "Unmatching…" : "Unmatch"}</Button>{/if}
+            {:else}<Button variant="outline" disabled={Boolean(unmatching)} onclick={() => void unmatch(song)}>{unmatching === songKey(song) ? "Unmatching…" : "Unmatch"}</Button>{/if}
           </li>
         {/each}
       </ul>

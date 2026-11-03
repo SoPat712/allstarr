@@ -216,7 +216,7 @@
         <section class="settings-card routing-group">
           <header>
             <div><h3>{tabNames[group.id] ?? group.label.replace(/ order$/i, "")} order</h3><small>{group.id === "lyrics" ? "A lyrics choice saved for a song always wins. Otherwise the best-timed lyrics win: word by word, then line by line, then plain text. This order decides between equally timed lyrics." : group.description || "Drag services, or use the arrows, to change the order Allstarr tries them."}</small></div>
-            {#if scores.length && group.id !== "lyrics"}<Button variant="ghost" onclick={() => sortByScore(group)}><Sparkles size={16} aria-hidden="true" />Sort by score</Button>{/if}
+            {#if scores.length && group.id !== "lyrics"}<Button variant="outline" onclick={() => sortByScore(group)}><Sparkles size={16} aria-hidden="true" />Sort by score</Button>{/if}
             <Button aria-label={`Save ${group.label}`} disabled={Boolean(action) || !dirtyOrderIds.includes(group.id)} onclick={() => void saveOrder(group)}>{action === group.id ? "Saving…" : "Save order"}</Button>
           </header>
           <ol>
