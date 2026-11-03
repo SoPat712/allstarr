@@ -11,7 +11,7 @@ namespace allstarr.Core.Secrets;
 
 public sealed record SecretAccessContext(Guid? UserId, string Purpose, bool AllowShared = false);
 
-public sealed record BackendCredentialGrant(Guid ReferenceId, DateTimeOffset UpdatedAt);
+public sealed record BackendCredentialGrant(Guid ReferenceId, DateTimeOffset UpdatedAt, bool NeedsSignIn = false, int Version = 0, Guid? UserId = null);
 
 public sealed record SecretReferenceInfo(
     Guid Id,
@@ -51,7 +51,7 @@ public sealed class SecretLease : IDisposable
     }
 }
 
-public sealed class EncryptedSecretStore
+public sealed partial class EncryptedSecretStore
 {
     private const int NonceSize = 12;
     private const int TagSize = 16;

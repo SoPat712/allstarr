@@ -20,7 +20,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class AdminPlaylistConsentTests : IAsyncLifetime
+public sealed partial class AdminPlaylistConsentTests : IAsyncLifetime
 {
     private SqliteTestDatabase _database = null!;
     private IDbContextFactory<AllstarrDbContext> _factory = null!;
@@ -158,11 +158,11 @@ public sealed class AdminPlaylistConsentTests : IAsyncLifetime
         Assert.False(new AdminAuthController.LoginRequest().ManagePlaylists);
     }
 
-    private AdminAuthController Controller(string? sessionId = null)
+    private AdminAuthController Controller(string? sessionId = null, string backend = "Subsonic")
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-        { ["Backend:Type"] = "Subsonic" }).Build();
-        var controller = new AdminAuthController(Options.Create(new JellyfinSettings()),
+        { ["Backend:Type"] = backend }).Build();
+        var controller = new AdminAuthController(Options.Create(new JellyfinSettings { Url = "http://backend.test" }),
             Options.Create(new SubsonicSettings { Url = "http://backend.test" }), configuration, new Clients(_backend),
             _sessions, NullLogger<AdminAuthController>.Instance,
             new MediaAssetResolver(new TestMemoryApplicationCache(), NullLogger<MediaAssetResolver>.Instance),
@@ -189,8 +189,32 @@ public sealed class AdminPlaylistConsentTests : IAsyncLifetime
         public bool Accept { get; set; } = true;
         public string? ReturnedUser { get; set; }
         public string? RequestedUser { get; private set; }
+        public string? Authorization { get; private set; }
+        public bool LoggedOut { get; private set; }
+        public bool LogoutFails { get; set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.RequestUri!.AbsolutePath == "/Sessions/Logout")
+            {
+                Authorization = request.Headers.GetValues("Authorization").Single();
+                LoggedOut = true;
+                if (LogoutFails) throw new HttpRequestException("Fixture logout failure");
+                return new(HttpStatusCode.NoContent);
+            }
+            if (request.RequestUri.AbsolutePath == "/Users/AuthenticateByName")
+            {
+                Authorization = request.Headers.GetValues("Authorization").Single();
+                using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                RequestedUser = body.RootElement.GetProperty("Username").GetString();
+                return new(Accept ? HttpStatusCode.OK : HttpStatusCode.Unauthorized)
+                {
+                    Content = new StringContent(JsonSerializer.Serialize(new
+                    {
+                        User = new { Id = ReturnedUser ?? "alice-id", Name = RequestedUser, Policy = new { IsAdministrator = false } },
+                        AccessToken = "jellyfin-fixture-token"
+                    }))
+                };
+            }
             var form = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(await request.Content!.ReadAsStringAsync(cancellationToken));
             RequestedUser = form["u"].ToString();
             Assert.Equal(RequestedUser, form["username"].ToString());

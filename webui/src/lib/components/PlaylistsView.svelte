@@ -8,7 +8,7 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { Badge } from "$lib/components/ui/badge";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { ArrowRight, ChevronDown, MoreHorizontal, MonitorX, Server, X } from "@lucide/svelte";
+  import { ArrowRight, ChevronDown, MoreHorizontal, MonitorX, RefreshCw, Server, X } from "@lucide/svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
   import CoverageBar from "$lib/components/CoverageBar.svelte";
@@ -38,6 +38,7 @@
   import { relativeTime } from "$lib/activity";
   import {
     confirmationCoverage,
+    canRebuildInJellyfin,
     filterPlaylists,
     filterTracks,
     formatDuration,
@@ -45,6 +46,7 @@
     mediaServerName,
     isReviewTrack,
     isServiceMix,
+    jellyfinPlaylistWarning,
     playlistOutcomeLabel,
     runBounded,
     playlistMatchCounts,
@@ -63,6 +65,8 @@
   let playlists = $state<PlaylistLink[]>([]);
   let removingMix = $state<{ id: string; name: string } | null>(null);
   let removing = $state(false), removeError = $state("");
+  let rebuildingPlaylist = $state<PlaylistLink | null>(null);
+  let rebuilding = $state(false), rebuildError = $state("");
   let keptMixes = $state<PlaylistMix[]>([]);
   let copies = $state<PlaylistCopy[]>([]);
   let copiesError = $state("");
@@ -367,6 +371,30 @@
         same(copy.originalTargetPlaylistId, playlist.targetPlaylistId)));
   }
 
+  function confirmRebuild(playlist: PlaylistLink) {
+    if (action || rebuilding || !canRebuildInJellyfin(playlist)) return;
+    rebuildError = "";
+    rebuildingPlaylist = playlist;
+  }
+
+  async function rebuildPlaylist() {
+    if (!rebuildingPlaylist || rebuilding || action) return;
+    rebuilding = true;
+    action = "rebuild";
+    rebuildError = "";
+    try {
+      await playlistLinks.rebuild(rebuildingPlaylist.id);
+      rebuildingPlaylist = null;
+      toast.success("Playlist rebuilt in Jellyfin.");
+      await refresh();
+    } catch (cause) {
+      rebuildError = cause instanceof Error ? cause.message : "The playlist could not be rebuilt.";
+    } finally {
+      rebuilding = false;
+      action = "";
+    }
+  }
+
   async function run(name: "sync" | "toggle") {
     if (!selected || action) return;
     action = name;
@@ -601,6 +629,7 @@
             </div>
           {:else}
             {@const confirmedPercent = Math.round(confirmationCoverage(playlist) * 100)}
+            {@const editingWarning = jellyfinPlaylistWarning(playlist, providerName(playlist.sourceProviderId))}
             <div
               class:active={playlist.id === selectedId}
               class="playlist-row"
@@ -636,6 +665,15 @@
                       : `${playlist.materializedCount} in ${providerName(playlist.targetProtocol)}`
                     : "Not updated yet"}</span>
                 </small>
+                {#if editingWarning}
+                  <span class="playlist-editing-warning">
+                    <small role="status">{editingWarning}</small>
+                    <span class="playlist-repair-actions">
+                      <Button variant="text" size="sm" href="#/sources/services?section=playlist-editing">Allow editing</Button>
+                      <Button variant="outline" size="sm" disabled={Boolean(action) || rebuilding} onclick={() => confirmRebuild(playlist)}><RefreshCw size={14} aria-hidden="true" />Rebuild</Button>
+                    </span>
+                  </span>
+                {/if}
               </span>
               <span
                 class="playlist-summary"
@@ -649,6 +687,18 @@
                 <small>{playlist.playableCount} of {playlist.trackCount} playable</small>
                 {#if !playlist.enabled}<Badge state="suggested">Paused</Badge>{/if}
                 {#if isServiceMix(playlist)}<span class="mix-remove"><Button variant="outline" size="sm" aria-label={`Remove ${playlist.name} from my apps`} onclick={() => { removeError = ""; removingMix = playlist; }}><MonitorX data-icon="inline-start" aria-hidden="true" />Remove from my apps</Button></span>{/if}
+                {#if canRebuildInJellyfin(playlist)}
+                  <span class="playlist-row-menu">
+                    <DropdownMenu.Root>
+                      <DropdownMenu.Trigger class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
+                      <DropdownMenu.Portal>
+                        <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+                          <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || rebuilding} onSelect={() => confirmRebuild(playlist)}>Rebuild in Jellyfin</DropdownMenu.Item>
+                        </DropdownMenu.Content>
+                      </DropdownMenu.Portal>
+                    </DropdownMenu.Root>
+                  </span>
+                {/if}
               </span>
               <!-- A finished playlist already says 100% beside it; the bar is only drawn where something is left to do. -->
               {#if !(playlist.trackCount > 0 && confirmedPercent === 100 && playlist.playableCount === playlist.trackCount)}<CoverageBar {...playlistMatchCounts(playlist.metrics)} compact />{/if}
@@ -702,6 +752,7 @@
               <DropdownMenu.Portal>
                 <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
                   <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("sync")}>{selected.importMode === "oneTime" ? "Rebuild from imported copy" : "Update playlist now"}</DropdownMenu.Item>
+                  {#if canRebuildInJellyfin(selected)}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || rebuilding} onSelect={() => confirmRebuild(selected)}>Rebuild in Jellyfin</DropdownMenu.Item>{/if}
                   <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => { detailOpen = false; rematchOpen = true; }}>Review account rematch</DropdownMenu.Item>
                   {#if selected.importMode === "linked"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void refreshSources([selected.id])}>Refresh source</DropdownMenu.Item>{/if}
                   {#if selected.sourceUpdateAvailable}
@@ -1023,8 +1074,23 @@
 {/if}
 
 <ConfirmDialog bind:open={() => Boolean(removingMix), value => { if (!value) removingMix = null; }} title="Remove from my apps?" description={`${removingMix?.name ?? "This mix"} will be removed from your apps. You can add it again in For you.`} confirmLabel="Remove from my apps" disabled={removing} closeOnConfirm={false} error={removeError} onConfirm={removeMix} />
+<ConfirmDialog
+  bind:open={() => Boolean(rebuildingPlaylist), value => { if (!value && !rebuilding) rebuildingPlaylist = null; }}
+  title="Rebuild this playlist in Jellyfin?"
+  description="Allstarr makes the playlist again in the right order and removes the old copy. Apps see it as a new playlist, so pins, favourites and shortcuts to the old one stop working."
+  confirmLabel={rebuilding ? "Rebuilding…" : "Rebuild"}
+  confirmVariant="default"
+  disabled={rebuilding}
+  closeOnConfirm={false}
+  error={rebuildError}
+  onConfirm={rebuildPlaylist}
+/>
 <style>
   .mix-remove { position: relative; z-index: calc(var(--layer-content) + 1); }
+  .playlist-editing-warning { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem .5rem; margin-top: .35rem; }
+  .playlist-editing-warning small { white-space: normal; }
+  .playlist-repair-actions { position: relative; z-index: calc(var(--layer-content) + 1); display: inline-flex; flex-wrap: wrap; gap: .35rem; }
+  .playlist-row-menu { position: relative; z-index: calc(var(--layer-content) + 1); justify-self: end; }
   @media (max-width: 650px) {
     .playlist-row-mix {
       row-gap: 0.18rem;

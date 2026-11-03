@@ -1,5 +1,19 @@
 import type { MixCard, PlaylistLink, PlaylistSourceAccount, PlaylistTrack } from "./api";
 
+export function canRebuildInJellyfin(link: Pick<PlaylistLink, "importMode" | "targetProtocol">) {
+  return link.importMode === "linked" && link.targetProtocol.toLowerCase() === "jellyfin";
+}
+
+export function jellyfinPlaylistWarning(
+  link: Pick<PlaylistLink, "importMode" | "targetProtocol" | "lastRunCode">,
+  sourceName: string,
+) {
+  if (!canRebuildInJellyfin(link)) return "";
+  const codes = link.lastRunCode?.split(",").map(code => code.trim()) ?? [];
+  if (codes.includes("credential_expired")) return "Saved Jellyfin sign-in expired";
+  return codes.includes("order") ? `Order in Jellyfin differs from ${sourceName}` : "";
+}
+
 export function isServiceMix(link: Pick<PlaylistLink, "sourceProviderId" | "sourcePlaylistId" | "importMode">) {
   return link.importMode === "linked" && (link.sourceProviderId === "lastfm" && (["loved", "similar"].includes(link.sourcePlaylistId) || link.sourcePlaylistId.startsWith("top:"))
     || link.sourceProviderId === "listenbrainz" && link.sourcePlaylistId.startsWith("createdfor:"));

@@ -10,6 +10,8 @@ import {
   orderPlaylistSources,
   playlistBehaviorSummary,
   playlistOutcomeLabel,
+  jellyfinPlaylistWarning,
+  canRebuildInJellyfin,
   providerColor,
   runBounded,
   mediaServerName,
@@ -51,6 +53,22 @@ const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
 });
 
 describe("playlist presentation", () => {
+  it("offers rebuilding only for linked Jellyfin playlists", () => {
+    expect(canRebuildInJellyfin(playlist({ targetProtocol: "Jellyfin" }))).toBe(true);
+    expect(canRebuildInJellyfin(playlist({ targetProtocol: "jellyfin", importMode: "oneTime" }))).toBe(false);
+    expect(canRebuildInJellyfin(playlist({ targetProtocol: "subsonic" }))).toBe(false);
+  });
+
+  it("explains Jellyfin order and expired sign-in failures without warning on one-time imports", () => {
+    const link = playlist({ targetProtocol: "jellyfin", lastRunCode: "order,removal" });
+    expect(jellyfinPlaylistWarning(link, "Spotify")).toBe("Order in Jellyfin differs from Spotify");
+    expect(jellyfinPlaylistWarning({ ...link, lastRunCode: "credential_expired" }, "Spotify"))
+      .toBe("Saved Jellyfin sign-in expired");
+    expect(jellyfinPlaylistWarning({ ...link, lastRunCode: "removal" }, "Spotify")).toBe("");
+    expect(jellyfinPlaylistWarning({ ...link, importMode: "oneTime" }, "Spotify")).toBe("");
+    expect(jellyfinPlaylistWarning({ ...link, targetProtocol: "subsonic" }, "Spotify")).toBe("");
+  });
+
   it("partitions match states without adding overlapping missing routes or rejected songs twice", () => {
     const metrics = { total: 10, matched: 4, review: 2, unresolved: 5, rejected: 3, playable: 5, materialized: 0 };
     expect(playlistMatchCounts(metrics)).toEqual({ matched: 4, review: 2, unmatched: 4 });

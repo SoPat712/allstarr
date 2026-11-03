@@ -78,6 +78,7 @@
   let {
     mode = "services",
     administrator,
+    backend = "",
     developmentIntelligence = false,
     currentUserId = "",
     initialSource = "",
@@ -89,6 +90,7 @@
   }: {
     mode?: "services" | "accounts";
     administrator: boolean;
+    backend?: string;
     developmentIntelligence?: boolean;
     currentUserId?: string;
     initialSource?: string;
@@ -883,8 +885,11 @@
         <button type="button" class="filter-chip" aria-pressed={listFilter === "all"} onclick={() => listFilter = "all"}>All available <span class="segmented-tab-count">{providers.length}</span></button>
       </div>{/if}
 
+      {#if listFilter === "accounts" || backend.toLowerCase() === "jellyfin"}
+        <PlaylistConsent {backend} focus={initialSection === "playlist-editing"} />
+      {/if}
+
       {#if listFilter === "accounts"}
-        <PlaylistConsent />
         <p class="source-filter-note">Personal accounts belong to one person. Shared accounts work for everyone. Passwords and tokens are never shown again after you save them.</p>
         {@render accountList()}
       {:else}

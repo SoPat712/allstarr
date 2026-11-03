@@ -9,7 +9,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class BackendPlaylistTargetTests
+public sealed partial class BackendPlaylistTargetTests
 {
     [Fact]
     public async Task Jellyfin_visible_playlist_summary_does_not_probe_write_permissions()
@@ -849,12 +849,18 @@ public sealed class BackendPlaylistTargetTests
             });
     }
 
-    private sealed record RequestRecord(string Path, string? AuthToken, IReadOnlyDictionary<string, string[]> Parameters, string? Authorization = null);
+    internal sealed record RequestRecord(string Path, string? AuthToken, IReadOnlyDictionary<string, string[]> Parameters, string? Authorization = null);
 
-    private sealed class JellyfinFakeBackend : HttpMessageHandler
+    internal sealed class JellyfinFakeBackend : HttpMessageHandler
     {
-        public JellyfinFakeBackend(string id, string name, IReadOnlyList<string> members) =>
+        public JellyfinFakeBackend(string id, string name, IReadOnlyList<string> members)
+        {
+            _initialId = id;
             Playlists[id] = new PlaylistState(name, members.ToList());
+        }
+
+        private readonly string _initialId;
+        public bool EmptyNewPlaylistArtwork { get; set; }
 
         public Dictionary<string, PlaylistState> Playlists { get; } = [];
         public ConcurrentQueue<RequestRecord> Requests { get; } = new();
@@ -869,8 +875,12 @@ public sealed class BackendPlaylistTargetTests
             ? Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(ExistingArtwork)) : null;
         public bool ListArtwork { get; set; }
         public bool FailNextMetadata { get; set; }
+        public bool TimeoutNextMetadata { get; set; }
         public HttpStatusCode EditProbeStatus { get; set; } = HttpStatusCode.NoContent;
         public bool RejectUserOperations { get; set; }
+        public HttpStatusCode? RejectSavedToken { get; set; }
+        public bool RejectTokenAfterCreate { get; set; }
+        public string? FailDeleteId { get; set; }
         private int _nextId = 2;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -879,13 +889,16 @@ public sealed class BackendPlaylistTargetTests
             var path = request.RequestUri!.AbsolutePath.Trim('/');
             var query = ParseQuery(request.RequestUri.Query);
             Requests.Enqueue(new(path, request.Headers.TryGetValues("X-Emby-Token", out var values) ? values.Single() : null, query, request.Headers.Authorization?.ToString()));
+            if (RejectSavedToken != null && request.Headers.Authorization?.ToString().Contains("fixture-token", StringComparison.Ordinal) == true)
+                return new(RejectSavedToken.Value);
             if (ForcedStatus != null) return new(ForcedStatus.Value);
 
             if (request.Method == HttpMethod.Get && path.EndsWith("/Images/Primary", StringComparison.Ordinal))
-                return ExistingArtwork == null ? new(HttpStatusCode.NotFound) :
+                return ExistingArtwork == null || EmptyNewPlaylistArtwork && path.Split('/')[1] != _initialId &&
+                    !Playlists[path.Split('/')[1]].Artwork ? new(HttpStatusCode.NotFound) :
                     new(HttpStatusCode.OK) { Content = new ByteArrayContent(ExistingArtwork) };
 
-            if (request.Method == HttpMethod.Get && path.StartsWith("Users/user-1/Items", StringComparison.Ordinal))
+            if (request.Method == HttpMethod.Get && path.StartsWith("Users/", StringComparison.Ordinal) && path.Contains("/Items", StringComparison.Ordinal))
             {
                 var parts = path.Split('/');
                 if (parts.Length == 4)
@@ -918,11 +931,19 @@ public sealed class BackendPlaylistTargetTests
                     TotalRecordCount = Playlists[id].Members.Count
                 });
             }
+            if (request.Method == HttpMethod.Delete && path.StartsWith("Items/", StringComparison.Ordinal))
+            {
+                var id = path.Split('/')[1];
+                if (id == FailDeleteId) return new(HttpStatusCode.ServiceUnavailable);
+                Playlists.Remove(id);
+                return new(HttpStatusCode.NoContent);
+            }
             if (request.Method == HttpMethod.Post && path == "Playlists")
             {
                 MutationCount++;
                 var id = $"p{_nextId++}";
                 Playlists[id] = new(query["Name"].Single(), SplitCsv(query, "Ids"));
+                if (RejectTokenAfterCreate) RejectSavedToken = HttpStatusCode.Unauthorized;
                 return Json(new { Id = id });
             }
             if (RejectUserOperations && (request.Method == HttpMethod.Delete || path.Contains("/Move/", StringComparison.Ordinal)))
@@ -970,6 +991,11 @@ public sealed class BackendPlaylistTargetTests
             if (request.Method == HttpMethod.Post && path.StartsWith("Items/", StringComparison.Ordinal))
             {
                 MutationCount++;
+                if (TimeoutNextMetadata)
+                {
+                    TimeoutNextMetadata = false;
+                    throw new TaskCanceledException("Fixture metadata timeout");
+                }
                 if (FailNextMetadata)
                 {
                     FailNextMetadata = false;
@@ -1112,7 +1138,7 @@ public sealed class BackendPlaylistTargetTests
         };
     }
 
-    private sealed class PlaylistState(string name, List<string> members)
+    internal sealed class PlaylistState(string name, List<string> members)
     {
         public string Name { get; set; } = name;
         public string? Description { get; set; }

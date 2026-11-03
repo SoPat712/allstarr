@@ -247,20 +247,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         var trackRetention = update.TrackRetention ?? record.TrackRetention;
         var retentionChanged = trackRetention != record.TrackRetention;
         ValidateImportPolicy(record.ImportMode, trackRetention, update.ScheduleId);
-        if (!string.Equals(record.TargetPlaylistId, update.TargetPlaylistId, StringComparison.Ordinal))
-        {
-            record.DestinationMode = update.TargetPlaylistId == null ? PlaylistDestinationMode.New : PlaylistDestinationMode.Existing;
-            var memberships = await db.PlaylistTargetMemberships
-                .Where(item => item.PlaylistLinkId == record.Id && (item.Active || item.RemovalConfirmedAt == null))
-                .ToListAsync(cancellationToken);
-            foreach (var membership in memberships)
-            {
-                membership.Active = false;
-                membership.RemovalConfirmedAt = _clock.UtcNow;
-                membership.UpdatedAt = _clock.UtcNow;
-                membership.Revision++;
-            }
-        }
+        await PlaylistDestinationChange.ApplyAsync(db, record, update.TargetPlaylistId, _clock.UtcNow, cancellationToken);
         record.Mode = update.Mode; record.ProjectionMode = update.ProjectionMode; record.MaterializationMode = update.MaterializationMode; record.TrackRetention = trackRetention; record.RuleVersion = update.RuleVersion.Trim(); record.PolicyVersion = update.PolicyVersion.Trim(); record.ScheduleId = update.ScheduleId; record.TargetPlaylistId = update.TargetPlaylistId; record.TargetCredentialReferenceId = update.TargetCredentialReferenceId; record.MirrorStaleEntries = update.MirrorStaleEntries; record.PreserveManualEntries = update.PreserveManualEntries; record.SyncName = update.SyncName; record.SyncDescription = update.SyncDescription; record.SyncArtwork = update.SyncArtwork; record.UpdatedAt = _clock.UtcNow; record.Revision++;
         await db.SaveChangesAsync(cancellationToken);
         if (retentionChanged && _kept != null)

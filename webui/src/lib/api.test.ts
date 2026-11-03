@@ -1,9 +1,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, intelligence, normalizeResponse, playTraces, settings, sources } from "./api";
+import { ApiError, auth, intelligence, normalizeResponse, playlistLinks, playTraces, settings, sources } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("API response normalization", () => {
+  it("rebuilds a playlist and returns its updated link", async () => {
+    const updated = { Id: "playlist/name", TargetPlaylistId: "replacement", LastRunCode: null };
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(updated)));
+    vi.stubGlobal("fetch", fetch);
+
+    expect(await playlistLinks.rebuild("playlist/name")).toEqual({ id: "playlist/name", targetPlaylistId: "replacement", lastRunCode: null });
+    expect(fetch).toHaveBeenCalledWith("/api/admin/playlist-links/playlist%2Fname/rebuild", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("retains the saved playlist sign-in state and sends only the reauthentication password", async () => {
+    const status = { Supported: true, Granted: false, UpdatedAt: null, NeedsSignIn: true };
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(status)));
+    vi.stubGlobal("fetch", fetch);
+    expect(await auth.grantPlaylistConsent("listener-password")).toEqual({ supported: true, granted: false, updatedAt: null, needsSignIn: true });
+    expect(fetch).toHaveBeenCalledWith("/api/admin/auth/playlist-consent", expect.objectContaining({
+      method: "POST", body: JSON.stringify({ password: "listener-password" }),
+    }));
+  });
+
   it("copies the redacted diagnostics response without rewriting its text", async () => {
     const text = '{\n  "schemaVersion": 1, "request": { "presented": { "title": "Evening song" } }\n}';
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(text)));

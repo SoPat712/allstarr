@@ -333,7 +333,7 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
         await LogReconciliationAsync(link, cancellationToken);
         var mode = link.Mode == PlaylistLinkMode.Virtual
             ? PlaylistPlanMode.Virtual
-            : link.MaterializationMode == PlaylistMaterializationMode.Recreate
+            : link.ImportMode != PlaylistImportMode.OneTime && link.MaterializationMode == PlaylistMaterializationMode.Recreate
                 ? PlaylistPlanMode.Recreate
                 : PlaylistPlanMode.Reconcile;
         var owned = await initial.PlaylistTargetMemberships.AsNoTracking()
@@ -410,10 +410,13 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
                 new BackendPlaylistMetadata(plan.Metadata.Name ?? before?.Name ?? snapshot.Name,
                     link.SyncDescription ? plan.Metadata.Description : before?.Description,
                     resolvedArtwork?.Bytes, resolvedArtwork?.ContentType),
-                plan.OrderedBackendItemIds, plan.IdempotencyKey,
+                link.ImportMode == PlaylistImportMode.OneTime && before != null
+                    ? before.Members.Select(item => item.BackendItemId).Concat(plan.OrderedBackendItemIds)
+                    : plan.OrderedBackendItemIds, plan.IdempotencyKey,
                 before?.BackendPlaylistId ?? link.TargetPlaylistId,
                 before?.NativeRevision, before?.Fingerprint,
-                owned, link.MirrorStaleEntries), cancellationToken);
+                owned, link.MirrorStaleEntries && link.ImportMode != PlaylistImportMode.OneTime)
+            { PreserveExistingOrder = link.ImportMode == PlaylistImportMode.OneTime }, cancellationToken);
             if (!write.IsSuccess || write.Value == null)
             {
                 var recoveryId = plan.Mode == PlaylistPlanMode.Reconcile &&
@@ -1375,7 +1378,9 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
         trackedLink.TargetPlaylistId = receipt.Snapshot.BackendPlaylistId; trackedLink.UpdatedAt = _clock.UtcNow; trackedLink.Revision++;
         await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken);
         return new(plan, run.Id, state, true, false,
-            verification.Code == "verified" ? metadataIssue : verification.Code);
+            receipt.UnsupportedMetadataFields.Contains("credential_expired", StringComparer.Ordinal)
+                ? "credential_expired"
+                : verification.Code == "verified" ? metadataIssue : verification.Code);
     }
 
     private void PersistMembershipEvidence(
@@ -1448,7 +1453,7 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
             .Concat((before?.Members ?? [])
                 .Select(item => item.BackendItemId)
                 .Where(item => !planned.Contains(item))
-                .Where(item => !link.MirrorStaleEntries || !syncOwned.Contains(item)))
+                .Where(item => link.ImportMode == PlaylistImportMode.OneTime || !link.MirrorStaleEntries || !syncOwned.Contains(item)))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         var durations = await db.LibraryTracks.AsNoTracking()

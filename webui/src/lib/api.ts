@@ -22,6 +22,7 @@ export type PlaylistConsentStatus = {
   supported: boolean;
   granted: boolean;
   updatedAt: string | null;
+  needsSignIn?: boolean;
 };
 
 export type OnboardingState = {
@@ -2546,6 +2547,8 @@ export const releaseInbox = {
 
 export const playlistLinks = {
   list: () => json<{ playlistLinks: PlaylistLink[] }>("/api/admin/playlist-links"),
+  rebuild: (id: string) =>
+    json<PlaylistLink>(`/api/admin/playlist-links/${encodeURIComponent(id)}/rebuild`, { method: "POST" }),
   copies: (listenerId: string) => json<PlaylistCopy[]>(`/api/admin/listeners/${encodeURIComponent(listenerId)}/playlist-forks`),
   details: (id: string, projectionMode?: "resolved" | "source" | "target", signal?: AbortSignal) =>
     json<PlaylistDetails>(`/api/admin/playlist-links/${encodeURIComponent(id)}${projectionMode ? `?projectionMode=${projectionMode}` : ""}`, { signal }),

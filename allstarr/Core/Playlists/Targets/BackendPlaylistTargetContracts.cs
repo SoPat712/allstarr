@@ -53,6 +53,8 @@ public sealed record BackendPlaylistTargetContext
     public string BackendInstanceId { get; }
     public string VerifiedPrincipalId { get; }
     public string? CredentialReference { get; }
+    internal bool UseConfiguredAuthentication { get; init; }
+    internal BackendPlaylistAuthentication? AuthenticationOverride { get; init; }
 
     private static string Required(string value, string parameterName) =>
         string.IsNullOrWhiteSpace(value)
@@ -193,6 +195,7 @@ public sealed record BackendPlaylistWriteRequest
         RecoveryPlaylistId = string.IsNullOrWhiteSpace(recoveryPlaylistId) ? null : recoveryPlaylistId;
     }
 
+    public bool PreserveExistingOrder { get; init; }
     public BackendPlaylistWriteMode Mode { get; }
     public BackendPlaylistMetadata Metadata { get; }
     public IReadOnlyList<string> OrderedBackendItemIds { get; }
@@ -224,6 +227,9 @@ public sealed record BackendPlaylistWriteReceipt(
 
 public interface IBackendPlaylistTarget
 {
+    Task<BackendPlaylistTargetResult<bool>> DeleteAsync(BackendPlaylistTargetContext context,
+        string backendPlaylistId, CancellationToken cancellationToken) =>
+        Task.FromResult(new BackendPlaylistTargetResult<bool>(BackendPlaylistTargetStatus.Unsupported));
     Task<BackendPlaylistTargetResult<bool>> WriteArtworkOnlyAsync(BackendPlaylistTargetContext context,
         string backendPlaylistId, BackendPlaylistArtwork artwork, CancellationToken cancellationToken) =>
         Task.FromResult(new BackendPlaylistTargetResult<bool>(BackendPlaylistTargetStatus.Unsupported));

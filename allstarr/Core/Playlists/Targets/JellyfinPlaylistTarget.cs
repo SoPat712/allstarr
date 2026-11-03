@@ -1,4 +1,6 @@
 using allstarr.Core.Configuration;
+using allstarr.Core.Identity;
+using allstarr.Core.Secrets;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -11,20 +13,22 @@ namespace allstarr.Core.Playlists.Targets;
 public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
 {
     private readonly HttpClient _client;
+    private readonly EncryptedSecretStore? _secrets;
     private readonly Uri? _baseUri;
     private readonly IBackendPlaylistAuthenticationResolver _authentication;
 
-    public JellyfinPlaylistTarget(IHttpClientFactory clients, IOptions<JellyfinSettings> settings)
+    public JellyfinPlaylistTarget(IHttpClientFactory clients, IOptions<JellyfinSettings> settings, EncryptedSecretStore? secrets = null)
         : this(
             clients.CreateClient(JellyfinProxyService.HttpClientName),
             Uri.TryCreate(settings.Value.Url, UriKind.Absolute, out var endpoint) ? endpoint : null,
-            new JellyfinConfiguredAuthentication(settings.Value))
+            new JellyfinConfiguredAuthentication(settings.Value), secrets)
     {
     }
 
-    public JellyfinPlaylistTarget(HttpClient client, Uri? baseUri, IBackendPlaylistAuthenticationResolver? authentication = null)
+    public JellyfinPlaylistTarget(HttpClient client, Uri? baseUri, IBackendPlaylistAuthenticationResolver? authentication = null, EncryptedSecretStore? secrets = null)
     {
         _client = client;
+        _secrets = secrets;
         _baseUri = baseUri == null ? null : new Uri(baseUri.ToString().TrimEnd('/') + "/");
         _authentication = authentication ?? new NoAuthenticationResolver();
     }
@@ -184,6 +188,56 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
     }
 
     public async Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> WriteAsync(
+        BackendPlaylistTargetContext context, BackendPlaylistWriteRequest request, CancellationToken cancellationToken)
+    {
+        if (_secrets == null || request.PreserveExistingOrder || context.UseConfiguredAuthentication)
+            return await WriteCoreAsync(context, request, cancellationToken);
+        var grant = await _secrets.GetJellyfinPlaylistGrantAsync(context.BackendInstanceId,
+            context.VerifiedPrincipalId, cancellationToken: cancellationToken);
+        if (grant == null) return await WriteCoreAsync(context, request, cancellationToken);
+        var fallbackRequest = request;
+        if (!grant.NeedsSignIn)
+        {
+            try
+            {
+                using var token = await _secrets.OpenJellyfinPlaylistTokenAsync(context.BackendInstanceId,
+                    context.VerifiedPrincipalId, grant, cancellationToken);
+                var authenticated = context with
+                {
+                    AuthenticationOverride = new(new Dictionary<string, string>
+                    {
+                        ["Authorization"] = JellyfinPlaylistSignIn.Authorization(grant.UserId!.Value, token.ReadUtf8())
+                    }, [])
+                    { ActsAsUser = true }
+                };
+                var result = await WriteCoreAsync(authenticated, request, cancellationToken);
+                if (result.Status != BackendPlaylistTargetStatus.Unauthorized &&
+                    result.UpstreamStatus is not (HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)) return result;
+                if (result.RecoveryPlaylistId != null)
+                    fallbackRequest = new(request.Mode, request.Metadata, request.OrderedBackendItemIds, request.IdempotencyKey,
+                        request.BackendPlaylistId ?? result.RecoveryPlaylistId,
+                        syncOwnedBackendItemIds: request.SyncOwnedBackendItemIds,
+                        removeStaleSyncOwnedItems: request.RemoveStaleSyncOwnedItems,
+                        recoveryPlaylistId: result.RecoveryPlaylistId);
+                await _secrets.RejectJellyfinPlaylistGrantAsync(context.BackendInstanceId,
+                    context.VerifiedPrincipalId, grant, cancellationToken);
+            }
+            catch (UnauthorizedAccessException) { return await WriteCoreAsync(context, request, cancellationToken); }
+        }
+        var configured = await _authentication.ResolveAsync(context, cancellationToken);
+        var fallback = await WriteCoreAsync(context with { AuthenticationOverride = configured with { ActsAsUser = false } },
+            fallbackRequest, cancellationToken);
+        return fallback.Value == null ? fallback : fallback with
+        {
+            Value = fallback.Value with
+            {
+                UnsupportedMetadataFields = fallback.Value.UnsupportedMetadataFields
+                    .Where(item => item is not ("order" or "removal")).Append("credential_expired").ToArray()
+            }
+        };
+    }
+
+    private async Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> WriteCoreAsync(
         BackendPlaylistTargetContext context,
         BackendPlaylistWriteRequest request,
         CancellationToken cancellationToken)
@@ -193,11 +247,11 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
             if (request.BackendPlaylistId != null &&
                 !await CanWriteAsync(context, request.BackendPlaylistId, cancellationToken))
                 return new(BackendPlaylistTargetStatus.Unauthorized, ErrorCode: "playlist-write-forbidden");
-            if (request.Mode == BackendPlaylistWriteMode.Recreate)
+            if (request.Mode == BackendPlaylistWriteMode.Recreate && !request.PreserveExistingOrder)
             {
                 var created = request.RecoveryPlaylistId == null
                     ? await CreateAsync(context, request, cancellationToken)
-                    : await WriteAsync(context, new BackendPlaylistWriteRequest(
+                    : await WriteCoreAsync(context, new BackendPlaylistWriteRequest(
                         BackendPlaylistWriteMode.Reconcile,
                         request.Metadata,
                         request.OrderedBackendItemIds,
@@ -233,12 +287,12 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
 
             // Jellyfin resolves reorder and removal permissions from the caller's user, so a server
             // key can only insert items; anything it cannot change is reported instead of retried.
-            var actsAsUser = (await _authentication.ResolveAsync(context, cancellationToken)).ActsAsUser;
+            var actsAsUser = (context.AuthenticationOverride ?? await _authentication.ResolveAsync(context, cancellationToken)).ActsAsUser;
             var unsupported = new List<string>();
             var changed = false;
             var staleOwned = request.SyncOwnedBackendItemIds.ToHashSet(StringComparer.Ordinal);
             var staleMembers = current.Members
-                .Where(member => request.RemoveStaleSyncOwnedItems &&
+                .Where(member => !request.PreserveExistingOrder && request.RemoveStaleSyncOwnedItems &&
                                  staleOwned.Contains(member.BackendItemId) &&
                                  !request.OrderedBackendItemIds.Contains(member.BackendItemId, StringComparer.Ordinal))
                 .ToArray();
@@ -257,7 +311,8 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
                 changed = true;
             }
 
-            foreach (var insert in PlanInserts(remaining, desired))
+            foreach (var insert in PlanInserts(remaining, request.PreserveExistingOrder
+                         ? remaining.Concat(desired).Distinct(StringComparer.Ordinal).ToArray() : desired))
             {
                 var add = await SendAsync(context, HttpMethod.Post,
                     $"Playlists/{Escape(current.BackendPlaylistId)}/Items?Ids={Csv(insert.Ids)}&position={insert.Position}&UserId={Escape(context.VerifiedPrincipalId)}",
@@ -270,13 +325,13 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
             if (!afterMembership.IsSuccess)
                 return ConvertFailure<BackendPlaylistWriteReceipt, BackendPlaylistSnapshot>(afterMembership, current.BackendPlaylistId);
             var desiredSet = desired.ToHashSet(StringComparer.Ordinal);
-            if (!actsAsUser)
+            if (!request.PreserveExistingOrder && !actsAsUser)
             {
                 if (!afterMembership.Value!.Members.Select(member => member.BackendItemId)
                         .Where(desiredSet.Contains).SequenceEqual(desired))
                     unsupported.Add("order");
             }
-            else
+            else if (!request.PreserveExistingOrder)
             {
                 foreach (var movePlan in PlanMoves(afterMembership.Value!.Members, desired))
                 {
@@ -305,6 +360,15 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
         }
     }
 
+    public async Task<BackendPlaylistTargetResult<bool>> DeleteAsync(BackendPlaylistTargetContext context,
+        string backendPlaylistId, CancellationToken cancellationToken)
+    {
+        var result = await SendAsync(context, HttpMethod.Delete, $"Items/{Escape(backendPlaylistId)}", null, cancellationToken);
+        return result.IsSuccess || result.Status == HttpStatusCode.NotFound
+            ? new(BackendPlaylistTargetStatus.Success, true, result.Status)
+            : ConvertFailure<bool>(result);
+    }
+
     public async Task<bool> FavoriteAsync(BackendPlaylistTargetContext context, string backendItemId, CancellationToken cancellationToken) =>
         (await SendAsync(context, HttpMethod.Post, $"Users/{Escape(context.VerifiedPrincipalId)}/FavoriteItems/{Escape(backendItemId)}", null, cancellationToken)).IsSuccess;
 
@@ -319,12 +383,23 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
         if (!create.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(create);
         using var document = JsonDocument.Parse(create.Body!);
         var id = document.RootElement.StringOrNull("Id") ?? throw new JsonException("Jellyfin create-playlist response has no Id.");
-        var metadata = await WriteMetadataAsync(context, id, request.Metadata, cancellationToken);
-        if (!metadata.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(metadata, id);
-        var snapshot = await ReadAsync(context, id, cancellationToken);
-        return snapshot.IsSuccess
-            ? Success(snapshot.Value!, changed: true, [])
-            : ConvertFailure<BackendPlaylistWriteReceipt, BackendPlaylistSnapshot>(snapshot, id);
+        try
+        {
+            var metadata = await WriteMetadataAsync(context, id, request.Metadata, cancellationToken);
+            if (!metadata.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(metadata, id);
+            var snapshot = await ReadAsync(context, id, cancellationToken);
+            return snapshot.IsSuccess
+                ? Success(snapshot.Value!, changed: true, [])
+                : ConvertFailure<BackendPlaylistWriteReceipt, BackendPlaylistSnapshot>(snapshot, id);
+        }
+        catch (JsonException)
+        {
+            return new(BackendPlaylistTargetStatus.BackendFailure, ErrorCode: "invalid-playlist-response", RecoveryPlaylistId: id);
+        }
+        catch (OperationCanceledException)
+        {
+            return new(BackendPlaylistTargetStatus.Cancelled, ErrorCode: "cancelled", RecoveryPlaylistId: id);
+        }
     }
 
     private async Task<HttpResult> WriteMetadataAsync(
@@ -375,7 +450,7 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
         }
         using var request = new HttpRequestMessage(method, new Uri(_baseUri, path)) { Content = content };
         BackendPlaylistAuthentication authentication;
-        try { authentication = await _authentication.ResolveAsync(context, cancellationToken); }
+        try { authentication = context.AuthenticationOverride ?? await _authentication.ResolveAsync(context, cancellationToken); }
         catch (BackendAccessMissingException) { return new(HttpStatusCode.ServiceUnavailable, null, BackendAccessMissingException.Code); }
         foreach (var header in authentication.Headers) request.Headers.TryAddWithoutValidation(header.Key, header.Value);
         try

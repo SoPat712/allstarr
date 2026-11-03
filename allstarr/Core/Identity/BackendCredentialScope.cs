@@ -4,6 +4,7 @@ namespace allstarr.Core.Identity;
 
 public static class BackendCredentialScope
 {
+    public const string JellyfinPurpose = "playlist-backend:jellyfin";
     public const string SubsonicPurpose = "playlist-backend:subsonic";
 
     public static bool Matches(SecretReferenceRecord secret, UserRecord user) =>

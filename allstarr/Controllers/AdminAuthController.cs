@@ -400,11 +400,13 @@ public sealed class AdminAuthController : ControllerBase
     {
         var session = await _sessionService.GetValidSessionAsync(Request, cancellationToken);
         if (session == null) return Unauthorized();
-        if (_backendType != BackendType.Subsonic)
-            return Ok(new { supported = false, granted = false, updatedAt = (DateTimeOffset?)null });
+        if (_backendType is not (BackendType.Subsonic or BackendType.Jellyfin))
+            return Ok(new { supported = false, granted = false, updatedAt = (DateTimeOffset?)null, needsSignIn = false });
         var principal = await ConsentPrincipalAsync(session, cancellationToken);
         if (principal == null || _secrets == null) return Unauthorized();
-        return Ok(ConsentStatus(await _secrets.GetSubsonicPlaylistGrantAsync(principal, cancellationToken)));
+        return Ok(ConsentStatus(_backendType == BackendType.Jellyfin
+            ? await _secrets.GetJellyfinPlaylistGrantAsync(principal, cancellationToken)
+            : await _secrets.GetSubsonicPlaylistGrantAsync(principal, cancellationToken)));
     }
 
     [HttpPost("playlist-consent")]
@@ -414,12 +416,14 @@ public sealed class AdminAuthController : ControllerBase
     {
         var session = await _sessionService.GetValidSessionAsync(Request, cancellationToken);
         if (session == null) return Unauthorized();
-        if (_backendType != BackendType.Subsonic || _secrets == null)
-            return BadRequest(new { error = "Playlist consent is available for Subsonic listeners." });
+        if (_backendType is not (BackendType.Subsonic or BackendType.Jellyfin) || _secrets == null)
+            return BadRequest(new { error = "Playlist consent is unavailable for this backend." });
         if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length > 2000)
             return BadRequest(new { error = "Enter your backend password." });
         try
         {
+            if (_backendType == BackendType.Jellyfin)
+                return await GrantJellyfinPlaylistConsentAsync(session, request.Password, cancellationToken);
             using var authentication = SubsonicAuthenticationRequest(session.UserId, request.Password);
             using var response = await _httpClient.SendAsync(authentication, cancellationToken);
             if (!response.IsSuccessStatusCode) return Unauthorized(new { error = "Backend reauthentication failed." });
@@ -444,28 +448,77 @@ public sealed class AdminAuthController : ControllerBase
     {
         var session = await _sessionService.GetValidSessionAsync(Request, cancellationToken);
         if (session == null) return Unauthorized();
-        if (_backendType != BackendType.Subsonic || _secrets == null) return BadRequest();
+        if (_backendType is not (BackendType.Subsonic or BackendType.Jellyfin) || _secrets == null) return BadRequest();
         var principal = await ConsentPrincipalAsync(session, cancellationToken);
         if (principal == null) return Unauthorized();
-        await _secrets.RevokeSubsonicPlaylistGrantAsync(principal, cancellationToken);
+        if (_backendType == BackendType.Jellyfin)
+        {
+            try
+            {
+                var grant = await _secrets.GetJellyfinPlaylistGrantAsync(principal, cancellationToken);
+                if (grant != null)
+                {
+                    using var token = await _secrets.OpenJellyfinPlaylistTokenAsync(principal.BackendInstanceId,
+                        principal.BackendPrincipalId, grant, cancellationToken);
+                    using var logout = new HttpRequestMessage(HttpMethod.Post, $"{_jellyfinSettings.Url!.TrimEnd('/')}/Sessions/Logout");
+                    logout.Headers.TryAddWithoutValidation("Authorization", JellyfinPlaylistSignIn.Authorization(principal.UserId, token.ReadUtf8()));
+                    using var response = await _httpClient.SendAsync(logout, cancellationToken);
+                }
+            }
+            catch (Exception exception) when (exception is HttpRequestException or OperationCanceledException or UnauthorizedAccessException) { }
+            await _secrets.RevokeJellyfinPlaylistGrantAsync(principal, CancellationToken.None);
+        }
+        else await _secrets.RevokeSubsonicPlaylistGrantAsync(principal, cancellationToken);
         return Ok(ConsentStatus(null));
     }
+
+    private async Task<IActionResult> GrantJellyfinPlaylistConsentAsync(
+        AdminAuthSession session, string password, CancellationToken cancellationToken)
+    {
+        var principal = await ConsentPrincipalAsync(session, cancellationToken);
+        if (principal == null) return Unauthorized();
+        using var authentication = new HttpRequestMessage(HttpMethod.Post,
+            $"{_jellyfinSettings.Url!.TrimEnd('/')}/Users/AuthenticateByName")
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new { Username = session.UserName, Pw = password }),
+                Encoding.UTF8, "application/json")
+        };
+        authentication.Headers.TryAddWithoutValidation("Authorization", JellyfinPlaylistSignIn.Authorization(principal.UserId));
+        using var response = await _httpClient.SendAsync(authentication, cancellationToken);
+        if (!response.IsSuccessStatusCode) return Unauthorized(new { error = "Backend reauthentication failed." });
+        using var document = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(cancellationToken),
+            cancellationToken: cancellationToken);
+        var root = document.RootElement;
+        if (!root.TryGetProperty("User", out var user) ||
+            !user.TryGetProperty("Id", out var id) || id.ValueKind != JsonValueKind.String ||
+            !SameJellyfinPrincipal(id.GetString(), session.UserId) ||
+            !root.TryGetProperty("AccessToken", out var token) || token.ValueKind != JsonValueKind.String ||
+            string.IsNullOrWhiteSpace(token.GetString()))
+            return Unauthorized(new { error = "Backend reauthentication failed." });
+        return Ok(ConsentStatus(await _secrets!.StoreJellyfinPlaylistGrantAsync(principal, token.GetString()!, cancellationToken)));
+    }
+
+    private static bool SameJellyfinPrincipal(string? left, string right) =>
+        Guid.TryParse(left, out var leftId) && Guid.TryParse(right, out var rightId)
+            ? leftId == rightId
+            : string.Equals(left, right, StringComparison.Ordinal);
 
     private async Task<AllstarrPrincipal?> ConsentPrincipalAsync(
         AdminAuthSession session,
         CancellationToken cancellationToken,
         AdminOidcBackendUser? verifiedUser = null)
     {
-        if (_identityResolver == null || !session.BackendType.Equals("Subsonic", StringComparison.OrdinalIgnoreCase) ||
+        if (_identityResolver == null || !session.BackendType.Equals(_backendType.ToString(), StringComparison.OrdinalIgnoreCase) ||
             !session.AllstarrUserId.HasValue) return null;
         try
         {
             var principal = await _identityResolver.ResolveAsync(
                 new BackendIdentityDescriptor(
-                    "subsonic",
+                    _backendType.ToString().ToLowerInvariant(),
                     session.UserId,
                     verifiedUser?.Name ?? session.UserName,
-                    verifiedUser?.IsAdministrator ?? session.IsAdministrator),
+                    verifiedUser?.IsAdministrator ?? session.IsAdministrator,
+                    session.BackendInstanceId),
                 cancellationToken);
             return principal?.UserId == session.AllstarrUserId &&
                    principal.IsAdministrator == session.IsAdministrator
@@ -476,7 +529,7 @@ public sealed class AdminAuthController : ControllerBase
     }
 
     private static object ConsentStatus(BackendCredentialGrant? grant) =>
-        new { supported = true, granted = grant != null, updatedAt = grant?.UpdatedAt };
+        new { supported = true, granted = grant != null, updatedAt = grant?.UpdatedAt, needsSignIn = grant?.NeedsSignIn ?? false };
 
     public sealed class PlaylistConsentRequest
     {
