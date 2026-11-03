@@ -24,3 +24,8 @@ public interface IApplicationCache
 
     Task<int> PurgeAllAsync();
 }
+
+public interface IApplicationCacheWriteObserver
+{
+    void Written(string key);
+}

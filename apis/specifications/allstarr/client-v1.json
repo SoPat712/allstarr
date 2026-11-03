@@ -1247,6 +1247,107 @@
         }
       }
     },
+    "/allstarr/v1/search/lyrics": {
+      "get": {
+        "tags": [
+          "LyricsSearch"
+        ],
+        "operationId": "searchLyrics",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer",
+              "format": "int32",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LyricsSearchResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/allstarr/v1/mixes": {
       "get": {
         "tags": [
@@ -3121,6 +3222,139 @@
           }
         }
       },
+      "LyricsSearchHighlight": {
+        "required": [
+          "start",
+          "length"
+        ],
+        "type": "object",
+        "properties": {
+          "start": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "length": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "LyricsSearchLine": {
+        "required": [
+          "text",
+          "startMs",
+          "endMs",
+          "before",
+          "after"
+        ],
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "startMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "endMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "before": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "after": {
+            "type": [
+              "null",
+              "string"
+            ]
+          }
+        }
+      },
+      "LyricsSearchResponse": {
+        "required": [
+          "results",
+          "truncated"
+        ],
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LyricsSearchResult"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "LyricsSearchResult": {
+        "required": [
+          "itemId",
+          "title",
+          "artist",
+          "album",
+          "albumId",
+          "isExternal",
+          "line",
+          "highlights",
+          "score",
+          "source"
+        ],
+        "type": "object",
+        "properties": {
+          "itemId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "artist": {
+            "type": "string"
+          },
+          "album": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "albumId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "isExternal": {
+            "type": "boolean"
+          },
+          "line": {
+            "$ref": "#/components/schemas/LyricsSearchLine"
+          },
+          "highlights": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LyricsSearchHighlight"
+            }
+          },
+          "score": {
+            "type": "number",
+            "format": "double"
+          },
+          "source": {
+            "$ref": "#/components/schemas/RichLyricsSource"
+          }
+        }
+      },
       "PlaybackAccountScope": {
         "enum": [
           "personal",
@@ -3349,6 +3583,9 @@
     },
     {
       "name": "ItemMatch"
+    },
+    {
+      "name": "LyricsSearch"
     },
     {
       "name": "Mixes"

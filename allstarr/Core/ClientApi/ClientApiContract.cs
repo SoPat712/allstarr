@@ -29,7 +29,7 @@ public sealed record ClientFeatures
     [JsonPropertyName("mixes")] public bool Mixes { get; init; } = true;
     [JsonPropertyName("releases")] public bool Releases { get; init; } = true;
     [JsonPropertyName("follow")] public bool Follow { get; init; } = true;
-    [JsonPropertyName("lyricsSearch")] public bool LyricsSearch { get; init; }
+    [JsonPropertyName("lyricsSearch")] public bool LyricsSearch { get; init; } = true;
     [JsonPropertyName("events")] public bool Events { get; init; } = true;
 }
 

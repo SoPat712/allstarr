@@ -1,5 +1,8 @@
+using System.Collections.Concurrent;
 using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Music;
+using allstarr.Core.ClientApi;
+using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
 
 namespace allstarr.Core.Protocols;
@@ -19,11 +22,16 @@ public sealed partial class ProtocolLyricsResolver
         internal bool WasDiscovered { get; set; }
     }
     private sealed record AutomaticAnswer(int Rank, string Id, LyricsInfo Lyrics, PreparedLyricsRead? Read);
-    private sealed class AutomaticLookup(DateTimeOffset deadline, CancellationTokenSource timer, CancellationTokenSource cancellation)
+    private sealed class AutomaticLookup(DateTimeOffset deadline, CancellationTokenSource timer, CancellationTokenSource cancellation,
+        ProtocolExecutionContext protocol, Song song, bool householdOnly)
     {
         internal DateTimeOffset Deadline { get; } = deadline;
+        internal ProtocolExecutionContext Protocol { get; } = protocol;
+        internal Song Song { get; } = song;
+        internal bool HouseholdOnly { get; } = householdOnly;
         internal CancellationToken Token => cancellation.Token;
         internal List<Task<AutomaticAnswer?>> Tasks { get; } = [];
+        internal ConcurrentBag<Task> Observations { get; } = [];
         internal ProtocolLyricsCandidate? Fallback { get; set; }
         internal TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal void Cancel() => cancellation.Cancel();
@@ -33,7 +41,7 @@ public sealed partial class ProtocolLyricsResolver
     private readonly HashSet<AutomaticLookup> _automatic = [];
     private readonly CancellationTokenSource _automaticShutdown = CancellationTokenSource.CreateLinkedTokenSource(lifetime?.ApplicationStopping ?? default);
     private TimeProvider LyricsClock => timeProvider ?? TimeProvider.System;
-    private AutomaticLookup? EnterAutomatic(ProtocolExecutionContext protocol)
+    private AutomaticLookup? EnterAutomatic(ProtocolExecutionContext protocol, Song song, bool householdOnly)
     {
         lock (_automaticGate)
         {
@@ -43,7 +51,7 @@ public sealed partial class ProtocolLyricsResolver
             if (deadline <= now) return null;
             var timer = new CancellationTokenSource(deadline - now, LyricsClock);
             var cancellation = CancellationTokenSource.CreateLinkedTokenSource(timer.Token, _automaticShutdown.Token, protocol.CancellationToken);
-            var lookup = new AutomaticLookup(deadline, timer, cancellation);
+            var lookup = new AutomaticLookup(deadline, timer, cancellation, protocol, song, householdOnly);
             _automatic.Add(lookup);
             return lookup;
         }
@@ -55,6 +63,8 @@ public sealed partial class ProtocolLyricsResolver
         catch (Exception) { }
         finally
         {
+            try { await Task.WhenAll(lookup.Observations); }
+            catch (Exception) { }
             lock (_automaticGate) _automatic.Remove(lookup);
             lookup.Dispose();
             lookup.Completion.TrySetResult();
@@ -98,7 +108,7 @@ public sealed partial class ProtocolLyricsResolver
                     continue;
                 }
                 if (read == null || !providerIds.Add(read.Binding.ProviderId)) continue;
-                var task = ReadAutomaticAsync(gateway, source.Id, rank, read, lookup.Token);
+                var task = ReadAutomaticAsync(gateway, source.Id, rank, read, lookup);
                 lookup.Tasks.Add(task);
                 var answer = await task.WaitAsync(lookup.Token);
                 if (answer == null || !await gateway.IsCurrentAsync(read, lookup.Token)) continue;
@@ -215,7 +225,7 @@ public sealed partial class ProtocolLyricsResolver
         {
             attempted.Add(rank);
             providerIds.Add(sources[rank].Read!.Binding.ProviderId);
-            var task = ReadAutomaticAsync(gateway, sources[rank].Id, rank, sources[rank].Read!, lookup.Token);
+            var task = ReadAutomaticAsync(gateway, sources[rank].Id, rank, sources[rank].Read!, lookup);
             lookup.Tasks.Add(task);
             ranks[task] = rank;
             return task;
@@ -257,27 +267,32 @@ public sealed partial class ProtocolLyricsResolver
         }
     }
     private async Task<AutomaticAnswer?> ReadAutomaticAsync(IProtocolLyricsExecutionGateway gateway, string id, int rank,
-        PreparedLyricsRead read, CancellationToken token)
+        PreparedLyricsRead read, AutomaticLookup lookup)
     {
+        var token = lookup.Token;
         try
         {
             var result = await gateway.ExecuteAsync(read, LyricsCompletionMode.OwnedAutomatic, token);
             token.ThrowIfCancellationRequested();
             if (string.IsNullOrWhiteSpace(result?.Content)) return null;
             var request = read.Spec.Request;
-            return new(rank, id, new LyricsInfo
+            var lyrics = new LyricsInfo
             {
                 TrackName = request.TrackTitle ?? string.Empty,
                 ArtistName = string.Join(", ", request.ArtistNames),
                 AlbumName = request.AlbumTitle ?? string.Empty,
                 Duration = request.DurationSeconds ?? 0,
                 Source = id,
+                CacheProvenance = LyricsSearchIndex.AccountProvenance(read.Binding.AccountId, read.Binding.AccountRevision),
                 Revision = result.Revision,
                 TimedLines = result.TimedLines,
                 Attribution = result.Attribution,
                 PlainLyrics = result.Format == allstarr.Core.Capabilities.ProviderLyricsFormat.PlainText ? result.Content : null,
                 SyncedLyrics = result.Format == allstarr.Core.Capabilities.ProviderLyricsFormat.PlainText ? null : result.Content
-            }, read);
+            };
+            if (searchIndex != null && lookup.Protocol.Protocol == ProtocolKind.Jellyfin && !lookup.HouseholdOnly)
+                lookup.Observations.Add(Task.Run(() => IndexAsync(lookup.Protocol, lookup.Song, lyrics)));
+            return new(rank, id, lyrics, read);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { return null; }
         catch (Exception exception) when (exception is not (OperationCanceledException or UnauthorizedAccessException)) { logger.LogWarning("Lyrics source {Provider} failed; trying the next configured source", id); return null; }

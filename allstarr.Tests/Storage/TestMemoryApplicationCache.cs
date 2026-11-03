@@ -8,6 +8,10 @@ namespace allstarr.Tests;
 internal sealed class TestMemoryApplicationCache : IApplicationCache
 {
     private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.Ordinal);
+    private readonly IApplicationCacheWriteObserver? _writeObserver;
+
+    public TestMemoryApplicationCache() { }
+    public TestMemoryApplicationCache(IApplicationCacheWriteObserver writeObserver) => _writeObserver = writeObserver;
 
     public bool IsEnabled => true;
 
@@ -29,6 +33,7 @@ internal sealed class TestMemoryApplicationCache : IApplicationCache
     public Task<bool> SetStringAsync(string key, string value, TimeSpan? expiry = null)
     {
         _entries[key] = new(value, expiry.HasValue ? DateTimeOffset.UtcNow.Add(expiry.Value) : null);
+        _writeObserver?.Written(key);
         return Task.FromResult(true);
     }
 

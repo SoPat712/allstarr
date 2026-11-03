@@ -1,4 +1,5 @@
 using System.Net;
+using allstarr.Core.ClientApi;
 using System.Collections.Immutable;
 using allstarr.Core.Settings;
 using System.Text.Json;
@@ -54,6 +55,27 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
             .ReturnsAsync((ProtocolExecutionContext context, CancellationToken _) =>
                 new BackendLibraryAccess(true, context.Principal!.UserId == _userA ? ["music"] : []));
         _service = new LibraryIndexService(_factory, state, _clock, _identities, _libraryAccess.Object);
+    }
+
+    [Fact]
+    public async Task LibraryIndex_LyricsNotificationsFollowMeaningfulTrackChanges()
+    {
+        var state = new DurableStorageState(_database.StorageOptions);
+        state.Set(DurableStorageReadiness.Ready, "fixture");
+        var changes = new LyricsSearchChanges();
+        var service = new LibraryIndexService(_factory, state, _clock, _identities, _libraryAccess.Object, lyricsChanges: changes);
+        var context = Context(_userA, "principal-a");
+        var first = await service.UpsertAsync(context, Input());
+        Assert.True(changes.Reader.TryRead(out var created));
+        Assert.Equal(first.Id, created!.LibraryTrackId);
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(1);
+        await service.UpsertAsync(context, Input());
+        Assert.False(changes.Reader.TryRead(out _));
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(1);
+        await service.UpsertAsync(context, Input() with { SourceModifiedAt = Input().SourceModifiedAt.AddMinutes(2) });
+        Assert.True(changes.Reader.TryRead(out var changed));
+        Assert.Equal(first.Id, changed!.LibraryTrackId);
+        Assert.False(changes.Reader.TryRead(out _));
     }
 
     [Fact]

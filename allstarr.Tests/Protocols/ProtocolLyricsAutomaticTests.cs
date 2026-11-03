@@ -7,6 +7,7 @@ using Microsoft.Extensions.Options;
 using System.Net;
 using System.Collections.Concurrent;
 using allstarr.Core.Capabilities;
+using allstarr.Core.ClientApi;
 using allstarr.Core.Health;
 using allstarr.Core.Operations;
 using allstarr.Core.Identity;
@@ -415,6 +416,39 @@ public sealed class ProtocolLyricsAutomaticTests
         Assert.Equal(1, first.Calls);
         Assert.Equal(1, second.Calls);
         await fixture.Resolver.StopAsync(default);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnselectedAutomaticLyricsAreIndexedWithoutACacheExceptForHouseholdReads(bool householdOnly)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lyrics-observations-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var index = new LyricsSearchIndex(new StorageOptions { DataDirectory = root });
+            var first = new Source("lrclib", Result("lrclib", false));
+            var second = new Source("lrcred", Result("lrcred", true));
+            await using var fixture = new Fixture(index, first, second)
+            { ExternalProvider = "deezer", ExternalId = "42", Recording = Guid.NewGuid() };
+
+            var selected = await fixture.FindAsync(new ProtocolLyricsSources(HouseholdOnly: householdOnly))
+                .WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal("lrcred", selected?.Source);
+            Assert.Equal("[00:01]Words", selected?.SyncedLyrics);
+            Assert.Equal(1, first.Calls);
+            Assert.Equal(1, second.Calls);
+            await fixture.Resolver.StopAsync(default).WaitAsync(TimeSpan.FromSeconds(5));
+            var documents = await index.SnapshotAsync(fixture.Protocol);
+            if (householdOnly) Assert.Empty(documents);
+            else
+            {
+                Assert.Equal(new[] { "lrclib", "lrcred" }, documents.Select(document => document.Source).OrderBy(source => source, StringComparer.Ordinal));
+                Assert.All(documents, document => Assert.Equal("ext-deezer-song-42", document.ItemId));
+            }
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
     [Fact]
@@ -870,9 +904,12 @@ public sealed class ProtocolLyricsAutomaticTests
         internal Fixture(params IProviderLyricsCapability[] sources) : this(new ManualTimeProvider(DateTimeOffset.UtcNow), null, null, sources) { }
         internal Fixture(ICrossProviderLinkResolver links, params IProviderLyricsCapability[] sources) : this(new ManualTimeProvider(DateTimeOffset.UtcNow), links, null, sources) { }
         internal Fixture(ManualTimeProvider clock, params IProviderLyricsCapability[] sources) : this(clock, null, null, sources) { }
+        internal Fixture(LyricsSearchIndex searchIndex, params IProviderLyricsCapability[] sources)
+            : this(new ManualTimeProvider(DateTimeOffset.UtcNow), null, null, sources, searchIndex) { }
         internal Fixture(ITrackIdentityService identities, ICrossProviderLinkResolver links, params IProviderLyricsCapability[] sources)
             : this(new ManualTimeProvider(DateTimeOffset.UtcNow), links, identities, sources) { }
-        private Fixture(ManualTimeProvider clock, ICrossProviderLinkResolver? links, ITrackIdentityService? identities, params IProviderLyricsCapability[] sources)
+        private Fixture(ManualTimeProvider clock, ICrossProviderLinkResolver? links, ITrackIdentityService? identities,
+            IProviderLyricsCapability[] sources, LyricsSearchIndex? searchIndex = null)
         {
             Clock = clock;
             _sources = sources;
@@ -904,7 +941,8 @@ public sealed class ProtocolLyricsAutomaticTests
             var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             { ["Providers:LyricsOrder"] = string.Join(',', sources.Select(source => source.ProviderId)) }).Build();
             var gateway = Gateway = new ProtocolProviderGateway(router.Object, registry, Mock.Of<IHttpClientFactory>(), configuration, effectivePolicies: policies.Object, outcomes: health, timeProvider: Clock, audioVerifier: FixtureAudioVerifier.Instance);
-            Resolver = new(gateway, NullLogger<ProtocolLyricsResolver>.Instance, crossLinks: links, effectivePolicies: policies.Object, timeProvider: Clock, identities: identities);
+            Resolver = new(gateway, NullLogger<ProtocolLyricsResolver>.Instance, crossLinks: links, effectivePolicies: policies.Object,
+                timeProvider: Clock, identities: identities, searchIndex: searchIndex);
             Protocol = new(ProtocolKind.Jellyfin, "fixture", "listener", new AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "fixture", "listener", "Listener", false),
                 "lyrics", Clock.GetUtcNow().AddMinutes(1), default);
         }

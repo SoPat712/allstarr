@@ -1,4 +1,5 @@
 using System.Text.Json;
+using allstarr.Core.ClientApi;
 using allstarr.Core.Playback;
 using System.Net;
 using System.Diagnostics;
@@ -234,7 +235,7 @@ public sealed partial class ProtocolProviderGateway(
     TimeProvider? timeProvider = null,
     IOptions<CacheSettings>? searchSettings = null,
     IProviderAudioVerifier? audioVerifier = null,
-    Enrichment.SharedTagQueue? sharedTags = null) : IProtocolProviderGateway
+    Enrichment.SharedTagQueue? sharedTags = null, LyricsSearchChanges? lyricsChanges = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
     private readonly IProviderAudioVerifier streamVerifier = audioVerifier ?? new ProviderAudioVerifier();
@@ -2099,7 +2100,9 @@ public sealed partial class ProtocolProviderGateway(
                 isrc: isrc));
         if (outcome.IsSuccess)
         {
-            var result = outcome.RequireValue();
+            var result = outcome.RequireValue() with { CacheProvenance = LyricsSearchIndex.AccountProvenance(routed.Candidate.Context.Account) };
+            if (recordingId.HasValue && protocol.Actor?.EffectiveUserId is { } user)
+                lyricsChanges?.RecordingChanged(user, recordingId.Value);
             return result.Availability == ProviderLyricsAvailabilityState.Available ? result : null;
         }
         if (outcome.Error!.Kind is ProviderErrorKind.NotFound or ProviderErrorKind.CapabilityUnavailable or ProviderErrorKind.NotSupported)

@@ -345,3 +345,48 @@ coalescing window. There are at most 8 connections per listener and 256 across
 the server; excess connections return 503 `unavailable`. Connections close on
 client disconnect and server shutdown. Clients should share one stream per
 running app and periodically reconcile state through ordinary reads.
+
+`GET /allstarr/v1/search/lyrics?q=<text>&limit=20` searches lyrics already held
+by Allstarr. Trimmed queries must contain 2–200 characters; `limit` is 1–50
+(default 20). Invalid values return 400 `invalid_request`. Empty searches return
+200 with `{"results":[],"truncated":false}`. Responses use `Cache-Control: no-store`.
+The capability flag is `features.lyricsSearch`.
+
+Each result has `itemId`, `title`, `artist`, `album`, `albumId`, `isExternal`,
+`line` (`text`, `startMs`, `endMs`, `before`, `after`), `highlights` (each with
+`start` and `length`), `score`, and `source` (`id`, `name`). IDs use the same
+native and external IDs as Jellyfin Items. Unknown album IDs, neighbouring
+lines at the edges, and untimed lyric timestamps are null. Highlights use
+UTF-16 offsets within `line.text`; they never extend into neighbouring lines.
+Scores range from zero to one. The response contains one best line per song,
+ordered by score, and `truncated` indicates additional matching songs.
+
+Matching ignores case, accents, punctuation, apostrophe style, and whitespace.
+Phrases can span into the next line; those results identify the first line.
+Exact phrases rank above all query words in one line, followed by partial
+query-word and word-prefix matches. Search applies the listener's effective
+lyrics pin, automatic source order, and timing preference, just like the lyrics
+route.
+
+Search reads a separate, rebuildable SQLite FTS index. It makes no lyric search
+or metadata requests to music services. Completed fetches, lyrics reads, and
+source reviews update stored source variants. Successful cache writes notify a bounded watch list of
+known song lookups and queue stored-content refreshes, including writes made
+outside the lyrics route. Retained-sidecar publication also queues a refresh.
+A background worker indexes Jellyfin's local and embedded lyrics, including
+sidecars exposed by its lyrics endpoint. It processes pages of 128 library
+records, paces backend reads at 250 ms, and reuses the library index's change
+fingerprints to skip unchanged songs. A bounded change queue expedites updates;
+periodic metadata passes recover missed notifications and populate existing
+stored lyrics after startup. New library lyrics become searchable after the
+library index observes their source change and background processing completes.
+
+Library hits require current permission to the indexed library and pass a
+batched Jellyfin Items check with the caller's token. Album IDs come from
+those visible items. Service hits require a provider available through the same routing checks used for playback.
+Account-free and permitted shared-account lyrics for public catalog songs can
+be shared; personal account content and retained lyrics stay scoped to their
+listener. Other listeners' personal source content and pins are excluded. Cached account content is tied to the current
+routed account revision; retained canonical IDs also require a playable source
+or the caller's retained-file access. The index follows personal and household pin
+changes immediately without rereading songs.

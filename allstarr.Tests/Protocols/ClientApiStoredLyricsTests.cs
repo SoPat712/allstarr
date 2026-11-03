@@ -1,16 +1,66 @@
 using System.Collections.Immutable;
+using System.Text.Json;
+using allstarr.Core.Matching;
+using allstarr.Models.Lyrics;
+using allstarr.Services.Common;
 using allstarr.Core.Capabilities;
 using allstarr.Core.ClientApi;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using allstarr.Models.Domain;
-using allstarr.Services.Common;
 using Moq;
 
 namespace allstarr.Tests;
 
 public sealed class ClientApiStoredLyricsTests
 {
+    [Theory]
+    [InlineData("lrcred")]
+    [InlineData("lrclib")]
+    public async Task StoredSearchUsesTheLyricsRoutesSongDurationForLastLineTiming(string provider)
+    {
+        var song = new Song { Title = "Fixture", Artist = "Artist", Duration = 10 };
+        var cache = new Mock<IApplicationCache>();
+        cache.Setup(item => item.GetAsync<ProviderLyricsResult>(It.IsAny<string>())).ReturnsAsync(new ProviderLyricsResult(
+            ProviderLyricsAvailabilityState.Available, provider, ProviderLyricsFormat.LineTimed, "[00:01.00]First\n[00:02.00]Last"));
+        cache.Setup(item => item.GetStringAsync(It.IsAny<string>())).ReturnsAsync(JsonSerializer.Serialize(new LyricsInfo
+        { Source = provider, Duration = 999, SyncedLyrics = "[00:01.00]First\n[00:02.00]Last" }));
+        var policy = new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty
+            .Add(ProviderCapabilityKind.Lyrics, [provider]), ImmutableHashSet<string>.Empty, "lossless", .07);
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", "listener", null,
+            "stored-lyrics", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var observed = new List<RichLyrics>();
+        await StoredItemLyrics.ReadAsync(cache.Object, song, null, null, null, policy, "http://unused.invalid", context, [], [], default, observed.Add);
+        Assert.Equal(10000, Assert.Single(observed).Lines[^1].EndMs);
+    }
+
+    [Fact]
+    public async Task StoredGeniusLyricsDecodeExistingCacheWithoutFetching()
+    {
+        var song = new Song { Title = "Fixture", Artist = "Artist" };
+        var cache = new TestMemoryApplicationCache();
+        var suffix = CanonicalCatalogKeys.Hash(JsonSerializer.Serialize(new
+        {
+            song.Isrc,
+            TrackTitle = "Fixture",
+            ArtistNames = new[] { "Artist" },
+            AlbumTitle = (string?)null,
+            DurationSeconds = (int?)null
+        }));
+        await cache.SetAsync("lyrics:v3:genius:" + suffix, new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available,
+            "genius", ProviderLyricsFormat.PlainText, "I&#x27;ve heard there&#x27;s more"));
+        var policy = new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty
+            .Add(ProviderCapabilityKind.Lyrics, ["genius"]), ImmutableHashSet<string>.Empty, "lossless", .07);
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", "listener", null,
+            "stored-lyrics", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var observed = new List<RichLyrics>();
+        var result = await StoredItemLyrics.ReadAsync(cache, song, null, null, null, policy, "http://unused.invalid", context, [], [], default, observed.Add);
+        Assert.True(result.Available);
+        Assert.Equal("I've heard there's more", Assert.Single(observed).Lines[0].Text);
+        var stored = await cache.GetAsync<ProviderLyricsResult>("lyrics:v3:genius:html-decoded:v1:" + suffix);
+        Assert.Equal("I've heard there's more", stored!.Content);
+    }
+
     [Theory]
     [InlineData(null, "word", "lrcred")]
     [InlineData(null, "line", "kept")]

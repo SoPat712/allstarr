@@ -177,6 +177,14 @@ public sealed record ProviderLyricsAttribution
 
 public sealed record ProviderLyricsResult
 {
+    private sealed record Binding(string Value);
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ProviderLyricsResult, Binding> Bindings = new();
+    internal string? CacheProvenance
+    {
+        get => Bindings.TryGetValue(this, out var binding) ? binding.Value : null;
+        init { if (value != null) Bindings.Add(this, new(value)); }
+    }
+
     public ProviderLyricsResult(
         ProviderLyricsAvailabilityState availability,
         string source,

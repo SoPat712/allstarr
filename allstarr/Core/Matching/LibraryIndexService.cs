@@ -1,4 +1,5 @@
 using System.Text.Json;
+using allstarr.Core.ClientApi;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
@@ -116,6 +117,7 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
     private readonly IProviderRegistry? _registry;
     private readonly ILogger<LibraryIndexService>? _logger;
     private readonly IEffectiveProviderPolicyResolver? _effectivePolicies;
+    private readonly LyricsSearchChanges? _lyricsChanges;
 
     public LibraryIndexService(
         IDbContextFactory<AllstarrDbContext> contextFactory,
@@ -125,7 +127,7 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
         IBackendLibraryAccessResolver libraryAccess,
         IProviderRegistry? registry = null,
         ILogger<LibraryIndexService>? logger = null,
-        IEffectiveProviderPolicyResolver? effectivePolicies = null)
+        IEffectiveProviderPolicyResolver? effectivePolicies = null, LyricsSearchChanges? lyricsChanges = null)
     {
         _contextFactory = contextFactory;
         _storageState = storageState;
@@ -135,6 +137,7 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
         _registry = registry;
         _logger = logger;
         _effectivePolicies = effectivePolicies;
+        _lyricsChanges = lyricsChanges;
     }
 
     public async Task<IndexedLibraryTrack> UpsertAsync(
@@ -250,10 +253,11 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
             });
         }
         await db.SaveChangesAsync(cancellationToken);
+        if (changed) _lyricsChanges?.LibraryChanged(record.Id);
         return Map(record);
     }
 
-    private static string TrackFingerprint(LibraryTrackRecord record) =>
+    internal static string TrackFingerprint(LibraryTrackRecord record) =>
         string.Join('\n',
             record.FilePath, record.Title, record.Artist, record.Album, record.AlbumArtist,
             record.DurationMilliseconds, record.Isrc, record.MusicBrainzRecordingId,

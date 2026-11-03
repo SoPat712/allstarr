@@ -1,3 +1,4 @@
+using allstarr.Core.ClientApi;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Storage;
@@ -56,7 +57,8 @@ public sealed partial class ProtocolLyricsResolver(
     IRecordingLyricsChoices? choices = null,
     ITrackIdentityService? identities = null,
     TimeProvider? timeProvider = null, IHostApplicationLifetime? lifetime = null,
-    allstarr.Core.ClientEvents.ClientLyricsUpdates? clientUpdates = null) : IProtocolLyricsResolver, IHostedService
+    allstarr.Core.ClientEvents.ClientLyricsUpdates? clientUpdates = null,
+    LyricsSearchIndex? searchIndex = null, LyricsSearchChanges? searchChanges = null) : IProtocolLyricsResolver, IHostedService
 {
     public async Task<RichLyrics?> GetRichLyricsAsync(ProtocolExecutionContext context, Song song, string resourceKey,
         ProtocolLyricsSources? sources = null) => RichLyricsMapper.Map(await FindAsync(
@@ -69,7 +71,10 @@ public sealed partial class ProtocolLyricsResolver(
         var results = new List<ProtocolLyricsCandidate>();
         await foreach (var candidate in ReadCandidatesAsync(protocol, song, song.CanonicalRecordingId?.ToString("N") ?? resourceKey,
             song.ExternalProvider, song.ExternalId, song.SpotifyId, sources))
+        {
+            if (sources?.HouseholdOnly != true) await IndexAsync(protocol, song, candidate.Lyrics);
             results.Add(candidate);
+        }
         return results;
     }
 
@@ -108,6 +113,7 @@ public sealed partial class ProtocolLyricsResolver(
         {
             var lyrics = candidate.Lyrics;
             if (lyrics == null) continue;
+            if (sources?.HouseholdOnly != true) await IndexAsync(protocol, song, lyrics, preference.RecordingId);
             Observe(lyrics);
             return lyrics;
         }
@@ -119,6 +125,22 @@ public sealed partial class ProtocolLyricsResolver(
             if (protocol.Actor?.EffectiveUserId is { } owner && !protocol.IsPreparation &&
                 sources?.HouseholdOnly != true && sources?.ForPermanentSidecar != true)
                 clientUpdates?.Observe(owner, string.IsNullOrWhiteSpace(protocol.RequestedItemId) ? song.Id : protocol.RequestedItemId, value);
+        }
+    }
+
+    private async Task IndexAsync(ProtocolExecutionContext context, Song song, LyricsInfo? info, Guid? recordingId = null)
+    {
+        if (searchIndex == null || context.Protocol != ProtocolKind.Jellyfin || RichLyricsMapper.Map(info) is not { } rich) return;
+        try
+        {
+            recordingId ??= (await ResolveChoiceAsync(context, song, false, song.ExternalProvider, song.ExternalId)).RecordingId;
+            await searchIndex.StoreAsync(context, song, recordingId, rich, expectedProvenance: info?.CacheProvenance);
+            if (context.Principal is { } principal && LyricsSearchIndex.ItemKey(song) is { } itemId)
+                searchChanges?.SongChanged(principal.UserId, itemId);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            logger.LogWarning("Lyrics search indexing was deferred ({ErrorType})", exception.GetType().Name);
         }
     }
 
@@ -297,7 +319,7 @@ public sealed partial class ProtocolLyricsResolver(
             }
             if (providers is IProtocolLyricsExecutionGateway executionGateway && protocol.Actor != null)
             {
-                var lookup = EnterAutomatic(protocol);
+                var lookup = EnterAutomatic(protocol, song, householdOnly);
                 if (lookup == null)
                 {
                     if (bestLocal != null) yield return bestLocal;
@@ -458,6 +480,7 @@ public sealed partial class ProtocolLyricsResolver(
                         Source = providerId,
                         Revision = result.Revision,
                         TimedLines = result.TimedLines,
+                        CacheProvenance = result.CacheProvenance,
                         Attribution = result.Attribution
                     };
                 }

@@ -116,7 +116,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var features = root.GetProperty("features");
         Assert.Equal(["events", "fixesMatch", "follow", "itemDetails", "lyricsRich", "lyricsSearch", "lyricsSources", "mixes", "playback", "releases", "reports", "titleMarkers"],
             features.EnumerateObject().Select(item => item.Name).Order().ToArray());
-        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name is "titleMarkers" or "itemDetails" or "playback" or "lyricsRich" or "lyricsSources" or "fixesMatch" or "reports" or "mixes" or "releases" or "follow" or "events", item.Value.GetBoolean()));
+        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name is "titleMarkers" or "itemDetails" or "playback" or "lyricsRich" or "lyricsSources" or "fixesMatch" or "reports" or "mixes" or "releases" or "follow" or "lyricsSearch" or "events", item.Value.GetBoolean()));
         Assert.NotNull(observed?.Principal);
         Assert.False(observed.Principal.IsAdministrator);
         Assert.Equal(ProviderActorKind.User, observed.RequireActor().Kind);
@@ -325,6 +325,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("getProviderIcon", paths.GetProperty("/allstarr/v1/providers/{providerId}/icon").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("getPlayback", paths.GetProperty("/allstarr/v1/playback/{requestId}").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("getCurrentPlayback", paths.GetProperty("/allstarr/v1/playback/current").GetProperty("get").GetProperty("operationId").GetString());
+        Assert.Equal("searchLyrics", paths.GetProperty("/allstarr/v1/search/lyrics").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("getItemLyrics", paths.GetProperty("/allstarr/v1/items/{itemId}/lyrics").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("getLyricsSources", paths.GetProperty("/allstarr/v1/items/{itemId}/lyrics/sources").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("setLyricsSource", paths.GetProperty("/allstarr/v1/items/{itemId}/lyrics/source").GetProperty("put").GetProperty("operationId").GetString());

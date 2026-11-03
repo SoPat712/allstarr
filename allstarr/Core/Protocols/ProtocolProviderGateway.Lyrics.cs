@@ -34,6 +34,8 @@ public sealed partial class ProtocolProviderGateway : IProtocolLyricsExecutionGa
         token.ThrowIfCancellationRequested();
         if (!outcome.IsSuccess || outcome.RequireValue().Availability != ProviderLyricsAvailabilityState.Available) return null;
         if (await CurrentLyricsCandidateAsync(prepared, token) == null) return null;
+        if (prepared.Spec.Actor.EffectiveUserId is { } user)
+            lyricsChanges?.RecordingChanged(user, request.CanonicalRecordingId);
         return outcome.RequireValue();
     }
 

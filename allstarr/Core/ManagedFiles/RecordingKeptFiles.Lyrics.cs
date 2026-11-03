@@ -1,4 +1,5 @@
 using allstarr.Core.Capabilities;
+using allstarr.Core.ClientApi;
 using allstarr.Core.Protocols;
 using allstarr.Services.Lyrics;
 using Microsoft.EntityFrameworkCore;
@@ -42,5 +43,6 @@ public sealed partial class RecordingKeptFiles
         await writer.EnsureSidecarAsync(file.Path, song, source?.ProviderId, source?.SourceExternalTrackId,
             cancellationToken, protocol);
         if (events != null) await events.LyricsAsync(file.RecordingId, null, automatic: true);
+        scope.ServiceProvider.GetService<LyricsSearchChanges>()?.RecordingChanged(listenerId, file.RecordingId);
     }
 }

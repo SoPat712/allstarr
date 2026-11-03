@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Net;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Matching;
@@ -19,15 +20,16 @@ internal static class StoredItemLyrics
     public static async Task<ItemDetailsLyrics> ReadAsync(IApplicationCache cache, Song? song, Guid? recordingId,
         string? chosenSource, string? audioPath, EffectiveProviderPolicySnapshot policy, string lyricsEndpoint,
         ProtocolExecutionContext execution, IReadOnlyList<ProviderAccountRecord> accounts,
-        IReadOnlyList<ProviderTrackIdentityRecord> identities, CancellationToken token)
+        IReadOnlyList<ProviderTrackIdentityRecord> identities, CancellationToken token, Action<RichLyrics>? observe = null)
     {
         if (song == null) return new(false, null, chosenSource);
         var best = new ItemDetailsLyrics(false, null, chosenSource);
         bool Consider(RichLyrics? rich, string source)
         {
+            if (rich != null) observe?.Invoke(rich);
             if (rich != null && LyricsQuality.Rank(rich.Format) > LyricsQuality.Rank(best.Format))
                 best = new(true, rich.Format, source);
-            return best.Format == "word";
+            return observe == null && best.Format == "word";
         }
         var lookup = MusicLyrics.ForLookup(song);
         var providers = chosenSource == null
@@ -48,14 +50,16 @@ internal static class StoredItemLyrics
                     var artists = lookup.Artists.Count > 0 ? lookup.Artists : [lookup.Artist];
                     var cached = await cache.GetStringAsync("lrclib:automatic:v2:" + CacheKeyBuilder.BuildLyricsKey(
                         string.Join(", ", artists), lookup.Title, lookup.Album, lookup.Duration ?? 0));
-                    var richCached = cached == null ? null : RichLyricsMapper.Map(JsonSerializer.Deserialize<LyricsInfo>(cached, ClientApiContract.JsonOptions));
+                    var info = cached == null ? null : JsonSerializer.Deserialize<LyricsInfo>(cached, ClientApiContract.JsonOptions);
+                    if (info != null) info.Duration = lookup.Duration ?? 0;
+                    var richCached = RichLyricsMapper.Map(info);
                     if (Consider(richCached, provider)) return best;
                 }
                 catch (Exception error) when (error is not OperationCanceledException) { }
                 continue;
             }
             if (provider == "paxsenix" && recordingId == null) continue;
-            var scope = provider == "paxsenix" ? $"apple:{recordingId:N}:" : "";
+            var scope = provider == "paxsenix" ? $"apple:{recordingId:N}:" : provider == "genius" ? "html-decoded:v1:" : "";
             var key = $"lyrics:v3:{provider}:" + scope + CanonicalCatalogKeys.Hash(JsonSerializer.Serialize(new
             {
                 lookup.Isrc,
@@ -79,8 +83,8 @@ internal static class StoredItemLyrics
                     if (provider == "lyricsplus") key = LyricsPlusCapabilityAdapter.StoredCacheKey(lyricsEndpoint, request);
                     else
                     {
-                        var accountStored = await ReadAccountCacheAsync(cache, provider, request, song, recordingId, execution, accounts, identities);
-                        var richStored = Map(accountStored, provider);
+                        var accountStored = await ReadAccountCacheAsync(cache, provider, request, song, recordingId, execution, accounts, identities, observe != null);
+                        var richStored = Map(accountStored, provider, lookup.Duration);
                         if (Consider(richStored, provider)) return best;
                         continue;
                     }
@@ -89,21 +93,33 @@ internal static class StoredItemLyrics
             }
             token.ThrowIfCancellationRequested();
             ProviderLyricsResult? stored;
-            try { stored = await cache.GetAsync<ProviderLyricsResult>(key); }
+            try
+            {
+                stored = await cache.GetAsync<ProviderLyricsResult>(key);
+                if (stored == null && provider == "genius" &&
+                    await cache.GetAsync<ProviderLyricsResult>(key.Replace("html-decoded:v1:", "", StringComparison.Ordinal)) is
+                    { Availability: ProviderLyricsAvailabilityState.Available, Content: { } content } legacy)
+                {
+                    var decoded = WebUtility.HtmlDecode(content);
+                    stored = new(legacy.Availability, legacy.Source, legacy.Format, decoded, "sha256:" + CanonicalCatalogKeys.Hash(decoded));
+                    await cache.SetAsync(key, stored, TimeSpan.FromDays(7));
+                }
+            }
             catch (Exception error) when (error is not OperationCanceledException) { continue; }
             if (stored?.Availability != ProviderLyricsAvailabilityState.Available) continue;
-            var rich = Map(stored, provider);
+            var rich = Map(stored, provider, lookup.Duration);
             if (Consider(rich, provider)) return best;
         }
         return best;
     }
 
-    private static RichLyrics? Map(ProviderLyricsResult? stored, string provider)
+    private static RichLyrics? Map(ProviderLyricsResult? stored, string provider, int? duration)
     {
         if (stored is not { Availability: ProviderLyricsAvailabilityState.Available }) return null;
         return RichLyricsMapper.Map(new LyricsInfo
         {
             Source = provider,
+            Duration = duration ?? 0,
             PlainLyrics = stored.Format == ProviderLyricsFormat.PlainText ? stored.Content : null,
             SyncedLyrics = stored.Format == ProviderLyricsFormat.PlainText ? null : stored.Content,
             TimedLines = stored.TimedLines
@@ -112,14 +128,14 @@ internal static class StoredItemLyrics
 
     private static async Task<ProviderLyricsResult?> ReadAccountCacheAsync(IApplicationCache cache, string provider,
         ProviderLyricsRequest request, Song song, Guid? recordingId, ProtocolExecutionContext execution,
-        IReadOnlyList<ProviderAccountRecord> accounts, IReadOnlyList<ProviderTrackIdentityRecord> identities)
+        IReadOnlyList<ProviderAccountRecord> accounts, IReadOnlyList<ProviderTrackIdentityRecord> identities, bool selectedOnly)
     {
         var contexts = accounts.Where(item => item.ProviderId == provider).OrderByDescending(item => item.OwnerUserId.HasValue)
             .Select(item => new ProviderAccountContext(item.Id, item.ProviderId, item.Scope, item.Revision,
                 ownerUserId: item.OwnerUserId, secretReferenceId: item.SecretReferenceId)).ToList();
         if (provider == "musixmatch")
         {
-            foreach (var account in contexts.Cast<ProviderAccountContext?>().Append(null))
+            foreach (var account in contexts.Cast<ProviderAccountContext?>().Concat(selectedOnly && contexts.Count > 0 ? [] : new ProviderAccountContext?[] { null }))
             {
                 execution.CancellationToken.ThrowIfCancellationRequested();
                 try
@@ -135,6 +151,8 @@ internal static class StoredItemLyrics
             .Select(item => item.ExternalId).Prepend(song.SpotifyId ?? (song.ExternalProvider == "spotify" ? song.ExternalId : null))
             .Select(item => SpotifyTrackReference.TryNormalize(item, out var id) ? id : null)
             .OfType<string>().Distinct(StringComparer.Ordinal).ToArray();
+        var knownSelector = song.SpotifyId ?? (song.ExternalProvider == "spotify" ? song.ExternalId : null);
+        if (selectedOnly && !SpotifyTrackReference.TryNormalize(knownSelector, out _) && selectors.Length != 1) return null;
         foreach (var selector in selectors)
             foreach (var account in contexts)
             {

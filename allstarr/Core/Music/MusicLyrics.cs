@@ -66,6 +66,7 @@ public static partial class MusicLyrics
             Artist = artist,
             Artists = artists,
             Album = StripPresentationLabels(song.Album),
+            AlbumId = song.AlbumId,
             Duration = song.Duration,
             PreciseDuration = song.PreciseDuration,
             SpotifyId = song.SpotifyId

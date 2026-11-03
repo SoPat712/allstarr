@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using allstarr.Core.Capabilities;
@@ -12,6 +13,7 @@ public sealed partial class GeniusCapabilityAdapter : MetadataLyricsCapabilityAd
     private protected override LyricsSpeculationMode Speculation => LyricsSpeculationMode.RecentHealthy;
     public override string ProviderId => "genius";
     protected override bool RequiresArtist => true;
+    protected override string CacheScope(ProviderLyricsRequest request) => "html-decoded:v1:";
 
     public GeniusCapabilityAdapter(HttpClient http, IApplicationCache? cache, Func<TimeSpan>? lyricsTtl = null,
         ILogger<GeniusCapabilityAdapter>? logger = null)
@@ -38,7 +40,7 @@ public sealed partial class GeniusCapabilityAdapter : MetadataLyricsCapabilityAd
         }
         if (!root.TryGetProperty("lyrics", out var lyrics) || lyrics.ValueKind == JsonValueKind.Null) return Unavailable();
         if (lyrics.ValueKind != JsonValueKind.String) return ContractFailure();
-        var lines = lyrics.GetString()!.Replace("\r", "").Split('\n').Select(line => line.Trim()).ToList();
+        var lines = WebUtility.HtmlDecode(lyrics.GetString()!).Replace("\r", "").Split('\n').Select(line => line.Trim()).ToList();
         while (lines.Count > 0 && (lines[^1].Length == 0 || Footer().IsMatch(lines[^1]))) lines.RemoveAt(lines.Count - 1);
         while (lines.Count > 0 && lines[0].Length == 0) lines.RemoveAt(0);
         if (lines.Count > 0) lines[^1] = EmbedSuffix().Replace(lines[^1], "").TrimEnd();

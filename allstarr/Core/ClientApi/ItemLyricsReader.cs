@@ -118,6 +118,7 @@ public sealed class ItemLyricsReader(
             Title = item.TryGetProperty("Name", out var name) ? name.GetString() ?? "" : "",
             Artist = item.TryGetProperty("AlbumArtist", out var artist) ? artist.GetString() ?? "" : "",
             Album = item.TryGetProperty("Album", out var album) ? album.GetString() ?? "" : "",
+            AlbumId = item.TryGetProperty("AlbumId", out var albumId) ? albumId.GetString() : null,
             Duration = item.TryGetProperty("RunTimeTicks", out var ticks) ? (int)(ticks.GetInt64() / 10000000) : 0
         };
         if (item.TryGetProperty("ProviderIds", out var ids) && ids.TryGetProperty("Spotify", out var spotify))
@@ -133,7 +134,7 @@ public sealed class ItemLyricsReader(
             return status == StatusCodes.Status200OK && body != null ? BackendLyrics.ParseJellyfin(body.RootElement) : null;
     }
 
-    private static bool SameNativeItem(string? actual, string expected) =>
+    internal static bool SameNativeItem(string? actual, string expected) =>
         string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase) ||
         Guid.TryParse(actual, out var actualGuid) && Guid.TryParse(expected, out var expectedGuid) && actualGuid == expectedGuid;
 

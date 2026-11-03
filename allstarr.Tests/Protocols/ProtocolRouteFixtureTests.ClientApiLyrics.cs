@@ -303,11 +303,13 @@ public sealed partial class ProtocolRouteFixtureTests
         ]);
 
     private static ProtocolFactory ClientLyricsFactory(Guid recording, Dictionary<string, ProviderLyricsResult?> results,
-        bool indexed = true, string? backendLyrics = null, bool externalIdentityFallback = false)
+        bool indexed = true, string? backendLyrics = null, bool externalIdentityFallback = false,
+        Func<string?>? readBackendLyrics = null, Action<IServiceCollection>? configure = null)
     {
-        Song Song() => new() { Id = "ext-deezer-song-lyrics", ExternalProvider = "deezer", ExternalId = "lyrics", CanonicalRecordingId = recording, Title = "Fixture", Artist = "Artist", Duration = 10 };
+        Song Song() => new() { Id = "ext-deezer-song-lyrics", ExternalProvider = "deezer", ExternalId = "lyrics", CanonicalRecordingId = recording, Title = "Fixture", Artist = "Artist", Album = "Album", AlbumId = "ext-deezer-album-lyrics", Duration = 10 };
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(service => service.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(results.Keys.ToArray());
+        gateway.Setup(service => service.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>())).ReturnsAsync(new[] { "deezer" });
         gateway.Setup(service => service.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", It.IsAny<string>()))
             .ReturnsAsync((ProtocolExecutionContext _, string _, string id) =>
             {
@@ -321,6 +323,8 @@ public sealed partial class ProtocolRouteFixtureTests
                 return song;
             });
         gateway.Setup(service => service.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "allstarr", recording.ToString("D"))).ReturnsAsync(Song);
+        gateway.Setup(service => service.GetAlbumAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "lyrics"))
+            .ReturnsAsync(new Album { Id = "ext-deezer-album-lyrics", ExternalProvider = "deezer", ExternalId = "lyrics", Title = "Album", Artist = "Artist" });
         gateway.Setup(service => service.GetLyricsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>(),
                 ProviderLyricsFormat.LineTimed, It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), It.IsAny<string?>()))
             .ReturnsAsync((ProtocolExecutionContext _, string source, string _, ProviderLyricsFormat? _, string? _, IReadOnlyList<string>? _, string? _, int? _, string? _) => results.GetValueOrDefault(source));
@@ -338,12 +342,17 @@ public sealed partial class ProtocolRouteFixtureTests
         return ClientApiFactory(request => request.RequestUri!.AbsolutePath switch
         {
             "/Users/Me" => Json(200, """{"Id":"listener","Policy":{"IsAdministrator":true}}"""),
-            "/Audio/native/Lyrics" => backendLyrics == null ? Json(404, "{}") : Json(200, backendLyrics),
+            "/Items/native-album" => Json(200, """{"Id":"native-album","Type":"MusicAlbum","Name":"Album"}"""),
+            "/Items/native" => Json(200, """{"Id":"native","Type":"Audio","Name":"Fixture","AlbumArtist":"Artist"}"""),
+            "/Audio/hidden/Lyrics" => Json(200, "{"),
+            "/Audio/native/Lyrics" => (readBackendLyrics?.Invoke() ?? backendLyrics) is { } body ? Json(200, body) : Json(404, "{}"),
             "/Items" => Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query)["ids"].ToString() switch
             {
-                "native" => Json(200, """{"Items":[{"Id":"native","Type":"Audio","Name":"Fixture","AlbumArtist":"Artist","RunTimeTicks":100000000}]}"""),
+                "native-album" => Json(200, """{"Items":[{"Id":"native-album","Type":"MusicAlbum","Name":"Album"}]}"""),
+                "native" => Json(200, """{"Items":[{"Id":"native","Type":"Audio","Name":"Fixture","AlbumArtist":"Artist","AlbumId":"native-album","RunTimeTicks":100000000}]}"""),
                 "wrong-id" => Json(200, """{"Items":[{"Id":"native","Type":"Audio"}]}"""),
                 "folder" => Json(200, """{"Items":[{"Id":"folder","Type":"Folder"}]}"""),
+                var ids when ids.Split(',').Contains("native", StringComparer.Ordinal) => Json(200, """{"Items":[{"Id":"native","Type":"Audio","Name":"Fixture","AlbumArtist":"Artist","AlbumId":"native-album","RunTimeTicks":100000000}]}"""),
                 _ => Json(200, """{"Items":[]}""")
             },
             _ => Json(404, "{}")
@@ -355,6 +364,7 @@ public sealed partial class ProtocolRouteFixtureTests
             services.AddSingleton(library.Object);
             services.RemoveAll<IEffectiveProviderPolicyResolver>();
             services.AddSingleton(policies.Object);
+            configure?.Invoke(services);
         });
     }
 

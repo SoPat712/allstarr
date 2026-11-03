@@ -415,6 +415,11 @@ builder.Services.AddSingleton<allstarr.Core.ClientEvents.IClientEventChanges, al
 builder.Services.AddSingleton<allstarr.Core.ClientEvents.ClientLyricsUpdates>();
 builder.Services.AddScoped<ItemDetailsReader>();
 builder.Services.AddScoped<ItemLyricsReader>();
+builder.Services.AddScoped<LyricsSearchReader>();
+builder.Services.AddSingleton<LyricsSearchIndex>();
+builder.Services.AddSingleton<LyricsSearchChanges>();
+builder.Services.AddSingleton<IApplicationCacheWriteObserver>(provider => provider.GetRequiredService<LyricsSearchChanges>());
+builder.Services.AddHostedService<LibraryLyricsIndexer>();
 builder.Services.AddScoped<ItemMatchReader>();
 builder.Services.AddScoped<PlaybackReader>();
 builder.Services.AddScoped<MixReader>();

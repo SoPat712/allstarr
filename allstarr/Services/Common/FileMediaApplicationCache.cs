@@ -915,7 +915,7 @@ public sealed class HybridApplicationCache(
     ApplicationCacheActivityMetrics? activityMetrics = null,
     IDbContextFactory<AllstarrDbContext>? contextFactory = null,
     IPlatformClock? clock = null,
-    ILogger<HybridApplicationCache>? logger = null) : IApplicationCache
+    ILogger<HybridApplicationCache>? logger = null, IApplicationCacheWriteObserver? writeObserver = null) : IApplicationCache
 {
     private readonly allstarr.Models.Settings.CacheSettings _settings = configuredSettings?.Value ?? new();
     private readonly ApplicationCacheActivityMetrics _activity = activityMetrics ?? new();
@@ -926,10 +926,25 @@ public sealed class HybridApplicationCache(
         ? Target(key).GetStringAsync(key) : Task.FromResult<string?>(null);
     public Task<T?> GetAsync<T>(string key) where T : class => IsCategoryEnabled(key)
         ? Target(key).GetAsync<T>(key) : Task.FromResult<T?>(null);
-    public Task<bool> SetStringAsync(string key, string value, TimeSpan? expiry = null) => IsCategoryEnabled(key)
-        ? Target(key).SetStringAsync(key, value, EffectiveExpiry(key, expiry)) : Task.FromResult(false);
-    public Task<bool> SetAsync<T>(string key, T value, TimeSpan? expiry = null) where T : class => IsCategoryEnabled(key)
-        ? Target(key).SetAsync(key, value, EffectiveExpiry(key, expiry)) : Task.FromResult(false);
+    public async Task<bool> SetStringAsync(string key, string value, TimeSpan? expiry = null)
+    {
+        if (!IsCategoryEnabled(key)) return false;
+        var saved = await Target(key).SetStringAsync(key, value, EffectiveExpiry(key, expiry));
+        if (saved) NotifyWritten(key);
+        return saved;
+    }
+    public async Task<bool> SetAsync<T>(string key, T value, TimeSpan? expiry = null) where T : class
+    {
+        if (!IsCategoryEnabled(key)) return false;
+        var saved = await Target(key).SetAsync(key, value, EffectiveExpiry(key, expiry));
+        if (saved) NotifyWritten(key);
+        return saved;
+    }
+    private void NotifyWritten(string key)
+    {
+        try { writeObserver?.Written(key); }
+        catch (Exception error) { logger?.LogWarning("Cache write notification deferred ({ErrorType})", error.GetType().Name); }
+    }
     public Task<bool> DeleteAsync(string key) => ApplicationCachePayloadPolicy.IsValidKey(key)
         ? Target(key).DeleteAsync(key) : Task.FromResult(false);
     public Task<bool> ExistsAsync(string key) => IsCategoryEnabled(key)

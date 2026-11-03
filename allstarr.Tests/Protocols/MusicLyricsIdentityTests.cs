@@ -46,6 +46,7 @@ public sealed class MusicLyricsIdentityTests
             Artist = "Artist [E]",
             Artists = ["Artist [E]"],
             Album = "Album [A]",
+            AlbumId = "ext-spotify-album-source",
             Duration = 120,
             PreciseDuration = TimeSpan.FromMilliseconds(120123),
             SpotifyId = "source"
@@ -61,6 +62,7 @@ public sealed class MusicLyricsIdentityTests
         Assert.Equal("Artist", lookup.Artist);
         Assert.Equal(["Artist"], lookup.Artists);
         Assert.Equal("Album", lookup.Album);
+        Assert.Equal("ext-spotify-album-source", lookup.AlbumId);
         Assert.Equal(TimeSpan.FromMilliseconds(120123), lookup.PreciseDuration);
     }
 }
