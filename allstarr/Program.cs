@@ -407,6 +407,7 @@ builder.Services.AddScoped<ClientApiListenerFilter>();
 builder.Services.AddScoped<ClientApiResultFilter>();
 builder.Services.AddSingleton<ClientApiAvailability>();
 builder.Services.AddScoped<ItemDetailsReader>();
+builder.Services.AddScoped<ItemLyricsReader>();
 builder.Services.AddScoped<PlaybackReader>();
 
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminHelperService>();

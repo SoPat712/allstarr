@@ -22,8 +22,8 @@ public sealed record ClientFeatures
     [JsonPropertyName("titleMarkers")] public bool TitleMarkers { get; init; } = true;
     [JsonPropertyName("itemDetails")] public bool ItemDetails { get; init; } = true;
     [JsonPropertyName("playback")] public bool Playback { get; init; } = true;
-    [JsonPropertyName("lyricsRich")] public bool LyricsRich { get; init; }
-    [JsonPropertyName("lyricsSources")] public bool LyricsSources { get; init; }
+    [JsonPropertyName("lyricsRich")] public bool LyricsRich { get; init; } = true;
+    [JsonPropertyName("lyricsSources")] public bool LyricsSources { get; init; } = true;
     [JsonPropertyName("fixesMatch")] public bool FixesMatch { get; init; }
     [JsonPropertyName("reports")] public bool Reports { get; init; }
     [JsonPropertyName("mixes")] public bool Mixes { get; init; }

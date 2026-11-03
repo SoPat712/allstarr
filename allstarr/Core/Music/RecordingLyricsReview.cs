@@ -26,6 +26,8 @@ public sealed record RecordingLyricsReviewSource(
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProviderLyricsAttribution? Attribution = null)
 {
     public bool Available => PreviewRevision != null;
+    [JsonIgnore] public string? TimingFormat { get; init; }
+    [JsonIgnore] public string? ShortPreview { get; init; }
 }
 
 public sealed record RecordingLyricsReviewResult(
@@ -300,13 +302,21 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
         var revision = "sha256:" + Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(revisionInput))).ToLowerInvariant();
         var preview = TruncatePreview(content, out var truncated);
+        var rich = RichLyricsMapper.Map(lyrics);
+        var shortPreview = rich == null ? null : string.Join("\n", rich.Lines.Take(4).Select(line => line.Text));
+        if (shortPreview is { Length: > 1000 })
+            shortPreview = shortPreview[..(char.IsHighSurrogate(shortPreview[999]) ? 999 : 1000)];
         return new RecordingLyricsReviewSource(
             candidate.SourceId,
             format,
             preview,
             revision,
             truncated,
-            lyrics?.Attribution);
+            lyrics?.Attribution)
+        {
+            TimingFormat = rich?.Format,
+            ShortPreview = shortPreview
+        };
     }
 
     private static string TruncatePreview(string content, out bool truncated)

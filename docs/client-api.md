@@ -18,7 +18,8 @@ receive the same personal scope as other listeners.
 
 `GET /allstarr/v1/capabilities` returns `serverVersion`, `apiVersion`, and a
 `features` object. Check feature flags before using optional routes.
-`titleMarkers`, `itemDetails`, and `playback` are available; the other flags remain false until supported.
+`titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, and `lyricsSources` are
+available; the other flags remain false until supported.
 The version in the path identifies the contract. Compatible additions stay
 within v1; incompatible changes use a new path version.
 
@@ -108,3 +109,73 @@ Its checked-in copy is `apis/specifications/allstarr/client-v1.json`.
 OpenAPI operation names are stable for generated clients.
 The contract test compares normalized JSON. Set `ALLSTARR_UPDATE_CLIENT_SPEC=1`
 when running that test to refresh the copy after an intentional change.
+
+`GET /allstarr/v1/items/{itemId}/lyrics` returns the listener's selected lyrics.
+Native Jellyfin IDs and external song IDs use the same song lookup and source
+selection as the Jellyfin lyrics routes: the effective pin takes precedence,
+then automatic selection prefers the best timing. Unknown or hidden items and
+items without lyrics return 404 `not_found`. Responses use `Cache-Control: no-store`.
+
+```json
+{
+  "source": {"id":"lyricsplus","name":"LyricsPlus"},
+  "format": "word",
+  "lines": [
+    {"startMs":1000,"endMs":1800,"text":"Hello","part":"lead",
+     "words":[{"startMs":1000,"endMs":1800,"text":"Hello"}]},
+    {"startMs":1200,"endMs":1600,"text":"Echo","part":"background",
+     "voice":"v2","singer":"Second singer",
+     "words":[{"startMs":1200,"endMs":1600,"text":"Echo"}]}
+  ]
+}
+```
+
+`format` is `word`, `line`, or `plain`. Times are milliseconds; unknown times
+are null. Line timing has an empty `words` array. Plain lyrics have null line
+times and empty word arrays. Background vocals keep their own word timing.
+`voice` and `singer` are present when supplied by the source.
+
+`GET /allstarr/v1/items/{itemId}/lyrics/sources` lists candidate sources,
+their formats, a text preview of up to four lines and 1,000 characters, the
+chosen source and layer (`personal`, `household`, or `automatic`), and the
+current revision. An unavailable candidate has null format and preview;
+`chosen` is null when no lyrics can be selected.
+
+```json
+{
+  "sources": [{"sourceId":"lyricsplus","format":"word","preview":"Hello\nEcho"}],
+  "chosen": {"sourceId":"lyricsplus","layer":"automatic"},
+  "revision": {"personal":null,"household":null}
+}
+```
+
+Pin a candidate with `PUT /allstarr/v1/items/{itemId}/lyrics/source`:
+
+```json
+{"sourceId":"lyricsplus","expectedRevision":{"personal":null,"household":null}}
+```
+
+Clear the caller's pin with `POST /allstarr/v1/items/{itemId}/lyrics/source/clear`:
+
+```json
+{"expectedRevision":{"personal":{"id":"11111111-1111-4111-8111-111111111111","revision":1},"household":null}}
+```
+
+Both writes return `{chosen,revision}` and use `Cache-Control: no-store`.
+Copy the complete revision object from the last sources or write response into
+`expectedRevision`; its stamps are opaque, and numeric revisions must be JSON
+numbers. A stale personal or household revision returns 409 `conflict`.
+Choosing an unavailable source or a source whose preview changes during the
+save also returns 409. A missing or null `expectedRevision` returns 400
+`invalid_request`.
+
+These writes always affect the caller's personal pin, including for
+administrators. Household pins and other listeners' choices are preserved.
+Clearing restores household selection when available, otherwise automatic
+selection. No other listener's personal choices are returned.
+
+Source review requires a known canonical recording. Native IDs map through
+the accessible library index after a Jellyfin visibility check with the
+listener's token. External IDs map through the same provider song identity
+used by the Jellyfin lyrics route. An item without a known recording returns
+404 from source review and writes; rich lyrics can still be available.
