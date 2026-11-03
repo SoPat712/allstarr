@@ -25,6 +25,8 @@ public sealed record RecordingLyricsReviewSource(
     bool Truncated,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProviderLyricsAttribution? Attribution = null)
 {
+    [JsonIgnore] public RichLyrics? FullLyrics { get; init; }
+    [JsonIgnore] public ProviderLyricsMetadata? Metadata { get; init; }
     public bool Available => PreviewRevision != null;
     [JsonIgnore] public string? TimingFormat { get; init; }
     [JsonIgnore] public string? ShortPreview { get; init; }
@@ -39,6 +41,9 @@ public sealed record RecordingLyricsReviewResult(
 
 public interface IRecordingLyricsReview
 {
+    Task<RichLyrics?> ReadCandidateAsync(ProtocolExecutionContext context, Guid recordingId, string sourceId,
+        Func<string, CancellationToken, Task<LyricsInfo?>>? readBackend = null);
+
     Task<RecordingLyricsReviewResult> GetAsync(
         ProtocolExecutionContext context,
         Guid recordingId,
@@ -92,12 +97,23 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
         Func<string, CancellationToken, Task<LyricsInfo?>>? readBackend = null) =>
         ReviewAsync(context, recordingId, scope, readBackend, onlySourceId: null);
 
+    public async Task<RichLyrics?> ReadCandidateAsync(ProtocolExecutionContext context, Guid recordingId, string sourceId,
+        Func<string, CancellationToken, Task<LyricsInfo?>>? readBackend = null)
+    {
+        var result = await ReviewAsync(context, recordingId, "personal", readBackend, sourceId, readOnly: true);
+        return SelectSource(result.Sources, sourceId)?.FullLyrics;
+    }
+
+    internal static RecordingLyricsReviewSource? SelectSource(IReadOnlyList<RecordingLyricsReviewSource> sources, string sourceId) =>
+        sources.FirstOrDefault(source => source.SourceId == sourceId) ??
+        (sourceId.Contains(':') ? null : sources.FirstOrDefault(source => LyricsVersions.ProviderId(source.SourceId) == sourceId));
+
     private async Task<RecordingLyricsReviewResult> ReviewAsync(
         ProtocolExecutionContext context,
         Guid recordingId,
         string scope,
         Func<string, CancellationToken, Task<LyricsInfo?>>? readBackend,
-        string? onlySourceId)
+        string? onlySourceId, bool readOnly = false)
     {
         var token = RequireContext(context);
         var reviewScope = ParseScope(scope);
@@ -166,7 +182,8 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
             recording.Id.ToString("N"),
             new ProtocolLyricsSources(Backend: backend, HouseholdOnly: reviewScope == ReviewScope.Household)
             {
-                OnlySourceId = onlySourceId
+                OnlySourceId = onlySourceId,
+                ReadOnly = readOnly
             });
         token.ThrowIfCancellationRequested();
         var sources = (candidates ?? Array.Empty<ProtocolLyricsCandidate>())
@@ -196,8 +213,7 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
         // Revalidate only the chosen source so an unrelated slow or changing source cannot block the save.
         var preview = await ReviewAsync(context, recordingId, ScopeName(reviewScope), readBackend, sourceId);
         token.ThrowIfCancellationRequested();
-        var source = preview.Sources.FirstOrDefault(item =>
-            string.Equals(item.SourceId, sourceId, StringComparison.Ordinal));
+        var source = SelectSource(preview.Sources, sourceId);
         if (source == null || !source.Available ||
             !string.Equals(source.PreviewRevision, previewRevision, StringComparison.Ordinal))
         {
@@ -315,7 +331,9 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
             lyrics?.Attribution)
         {
             TimingFormat = rich?.Format,
-            ShortPreview = shortPreview
+            ShortPreview = shortPreview,
+            Metadata = lyrics?.Metadata,
+            FullLyrics = rich == null ? null : rich with { Source = new(candidate.SourceId, RichLyricsMapper.SourceName(candidate.SourceId)) }
         };
     }
 

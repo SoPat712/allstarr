@@ -100,7 +100,7 @@ public static class RichLyricsMapper
     private static TimeSpan? SongEnd(LyricsInfo lyrics) => lyrics.Duration > 0 ? TimeSpan.FromSeconds(lyrics.Duration) : null;
     private static long? Milliseconds(TimeSpan? time) => time is { } value
         ? (long)Math.Round(value.TotalMilliseconds, MidpointRounding.AwayFromZero) : null;
-    private static string SourceName(string id) => id switch
+    internal static string SourceName(string id) => LyricsVersions.ProviderId(id) switch
     {
         "lyricsplus" => "LyricsPlus",
         "musixmatch" => "Musixmatch",
@@ -113,6 +113,6 @@ public static class RichLyricsMapper
         "paxsenix" => "Paxsenix",
         "backend" => "Library",
         "kept" => "Kept lyrics",
-        _ => id
+        _ => LyricsVersions.ProviderId(id)
     };
 }

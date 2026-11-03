@@ -17,7 +17,8 @@ public sealed class ItemLyricsReader(
     IProtocolLyricsResolver lyrics,
     ILibraryIndexService library,
     ITrackIdentityService identities,
-    IRecordingLyricsReview review)
+    IRecordingLyricsReview review,
+    IProviderRegistry? registry = null)
 {
     public async Task<Guid?> ResolveRecordingIdAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
     {
@@ -25,10 +26,14 @@ public sealed class ItemLyricsReader(
         return item == null ? null : await RecordingAsync(execution, item);
     }
 
-    public async Task<RichLyrics?> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
+    public async Task<RichLyrics?> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId, string? sourceId = null)
     {
         var item = await ResolveAsync(http, execution, itemId);
-        return item == null ? null : await ReadRichAsync(execution, item);
+        if (item == null) return null;
+        if (sourceId == null) return await ReadRichAsync(execution, item);
+        var recording = await RecordingAsync(execution, item);
+        return recording == null ? null : await review.ReadCandidateAsync(execution, recording.Value, sourceId,
+            (id, token) => ReadBackendAsync(http, id, token));
     }
 
     public async Task<ClientLyricsSources?> SourcesAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
@@ -39,7 +44,9 @@ public sealed class ItemLyricsReader(
         var result = await review.GetAsync(execution, recording.Value, "personal",
             (id, token) => ReadBackendAsync(http, id, token));
         var chosen = Chosen(result.Choices, await ReadRichAsync(execution, item));
-        return new(result.Sources.Select(source => new ClientLyricsSource(source.SourceId, source.TimingFormat, source.ShortPreview)).ToArray(),
+        return new(result.Sources.Select(source => new ClientLyricsSource(source.SourceId, source.TimingFormat, source.ShortPreview,
+            LyricsVersions.ProviderId(source.SourceId), ProviderName(source.SourceId), source.Metadata?.Title,
+            source.Metadata?.Artist, source.Metadata?.Album, source.Metadata?.DurationMs)).ToArray(),
             chosen, ClientLyricsRevision.From(result.Choices.Revision));
     }
 
@@ -51,7 +58,7 @@ public sealed class ItemLyricsReader(
         if (item == null || recording == null) return null;
         var result = await review.GetAsync(execution, recording.Value, "personal",
             (id, token) => ReadBackendAsync(http, id, token));
-        var source = result.Sources.FirstOrDefault(source => source.SourceId == request.SourceId);
+        var source = RecordingLyricsReview.SelectSource(result.Sources, request.SourceId);
         if (source?.PreviewRevision == null)
             throw new LyricsChoiceConflictException("The lyrics source is unavailable.");
         var choices = await review.ChooseAsync(execution, recording.Value, request.SourceId, "personal",
@@ -69,13 +76,21 @@ public sealed class ItemLyricsReader(
         return new(Chosen(choices, await ReadRichAsync(execution, item)), ClientLyricsRevision.From(choices.Revision));
     }
 
+    private string ProviderName(string sourceId)
+    {
+        var provider = LyricsVersions.ProviderId(sourceId);
+        var name = RichLyricsMapper.SourceName(sourceId);
+        return name == provider && registry?.TryGet(provider, out var descriptor) == true ? descriptor!.DisplayName : name;
+    }
+
     private Task<RichLyrics?> ReadRichAsync(ProtocolExecutionContext execution, LyricsItem item) =>
         lyrics.GetRichLyricsAsync(execution, item.Song, item.ResourceKey, item.Sources);
 
     private static ClientLyricsChosen? Chosen(RecordingLyricsChoiceLayers choices, RichLyrics? rich)
     {
         if (rich == null) return null;
-        var layer = choices.Effective?.SourceId == rich.Source.Id
+        var layer = choices.Effective is { } effective &&
+            (effective.SourceId == rich.Source.Id || LyricsVersions.ProviderId(effective.SourceId) == LyricsVersions.ProviderId(rich.Source.Id))
             ? choices.Personal == null ? "household" : "personal" : "automatic";
         return new(rich.Source.Id, layer);
     }

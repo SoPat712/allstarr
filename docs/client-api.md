@@ -18,7 +18,7 @@ receive the same personal scope as other listeners.
 
 `GET /allstarr/v1/capabilities` returns `serverVersion`, `apiVersion`, and a
 `features` object. Check feature flags before using optional routes.
-`titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, `lyricsSources`,
+`titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, `lyricsSources`, `lyricsVersions`,
 `fixesMatch`, `reports`, `mixes`, `releases`, `follow`, and `events` are available;
 the other flags remain false until supported.
 The version in the path identifies the contract. Compatible additions stay
@@ -137,19 +137,46 @@ are null. Line timing has an empty `words` array. Plain lyrics have null line
 times and empty word arrays. Background vocals keep their own word timing.
 `voice` and `singer` are present when supplied by the source.
 
-`GET /allstarr/v1/items/{itemId}/lyrics/sources` lists candidate sources,
+`GET /allstarr/v1/items/{itemId}/lyrics?sourceId=<id>` reads a candidate's full
+lyrics in the same rich shape, with the same item access checks as source review.
+It does not pin, publish client events, or change the effective lyrics. Unknown
+or unavailable versions return 404 `not_found`; previews use `Cache-Control: no-store`.
+Omit `sourceId` to read the effective lyrics.
+
+`GET /allstarr/v1/items/{itemId}/lyrics/sources` lists candidate versions,
 their formats, a text preview of up to four lines and 1,000 characters, the
 chosen source and layer (`personal`, `household`, or `automatic`), and the
 current revision. An unavailable candidate has null format and preview;
-`chosen` is null when no lyrics can be selected.
+`chosen` is null when no lyrics can be selected. Each candidate also includes
+`providerId`, `providerName`, and nullable provider metadata: `title`, `artist`,
+`album`, and `durationMs` (an integer in milliseconds). Providers stay in the
+configured order; each provider's best match appears first. Lists contain at
+most five versions per provider and twenty candidates overall.
+
+Version IDs use `<providerId>:<versionKey>`, preserving the provider's record ID
+when available. Otherwise the key is the first sixteen lowercase hexadecimal
+characters of SHA-256 over normalized title, artist, album, and duration metadata.
+Normalization applies Unicode compatibility normalization, lowercase, and collapsed
+whitespace. Singleton providers may retain a plain provider ID. LRCLIB search
+returns multiple lyric records; the other current lyrics adapters return one
+lyrics result per lookup. lrc.red and Paxsenix can search several metadata
+matches, but their existing lyrics fetches resolve one record. Existing caches, request budgets, and singleton fetch
+counts are preserved; old best-only LRCLIB cache entries refresh once.
 
 ```json
 {
-  "sources": [{"sourceId":"lyricsplus","format":"word","preview":"Hello\nEcho"}],
-  "chosen": {"sourceId":"lyricsplus","layer":"automatic"},
+  "sources": [{"sourceId":"lrclib:123","providerId":"lrclib","providerName":"LRCLIB",
+    "title":"Two Moons Over Ohio (Live)","artist":"Example Artist","album":null,
+    "durationMs":271000,"format":"line","preview":"Hello\nEcho"}],
+  "chosen": {"sourceId":"lrclib:123","layer":"personal"},
   "revision": {"personal":null,"household":null}
 }
 ```
+
+Pin a version ID unchanged, or use a plain provider ID to select that provider's
+best version. A missing pinned version falls back to the same provider's best
+available version, then the usual automatic rules. The saved pin and revision
+remain intact. Playback, Jellyfin lyrics, and lyrics search honor the same choice.
 
 Pin a candidate with `PUT /allstarr/v1/items/{itemId}/lyrics/source`:
 

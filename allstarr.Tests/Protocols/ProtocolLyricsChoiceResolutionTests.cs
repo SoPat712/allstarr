@@ -118,12 +118,14 @@ public sealed class ProtocolLyricsChoiceResolutionTests
         choices.VerifyNoOtherCalls();
     }
 
-    [Fact]
-    public async Task DisabledChoiceCannotBypassPolicy()
+    [Theory]
+    [InlineData("lrclib")]
+    [InlineData("lrclib:101")]
+    public async Task DisabledChoiceCannotBypassPolicy(string sourceId)
     {
         var context = Context();
         var recording = Guid.CreateVersion7();
-        var choices = Choices(context, recording, new(new(Guid.CreateVersion7(), recording, context.Principal!.UserId, "lrclib", 2), null));
+        var choices = Choices(context, recording, new(new(Guid.CreateVersion7(), recording, context.Principal!.UserId, sourceId, 2), null));
         var provider = Providers(context, true);
         var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
         policies.Setup(item => item.ResolveForUserAsync(context.Principal.UserId, context.CancellationToken))

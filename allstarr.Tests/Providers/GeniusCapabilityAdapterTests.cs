@@ -62,6 +62,19 @@ public sealed class GeniusCapabilityAdapterTests
         Assert.Equal(1, handler.Calls);
     }
 
+    [Fact]
+    public async Task PreservesProviderTitleAndArtistWithoutInventingAlbumOrDuration()
+    {
+        using var handler = new Handler("Words", includeMetadata: true);
+        using var http = new HttpClient(handler);
+        var result = (await new GeniusCapabilityAdapter(http, null, TimeProvider.System, new(TimeProvider.System))
+            .FetchLyricsAsync(Context(), Request())).RequireValue();
+        Assert.Equal("Fixture", result.Metadata?.Title);
+        Assert.Equal("Artist", result.Metadata?.Artist);
+        Assert.Null(result.Metadata?.Album);
+        Assert.Null(result.Metadata?.DurationMs);
+    }
+
     private static string Revision(string content) => "sha256:" + Hash(content);
 
     private static string Hash(string content) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
@@ -74,7 +87,7 @@ public sealed class GeniusCapabilityAdapterTests
         new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
             true, true, false, ["genius"]), "lyrics-test", "lyrics-test", DateTimeOffset.UtcNow.AddMinutes(1), default);
 
-    private sealed class Handler(string lyrics) : HttpMessageHandler
+    private sealed class Handler(string lyrics, bool includeMetadata = false) : HttpMessageHandler
     {
         public int Calls { get; private set; }
 
@@ -82,7 +95,7 @@ public sealed class GeniusCapabilityAdapterTests
         {
             Calls++;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            { Content = new StringContent(JsonSerializer.Serialize(new { lyrics })) });
+            { Content = new StringContent(JsonSerializer.Serialize(includeMetadata ? (object)new { lyrics, title = "Fixture", artist = "Artist" } : new { lyrics })) });
         }
     }
 }

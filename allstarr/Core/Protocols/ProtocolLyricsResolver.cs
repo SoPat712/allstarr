@@ -23,6 +23,7 @@ public sealed record ProtocolLyricsSources(
     /// <summary>Reads only this source, still subject to the listener's availability policy.</summary>
     public string? OnlySourceId { get; init; }
     public bool ForPermanentSidecar { get; init; }
+    public bool ReadOnly { get; init; }
 }
 
 public sealed record ProtocolLyricsCandidate(string SourceId, LyricsInfo? Lyrics);
@@ -68,12 +69,13 @@ public sealed partial class ProtocolLyricsResolver(
         string resourceKey, ProtocolLyricsSources? sources = null)
     {
         ArgumentNullException.ThrowIfNull(song);
+        if (sources?.ReadOnly == true) protocol = protocol with { IsReadOnly = true };
         var results = new List<ProtocolLyricsCandidate>();
         await foreach (var candidate in ReadCandidatesAsync(protocol, song, song.CanonicalRecordingId?.ToString("N") ?? resourceKey,
             song.ExternalProvider, song.ExternalId, song.SpotifyId, sources))
         {
-            if (sources?.HouseholdOnly != true) await IndexAsync(protocol, song, candidate.Lyrics);
             results.Add(candidate);
+            if (results.Count == 20) break;
         }
         return results;
     }
@@ -256,6 +258,7 @@ public sealed partial class ProtocolLyricsResolver(
                     ? await keptLyrics.ReadHouseholdAsync(protocol, song, identities)
                     : await keptLyrics.ReadAsync(protocol, song, identities);
             });
+        var preferredProvider = preferredSourceId == null ? null : LyricsVersions.ProviderId(preferredSourceId);
         var configuredOrder = providers.GetProviderOrder(ProviderCapabilityKind.Lyrics);
         IReadOnlyList<string> order = new[] { "backend", "kept" }
             .Where(id => localSources.ContainsKey(id) && !configuredOrder.Contains(id, StringComparer.Ordinal))
@@ -273,8 +276,8 @@ public sealed partial class ProtocolLyricsResolver(
             order = automaticLookup && sources?.OnlySourceId == null
                 ? effectivePolicy.ApplyAutomaticProviderAvailability(ProviderCapabilityKind.Lyrics, order)
                 : enabled;
-            if (preferredSourceId != null && enabled.Contains(preferredSourceId, StringComparer.Ordinal))
-                order = new[] { preferredSourceId }.Concat(order).Distinct(StringComparer.Ordinal).ToArray();
+            if (preferredSourceId != null && enabled.Contains(preferredProvider!, StringComparer.Ordinal))
+                order = new[] { preferredProvider! }.Concat(order).Distinct(StringComparer.Ordinal).ToArray();
         }
         if (cleanOnly)
         {
@@ -284,10 +287,10 @@ public sealed partial class ProtocolLyricsResolver(
         }
         IReadOnlyList<CrossProviderLinkCandidate>? resolvedLinks = null;
 
-        if (preferredSourceId != null && order.Contains(preferredSourceId, StringComparer.Ordinal))
-            order = new[] { preferredSourceId }.Concat(order).Distinct(StringComparer.Ordinal).ToArray();
+        if (preferredSourceId != null && order.Contains(preferredProvider!, StringComparer.Ordinal))
+            order = new[] { preferredProvider! }.Concat(order).Distinct(StringComparer.Ordinal).ToArray();
         if (sources?.OnlySourceId is { } onlySource)
-            order = order.Where(item => string.Equals(item, onlySource, StringComparison.Ordinal)).ToArray();
+            order = order.Where(item => string.Equals(item, LyricsVersions.ProviderId(onlySource), StringComparison.Ordinal)).ToArray();
 
         if (sources?.ForPermanentSidecar == true)
         {
@@ -300,11 +303,21 @@ public sealed partial class ProtocolLyricsResolver(
         var bestLocalRank = int.MaxValue;
         if (automaticLookup && sources?.OnlySourceId == null)
         {
-            if (preferredSourceId != null && enabledOrder.Contains(preferredSourceId, StringComparer.Ordinal))
+            if (preferredSourceId != null && enabledOrder.Contains(preferredProvider!, StringComparer.Ordinal))
             {
-                var pinned = await ReadOneAsync(preferredSourceId);
-                if (pinned != null) { yield return new(preferredSourceId, pinned); yield break; }
-                order = order.Where(id => id != preferredSourceId).ToArray();
+                var pinned = await ReadOneAsync(preferredProvider!);
+                if (pinned != null)
+                {
+                    var versions = LyricsVersions.Candidates(preferredProvider!, pinned);
+                    var selected = versions.FirstOrDefault(version => version.Source == preferredSourceId) ??
+                        (RichLyricsMapper.Map(pinned) == null ? versions.FirstOrDefault() : pinned);
+                    if (selected != null)
+                    {
+                        yield return new(selected.Source ?? preferredProvider!, selected);
+                        yield break;
+                    }
+                }
+                order = order.Where(id => id != preferredProvider).ToArray();
             }
             for (var rank = 0; rank < order.Count; rank++)
             {
@@ -411,7 +424,17 @@ public sealed partial class ProtocolLyricsResolver(
             protocol.CancellationToken.ThrowIfCancellationRequested();
             if (automaticLookup && !LyricsQuality.CanImprove(providerId, rank, LyricsQuality.Rank(best?.Lyrics), bestRank)) continue;
             var lyrics = localResults.TryGetValue(providerId, out var local) ? local : await ReadOneAsync(providerId);
-            if (!automaticLookup) { yield return new(providerId, lyrics); continue; }
+            if (!automaticLookup)
+            {
+                if (lyrics == null) { yield return new(providerId, null); continue; }
+                foreach (var version in LyricsVersions.Candidates(providerId, lyrics))
+                {
+                    var id = lyrics.Versions == null ? providerId : LyricsVersions.SourceId(providerId, version.Metadata);
+                    if (sources?.OnlySourceId is { } selected && selected != providerId && selected != id) continue;
+                    yield return new(id, version);
+                }
+                continue;
+            }
             var quality = LyricsQuality.Rank(lyrics);
             if (quality > LyricsQuality.Rank(best?.Lyrics) || quality > 0 && quality == LyricsQuality.Rank(best?.Lyrics) && rank < bestRank)
             {
@@ -431,6 +454,7 @@ public sealed partial class ProtocolLyricsResolver(
                 {
                     lyrics = await readLocal(protocol.CancellationToken);
                     if (lyrics != null) lyrics.Source = providerId;
+                    if (sources?.ReadOnly != true && !householdOnly) await IndexAsync(protocol, song, lyrics, canonicalRecordingId);
                 }
                 else
                 {
@@ -468,24 +492,34 @@ public sealed partial class ProtocolLyricsResolver(
                         song.Duration,
                         song.Isrc);
                     protocol.CancellationToken.ThrowIfCancellationRequested();
-                    if (string.IsNullOrWhiteSpace(result?.Content)) return null;
-                    lyrics = new LyricsInfo
+                    if (result == null || string.IsNullOrWhiteSpace(result.Content) && result.Versions?.Any(version => !string.IsNullOrWhiteSpace(version.Content)) != true)
                     {
-                        TrackName = song.Title,
-                        ArtistName = string.Join(", ", artists),
-                        AlbumName = song.Album,
-                        Duration = song.Duration ?? 0,
-                        PlainLyrics = result.Format == ProviderLyricsFormat.PlainText ? result.Content : null,
-                        SyncedLyrics = result.Format == ProviderLyricsFormat.PlainText ? null : result.Content,
-                        Source = providerId,
-                        Revision = result.Revision,
-                        TimedLines = result.TimedLines,
-                        CacheProvenance = result.CacheProvenance,
-                        Attribution = result.Attribution
-                    };
+                        if (sources?.ReadOnly != true && !householdOnly && searchIndex != null)
+                            await searchIndex.ReconcileVersionsAsync(protocol, song, providerId, new HashSet<string>(), unavailable: true);
+                        return null;
+                    }
+                    lyrics = LyricsVersions.Map(result, providerId, song.Duration);
+                    lyrics.TrackName = song.Title;
+                    lyrics.ArtistName = string.Join(", ", artists);
+                    lyrics.AlbumName = song.Album;
+                    lyrics.Duration = song.Duration ?? 0;
+                    if (sources?.ReadOnly != true && !householdOnly)
+                    {
+                        await IndexAsync(protocol, song, lyrics, canonicalRecordingId);
+                        if (lyrics.Versions != null)
+                        {
+                            foreach (var version in LyricsVersions.Candidates(providerId, lyrics))
+                                await IndexAsync(protocol, song, version, canonicalRecordingId);
+                            if (searchIndex != null)
+                                await searchIndex.ReconcileVersionsAsync(protocol, song, providerId,
+                                    LyricsVersions.Candidates(providerId, lyrics).Select(version => version.Source!).ToHashSet(StringComparer.Ordinal));
+                        }
+                        else if (searchIndex != null)
+                            await searchIndex.ReconcileVersionsAsync(protocol, song, providerId, new HashSet<string>());
+                    }
                 }
                 protocol.CancellationToken.ThrowIfCancellationRequested();
-                if (lyrics == null || string.IsNullOrWhiteSpace(lyrics.SyncedLyrics) && string.IsNullOrWhiteSpace(lyrics.PlainLyrics))
+                if (lyrics == null || string.IsNullOrWhiteSpace(lyrics.SyncedLyrics) && string.IsNullOrWhiteSpace(lyrics.PlainLyrics) && lyrics.Versions?.Count is not > 0)
                     return null;
                 return lyrics;
             }

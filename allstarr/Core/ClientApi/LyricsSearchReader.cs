@@ -3,6 +3,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Services.Jellyfin;
 using allstarr.Core.Matching;
 using allstarr.Core.ManagedFiles;
+using allstarr.Core.Music;
 using allstarr.Core.Routing;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
@@ -43,14 +44,14 @@ public sealed class LyricsSearchReader(LyricsSearchIndex index, IDbContextFactor
             (link.Scope == ProviderIdentityScope.Catalog || db.ProviderAccounts.Any(account => account.Id == link.ProviderAccountId && account.Enabled &&
                 (account.OwnerUserId == null || account.OwnerUserId == owner)))).Select(link => link.CanonicalRecordingId).Distinct().ToArrayAsync(token)).ToHashSet();
         var availableSources = new Dictionary<string, string>(StringComparer.Ordinal) { ["backend"] = "public", ["kept"] = "public" };
-        foreach (var source in documents.Select(document => document.Source).Distinct(StringComparer.Ordinal)
+        foreach (var source in documents.Select(document => LyricsVersions.ProviderId(document.Source)).Distinct(StringComparer.Ordinal)
                      .Where(source => source is not ("backend" or "kept") && policy.IsEnabled(source)))
         {
             var plan = await router.PlanAsync<IProviderLyricsCapability>(LyricsSearchIndex.SourceRequest(execution, source));
             if (plan.Candidates.FirstOrDefault() is { } candidate)
                 availableSources[source] = LyricsSearchIndex.AccountProvenance(candidate.Context.Account);
         }
-        var visible = documents.Where(document => availableSources.TryGetValue(document.Source, out var provenance) && provenance == document.Provenance && policy.Includes(document.Song) &&
+        var visible = documents.Where(document => availableSources.TryGetValue(LyricsVersions.ProviderId(document.Source), out var provenance) && provenance == document.Provenance && policy.Includes(document.Song) &&
             (document.Song.IsLocal ? native.Contains(NativeKey(document.ItemId)) :
                 (document.Owner == owner || document.PublicCatalog && document.SharedSource) && document.Song.ExternalProvider is { } provider && (provider == "allstarr" && document.RecordingId.HasValue || policy.IsEnabled(provider) && playable.Contains(provider)))).ToArray();
         var rows = await db.RecordingLyricsChoices.AsNoTracking().Where(choice => choice.RevokedAt == null &&

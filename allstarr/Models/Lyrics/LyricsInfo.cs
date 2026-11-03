@@ -15,6 +15,8 @@ public class LyricsInfo
     public string? SyncedLyrics { get; set; }
     public string? Source { get; set; }
     public string? Revision { get; set; }
+    public ProviderLyricsMetadata? Metadata { get; set; }
+    public IReadOnlyList<LyricsInfo>? Versions { get; set; }
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public ProviderLyricsAttribution? Attribution { get; set; }
     public IReadOnlyList<ProviderLyricsTimedLine>? TimedLines { get; set; }

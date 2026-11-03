@@ -2101,9 +2101,10 @@ public sealed partial class ProtocolProviderGateway(
         if (outcome.IsSuccess)
         {
             var result = outcome.RequireValue() with { CacheProvenance = LyricsSearchIndex.AccountProvenance(routed.Candidate.Context.Account) };
-            if (recordingId.HasValue && protocol.Actor?.EffectiveUserId is { } user)
+            if (!protocol.IsReadOnly && recordingId.HasValue && protocol.Actor?.EffectiveUserId is { } user)
                 lyricsChanges?.RecordingChanged(user, recordingId.Value);
-            return result.Availability == ProviderLyricsAvailabilityState.Available ? result : null;
+            return result.Availability == ProviderLyricsAvailabilityState.Available ||
+                result.Versions?.Any(version => version.Availability == ProviderLyricsAvailabilityState.Available) == true ? result : null;
         }
         if (outcome.Error!.Kind is ProviderErrorKind.NotFound or ProviderErrorKind.CapabilityUnavailable or ProviderErrorKind.NotSupported)
             return null;

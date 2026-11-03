@@ -114,9 +114,9 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(1, root.GetProperty("apiVersion").GetInt32());
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("serverVersion").GetString()));
         var features = root.GetProperty("features");
-        Assert.Equal(["events", "fixesMatch", "follow", "itemDetails", "lyricsRich", "lyricsSearch", "lyricsSources", "mixes", "playback", "releases", "reports", "titleMarkers"],
+        Assert.Equal(["events", "fixesMatch", "follow", "itemDetails", "lyricsRich", "lyricsSearch", "lyricsSources", "lyricsVersions", "mixes", "playback", "releases", "reports", "titleMarkers"],
             features.EnumerateObject().Select(item => item.Name).Order().ToArray());
-        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name is "titleMarkers" or "itemDetails" or "playback" or "lyricsRich" or "lyricsSources" or "fixesMatch" or "reports" or "mixes" or "releases" or "follow" or "lyricsSearch" or "events", item.Value.GetBoolean()));
+        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name is "titleMarkers" or "itemDetails" or "playback" or "lyricsRich" or "lyricsSources" or "lyricsVersions" or "fixesMatch" or "reports" or "mixes" or "releases" or "follow" or "lyricsSearch" or "events", item.Value.GetBoolean()));
         Assert.NotNull(observed?.Principal);
         Assert.False(observed.Principal.IsAdministrator);
         Assert.Equal(ProviderActorKind.User, observed.RequireActor().Kind);
@@ -327,6 +327,11 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("getCurrentPlayback", paths.GetProperty("/allstarr/v1/playback/current").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("searchLyrics", paths.GetProperty("/allstarr/v1/search/lyrics").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("getItemLyrics", paths.GetProperty("/allstarr/v1/items/{itemId}/lyrics").GetProperty("get").GetProperty("operationId").GetString());
+        var lyricsQuery = paths.GetProperty("/allstarr/v1/items/{itemId}/lyrics").GetProperty("get").GetProperty("parameters")
+            .EnumerateArray().Single(parameter => parameter.GetProperty("name").GetString() == "sourceId");
+        Assert.Equal("query", lyricsQuery.GetProperty("in").GetString());
+        Assert.False(lyricsQuery.TryGetProperty("required", out var requiredLyricsQuery) && requiredLyricsQuery.GetBoolean());
+        Assert.Equal("string", lyricsQuery.GetProperty("schema").GetProperty("type").GetString());
         Assert.Equal("getLyricsSources", paths.GetProperty("/allstarr/v1/items/{itemId}/lyrics/sources").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("setLyricsSource", paths.GetProperty("/allstarr/v1/items/{itemId}/lyrics/source").GetProperty("put").GetProperty("operationId").GetString());
         Assert.Equal("clearLyricsSource", paths.GetProperty("/allstarr/v1/items/{itemId}/lyrics/source/clear").GetProperty("post").GetProperty("operationId").GetString());

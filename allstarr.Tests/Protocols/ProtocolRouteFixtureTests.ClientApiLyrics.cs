@@ -158,6 +158,8 @@ public sealed partial class ProtocolRouteFixtureTests
         await AssertClientApiError(rich, 404, "not_found");
         using var sources = await client.GetAsync(path + "/sources");
         await AssertClientApiError(sources, 404, "not_found");
+        using var preview = await client.GetAsync(path + "?sourceId=lrclib:101");
+        await AssertClientApiError(preview, 404, "not_found");
         using var pin = await client.PutAsJsonAsync(path + "/source", new { sourceId = "lyricsplus", expectedRevision = new { } });
         await AssertClientApiError(pin, 404, "not_found");
         using var clear = await client.PostAsJsonAsync(path + "/source/clear", new { expectedRevision = new { } });
@@ -262,6 +264,8 @@ public sealed partial class ProtocolRouteFixtureTests
         await AssertClientApiError(rich, 404, "not_found");
         using var sources = await client.GetAsync(path + "/sources");
         await AssertClientApiError(sources, 404, "not_found");
+        using var preview = await client.GetAsync(path + "?sourceId=lrclib:101");
+        await AssertClientApiError(preview, 404, "not_found");
         using var pin = await client.PutAsJsonAsync(path + "/source", new { sourceId = "lrclib", expectedRevision = new { } });
         await AssertClientApiError(pin, 404, "not_found");
         using var clear = await client.PostAsJsonAsync(path + "/source/clear", new { expectedRevision = new { } });

@@ -7,7 +7,13 @@ namespace allstarr.Core.ClientApi;
 public sealed record ClientLyricsSource(
     [property: JsonPropertyName("sourceId")] string SourceId,
     [property: JsonPropertyName("format")] string? Format,
-    [property: JsonPropertyName("preview")] string? Preview);
+    [property: JsonPropertyName("preview")] string? Preview,
+    [property: JsonPropertyName("providerId")] string ProviderId,
+    [property: JsonPropertyName("providerName")] string ProviderName,
+    [property: JsonPropertyName("title")] string? Title,
+    [property: JsonPropertyName("artist")] string? Artist,
+    [property: JsonPropertyName("album")] string? Album,
+    [property: JsonPropertyName("durationMs"), JsonNumberHandling(JsonNumberHandling.Strict)] long? DurationMs);
 
 public sealed record ClientLyricsChosen(
     [property: JsonPropertyName("sourceId")] string SourceId,

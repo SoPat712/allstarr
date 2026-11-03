@@ -43,17 +43,10 @@ public sealed class BuiltInLyricsCapabilityAdapter(
             if (lyrics == null)
                 return Available(ProviderLyricsAvailabilityState.Unavailable);
 
-            var (format, content) = SelectContent(lyrics, request.PreferredFormat);
-            if (string.IsNullOrWhiteSpace(content))
-                return Available(ProviderLyricsAvailabilityState.Unavailable);
-            var revision = lyrics.Revision ?? "sha256:" + Convert.ToHexString(
-                SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
-            return Available(
-                ProviderLyricsAvailabilityState.Available,
-                request.AvailabilityOnly ? null : format,
-                request.AvailabilityOnly ? null : content,
-                revision,
-                lyrics.Source);
+            return ProviderOutcome<ProviderLyricsResult>.Success(MapLyrics(lyrics, request) with
+            {
+                Versions = lyrics.Versions?.Select(version => MapLyrics(version, request)).ToArray()
+            });
         }
         catch (OperationCanceledException)
         {
@@ -63,6 +56,27 @@ public sealed class BuiltInLyricsCapabilityAdapter(
         {
             return Failure(ProviderErrorKind.TransientFailure);
         }
+    }
+
+    private ProviderLyricsResult MapLyrics(LyricsInfo lyrics, ProviderLyricsRequest request)
+    {
+        var (format, content) = SelectContent(lyrics, request.PreferredFormat);
+        if (string.IsNullOrWhiteSpace(content))
+            return new(ProviderLyricsAvailabilityState.Unavailable, ProviderId) { Metadata = lyrics.Metadata };
+
+        var revision = lyrics.Revision ?? "sha256:" + Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
+        return new(
+            ProviderLyricsAvailabilityState.Available,
+            lyrics.Source ?? ProviderId,
+            request.AvailabilityOnly ? null : format,
+            request.AvailabilityOnly ? null : content,
+            revision,
+            request.AvailabilityOnly || format == ProviderLyricsFormat.PlainText ? null : lyrics.TimedLines,
+            request.AvailabilityOnly ? null : lyrics.Attribution)
+        {
+            Metadata = lyrics.Metadata
+        };
     }
 
     private ProviderOutcome<ProviderLyricsResult> Available(

@@ -58,6 +58,12 @@ public sealed partial class ProtocolRouteFixtureTests
                 foreach (var item in node.EnumerateArray()) CheckProperties(item);
         }
 
+        var source = schemas.GetProperty("ClientLyricsSource").GetProperty("properties");
+        foreach (var property in new[] { "title", "artist", "album", "format", "preview" })
+            Assert.Equal(new[] { "null", "string" }, ClientApiSchemaTypes(source.GetProperty(property)).Order().ToArray());
+        Assert.Equal(new[] { "integer", "null" }, ClientApiSchemaTypes(source.GetProperty("durationMs")).Order().ToArray());
+        foreach (var property in new[] { "providerId", "providerName", "sourceId" })
+            Assert.Equal(new[] { "string" }, ClientApiSchemaTypes(source.GetProperty(property)));
         CheckProperties(document.RootElement);
     }
 

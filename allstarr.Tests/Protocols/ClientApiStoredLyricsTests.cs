@@ -34,6 +34,29 @@ public sealed class ClientApiStoredLyricsTests
         Assert.Equal(10000, Assert.Single(observed).Lines[^1].EndMs);
     }
 
+    [Theory]
+    [InlineData("lrclib:102", "Chosen verse", "lrclib:102")]
+    [InlineData("lrclib:missing", "Best verse", "lrclib")]
+    [InlineData("lrclib", "Best verse", "lrclib")]
+    public async Task StoredLyricsVersionPinUsesCachedVersionOrProviderBest(string pin, string expectedText, string expectedSource)
+    {
+        var song = new Song { Title = "Fixture", Artist = "Artist", Duration = 240 };
+        var best = new LyricsInfo { Source = "lrclib", PlainLyrics = "Best verse", Metadata = new("101", "Fixture", "Artist", null, 240000) };
+        var chosen = new LyricsInfo { Source = "lrclib", PlainLyrics = "Chosen verse", Metadata = new("102", "Fixture (Live)", "Artist", null, 271000) };
+        best.Versions = [new() { Source = "lrclib", PlainLyrics = best.PlainLyrics, Metadata = best.Metadata }, chosen];
+        var cache = new Mock<IApplicationCache>();
+        cache.Setup(item => item.GetStringAsync(It.IsAny<string>())).ReturnsAsync(JsonSerializer.Serialize(best));
+        var policy = new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty
+            .Add(ProviderCapabilityKind.Lyrics, ["lrclib"]), ImmutableHashSet<string>.Empty, "lossless", .07);
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", "listener", null,
+            "stored-version", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var observed = new List<RichLyrics>();
+        var result = await StoredItemLyrics.ReadAsync(cache.Object, song, null, pin, null, policy, "http://unused.invalid", context, [], [], default, observed.Add);
+        Assert.True(result.Available);
+        Assert.Equal(expectedSource, result.Source);
+        Assert.Contains(observed, rich => rich.Source.Id == expectedSource && rich.Lines[0].Text == expectedText);
+    }
+
     [Fact]
     public async Task StoredGeniusLyricsDecodeExistingCacheWithoutFetching()
     {

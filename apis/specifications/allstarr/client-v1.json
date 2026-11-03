@@ -457,6 +457,13 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "sourceId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2302,6 +2309,9 @@
           "lyricsRich": {
             "type": "boolean"
           },
+          "lyricsVersions": {
+            "type": "boolean"
+          },
           "lyricsSources": {
             "type": "boolean"
           },
@@ -2455,7 +2465,13 @@
         "required": [
           "sourceId",
           "format",
-          "preview"
+          "preview",
+          "providerId",
+          "providerName",
+          "title",
+          "artist",
+          "album",
+          "durationMs"
         ],
         "type": "object",
         "properties": {
@@ -2473,6 +2489,37 @@
               "null",
               "string"
             ]
+          },
+          "providerId": {
+            "type": "string"
+          },
+          "providerName": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "artist": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "album": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "durationMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
           }
         }
       },

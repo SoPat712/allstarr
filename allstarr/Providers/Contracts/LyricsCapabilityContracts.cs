@@ -175,6 +175,8 @@ public sealed record ProviderLyricsAttribution
     public ProviderLyricsContributor? Maker { get; }
 }
 
+public sealed record ProviderLyricsMetadata(string? VersionKey, string? Title, string? Artist, string? Album, long? DurationMs);
+
 public sealed record ProviderLyricsResult
 {
     private sealed record Binding(string Value);
@@ -184,6 +186,9 @@ public sealed record ProviderLyricsResult
         get => Bindings.TryGetValue(this, out var binding) ? binding.Value : null;
         init { if (value != null) Bindings.Add(this, new(value)); }
     }
+
+    public ProviderLyricsMetadata? Metadata { get; init; }
+    public IReadOnlyList<ProviderLyricsResult>? Versions { get; init; }
 
     public ProviderLyricsResult(
         ProviderLyricsAvailabilityState availability,

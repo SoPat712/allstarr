@@ -46,7 +46,11 @@ public sealed partial class GeniusCapabilityAdapter : MetadataLyricsCapabilityAd
         if (lines.Count > 0) lines[^1] = EmbedSuffix().Replace(lines[^1], "").TrimEnd();
         var text = string.Join('\n', lines).TrimEnd();
         return string.IsNullOrWhiteSpace(text) ? Unavailable() : ProviderOutcome<ProviderLyricsResult>.Success(new(
-            ProviderLyricsAvailabilityState.Available, ProviderId, ProviderLyricsFormat.PlainText, text, "sha256:" + Hash(text)));
+            ProviderLyricsAvailabilityState.Available, ProviderId, ProviderLyricsFormat.PlainText, text, "sha256:" + Hash(text))
+        {
+            Metadata = new(null, root.TryGetProperty("title", out var providerTitle) && providerTitle.ValueKind == JsonValueKind.String ? providerTitle.GetString() : null,
+                root.TryGetProperty("artist", out var providerArtist) && providerArtist.ValueKind == JsonValueKind.String ? providerArtist.GetString() : null, null, null)
+        });
     }
 
     [GeneratedRegex(@"\d*Embed$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]

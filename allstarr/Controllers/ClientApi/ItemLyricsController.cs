@@ -11,8 +11,8 @@ public sealed class ItemLyricsController(ItemLyricsReader reader) : ClientApiCon
     [HttpGet]
     [EndpointName("getItemLyrics")]
     [ProducesResponseType<RichLyrics>(200)]
-    public Task<ActionResult<RichLyrics>> Get(string itemId) =>
-        ExecuteAsync(() => reader.ReadAsync(HttpContext, Execution, itemId));
+    public Task<ActionResult<RichLyrics>> Get(string itemId, [FromQuery] string? sourceId = null) =>
+        ExecuteAsync(() => reader.ReadAsync(HttpContext, Execution, itemId, sourceId ?? (Request.Query.ContainsKey("sourceId") ? "" : null)));
 
     [HttpGet("sources")]
     [EndpointName("getLyricsSources")]

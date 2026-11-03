@@ -92,7 +92,7 @@ public sealed class RecordingLyricsChoices : IRecordingLyricsChoices
         LyricsChoiceRevision expected)
     {
         var token = RequireContext(context);
-        var source = ProviderContractValidation.ProviderId(sourceId, nameof(sourceId));
+        var source = LyricsVersions.Validate(sourceId);
         var targetScope = ParseScope(scope);
         ArgumentNullException.ThrowIfNull(expected);
         var authorization = await AuthorizeAsync(

@@ -31,15 +31,37 @@ internal static class StoredItemLyrics
                 best = new(true, rich.Format, source);
             return observe == null && best.Format == "word";
         }
+        bool ConsiderProvider(LyricsInfo? info, string provider)
+        {
+            if (info == null) return false;
+            info.Source = provider;
+            var versions = info.Versions?.Select(version =>
+            {
+                version.Source = LyricsVersions.SourceId(provider, version.Metadata);
+                if (version.Metadata?.DurationMs is { } milliseconds) version.Duration = (int)((milliseconds + 999) / 1000);
+                return RichLyricsMapper.Map(version);
+            }).OfType<RichLyrics>().ToArray() ?? [];
+            foreach (var version in versions) observe?.Invoke(version);
+            var rich = versions.FirstOrDefault(version => version.Source.Id == chosenSource) ?? RichLyricsMapper.Map(info);
+            if (rich == null) return false;
+            var pinned = chosenSource != null && LyricsVersions.ProviderId(chosenSource) == provider;
+            if (pinned)
+            {
+                observe?.Invoke(rich);
+                best = new(true, rich.Format, rich.Source.Id);
+                return true;
+            }
+            return Consider(rich, rich.Source.Id);
+        }
         var lookup = MusicLyrics.ForLookup(song);
-        var providers = chosenSource == null
-            ? ProviderOrderPolicyCatalog.NormalizeOrder(ProviderCapabilityKind.Lyrics, policy.GetProviderOrder(ProviderCapabilityKind.Lyrics)) : [chosenSource];
+        var automatic = ProviderOrderPolicyCatalog.NormalizeOrder(ProviderCapabilityKind.Lyrics, policy.GetProviderOrder(ProviderCapabilityKind.Lyrics));
+        var providers = chosenSource == null ? automatic : [LyricsVersions.ProviderId(chosenSource)];
         foreach (var provider in providers.Where(policy.IsEnabled))
         {
             token.ThrowIfCancellationRequested();
             if (provider == "kept" && audioPath != null)
             {
-                if (Consider(RichLyricsMapper.Map(await KeptLyricsReader.ReadStoredSidecarAsync(song, audioPath, token)), provider)) return best;
+                if (ConsiderProvider(await KeptLyricsReader.ReadStoredSidecarAsync(song, audioPath, token), provider)) return best;
                 continue;
             }
             if (provider is not ("lrclib" or "lrcred" or "unison" or "genius" or "paxsenix" or "lyricsplus" or "musixmatch" or "spicylyrics" or "spotify")) continue;
@@ -52,8 +74,7 @@ internal static class StoredItemLyrics
                         string.Join(", ", artists), lookup.Title, lookup.Album, lookup.Duration ?? 0));
                     var info = cached == null ? null : JsonSerializer.Deserialize<LyricsInfo>(cached, ClientApiContract.JsonOptions);
                     if (info != null) info.Duration = lookup.Duration ?? 0;
-                    var richCached = RichLyricsMapper.Map(info);
-                    if (Consider(richCached, provider)) return best;
+                    if (ConsiderProvider(info, provider)) return best;
                 }
                 catch (Exception error) when (error is not OperationCanceledException) { }
                 continue;
@@ -84,8 +105,8 @@ internal static class StoredItemLyrics
                     else
                     {
                         var accountStored = await ReadAccountCacheAsync(cache, provider, request, song, recordingId, execution, accounts, identities, observe != null);
-                        var richStored = Map(accountStored, provider, lookup.Duration);
-                        if (Consider(richStored, provider)) return best;
+                        if (accountStored is { Availability: ProviderLyricsAvailabilityState.Available } &&
+                            ConsiderProvider(LyricsVersions.Map(accountStored, provider, lookup.Duration), provider)) return best;
                         continue;
                     }
                 }
@@ -107,23 +128,9 @@ internal static class StoredItemLyrics
             }
             catch (Exception error) when (error is not OperationCanceledException) { continue; }
             if (stored?.Availability != ProviderLyricsAvailabilityState.Available) continue;
-            var rich = Map(stored, provider, lookup.Duration);
-            if (Consider(rich, provider)) return best;
+            if (ConsiderProvider(LyricsVersions.Map(stored, provider, lookup.Duration), provider)) return best;
         }
         return best;
-    }
-
-    private static RichLyrics? Map(ProviderLyricsResult? stored, string provider, int? duration)
-    {
-        if (stored is not { Availability: ProviderLyricsAvailabilityState.Available }) return null;
-        return RichLyricsMapper.Map(new LyricsInfo
-        {
-            Source = provider,
-            Duration = duration ?? 0,
-            PlainLyrics = stored.Format == ProviderLyricsFormat.PlainText ? stored.Content : null,
-            SyncedLyrics = stored.Format == ProviderLyricsFormat.PlainText ? null : stored.Content,
-            TimedLines = stored.TimedLines
-        });
     }
 
     private static async Task<ProviderLyricsResult?> ReadAccountCacheAsync(IApplicationCache cache, string provider,

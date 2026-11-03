@@ -343,7 +343,7 @@ public sealed class LibraryLyricsIndexer(IDbContextFactory<AllstarrDbContext> fa
         }
         foreach (var rich in stored)
         {
-            var account = selectedAccounts.FirstOrDefault(account => account.ProviderId == rich.Source.Id);
+            var account = selectedAccounts.FirstOrDefault(account => account.ProviderId == LyricsVersions.ProviderId(rich.Source.Id));
             await index.StoreAsync(context, song, recording, rich,
                 expectedProvenance: LyricsSearchIndex.AccountProvenance(account?.Id, account?.Revision));
         }

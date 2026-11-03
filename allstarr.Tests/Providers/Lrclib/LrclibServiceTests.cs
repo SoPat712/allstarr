@@ -80,7 +80,7 @@ public class LrclibServiceTests
     public async Task GetLyricsAsync_ReturnsApplicationCacheWithoutProviderCall()
     {
         _mockCache.Setup(cache => cache.GetStringAsync(It.IsAny<string>())).ReturnsAsync(
-            """{"id":7,"trackName":"Cached","artistName":"Artist","plainLyrics":"cached lyrics"}""");
+            """{"id":7,"trackName":"Cached","artistName":"Artist","plainLyrics":"cached lyrics","versions":[{"id":7,"plainLyrics":"cached lyrics"}]}""");
         var service = CreateService();
 
         var result = await service.GetLyricsAsync("Cached", "Artist", "Album", 180);
@@ -92,6 +92,114 @@ public class LrclibServiceTests
             Times.Never(),
             ItExpr.IsAny<HttpRequestMessage>(),
             ItExpr.IsAny<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetLyricsAsync_MissingRecordIdsRetainDistinctMetadataVersions()
+    {
+        SetupSearch("""[{"trackName":"Track","artistName":"Artist","duration":180,"plainLyrics":"Studio"},{"trackName":"Track (Live)","artistName":"Artist","duration":271,"plainLyrics":"Concert"}]""");
+        var result = await CreateService().GetLyricsAsync("Track", "Artist", "Album", 180);
+        Assert.Equal(2, result!.Versions!.Count);
+        Assert.All(result.Versions!, version => Assert.Null(version.Metadata!.VersionKey));
+    }
+
+    [Fact]
+    public async Task GetLyricsAsync_OrdersAndBoundsVersionsWithoutChangingBestMatch()
+    {
+        var records = Enumerable.Range(1, 7).Select(id => new
+        {
+            id,
+            trackName = "Track",
+            artistName = "Artist",
+            albumName = (string?)null,
+            duration = 180.125,
+            plainLyrics = "plain " + id,
+            syncedLyrics = id == 7 ? "[00:01]best" : null
+        }).ToArray();
+        SetupSearch(JsonSerializer.Serialize(records.Concat([records[6]])));
+
+        var result = await CreateService().GetLyricsAsync("Track", "Artist", "Requested album", 180);
+
+        Assert.NotNull(result);
+        Assert.Equal(7, result.Id);
+        Assert.Equal("[00:01]best", result.SyncedLyrics);
+        Assert.Equal(new[] { 7, 1, 2, 3, 4 }, result.Versions!.Select(version => version.Id));
+        Assert.All(result.Versions!, version => Assert.Null(version.Versions));
+        Assert.Equal("7", result.Metadata!.VersionKey);
+        Assert.Equal("Track", result.Metadata.Title);
+        Assert.Equal("Artist", result.Metadata.Artist);
+        Assert.Null(result.Metadata.Album);
+        Assert.Equal(180125L, result.Metadata.DurationMs);
+        Assert.Equal("Requested album", result.AlbumName);
+        _handler.Protected().Verify("SendAsync", Times.Once(),
+            ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetLyricsAsync_CachesAllVersionsWithTheSharedLyricsTtl()
+    {
+        var values = new Dictionary<string, string>();
+        _mockCache.Setup(cache => cache.GetStringAsync(It.IsAny<string>()))
+            .ReturnsAsync((string key) => values.GetValueOrDefault(key));
+        _mockCache.Setup(cache => cache.SetStringAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan?>()))
+            .Callback<string, string, TimeSpan?>((key, value, _) => values[key] = value)
+            .ReturnsAsync(true);
+        SetupSearch("""[{"id":1,"trackName":"Track","artistName":"Artist","duration":180,"plainLyrics":"first"},{"id":2,"trackName":"Track","artistName":"Artist","duration":180,"plainLyrics":"second"}]""");
+        var service = CreateService();
+
+        var first = await service.GetLyricsAsync("Track", "Artist", "Album", 180);
+        var second = await service.GetLyricsAsync("Track", "Artist", "Album", 180);
+
+        Assert.Equal(new[] { 1, 2 }, first!.Versions!.Select(version => version.Id));
+        Assert.Equal(new[] { 1, 2 }, second!.Versions!.Select(version => version.Id));
+        _handler.Protected().Verify("SendAsync", Times.Once(),
+            ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>());
+        _mockCache.Verify(cache => cache.SetStringAsync(
+            "lrclib:automatic:v2:" + CacheKeyBuilder.BuildLyricsKey("Artist", "Track", "Album", 180),
+            It.IsAny<string>(), new CacheSettings().LyricsTTL), Times.Once());
+    }
+
+    [Fact]
+    public async Task GetLyricsAsync_RefreshesLegacyBestOnlyCacheToDiscoverVersions()
+    {
+        _mockCache.Setup(cache => cache.GetStringAsync(It.IsAny<string>())).ReturnsAsync(
+            """{"id":1,"plainLyrics":"old best"}""");
+        SetupSearch("""[{"id":1,"trackName":"Track","artistName":"Artist","duration":180,"plainLyrics":"first"},{"id":2,"trackName":"Track","artistName":"Artist","duration":180,"plainLyrics":"second"}]""");
+
+        var result = await CreateService().GetLyricsAsync("Track", "Artist", "Album", 180);
+
+        Assert.Equal(new[] { 1, 2 }, result!.Versions!.Select(version => version.Id));
+        _handler.Protected().Verify("SendAsync", Times.Once(),
+            ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetLyricsAsync_ExactFallbackPreservesNullableProviderMetadata()
+    {
+        SetupSearch("""[{"id":3,"trackName":"ZZZZZZZZZZZZZZZZZZZZZZZZZZ","artistName":"YYYYYYY","duration":800,"plainLyrics":"wrong"}]""");
+        _handler.Protected().Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(request => request.RequestUri!.AbsolutePath == "/api/get"),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"id":42,"plainLyrics":"exact"}""")
+            });
+
+        var result = await CreateService().GetLyricsAsync("Track", "Artist", "Album", 180);
+
+        Assert.NotNull(result);
+        Assert.Equal("exact", result.PlainLyrics);
+        Assert.Equal("Track", result.TrackName);
+        Assert.Equal("Artist", result.ArtistName);
+        Assert.Equal("Album", result.AlbumName);
+        Assert.Equal(180, result.Duration);
+        Assert.Equal("42", result.Metadata!.VersionKey);
+        Assert.Null(result.Metadata.Title);
+        Assert.Null(result.Metadata.Artist);
+        Assert.Null(result.Metadata.Album);
+        Assert.Null(result.Metadata.DurationMs);
+        Assert.Equal(42, Assert.Single(result.Versions!).Id);
     }
 
     [Fact]
@@ -156,6 +264,15 @@ public class LrclibServiceTests
         return document.RootElement.GetProperty("id").GetInt32() == 42 &&
                document.RootElement.GetProperty("plainLyrics").GetString() == "complete lyrics";
     }
+
+    private void SetupSearch(string json) =>
+        _handler.Protected().Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.Is<HttpRequestMessage>(request => request.RequestUri!.AbsolutePath == "/api/search"),
+                ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(() => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json)
+            });
 
     private LrclibService CreateService() =>
         new(

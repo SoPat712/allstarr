@@ -1,4 +1,6 @@
 using allstarr.Core.Providers.Lyrics;
+using allstarr.Core.Music;
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using allstarr.Models.Lyrics;
@@ -55,7 +57,9 @@ public class LrclibService
         {
             try
             {
-                return JsonSerializer.Deserialize<LyricsInfo>(cached, JsonOptions);
+                var cachedLyrics = JsonSerializer.Deserialize<LyricsInfo>(cached, JsonOptions);
+                if (cachedLyrics?.Versions is { Count: > 0 })
+                    return cachedLyrics;
             }
             catch (Exception ex)
             {
@@ -84,6 +88,7 @@ public class LrclibService
                 {
                     LrclibResponse? bestMatch = null;
                     double bestScore = 0;
+                    var scoredResults = new List<(LrclibResponse Response, double Score)>();
 
                     foreach (var result in searchResults)
                     {
@@ -97,6 +102,7 @@ public class LrclibService
                         var durationScore = durationDiff <= 5 ? 100.0 : Math.Max(0, 100 - (durationDiff * 2));
                         var syncedBonus = !string.IsNullOrEmpty(result.SyncedLyrics) ? 15.0 : 0.0;
                         var totalScore = (trackScore * 0.3) + (artistScore * 0.3) + (durationScore * 0.15) + artistCountBonus + syncedBonus;
+                        scoredResults.Add((result, totalScore));
 
                         _logger.LogDebug("Candidate: {Track} by {Artist} ({ArtistCount} artists) - Score: {Score:F1} (track:{TrackScore:F1}, artist:{ArtistScore:F1}, duration:{DurationScore:F1}, countBonus:{CountBonus:F1}, synced:{Synced})",
                             result.TrackName, result.ArtistName, resultArtistCount, totalScore, trackScore, artistScore, durationScore, artistCountBonus, !string.IsNullOrEmpty(result.SyncedLyrics));
@@ -113,17 +119,14 @@ public class LrclibService
                         _logger.LogInformation("Found lyrics via search for {Artist} - {Track} (ID: {Id}, score: {Score:F1}, synced: {HasSynced})",
                             artistName, trackName, bestMatch.Id, bestScore, !string.IsNullOrEmpty(bestMatch.SyncedLyrics));
 
-                        var result = new LyricsInfo
-                        {
-                            Id = bestMatch.Id,
-                            TrackName = bestMatch.TrackName ?? trackName,
-                            ArtistName = bestMatch.ArtistName ?? artistName,
-                            AlbumName = bestMatch.AlbumName ?? albumName,
-                            Duration = bestMatch.Duration.HasValue ? (int)Math.Round(bestMatch.Duration.Value) : durationSeconds,
-                            Instrumental = bestMatch.Instrumental,
-                            PlainLyrics = bestMatch.PlainLyrics,
-                            SyncedLyrics = bestMatch.SyncedLyrics
-                        };
+                        var result = ToLyricsInfo(bestMatch, trackName, artistName, albumName, durationSeconds);
+                        result.Versions = scoredResults
+                            .Where(candidate => candidate.Score >= 60)
+                            .OrderByDescending(candidate => candidate.Score)
+                            .Select(candidate => ToLyricsInfo(candidate.Response, trackName, artistName, albumName, durationSeconds))
+                            .DistinctBy(version => LyricsVersions.SourceId("lrclib", version.Metadata))
+                            .Take(5)
+                            .ToArray();
 
                         await LyricsAwait.CompleteAsync(CacheLyricsAsync(cacheKey, result), completion, token);
                         return result;
@@ -162,17 +165,8 @@ public class LrclibService
                 return null;
             }
 
-            var exactResult = new LyricsInfo
-            {
-                Id = lyrics.Id,
-                TrackName = lyrics.TrackName ?? trackName,
-                ArtistName = lyrics.ArtistName ?? artistName,
-                AlbumName = lyrics.AlbumName ?? albumName,
-                Duration = lyrics.Duration.HasValue ? (int)Math.Round(lyrics.Duration.Value) : durationSeconds,
-                Instrumental = lyrics.Instrumental,
-                PlainLyrics = lyrics.PlainLyrics,
-                SyncedLyrics = lyrics.SyncedLyrics
-            };
+            var exactResult = ToLyricsInfo(lyrics, trackName, artistName, albumName, durationSeconds);
+            exactResult.Versions = [ToLyricsInfo(lyrics, trackName, artistName, albumName, durationSeconds)];
 
             await LyricsAwait.CompleteAsync(CacheLyricsAsync(cacheKey, exactResult), completion, token);
 
@@ -262,17 +256,7 @@ public class LrclibService
                 return null;
             }
 
-            return new LyricsInfo
-            {
-                Id = lyrics.Id,
-                TrackName = lyrics.TrackName ?? trackName,
-                ArtistName = lyrics.ArtistName ?? artistName,
-                AlbumName = lyrics.AlbumName ?? albumName,
-                Duration = lyrics.Duration.HasValue ? (int)Math.Round(lyrics.Duration.Value) : durationSeconds,
-                Instrumental = lyrics.Instrumental,
-                PlainLyrics = lyrics.PlainLyrics,
-                SyncedLyrics = lyrics.SyncedLyrics
-            };
+            return ToLyricsInfo(lyrics, trackName, artistName, albumName, durationSeconds);
         }
         catch (Exception ex)
         {
@@ -318,17 +302,7 @@ public class LrclibService
                 return null;
             }
 
-            var result = new LyricsInfo
-            {
-                Id = lyrics.Id,
-                TrackName = lyrics.TrackName ?? string.Empty,
-                ArtistName = lyrics.ArtistName ?? string.Empty,
-                AlbumName = lyrics.AlbumName ?? string.Empty,
-                Duration = lyrics.Duration.HasValue ? (int)Math.Round(lyrics.Duration.Value) : 0,
-                Instrumental = lyrics.Instrumental,
-                PlainLyrics = lyrics.PlainLyrics,
-                SyncedLyrics = lyrics.SyncedLyrics
-            };
+            var result = ToLyricsInfo(lyrics, string.Empty, string.Empty, string.Empty, 0);
 
             await CacheLyricsAsync(cacheKey, result);
 
@@ -346,6 +320,21 @@ public class LrclibService
             cacheKey,
             JsonSerializer.Serialize(lyrics, JsonOptions),
             _lyricsTtl);
+
+    private static LyricsInfo ToLyricsInfo(LrclibResponse lyrics, string trackName, string artistName,
+        string albumName, int durationSeconds) => new()
+        {
+            Id = lyrics.Id,
+            TrackName = lyrics.TrackName ?? trackName,
+            ArtistName = lyrics.ArtistName ?? artistName,
+            AlbumName = lyrics.AlbumName ?? albumName,
+            Duration = lyrics.Duration.HasValue ? (int)Math.Round(lyrics.Duration.Value) : durationSeconds,
+            Instrumental = lyrics.Instrumental,
+            PlainLyrics = lyrics.PlainLyrics,
+            SyncedLyrics = lyrics.SyncedLyrics,
+            Metadata = new(lyrics.Id > 0 ? lyrics.Id.ToString(CultureInfo.InvariantCulture) : null, lyrics.TrackName, lyrics.ArtistName,
+            lyrics.AlbumName, lyrics.Duration.HasValue ? (long)Math.Round(lyrics.Duration.Value * 1000) : null)
+        };
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {

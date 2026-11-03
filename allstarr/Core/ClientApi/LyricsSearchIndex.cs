@@ -33,17 +33,18 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
         if (string.IsNullOrWhiteSpace(itemId)) return;
         recordingId ??= song.CanonicalRecordingId;
         var owner = sharedLibrary && song.IsLocal && rich.Source.Id == "backend" ? Guid.Empty : context.Principal.UserId;
+        var providerId = LyricsVersions.ProviderId(rich.Source.Id);
         var provenance = "public";
         var sharedSource = rich.Source.Id is not ("backend" or "kept");
         if (router != null && rich.Source.Id is not ("backend" or "kept"))
         {
-            var plan = await router.PlanAsync<IProviderLyricsCapability>(SourceRequest(context, rich.Source.Id));
+            var plan = await router.PlanAsync<IProviderLyricsCapability>(SourceRequest(context, providerId));
             if (plan.Candidates.FirstOrDefault() is not { } candidate) return;
             provenance = AccountProvenance(candidate.Context.Account);
             if (expectedProvenance != null && expectedProvenance != provenance) return;
-            if (expectedProvenance == null && (registry?.TryGet(rich.Source.Id, out var sourceDescriptor) != true ||
+            if (expectedProvenance == null && (registry?.TryGet(providerId, out var sourceDescriptor) != true ||
                 !sourceDescriptor!.Capabilities.Any(capability => capability.Capability == ProviderCapabilityKind.Lyrics && capability.AccountRequirement == ProviderAccountRequirement.None))) return;
-            sharedSource = rich.Source.Id != "spicylyrics" && (candidate.Context.Account == null || candidate.Context.Account.Scope == ProviderAccountScope.Shared);
+            sharedSource = providerId != "spicylyrics" && (candidate.Context.Account == null || candidate.Context.Account.Scope == ProviderAccountScope.Shared);
         }
         var publicCatalog = !song.IsLocal && song.ExternalProvider is { } provider && registry?.TryGet(provider, out var descriptor) == true &&
             descriptor!.Capabilities.Any(capability => capability.Capability == ProviderCapabilityKind.Metadata && capability.AccountRequirement == ProviderAccountRequirement.None);
@@ -99,7 +100,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
             Open();
             return _documents.Values.Where(document => document.Backend == context.BackendInstanceId &&
                 (document.Owner == Guid.Empty || document.Owner == context.Principal?.UserId ||
-                    document.SharedSource && document.Source is not ("backend" or "kept") && (document.Song.IsLocal || document.PublicCatalog))).ToArray();
+                    document.SharedSource && !document.Source.Contains(':') && document.Source is not ("backend" or "kept") && (document.Song.IsLocal || document.PublicCatalog))).ToArray();
         }
         finally { _transaction = null; _gate.Release(); }
     }
@@ -111,7 +112,7 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
         var normalized = LyricsSearchMatcher.Normalize(query);
         if (normalized.Length == 0) return new([], false);
         var order = policy.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics,
-            visible.Select(document => document.Source).Distinct(StringComparer.Ordinal));
+            visible.Select(document => LyricsVersions.ProviderId(document.Source)).Distinct(StringComparer.Ordinal));
         var automatic = order.Where(policy.IsAutomatic).ToArray();
         var enabledSources = order.ToHashSet(StringComparer.Ordinal);
         var automaticSources = automatic.ToHashSet(StringComparer.Ordinal);
@@ -120,19 +121,23 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
             if (group.Count() == 1)
             {
                 var single = group.First();
-                var selectedSource = single.RecordingId is { } recording ? choices.GetValueOrDefault(recording) : null;
-                return enabledSources.Contains(single.Source) && (single.Source == selectedSource || automaticSources.Contains(single.Source)) &&
+                var singlePin = single.RecordingId is { } recording ? choices.GetValueOrDefault(recording) : null;
+                return enabledSources.Contains(LyricsVersions.ProviderId(single.Source)) &&
+                    (single.Source == singlePin || singlePin != null && single.Source == LyricsVersions.ProviderId(singlePin) ||
+                        !single.Source.Contains(':') && automaticSources.Contains(single.Source)) &&
                     (policy.Preferences.ExplicitFilter != "CleanOnly" || CleanRecordingPolicy.IsVerifiedClean(single.Song) && single.Source is "backend" or "kept")
                     ? single : null;
             }
-            var candidates = group.Where(document => enabledSources.Contains(document.Source) &&
+            var candidates = group.Where(document => enabledSources.Contains(LyricsVersions.ProviderId(document.Source)) &&
                 (policy.Preferences.ExplicitFilter != "CleanOnly" || CleanRecordingPolicy.IsVerifiedClean(document.Song) && document.Source is "backend" or "kept"))
                 .GroupBy(document => (document.Source, document.Provenance))
                 .Select(source => source.OrderByDescending(document => document.UpdatedAt)
                     .ThenByDescending(document => document.Owner == context.Principal?.UserId).First()).ToArray();
             var pin = group.Select(document => document.RecordingId is { } recording ? choices.GetValueOrDefault(recording) : null).FirstOrDefault(source => source != null);
             var chosen = candidates.Where(document => document.Source == pin).OrderByDescending(document => document.Owner == context.Principal?.UserId).FirstOrDefault() ??
-                candidates.Where(document => automatic.Contains(document.Source, StringComparer.Ordinal))
+                candidates.Where(document => pin != null && document.Source == LyricsVersions.ProviderId(pin))
+                    .OrderByDescending(document => document.Owner == context.Principal?.UserId).FirstOrDefault() ??
+                candidates.Where(document => !document.Source.Contains(':') && automatic.Contains(document.Source, StringComparer.Ordinal))
                     .OrderByDescending(document => LyricsQuality.Rank(document.Format)).ThenBy(document => Array.IndexOf(automatic, document.Source))
                     .ThenByDescending(document => document.Owner == context.Principal?.UserId).FirstOrDefault();
             var recordingId = group.Select(document => document.RecordingId).FirstOrDefault(recording => recording.HasValue);
@@ -217,6 +222,16 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
         finally { _transaction = null; _gate.Release(); }
     }
 
+    public async Task ReconcileVersionsAsync(ProtocolExecutionContext context, Song song, string provider,
+        IReadOnlySet<string> versions, bool unavailable = false)
+    {
+        var snapshot = await SnapshotAsync(context);
+        var retained = snapshot.Where(document => document.ItemId == ItemKey(song) &&
+            (LyricsVersions.ProviderId(document.Source) != provider || versions.Contains(document.Source) || !unavailable && document.Source == provider))
+            .Select(document => document.Source).ToHashSet(StringComparer.Ordinal);
+        await ReconcileStoredAsync(context, song, retained, new HashSet<string>(StringComparer.Ordinal) { provider });
+    }
+
     public async Task ReconcileStoredAsync(ProtocolExecutionContext context, Song song, IReadOnlySet<string> sources, IReadOnlySet<string>? unavailableSources = null)
     {
         var itemId = song.IsLocal ? song.Id : $"ext-{song.ExternalProvider}-song-{song.ExternalId}";
@@ -227,8 +242,8 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
             Open();
             var ids = _documents.Values.Where(document => document.Owner == context.Principal?.UserId &&
                 document.Backend == context.BackendInstanceId && document.ItemId == itemId && !sources.Contains(document.Source) &&
-                (document.Source is "kept" or "lrclib" or "lrcred" or "unison" or "genius" or "paxsenix" or "lyricsplus" or "musixmatch" or "spicylyrics" or "spotify") &&
-                (unavailableSources == null || document.Source == "kept" || unavailableSources.Contains(document.Source)))
+                (LyricsVersions.ProviderId(document.Source) is "kept" or "lrclib" or "lrcred" or "unison" or "genius" or "paxsenix" or "lyricsplus" or "musixmatch" or "spicylyrics" or "spotify") &&
+                (unavailableSources == null || document.Source == "kept" || unavailableSources.Contains(LyricsVersions.ProviderId(document.Source))))
                 .Select(document => document.Id).ToArray();
             using var transaction = _connection!.BeginTransaction();
             _transaction = transaction;
@@ -300,7 +315,9 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
     internal static string AccountProvenance(ProviderAccountContext? account) => AccountProvenance(account?.AccountId, account?.Revision);
     internal static string AccountProvenance(Guid? account, long? revision) => account == null ? "public" : $"{account:N}:{revision}";
 
-    internal static ProviderRouteRequest SourceRequest(ProtocolExecutionContext context, string source) => new(ProviderCapabilityKind.Lyrics,
+    internal static ProviderRouteRequest SourceRequest(ProtocolExecutionContext context, string source) => SourceRequestCore(context, LyricsVersions.ProviderId(source));
+
+    private static ProviderRouteRequest SourceRequestCore(ProtocolExecutionContext context, string source) => new(ProviderCapabilityKind.Lyrics,
         context.RequireActor(), new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
             ProviderExplicitContentPolicy.Allow, false, true, false, [source]), "lyrics-search-sources", context.CorrelationId,
         context.Deadline, [source], cancellationToken: context.CancellationToken, purpose: ProviderRoutePurpose.ManualSelection);
