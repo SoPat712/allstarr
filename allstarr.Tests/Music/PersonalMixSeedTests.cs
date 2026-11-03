@@ -22,19 +22,19 @@ public sealed class PersonalMixSeedTests
         seed.ArtistId = "ext-deezer-artist-root";
         var own = Enumerable.Range(0, 50).Select(index => Track("own-" + index, seed.Artist)).ToList();
         var similar = Enumerable.Range(0, 100).Select(index => Track("similar-" + index, "Radio artist " + index)).ToList();
-        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", 100))
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", It.IsAny<int>()))
             .ReturnsAsync(similar.Prepend(seed).Append(similar[0]).ToList());
-        gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "root")).ReturnsAsync(own);
-        gateway.Setup(item => item.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "root", 10))
-            .ReturnsAsync(Enumerable.Range(0, 10).Select(index => new Artist
+        gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "root", 20)).ReturnsAsync(own);
+        gateway.Setup(item => item.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "root", 4))
+            .ReturnsAsync(Enumerable.Range(0, 4).Select(index => new Artist
             { Name = "Related artist " + index, ExternalProvider = "deezer", ExternalId = index.ToString() }).ToList());
         var related = new List<Song>();
-        for (var index = 0; index < 10; index++)
+        for (var index = 0; index < 4; index++)
         {
             var artist = index.ToString();
             var tracks = Enumerable.Range(0, 50).Select(track => Track("related-" + artist + "-" + track, "Related artist " + artist)).ToList();
-            related.AddRange(tracks.Take(2));
-            gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", artist)).ReturnsAsync(tracks);
+            related.AddRange(tracks.Take(5));
+            gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", artist, 5)).ReturnsAsync(tracks);
         }
         using var radio = new MusicMixService(gateway.Object);
 
@@ -201,6 +201,67 @@ public sealed class PersonalMixSeedTests
         Assert.DoesNotContain("Suggested", message);
         Assert.DoesNotContain("Related artist", message);
         Assert.DoesNotContain("fixture-key", message);
+    }
+
+    [Fact]
+    public async Task Radio_deadline_keeps_suggestions_resolved_before_a_later_search_stalls()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var gateway = new Mock<IProtocolProviderGateway>();
+        var seed = new Song { Title = "Seed", Artist = "Seed artist", ExternalProvider = "deezer", ExternalId = "seed" };
+        var pending = new TaskCompletionSource<IReadOnlyList<Song>>();
+        var arrived = new Song { Id = "arrived", Title = "First suggestion", Artist = "Related artist", Duration = 180 };
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "First suggestion Related artist", 3))
+            .ReturnsAsync([arrived]);
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Pending suggestion Related artist", 3))
+            .Returns(pending.Task);
+        using var client = new HttpClient(new MultipleSuggestions());
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient(nameof(LastFmSimilarTracks))).Returns(client);
+        var similar = new LastFmSimilarTracks(clients.Object, new Accounts(), NullLogger<LastFmSimilarTracks>.Instance);
+        using var radio = new MusicMixService(gateway.Object, similar, timeProvider: clock);
+        var start = radio.SeedCandidatesAsync(MusicObservationsTests.Context(), seed, null, "deezer", "seed", default, capCandidates: true);
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(3));
+        clock.Advance(TimeSpan.FromSeconds(3));
+
+        Assert.Same(arrived, Assert.Single(await start.WaitAsync(TimeSpan.FromSeconds(10))));
+        Assert.False(pending.Task.IsCompleted);
+    }
+
+    [Fact]
+    public async Task Radio_deadline_bounds_a_similar_track_account_read_that_ignores_cancellation()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var pending = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var accounts = new Mock<IScopedRecommendationAccountAccessor>();
+        accounts.Setup(item => item.HasAccountAsync(It.IsAny<IntelligenceScope>(), "lastfm", It.IsAny<CancellationToken>()))
+            .Returns(pending.Task);
+        var similar = new LastFmSimilarTracks(Mock.Of<IHttpClientFactory>(), accounts.Object, NullLogger<LastFmSimilarTracks>.Instance);
+        using var radio = new MusicMixService(Mock.Of<IProtocolProviderGateway>(), similar, timeProvider: clock);
+        var seed = new Song { Title = "Seed", Artist = "Seed artist" };
+        var start = radio.SeedCandidatesAsync(MusicObservationsTests.Context(), seed, null, null, null, default, capCandidates: true);
+        try
+        {
+            await clock.WaitForTimersAsync(TimeSpan.FromSeconds(3));
+            clock.Advance(TimeSpan.FromSeconds(3));
+            Assert.Empty(await start.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.False(pending.Task.IsCompleted);
+        }
+        finally { pending.TrySetResult(false); }
+    }
+
+    private sealed class MultipleSuggestions : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                {"similartracks":{"track":[
+                  {"name":"First suggestion","artist":{"name":"Related artist"}},
+                  {"name":"Pending suggestion","artist":{"name":"Related artist"}}
+                ]}}
+                """)
+            });
     }
 
     private sealed class SeedLogger : ILogger<PersonalMixService>

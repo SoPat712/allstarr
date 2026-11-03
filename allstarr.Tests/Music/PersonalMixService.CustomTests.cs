@@ -48,7 +48,7 @@ public sealed partial class PersonalMixServiceTests
             .ReturnsAsync(songs.Values.ToList());
         gateway.Setup(item => item.GetArtistAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0"))
             .ReturnsAsync(new Artist { Id = "ext-deezer-artist-0", Name = "Seed" });
-        gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0"))
+        gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", It.IsAny<int>()))
             .ReturnsAsync(songs.Values.ToList());
         var preview = await service.StartAsync(owner, new(kind, "ext-deezer-" + kind + "-0", 25));
         Assert.Equal(25, preview.Songs.Count);

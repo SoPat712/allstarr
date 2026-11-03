@@ -525,6 +525,43 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
         return albums.Where(album => !string.IsNullOrWhiteSpace(album.Artist)).ToList();
     }
 
+    public override async Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> GetArtistTracksAsync(
+        ProviderExecutionContext context, ProviderArtistItemsRequest request)
+    {
+        if (request.Page.Limit >= 50) return await base.GetArtistTracksAsync(context, request);
+        var failure = ValidateContext(context);
+        if (failure != null) return ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(failure);
+        if (request.Id.ProviderId != ProviderId || request.Id.ResourceKind != ProviderResourceKind.Artist)
+            return ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(new(ProviderErrorKind.Forbidden));
+        if (request.ExpectedSnapshotVersion != null ||
+            !int.TryParse(request.Page.Cursor ?? "0", NumberStyles.None, CultureInfo.InvariantCulture, out var offset) ||
+            offset > int.MaxValue - request.Page.Limit)
+            return ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(new(ProviderErrorKind.NotSupported));
+        try
+        {
+            var limit = request.Page.Limit;
+            using var response = await GetAsync(
+                $"{BaseUrl}/artist/{Uri.EscapeDataString(request.Id.Value)}/top?index={offset}&limit={limit}", context.CancellationToken);
+            response.EnsureSuccessStatusCode();
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(context.CancellationToken));
+            var root = document.RootElement;
+            if (root.TryGetProperty("error", out _) || !root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array)
+                return ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(new(ProviderErrorKind.TransientFailure));
+            var records = data.EnumerateArray().Take(limit).ToArray();
+            var tracks = MapValid(records, track => ParseDeezerTrack(track));
+            context.CancellationToken.ThrowIfCancellationRequested();
+            var values = MapValid(tracks, MapTrack);
+            var nextOffset = offset + records.Length;
+            var hasNext = records.Length > 0 && (root.TryGetProperty("total", out var total) && total.TryGetInt32(out var count)
+                ? nextOffset < count : GetNextPageUrl(root) != null || records.Length == limit);
+            return ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new(ProviderId, values,
+                hasNext ? nextOffset.ToString(CultureInfo.InvariantCulture) : null, hasNext || values.Count < records.Length));
+        }
+        catch (OperationCanceledException) { return ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(new(ProviderErrorKind.Canceled)); }
+        catch (HttpRequestException exception) { return ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(HttpError(exception)); }
+        catch { return ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(new(ProviderErrorKind.TransientFailure)); }
+    }
+
     public override async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (!string.Equals(externalProvider, "deezer", StringComparison.OrdinalIgnoreCase)) return new List<Song>();

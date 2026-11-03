@@ -109,6 +109,10 @@ public interface IProtocolProviderGateway
         string providerId,
         string externalId);
 
+    async Task<List<Song>> GetArtistTracksAsync(
+        ProtocolExecutionContext protocol, string providerId, string externalId, int limit) =>
+        (await GetArtistTracksAsync(protocol, providerId, externalId)).Take(limit).ToList();
+
     Task<List<Song>> GetSimilarSongsAsync(
         ProtocolExecutionContext protocol,
         string providerId,
@@ -945,10 +949,14 @@ public sealed partial class ProtocolProviderGateway(
         return artists;
     }
 
-    public async Task<List<Song>> GetArtistTracksAsync(
-        ProtocolExecutionContext protocol,
-        string providerId,
-        string externalId)
+    public Task<List<Song>> GetArtistTracksAsync(ProtocolExecutionContext protocol, string providerId, string externalId) =>
+        ArtistTracksAsync(protocol, providerId, externalId, null);
+
+    public Task<List<Song>> GetArtistTracksAsync(ProtocolExecutionContext protocol, string providerId, string externalId, int limit) =>
+        ArtistTracksAsync(protocol, providerId, externalId, Math.Clamp(limit, 1, 200));
+
+    private async Task<List<Song>> ArtistTracksAsync(
+        ProtocolExecutionContext protocol, string providerId, string externalId, int? limit)
     {
         ArgumentNullException.ThrowIfNull(protocol);
         var routedProviderId = NormalizeProvider(providerId);
@@ -956,7 +964,7 @@ public sealed partial class ProtocolProviderGateway(
         {
             var known = await ReadKnownRelationshipsAsync<Song>(protocol, routedProviderId, externalId, "tracks");
             var currentPolicy = await ResolveEffectivePolicyAsync(protocol);
-            return known.Where(song => currentPolicy?.Includes(song) != false).ToList();
+            return known.Where(song => currentPolicy?.Includes(song) != false).Take(limit ?? int.MaxValue).ToList();
         }
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-artist-tracks");
@@ -970,7 +978,7 @@ public sealed partial class ProtocolProviderGateway(
             {
                 var outcome = await routed.Candidate.Implementation.GetArtistTracksAsync(
                     routed.Candidate.Context,
-                    new ProviderArtistItemsRequest(id, new ProviderPageRequest(200, cursor)));
+                    new ProviderArtistItemsRequest(id, new ProviderPageRequest(limit is { } count ? count - tracks.Count : 200, cursor)));
                 if (!outcome.IsSuccess)
                 {
                     if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return [];
@@ -979,14 +987,16 @@ public sealed partial class ProtocolProviderGateway(
                     ThrowRouteFailure(outcome.Error);
                 }
                 var page = outcome.RequireValue();
-                tracks.AddRange(page.Items.Select(Map));
+                tracks.AddRange(page.Items.Take(limit is { } remaining ? remaining - tracks.Count : int.MaxValue).Select(Map));
                 cursor = page.NextCursor;
+                if (tracks.Count >= limit) break;
                 if (cursor != null && (seenCursors.Count >= 1_000 || !seenCursors.Add(cursor)))
                     throw new HttpRequestException("The provider repeated an artist-track page cursor.");
             } while (cursor != null);
             var policy = await ResolveEffectivePolicyAsync(protocol);
             await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks, protocol);
-            await CacheKnownRelationshipsAsync(protocol, routed.Candidate.Context, externalId, "tracks", tracks);
+            if (limit == null)
+                await CacheKnownRelationshipsAsync(protocol, routed.Candidate.Context, externalId, "tracks", tracks);
             return tracks.Where(song => policy?.Includes(song) != false).ToList();
         }
 

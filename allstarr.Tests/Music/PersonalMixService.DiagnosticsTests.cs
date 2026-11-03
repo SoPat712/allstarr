@@ -34,7 +34,7 @@ public sealed partial class PersonalMixServiceTests
             });
             await db.SaveChangesAsync();
         }
-        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", 100))
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", It.IsAny<int>()))
             .ReturnsAsync(songs.Values.Append(songs["7"]).ToList());
         var logger = new MixLogger();
 

@@ -47,7 +47,8 @@ public sealed partial class TasteService
         return Read(await db.TasteProfiles.AsNoTracking().SingleOrDefaultAsync(item => item.OwnerUserId == user, token)).UseImportedHistory;
     }
 
-    private async Task AddListeningHistoryAsync(AllstarrDbContext db, Guid user, TasteDocument document, CancellationToken token)
+    private async Task AddListeningHistoryAsync(AllstarrDbContext db, Guid user, TasteDocument document, CancellationToken token,
+        IReadOnlyList<ListeningEventRecord>? history = null)
     {
         var listener = await db.Users.AsNoTracking().SingleAsync(item => item.Id == user, token);
         if (listener.IsSynthetic) return;
@@ -73,19 +74,30 @@ public sealed partial class TasteService
                     offsets[key] = import.CompletedAt.Value - last.At;
             }
         }
+        var profiles = history == null ? null : await tags.GetTags(history.Select(item => item.CanonicalRecordingId).OfType<Guid>().Distinct().ToArray(), token);
         var batch = new List<ListeningEventRecord>(500);
-        await foreach (var item in events.AsAsyncEnumerable().WithCancellation(token))
+        await foreach (var item in (history == null ? events.AsAsyncEnumerable() : Captured()).WithCancellation(token))
         {
             batch.Add(item);
             if (batch.Count == 500) await ApplyBatch();
         }
         await ApplyBatch();
 
+        async IAsyncEnumerable<ListeningEventRecord> Captured()
+        {
+            foreach (var item in history!)
+                if (item.OwnerUserId == user && item.Protocol == listener.BackendType && item.BackendInstanceId == listener.BackendInstanceId &&
+                    (item.SourceKind == "protocol" || document.UseImportedHistory && item.SourceKind is "import" or "listenbrainz-api") &&
+                    item.State is ListeningEventState.Completed or ListeningEventState.Skipped)
+                    yield return item;
+            await Task.CompletedTask;
+        }
+
         async Task ApplyBatch()
         {
             if (batch.Count == 0) return;
             var songs = batch.Select(item => new Song { CanonicalRecordingId = item.CanonicalRecordingId, Artist = item.Artist ?? "" }).ToArray();
-            var features = await FeaturesAsync(songs, token);
+            var features = profiles == null ? await FeaturesAsync(songs, token) : Features(songs, profiles);
             for (var index = 0; index < batch.Count; index++)
             {
                 var item = batch[index];

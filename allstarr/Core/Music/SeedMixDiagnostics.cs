@@ -7,13 +7,15 @@ internal sealed class SeedMixDiagnostics(ILogger<PersonalMixService>? logger) : 
     private static readonly string[] Sources = ["radio", "audiomuse", "library", "heart"];
     private static readonly string[] Stages = ["found", "without-seed", "unique", "details", "policy", "never", "playable", "skips", "filters", "evidence",
         "revalidated-never", "revalidated-policy", "access", "eligible", "artist-checked", "artist-kept", "selected"];
-    private static readonly string[] Phases = ["queue", "setup", "access", "seed", "sources", "sound", "radio", "seed-provider", "provider-similar",
-        "artist-tracks", "similar-tracks", "suggestion-search", "related-library", "rank", "playback", "hearts", "fallback-library", "revalidate", "select", "save"];
+    private static readonly string[] Phases = ["queue", "setup", "setup-user", "setup-history", "access", "seed", "sources", "sound", "radio", "seed-provider", "provider-similar",
+        "artist-tracks", "similar-tracks", "suggestion-search", "related-library", "rank", "rank-tags", "rank-taste", "rank-rules", "playback", "hearts", "fallback-library", "revalidate", "select", "save"];
     private readonly object gate = new();
     private readonly long started = Stopwatch.GetTimestamp();
     private readonly Dictionary<(string Source, string Stage), int> counts = [];
     private readonly Dictionary<string, int> discovery = [];
     private readonly Dictionary<string, long> timings = [];
+    private string lastFm = "lastfm: not-requested";
+    internal void LastFm(string outcome) { lock (gate) lastFm = outcome; }
     private int selectedSeed, selectedRelated, selectedSound, selectedGeneral, soundPreferred, soundAllowance, relatedShortfall, completed;
 
     internal void Add(string stage, int count)
@@ -58,7 +60,7 @@ internal sealed class SeedMixDiagnostics(ILogger<PersonalMixService>? logger) : 
                 stage + "=" + counts.GetValueOrDefault((source, stage)))) + "]"));
             var phases = string.Join(',', Phases.Select(phase => phase + "=" + timings.GetValueOrDefault(phase))) +
                 ",total=" + (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds;
-            logger.LogInformation("Seed mix candidates: seed resolved={SeedResolved}, seed search found={SeedSearchFound}, provider similar={ProviderSimilar}, artist tracks={ArtistTracks}, related artists={RelatedArtists}, related tracks={RelatedTracks}, similar tracks={SimilarTracks}, suggestions found={SuggestionsFound}, suggestions resolved={SuggestionsResolved}; capped artist tracks={CappedArtistTracks}, provider similar={CappedProviderSimilar}, related tracks={CappedRelatedTracks}, suggestions={CappedSuggestions}, related capped={RelatedCapped}; playback checks={PlaybackChecks}; library access succeeded={LibraryAccessSucceeded}, seed library found={SeedLibraryFound}, related artist names={RelatedArtistNames}; stages {Stages}; sound neighbours={SoundNeighbours}, preferred={Preferred}, radio overlaps={RadioOverlaps}; selected seed/related/sound/general={SelectedSeed}/{SelectedRelated}/{SelectedSound}/{SelectedGeneral}; sound allowance={SoundAllowance}, related shortfall={RelatedShortfall}; phases ms {Phases}; completed={Completed}",
+            logger.LogInformation("Seed mix candidates: seed resolved={SeedResolved}, seed search found={SeedSearchFound}, provider similar={ProviderSimilar}, artist tracks={ArtistTracks}, related artists={RelatedArtists}, related tracks={RelatedTracks}, similar tracks={SimilarTracks}, suggestions found={SuggestionsFound}, suggestions resolved={SuggestionsResolved}; capped artist tracks={CappedArtistTracks}, provider similar={CappedProviderSimilar}, related tracks={CappedRelatedTracks}, suggestions={CappedSuggestions}, related capped={RelatedCapped}; playback checks={PlaybackChecks}; library access succeeded={LibraryAccessSucceeded}, seed library found={SeedLibraryFound}, related artist names={RelatedArtistNames}; stages {Stages}; sound neighbours={SoundNeighbours}, preferred={Preferred}, radio overlaps={RadioOverlaps}; selected seed/related/sound/general={SelectedSeed}/{SelectedRelated}/{SelectedSound}/{SelectedGeneral}; sound allowance={SoundAllowance}, related shortfall={RelatedShortfall}; {LastFmOutcome}; phases ms {Phases}; completed={Completed}",
                 discovery.GetValueOrDefault("seed-resolved"), discovery.GetValueOrDefault("seed-search-found"), discovery.GetValueOrDefault("provider-similar"),
                 discovery.GetValueOrDefault("artist-tracks"), discovery.GetValueOrDefault("related-artists"), discovery.GetValueOrDefault("related-tracks"),
                 discovery.GetValueOrDefault("similar-tracks"), discovery.GetValueOrDefault("suggestions-found"), discovery.GetValueOrDefault("suggestions-resolved"),
@@ -66,7 +68,7 @@ internal sealed class SeedMixDiagnostics(ILogger<PersonalMixService>? logger) : 
                 discovery.GetValueOrDefault("capped-suggestions"), discovery.GetValueOrDefault("related-capped"), discovery.GetValueOrDefault("playback-checks"),
                 discovery.GetValueOrDefault("library-access-succeeded"), discovery.GetValueOrDefault("seed-library-found"), discovery.GetValueOrDefault("related-artist-names"),
                 stages, discovery.GetValueOrDefault("sound-neighbours"), soundPreferred, discovery.GetValueOrDefault("radio-overlaps"), selectedSeed, selectedRelated, selectedSound, selectedGeneral,
-                soundAllowance, relatedShortfall, phases, completed);
+                soundAllowance, relatedShortfall, lastFm, phases, completed);
         }
     }
 

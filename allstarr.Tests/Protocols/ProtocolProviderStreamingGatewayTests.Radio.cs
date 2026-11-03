@@ -10,6 +10,34 @@ namespace allstarr.Tests;
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
     [Fact]
+    public async Task RadioSeed_BoundedArtistTracksRequestOnlyTheRemainingPageAndStopAtTheLimit()
+    {
+        var requests = new List<ProviderArtistItemsRequest>();
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        metadata.SetupGet(item => item.ProviderId).Returns("deezer");
+        metadata.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        metadata.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderArtistItemsRequest>()))
+            .Returns((ProviderExecutionContext _, ProviderArtistItemsRequest request) =>
+            {
+                requests.Add(request);
+                return Task.FromResult(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("deezer",
+                    Enumerable.Range(request.Page.Cursor == null ? 0 : 3, request.Page.Cursor == null ? 3 : 5)
+                        .Select(index => new ProviderTrackMetadata(new("deezer", ProviderResourceKind.Track, index.ToString()), "Track " + index, [new("Artist")])).ToArray(),
+                    "next")));
+            });
+        var registry = MetadataRegistry(metadata.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => MetadataPlan(request, registry, metadata.Object));
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory());
+
+        var tracks = await gateway.GetArtistTracksAsync(Context(), "deezer", "artist", 5);
+
+        Assert.Equal(5, tracks.Count);
+        Assert.Equal([5, 2], requests.Select(request => request.Page.Limit));
+    }
+
+    [Fact]
     public async Task RadioSeed_ArtistDiscoveryFetchesColdRelationshipsForACustomStart()
     {
         var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);

@@ -34,7 +34,7 @@ public sealed partial class PersonalMixAudioTests
         gateway.Setup(item => item.SearchAutomaticProviderSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", seed.Title + " " + seed.Artist, 3))
             .ReturnsAsync(ProviderOutcome<IReadOnlyList<Song>>.Success([new()
             { Title = seed.Title, Artist = seed.Artist, Duration = 180, ExternalProvider = "deezer", ExternalId = "seed" }]));
-        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", 100))
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", It.IsAny<int>()))
             .ReturnsAsync(radio.Concat(markers).ToList());
         gateway.Setup(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>())).ReturnsAsync(true);
         var logger = new SoundMixLogger();
@@ -89,17 +89,17 @@ public sealed partial class PersonalMixAudioTests
             { Title = seed.Title, Artist = seed.Artist, Duration = 180, ExternalProvider = "deezer", ExternalId = "seed" }]));
         gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), seed.Artist, 0, 0, 3, "deezer"))
             .ReturnsAsync(new SearchResult { Artists = [new() { Name = seed.Artist, ExternalProvider = "deezer", ExternalId = "seed-artist" }] });
-        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", 100))
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed", It.IsAny<int>()))
             .ReturnsAsync(Enumerable.Range(0, 100).Select(index => Related("similar-" + index, "Radio artist " + index)).ToList());
-        gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed-artist"))
+        gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed-artist", It.IsAny<int>()))
             .ReturnsAsync(Enumerable.Range(0, 50).Select(index => Related("own-" + index, seed.Artist)).ToList());
-        gateway.Setup(item => item.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed-artist", 10))
+        gateway.Setup(item => item.GetSimilarArtistsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "seed-artist", 4))
             .ReturnsAsync(Enumerable.Range(0, 10).Select(index => new Artist
             { Name = "Related artist " + index, ExternalProvider = "deezer", ExternalId = index.ToString() }).ToList());
         for (var index = 0; index < 10; index++)
         {
             var artist = index.ToString();
-            gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", artist))
+            gateway.Setup(item => item.GetArtistTracksAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", artist, It.IsAny<int>()))
                 .ReturnsAsync(Enumerable.Range(0, 50).Select(track => Related("related-" + artist + "-" + track, "Related artist " + artist)).ToList());
         }
         var checks = 0;
@@ -121,7 +121,7 @@ public sealed partial class PersonalMixAudioTests
         Assert.Contains(preview.Songs, item => item.Song.Artist == seed.Artist);
         Assert.True(preview.Songs.Count(item => item.Source != "audiomuse") >= Math.Ceiling(length * .6), measurement);
         Assert.InRange(preview.Songs.Count(item => item.Source == "audiomuse"), 1, length * 2 / 5);
-        Assert.Equal(length == 25 ? 9 : 17, preview.Songs.Count(item => item.Source == "audiomuse"));
+        Assert.Equal(length * 2 / 5, preview.Songs.Count(item => item.Source == "audiomuse"));
         Assert.Equal(length, preview.Songs.Select(item => item.Song.Id).Distinct().Count());
         Assert.True(checks <= length + 8, measurement);
         Assert.True(checks == (length == 25 ? 23 : 38), measurement);

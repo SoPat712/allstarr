@@ -13,6 +13,65 @@ namespace allstarr.Tests;
 public sealed class LastFmSimilarTracksTests
 {
     [Theory]
+    [InlineData("single", "lastfm: ok", 1)]
+    [InlineData("ok", "lastfm: ok", 2)]
+    [InlineData("empty", "lastfm: empty", 0)]
+    [InlineData("api-error", "lastfm: api-error-6", 0)]
+    [InlineData("api-error-text", "lastfm: api-error", 0)]
+    [InlineData("http", "lastfm: http-503", 0)]
+    [InlineData("json", "lastfm: unavailable", 0)]
+    [InlineData("odd", "lastfm: unavailable", 0)]
+    [InlineData("exception", "lastfm: unavailable", 0)]
+    public async Task SimilarOutcomeUsesOnlyFixedTokensAndNumericCodes(string mode, string expectedOutcome, int expectedCount)
+    {
+        using var handler = new FixtureHandler(mode);
+        using var client = new HttpClient(handler);
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient(nameof(LastFmSimilarTracks))).Returns(client);
+        var service = new LastFmSimilarTracks(clients.Object, new FixtureAccounts(), NullLogger<LastFmSimilarTracks>.Instance);
+
+        var result = await service.FindWithOutcomeAsync(MusicObservationsTests.Context(), "Artist", "Title", 5, default);
+
+        Assert.Equal(expectedOutcome, result.Outcome);
+        Assert.Equal(expectedCount, result.Suggestions.Count);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("""{"apiKey":null}""")]
+    [InlineData("""{"apiKey":" "}""")]
+    [InlineData("""{"apiKey":7}""")]
+    public async Task MissingKeyReportsOutcomeWithoutCreatingAnHttpClient(string secretJson)
+    {
+        var accounts = new FixtureAccounts(secretJson);
+        var clients = new Mock<IHttpClientFactory>(MockBehavior.Strict);
+        var service = new LastFmSimilarTracks(clients.Object, accounts, NullLogger<LastFmSimilarTracks>.Instance);
+
+        var result = await service.FindWithOutcomeAsync(MusicObservationsTests.Context(), "Artist", "Title", 5, default);
+
+        Assert.Equal("lastfm: no-key", result.Outcome);
+        Assert.Empty(result.Suggestions);
+        Assert.Equal(1, accounts.SecretReads);
+        clients.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task TimeoutReportsOutcome()
+    {
+        var accounts = new Mock<IScopedRecommendationAccountAccessor>();
+        accounts.Setup(item => item.HasAccountAsync(It.IsAny<IntelligenceScope>(), "lastfm", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new OperationCanceledException());
+        var service = new LastFmSimilarTracks(Mock.Of<IHttpClientFactory>(), accounts.Object,
+            NullLogger<LastFmSimilarTracks>.Instance);
+
+        var result = await service.FindWithOutcomeAsync(MusicObservationsTests.Context(), "Artist", "Title", 5, default);
+
+        Assert.Equal("lastfm: timeout", result.Outcome);
+        Assert.Empty(result.Suggestions);
+    }
+
+    [Theory]
     [InlineData("single", 1)]
     [InlineData("empty", 0)]
     [InlineData("api-error", 0)]
@@ -68,7 +127,10 @@ public sealed class LastFmSimilarTracksTests
         var clients = new Mock<IHttpClientFactory>(MockBehavior.Strict);
         var service = new LastFmSimilarTracks(clients.Object, accounts.Object, NullLogger<LastFmSimilarTracks>.Instance);
 
-        Assert.Empty(await service.FindAsync(context, "Artist", "Title", 5, default));
+        var result = await service.FindWithOutcomeAsync(context, "Artist", "Title", 5, default);
+
+        Assert.Equal("lastfm: no-account", result.Outcome);
+        Assert.Empty(result.Suggestions);
 
         accounts.VerifyAll();
         accounts.VerifyNoOtherCalls();
@@ -84,7 +146,10 @@ public sealed class LastFmSimilarTracksTests
             NullLogger<LastFmSimilarTracks>.Instance,
             Options.Create(new PlaybackSettings { LastFmSimilarEnabled = false }));
 
-        Assert.Empty(await service.FindAsync(MusicObservationsTests.Context(), "Artist", "Title", 5, default));
+        var result = await service.FindWithOutcomeAsync(MusicObservationsTests.Context(), "Artist", "Title", 5, default);
+
+        Assert.Equal("lastfm: disabled", result.Outcome);
+        Assert.Empty(result.Suggestions);
 
         accounts.VerifyNoOtherCalls();
         clients.VerifyNoOtherCalls();
@@ -136,9 +201,11 @@ public sealed class LastFmSimilarTracksTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             service.FindAsync(MusicObservationsTests.Context(), "Artist", "Title", 5, cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            service.FindWithOutcomeAsync(MusicObservationsTests.Context(), "Artist", "Title", 5, cancellation.Token));
     }
 
-    private sealed class FixtureAccounts : IScopedRecommendationAccountAccessor
+    private sealed class FixtureAccounts(string secretJson = """{"apiKey":"fixture-key"}""") : IScopedRecommendationAccountAccessor
     {
         public int SecretReads { get; private set; }
         public Task<bool> HasAccountAsync(IntelligenceScope scope, string providerId, CancellationToken cancellationToken) =>
@@ -147,7 +214,7 @@ public sealed class LastFmSimilarTracksTests
             Func<JsonElement, CancellationToken, Task<T>> operation, CancellationToken cancellationToken)
         {
             SecretReads++;
-            using var secret = JsonDocument.Parse("""{"apiKey":"fixture-key"}""");
+            using var secret = JsonDocument.Parse(secretJson);
             return await operation(secret.RootElement, cancellationToken);
         }
     }
@@ -169,7 +236,8 @@ public sealed class LastFmSimilarTracksTests
                     "json" => "invalid",
                     "single" => """{"similartracks":{"track":{"name":"Only song","artist":{"name":"Only artist"}}}}""",
                     "empty" => """{"similartracks":{"track":[]}}""",
-                    "api-error" => """{"error":6,"message":"Track not found"}""",
+                    "api-error" => """{"error":6,"message":"fixture-key https://fixture.invalid/private"}""",
+                    "api-error-text" => """{"error":"fixture-key https://fixture.invalid/private","message":"private"}""",
                     "odd" => """{"similartracks":{"track":"unexpected"}}""",
                     _ => """
                     {"similartracks":{"track":[

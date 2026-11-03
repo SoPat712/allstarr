@@ -75,10 +75,12 @@ public sealed class SharedTagStore(IDbContextFactory<AllstarrDbContext> factory,
         var ids = recordings.Distinct().ToArray();
         var canonical = await db.CanonicalRecordings.AsNoTracking().Where(item => ids.Contains(item.Id) ||
             item.MergedIntoId != null && ids.Contains(item.MergedIntoId.Value)).ToArrayAsync(token);
-        var roots = ids.ToDictionary(id => id, id => canonical.FirstOrDefault(item => item.Id == id)?.MergedIntoId ?? id);
+        var byId = canonical.ToDictionary(item => item.Id);
+        var roots = ids.ToDictionary(id => id, id => byId.GetValueOrDefault(id)?.MergedIntoId ?? id);
         var rootIds = roots.Values.Distinct().ToArray();
         var aliases = await db.CanonicalRecordings.AsNoTracking().Where(item => item.MergedIntoId != null &&
             rootIds.Contains(item.MergedIntoId.Value)).ToArrayAsync(token);
+        var aliasesByRoot = aliases.ToLookup(item => item.MergedIntoId!.Value, item => item.Id);
         var keys = rootIds.Concat(aliases.Select(item => item.Id)).Select(RecordingKey).ToArray();
         var rows = await db.SharedTagProfiles.AsNoTracking().Where(item => keys.Contains(item.Key)).ToArrayAsync(token);
         var documents = rows.ToDictionary(item => item.Key, Read);
@@ -87,7 +89,7 @@ public sealed class SharedTagStore(IDbContextFactory<AllstarrDbContext> factory,
             .ToDictionary(item => item.Key, Read);
         return roots.ToDictionary(item => item.Key, item =>
         {
-            var related = aliases.Where(alias => alias.MergedIntoId == item.Value).Select(alias => alias.Id).Append(item.Value)
+            var related = aliasesByRoot[item.Value].Append(item.Value)
                 .Select(id => documents.GetValueOrDefault(RecordingKey(id))).OfType<SharedTagDocument>().ToArray();
             var evidence = related.SelectMany(document => document.Evidence).Concat(related.SelectMany(document => document.ArtistKeys)
                 .Distinct().SelectMany(key => artists.GetValueOrDefault(ArtistKey(key))?.Evidence ?? []));

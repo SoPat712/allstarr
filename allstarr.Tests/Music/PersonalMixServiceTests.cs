@@ -81,7 +81,7 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
     }
 
     private PersonalMixService NewService(Microsoft.Extensions.Logging.ILogger<PersonalMixService>? logger = null) => new(factory, clock, tags, taste,
-        new MusicMixService(gateway.Object), gateway.Object,
+        new MusicMixService(gateway.Object, timeProvider: clock), gateway.Object,
         NewReleaseService(),
         settings.Object, policies.Object, access.Object, tagSources: tagSources, logger: logger);
 
@@ -684,7 +684,11 @@ public sealed partial class PersonalMixServiceTests : IAsyncLifetime
     }
 
     public async Task DisposeAsync() => await database.DisposeAsync();
-    private sealed class Clock : IPlatformClock { public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.Parse("2026-10-29T12:00:00Z"); }
+    private sealed class Clock : TimeProvider, IPlatformClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = DateTimeOffset.Parse("2026-10-29T12:00:00Z");
+        public override DateTimeOffset GetUtcNow() => UtcNow;
+    }
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     {
         public AllstarrDbContext CreateDbContext() => new(options);

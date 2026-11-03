@@ -71,7 +71,7 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
         foreach (var key in document.Occurrences.Where(item => item.Value.At < now.AddDays(-8)).Select(item => item.Key).ToArray()) document.Occurrences.Remove(key);
     }
 
-    private async Task<TasteDocument> LoadAsync(Guid user, CancellationToken token)
+    private async Task<TasteDocument> LoadAsync(Guid user, CancellationToken token, IReadOnlyList<ListeningEventRecord>? history = null)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         await RequireUser(db, user, token);
@@ -96,7 +96,9 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
             var document = Read(row);
             await RememberPlaybackAsync(db, user, document, token);
             Prune(document);
-            if (!document.Paused) await AddListeningHistoryAsync(db, user, document, token);
+            if (!document.Paused)
+                await AddListeningHistoryAsync(db, user, document, token,
+                    history?.Count(item => item.State is ListeningEventState.Completed or ListeningEventState.Skipped) == plays ? history : null);
             document.Scales = Scales(document);
             loaded[user] = new(revision, plays, tagChanges, clock.UtcNow, document);
             return document;
@@ -330,7 +332,11 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
     private async Task<Dictionary<Song, IReadOnlyDictionary<string, string>>> FeaturesAsync(IReadOnlyList<Song> songs, CancellationToken token)
     {
         var profiles = await tags.GetTags(songs.Select(song => song.CanonicalRecordingId).OfType<Guid>().Distinct().ToArray(), token);
-        return songs.Distinct().ToDictionary(song => song, song =>
+        return Features(songs, profiles);
+    }
+
+    private static Dictionary<Song, IReadOnlyDictionary<string, string>> Features(IReadOnlyList<Song> songs,
+        IReadOnlyDictionary<Guid, SharedSongTags> profiles) => songs.Distinct().ToDictionary(song => song, song =>
         {
             var features = new Dictionary<string, string>();
             features[Key("song", PersonalMixRules.Key(song))] = song.Title;
@@ -340,7 +346,6 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
                 features[Key("artist", artist)] = artist.Trim();
             return (IReadOnlyDictionary<string, string>)features;
         });
-    }
 
     private TasteScore Score(TasteDocument document, IReadOnlyDictionary<string, string> features, string? seed, bool followed)
     {
@@ -387,6 +392,15 @@ public sealed partial class TasteService(IDbContextFactory<AllstarrDbContext> fa
         var document = await LoadAsync(user, token);
         var features = await FeaturesAsync(songs, token);
         return features.ToDictionary(item => item.Key, item => Score(document, item.Value, null, false));
+    }
+
+    internal async Task<(IReadOnlyDictionary<Song, TasteScore> Scores, IReadOnlyList<TasteNudge> Nudges)> ScoreManyAsync(
+        Guid user, IReadOnlyList<Song> songs, IReadOnlyDictionary<Guid, SharedSongTags> profiles, CancellationToken token,
+        IReadOnlyList<ListeningEventRecord>? history = null)
+    {
+        var document = await LoadAsync(user, token, history);
+        var features = Features(songs, profiles);
+        return (features.ToDictionary(item => item.Key, item => Score(document, item.Value, null, false)), document.Nudges.ToArray());
     }
 
     internal async Task<IReadOnlySet<Song>> BlockedSongsAsync(Guid user, IReadOnlyList<Song> songs, CancellationToken token)

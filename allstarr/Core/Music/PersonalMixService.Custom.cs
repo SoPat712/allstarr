@@ -40,8 +40,8 @@ public sealed partial class PersonalMixService
             await using var db = await factory.CreateDbContextAsync(token);
             using (diagnostics.Phase("setup"))
             {
-                (user, _, _) = await SnapshotAsync(owner, token);
-                (events, history) = await HistoryAsync(db, user, token);
+                using (diagnostics.Phase("setup-user")) user = await UserAsync(db, owner, token);
+                using (diagnostics.Phase("setup-history")) (events, history) = await HistoryAsync(db, user, token);
             }
             var (fetched, seedName) = await CandidatesAsync(db, user, events, token, request, diagnostics: diagnostics);
             var fetchedCount = fetched.Count(row => row.PlaybackQualified);
@@ -99,7 +99,7 @@ public sealed partial class PersonalMixService
             .Append(seed.Artist).Where(name => !string.IsNullOrWhiteSpace(name)).Select(name => name.Trim().ToLowerInvariant()).Distinct().ToArray();
         diagnostics?.Add("related-artist-names", artists.Length);
         var seedTags = seed.Genres.Select(genre => SharedTagNormalization.Canonical(genre, [])).OfType<string>().ToHashSet();
-        if (seed.Song?.CanonicalRecordingId is { } recording)
+        if (seed.Rows.Any(row => row.Source == "audiomuse") && seed.Song?.CanonicalRecordingId is { } recording)
         {
             var profiles = await tags.GetTags([recording], token);
             if (profiles.TryGetValue(recording, out var profile)) seedTags.UnionWith(profile.Tags.Where(tag => tag.Score > 0).Select(tag => tag.Tag));

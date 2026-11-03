@@ -502,8 +502,14 @@ public sealed partial class PersonalMixService
             else if (unique.Count < 1000 && recordings.Find(row.Song) == null) { unique.Add(row); recordings.Add(row.Song); }
         var songs = unique.ToArray();
         foreach (var row in songs) diagnostics?.Count(row.Source, "unique");
-        var profiles = await tags.GetTags(songs.Select(item => item.Song.CanonicalRecordingId).OfType<Guid>().Distinct().ToArray(), token);
-        var scores = await taste.ScoreManyAsync(user.Id, songs.Select(item => item.Song).ToArray(), token);
+        IReadOnlyDictionary<Guid, SharedSongTags> profiles;
+        using (diagnostics?.Phase("rank-tags"))
+            profiles = await tags.GetTags(songs.Select(item => item.Song.CanonicalRecordingId).OfType<Guid>().Distinct().ToArray(), token);
+        (IReadOnlyDictionary<Song, TasteScore> scores, IReadOnlyList<TasteNudge> nudges) ranking;
+        using (diagnostics?.Phase("rank-taste"))
+            ranking = await taste.ScoreManyAsync(user.Id, songs.Select(item => item.Song).ToArray(), profiles, token, deferPlayback ? events : null);
+        var (scores, nudges) = ranking;
+        using var rules = diagnostics?.Phase("rank-rules");
         var listening = events.SelectMany(play => PersonalMixRules.IdentityKeys(new Song
         {
             Id = play.TrackReference,
@@ -515,7 +521,6 @@ public sealed partial class PersonalMixService
             .Select(key => (Key: key, Play: play))).GroupBy(item => item.Key)
             .ToDictionary(group => group.Key, group => group.Select(item => item.Play).ToArray());
         var recentIds = RecentHistory(events);
-        var nudges = (await taste.GetAsync(user.Id, token)).Nudges;
         var result = new List<MixCandidate>();
         var failed = false;
         foreach (var row in songs)

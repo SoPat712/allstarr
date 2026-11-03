@@ -137,7 +137,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         (catalog, token) => catalog.GetArtistAlbumsAsync(ProviderId, request.Id.Value, token),
         MapAlbum);
 
-    public Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> GetArtistTracksAsync(
+    public virtual Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> GetArtistTracksAsync(
         ProviderExecutionContext context,
         ProviderArtistItemsRequest request) => ExecuteCollectionPageAsync(
         context,

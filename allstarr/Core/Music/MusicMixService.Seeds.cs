@@ -15,8 +15,16 @@ public sealed partial class MusicMixService
         string? provider, string? externalId, CancellationToken token, SeedMixDiagnostics? diagnostics = null, bool includeArtist = true, bool capCandidates = false)
     {
         List<Song>[] sources = [[], [], [], []];
-        var found = await FindSeedCandidatesAsync(context, seed, artist, provider, externalId, token, diagnostics, includeArtist, sources);
-        if (!capCandidates) return found;
+        if (capCandidates)
+        {
+            await DiscoverSeedSourcesAsync(context, seed, artist, provider, externalId, token, diagnostics, includeArtist, sources);
+            return CapSeedCandidates(seed, artist, sources, diagnostics);
+        }
+        return await FindSeedCandidatesAsync(context, seed, artist, provider, externalId, token, diagnostics, includeArtist, sources);
+    }
+
+    private static IReadOnlyList<Song> CapSeedCandidates(Song? seed, Artist? artist, List<Song>[] sources, SeedMixDiagnostics? diagnostics)
+    {
         sources[2] = InterleaveArtists(sources[2]).ToList();
         var selected = new List<Song>();
         var positions = new int[4];
@@ -165,13 +173,21 @@ public sealed partial class MusicMixService
     }
 
     private async Task<List<Song>> SimilarSeedCandidatesAsync(ProtocolExecutionContext context, Song seed,
-        CancellationToken token, SeedMixDiagnostics? diagnostics)
+        CancellationToken token, SeedMixDiagnostics? diagnostics, List<Song>? arrivals = null)
     {
         var result = new List<Song>();
-        if (lastFm == null) return result;
+        if (lastFm == null) { diagnostics?.LastFm("lastfm: unavailable"); return result; }
         IReadOnlyList<SimilarTrackSuggestion> suggestions;
         using (diagnostics?.Phase("similar-tracks"))
-            suggestions = await lastFm.FindAsync(context, seed.Artist, seed.Title, SuggestionLookups, token);
+        {
+            try
+            {
+                var answer = await lastFm.FindWithOutcomeAsync(context, seed.Artist, seed.Title, SuggestionLookups, token).WaitAsync(token);
+                suggestions = answer.Suggestions;
+                diagnostics?.LastFm(answer.Outcome);
+            }
+            catch (OperationCanceledException) { diagnostics?.LastFm("lastfm: timeout"); throw; }
+        }
         diagnostics?.Add("similar-tracks", suggestions.Count);
         foreach (var suggestion in suggestions)
         {
@@ -180,7 +196,7 @@ public sealed partial class MusicMixService
             diagnostics?.Add("suggestions-found", found.Count);
             var match = found.FirstOrDefault(song => MusicSearchService.MetadataRecordingsMatch(
                 new Song { Title = suggestion.Title, Artist = suggestion.Artist }, song, allowSparse: true));
-            if (match != null) { result.Add(match); diagnostics?.Add("suggestions-resolved", 1); }
+            if (match != null) { result.Add(match); arrivals?.Add(match); diagnostics?.Add("suggestions-resolved", 1); }
         }
         return result;
     }

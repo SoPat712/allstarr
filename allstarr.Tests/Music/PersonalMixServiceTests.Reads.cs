@@ -1,5 +1,6 @@
 using System.Data.Common;
 using allstarr.Core.Music;
+using allstarr.Core.Enrichment;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -12,6 +13,130 @@ namespace allstarr.Tests;
 public sealed partial class PersonalMixServiceTests
 {
     [Fact]
+    public async Task Custom_setup_does_not_load_a_mix_document_that_it_discards()
+    {
+        await Seed();
+        var probe = new MixReadProbe();
+        factory = new(new DbContextOptionsBuilder<AllstarrDbContext>(database.Options).AddInterceptors(probe).Options);
+        gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0"))
+            .Returns(() =>
+            {
+                Assert.Equal(0, probe.MixDocuments);
+                return Task.FromResult<Song?>(songs["0"]);
+            });
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", It.IsAny<int>()))
+            .ReturnsAsync(songs.Values.ToList());
+
+        Assert.Equal(25, (await NewService().StartAsync(owner, new("song", songs["0"].Id, 25))).Songs.Count);
+    }
+
+    [Fact]
+    public async Task Custom_cold_ranking_reuses_captured_history_and_reads_its_tags_once()
+    {
+        await Seed(count: 1001, plays: 1);
+        await tags.SaveAsync(SharedTagStore.RecordingKey(songs["1"].CanonicalRecordingId!.Value),
+            [new("provider", [new("rock", IsGenre: true)], clock.UtcNow)], [], true, default);
+        var probe = new MixReadProbe();
+        factory = new(new DbContextOptionsBuilder<AllstarrDbContext>(database.Options).AddInterceptors(probe).Options);
+        tags = new(factory, clock);
+        taste = new(factory, tags, clock);
+        var reading = false;
+        var tagReads = 0;
+        probe.Read = sql =>
+        {
+            if (reading && sql.Contains("FROM \"shared_tag_profiles\"", StringComparison.Ordinal)) tagReads++;
+        };
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", It.IsAny<int>()))
+            .Returns(() => { reading = true; return Task.FromResult(songs.Values.ToList()); });
+        gateway.Setup(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>()))
+            .Returns(() => { reading = false; return Task.FromResult(true); });
+
+        var preview = await NewService().StartAsync(owner, new("song", songs["0"].Id, 25));
+
+        Assert.Equal(25, preview.Songs.Count);
+        Assert.Equal(4, tagReads);
+        Assert.Equal(1, probe.FullHistoryReads);
+        var baselineFactory = new Factory(database.Options);
+        var baselineTags = new SharedTagStore(baselineFactory, clock);
+        var expected = await new TasteService(baselineFactory, baselineTags, clock).ScoreAsync(owner, songs["1"]);
+        Assert.Equal(expected.Score, Assert.Single(preview.Songs, row => row.Song.Id == songs["1"].Id).Score, 10);
+        output.WriteLine($"Cold custom ranking: 1001 history rows, tag reads {tagReads}, full history reads {probe.FullHistoryReads}, total reads {probe.Reads}.");
+    }
+
+    [Fact]
+    public async Task Custom_cold_ranking_reloads_history_when_a_play_arrives_during_discovery()
+    {
+        await Seed(count: 40, plays: 1);
+        var probe = new MixReadProbe();
+        factory = new(new DbContextOptionsBuilder<AllstarrDbContext>(database.Options).AddInterceptors(probe).Options);
+        tags = new(factory, clock);
+        taste = new(factory, tags, clock);
+        var added = false;
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", It.IsAny<int>()))
+            .Returns(async () =>
+            {
+                if (!added)
+                {
+                    added = true;
+                    await using var db = factory.CreateDbContext();
+                    db.ListeningEvents.Add(new()
+                    {
+                        Id = Guid.NewGuid(),
+                        OwnerUserId = owner,
+                        Protocol = protocol,
+                        BackendInstanceId = "main",
+                        OccurrenceKey = "new-play",
+                        State = allstarr.Core.Intelligence.ListeningEventState.Completed,
+                        SourceKind = "protocol",
+                        TrackReference = songs["1"].Id,
+                        Artist = songs["1"].Artist,
+                        CanonicalRecordingId = songs["1"].CanonicalRecordingId,
+                        ListenedAt = clock.UtcNow,
+                        UpdatedAt = clock.UtcNow
+                    });
+                    await db.SaveChangesAsync();
+                }
+                return songs.Values.ToList();
+            });
+
+        Assert.Equal(25, (await NewService().StartAsync(owner, new("song", songs["0"].Id, 25))).Songs.Count);
+        Assert.Equal(2, probe.FullHistoryReads);
+    }
+
+    [Theory]
+    [InlineData(25)]
+    [InlineData(85)]
+    public async Task Custom_ranking_reads_one_tag_batch_and_one_taste_snapshot(int count)
+    {
+        await Seed(count: count + 1, plays: 0);
+        var probe = new MixReadProbe();
+        factory = new(new DbContextOptionsBuilder<AllstarrDbContext>(database.Options).AddInterceptors(probe).Options);
+        tags = new(factory, clock);
+        taste = new(factory, tags, clock);
+        await taste.GetAsync(owner);
+        var reading = false;
+        var tagReads = 0;
+        var tasteReads = 0;
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", It.IsAny<int>()))
+            .Returns(() => { reading = true; return Task.FromResult(songs.Values.ToList()); });
+        gateway.Setup(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>()))
+            .Returns(() => { reading = false; return Task.FromResult(true); });
+        probe.Read = sql =>
+        {
+            if (!reading) return;
+            if (sql.Contains("FROM \"shared_tag_profiles\"", StringComparison.Ordinal)) tagReads++;
+            if (sql.Contains("FROM \"taste_profiles\"", StringComparison.Ordinal)) tasteReads++;
+        };
+
+        var preview = await NewService().StartAsync(owner, new("song", songs["0"].Id, 25));
+
+        Assert.Equal(25, preview.Songs.Count);
+        Assert.Equal(2, tagReads);
+        Assert.Equal(1, tasteReads);
+        output.WriteLine($"Custom ranking {count}: tag reads {tagReads}, taste reads {tasteReads}, total reads {probe.Reads}.");
+    }
+
+    [Fact]
     public async Task Custom_selection_bounds_overlapping_playback_reads_and_checks_each_recording_once()
     {
         await Seed(count: 176, plays: 0);
@@ -19,7 +144,7 @@ public sealed partial class PersonalMixServiceTests
         songs["1"].ExplicitContentLyrics = 1;
         songs["4"].Artist = "";
         await taste.PutNudgeAsync(owner, new("artist", songs["2"].Artist, "never"));
-        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", 100))
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", It.IsAny<int>()))
             .ReturnsAsync(songs.Values.Append(songs["5"]).ToList());
         var reads = new System.Collections.Concurrent.ConcurrentDictionary<string, int>();
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -45,7 +170,7 @@ public sealed partial class PersonalMixServiceTests
         release.TrySetResult();
         var preview = await generation;
         output.WriteLine($"Custom ranking: playback reads {reads.Count}, peak {peak}, database reads {probe.Reads}; " +
-            System.Text.RegularExpressions.Regex.Match(Assert.Single(logger.Entries).Message, @"rank=\d+,playback=\d+").Value);
+            System.Text.RegularExpressions.Regex.Match(Assert.Single(logger.Entries).Message, @"rank=\d+,rank-tags=\d+,rank-taste=\d+,rank-rules=\d+,playback=\d+").Value);
 
         Assert.True(startedTogether, "Four independent playback reads should start before any finishes.");
         Assert.Equal(4, peak);
@@ -64,7 +189,7 @@ public sealed partial class PersonalMixServiceTests
     public async Task Custom_selection_borrows_unused_source_slots_to_fill_from_radio_alone(int length)
     {
         await Seed(count: 90, plays: 0);
-        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", 100))
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", It.IsAny<int>()))
             .ReturnsAsync(songs.Values.ToList());
         var logger = new MixLogger();
 
@@ -79,7 +204,7 @@ public sealed partial class PersonalMixServiceTests
     public async Task Custom_selection_keeps_spare_qualified_songs_for_final_rules()
     {
         await Seed(count: 90, plays: 0);
-        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", 100))
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", It.IsAny<int>()))
             .ReturnsAsync(songs.Values.ToList());
         var checks = 0;
         string? blocked = null;
@@ -107,7 +232,7 @@ public sealed partial class PersonalMixServiceTests
     public async Task Custom_selection_stops_at_the_playback_budget_when_routes_fail(bool throws)
     {
         await Seed(count: 90, plays: 0);
-        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", 100))
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", It.IsAny<int>()))
             .ReturnsAsync(songs.Values.ToList());
         var checks = 0;
         gateway.Setup(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>()))
@@ -130,7 +255,7 @@ public sealed partial class PersonalMixServiceTests
     public async Task Custom_selection_cancels_pending_playback_and_releases_the_next_start()
     {
         await Seed(count: 60, plays: 0);
-        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", 100))
+        gateway.Setup(item => item.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "0", It.IsAny<int>()))
             .ReturnsAsync(songs.Values.ToList());
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gateway.Setup(item => item.CanPlaySongAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>()))
@@ -191,11 +316,13 @@ public sealed partial class PersonalMixServiceTests
 
     private sealed class MixReadProbe : DbCommandInterceptor
     {
+        public Action<string>? Read;
         public int MixDocuments, HistoryReads, FullHistoryReads, Writes, Reads, FavouriteReads;
         public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
             CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
         {
             var sql = command.CommandText;
+            Read?.Invoke(sql);
             if (sql.TrimStart().StartsWith("SELECT", StringComparison.Ordinal)) Reads++;
             else Writes++;
             if (sql.Contains("FROM \"listening_events\"", StringComparison.Ordinal)) HistoryReads++;
