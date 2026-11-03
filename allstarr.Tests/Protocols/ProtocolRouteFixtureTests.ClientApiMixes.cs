@@ -145,7 +145,14 @@ public sealed partial class ProtocolRouteFixtureTests
         (await db.Users.SingleAsync(item => item.BackendPrincipalId == "listener")).IsSynthetic = true;
         await db.SaveChangesAsync();
         using var synthetic = await client.GetAsync("/allstarr/v1/mixes");
-        await AssertClientApiError(synthetic, 404, "not_found");
+        Assert.Equal(HttpStatusCode.OK, synthetic.StatusCode);
+        using var syntheticBody = JsonDocument.Parse(await synthetic.Content.ReadAsStringAsync());
+        Assert.Empty(syntheticBody.RootElement.GetProperty("mixes").EnumerateArray());
+        foreach (var suffix in new[] { "items", "cover" })
+        {
+            using var specific = await client.GetAsync($"/allstarr/v1/mixes/{mix.Id}/{suffix}");
+            await AssertClientApiError(specific, 404, "not_found");
+        }
     }
 
     [Fact]

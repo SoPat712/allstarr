@@ -141,7 +141,8 @@ public sealed partial class PersonalMixService
         if (context.Actor?.EffectiveUserId is not { } owner || link.OwnerUserId != owner ||
             !(bool)(await settings.GetAsync(PublishKey, token)).Value) return false;
         await using var db = await factory.CreateDbContextAsync(token);
-        var user = await UserAsync(db, owner, token);
+        var user = await BrowseUserAsync(db, owner, token, context);
+        if (user == null) return false;
         var row = await RowAsync(db, user, token);
         if (row != null && System.Text.Json.JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!.AppsOptInVersion < 3)
             await SnapshotAsync(owner, token);

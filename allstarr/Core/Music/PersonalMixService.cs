@@ -68,6 +68,15 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     private static async Task<UserRecord> UserAsync(AllstarrDbContext db, Guid owner, CancellationToken token) =>
         await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == owner && item.Enabled && !item.IsSynthetic, token)
             ?? throw new UnauthorizedAccessException();
+    private static async Task<UserRecord?> BrowseUserAsync(AllstarrDbContext db, Guid owner, CancellationToken token,
+        ProtocolExecutionContext? context = null)
+    {
+        var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == owner && item.Enabled && !item.IsSynthetic, token);
+        if (user == null || context != null && (user.BackendType != context.Protocol.ToString().ToLowerInvariant() ||
+            user.BackendInstanceId != context.BackendInstanceId || user.BackendPrincipalId != context.VerifiedBackendPrincipalId)) return null;
+        return user;
+    }
+
     private static IQueryable<ListeningEventRecord> Events(AllstarrDbContext db, UserRecord user, bool imported) =>
         db.ListeningEvents.AsNoTracking().Where(item => item.OwnerUserId == user.Id && item.Protocol == user.BackendType && item.BackendInstanceId == user.BackendInstanceId &&
             (imported || item.SourceKind == "protocol"));
@@ -300,10 +309,20 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         finally { writes.Release(); }
     }
 
-    public async Task<IReadOnlyList<PersonalMix>> ListAsync(Guid owner, string? timeZoneId = null, CancellationToken token = default)
+    public Task<IReadOnlyList<PersonalMix>> ListAsync(Guid owner, string? timeZoneId = null, CancellationToken token = default) =>
+        ListCoreAsync(owner, timeZoneId, token);
+
+    public Task<IReadOnlyList<PersonalMix>> ListAsync(ProtocolExecutionContext context, string? timeZoneId = null) =>
+        context.Actor?.EffectiveUserId is { } owner
+            ? ListCoreAsync(owner, timeZoneId, context.CancellationToken, context)
+            : Task.FromResult<IReadOnlyList<PersonalMix>>([]);
+
+    private async Task<IReadOnlyList<PersonalMix>> ListCoreAsync(Guid owner, string? timeZoneId, CancellationToken token,
+        ProtocolExecutionContext? context = null)
     {
         await using var db = await factory.CreateDbContextAsync(token);
-        var user = await UserAsync(db, owner, token);
+        var user = await BrowseUserAsync(db, owner, token, context);
+        if (user == null) return [];
         var row = await RowAsync(db, user, token);
         if (timeZoneId != null) DurableScheduleEngine.Validate("0 4 * * *", timeZoneId);
         var saved = row == null ? null : JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!;
@@ -677,9 +696,8 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         await writes.WaitAsync(token);
         try
         {
-            var user = await UserAsync(db, owner, token);
-            if (user.BackendType != context.Protocol.ToString().ToLowerInvariant() || user.BackendInstanceId != context.BackendInstanceId ||
-                user.BackendPrincipalId != context.VerifiedBackendPrincipalId) return [];
+            var user = await BrowseUserAsync(db, owner, token, context);
+            if (user == null) return [];
             document = await LoadAsync(db, user, token, publishedOnly: true);
         }
         finally { writes.Release(); }

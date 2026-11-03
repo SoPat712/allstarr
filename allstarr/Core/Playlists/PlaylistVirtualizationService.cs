@@ -174,10 +174,14 @@ public sealed class PlaylistVirtualizationService(
                 else
                 {
                     if (targets == null) continue;
-                    var read = await targets.Resolve(link.TargetProtocol).ReadAsync(new(link.TargetBackendInstanceId,
-                        context.VerifiedBackendPrincipalId, link.OwnerUserId == owner ? link.TargetCredentialReferenceId?.ToString() : null),
-                        link.TargetPlaylistId, token);
-                    if (!read.IsSuccess || read.Value == null) continue;
+                    try
+                    {
+                        var read = await targets.Resolve(link.TargetProtocol).ReadAsync(new(link.TargetBackendInstanceId,
+                            context.VerifiedBackendPrincipalId, link.OwnerUserId == owner ? link.TargetCredentialReferenceId?.ToString() : null),
+                            link.TargetPlaylistId, token);
+                        if (!read.IsSuccess || read.Value == null) continue;
+                    }
+                    catch (UnauthorizedAccessException) { continue; }
                 }
                 authorizedTargetIds.Add(link.TargetPlaylistId);
             }
@@ -250,6 +254,21 @@ public sealed class PlaylistVirtualizationService(
         CancellationToken cancellationToken,
         DurablePlaylistProjection? publishedProjection = null,
         IReadOnlySet<string>? visibleTargetIds = null)
+    {
+        try
+        {
+            return await ReadPlaylistAsync(context, protocolId, projectionMode, cancellationToken, publishedProjection, visibleTargetIds);
+        }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
+    private async Task<VirtualPlaylistReadModel?> ReadPlaylistAsync(
+        ProtocolExecutionContext context,
+        string protocolId,
+        PlaylistProjectionMode? projectionMode,
+        CancellationToken cancellationToken,
+        DurablePlaylistProjection? publishedProjection,
+        IReadOnlySet<string>? visibleTargetIds)
     {
         ArgumentNullException.ThrowIfNull(context);
         var virtualId = TryParseProtocolId(protocolId, out var linkId);

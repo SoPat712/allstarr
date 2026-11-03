@@ -19,7 +19,7 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
     public async Task<ClientMixes> ListAsync(ProtocolExecutionContext execution, string? timeZoneId)
     {
         var token = execution.CancellationToken;
-        var stored = await mixes.ListAsync(execution.RequireActor().EffectiveUserId!.Value, timeZoneId, token);
+        var stored = await mixes.ListAsync(execution, timeZoneId);
         var allowed = await AllowedLocalIdsAsync(execution, stored);
         var publish = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value;
         return new(stored.Select(mix =>

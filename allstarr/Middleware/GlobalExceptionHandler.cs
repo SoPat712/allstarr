@@ -1,11 +1,16 @@
+using System.Diagnostics;
+using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Diagnostics;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Controllers;
+using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.AspNetCore.Routing;
 using allstarr.Services.Admin;
 
 namespace allstarr.Middleware;
 
 /// <summary>
-/// Global exception handler that catches unhandled exceptions and returns appropriate Subsonic API error responses
+/// Global exception handler that returns errors in the request protocol.
 /// </summary>
 public class GlobalExceptionHandler : IExceptionHandler
 {
@@ -43,8 +48,15 @@ public class GlobalExceptionHandler : IExceptionHandler
             return true;
         }
 
+        var endpoint = httpContext.Features.Get<IExceptionHandlerFeature>()?.Endpoint ?? httpContext.GetEndpoint();
+        var protocol = httpContext.GetProtocolExecutionContext()?.Protocol;
+        var subsonic = protocol == ProtocolKind.Subsonic || protocol == null &&
+            (httpContext.Request.Path.StartsWithSegments("/rest", StringComparison.OrdinalIgnoreCase) ||
+             endpoint?.Metadata.GetMetadata<ControllerActionDescriptor>()?.ControllerName == "Subsonic");
+        var jellyfin = !subsonic && httpContext.Connection.LocalPort != 5275;
         var (statusCode, subsonicErrorCode, errorMessage) = MapExceptionToResponse(exception);
-        var routePattern = (httpContext.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? "unmatched";
+        if (jellyfin && exception is UnauthorizedAccessException) statusCode = StatusCodes.Status403Forbidden;
+        var routePattern = (endpoint as RouteEndpoint)?.RoutePattern.RawText ?? "unmatched";
         _logger.LogError(
             exception,
             "Unhandled {ErrorKind} on route {RoutePattern}; returning {StatusCode}",
@@ -53,10 +65,24 @@ public class GlobalExceptionHandler : IExceptionHandler
             statusCode);
 
         httpContext.Response.StatusCode = statusCode;
-        httpContext.Response.ContentType = "application/json";
-
-        var response = CreateSubsonicErrorResponse(subsonicErrorCode, errorMessage);
-        await httpContext.Response.WriteAsJsonAsync(response, cancellationToken);
+        if (jellyfin)
+        {
+            var problem = new ProblemDetails
+            {
+                Type = "about:blank",
+                Title = ReasonPhrases.GetReasonPhrase(statusCode),
+                Status = statusCode
+            };
+            problem.Extensions["traceId"] = Activity.Current?.Id ?? httpContext.TraceIdentifier;
+            await httpContext.Response.WriteAsJsonAsync(problem, options: null,
+                contentType: "application/problem+json", cancellationToken: cancellationToken);
+        }
+        else
+        {
+            httpContext.Response.ContentType = "application/json";
+            var response = CreateSubsonicErrorResponse(subsonicErrorCode, errorMessage);
+            await httpContext.Response.WriteAsJsonAsync(response, cancellationToken);
+        }
 
         return true;
     }
