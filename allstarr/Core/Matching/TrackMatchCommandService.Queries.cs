@@ -102,13 +102,22 @@ public sealed partial class TrackMatchCommandService
         return new(identities, localTracks, snapshots, decisions, overrides, artifacts);
     }
 
-    public async Task<TrackMatchReviewData> GetReviewDataAsync(
+    public Task<TrackMatchReviewData> GetClientReviewDataAsync(TrackMatchActor actor, Guid snapshotId,
+        CancellationToken cancellationToken) =>
+        GetReviewDataCoreAsync(actor, null, null, snapshotId, 5000, cancellationToken, true);
+
+    public Task<TrackMatchReviewData> GetReviewDataAsync(
         TrackMatchActor actor,
         string? backendLibraryId = null,
         string? search = null,
         Guid? externalSnapshotId = null,
         int scanLimit = 5000,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        GetReviewDataCoreAsync(actor, backendLibraryId, search, externalSnapshotId, scanLimit, cancellationToken, false);
+
+    private async Task<TrackMatchReviewData> GetReviewDataCoreAsync(
+        TrackMatchActor actor, string? backendLibraryId, string? search, Guid? externalSnapshotId,
+        int scanLimit, CancellationToken cancellationToken, bool includeSourceHistory)
     {
         var timings = new List<(string Step, long At)> { ("start", Stopwatch.GetTimestamp()) };
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -122,7 +131,18 @@ public sealed partial class TrackMatchCommandService
                 (item.ProviderAccountId == null || visibleAccountIds!.Contains(item.ProviderAccountId.Value) &&
                     db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId && account.ProviderId == item.ProviderId)));
         if (externalSnapshotId.HasValue)
-            snapshotsQuery = snapshotsQuery.Where(item => item.Id == externalSnapshotId.Value);
+        {
+            if (includeSourceHistory)
+            {
+                var source = await db.ExternalMetadataSnapshots.AsNoTracking().SingleOrDefaultAsync(item =>
+                    item.Id == externalSnapshotId.Value && item.OwnerUserId == actor.UserId && item.ResourceKind == "track", cancellationToken);
+                if (source == null) return new([], [], [], [], []);
+                snapshotsQuery = snapshotsQuery.Where(item => item.ProviderId == source.ProviderId &&
+                    item.ExternalIdHash == source.ExternalIdHash && item.Protocol == source.Protocol &&
+                    item.BackendInstanceId == source.BackendInstanceId && item.BackendPrincipalId == source.BackendPrincipalId);
+            }
+            else snapshotsQuery = snapshotsQuery.Where(item => item.Id == externalSnapshotId.Value);
+        }
         var orderedSnapshots = snapshotsQuery.OrderByDescending(item => item.RetrievedAt)
             .ThenByDescending(item => item.SnapshotVersion).ThenByDescending(item => item.Id);
         var limit = Math.Clamp(scanLimit, 1, 10000);

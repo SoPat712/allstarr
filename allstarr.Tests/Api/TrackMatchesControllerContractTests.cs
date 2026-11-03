@@ -115,7 +115,7 @@ public sealed class TrackMatchesControllerContractTests
             best ? ["ArtistGrid best version +5"] : [], [], Title: "Song",
             ProviderTrackIds: new Dictionary<string, string> { ["artistgrid"] = "version" },
             IsLocal: false, IsBestVersion: best);
-        var parse = typeof(TrackMatchesController).GetMethod("ParseCandidates", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var parse = typeof(TrackMatchReviewCandidates).GetMethod("ParseCandidates", BindingFlags.Static | BindingFlags.NonPublic)!;
         var projected = JsonSerializer.SerializeToElement(parse.Invoke(null,
             [JsonSerializer.Serialize(new[] { score }), new HashSet<string>(["artistgrid"]), new HashSet<Guid>()]));
         var candidate = Assert.Single(projected.EnumerateArray());
@@ -213,7 +213,7 @@ public sealed class TrackMatchesControllerContractTests
               { "providerTrackIds": {}, "title": "Metadata only" }
             ]
             """;
-        var parse = typeof(TrackMatchesController).GetMethod(
+        var parse = typeof(TrackMatchReviewCandidates).GetMethod(
             "ParseCandidates",
             BindingFlags.Static | BindingFlags.NonPublic)!;
 

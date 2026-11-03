@@ -37,28 +37,36 @@ public sealed partial class ProblemReportService(
         await using var db = await factory.CreateDbContextAsync(token);
         await using var transaction = await db.Database.BeginTransactionAsync(token);
         var actor = await RequireActorAsync(db, session, false, token);
-        return await CaptureAsync(db, session, actor, selector, token);
+        return await CaptureAsync(db, actor, selector, token);
     }
 
     public Task<ProblemReportReceipt> CreateAsync(AdminAuthSession session, CreateProblemReportRequest request, CancellationToken token) =>
-        CreateCoreAsync(session, request, null, token);
+        CreateCoreAsync((db, cancellation) => RequireActorAsync(db, session, false, cancellation), request, null, token);
 
     internal Task<ProblemReportReceipt> CreatePlaybackAsync(AdminAuthSession session, PlayTraceReportRequest request, PlayTraceDetail trace, CancellationToken token)
+    {
+        var context = PlaybackReportContext(trace, session.AllstarrUserId, session.UserName);
+        return CreateCoreAsync((db, cancellation) => RequireActorAsync(db, session, false, cancellation),
+            new(request.RequestId, "wrong-match", request.Note), context, token);
+    }
+
+    private ProblemReportContext PlaybackReportContext(PlayTraceDetail trace, Guid? reporterId, string? reporterName)
     {
         var song = trace.Request.Presented;
         var resolution = trace.Resolution;
         var context = new ProblemReportContext(1, clock.UtcNow, trace.ListenerId,
-            trace.ListenerId == session.AllstarrUserId ? PlayTraceText.Clean(session.UserName) : null,
+            trace.ListenerId == reporterId ? PlayTraceText.Clean(reporterName) : null,
             new(trace.Request.ItemId, resolution.ExternalSnapshotId, resolution.CanonicalRecordingId, null, song.Title, song.Artist, song.Album,
                 song.DurationMilliseconds, resolution.Provider),
             new(resolution.DecisionId, resolution.State, null, resolution.Score, resolution.AuthorityScope, []),
             new(resolution.Provider, resolution.Provider != null, null, null, trace.StartedAt, trace.StartedAt, resolution.Cached,
                 null, resolution.Route, null, trace.Request.Client), [])
         { PlaybackRequestId = trace.Id };
-        return CreateCoreAsync(session, new(request.RequestId, "wrong-match", request.Note), context, token);
+        return context;
     }
 
-    private async Task<ProblemReportReceipt> CreateCoreAsync(AdminAuthSession session, CreateProblemReportRequest request, ProblemReportContext? captured, CancellationToken token)
+    private async Task<ProblemReportReceipt> CreateCoreAsync(Func<AllstarrDbContext, CancellationToken, Task<UserRecord>> resolveActor,
+        CreateProblemReportRequest request, ProblemReportContext? captured, CancellationToken token)
     {
         var normalized = NormalizeRequest(request);
         var fingerprint = Convert.ToHexStringLower(SHA256.HashData(captured == null ? JsonSerializer.SerializeToUtf8Bytes(normalized, JsonOptions) :
@@ -69,7 +77,7 @@ public sealed partial class ProblemReportService(
             try
             {
                 await using var transaction = await db.Database.BeginTransactionAsync(token);
-                var actor = await RequireActorAsync(db, session, false, token);
+                var actor = await resolveActor(db, token);
                 var existing = await db.ProblemReports.AsNoTracking().SingleOrDefaultAsync(item =>
                     item.ActorUserId == actor.Id && item.RequestId == normalized.RequestId, token);
                 if (existing != null)
@@ -78,7 +86,7 @@ public sealed partial class ProblemReportService(
                         throw new ProblemReportException(409, "report_request_conflict", "This request was already used for another problem report.");
                     return new(existing.Id, existing.Status, existing.CreatedAt, true);
                 }
-                var context = captured ?? await CaptureAsync(db, session, actor, normalized.Selector, token);
+                var context = captured ?? await CaptureAsync(db, actor, normalized.Selector, token);
                 var contextJson = JsonSerializer.Serialize(context, JsonOptions);
                 if (Encoding.UTF8.GetByteCount(contextJson) > 32768) throw ProblemReportException.Invalid();
                 var record = new ProblemReportRecord

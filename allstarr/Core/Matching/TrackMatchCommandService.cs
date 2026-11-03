@@ -27,7 +27,8 @@ public sealed record ResolveTrackMatchCommand(
     string? ExternalId = null,
     string? Reason = null,
     string AuthorityScope = "personal",
-    ManualAuthorityRevision? ExpectedAuthority = null);
+    ManualAuthorityRevision? ExpectedAuthority = null,
+    string? ExpectedMatchRevision = null);
 
 public sealed record AutomatedSourceMatchResult(
     string ProviderId,

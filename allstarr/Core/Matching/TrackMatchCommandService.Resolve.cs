@@ -160,11 +160,18 @@ public sealed partial class TrackMatchCommandService
                 .Where(item => item.ExternalSnapshotId == snapshot.Id)
                 .OrderByDescending(item => item.DecisionVersion).FirstOrDefaultAsync(cancellationToken);
             libraryTrackId = TrackMatchOverridePolicy.TopCandidateLibraryTrackId(latest?.CandidateResultsJson) ?? latest?.LibraryTrackId;
+            if (command.ExpectedMatchRevision != null && libraryTrackId.HasValue &&
+                !await (await AccessibleTracksAsync(db, actor, cancellationToken)).AnyAsync(item =>
+                    item.Id == libraryTrackId && item.BackendInstanceId == snapshot.BackendInstanceId, cancellationToken))
+                libraryTrackId = null;
         }
 
         try
         {
             await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+            if (command.ExpectedMatchRevision != null &&
+                command.ExpectedMatchRevision != await TrackMatchRevision.ReadAsync(db, snapshot, actor.UserId, cancellationToken))
+                return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.Conflict, "The match changed; refresh and try again");
             var ownerId = command.AuthorityScope == "personal" ? (Guid?)actor.UserId : null;
             await ReplaceOverrideAsync(db, snapshot, ownerId,
                 targetType == "reject" ? ManualOverrideDecision.Reject : ManualOverrideDecision.Pin,

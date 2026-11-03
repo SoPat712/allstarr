@@ -18,8 +18,8 @@ receive the same personal scope as other listeners.
 
 `GET /allstarr/v1/capabilities` returns `serverVersion`, `apiVersion`, and a
 `features` object. Check feature flags before using optional routes.
-`titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, and `lyricsSources` are
-available; the other flags remain false until supported.
+`titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, `lyricsSources`,
+`fixesMatch`, and `reports` are available; the other flags remain false until supported.
 The version in the path identifies the contract. Compatible additions stay
 within v1; incompatible changes use a new path version.
 
@@ -179,3 +179,64 @@ the accessible library index after a Jellyfin visibility check with the
 listener's token. External IDs map through the same provider song identity
 used by the Jellyfin lyrics route. An item without a known recording returns
 404 from source review and writes; rich lyrics can still be available.
+
+`GET /allstarr/v1/items/{itemId}/match` returns the caller's effective match:
+`{state,confidence,authority,current,candidates,revision}`. Authority is
+`automatic`, `household`, or `personal`. Each candidate has `candidateId`,
+`title`, `artist`, `album`, `durationMs`, `isrc`, `provider` (`id`, `name`,
+`iconUrl`), `isExternal`, `confidence`, and `reasons` containing the same
+saved evidence shown in the dashboard. Unknown metadata is null. Own-library
+candidates identify Jellyfin as their provider. `current` is null when no
+candidate is selected, including after rejection.
+
+Choose a returned candidate with `PUT /allstarr/v1/items/{itemId}/match`:
+
+```json
+{"candidateId":"opaque-candidate-id","expectedRevision":"opaque-revision"}
+```
+
+Reject with `POST /allstarr/v1/items/{itemId}/match/reject` and body
+`{"expectedRevision":"opaque-revision"}`. Clear a personal choice or rejection
+with `DELETE /allstarr/v1/items/{itemId}/match?expectedRevision=opaque-revision`.
+All three writes return the updated match object. Copy the exact opaque string
+from the last response; a stale revision returns 409 `conflict`, including
+changes to the automatic decision or household choice. Revisions cannot be
+reused after a choice is set and cleared. All responses use `Cache-Control: no-store`.
+These writes affect only the caller, including administrators. Clearing restores
+the household choice when available, otherwise automatic matching.
+
+External song IDs resolve to the newest accessible track snapshot for that
+source and listener. When an external playback item has no source snapshot,
+its known recording locates the caller's source snapshot. Canonical song IDs
+and visible native Jellyfin IDs also resolve through the known recording to
+a snapshot owned by that listener. Native IDs
+first pass the same Jellyfin visibility check and accessible library-index
+lookup used by lyrics source review. Missing snapshots and snapshots outside
+the listener's view return 404 `not_found`.
+
+`POST /allstarr/v1/reports` creates a problem report and returns `201 {"id":"..."}`:
+
+```json
+{"kind":"wrong-song","note":"The live version plays instead.","itemId":"ext-deezer-song-123","playbackRequestId":"11111111-1111-4111-8111-111111111111"}
+```
+
+`itemId` and `playbackRequestId` are optional. Kinds are `wrong-song`,
+`wrong-lyrics`, `wont-play`, `bad-quality`, `wrong-info`, and `other`. They appear
+in the existing dashboard inbox as `wrong-match`, `wrong-lyrics`, `playback`,
+`playback`, `metadata`, and `other`, respectively. Notes must contain 1–2,000
+characters after trimming and follow the same text validation and request-size
+limit as dashboard reports.
+
+Playback context is captured on the server. An explicit request ID must belong
+to this listener and device, follow the same retention rules as playback lookup,
+and agree with `itemId` when both are provided. Unknown, expired, or foreign IDs
+return 404 `not_found`. Without a request ID, the caller's recent playback on
+this device supplies context when available; an optional item ID restricts that
+selection. Other listeners' or devices' playback cannot be attached, including
+by administrators. Responses use `Cache-Control: no-store`.
+
+The OpenAPI 3.1 document explicitly types enums. Nullable string enums include
+null in both their `type` and `enum`. Nullable object references declare
+`type: ["object", "null"]` and use `anyOf` with the reference and a null schema,
+preserving referenced-object validation while accepting null. Response JSON is
+unchanged.

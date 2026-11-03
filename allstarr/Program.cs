@@ -370,6 +370,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.AddOpenApi("v1", options =>
 {
     options.ShouldInclude = description => description.GroupName == ClientApiContract.GroupName;
+    options.AddDocumentTransformer<ClientApiSchemaTransformer>();
     options.AddDocumentTransformer((document, context, cancellationToken) =>
     {
         document.Info.Title = "Allstarr Client API";
@@ -408,6 +409,7 @@ builder.Services.AddScoped<ClientApiResultFilter>();
 builder.Services.AddSingleton<ClientApiAvailability>();
 builder.Services.AddScoped<ItemDetailsReader>();
 builder.Services.AddScoped<ItemLyricsReader>();
+builder.Services.AddScoped<ItemMatchReader>();
 builder.Services.AddScoped<PlaybackReader>();
 
 builder.Services.AddSingleton<allstarr.Services.Admin.AdminHelperService>();

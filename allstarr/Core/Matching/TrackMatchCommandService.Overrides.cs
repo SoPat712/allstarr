@@ -99,6 +99,14 @@ public sealed partial class TrackMatchCommandService
             authorityScope,
             cancellationToken);
 
+    public Task<ManualTrackAuthorityCommandResult> ClearClientMatchAsync(
+        TrackMatchActor actor, Guid snapshotId, ManualTrackOverrideRecord authority, string expectedRevision,
+        string correlationId, CancellationToken cancellationToken) =>
+        ReleaseManualAuthorityAsync(actor, snapshotId,
+            authority.Decision == ManualOverrideDecision.Reject ? ManualTrackAuthorityKind.Rejection :
+                authority.TargetProviderId != null ? ManualTrackAuthorityKind.ProviderMatch : ManualTrackAuthorityKind.LocalMatch,
+            authority.Id, authority.Revision, correlationId, "manual-authority.delete", "personal", cancellationToken, expectedRevision);
+
     public async Task<TrackRematchCommandResult> RematchManualAuthorityAsync(
         ProtocolExecutionContext context,
         Guid externalSnapshotId,
@@ -151,7 +159,8 @@ public sealed partial class TrackMatchCommandService
         string correlationId,
         string auditAction,
         string authorityScope,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? expectedMatchRevision = null)
     {
         if (expectedRevision < 0)
             return new(false, TrackMatchCommandFailure.Invalid, "ExpectedRevision is invalid");
@@ -175,6 +184,10 @@ public sealed partial class TrackMatchCommandService
         if (authorityScope == "household" && !actor.IsAdministrator)
             return new(false, TrackMatchCommandFailure.Forbidden, "Household choices require administrator permissions");
         var ownerId = authorityScope == "personal" ? (Guid?)actor.UserId : null;
+        await using var transaction = expectedMatchRevision == null ? null : await db.Database.BeginTransactionAsync(cancellationToken);
+        if (expectedMatchRevision != null &&
+            expectedMatchRevision != await TrackMatchRevision.ReadAsync(db, snapshot, actor.UserId, cancellationToken))
+            return new(false, TrackMatchCommandFailure.Conflict, "The match changed; refresh and try again");
         var record = await ManualTrackOverrides.ForSource(db, snapshot).SingleOrDefaultAsync(item =>
             item.Id == authorityId && item.OwnerUserId == ownerId, cancellationToken);
         if (record == null)
@@ -215,6 +228,7 @@ public sealed partial class TrackMatchCommandService
             return new(false, TrackMatchCommandFailure.Conflict,
                 "The manual decision changed; refresh and try again");
         }
+        if (transaction != null) await transaction.CommitAsync(cancellationToken);
         return new(
             true,
             ExternalSnapshotId: snapshot.Id);

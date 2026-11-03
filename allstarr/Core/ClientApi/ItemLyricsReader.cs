@@ -19,6 +19,12 @@ public sealed class ItemLyricsReader(
     ITrackIdentityService identities,
     IRecordingLyricsReview review)
 {
+    public async Task<Guid?> ResolveRecordingIdAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
+    {
+        var item = await ResolveAsync(http, execution, itemId);
+        return item == null ? null : await RecordingAsync(execution, item);
+    }
+
     public async Task<RichLyrics?> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
     {
         var item = await ResolveAsync(http, execution, itemId);

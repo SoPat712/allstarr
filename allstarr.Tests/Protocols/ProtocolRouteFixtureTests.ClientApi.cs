@@ -116,7 +116,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var features = root.GetProperty("features");
         Assert.Equal(["events", "fixesMatch", "follow", "itemDetails", "lyricsRich", "lyricsSearch", "lyricsSources", "mixes", "playback", "releases", "reports", "titleMarkers"],
             features.EnumerateObject().Select(item => item.Name).Order().ToArray());
-        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name is "titleMarkers" or "itemDetails" or "playback" or "lyricsRich" or "lyricsSources", item.Value.GetBoolean()));
+        Assert.All(features.EnumerateObject(), item => Assert.Equal(item.Name is "titleMarkers" or "itemDetails" or "playback" or "lyricsRich" or "lyricsSources" or "fixesMatch" or "reports", item.Value.GetBoolean()));
         Assert.NotNull(observed?.Principal);
         Assert.False(observed.Principal.IsAdministrator);
         Assert.Equal(ProviderActorKind.User, observed.RequireActor().Kind);
@@ -325,6 +325,11 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("getLyricsSources", paths.GetProperty("/allstarr/v1/items/{itemId}/lyrics/sources").GetProperty("get").GetProperty("operationId").GetString());
         Assert.Equal("setLyricsSource", paths.GetProperty("/allstarr/v1/items/{itemId}/lyrics/source").GetProperty("put").GetProperty("operationId").GetString());
         Assert.Equal("clearLyricsSource", paths.GetProperty("/allstarr/v1/items/{itemId}/lyrics/source/clear").GetProperty("post").GetProperty("operationId").GetString());
+        Assert.Equal("getItemMatch", paths.GetProperty("/allstarr/v1/items/{itemId}/match").GetProperty("get").GetProperty("operationId").GetString());
+        Assert.Equal("setItemMatch", paths.GetProperty("/allstarr/v1/items/{itemId}/match").GetProperty("put").GetProperty("operationId").GetString());
+        Assert.Equal("rejectItemMatch", paths.GetProperty("/allstarr/v1/items/{itemId}/match/reject").GetProperty("post").GetProperty("operationId").GetString());
+        Assert.Equal("clearItemMatch", paths.GetProperty("/allstarr/v1/items/{itemId}/match").GetProperty("delete").GetProperty("operationId").GetString());
+        Assert.Equal("createReport", paths.GetProperty("/allstarr/v1/reports").GetProperty("post").GetProperty("operationId").GetString());
     }
 
     [Fact]

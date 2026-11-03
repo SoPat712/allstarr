@@ -103,7 +103,7 @@
                 "$ref": "#/components/schemas/ItemDetailsRequest"
               }
             },
-            "application/*+json": {
+            "application/*\u002Bjson": {
               "schema": {
                 "$ref": "#/components/schemas/ItemDetailsRequest"
               }
@@ -393,7 +393,7 @@
                 "$ref": "#/components/schemas/SetClientLyricsSourceRequest"
               }
             },
-            "application/*+json": {
+            "application/*\u002Bjson": {
               "schema": {
                 "$ref": "#/components/schemas/SetClientLyricsSourceRequest"
               }
@@ -503,7 +503,7 @@
                 "$ref": "#/components/schemas/ClearClientLyricsSourceRequest"
               }
             },
-            "application/*+json": {
+            "application/*\u002Bjson": {
               "schema": {
                 "$ref": "#/components/schemas/ClearClientLyricsSourceRequest"
               }
@@ -578,6 +578,410 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ClientLyricsSelection"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v1/items/{itemId}/match": {
+      "get": {
+        "tags": [
+          "ItemMatch"
+        ],
+        "operationId": "getItemMatch",
+        "parameters": [
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientItemMatch"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "ItemMatch"
+        ],
+        "operationId": "setItemMatch",
+        "parameters": [
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetClientMatchRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetClientMatchRequest"
+              }
+            },
+            "application/*\u002Bjson": {
+              "schema": {
+                "$ref": "#/components/schemas/SetClientMatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientItemMatch"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "ItemMatch"
+        ],
+        "operationId": "clearItemMatch",
+        "parameters": [
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "expectedRevision",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientItemMatch"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/allstarr/v1/items/{itemId}/match/reject": {
+      "post": {
+        "tags": [
+          "ItemMatch"
+        ],
+        "operationId": "rejectItemMatch",
+        "parameters": [
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectClientMatchRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectClientMatchRequest"
+              }
+            },
+            "application/*\u002Bjson": {
+              "schema": {
+                "$ref": "#/components/schemas/RejectClientMatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientItemMatch"
                 }
               }
             }
@@ -835,7 +1239,7 @@
           "200": {
             "description": "OK",
             "content": {
-              "image/svg+xml": {
+              "image/svg\u002Bxml": {
                 "schema": {
                   "type": "string",
                   "format": "binary"
@@ -869,6 +1273,106 @@
           },
           "304": {
             "description": "Not Modified"
+          }
+        }
+      }
+    },
+    "/allstarr/v1/reports": {
+      "post": {
+        "tags": [
+          "Reports"
+        ],
+        "operationId": "createReport",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateClientReportRequest"
+              }
+            },
+            "text/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateClientReportRequest"
+              }
+            },
+            "application/*\u002Bjson": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateClientReportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "400": {
+            "description": "Bad Request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not Found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service Unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientApiError"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClientReportReceipt"
+                }
+              }
+            }
           }
         }
       }
@@ -963,6 +1467,55 @@
           }
         }
       },
+      "ClientItemMatch": {
+        "required": [
+          "state",
+          "confidence",
+          "authority",
+          "current",
+          "candidates",
+          "revision"
+        ],
+        "type": "object",
+        "properties": {
+          "state": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "authority": {
+            "type": "string"
+          },
+          "current": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClientMatchCandidate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "candidates": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientMatchCandidate"
+            }
+          },
+          "revision": {
+            "type": "string"
+          }
+        }
+      },
       "ClientLyricsChosen": {
         "required": [
           "sourceId",
@@ -982,22 +1535,30 @@
         "type": "object",
         "properties": {
           "personal": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
               {
                 "$ref": "#/components/schemas/ClientLyricsStamp"
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "household": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
               {
                 "$ref": "#/components/schemas/ClientLyricsStamp"
+              },
+              {
+                "type": "null"
               }
             ]
           }
@@ -1011,12 +1572,16 @@
         "type": "object",
         "properties": {
           "chosen": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
               {
                 "$ref": "#/components/schemas/ClientLyricsChosen"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -1065,12 +1630,16 @@
             }
           },
           "chosen": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
               {
                 "$ref": "#/components/schemas/ClientLyricsChosen"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -1096,6 +1665,76 @@
           }
         }
       },
+      "ClientMatchCandidate": {
+        "required": [
+          "candidateId",
+          "title",
+          "artist",
+          "album",
+          "durationMs",
+          "isrc",
+          "provider",
+          "isExternal",
+          "confidence",
+          "reasons"
+        ],
+        "type": "object",
+        "properties": {
+          "candidateId": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "artist": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "album": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "durationMs": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int64"
+          },
+          "isrc": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "provider": {
+            "$ref": "#/components/schemas/ItemDetailsProvider"
+          },
+          "isExternal": {
+            "type": "boolean"
+          },
+          "confidence": {
+            "type": [
+              "null",
+              "number"
+            ],
+            "format": "double"
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "ClientPlayback": {
         "required": [
           "provider",
@@ -1109,35 +1748,44 @@
         "type": "object",
         "properties": {
           "provider": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
               {
                 "$ref": "#/components/schemas/ItemDetailsProvider"
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "accountScope": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
-              {
-                "$ref": "#/components/schemas/PlaybackAccountScope"
-              }
+            "enum": [
+              "personal",
+              "shared",
+              null
+            ],
+            "type": [
+              "null",
+              "string"
             ]
           },
           "cached": {
             "type": "boolean"
           },
           "delivered": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
               {
                 "$ref": "#/components/schemas/PlaybackDelivered"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -1158,6 +1806,47 @@
             "format": "date-time"
           }
         }
+      },
+      "ClientReportReceipt": {
+        "required": [
+          "id"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "CreateClientReportRequest": {
+        "required": [
+          "kind",
+          "note"
+        ],
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "itemId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "playbackRequestId": {
+            "type": [
+              "null",
+              "string"
+            ],
+            "format": "uuid"
+          }
+        },
+        "additionalProperties": false
       },
       "ItemDetails": {
         "required": [
@@ -1194,22 +1883,30 @@
             ]
           },
           "provider": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
               {
                 "$ref": "#/components/schemas/ItemDetailsProvider"
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "audio": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
               {
                 "$ref": "#/components/schemas/ItemDetailsAudio"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -1226,12 +1923,16 @@
             "$ref": "#/components/schemas/ItemDetailsKeep"
           },
           "match": {
-            "oneOf": [
-              {
-                "type": "null"
-              },
+            "type": [
+              "null",
+              "object"
+            ],
+            "anyOf": [
               {
                 "$ref": "#/components/schemas/ItemDetailsMatch"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -1409,6 +2110,10 @@
           "personal",
           "shared",
           null
+        ],
+        "type": [
+          "null",
+          "string"
         ]
       },
       "PlaybackDelivered": {
@@ -1453,6 +2158,17 @@
               "integer"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "RejectClientMatchRequest": {
+        "required": [
+          "expectedRevision"
+        ],
+        "type": "object",
+        "properties": {
+          "expectedRevision": {
+            "type": "string"
           }
         }
       },
@@ -1581,6 +2297,21 @@
             "$ref": "#/components/schemas/ClientLyricsRevision"
           }
         }
+      },
+      "SetClientMatchRequest": {
+        "required": [
+          "candidateId",
+          "expectedRevision"
+        ],
+        "type": "object",
+        "properties": {
+          "candidateId": {
+            "type": "string"
+          },
+          "expectedRevision": {
+            "type": "string"
+          }
+        }
       }
     }
   },
@@ -1595,10 +2326,16 @@
       "name": "ItemLyrics"
     },
     {
+      "name": "ItemMatch"
+    },
+    {
       "name": "Playback"
     },
     {
       "name": "ProviderIcons"
+    },
+    {
+      "name": "Reports"
     }
   ]
 }

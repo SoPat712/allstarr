@@ -6,7 +6,6 @@ using allstarr.Core.Identity;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
-using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
@@ -14,8 +13,8 @@ namespace allstarr.Core.Operations;
 
 public sealed partial class ProblemReportService
 {
-    private async Task<ProblemReportContext> CaptureAsync(AllstarrDbContext db, AdminAuthSession session,
-        UserRecord actor, ProblemReportSelector? selector, CancellationToken token)
+    private async Task<ProblemReportContext> CaptureAsync(AllstarrDbContext db, UserRecord actor,
+        ProblemReportSelector? selector, CancellationToken token)
     {
         var now = clock.UtcNow;
         if (selector == null) return new(1, now, null, null, null, null, null, []);
@@ -99,7 +98,7 @@ public sealed partial class ProblemReportService
                 .OrderByDescending(item => item.RetrievedAt).Select(item => (Guid?)item.Id).FirstOrDefaultAsync(token);
             if (ownedSnapshot.HasValue)
             {
-                canonicalContext = await CaptureAsync(db, session, actor, new(ExternalSnapshotId: ownedSnapshot), token);
+                canonicalContext = await CaptureAsync(db, actor, new(ExternalSnapshotId: ownedSnapshot), token);
                 canonical = canonicalContext.Song?.CanonicalRecordingId;
             }
             else throw ProblemReportException.Missing();
