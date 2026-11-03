@@ -22,7 +22,10 @@ public sealed class LegacyMappingReadinessContractTests
         Assert.Contains("sourceArtworkUrl", mappings, StringComparison.Ordinal);
         Assert.Contains("candidateArtworkUrl", mappings, StringComparison.Ordinal);
         Assert.DoesNotContain("artworkUrl = song.CoverArtUrl", mappings, StringComparison.Ordinal);
-        Assert.Contains("new MediaAssetIdentity(", downloads, StringComparison.Ordinal);
+        var artwork = File.ReadAllText(FindRepositoryFile(
+            "allstarr", "Core", "NewReleases", "ReleaseArtworkReader.cs"));
+        Assert.Contains("ReadDownloadArtworkAsync(session", downloads, StringComparison.Ordinal);
+        Assert.Contains("media.ResolveAsync(new(owner", artwork, StringComparison.Ordinal);
         Assert.DoesNotContain("CoverArtUrl = download.CoverArtUrl", downloads, StringComparison.Ordinal);
     }
 

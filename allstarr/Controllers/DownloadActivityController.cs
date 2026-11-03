@@ -13,7 +13,7 @@ namespace allstarr.Controllers;
 [ApiController]
 [Route("api/admin/downloads")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public class DownloadActivityController : ControllerBase
+public partial class DownloadActivityController : ControllerBase
 {
     private readonly IReadOnlyList<IPlaybackActivitySource> _playbackSources;
     private readonly IReadOnlyList<IPlaybackMetadataResolver> _metadataResolvers;
@@ -23,6 +23,10 @@ public class DownloadActivityController : ControllerBase
     private readonly IPlaybackDeliveryActivitySource? _playbackDeliveries;
     private readonly IDbContextFactory<AllstarrDbContext>? _contextFactory;
     private readonly TimeProvider _timeProvider;
+    private readonly IProtocolProviderGateway? _providerGateway;
+    private readonly IHttpClientFactory? _httpClients;
+    private readonly Core.ManagedFiles.RecordingKeptFiles? _keptFiles;
+    private readonly AdminProtocolExecutionContextFactory? _protocolContexts;
 
     public DownloadActivityController(
         IEnumerable<IPlaybackActivitySource> playbackSources,
@@ -32,7 +36,11 @@ public class DownloadActivityController : ControllerBase
         IBackendLibraryAccessResolver libraryAccess,
         IPlaybackDeliveryActivitySource? playbackDeliveries = null,
         IDbContextFactory<AllstarrDbContext>? contextFactory = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IProtocolProviderGateway? providerGateway = null,
+        IHttpClientFactory? httpClients = null,
+        Core.ManagedFiles.RecordingKeptFiles? keptFiles = null,
+        AdminProtocolExecutionContextFactory? protocolContexts = null)
     {
         _playbackSources = playbackSources.ToList();
         _metadataResolvers = metadataResolvers.ToList();
@@ -42,6 +50,10 @@ public class DownloadActivityController : ControllerBase
         _playbackDeliveries = playbackDeliveries;
         _contextFactory = contextFactory;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _providerGateway = providerGateway;
+        _httpClients = httpClients;
+        _keptFiles = keptFiles;
+        _protocolContexts = protocolContexts;
     }
 
     [HttpGet("/api/admin/ui/now-playing")]
@@ -209,32 +221,9 @@ public class DownloadActivityController : ControllerBase
             }
             return NotFound();
         }
-        var asset = await _mediaAssets.ResolveAsync(
-            new MediaAssetIdentity(
-                session?.AllstarrUserId,
-                null,
-                ResolvePlaybackProvider(normalizedItemId),
-                "track",
-                normalizedItemId,
-                Width: 96),
-            async token =>
-            {
-                foreach (var resolver in _metadataResolvers)
-                {
-                    var artwork = await resolver.ResolveArtworkAsync(normalizedItemId, token);
-                    if (artwork != null)
-                        return new MediaAssetSource(artwork.Content, artwork.ContentType);
-                }
-                if (normalizedItemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase))
-                    return await ProviderArtworkFallback.ReadAsync(HttpContext.RequestServices, ResolvePlaybackProvider(normalizedItemId), 96, token);
-                return null;
-            },
-            5 * 1024 * 1024,
-            cancellationToken);
-
-        if (asset == null) return NotFound();
-        Response.Headers.CacheControl = "private, max-age=300";
-        return File(asset.Bytes, asset.ContentType);
+        var asset = await ReadDownloadArtworkAsync(session, normalizedItemId, cancellationToken);
+        Response.Headers.CacheControl = asset == null ? "private, max-age=3600" : "private, max-age=604800";
+        return asset == null ? NoContent() : File(asset.Bytes, asset.ContentType);
     }
 
     private async Task<PlaybackTrackMetadata?> TryResolvePlaybackMetadataAsync(

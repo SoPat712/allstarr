@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { flip } from "svelte/animate";
   import { ArrowRight, ChevronDown, CircleAlert } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
@@ -16,6 +16,8 @@
   import {
     activityAction,
     activityHeadline,
+    activityRecovery,
+    jobState,
     activityText,
     activityTone,
     activityDuration,
@@ -39,12 +41,15 @@
   import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-    import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
+  import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { findProviderDefinition } from "$lib/sources";
 
   let { administrator = false, scope = "mine" }: { administrator?: boolean; scope?: "mine" | "everyone" } = $props();
 
   let disposed = false;
+  let earlierButton = $state<HTMLButtonElement | null>(null);
+  let filterTopUpPending = false;
+  let previousFilters = "";
   let items = $state<ActivityItem[]>([]);
   let providers = $state<ProviderDefinition[]>([]);
   let backend = $state("Local library");
@@ -105,49 +110,57 @@
   }
 
   async function load(mode: "initial" | "refresh" | "older" = "refresh") {
-    if (refreshing || loadingEarlier) return;
+    if (disposed || refreshing || loadingEarlier) return;
     if (mode === "older") loadingEarlier = true;
     else refreshing = true;
     if (items.length) error = "";
     try {
-      const response = await eventLog.list(mode === "older"
-        ? { limit: 50, before: cursor, beforeId: cursorId, scope }
-        : { limit: 50, scope });
-      if (disposed) return;
-      error = "";
-      if (mode === "initial") items = response.items;
-      else if (mode === "older") items = mergeActivity(items, response.items);
-      else {
-        const knownIds = new Set(items.map((item) => item.id));
-        const added = response.items.filter((item) => !knownIds.has(item.id));
-        items = mergeActivity(items, response.items);
-        if (added.length) {
-          streamedIds = new Set(added.map((item) => item.id));
-          const announcement = `${added.length} new ${added.length === 1 ? "event" : "events"} streamed in.`;
-          if (streamAnnouncement === announcement) {
-            streamAnnouncement = "";
-            await tick();
+      const knownIds = new Set(items.map((item) => item.id));
+      const knownGroups = new Set(groups.map(group => group.key));
+      for (let page = 0; page < (mode === "refresh" ? 1 : 8); page++) {
+        if (disposed) return;
+        const response = await eventLog.list(mode === "older" || page > 0
+          ? { limit: 100, before: cursor, beforeId: cursorId, scope }
+          : { limit: 100, scope });
+        if (disposed) return;
+        error = "";
+        if (mode === "initial" && page === 0) items = response.items;
+        else if (mode !== "refresh") items = mergeActivity(items, response.items);
+        else {
+          const added = response.items.filter((item) => !knownIds.has(item.id));
+          items = mergeActivity(items, response.items);
+          if (added.length) {
+            streamedIds = new Set(added.map((item) => item.id));
+            const announcement = `${added.length} new ${added.length === 1 ? "event" : "events"} streamed in.`;
+            if (streamAnnouncement === announcement) {
+              streamAnnouncement = "";
+              await tick();
+            }
+            streamAnnouncement = announcement;
+            if (streamTimer) clearTimeout(streamTimer);
+            streamTimer = setTimeout(() => {
+              streamedIds = new Set();
+              streamAnnouncement = "";
+              streamTimer = null;
+            }, 600);
           }
-          streamAnnouncement = announcement;
-          if (streamTimer) clearTimeout(streamTimer);
-          streamTimer = setTimeout(() => {
-            streamedIds = new Set();
-            streamAnnouncement = "";
-            streamTimer = null;
-          }, 600);
         }
-      }
-      if (mode !== "refresh" || !cursor) {
-        cursor = response.nextCursor || "";
-        cursorId = response.nextCursorId || "";
-        hasMore = response.hasMore;
+        if (mode !== "refresh" || !cursor) {
+          cursor = response.nextCursor || "";
+          cursorId = response.nextCursorId || "";
+          hasMore = response.hasMore;
+        }
+        if (mode === "refresh" || !hasMore || !cursor ||
+          groups.filter(group => mode === "initial" || !knownGroups.has(group.key)).length >= 25) break;
       }
     } catch (cause) {
+      if (disposed) return;
       error = cause instanceof Error ? cause.message : "The Event log is unavailable.";
     } finally {
       loading = false;
       refreshing = false;
       loadingEarlier = false;
+      topUpFilters();
     }
   }
 
@@ -176,10 +189,29 @@
     return new Intl.DateTimeFormat(undefined, { timeStyle: "short" }).format(new Date(value));
   }
 
-  function sentence(value?: string | null) {
-    const text = humanize(value);
-    return text.charAt(0) + text.slice(1).toLowerCase();
+  function topUpFilters() {
+    if (!filterTopUpPending || disposed || loading || refreshing || loadingEarlier) return;
+    filterTopUpPending = false;
+    if (hasMore && !error && groups.length < 25) void load("older");
   }
+
+  $effect(() => {
+    const filters = JSON.stringify([showBackground, problemsOnly, query, category, providerFilter]);
+    if (previousFilters && filters !== previousFilters) filterTopUpPending = true;
+    previousFilters = filters;
+    untrack(topUpFilters);
+  });
+
+  $effect(() => {
+    const button = earlierButton;
+    if (!button || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting) && !disposed && hasMore &&
+        !loading && !refreshing && !loadingEarlier && !error) void load("older");
+    }, { rootMargin: "400px" });
+    observer.observe(button);
+    return () => observer.disconnect();
+  });
 
   function sourceName(item: ActivityItem) {
     if (item.providerId === "library" && item.source !== "library") return item.source;
@@ -201,7 +233,7 @@
   }
 
   function groupBadge(entries: ActivityItem[], state: string) {
-    if (state !== "mixed") return sentence(state);
+    if (state !== "mixed") return jobState(state);
     if (entries.every(item => item.kind !== "matching" && !item.jobId)) return `${humanize(groupSeverity(entries))} · ${entries.length} events`;
     const succeeded = entries.filter((item) => outcomeClass(item.state) === "accepted").length;
     return `${succeeded} of ${entries.length} done`;
@@ -364,11 +396,11 @@
                       {:else}
                         {#if (item.sourceTitle || item.targetTitle) && !item.detail.includes(item.sourceTitle || item.targetTitle || "")}<p><strong>{item.sourceTitle || item.targetTitle}</strong>{item.sourceArtist || item.targetArtist ? ` · ${item.sourceArtist || item.targetArtist}` : ""}</p>{/if}
                         <p>{activityText(item.detail)}</p>
-                        {#if item.recovery}<p class="notice-copy"><strong>Next step:</strong> {activityText(item.recovery)}</p>{/if}
+                        {#if item.recovery}<p class="notice-copy"><strong>Next step:</strong> {activityRecovery(item.recovery)}</p>{/if}
                       {/if}
                       <div class="event-child-meta">
                         <span>{item.actorDisplayName || "Household"} · {sourceName(item)}</span>
-                        <ActivityOutcome state={item.state} severity={item.severity} label={sentence(item.state)} />
+                        <ActivityOutcome state={item.state} severity={item.severity} label={jobState(item.state)} />
                         {#if activityDuration(item.durationMilliseconds)}<span>Took {activityDuration(item.durationMilliseconds)}</span>{/if}
                         {#if item.playlistName}<span>{item.playlistName}</span>{/if}
                       </div>
@@ -413,7 +445,7 @@
 
     {#if hasMore}
       <nav class="event-log-pagination" aria-label="Event log pages">
-        <Button variant="secondary" disabled={loadingEarlier} onclick={() => void load("older")}>
+        <Button bind:ref={earlierButton} variant="secondary" disabled={loadingEarlier || refreshing} onclick={() => void load("older")}>
           {loadingEarlier ? "Loading…" : "Load earlier events"}
         </Button>
       </nav>

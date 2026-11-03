@@ -5,6 +5,9 @@ import {
   activityDuration,
   activityHeadline,
   activityLink,
+  activityRecovery,
+  jobState,
+  jobName,
   dayLabel,
   filterActivity,
   groupActivity,
@@ -124,7 +127,7 @@ describe("background work presentation", () => {
       "downloads.quality-check": "Audio quality check", "extension.session.verify": "Verify source sign-in",
       "problem-alert.delivery": "Send problem alert", "recommendation.generate": "Generate recommendations",
       "playlist.provider-source-update": "Update source playlist", "storage.verify-files": "Verify stored files",
-      "configuration.legacy-media": "Import existing media", "releases.poll": "Check new releases",
+      "configuration.legacy-media": "Import existing media", "releases.poll": "New releases check",
       "library.refresh": "Library refresh", "library.promote": "Promote song to library",
       "playback.signal.process": "Record a listen", "spotify-likes.import": "Import Spotify likes",
     })) {
@@ -136,7 +139,7 @@ describe("background work presentation", () => {
   it("uses ordinary job names and distinguishes deferred work", async () => {
     const { jobName, jobState, progressPercent } = await import("./activity");
     expect(jobName("playlist.materialize")).toBe("Update playlist");
-    expect(jobState("RetryScheduled")).toBe("Retrying");
+    expect(jobState("RetryScheduled")).toBe("Retry scheduled");
     expect(jobState("Deferred")).toBe("Deferred");
     expect(progressPercent(5, 10)).toBe(50);
     expect(progressPercent(20, 10)).toBe(100);
@@ -262,5 +265,38 @@ describe("Activity outcome tones", () => {
     expect(activityTone("recorded", "Warning")).toBe("warning");
     expect(activityTone("not_checked", "error")).toBe("neutral");
     expect(activityTone("partial-failure", "error")).toBe("warning");
+  });
+});
+
+
+describe("activity labels and retry times", () => {
+  it("uses the same state labels for enum and stored state spellings", () => {
+    for (const state of ["RetryScheduled", "retry_scheduled", "retryscheduled"])
+      expect(jobState(state)).toBe("Retry scheduled");
+    for (const state of ["PartiallySucceeded", "partially_succeeded", "partiallysucceeded"])
+      expect(jobState(state)).toBe("Partly done");
+  });
+
+  it("names all remaining registered work and respects supplied names", () => {
+    for (const [type, label] of Object.entries({
+      "mixes.refresh": "Mix refresh", "collection.migrate": "Moving your music",
+      "compilation": "Compilation", "listening-history.resolve": "Find imported songs",
+      "smart-playlist.materialize": "Update smart playlist",
+    })) {
+      expect(jobName(type)).toBe(label);
+      expect(activityHeadline({ ...item(type, "Finished"), kind: "job", label: "Background task", action: type })).toBe(label);
+    }
+    expect(jobName("mixes.refresh", "Refresh evening mixes")).toBe("Refresh evening mixes");
+    expect(activityHeadline({ ...item("job", "Finished"), kind: "job", label: "mixes.refresh", displayName: "Refresh evening mixes" })).toBe("Refresh evening mixes");
+  });
+
+  it("renders retry schedules using the viewer's local clock and date", () => {
+    const retry = new Date("2026-11-03T04:00:27Z");
+    const clock = new Intl.DateTimeFormat(undefined, { timeStyle: "short" }).format(retry);
+    expect(activityRecovery("Retry scheduled for 2026-11-03 04:00:27 UTC.", retry)).toBe(`Retrying at ${clock}`);
+    const dated = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(retry);
+    expect(activityRecovery("Retry scheduled for 2026-11-03 04:00:27 UTC.", new Date("2026-11-01T12:00:00Z"))).toBe(`Retrying at ${dated}`);
+    expect(activityRecovery("Review your source connection.")).toBe("Review your source connection.");
+    expect(activityRecovery("Retry scheduled for an unknown time.")).toBe("Retry scheduled for an unknown time.");
   });
 });

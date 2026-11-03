@@ -238,3 +238,16 @@ test("A failed removal keeps the mix and can be retried", async ({ page }) => {
   expect(cards[0].inApps).toBe(true); failing = false; await confirm.click();
   await expect(dialog).toHaveCount(0); await expect(page.locator(".playlist-row")).toHaveCount(0);
 });
+
+
+test("Playlist removal uses an outlined control under coverage", async ({ page }) => {
+  await mockCopies(page, false, false, [mixPlaylist], builtInMixes);
+  await page.goto("/#/library/playlists");
+  for (const name of [mixPlaylist.name, keptMix.name]) {
+    const action = page.getByRole("button", { name: `Remove ${name} from my apps`, exact: true });
+    await expect(action).toHaveText("Remove from my apps");
+    await expect(action.locator('svg[data-icon="inline-start"]')).toHaveCount(1);
+    expect(await action.evaluate(element => getComputedStyle(element).borderTopStyle)).toBe("solid");
+    expect(await action.evaluate(element => getComputedStyle(element).borderTopColor)).not.toBe("rgba(0, 0, 0, 0)");
+  }
+});

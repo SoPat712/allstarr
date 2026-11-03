@@ -118,7 +118,7 @@ test("Activity consolidates repeated song updates and expands all items", async 
   await expect(groups).toHaveCount(2);
   const succeeded = groups.first(), failed = groups.last();
   await expect(succeeded.locator(":scope > summary")).toContainText("Song details updated · 100 songs");
-  await expect(succeeded.locator(":scope > summary [data-slot=badge]")).toHaveText("Succeeded");
+  await expect(succeeded.locator(":scope > summary [data-slot=badge]")).toHaveText("Completed");
   await expectOutcome(succeeded.locator(":scope > summary [data-slot=badge]"), "success");
   await expect(succeeded.locator(":scope > summary .event-kind-icon")).toHaveAttribute("data-tone", "success");
   await expect(succeeded.locator(".event-child").first()).not.toBeVisible();
@@ -220,4 +220,90 @@ test("Diagnostic event groups do not pretend to be unfinished jobs", async ({ pa
   await group.locator(":scope > summary").click();
   await expectOutcome(group.locator(".event-child [data-slot=badge]").nth(0), "neutral");
   await expectOutcome(group.locator(".event-child [data-slot=badge]").nth(1), "warning");
+});
+
+
+async function mockPagedActivity(page: Page, pages: number, visiblePerPage = 10, consolidate = false) {
+  await mockActivity(page);
+  const requests: URL[] = [];
+  let active = 0, peak = 0;
+  await page.route("**/api/admin/ui/activity?**", async route => {
+    const url = new URL(route.request().url());
+    requests.push(url); active++; peak = Math.max(peak, active);
+    const index = Number(url.searchParams.get("beforeId") || 0);
+    const items = Array.from({ length: 100 }, (_, offset) => ({
+      id: `page-${index}-${offset}`, kind: offset < visiblePerPage ? "playlist" : "job",
+      label: offset < visiblePerPage ? consolidate ? "Playlist updated" : `Evening playlist ${index}-${offset}` : "Background task",
+      source: "System", detail: "Finished", state: "succeeded",
+      occurredAt: new Date(Date.UTC(2026, 9, 26, 12, 0, -(index * 100 + offset))).toISOString(),
+    }));
+    await route.fulfill({ json: { items, hasMore: index + 1 < pages, nextCursor: items.at(-1)!.occurredAt, nextCursorId: String(index + 1) } });
+    active--;
+  });
+  return { requests, peak: () => peak };
+}
+
+test("Activity tops up filtered pages and automatically loads earlier events on scroll", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 700 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const fixture = await mockPagedActivity(page, 6);
+  await page.goto("/#/activity");
+  await expect(page.locator(".event-log-group")).toHaveCount(30);
+  expect(fixture.requests).toHaveLength(3);
+  expect(fixture.requests.every(url => url.searchParams.get("limit") === "100")).toBe(true);
+  expect(fixture.requests[1].searchParams.get("beforeId")).toBe("1");
+  await page.getByRole("button", { name: "Load earlier events" }).scrollIntoViewIfNeeded();
+  await expect(page.locator(".event-log-group")).toHaveCount(60);
+  expect(fixture.requests).toHaveLength(6);
+  expect(fixture.peak()).toBe(1);
+});
+
+test("Activity tops up when search filters leave fewer than twenty five events", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 700 });
+  const fixture = await mockPagedActivity(page, 7);
+  await page.goto("/#/activity");
+  await expect(page.locator(".event-log-group")).toHaveCount(30);
+  await page.getByRole("searchbox", { name: "Search", exact: true }).fill("Evening playlist 6-");
+  await expect(page.locator(".event-log-group")).toHaveCount(10);
+  await expect(page.getByRole("button", { name: "Load earlier events" })).toHaveCount(0);
+  expect(fixture.requests).toHaveLength(7);
+});
+
+test("Activity bounds a routine-only initial load to eight sequential pages", async ({ page }) => {
+  const fixture = await mockPagedActivity(page, 20, 0);
+  await page.addInitScript(() => { window.IntersectionObserver = class {
+    observe() {} unobserve() {} disconnect() {} takeRecords() { return []; }
+    root = null; rootMargin = ""; thresholds = [];
+  } as unknown as typeof IntersectionObserver; });
+  await page.goto("/#/activity");
+  await expect(page.getByRole("button", { name: "Load earlier events" })).toBeEnabled();
+  expect(fixture.requests).toHaveLength(8);
+  expect(fixture.peak()).toBe(1);
+  await page.getByRole("button", { name: "Load earlier events" }).click();
+  await expect.poll(() => fixture.requests.length).toBe(16);
+});
+
+test("Activity counts displayed groups when repeated events consolidate", async ({ page }) => {
+  await page.addInitScript(() => { window.IntersectionObserver = class {
+    observe() {} unobserve() {} disconnect() {} takeRecords() { return []; }
+    root = null; rootMargin = ""; thresholds = [];
+  } as unknown as typeof IntersectionObserver; });
+  const fixture = await mockPagedActivity(page, 20, 100, true);
+  await page.goto("/#/activity");
+  await expect(page.getByRole("button", { name: "Load earlier events" })).toBeEnabled();
+  expect(fixture.requests).toHaveLength(8);
+  expect(await page.locator(".event-log-group").count()).toBeLessThan(25);
+});
+
+test("Activity uses readable retry badges and local retry times", async ({ page }) => {
+
+  await mockActivity(page, [{ ...rows[1], state: "RetryScheduled", label: "mixes.refresh", displayName: "Mix refresh", recovery: "Retry scheduled for 2026-11-03 04:00:27 UTC." }]);
+  await page.goto("/#/activity");
+  const group = page.locator(".event-log-group");
+  await expect(group.locator(":scope > summary [data-slot=badge]")).toHaveText("Retry scheduled");
+  await group.locator(":scope > summary").click();
+  await expect(group.locator(".event-child-meta [data-slot=badge]")).toHaveText("Retry scheduled");
+  const localTime = await page.evaluate(() => new Intl.DateTimeFormat(undefined, { timeStyle: "short" }).format(new Date("2026-11-03T04:00:27Z")));
+  await expect(group.locator(".notice-copy")).toContainText(localTime);
+  await expect(group.locator(".notice-copy")).not.toContainText("UTC");
 });

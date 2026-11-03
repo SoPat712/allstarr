@@ -8,7 +8,7 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { Badge } from "$lib/components/ui/badge";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { ArrowRight, ChevronDown, MoreHorizontal, Server, X } from "@lucide/svelte";
+  import { ArrowRight, ChevronDown, MoreHorizontal, MonitorX, Server, X } from "@lucide/svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
   import CoverageBar from "$lib/components/CoverageBar.svelte";
@@ -596,7 +596,7 @@
               </span>
               <span class="playlist-summary">
                 <small>{playlist.trackCount === null ? "Song count unavailable" : `${playlist.trackCount} ${playlist.trackCount === 1 ? "song" : "songs"}`}</small>
-                <span class="mix-remove"><Button variant="ghost" aria-label={`Remove ${playlist.name} from my apps`} onclick={() => { removeError = ""; removingMix = playlist; }}>Remove from my apps</Button></span>
+                <span class="mix-remove"><Button variant="outline" size="sm" aria-label={`Remove ${playlist.name} from my apps`} onclick={() => { removeError = ""; removingMix = playlist; }}><MonitorX data-icon="inline-start" aria-hidden="true" />Remove from my apps</Button></span>
               </span>
             </div>
           {:else}
@@ -648,7 +648,7 @@
                 </span>
                 <small>{playlist.playableCount} of {playlist.trackCount} playable</small>
                 {#if !playlist.enabled}<Badge state="suggested">Paused</Badge>{/if}
-                {#if isServiceMix(playlist)}<span class="mix-remove"><Button variant="ghost" aria-label={`Remove ${playlist.name} from my apps`} onclick={() => { removeError = ""; removingMix = playlist; }}>Remove from my apps</Button></span>{/if}
+                {#if isServiceMix(playlist)}<span class="mix-remove"><Button variant="outline" size="sm" aria-label={`Remove ${playlist.name} from my apps`} onclick={() => { removeError = ""; removingMix = playlist; }}><MonitorX data-icon="inline-start" aria-hidden="true" />Remove from my apps</Button></span>{/if}
               </span>
               <!-- A finished playlist already says 100% beside it; the bar is only drawn where something is left to do. -->
               {#if !(playlist.trackCount > 0 && confirmedPercent === 100 && playlist.playableCount === playlist.trackCount)}<CoverageBar {...playlistMatchCounts(playlist.metrics)} compact />{/if}

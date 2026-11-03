@@ -44,7 +44,7 @@ const baseFile = {
   removable: true,
 };
 
-async function mockDownloadsApp(page: Page, queued = true): Promise<DownloadFixture> {
+async function mockDownloadsApp(page: Page, queued = true, keptActions = false): Promise<DownloadFixture> {
   const fixture: DownloadFixture = { keepHeaders: [], keepRequests: 0, releaseRequests: 0, releaseStorage: [] };
   let cacheFile = { ...baseFile };
   let moved = false;
@@ -54,8 +54,9 @@ async function mockDownloadsApp(page: Page, queued = true): Promise<DownloadFixt
     storage: "legacy",
     publicationState: "Referenced",
     referenceCount: 2,
-    explicitlyKept: false,
-    removable: false,
+    explicitlyKept: keptActions,
+    removable: keptActions,
+    canDeleteKeptCopy: keptActions,
   };
 
   await page.route("**/images/providers/**", (route) => route.fulfill({
@@ -337,4 +338,43 @@ test("completed Keep reports the move and removes the Cache row", async ({ page 
   await row.getByRole("button", { name: "Keep", exact: true }).click();
   await expect(page.getByText("Moved to Kept.", { exact: true })).toBeVisible();
   await expect(row).toHaveCount(0);
+});
+
+
+for (const storage of ["cached", "kept"]) test(`Downloads show a labeled outlined action in ${storage}`, async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await mockDownloadsApp(page, true, storage === "kept");
+  await page.goto(`/#/library/${storage}`);
+  const action = page.locator(".download-actions").first().getByRole("link", { name: "Download", exact: true });
+  await expect(action).toHaveText("Download");
+  await expect(action).toHaveAttribute("data-slot", "button");
+  await expect(action.locator('svg[data-icon="inline-start"]')).toHaveCount(1);
+  expect(await action.evaluate(element => getComputedStyle(element).borderTopStyle)).toBe("solid");
+  expect(await action.evaluate(element => getComputedStyle(element).borderTopColor)).not.toBe("rgba(0, 0, 0, 0)");
+  const headerActions = page.locator(".downloads-heading-actions");
+  const removeAll = headerActions.getByRole("button", { name: "Remove all", exact: true });
+  await expect(removeAll).toHaveText("Remove all");
+  await expect(removeAll.locator('svg[data-icon="inline-start"]')).toHaveCount(1);
+  expect(await removeAll.evaluate(element => getComputedStyle(element).borderTopColor)).not.toBe("rgba(0, 0, 0, 0)");
+  const headerHeights = () => headerActions.locator("[data-slot=button]").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().height));
+  expect(new Set(await headerHeights()).size).toBe(1);
+  const actions = page.locator(".download-actions").first();
+  await expect(actions.locator(":scope > :first-child")).toHaveAccessibleName("Download");
+  if (storage === "cached") {
+    const remove = actions.getByRole("button", { name: "Remove", exact: true });
+    await expect(remove).toHaveText("Remove");
+    await expect(remove.locator('svg[data-icon="inline-start"]')).toHaveCount(1);
+    expect(await remove.evaluate(element => getComputedStyle(element).borderTopColor)).not.toBe("rgba(0, 0, 0, 0)");
+  }
+  if (storage === "kept") {
+    await expect(actions.locator("[data-slot=button]")).toHaveText(["Download", "Delete kept copy…", "Release Keep"]);
+    const heights = await actions.locator("[data-slot=button]").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().height));
+    expect(new Set(heights).size).toBe(1);
+  }
+  await page.setViewportSize({ width: 390, height: 900 });
+  await expect(action).toHaveText("Download");
+  if (storage === "cached") await expect(actions.getByRole("button", { name: "Remove", exact: true })).toHaveText("Remove");
+  await expect(removeAll).toHaveText("Remove all");
+  expect(new Set(await headerHeights()).size).toBe(1);
+  await expectContainedMobileGeometry(page);
 });

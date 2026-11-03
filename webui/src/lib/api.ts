@@ -173,6 +173,7 @@ export type PlayTraceAuthority = { authorityScope: MatchAuthorityScope; expected
 export type PlayTraceReportRequest = { requestId: string; note: string };
 
 export type ActivityItem = {
+  displayName?: string | null;
   jobId?: string | null;
   recovery?: string | null;
   actionHref?: string | null;

@@ -221,7 +221,7 @@
       <div class="panel-heading-actions downloads-heading-actions">
         <RefreshButton variant="secondary" onrefresh={refresh} />
         {#if bulkActionCount}
-          <Button class="download-remove" variant="ghost" onclick={() => confirm({ kind: "all" })}>Remove all</Button>
+          <Button class="download-remove" variant="outline" onclick={() => confirm({ kind: "all" })}><Trash2 data-icon="inline-start" aria-hidden="true" />Remove all</Button>
         {/if}
       </div>
     </header>
@@ -290,7 +290,7 @@
                 <small>Updated <time datetime={file.lastModified}>{relativeTime(file.lastModified)}</time></small>
               </span>
               <span class="download-actions" role="cell">
-                <Button variant="ghost" size="icon" href={downloads.fileUrl(file.path, storage)} aria-label="Download" title="Download a copy"><Download size={18} aria-hidden="true" /></Button>
+                <Button class="download-copy" variant="outline" href={downloads.fileUrl(file.path, storage)} aria-label="Download" title="Download a copy"><Download size={18} data-icon="inline-start" aria-hidden="true" />Download</Button>
                 {#if !cached && file.canDeleteKeptCopy}
                   <Button variant="destructive" disabled={Boolean(action)} onclick={() => void previewDeletion(file)}>Delete kept copy…</Button>
                 {/if}
@@ -301,7 +301,7 @@
                     <Button disabled={Boolean(action)} onclick={() => confirm({ kind: "release", file })}>Release Keep</Button>
                   {:else}
                     {#if cached}<Button disabled={Boolean(action)} onclick={() => void keep(file)}>Keep</Button>{/if}
-                    <Button class="download-remove" variant="ghost" size="icon" disabled={Boolean(action)} aria-label="Remove" title="Remove" onclick={() => confirm({ kind: "one", file })}><Trash2 size={18} aria-hidden="true" /></Button>
+                    <Button class="download-remove" variant="outline" disabled={Boolean(action)} aria-label="Remove" title="Remove" onclick={() => confirm({ kind: "one", file })}><Trash2 size={18} data-icon="inline-start" aria-hidden="true" />Remove</Button>
                   {/if}
                 {/if}
               </span>
@@ -351,9 +351,10 @@
 {/if}
 
 <style>
+  :global(.download-actions .download-copy), :global(.download-actions .download-remove) { display: inline-flex; }
   .download-provider-id { display: none; }
   .track-cache-link { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--surface-gutter); border-top: 1px solid var(--color-edge); }
-  :global(.download-actions .download-remove:not(:disabled):hover) { color: var(--md-sys-color-error); }
+  :global(.download-actions .download-remove:not(:disabled):hover), :global(.downloads-heading-actions .download-remove:not(:disabled):hover) { color: var(--md-sys-color-error); }
   .download-quality-summary {
     display: flex;
     align-items: center;

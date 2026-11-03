@@ -256,13 +256,18 @@ export const jobNames: Record<string, string> = {
   "downloads.quality-check": "Audio quality check", "extension.session.verify": "Verify source sign-in",
   "problem-alert.delivery": "Send problem alert", "recommendation.generate": "Generate recommendations",
   "playlist.provider-source-update": "Update source playlist", "storage.verify-files": "Verify stored files",
-  "configuration.legacy-media": "Import existing media", "releases.poll": "Check new releases",
+  "configuration.legacy-media": "Import existing media", "releases.poll": "New releases check",
   "library.refresh": "Library refresh", "library.promote": "Promote song to library",
   "playback.signal.process": "Record a listen", "spotify-likes.import": "Import Spotify likes",
+  "mixes.refresh": "Mix refresh", "collection.migrate": "Moving your music", "compilation": "Compilation",
+  "listening-history.resolve": "Find imported songs", "smart-playlist.materialize": "Update smart playlist",
 };
-export function jobName(type: string) { return jobNames[type] ?? "Background task"; }
+export function jobName(type: string, displayName?: string | null) { return displayName?.trim() || jobNames[type] || "Background task"; }
 export function jobState(state: string) {
-  return ({ Pending: "Waiting", Running: "Running", RetryScheduled: "Retrying", Deferred: "Deferred", Succeeded: "Completed", Failed: "Failed", Cancelled: "Cancelled" } as Record<string, string>)[state] ?? humanize(state);
+  const normalized = state.toLowerCase().replaceAll(/[-_ ]/g, "");
+  return ({ pending: "Waiting", running: "Running", retryscheduled: "Retry scheduled", deferred: "Deferred",
+    succeeded: "Completed", partiallysucceeded: "Partly done", failed: "Failed", cancelled: "Cancelled",
+  } as Record<string, string>)[normalized] ?? humanize(state).toLowerCase().replace(/^./, letter => letter.toUpperCase());
 }
 export function progressPercent(completed?: number | null, total?: number | null) {
   return typeof total === "number" && Number.isFinite(total) && total > 0 && typeof completed === "number" && Number.isFinite(completed)
@@ -292,10 +297,24 @@ export function activityText(value?: string | null) {
   return value.replace(opaqueReference, "the recorded item");
 }
 export function activityHeadline(item: ActivityItem) {
-  if (item.kind === "job" && /^[a-z0-9-]+\.[a-z0-9.-]+$/.test(item.label)) return jobName(item.label);
+  if (item.kind === "job") {
+    if (item.displayName?.trim()) return activityText(item.displayName);
+    if (jobNames[item.label] || /^[a-z0-9-]+\.[a-z0-9.-]+$/.test(item.label)) return jobName(item.label);
+    if (item.label.toLowerCase() === "background task") return jobName(item.action || "");
+  }
   return activityText(item.label) || "Activity update";
 }
 export function activityDuration(value?: number | null) {
   if (value == null || !Number.isFinite(value) || value < 0) return "";
   return value < 1000 ? "less than a second" : `${Number((value / 1000).toFixed(1))} seconds`;
+}
+
+export function activityRecovery(value?: string | null, now = new Date()) {
+  const text = activityText(value);
+  const match = /^Retry scheduled for (\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) UTC\.$/.exec(text);
+  if (!match) return text;
+  const date = new Date(`${match[1]}T${match[2]}Z`);
+  if (Number.isNaN(date.getTime())) return text;
+  const today = date.toDateString() === now.toDateString();
+  return `Retrying at ${new Intl.DateTimeFormat(undefined, { timeStyle: "short", ...(today ? {} : { dateStyle: "medium" }) }).format(date)}`;
 }

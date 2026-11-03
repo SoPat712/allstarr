@@ -17,6 +17,15 @@ namespace allstarr.Tests;
 
 public sealed class DownloadActivityControllerTests
 {
+    [Fact]
+    public async Task Artwork_WithoutCoverReturnsNoContentWithReleaseCachePolicy()
+    {
+        var controller = CreateController([], []);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession();
+        Assert.IsType<NoContentResult>(await controller.GetPlaybackArtwork("ext-apple-musickit-song-6792884096", default));
+        Assert.Equal("private, max-age=3600", controller.Response.Headers.CacheControl);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
