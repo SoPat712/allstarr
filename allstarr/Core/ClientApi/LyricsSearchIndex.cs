@@ -148,6 +148,13 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
         try
         {
             Open();
+            var scorer = new LyricsSearchMatcher.PreparedQuery(normalized);
+            _connection!.CreateFunction<string, double>("lyrics_score", text =>
+            {
+                var split = text.IndexOf('\n');
+                return scorer.Score(split < 0 ? text.AsSpan() : text.AsSpan(0, split),
+                    split < 0 ? default : text.AsSpan(split + 1));
+            }, isDeterministic: true);
             using (var transaction = _connection!.BeginTransaction())
             {
                 _transaction = transaction;
@@ -161,8 +168,8 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
             var matches = new List<(long Id, int Ordinal)>();
             using (var exact = Command("""
                 SELECT doc, ordinal FROM lines JOIN eligible ON eligible.id=lines.doc
-                WHERE lines MATCH $phrase AND lyrics_score(text,$query)=1 ORDER BY lines.rowid
-                """, ("$phrase", "\"" + normalized + "\""), ("$query", normalized)))
+                WHERE lines MATCH $phrase AND lyrics_score(text)=1 ORDER BY lines.rowid
+                """, ("$phrase", "\"" + normalized + "\"")))
             using (var reader = exact.ExecuteReader())
             {
                 var seen = new HashSet<long>();
@@ -177,11 +184,11 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
             {
                 matches.Clear();
                 using var search = Command("""
-                    SELECT doc, ordinal, max(lyrics_score(text,$query)) AS score
+                    SELECT doc, ordinal, max(lyrics_score(text)) AS score
                     FROM lines JOIN eligible ON eligible.id=lines.doc
                     WHERE lines MATCH $fts GROUP BY doc HAVING score>0
                     ORDER BY score DESC, doc LIMIT $take
-                    """, ("$query", normalized), ("$fts", fts), ("$take", limit + 1));
+                    """, ("$fts", fts), ("$take", limit + 1));
                 using var reader = search.ExecuteReader();
                 while (reader.Read()) matches.Add((reader.GetInt64(0), reader.GetInt32(1)));
             }
@@ -325,11 +332,6 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
             CREATE TABLE IF NOT EXISTS library_state(id TEXT PRIMARY KEY,revision INTEGER NOT NULL);
             CREATE TEMP TABLE eligible(id INTEGER PRIMARY KEY);
             """);
-        db.CreateFunction<string, string, double>("lyrics_score", (text, query) =>
-        {
-            var split = text.IndexOf('\n');
-            return LyricsSearchMatcher.Score(split < 0 ? text : text[..split], split < 0 ? null : text[(split + 1)..], query);
-        }, isDeterministic: true);
         using (var checkpoints = Command("SELECT id,revision FROM library_state"))
         using (var checkpointReader = checkpoints.ExecuteReader())
             while (checkpointReader.Read()) _libraryStamps[Guid.Parse(checkpointReader.GetString(0))] = checkpointReader.GetInt64(1);

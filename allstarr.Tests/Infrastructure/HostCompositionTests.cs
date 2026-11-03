@@ -1,4 +1,5 @@
 using allstarr.Controllers;
+using allstarr.Controllers.ClientApi;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Infrastructure;
@@ -157,11 +158,23 @@ public sealed class HostCompositionTests
             .Where(type => !type.IsAbstract && typeof(ControllerBase).IsAssignableFrom(type))
             .Where(type => type.AsType() != typeof(JellyfinController) &&
                            type.AsType() != typeof(SubsonicController) &&
+                           !typeof(ClientApiControllerBase).IsAssignableFrom(type) &&
                            type.GetCustomAttribute<ReleaseFeatureAttribute>() == null)
             .Select(type => type.AsType())
             .ToArray();
         Assert.All(backendNeutralControllers, controllerType =>
             Assert.Contains(controllerType, controllerTypes));
+
+        var clientApiControllers = typeof(Program).Assembly.DefinedTypes
+            .Where(type => !type.IsAbstract && typeof(ClientApiControllerBase).IsAssignableFrom(type))
+            .Select(type => type.AsType())
+            .ToArray();
+        Assert.NotEmpty(clientApiControllers);
+        Assert.All(clientApiControllers, controllerType =>
+        {
+            if (backend == "Jellyfin") Assert.Contains(controllerType, controllerTypes);
+            else Assert.DoesNotContain(controllerType, controllerTypes);
+        });
 
         var handlers = factory.Services.GetServices<IDurableJobHandler>().Select(item => item.GetType()).ToArray();
         Assert.DoesNotContain(typeof(RecommendationRunJobHandler), handlers);

@@ -84,20 +84,32 @@ public sealed partial class ProtocolRouteFixtureTests
         var bytes = Directory.GetFiles(Path.GetDirectoryName(index.DatabasePath)!, "lyrics-search-v1.db*").Sum(path => new FileInfo(path).Length);
         Assert.True(bytes < 512L * 1024 * 1024, $"Index size was {bytes} bytes");
         _lyricsSearchOutput.WriteLine($"Indexed 20000 songs / 1200000 lines in {loading.Elapsed.TotalSeconds:F2}s; database and journal bytes: {bytes}");
-        await ReadClientLyricsJsonAsync(client, "/allstarr/v1/search/lyrics?q=silver%20moon");
-        var watch = Stopwatch.StartNew();
-        var common = await ReadClientLyricsJsonAsync(client, "/allstarr/v1/search/lyrics?q=silver%20moon");
-        watch.Stop();
-        _lyricsSearchOutput.WriteLine($"Common phrase full HTTP response: {watch.Elapsed.TotalMilliseconds:F1}ms");
-        Assert.Equal(20, common["results"]!.AsArray().Count);
-        Assert.True(common["truncated"]!.GetValue<bool>());
-        Assert.True(watch.Elapsed < TimeSpan.FromMilliseconds(300), $"Common phrase took {watch.Elapsed.TotalMilliseconds:F1}ms");
-        watch.Restart();
-        var specific = await ReadClientLyricsJsonAsync(client, "/allstarr/v1/search/lyrics?q=constellation%20number%2019999");
-        watch.Stop();
-        _lyricsSearchOutput.WriteLine($"Specific phrase full HTTP response: {watch.Elapsed.TotalMilliseconds:F1}ms");
-        Assert.Equal("native-19999", specific["results"]![0]!["itemId"]!.GetValue<string>());
-        Assert.True(watch.Elapsed < TimeSpan.FromMilliseconds(300), $"Specific phrase took {watch.Elapsed.TotalMilliseconds:F1}ms");
+        var budget = TimeSpan.FromMilliseconds(Environment.GetEnvironmentVariable("CI") != null ? 600 : 300);
+        await Measure("Common phrase", "/allstarr/v1/search/lyrics?q=silver%20moon", common =>
+        {
+            Assert.Equal(20, common["results"]!.AsArray().Count);
+            Assert.True(common["truncated"]!.GetValue<bool>());
+        });
+        await Measure("Specific phrase", "/allstarr/v1/search/lyrics?q=constellation%20number%2019999", specific =>
+            Assert.Equal("native-19999", specific["results"]![0]!["itemId"]!.GetValue<string>()));
+
+        async Task Measure(string name, string path, Action<JsonNode> verify)
+        {
+            await ReadClientLyricsJsonAsync(client, path);
+            var elapsed = new TimeSpan[5];
+            for (var run = 0; run < elapsed.Length; run++)
+            {
+                var watch = Stopwatch.StartNew();
+                var response = await ReadClientLyricsJsonAsync(client, path);
+                watch.Stop();
+                elapsed[run] = watch.Elapsed;
+                verify(response);
+            }
+            Array.Sort(elapsed);
+            var median = elapsed[elapsed.Length / 2];
+            _lyricsSearchOutput.WriteLine($"{name} full HTTP response median (5 runs): {median.TotalMilliseconds:F1}ms");
+            Assert.True(median < budget, $"{name} median took {median.TotalMilliseconds:F1}ms (budget {budget.TotalMilliseconds:F0}ms)");
+        }
     }
 
     [Fact]

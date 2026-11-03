@@ -14,6 +14,31 @@ namespace allstarr.Tests;
 public sealed class LyricsSearchIndexTests
 {
     [Fact]
+    public async Task LyricsSearch_SpecificPhraseKeepsRankedPartialMatchesAndBestLine()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "lyrics-ranking-" + Guid.NewGuid().ToString("N"));
+        var context = Context();
+        try
+        {
+            using var index = new LyricsSearchIndex(new StorageOptions { DataDirectory = root });
+            await index.StoreAsync(context, Song(1), null, Lyrics("Constellation number 19999"));
+            await index.StoreAsync(context, Song(2), null, Lyrics("19999 under a constellation number"));
+            await index.StoreAsync(context, Song(3), null, Lyrics("A different story\nConstellation number 42"));
+            await index.StoreAsync(context, Song(4), null, Lyrics("Just a number"));
+            await index.StoreAsync(context, Song(5), null, Lyrics("No matching words"));
+
+            var result = await index.SearchAsync(context, "constellation number 19999", 3,
+                await index.SnapshotAsync(context), Policy(), new Dictionary<Guid, string>());
+
+            Assert.Equal(new[] { "song-1", "song-2", "song-3" }, result.Results.Select(hit => hit.ItemId));
+            Assert.Equal(new[] { 1.0, 0.8, 0.2 + 0.5 * 2 / 3 }, result.Results.Select(hit => hit.Score));
+            Assert.Equal("Constellation number 42", result.Results[2].Line.Text);
+            Assert.True(result.Truncated);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public async Task LyricsSearch_DoesNotReassignFetchedPrivateContentToANewAccountRevision()
     {
         var root = Path.Combine(Path.GetTempPath(), "lyrics-binding-" + Guid.NewGuid().ToString("N"));

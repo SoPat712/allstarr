@@ -44,6 +44,17 @@ public sealed class CacheIslandRegressionContractTests
             "allstarr",
             "Controllers",
             "DownloadActivityController.cs"));
+        var artwork = File.ReadAllText(Path.Combine(
+            _repositoryRoot,
+            "allstarr",
+            "Core",
+            "Downloads",
+            "DownloadArtworkReader.cs"));
+        var artworkController = File.ReadAllText(Path.Combine(
+            _repositoryRoot,
+            "allstarr",
+            "Controllers",
+            "DownloadActivityController.Artwork.cs"));
 
         Assert.Contains("IApplicationCache cache", external, StringComparison.Ordinal);
         Assert.Contains("BuildPlaybackMetadataKey", external, StringComparison.Ordinal);
@@ -58,7 +69,18 @@ public sealed class CacheIslandRegressionContractTests
         Assert.Contains("_permissionSource.CreateRequestAsync(context", jellyfin, StringComparison.Ordinal);
         Assert.Contains("Items?UserId=", jellyfin, StringComparison.Ordinal);
         Assert.Contains("IMediaAssetResolver mediaAssets", downloads, StringComparison.Ordinal);
-        Assert.Contains("MediaAssetIdentity", downloads, StringComparison.Ordinal);
+        Assert.Contains("IMediaAssetResolver media", artwork, StringComparison.Ordinal);
+        Assert.Contains("media.ResolveAsync(new MediaAssetIdentity(owner, null, provider, \"track\",", artwork, StringComparison.Ordinal);
+        Assert.Contains("$\"ext-{provider}-song-{trackId}\"", artwork, StringComparison.Ordinal);
+        Assert.Contains("new DownloadArtworkReader(_providerGateway, _mediaAssets,", artworkController, StringComparison.Ordinal);
+        var nativeStart = downloads.IndexOf("if (ExternalPlaybackMetadataResolver.ParseTrackIdentity(normalizedItemId) == null)", StringComparison.Ordinal);
+        var nativeEnd = downloads.IndexOf("var asset = await ReadDownloadArtworkAsync", StringComparison.Ordinal);
+        var nativeArtwork = downloads[nativeStart..nativeEnd];
+        Assert.Contains("_libraryAccess.ResolveUserAsync(viewerId, cancellationToken)", nativeArtwork, StringComparison.Ordinal);
+        Assert.Contains("resolver.ResolveArtworkAsync(normalizedItemId, access.Context, cancellationToken)", nativeArtwork, StringComparison.Ordinal);
+        Assert.Contains("\"private, no-store\"", nativeArtwork, StringComparison.Ordinal);
+        Assert.DoesNotContain("_mediaAssets", nativeArtwork, StringComparison.Ordinal);
+        Assert.DoesNotContain("IApplicationCache", nativeArtwork, StringComparison.Ordinal);
     }
 
     [Fact]

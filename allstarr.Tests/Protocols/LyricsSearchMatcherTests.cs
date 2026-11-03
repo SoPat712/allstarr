@@ -4,6 +4,24 @@ namespace allstarr.Tests;
 
 public sealed class LyricsSearchMatcherTests
 {
+    [Theory]
+    [InlineData("blue moon", null, "blue moon", 1)]
+    [InlineData("blue", "moon rising", "blue moon", 1)]
+    [InlineData("blue moon", null, "moon blue", 0.8)]
+    [InlineData("blue moonlight", null, "blue moon", 0.7)]
+    [InlineData("a blue sky", null, "blue moon", 0.45)]
+    [InlineData("a blue sky", null, "blue blue moon", 0.45)]
+    [InlineData("red sun", "blue moon", "blue moon", 0)]
+    [InlineData("blue", "moonlight blue moon", "blue moon", 0.45)]
+    [InlineData("blueberry moon", null, "blue moon", 0.7)]
+    [InlineData("the", null, "he", 0)]
+    [InlineData("", "blue moon", "blue moon", 0)]
+    [InlineData("blue moon", null, "", 0)]
+    public void LyricsSearch_ScoringPreservesBoundariesAndDistinctQueryWords(string line, string? next, string query, double expected)
+    {
+        Assert.Equal(expected, LyricsSearchMatcher.Score(line, next, query), precision: 10);
+    }
+
     [Fact]
     public void LyricsSearch_PhrasePreservesUtf16OffsetsAndCombiningAccents()
     {

@@ -46,17 +46,59 @@ public static class LyricsSearchMatcher
         }
     }
 
-    internal static double Score(string line, string? next, string query)
+    internal static double Score(string line, string? next, string query) => new PreparedQuery(query).Score(line, next);
+
+    internal sealed class PreparedQuery(string query)
     {
-        if (query.Length == 0 || line.Length == 0) return 0;
-        var joined = line + " " + next;
-        var phrase = (" " + joined + " ").IndexOf(" " + query + " ", StringComparison.Ordinal);
-        if (phrase >= 0 && phrase < line.Length) return 1;
-        var words = query.Split(' ', StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal).ToArray();
-        var whole = words.Count(word => (" " + line + " ").Contains(" " + word + " ", StringComparison.Ordinal));
-        if (whole == words.Length) return 0.8;
-        var partial = words.Count(word => (" " + line).Contains(" " + word, StringComparison.Ordinal));
-        return partial == 0 ? 0 : 0.2 + 0.5 * partial / words.Length;
+        private readonly string[] words = query.Split(' ', StringSplitOptions.RemoveEmptyEntries).Distinct(StringComparer.Ordinal).ToArray();
+
+        public double Score(ReadOnlySpan<char> line, ReadOnlySpan<char> next)
+        {
+            if (query.Length == 0 || line.Length == 0) return 0;
+            for (var offset = 0; offset < line.Length;)
+            {
+                var found = line[offset..].IndexOf(query[0]);
+                if (found < 0) break;
+                var start = offset + found;
+                offset = start + 1;
+                if (start > 0 && line[start - 1] != ' ') continue;
+                var length = Math.Min(line.Length - start, query.Length);
+                if (!line.Slice(start, length).SequenceEqual(query.AsSpan(0, length))) continue;
+                if (length == query.Length)
+                {
+                    if (start + length == line.Length || line[start + length] == ' ') return 1;
+                }
+                else if (query[length] == ' ')
+                {
+                    var tail = query.AsSpan(length + 1);
+                    if (next.StartsWith(tail, StringComparison.Ordinal) &&
+                        (tail.Length == next.Length || next[tail.Length] == ' ')) return 1;
+                }
+            }
+            var whole = 0;
+            var partial = 0;
+            foreach (var word in words)
+            {
+                var prefix = false;
+                for (var offset = 0; offset < line.Length;)
+                {
+                    var found = line[offset..].IndexOf(word, StringComparison.Ordinal);
+                    if (found < 0) break;
+                    var start = offset + found;
+                    offset = start + 1;
+                    if (start > 0 && line[start - 1] != ' ') continue;
+                    prefix = true;
+                    if (start + word.Length == line.Length || line[start + word.Length] == ' ')
+                    {
+                        whole++;
+                        break;
+                    }
+                }
+                if (prefix) partial++;
+            }
+            if (whole == words.Length) return 0.8;
+            return partial == 0 ? 0 : 0.2 + 0.5 * partial / words.Length;
+        }
     }
 
     private static Normalized Map(string text)

@@ -32,7 +32,7 @@ public sealed class DownloadArtworkReader(IProtocolProviderGateway gateway, IMed
             }
         }
 
-        var asset = await media.ResolveAsync(new(owner, null, provider, "track", $"ext-{provider}-song-{trackId}",
+        var asset = await media.ResolveAsync(new MediaAssetIdentity(owner, null, provider, "track", $"ext-{provider}-song-{trackId}",
                 Revision: "cover-v2", Width: 96),
             cancel => ReadCatalogAsync(owner, protocol, provider, trackId, cancel), MaximumBytes, token);
         return asset == null ? null : new(asset.Bytes, asset.ContentType);
