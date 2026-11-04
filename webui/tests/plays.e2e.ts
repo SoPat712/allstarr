@@ -45,30 +45,31 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     const reads = await mockPlays(page);
     await page.goto("/#/activity");
     await page.getByRole("tab", { name: "Plays", exact: true }).click();
-    const row = page.getByRole("button", { name: /Evening song/ });
+    const row = page.locator(".play-row").filter({ hasText: "Evening song" });
     await expect(row).toContainText("River");
     await expect(row).toContainText("Started in 1.2 s");
     await expect(row).toContainText("Apple Music");
     await expect(row.locator("[data-slot=badge]")).toHaveClass(/badge-success/);
-    await expect(row.locator("img")).toBeVisible();
+    await expect(row.locator(".row-leading img")).toBeVisible();
     await expect(page.getByRole("group", { name: "Activity scope" })).toHaveCount(0);
     const folder = "test-results/shots-uiactivity";
     await mkdir(folder, { recursive: true });
     await page.screenshot({ path: `${folder}/plays-list-${width}-${theme}.png`, fullPage: true });
-    await row.focus(); await page.keyboard.press("Enter");
+    await row.locator(".row-action").focus(); await page.keyboard.press("Enter");
     const steps = page.getByRole("list", { name: "Start steps" }).getByRole("listitem");
     await expect(steps).toHaveCount(2);
     await expect(steps.first()).toContainText("Choosing where to play");
     await expect(steps.last()).toContainText("Opening the source · Apple Music");
     await expect(steps.last()).toContainText("1 second");
-    await page.getByRole("button", { name: "Copy diagnostics", exact: true }).click();
+    await page.getByRole("button", { name: "More play actions" }).click();
+    await page.getByRole("menuitem", { name: "Copy diagnostics", exact: true }).click();
     await expect(page.getByText("Copied — paste it to your admin.", { exact: true })).toBeVisible();
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(redacted);
     if (width === 390) await expectContainedMobileGeometry(page);
     await page.screenshot({ path: `${folder}/plays-details-${width}-${theme}.png`, fullPage: true });
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await expect.poll(() => reads.length).toBeGreaterThan(1);
-    await expect(row).toHaveAttribute("aria-expanded", "true");
+    await expect(row.locator(".row-action")).toHaveAttribute("aria-pressed", "true");
   });
 }
 test("Plays defaults to Mine and lets an administrator choose Everyone", async ({ page }) => {
@@ -78,7 +79,7 @@ test("Plays defaults to Mine and lets an administrator choose Everyone", async (
   await expect(page.getByRole("button", { name: /Evening song/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /Morning song/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Everyone", exact: true }).click();
-  await expect(page.getByRole("button", { name: /Morning song/ })).toContainText("Saved copy");
+  await expect(page.locator(".play-row").filter({ hasText: "Morning song" })).toContainText("Saved copy");
   await page.getByRole("button", { name: "Mine", exact: true }).click();
   await expect(page.getByRole("button", { name: /Morning song/ })).toHaveCount(0);
 });
@@ -102,7 +103,8 @@ test("Diagnostics can be copied when the clipboard service is unavailable", asyn
   await page.goto("/#/activity?view=plays");
   await page.getByRole("button", { name: /Evening song/ }).click();
   await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined }));
-  await page.getByRole("button", { name: "Copy diagnostics", exact: true }).click();
+  await page.getByRole("button", { name: "More play actions" }).click();
+  await page.getByRole("menuitem", { name: "Copy diagnostics", exact: true }).click();
   await expect(page.getByText("Copied — paste it to your admin.", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => { Reflect.deleteProperty(navigator, "clipboard"); return navigator.clipboard.readText(); })).toBe(redacted);
 });

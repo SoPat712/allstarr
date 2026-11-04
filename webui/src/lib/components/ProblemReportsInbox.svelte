@@ -1,15 +1,18 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { home, matchReview, type MatchReviewItem, type ProviderDefinition } from "$lib/api";
   import { Button } from "$lib/components/ui/button";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   import { Badge } from "$lib/components/ui/badge";
-  import { Skeleton } from "$lib/components/ui/skeleton";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import ItemRow from "$lib/components/patterns/ItemRow.svelte";
+  import SidePanel from "$lib/components/patterns/SidePanel.svelte";
+  import EmptyState from "$lib/components/patterns/EmptyState.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import { MessageSquareWarning } from "@lucide/svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
-  import ProblemContextCard from "$lib/components/ProblemContextCard.svelte";
-  import RecordingLyricsPicker from "$lib/components/RecordingLyricsPicker.svelte";
-  import MatchDialog from "$lib/components/MatchDialog.svelte";
   import { Dialog } from "$lib/components/ui/dialog";
   import { X } from "@lucide/svelte";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
@@ -19,6 +22,9 @@
   let { administrator, initialReportId = "" }: { administrator: boolean; initialReportId?: string } = $props();
   let filter = $state<ReportStatus | "all">("new");
   let rows = $state<ProblemReport[]>([]);
+  let known = $state<ProblemReport[]>([]);
+  let panelOpen = $state(false);
+  const count = (status: string) => known.filter(row => status === "all" || row.status === status).length;
   let cursor = $state<string | null>(null);
   let detail = $state<ProblemReportDetail | null>(null);
   let selectedId = $state("");
@@ -26,7 +32,7 @@
   let matchLoading = $state(false);
   let selectedMatch = $state<MatchReviewItem | null>(null);
   let matchError = $state("");
-  let matchTrigger: HTMLElement | undefined;
+  let matchTrigger = $state<HTMLElement>();
   let matchWasOpen = false;
   let backend = $state("Local library");
   const wrongMatch = $derived(detail?.kind === "wrong-match");
@@ -43,8 +49,10 @@
   let detailError = $state("");
   let conflict = $state(false);
   let savedMessage = $state("");
+  let opener: HTMLElement | null = null;
   let disposed = false;
   let request = 0;
+  let listRequest = 0;
   const provider = (id: string | null) => reportSourceName(providers, id);
 
   $effect(() => {
@@ -56,28 +64,35 @@
     queueMicrotask(() => { if (trigger?.isConnected) trigger.focus(); });
   });
 
-  async function load(more = false) {
-    if (!administrator || busy || disposed || more && !cursor) return;
+  async function load(more = false, replace = false) {
+    if (!administrator || busy && !replace || disposed || more && !cursor) return;
+    const version = ++listRequest;
     busy = true; error = "";
     try {
-      const next = await listenerSupport.list(filter, more ? cursor! : undefined);
-      if (disposed) return;
+      const [next, overview] = await Promise.all([
+        listenerSupport.list(filter, more ? cursor! : undefined),
+        !more && filter !== "all" ? listenerSupport.list("all").catch(() => null) : null,
+      ]);
+      if (disposed || version !== listRequest) return;
       rows = more ? [...rows, ...next.items.filter(item => !rows.some(old => old.id === item.id))] : next.items;
       cursor = next.nextCursor;
-    } catch (cause) { error = supportError(cause, "Reports could not be loaded. Try again."); }
-    finally { busy = false; loading = false; }
+      const merged = new Map(known.map(row => [row.id, row]));
+      for (const row of [...(overview?.items ?? []), ...next.items]) merged.set(row.id, row);
+      known = [...merged.values()];
+    } catch (cause) { if (!disposed && version === listRequest) error = supportError(cause, "Reports could not be loaded. Try again."); }
+    finally { if (!disposed && version === listRequest) { busy = false; loading = false; } }
   }
   async function choose(next: string) {
-    if (busy) return;
     filter = next as ReportStatus | "all"; cursor = null; rows = []; loading = true;
-    await load();
+    await load(false, true);
   }
   async function open(id: string) {
     if (saving) return;
     lyricsOpen = false;
     matchOpen = false; matchLoading = false; selectedMatch = null; matchError = "";
     const current = ++request;
-    selectedId = id; detail = null;
+    if (!panelOpen) opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    selectedId = id; detail = null; panelOpen = true;
     detailLoading = true; detailError = ""; conflict = false; savedMessage = "";
     try {
       const incoming = await listenerSupport.detail(id);
@@ -145,33 +160,41 @@
 
 {#if administrator}
   <section class="settings-content" aria-label="Problem report inbox">
-    <header class="panel-heading"><div><h2>Problem reports</h2><p>Notes and captured diagnostics from your listeners.</p></div><div class="panel-heading-actions"><RefreshButton variant="secondary" onrefresh={() => load()} label="Refresh reports" /></div></header>
-    <SegmentedNav label="Report status" active={filter} onchange={(next) => void choose(next)} items={[
-      { id: "new", label: "New" }, { id: "seen", label: "Seen" }, { id: "fixed", label: "Fixed" }, { id: "all", label: "All" },
-    ]} />
-    {#if error}<div class="degraded-banner" role="alert"><p>{error}</p><Button variant="secondary" disabled={busy} onclick={() => void load()}>Retry reports</Button></div>{/if}
-    {#if loading}<Skeleton class="settings-card skeleton-panel" aria-label="Loading reports" aria-busy="true" />
+    <PageStatus label="Reports status" items={[{ label: loading ? "Loading reports…" : count("new") + (count("new") === 1 ? " new report" : " new reports") }, { label: count("seen") + " seen · " + count("fixed") + " fixed · " + known.length + " reports loaded" }]} />
+    <div class="report-toolbar"><FilterSegments label="Report status" value={filter} onchange={(next) => void choose(next)} storageKey="activity.reports" options={[
+      { id: "new", label: "New", count: count("new") }, { id: "seen", label: "Seen", count: count("seen") },
+      { id: "fixed", label: "Fixed", count: count("fixed") }, { id: "all", label: "All", count: count("all") },
+    ]} /><RefreshButton variant="outline" onrefresh={() => load()} label="Refresh reports" /></div>
+    {#if error}<ErrorState title={error} onretry={() => load()} />{/if}
+    {#if loading}<RowsSkeleton label="Loading reports" />
     {:else if rows.length}
-      <article class="settings-card" aria-label="Report list">
+      <article class="report-list" aria-label="Report list">
         {#each rows as row (row.id)}
-          <div class="settings-row"><div><strong>{row.songTitle ?? "General report"}</strong><small>{row.artist ? `${row.artist} · ` : ""}{reportKindLabel(row.kind)} · {row.reporterName} · {supportDate(row.createdAt)}</small><small>{row.notePreview}</small><small>Source: {provider(row.providerId)} · App: {row.clientName ?? "Not captured"}</small></div>
-            <div class="panel-heading-actions"><Badge tone={row.status === "fixed" ? "success" : row.status === "new" ? "accent" : "neutral"}>{reportStatusLabel(row.status)}</Badge><Button variant="secondary" disabled={saving} aria-label={`Open report for ${row.songTitle ?? "general problem"}`} onclick={() => void open(row.id)}>Open report</Button></div></div>
+          <ItemRow title={reportKindLabel(row.kind) + (row.songTitle ? " · " + row.songTitle : "")} subtitle={[row.artist, row.reporterName, provider(row.providerId), row.clientName, supportDate(row.createdAt), row.notePreview].filter(Boolean).join(" · ")} actionLabel={"Open report for " + (row.songTitle ?? "general problem")} selected={selectedId === row.id && panelOpen} onclick={() => void open(row.id)}>
+            {#snippet leading()}<MessageSquareWarning size={20} aria-hidden="true" />{/snippet}
+            {#snippet pill()}<Badge tone={row.status === "fixed" ? "success" : row.status === "new" ? "accent" : "neutral"}>{reportStatusLabel(row.status)}</Badge>{/snippet}
+          </ItemRow>
         {/each}
-        {#if cursor}<footer><Button variant="secondary" disabled={busy} onclick={() => void load(true)}>{busy ? "Loading…" : "Load more reports"}</Button></footer>{/if}
+        {#if cursor}<footer><Button variant="outline" disabled={busy} onclick={() => void load(true)}>{busy ? "Loading…" : "Load more reports"}</Button></footer>{/if}
       </article>
-    {:else if !error}<article class="settings-card"><header><h3>No {filter === "all" ? "" : `${filter} `}reports</h3></header><p class="settings-impact">Listeners can report a song from its details or send a note from Getting started.</p></article>{/if}
-    {#if detailLoading}<Skeleton class="settings-card skeleton-panel" aria-label="Loading report" aria-busy="true" />{/if}
-    {#if detailError}<div class="degraded-banner" role="alert"><p>{detailError}</p>{#if selectedId}<Button variant="secondary" disabled={detailLoading || saving} onclick={() => void open(selectedId)}>Reload report</Button>{/if}</div>{/if}
+    {:else if !error}<EmptyState title={filter === "all" ? "No reports" : "No " + filter + " reports"} description="Listeners can report a song from its details in any app, or send a note from Report a problem.">{#snippet icon()}<MessageSquareWarning size={24} />{/snippet}</EmptyState>{/if}
+    {#if selectedId}
+      <SidePanel bind:open={panelOpen} title={detail ? reportKindLabel(detail.kind) : "Report details"} description={detail ? detail.reporterName + " · " + supportDate(detail.createdAt) : "Captured with the report"} onclose={() => { selectedId = ""; detail = null; request++; lyricsOpen = false; matchOpen = false; void tick().then(() => { if (opener?.isConnected) opener.focus({ preventScroll: true }); }); }}>
+        <div class="report-panel-content">
+        {#if detailLoading}<RowsSkeleton count={3} label="Loading report" />{/if}
+    {#if detailError}<ErrorState title={detailError} onretry={() => open(selectedId)} />{/if}
     {#if detail}
       <article class="settings-card" aria-label="Report note"><header><div><h3>{reportKindLabel(detail.kind)}</h3><small>Reported by {detail.reporterName} · {supportDate(detail.createdAt)}</small></div></header>
         <p class="settings-impact whitespace-pre-wrap break-words">{detail.note}</p>
         <form aria-label="Report status change" onsubmit={(event) => void save(event)}>
           <div class="settings-row"><div><strong>Status</strong><small>Opening a report leaves its status unchanged.</small></div><SelectField label="Report status" value={desired} options={reportStatuses} onchange={(value) => desired = value as ReportStatus} disabled={saving || conflict} /></div>
           {#if savedMessage}<p class="settings-impact" role="status">{savedMessage}</p>{/if}
-          <footer><Button type="submit" disabled={saving || conflict || desired === detail.status}>{saving ? "Saving…" : "Save status"}</Button></footer>
+          <footer><Button type="submit" variant="outline" disabled={saving || conflict || desired === detail.status}>{saving ? "Saving…" : "Save status"}</Button></footer>
         </form>
       </article>
-      {#if matchError}<div class="degraded-banner" role="alert"><p>{matchError}</p></div>{/if}
+      {#if matchError}<ErrorState title={matchError} onretry={matchTrigger ? () => reviewMatch(matchTrigger!) : undefined} />{/if}
+      {#await import("./ProblemContextCard.svelte") then module}
+      {@const ProblemContextCard = module.default}
       <ProblemContextCard context={detail.context} {providers} review {matchLoading}
         onReviewMatch={wrongMatch ? (trigger) => void reviewMatch(trigger) : undefined}
         matchReviewNote={wrongMatch && detail.context.song && !detail.context.song.externalSnapshotId ? "This song has no provider match to review." : ""}
@@ -179,15 +202,23 @@
         lyricsTrigger = trigger;
         lyricsOpen = true;
       }} />
+      {/await}
+    {/if}
+        </div>
+        {#snippet footer()}<Button disabled={!detail || saving || conflict || detail.status === "fixed"} onclick={() => void saveStatus("fixed")}>{detail?.status === "fixed" ? "Fixed" : saving ? "Saving…" : "Mark fixed"}</Button>{/snippet}
+      </SidePanel>
     {/if}
   </section>
 
-  <MatchDialog bind:open={matchOpen} match={selectedMatch} {providers} {backend} showReject={false} onSaved={matchSaved} />
+  {#if matchOpen}{#await import("./MatchDialog.svelte") then module}
+    {@const MatchDialog = module.default}
+    <MatchDialog bind:open={matchOpen} match={selectedMatch} {providers} {backend} showReject={false} onSaved={matchSaved} />
+  {/await}{/if}
 
   <Dialog.Root bind:open={lyricsOpen}>
     <Dialog.Portal>
-      <Dialog.Overlay class="dialog-overlay" />
-      <Dialog.Content class="source-dialog" onCloseAutoFocus={(event) => {
+      <Dialog.Overlay class="dialog-overlay report-lyrics-overlay" />
+      <Dialog.Content class="source-dialog report-lyrics-dialog" onCloseAutoFocus={(event) => {
         if (lyricsTrigger?.isConnected) { event.preventDefault(); lyricsTrigger.focus(); }
       }}>
         <header>
@@ -196,10 +227,23 @@
         </header>
         <p class="settings-impact" style="margin: 0; padding: var(--space-3) var(--surface-gutter);">Personal choices apply to your signed-in account. Household choices set a shared default.</p>
         {#if lyricsOpen && lyricsRecordingId}
-          {#key lyricsRecordingId}<RecordingLyricsPicker recordingId={lyricsRecordingId} {providers} allowHousehold />{/key}
+          {#await import("./RecordingLyricsPicker.svelte") then module}
+            {@const RecordingLyricsPicker = module.default}
+            {#key lyricsRecordingId}<RecordingLyricsPicker recordingId={lyricsRecordingId} {providers} allowHousehold />{/key}
+          {/await}
         {/if}
         <footer class="dialog-actions" style="position: sticky; bottom: 0; z-index: 1;"><Button onclick={() => lyricsOpen = false}>Done</Button></footer>
       </Dialog.Content>
     </Dialog.Portal>
   </Dialog.Root>
 {/if}
+
+<style>
+  .report-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); margin-block: var(--space-4); }
+  .report-list { overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
+  .report-list footer { padding: var(--space-3); text-align: center; }
+  .report-panel-content :global(.settings-card) { box-shadow: none; margin-block: var(--space-4); padding: var(--space-3); }
+  .report-panel-content :global(.settings-row) { flex-wrap: wrap; }
+  :global(.report-lyrics-overlay) { z-index: var(--layer-nested-overlay); }
+  :global(.report-lyrics-dialog) { z-index: var(--layer-nested-dialog); }
+</style>

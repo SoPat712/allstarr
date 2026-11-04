@@ -1,6 +1,6 @@
 <script lang="ts">
   import { newUuid } from "$lib/uuid";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { ApiError, home, matchReview, playTraces, type MatchAuthorityScope, type MatchReviewItem, type PlayTrace, type PlayTraceChoice, type ProviderDefinition } from "$lib/api";
   import { expectedAuthorityForScope } from "$lib/matching-api";
   import { dayLabel } from "$lib/activity";
@@ -8,13 +8,24 @@
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button } from "$lib/components/ui/button";
-  import { Skeleton } from "$lib/components/ui/skeleton";
+  import { MoreHorizontal, Headphones } from "@lucide/svelte";
+  import { buttonVariants } from "$lib/components/ui/button";
+  import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import ItemRow from "$lib/components/patterns/ItemRow.svelte";
+  import SidePanel from "$lib/components/patterns/SidePanel.svelte";
+  import StatePill from "$lib/components/patterns/StatePill.svelte";
+  import EmptyState from "$lib/components/patterns/EmptyState.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import { groupPlays } from "./activity-rows";
   import ActivityOutcome from "$lib/components/ActivityOutcome.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
-  import MatchDialog from "$lib/components/MatchDialog.svelte";
+  let matchModule = $state<typeof import("./MatchDialog.svelte")>();
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
-  import RouteError from "$lib/components/RouteError.svelte";
 
   let { administrator = false, scope = "mine", currentUserId = "" }: { administrator?: boolean; scope?: "mine" | "everyone"; currentUserId?: string } = $props();
   let plays = $state<PlayTrace[]>([]);
@@ -25,6 +36,9 @@
   let cursor = $state("");
   let hasMore = $state(false);
   let expanded = $state("");
+  let panelOpen = $state(false);
+  let filter = $state("all");
+  let selectedRuns = $state<PlayTrace[]>([]);
   let detail = $state<PlayTrace | null>(null);
   let detailBusy = $state(false);
   let detailError = $state("");
@@ -39,22 +53,37 @@
   let reportOpen = $state(false);
   let reportNote = $state("");
   let reportRequestId = "";
+  let opener: HTMLElement | null = null;
   let disposed = false;
   let detailRequest = 0;
   let refreshPending = false;
   const days = $derived.by(() => {
-    const result: { label: string; plays: PlayTrace[] }[] = [];
-    for (const play of plays) {
-      const label = dayLabel(play.startedAt);
+    const result: { label: string; plays: PlayTrace[][] }[] = [];
+    for (const runs of groupPlays(plays)) {
+      if (!runs.some(play => filter === "all" || (filter === "slow" ? (play.timing.firstByteMs ?? 0) > 4000 : play.outcome.toLowerCase() === filter))) continue;
+      const label = dayLabel(runs[0].startedAt);
       let day = result.at(-1);
       if (day?.label !== label) result.push(day = { label, plays: [] });
-      day.plays.push(play);
+      day.plays.push(runs);
     }
     return result;
   });
   const steps = $derived([...(detail?.timing.phases ?? [])].sort((a, b) => a.startedMs - b.startedMs));
   function time(value: string) {
     return Number.isNaN(Date.parse(value)) ? "Time not recorded" : new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  }
+  const clock = (value: string) => Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleTimeString(undefined, { timeStyle: "short" }) : "Not recorded";
+  function startRange(runs: PlayTrace[]) {
+    const starts = runs.map(run => run.timing.firstByteMs).filter((value): value is number => value != null && Number.isFinite(value) && value >= 0);
+    if (!starts.length) return "Start not recorded";
+    if (runs.length === 1) return playStart(starts[0]);
+    const low = Math.round(Math.min(...starts) / 100) / 10, high = Math.round(Math.max(...starts) / 100) / 10;
+    return (low === high ? String(low) : low + "–" + high) + " s";
+  }
+  function outcomes(runs: PlayTrace[]) {
+    const counts = new Map<string, number>();
+    for (const run of runs) { const label = playOutcome(run.outcome).label; counts.set(label, (counts.get(label) ?? 0) + 1); }
+    return [...counts].map(([label, count]) => label + (count > 1 ? " ×" + count : "")).join(" · ");
   }
   async function load(older = false) {
     if (busy) { if (!older) refreshPending = true; return; }
@@ -96,7 +125,8 @@
   function toggle(play: PlayTrace) {
     detailRequest++;
     reportOpen = false; forgetOpen = false; matchOpen = false; authorityScope = "personal";
-    if (expanded === play.id) { expanded = ""; return; }
+    if (!panelOpen) opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    panelOpen = true;
     expanded = play.id; detail = null; detailError = "";
     void loadDetail(play.id);
   }
@@ -141,6 +171,8 @@
     matchLoading = true;
     try {
       const match = await latestMatch(play);
+      if (disposed || expanded !== id) return;
+      matchModule ??= await import("./MatchDialog.svelte");
       if (disposed || expanded !== id) return;
       selectedMatch = match; matchOpen = true;
     } catch (cause) { if (!disposed && expanded === id) toast.error(playActionError(cause)); }
@@ -212,29 +244,72 @@
 </script>
 
 <section class="activity-plays" aria-label="Plays" aria-busy={busy}>
-  <div class="plays-toolbar"><RefreshButton variant="secondary" label="Refresh plays" onrefresh={() => load()} /></div>
+  <PageStatus label="Plays status" items={[
+    { label: loading ? "Loading plays…" : plays.length + (plays.length === 1 ? " play loaded" : " plays loaded") },
+    { label: plays.filter(play => (play.timing.firstByteMs ?? 0) > 4000).length + " slow starts", tone: plays.some(play => (play.timing.firstByteMs ?? 0) > 4000) ? "warn" : "neutral" },
+  ]} />
+  <div class="plays-toolbar"><FilterSegments label="Play filters" storageKey={"activity.plays." + scope} bind:value={filter} options={[
+    { id: "all", label: "All", count: plays.length },
+    { id: "completed", label: "Played", count: plays.filter(play => play.outcome.toLowerCase() === "completed").length },
+    { id: "cancelled", label: "Stopped", count: plays.filter(play => play.outcome.toLowerCase() === "cancelled").length },
+    { id: "failed", label: "Problems", count: plays.filter(play => play.outcome.toLowerCase() === "failed").length },
+    { id: "slow", label: "Slow starts", count: plays.filter(play => (play.timing.firstByteMs ?? 0) > 4000).length },
+  ]} /><RefreshButton variant="outline" label="Refresh plays" onrefresh={() => load()} /></div>
+  <div class="play-headings" aria-hidden="true"><span>Song</span><span>Played from</span><span>Start</span><span>Result</span><span>When</span></div>
   {#if loading}
-    <Skeleton class="skeleton-panel" aria-label="Loading plays" />
+    <RowsSkeleton label="Loading plays" />
   {:else if error && !plays.length}
-    <RouteError eyebrow="Plays unavailable" title="Play history is unavailable." message={error} onRetry={() => load()} />
+    <ErrorState title={error} onretry={() => load()} />
   {:else}
     {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
     {#each days as day (day.label)}
       <section class="event-log-day" aria-label={day.label}>
         <h2>{day.label}</h2>
         <div class="event-log-list">
-          {#each day.plays as play (play.id)}
+          {#each day.plays as runs (runs[0].id)}
+            {@const play = runs[0]}
             {@const outcome = playOutcome(play.outcome)}
             <article class="play-row">
-              <button type="button" class="play-toggle" aria-expanded={expanded === play.id} aria-controls={`play-${play.id}`} onclick={() => toggle(play)}>
-                <MediaArtwork url={play.request.presented.artwork === "available" ? null : play.request.presented.artwork} />
-                <span class="play-copy"><strong>{play.request.presented.title || "Unknown song"}</strong><small>{play.request.presented.artist || "Unknown artist"}</small><small>{playStart(play.timing.firstByteMs)} · {playSource(play.resolution.provider, play.resolution.cached, providers)}</small></span>
-                <span class="play-end"><ActivityOutcome state={outcome.state} label={outcome.label} /><time datetime={play.startedAt}>{time(play.startedAt)}</time></span>
-              </button>
-              {#if expanded === play.id}
-                <div class="play-detail" id={`play-${play.id}`} aria-busy={detailBusy}>
+              <ItemRow title={(play.request.presented.title || "Unknown song") + (runs.length > 1 ? " ×" + runs.length : "")} subtitle={play.request.presented.artist || "Unknown artist"} selected={panelOpen && selectedRuns[0]?.id === play.id} onclick={() => { selectedRuns = runs; toggle(play); }}>
+                {#snippet leading()}<MediaArtwork url={play.request.presented.artwork === "available" ? null : play.request.presented.artwork} />{/snippet}
+                {#snippet trailing()}
+                  <div class="play-columns">
+                    <span class="play-source">{#each [...new Set(runs.map(run => playSource(run.resolution.provider, run.resolution.cached, providers)))] as source}<span><ProviderMark id={runs.find(run => playSource(run.resolution.provider, run.resolution.cached, providers) === source)?.resolution.provider || "library"} definition={providers.find(item => item.name === source)} label={source} />{source}</span>{/each}</span>
+                    <span class="play-start-time">{startRange(runs)}{#if runs.some(run => (run.timing.firstByteMs ?? 0) > 4000)}<StatePill tone="warn" text="Slow start" />{/if}</span>
+                    <span class="play-result"><ActivityOutcome state={runs.some(run => run.outcome.toLowerCase() === "failed") ? "failed" : outcome.state} label={outcomes(runs)} /></span>
+                    <time datetime={play.startedAt} title={time(play.startedAt)}>{clock(play.startedAt)}</time>
+                  </div>
+                {/snippet}
+              </ItemRow>
+            </article>
+          {/each}
+        </div>
+      </section>
+    {:else}
+      <EmptyState title={plays.length ? "No plays match this filter" : "No plays yet"} description={plays.length ? "Choose All to see every loaded play." : "Play something and it will show up here."}>{#snippet icon()}<Headphones size={24} />{/snippet}</EmptyState>
+    {/each}
+    {#if hasMore}<div class="plays-toolbar"><Button variant="secondary" disabled={busy} onclick={() => void load(true)}>Load earlier plays</Button></div>{/if}
+  {/if}
+</section>
+
+{#if expanded}
+  <SidePanel bind:open={panelOpen} title={detail?.request.presented.title || selectedRuns[0]?.request.presented.title || "Play details"} description={detail?.request.presented.artist || selectedRuns[0]?.request.presented.artist || ""} onclose={() => { expanded = ""; detailRequest++; reportOpen = false; void tick().then(() => { if (opener?.isConnected) opener.focus({ preventScroll: true }); }); }}>
+    {#snippet menu()}
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label="More play actions"><MoreHorizontal size={18} /></DropdownMenu.Trigger>
+        <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end">
+          <DropdownMenu.Item class="bits-menu-item play-forget" disabled={!detail?.resolution.externalSnapshotId || actionBusy} onSelect={() => forgetOpen = true}>Look for it again</DropdownMenu.Item>
+          <DropdownMenu.Item class="bits-menu-item" disabled={!detail?.resolution.externalSnapshotId || actionBusy} onSelect={openReport}>Report a problem</DropdownMenu.Item>
+          <DropdownMenu.Item class="bits-menu-item" disabled={copying} onSelect={() => void copy(expanded)}>Copy diagnostics</DropdownMenu.Item>
+        </DropdownMenu.Content></DropdownMenu.Portal>
+      </DropdownMenu.Root>
+    {/snippet}
+    {#if selectedRuns.length > 1}
+      <nav class="play-runs" aria-label="Plays of this song">{#each selectedRuns as run}<Button variant={run.id === expanded ? "secondary" : "ghost"} onclick={() => toggle(run)}>{clock(run.startedAt)} · {playOutcome(run.outcome).label}</Button>{/each}</nav>
+    {/if}
+                <div class="play-detail" id={`play-${expanded}`} aria-busy={detailBusy}>
                   {#if detailBusy && !detail}<p role="status">Loading start steps…</p>{/if}
-                  {#if detailError}<p class="notice-error" role="alert">{detailError}</p><Button variant="secondary" onclick={() => void loadDetail(play.id)}>Retry start steps</Button>{/if}
+                  {#if detailError}<ErrorState title={detailError} onretry={() => loadDetail(expanded)} />{/if}
                   {#if detail}
                     <div class="play-comparison" role="region" aria-label="What played">
                       {#each playComparison(detail, providers) as row}
@@ -252,9 +327,7 @@
                         </div>
                       {/if}
                       <div class="play-actions">
-                        <Button variant="secondary" size="sm" disabled={actionBusy || matchLoading} onclick={() => void reviewMatch()}>Wrong song?</Button>
-                        <Button variant="secondary" size="sm" disabled={actionBusy} onclick={() => forgetOpen = true}>Look for it again</Button>
-                        <Button variant="secondary" size="sm" disabled={actionBusy} aria-expanded={reportOpen} onclick={openReport}>Report a problem</Button>
+                        <Button variant="outline" size="sm" disabled={actionBusy || matchLoading} onclick={() => void reviewMatch()}>Wrong song?</Button>
                       </div>
                       {#if reportOpen}
                         <form class="play-report" aria-label="Report a problem" onsubmit={(event) => void report(event)}>
@@ -277,36 +350,32 @@
                     </div>
                     {#if detail.timing.omittedPhases}<p>Some start steps were not retained.</p>{/if}
                   {/if}
-                  <Button variant="secondary" disabled={copying} onclick={() => void copy(play.id)}>{copying ? "Copying…" : "Copy diagnostics"}</Button>
-                </div>
-              {/if}
-            </article>
-          {/each}
-        </div>
-      </section>
-    {:else}
-      <div class="compact-empty"><p>Play something and it will show up here.</p></div>
-    {/each}
-    {#if hasMore}<div class="plays-toolbar"><Button variant="secondary" disabled={busy} onclick={() => void load(true)}>Load earlier plays</Button></div>{/if}
-  {/if}
-</section>
 
-<MatchDialog bind:open={matchOpen} match={selectedMatch} {providers} {backend} showReject={false} onChoose={chooseVersion} onSaved={() => {}} />
+                </div>
+  </SidePanel>
+{/if}
+{#if matchModule && matchOpen}
+  {@const MatchDialog = matchModule.default}
+  <MatchDialog bind:open={matchOpen} match={selectedMatch} {providers} {backend} showReject={false} onChoose={chooseVersion} onSaved={() => {}} />
+{/if}
 <ConfirmDialog bind:open={forgetOpen} title="Look for this song again?" description="Allstarr will forget this choice and pick the best version next time it plays." confirmLabel="Look for it again" confirmVariant="secondary" disabled={actionBusy} closeOnConfirm={false} onConfirm={forget} />
 
 <style>
-  .activity-plays { display: grid; gap: var(--section-gap); min-width: 0; }
-  .plays-toolbar { display: flex; justify-content: flex-end; }
+  .activity-plays { container-type: inline-size; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--section-gap); min-width: 0; }
+  .plays-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-3); justify-content: space-between; align-items: center; }
   .play-row + .play-row { border-top: 1px solid var(--color-edge); }
-  .play-toggle { display: grid; width: 100%; min-height: 4rem; grid-template-columns: 2.5rem minmax(0, 1fr) auto; gap: var(--space-4); align-items: center; padding: var(--space-3) var(--space-5); border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-  .play-toggle:hover, .play-toggle[aria-expanded="true"] { background: color-mix(in srgb, var(--color-ink) 4%, transparent); }
-  .play-toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-  .play-toggle :global(.media-art) { width: 2.5rem; height: 2.5rem; }
-  .play-copy { display: grid; gap: .125rem; min-width: 0; }
-  .play-copy strong { color: var(--color-ink); font-size: var(--text-sm); font-weight: 500; }
-  small, time, p, li { color: var(--color-ink-muted); font-size: .8125rem; line-height: 1.5; overflow-wrap: anywhere; }
-  .play-end { display: grid; justify-items: end; gap: .25rem; }
-  .play-detail { display: grid; justify-items: start; gap: .75rem; padding: var(--space-3) var(--space-5) var(--space-4) calc(2.5rem + var(--space-5) + var(--space-4)); }
+  .play-row :global(.row-controls) { flex: 0 1 58%; min-width: 0; pointer-events: none; }
+  .play-columns { display: grid; grid-template-columns: minmax(90px, 1.2fr) minmax(100px, 1fr) minmax(90px, 1fr) 65px; gap: var(--space-3); align-items: center; width: 100%; color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .play-source, .play-start-time { display: grid; gap: var(--space-1); }
+  .play-source > span { display: flex; align-items: center; gap: var(--space-1); }
+  .play-columns time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .play-headings { display: grid; grid-template-columns: minmax(0, 1fr) 1.2fr 1fr 1fr 65px; gap: var(--space-3); padding: var(--space-2) var(--space-5); color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .play-headings > span:first-child { width: 38%; }
+  .play-headings { grid-template-columns: 40% minmax(90px, 1.2fr) minmax(100px, 1fr) minmax(90px, 1fr) 65px; }
+  .play-detail { display: grid; gap: var(--space-4); }
+  :global(.play-forget) { color: var(--danger); }
+  .play-runs { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
+  small, time, p, li { color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.5; overflow-wrap: anywhere; }
   .play-comparison { display: grid; gap: .25rem; }
   .play-comparison strong { color: var(--color-ink); font-weight: 500; }
   .play-difference { color: var(--on-warning-container); }
@@ -324,9 +393,13 @@
   li + li { margin-top: .5rem; }
   li strong { display: block; }
   p { margin: 0; }
-  @media (max-width: 650px) {
-    .play-toggle { grid-template-columns: 2.5rem minmax(0, 1fr); gap: var(--space-3); padding-inline: var(--space-4); }
-    .play-end { grid-column: 2; justify-items: start; }
-    .play-detail { padding-inline: var(--space-4); }
+  @container (max-width: 720px) {
+    .play-headings { display: none; }
+    .play-row :global(.item-row) { flex-wrap: wrap; }
+    .play-row :global(.row-copy) { flex-basis: calc(100% - 90px); }
+    .play-row :global(.row-controls) { flex: 1 1 100%; margin-left: 48px; }
+    .play-row :global(.row-chevron) { display: none; }
+    .play-columns { grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2); }
+    .play-source { grid-column: 1; } .play-start-time { grid-column: 1; } .play-result { grid-column: 2; grid-row: 1; } .play-columns time { grid-column: 2; grid-row: 2; }
   }
 </style>

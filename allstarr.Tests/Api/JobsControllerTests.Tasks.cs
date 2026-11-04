@@ -170,6 +170,115 @@ public sealed partial class JobsControllerTests
         }
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task PlaylistTaskShowsLatestScheduledExecutionWithoutMaterializationRun(bool previousRun, bool running)
+    {
+        var linkId = Guid.CreateVersion7();
+        var scheduleId = Guid.CreateVersion7();
+        var otherScheduleId = Guid.CreateVersion7();
+        var now = new DateTimeOffset(2026, 11, 1, 12, 0, 0, TimeSpan.Zero);
+        var started = now.AddMinutes(-5);
+        var completed = now.AddMinutes(-4);
+        var prefix = $"schedule:{scheduleId:N}:";
+        var payload = JsonSerializer.Serialize(new PlaylistSyncScheduledPayload(scheduleId, linkId,
+            now.AddMinutes(-20), 1, "saved-retry", "saved-cancellation"));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.JobSchedules.AddRange(
+                new() { Id = scheduleId, OwnerUserId = _userId, JobType = DurableScheduleEngine.PlaylistSyncJobType, Enabled = true, CronExpression = "0 2 * * *", TimeZoneId = "UTC", NextRunAt = now.AddDays(1) },
+                new() { Id = otherScheduleId, OwnerUserId = _otherUserId, JobType = DurableScheduleEngine.PlaylistSyncJobType, Enabled = true, CronExpression = "0 2 * * *", TimeZoneId = "UTC", NextRunAt = now.AddDays(1) });
+            var link = Link(linkId, _userId);
+            link.ScheduleId = scheduleId;
+            link.Mode = PlaylistLinkMode.Virtual;
+            var otherLink = Link(Guid.CreateVersion7(), _otherUserId);
+            otherLink.ScheduleId = otherScheduleId;
+            db.PlaylistLinks.AddRange(link, otherLink);
+            var snapshot = Snapshot(Guid.CreateVersion7(), linkId, _userId, "Owner mix");
+            db.PlaylistSourceSnapshots.Add(snapshot);
+            if (previousRun)
+            {
+                var previous = SyncRun(Guid.CreateVersion7(), linkId, snapshot.Id, _userId, _ownJobId, now.AddHours(-1));
+                previous.JobId = null;
+                db.PlaylistSyncRuns.Add(previous);
+            }
+            var job = await db.Jobs.SingleAsync(item => item.Id == _ownJobId);
+            job.Type = DurableScheduleEngine.PlaylistSyncJobType;
+            job.IdempotencyKey = prefix + now.AddMinutes(-20).UtcTicks;
+            job.PayloadJson = payload;
+            job.State = running ? DurableJobState.Running : DurableJobState.Succeeded;
+            job.StartedAt = now.AddMinutes(-20);
+            job.LastAttemptStartedAt = started;
+            job.LastAttemptCompletedAt = running ? null : completed;
+            job.CompletedAt = running ? null : completed;
+            job.UpdatedAt = completed;
+            var foreign = await db.Jobs.SingleAsync(item => item.Id == _otherJobId);
+            foreign.Type = job.Type;
+            foreign.IdempotencyKey = job.IdempotencyKey;
+            foreign.PayloadJson = payload;
+            foreign.State = DurableJobState.Running;
+            foreign.StartedAt = now;
+            foreign.LastAttemptStartedAt = now;
+            foreign.UpdatedAt = now;
+            db.Jobs.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                ScopeKey = $"user:{_userId:N}",
+                OwnerUserId = _userId,
+                Type = job.Type,
+                IdempotencyKey = prefix + now.UtcTicks,
+                PayloadJson = payload,
+                State = DurableJobState.Pending,
+                AvailableAt = now,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            await db.SaveChangesAsync();
+        }
+        var controller = new ActivityTasksController(_factory) { ControllerContext = new() { HttpContext = new DefaultHttpContext() } };
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = Session(_userId, true);
+        foreach (var scope in new[] { "mine", "everyone" })
+        {
+            using var result = Json(await controller.List(scope: scope));
+            var task = Assert.Single(result.RootElement.GetProperty("items").EnumerateArray(), item => item.GetProperty("id").GetGuid() == scheduleId);
+            Assert.Equal(running ? started : completed, task.GetProperty("lastRunAt").GetDateTimeOffset());
+            Assert.Equal(running ? "Running" : "Scheduled", task.GetProperty("state").GetString());
+            Assert.Equal(now.AddDays(1), task.GetProperty("nextRunAt").GetDateTimeOffset());
+            if (scope == "everyone")
+            {
+                var other = Assert.Single(result.RootElement.GetProperty("items").EnumerateArray(), item => item.GetProperty("id").GetGuid() == otherScheduleId);
+                Assert.Equal(JsonValueKind.Null, other.GetProperty("lastRunAt").ValueKind);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PlaylistTaskDoesNotTreatAnUnstartedCancelledOccurrenceAsARun()
+    {
+        var scheduleId = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.JobSchedules.Add(new() { Id = scheduleId, OwnerUserId = _userId, JobType = DurableScheduleEngine.PlaylistSyncJobType, Enabled = true, CronExpression = "0 2 * * *", TimeZoneId = "UTC", NextRunAt = DateTimeOffset.UtcNow.AddDays(1) });
+            var link = Link(Guid.CreateVersion7(), _userId);
+            link.ScheduleId = scheduleId;
+            db.PlaylistLinks.Add(link);
+            var job = await db.Jobs.SingleAsync(item => item.Id == _ownJobId);
+            job.Type = DurableScheduleEngine.PlaylistSyncJobType;
+            job.IdempotencyKey = $"schedule:{scheduleId:N}:{DateTimeOffset.UtcNow.UtcTicks}";
+            job.State = DurableJobState.Cancelled;
+            job.CompletedAt = DateTimeOffset.UtcNow;
+            await db.SaveChangesAsync();
+        }
+        var controller = new ActivityTasksController(_factory) { ControllerContext = new() { HttpContext = new DefaultHttpContext() } };
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = Session(_userId);
+        using var result = Json(await controller.List());
+        var task = Assert.Single(result.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal(JsonValueKind.Null, task.GetProperty("lastRunAt").ValueKind);
+    }
+
     [Fact]
     public async Task ActivityTasks_RequiresLinkedAuthentication()
     {

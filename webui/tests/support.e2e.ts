@@ -127,7 +127,7 @@ for (const backend of ["Jellyfin", "Subsonic"]) {
     const context = page.getByRole("article", { name: "Included report details" });
     await expect(context.getByText(backend === "Jellyfin" ? "Jellyfin" : "Subsonic / OpenSubsonic", { exact: true })).toBeVisible();
     await page.goto("/#/activity?view=reports");
-    await expect(page.getByRole("article", { name: "Report list" })).toContainText(`Source: ${backend}`);
+    await expect(page.getByRole("article", { name: "Report list" })).toContainText(backend);
   });
 }
 
@@ -270,7 +270,7 @@ test("administrator inbox opens without changing status and protects a stale edi
   await expect(page.getByRole("alert")).toContainText("This report changed.");
   await expect(page.getByRole("button", { name: "Save status", exact: true })).toBeDisabled();
   expect(state.updates[0]).toEqual({ status: "seen", expectedRevision: 1 });
-  await page.getByRole("button", { name: "Reload report", exact: true }).click();
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
   await expect(status).toContainText("Fixed");
   state.conflict = false;
   await status.click();
@@ -278,7 +278,8 @@ test("administrator inbox opens without changing status and protects a stale edi
   await page.getByRole("button", { name: "Save status", exact: true }).click();
   await expect(page.getByRole("form", { name: "Report status change" }).getByRole("status")).toHaveText("Report marked seen.");
   expect(state.updates[1]).toEqual({ status: "seen", expectedRevision: 2 });
-  await page.getByRole("tab", { name: "All", exact: true }).click();
+  await page.locator("[data-side-panel]").getByRole("button", { name: "Close", exact: true }).click();
+  await page.getByRole("radiogroup", { name: "Report status" }).getByRole("radio", { name: /^All/ }).click();
   await expect(page.getByRole("button", { name: /^Open report for/ })).toBeVisible();
   expect(state.reportReads.at(-1)).toBeNull();
   const reports = page.getByRole("tab", { name: "Reports", exact: true });
@@ -396,18 +397,29 @@ for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"] as c
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     const fixture = await mockReportLyrics(page);
     await page.goto(`/#/activity?view=reports&report=${reportId}`);
+    const panel = page.getByRole("dialog", { name: "Wrong lyrics", exact: true });
+    await expect(panel).toBeVisible();
     const button = page.getByRole("button", { name: "Review lyrics", exact: true });
     await expect(button).toBeVisible();
     await expect(page.getByRole("link", { name: "Review match", exact: true })).toHaveCount(0);
     expect(fixture.scopes).toEqual([]);
     await button.click();
     const dialog = page.getByRole("dialog", { name: "Review lyrics", exact: true });
+    await expect(dialog.getByRole("heading", { name: "Review lyrics", exact: true })).toBeVisible();
+    await expect(panel).toHaveAttribute("data-state", "open");
     await expect(dialog).toContainText(captured.song.title);
     await expect(dialog).toContainText("Personal choices apply to your signed-in account.");
     await expect(dialog.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Personal fixture words");
     expect(fixture.scopes).toEqual(["personal"]);
     expect(fixture.writes).toEqual([]);
     expect(fixture.state.updates).toEqual([]);
+    const close = dialog.getByRole("button", { name: "Close lyrics review", exact: true });
+    const done = dialog.getByRole("button", { name: "Done", exact: true });
+    await expect(close).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(done).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(close).toBeFocused();
     await dialog.getByRole("radio", { name: "Household", exact: true }).check();
     await expect(dialog.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Shared fixture words");
     expect(fixture.scopes).toEqual(["personal", "household"]);
@@ -422,9 +434,17 @@ for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"] as c
     await expect.poll(() => fixture.writes).toEqual([{ sourceId: "lrclib", scope: "household",
       expectedRevision: { personal: null, household: null }, previewRevision: "sha256:household" }]);
     expect(fixture.state.updates).toEqual([]);
-    await dialog.getByRole("button", { name: "Done", exact: true }).click();
+    await done.click();
     await expect(dialog).toHaveCount(0);
+    await expect(panel).toBeVisible();
     await expect(button).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(dialog.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Personal fixture words");
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(panel).toBeVisible();
+    await expect(button).toBeFocused();
+    expect(fixture.state.updates).toEqual([]);
   });
 }
 
@@ -467,6 +487,8 @@ test("closing report lyrics discards a late preview before reopening", async ({ 
   await mockReportLyrics(page);
   let release!: () => void;
   const delayed = new Promise<void>(resolve => { release = resolve; });
+  let finish!: () => void;
+  const finished = new Promise<void>(resolve => { finish = resolve; });
   let reads = 0;
   await page.route(`**/api/admin/recordings/${reportRecordingId}/lyrics*`, async route => {
     reads++;
@@ -477,6 +499,7 @@ test("closing report lyrics discards a late preview before reopening", async ({ 
       choices: { personal: null, household: null, effective: null, revision: { personal: null, household: null } },
       sources: [{ sourceId: "lrclib", available: true, preview: first ? "Old preview" : "Current preview",
         previewRevision: "sha256:fixture", format: "plain", truncated: false }] }).catch(() => {});
+    if (first) finish();
   });
   await page.goto(`/#/activity?view=reports&report=${reportId}`);
   const button = page.getByRole("button", { name: "Review lyrics", exact: true });
@@ -484,9 +507,13 @@ test("closing report lyrics discards a late preview before reopening", async ({ 
   const dialog = page.getByRole("dialog", { name: "Review lyrics", exact: true });
   await expect.poll(() => reads).toBe(1);
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Wrong lyrics", exact: true })).toBeVisible();
+  await expect(button).toBeFocused();
   await button.click();
   await expect(dialog.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Current preview");
   release();
+  await finished;
   await expect(dialog.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Current preview");
 });
 
@@ -582,7 +609,7 @@ for (const options of [{ missing: true }, { changed: true }]) {
     await page.goto(`/#/activity?view=reports&report=${reportId}`);
     await page.getByRole("button", { name: "Review match", exact: true }).click();
     await expect(page.getByRole("alert")).toContainText("The captured recording no longer has a matching review available.");
-    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: captured.song.title, exact: true })).toHaveCount(0);
     expect(fixture.reads).toEqual([snapshotId]);
     expect(fixture.state.updates).toEqual([]);
   });
@@ -644,6 +671,7 @@ test("reopening a report discards a late match review read", async ({ page }) =>
   await page.goto(`/#/activity?view=reports&report=${reportId}`);
   await page.getByRole("button", { name: "Review match", exact: true }).click();
   await expect(page.getByRole("button", { name: "Loading match…", exact: true })).toBeDisabled();
+  await page.locator("[data-side-panel]").getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("button", { name: `Open report for ${captured.song.title}`, exact: true }).click();
   await page.getByRole("button", { name: "Review match", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: captured.song.title, exact: true });

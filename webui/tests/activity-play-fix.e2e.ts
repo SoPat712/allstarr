@@ -80,14 +80,20 @@ async function mockPlays(page: Page, options: { administrator?: boolean; library
 async function openPlay(page: Page) {
   await page.goto("/#/activity?view=plays");
   const row = page.locator(".play-row").filter({ has: page.getByRole("button", { name: /Housewife/ }) });
-  await row.locator(".play-toggle").click();
-  await expect(row.getByRole("region", { name: "What played" })).toBeVisible();
-  return row;
+  await row.locator(".row-action").click();
+  const panel = page.locator("[data-side-panel]");
+  await expect(panel.getByRole("region", { name: "What played" })).toBeVisible();
+  return panel;
+}
+
+async function playAction(page: Page, name: string) {
+  await page.getByRole("button", { name: "More play actions" }).click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
 }
 
 async function choose(page: Page, row: Locator, version: "library" | "streaming" = "library") {
   await row.getByRole("button", { name: "Wrong song?", exact: true }).click();
-  const dialog = page.getByRole("dialog");
+  const dialog = page.getByRole("dialog").filter({ has: page.locator(".candidate-card") });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("button", { name: /reject/i })).toHaveCount(0);
   await dialog.locator(".candidate-card").filter({ hasText: `Housewife — ${version} version` }).getByRole("button", { name: "Choose candidate" }).click();
@@ -127,13 +133,13 @@ test("An administrator saves a streaming version for everyone", async ({ page })
 test("Looking for a song again requires confirmation", async ({ page }) => {
   const fixture = await mockPlays(page);
   const row = await openPlay(page);
-  await row.getByRole("button", { name: "Look for it again", exact: true }).click();
+  await playAction(page, "Look for it again");
   const confirmation = page.getByRole("alertdialog", { name: "Look for this song again?" });
   await expect(confirmation).toBeVisible();
   expect(fixture.writes).toEqual([]);
   await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(fixture.writes).toEqual([]);
-  await row.getByRole("button", { name: "Look for it again", exact: true }).click();
+  await playAction(page, "Look for it again");
   await confirmation.getByRole("button", { name: "Look for it again", exact: true }).click();
   await expect.poll(() => fixture.writes.length).toBe(1);
   await expect(confirmation).not.toBeVisible();
@@ -146,11 +152,11 @@ test("A failed rematch closes confirmation and allows a fresh retry", async ({ p
   const fixture = await mockPlays(page, { forgetRetry: true });
   const row = await openPlay(page);
   const confirmation = page.getByRole("alertdialog", { name: "Look for this song again?" });
-  await row.getByRole("button", { name: "Look for it again", exact: true }).click();
+  await playAction(page, "Look for it again");
   await confirmation.getByRole("button", { name: "Look for it again", exact: true }).click();
   await expect(page.getByText("The song could not be changed. Try again.", { exact: true })).toBeVisible();
   await expect(confirmation).not.toBeVisible();
-  await row.getByRole("button", { name: "Look for it again", exact: true }).click();
+  await playAction(page, "Look for it again");
   await expect(confirmation).toBeVisible();
   await confirmation.getByRole("button", { name: "Look for it again", exact: true }).click();
   await expect(page.getByText("Done. Allstarr will look again next time.", { exact: true })).toBeVisible();
@@ -161,7 +167,7 @@ test("A failed rematch closes confirmation and allows a fresh retry", async ({ p
 test("Looking for an automatically matched song again sends no saved authority", async ({ page }) => {
   const fixture = await mockPlays(page, { automatic: true });
   const row = await openPlay(page);
-  await row.getByRole("button", { name: "Look for it again", exact: true }).click();
+  await playAction(page, "Look for it again");
   await page.getByRole("alertdialog").getByRole("button", { name: "Look for it again", exact: true }).click();
   await expect.poll(() => fixture.writes.length).toBe(1);
   expect(fixture.writes[0]).toEqual({ path: `/api/admin/play-traces/${playId}/forget`, body: { authorityScope: "personal", expectedAuthority: null } });
@@ -170,7 +176,7 @@ test("Looking for an automatically matched song again sends no saved authority",
 test("A report preserves its note and request reference when retried", async ({ page }) => {
   const fixture = await mockPlays(page, { reportRetry: true });
   const row = await openPlay(page);
-  await row.getByRole("button", { name: "Report a problem", exact: true }).click();
+  await playAction(page, "Report a problem");
   const form = page.getByRole("form", { name: "Report a problem" });
   await expect(form.getByLabel("Note (optional)")).toHaveAttribute("maxlength", "500");
   await form.getByLabel("Note (optional)").fill("The live version played instead of the studio recording.");
@@ -190,7 +196,7 @@ for (const action of ["version", "forget"] as const) test(`A changed match reloa
   const row = await openPlay(page);
   if (action === "version") await choose(page, row);
   else {
-    await row.getByRole("button", { name: "Look for it again", exact: true }).click();
+    await playAction(page, "Look for it again");
     await page.getByRole("alertdialog").getByRole("button", { name: "Look for it again", exact: true }).click();
   }
   await expect(page.getByText("This song's match changed. Showing the latest.", { exact: true })).toBeVisible();
@@ -203,7 +209,7 @@ for (const action of ["version", "forget"] as const) test(`A changed match reloa
   await expect.poll(() => fixture.reads.filter(path => path.startsWith("/api/admin/track-matches?")).length).toBeGreaterThan(1);
   if (action === "version") await choose(page, row);
   else {
-    await row.getByRole("button", { name: "Look for it again", exact: true }).click();
+    await playAction(page, "Look for it again");
     await page.getByRole("alertdialog").getByRole("button", { name: "Look for it again", exact: true }).click();
   }
   await expect(page.getByText(action === "version" ? "Saved. It will play this version next time." : "Done. Allstarr will look again next time.", { exact: true })).toBeVisible();
@@ -220,10 +226,13 @@ test("A library play explains why there is nothing to change", async ({ page }) 
   const fixture = await mockPlays(page, { library: true });
   await page.goto("/#/activity?view=plays");
   const row = page.locator(".play-row").filter({ has: page.getByRole("button", { name: /Library favorite/ }) });
-  await row.locator(".play-toggle").click();
-  await expect(row).toContainText("This played from your library, so there is nothing to change here.");
-  await expect(row.getByRole("button", { name: "Copy diagnostics", exact: true })).toBeVisible();
-  await expect(row.getByRole("button", { name: "Wrong song?", exact: true })).toHaveCount(0);
+  await row.locator(".row-action").click();
+  const panel = page.locator("[data-side-panel]");
+  await expect(panel).toContainText("This played from your library, so there is nothing to change here.");
+  await page.getByRole("button", { name: "More play actions" }).click();
+  await expect(page.getByRole("menuitem", { name: "Copy diagnostics", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(panel.getByRole("button", { name: "Wrong song?", exact: true })).toHaveCount(0);
   await expect(row.getByRole("button", { name: "Look for it again", exact: true })).toHaveCount(0);
   await expect(row.getByRole("button", { name: "Report a problem", exact: true })).toHaveCount(0);
   expect(fixture.writes).toEqual([]);
@@ -249,28 +258,32 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
   const fixture = await mockPlays(page, { administrator: true });
   await page.goto("/#/activity?view=plays");
   const row = page.locator(".play-row").first();
-  await expect(row.locator(".play-toggle")).toBeVisible();
+  await expect(row.locator(".row-action")).toBeVisible();
   await expectPlayGeometry(page, width);
   const shot = async (state: string) => page.screenshot({ path: testInfo.outputPath(`plays-${state}-${width}-${theme}.png`), fullPage: true });
   await shot("collapsed");
-  await row.locator(".play-toggle").click();
-  const comparison = row.getByRole("region", { name: "What played" });
+  await row.locator(".row-action").click();
+  const panel = page.locator("[data-side-panel]");
+  const comparison = panel.getByRole("region", { name: "What played" });
   await expect(comparison).toBeVisible();
   await expect(comparison.locator(".play-difference").first()).toBeVisible();
-  await expect(row.getByText("How it started", { exact: true })).toBeVisible();
+  await expect(panel.getByText("How it started", { exact: true })).toBeVisible();
   const comparisonBox = await comparison.boundingBox();
-  const stepBox = await row.getByRole("list", { name: "Start steps" }).locator("li").first().boundingBox();
+  const stepBox = await panel.getByRole("list", { name: "Start steps" }).locator("li").first().boundingBox();
   expect(Math.abs(comparisonBox!.x - stepBox!.x)).toBeLessThanOrEqual(1);
-  for (const name of ["Wrong song?", "Look for it again", "Report a problem"]) await expect(row.getByRole("button", { name, exact: true })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Wrong song?", exact: true })).toBeVisible();
+  await panel.getByRole("button", { name: "More play actions" }).click();
+  for (const name of ["Look for it again", "Report a problem"]) await expect(page.getByRole("menuitem", { name, exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
   await expectPlayGeometry(page, width);
   await shot("expanded");
-  await row.getByRole("button", { name: "Report a problem", exact: true }).click();
+  await playAction(page, "Report a problem");
   const form = page.getByRole("form", { name: "Report a problem" });
   await form.getByLabel("Note (optional)").fill("A different recording played.");
   await expectPlayGeometry(page, width);
   await shot("report");
   await form.getByRole("button", { name: "Cancel", exact: true }).click();
-  await row.getByRole("group", { name: "Change it for" }).getByRole("button", { name: "Everyone", exact: true }).click();
+  await panel.getByRole("group", { name: "Change it for" }).getByRole("button", { name: "Everyone", exact: true }).click();
   await expectPlayGeometry(page, width);
   await shot("scope");
   expect(fixture.writes).toEqual([]);

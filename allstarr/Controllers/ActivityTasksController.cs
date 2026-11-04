@@ -45,12 +45,26 @@ public sealed class ActivityTasksController(IDbContextFactory<AllstarrDbContext>
         var runs = await db.PlaylistSyncRuns.AsNoTracking().Where(x => ids.Contains(x.PlaylistLinkId) && db.PlaylistLinks.Any(link => link.Id == x.PlaylistLinkId && link.OwnerUserId == x.OwnerUserId))
             .GroupBy(x => new { x.OwnerUserId, x.PlaylistLinkId }).Select(group => group.OrderByDescending(x => x.StartedAt).ThenByDescending(x => x.Id).First())
             .ToDictionaryAsync(x => (x.OwnerUserId, x.PlaylistLinkId), cancellationToken);
+        var schedulePrefixes = scheduled.Select(entry => $"schedule:{entry.Schedule.Id:N}:").ToArray();
+        var scheduledRuns = await db.Jobs.AsNoTracking()
+            .Where(job => job.Type == DurableScheduleEngine.PlaylistSyncJobType && owners.Contains(job.OwnerUserId) &&
+                (job.LastAttemptStartedAt != null || job.StartedAt != null) &&
+                schedulePrefixes.Contains(job.IdempotencyKey.Substring(0, 42)))
+            .GroupBy(job => new { job.OwnerUserId, Prefix = job.IdempotencyKey.Substring(0, 42) })
+            .Select(group => group.OrderByDescending(job => job.LastAttemptStartedAt ?? job.StartedAt).ThenByDescending(job => job.Id).First())
+            .ToDictionaryAsync(job => (job.OwnerUserId, job.IdempotencyKey[..42]), cancellationToken);
         var items = new List<object>();
         foreach (var entry in scheduled)
         {
             var schedule = entry.Schedule;
             var link = entry.Link;
             runs.TryGetValue((link.OwnerUserId, link.Id), out var run);
+            scheduledRuns.TryGetValue((schedule.OwnerUserId, $"schedule:{schedule.Id:N}:"), out var scheduledRun);
+            var scheduledStartedAt = scheduledRun?.LastAttemptStartedAt ?? scheduledRun?.StartedAt;
+            var useScheduledRun = scheduledStartedAt.HasValue && (run == null || scheduledStartedAt >= run.StartedAt);
+            var lastRunAt = useScheduledRun
+                ? scheduledRun!.CompletedAt ?? scheduledRun.LastAttemptCompletedAt ?? scheduledStartedAt
+                : run?.CompletedAt ?? run?.StartedAt;
             var enabled = schedule.Enabled && link.Enabled && link.ImportMode == PlaylistImportMode.Linked;
             items.Add(new
             {
@@ -59,9 +73,11 @@ public sealed class ActivityTasksController(IDbContextFactory<AllstarrDbContext>
                 name = "Sync " + (SafeOperationalText.Sanitize(titles.GetValueOrDefault((link.OwnerUserId, link.Id)), 200) ?? "playlist"),
                 ownerName = ActivityPresentation.UserName(names.GetValueOrDefault(link.OwnerUserId)),
                 enabled,
-                state = !enabled ? "Paused" : run != null && run.CompletedAt == null ? "Running" : "Scheduled",
+                state = !enabled ? "Paused" : useScheduledRun
+                    ? scheduledRun!.State == DurableJobState.Running ? "Running" : "Scheduled"
+                    : run != null && run.CompletedAt == null ? "Running" : "Scheduled",
                 cadence = CronCadence(schedule.CronExpression, schedule.TimeZoneId),
-                lastRunAt = run?.CompletedAt ?? run?.StartedAt,
+                lastRunAt,
                 nextRunAt = enabled ? schedule.NextRunAt : null,
                 runPlaylistLinkId = link.Enabled && link.ImportMode == PlaylistImportMode.Linked ? (Guid?)link.Id : null,
                 detail = "Uses this playlist's saved update rules."

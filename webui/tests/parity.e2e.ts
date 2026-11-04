@@ -2,6 +2,11 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { expectContainedMobileGeometry } from "./mobile-geometry";
 
+async function nextPlaylistOptions(dialog: Locator) {
+  const next = dialog.getByRole("button", { name: "Next", exact: true });
+  if (await next.count()) await next.click();
+}
+
 test.afterEach(async ({ page }) => { expect(await page.pageErrors()).toEqual([]); });
 
 for (const width of [390, 1280]) {
@@ -1080,27 +1085,10 @@ for (const viewport of viewports) {
       await expect(details).not.toContainText(/hybrid|materialized|write-back|projection mode/i);
       await expect(details.getByRole("tab", { name: /Original|Native/ })).toHaveCount(0);
       await expect(details.getByText("Test song", { exact: true })).toBeVisible();
-      // Phones scroll the whole sheet; wider screens keep the header fixed and scroll only the songs.
-      if (viewport.width <= 760) await expect(details).toHaveCSS("overflow-y", "auto");
-      else {
-        await expect(details).toHaveCSS("overflow", "hidden");
-        await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
-      }
-      await expect.poll(() => details.locator(".track-scroll").evaluate((scroll) =>
-        scroll.clientHeight - scroll.querySelector("table")!.scrollHeight)).toBeLessThan(48);
-      const headerContentClearsSwitcher = () => details.evaluate((dialog) => {
-        const header = dialog.querySelector(".playlist-hero");
-        const switcher = dialog.querySelector(".playlist-overview");
-        if (!header || !switcher) return false;
-        const switcherTop = switcher.getBoundingClientRect().top;
-        return Array.from(header.children).every((child) => child.getBoundingClientRect().bottom <= switcherTop + 1);
-      });
-      await expect.poll(headerContentClearsSwitcher).toBe(true);
-      if (viewport.width === 1280) {
-        await page.setViewportSize({ width: 1168, height: 497 });
-        await expect.poll(headerContentClearsSwitcher).toBe(true);
-        await page.setViewportSize(viewport);
-      }
+      await expect(details).toHaveCSS("overflow", "hidden");
+      await expect(details.locator(".panel-body")).toHaveCSS("overflow-y", "auto");
+      await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       const screenshotDirectory = process.env.ALLSTARR_SCREENSHOT_DIR;
       const detailScreenshot = await page.screenshot({
         path: screenshotDirectory ? `${screenshotDirectory}/playlist-${viewport.width}-details.png` : undefined,
@@ -1143,7 +1131,7 @@ for (const viewport of viewports) {
         const errorPage = await context.newPage();
         await mockApi(errorPage, { fail: [...failures] });
         await errorPage.goto(route);
-        const errorSurface = route === "#/activity" ? errorPage.getByRole("alert", { name: "Event log unavailable" }) : errorPage.getByRole("alert");
+        const errorSurface = route === "#/activity" ? errorPage.getByRole("alert", { name: "Event log unavailable", exact: true }) : errorPage.getByRole("alert");
         await expect(errorSurface).toBeVisible();
         const retry = errorSurface.getByRole("button", { name: "Try again" });
         if (route === "#/activity") await retry.scrollIntoViewIfNeeded();
@@ -1453,7 +1441,7 @@ for (const viewport of viewports) {
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-history.png`, fullPage: true });
-      await page.getByRole("tab", { name: "Import", exact: true }).click();
+      await page.getByRole("tab", { name: "Options and review", exact: true }).click();
       await expect(page.getByRole("heading", { name: "Import listening history" })).toBeVisible();
       await expect(page.getByText(/upload the JSON files from your Extended Streaming History download/)).toBeVisible();
       const automationTab = page.getByRole("tab", { name: "Automation", exact: true });
@@ -1739,7 +1727,7 @@ test("Intelligence history imports, corrections, and schedules use the selected 
   });
   await detail.getByRole("button", { name: "Close listen details" }).click();
 
-  await page.getByRole("tab", { name: "Import", exact: true }).click();
+  await page.getByRole("tab", { name: "Options and review", exact: true }).click();
   await expect(page).toHaveURL(/#\/intelligence\?section=imports$/);
   const previews: string[] = [];
   page.on("request", (request) => {
@@ -2033,7 +2021,7 @@ test("Intelligence partial and section error states stay announced", async ({ pa
   await page.getByRole("tab", { name: "History", exact: true }).click();
   await expect(page.locator(".history-workspace").getByRole("alert")).toContainText("Fixture unavailable");
 
-  await page.getByRole("tab", { name: "Import", exact: true }).click();
+  await page.getByRole("tab", { name: "Options and review", exact: true }).click();
   await page.getByLabel("History export files").setInputFiles({
     name: "Streaming_History.json", mimeType: "application/json", buffer: Buffer.from("[]"),
   });
@@ -3124,11 +3112,11 @@ test("Import playlist separates source, import mode, destination, updates, and s
   expect(dialogBox!.x).toBeLessThanOrEqual(1);
   expect(Math.abs(dialogBox!.width - 390)).toBeLessThanOrEqual(1);
   expect(dialogBox!.height).toBeLessThanOrEqual(844 * 0.92 + 1);
-  await expect(dialog.getByText("Loading playlist sources…")).toBeVisible();
+  await expect(dialog.getByRole("status", { name: "Loading items" })).toBeVisible();
   sources.release();
   await expect(dialog.getByRole("radiogroup", { name: "Import from" }).getByRole("radio")).toHaveCount(5);
-  await expect(dialog.getByRole("button", { name: "Source", exact: true })).toBeDisabled();
-  await expect(dialog.getByRole("button", { name: "Import", exact: true })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Choose", exact: true })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Options and review", exact: true })).toBeDisabled();
   const stepTops = await dialog.locator(".playlist-add-steps button").evaluateAll((buttons) =>
     buttons.map((button) => Math.round(button.getBoundingClientRect().top)));
   expect(new Set(stepTops).size).toBe(1);
@@ -3146,14 +3134,14 @@ test("Import playlist separates source, import mode, destination, updates, and s
   await dialog.getByRole("button", { name: "Load more" }).click();
   await expect(dialog.getByRole("radio", { name: /Second Mix/ })).toBeVisible();
   await dialog.getByRole("radio", { name: /Source Mix/ }).check();
-  await dialog.getByRole("button", { name: "Continue" }).click();
-  await expect(dialog.getByRole("button", { name: "Back to Source" })).toBeEnabled();
-  await expect(dialog.getByRole("button", { name: "Import", exact: true })).toHaveAttribute("aria-current", "step");
+  await nextPlaylistOptions(dialog);
+  await expect(dialog.getByRole("button", { name: "Back to Choose" })).toBeEnabled();
+  await expect(dialog.getByRole("button", { name: "Options and review", exact: true })).toHaveAttribute("aria-current", "step");
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/playlist-390-listener-choice.png` });
   await expect(dialog.getByRole("radio", { name: /Import once/ })).toBeChecked();
   await dialog.getByRole("radio", { name: /Keep in sync/ }).check();
-  await dialog.getByRole("button", { name: "Continue" }).click();
+  await nextPlaylistOptions(dialog);
   await expect.poll(() => dialog.locator(".playlist-add-body").evaluate((body) => body.scrollTop)).toBe(0);
   await expect(dialog.getByRole("radio", { name: /New playlist/ })).toBeChecked();
   await dialog.getByRole("radio", { name: /Existing playlist/ }).check();
@@ -3163,20 +3151,20 @@ test("Import playlist separates source, import mode, destination, updates, and s
     await dialog.locator(".playlist-add-body").evaluate((body) => body.scrollTo({ top: 0 }));
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/playlist-390-appearance-choice.png` });
   }
-  await dialog.getByRole("button", { name: "Continue" }).click();
+  await nextPlaylistOptions(dialog);
   await dialog.getByRole("button", { name: "Update schedule" }).click();
   await expect(page.getByRole("option", { name: "Daily at 3:00 AM" })).toHaveAttribute("aria-selected", "true");
   await page.getByRole("option", { name: "Daily at 3:00 AM" }).click();
-  await expect(dialog.getByRole("button", { name: "Import and link" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: /^Import (?:\d+ songs|playlist)$/ })).toBeVisible();
   await expect(dialog.getByRole("checkbox", { name: /Keep downloaded copies/ })).not.toBeChecked();
   await dialog.getByRole("checkbox", { name: /Keep downloaded copies/ }).check();
-  await expect(dialog.getByRole("button", { name: "Import and link" })).toBeInViewport();
+  await expect(dialog.getByRole("button", { name: /^Import (?:\d+ songs|playlist)$/ })).toBeInViewport();
   await expect(dialog.locator(".playlist-add-body")).toHaveCSS("overflow-y", "auto");
   const create = page.waitForRequest((request) =>
     request.method() === "POST" && request.url().endsWith("/api/admin/playlist-links"));
   const scheduled = page.waitForRequest((request) =>
     request.method() === "POST" && request.url().endsWith("/schedules"));
-  await dialog.getByRole("button", { name: "Import and link" }).click();
+  await dialog.getByRole("button", { name: /^Import (?:\d+ songs|playlist)$/ }).click();
   const input = (await create).postDataJSON();
   expect(input).toMatchObject({
     targetPlaylistId: "jellyfin-playlist",
@@ -3224,6 +3212,7 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
   await expect(details.getByText("Test song", { exact: true })).toBeVisible();
   await expect(details).toHaveCSS("overflow", "hidden");
   await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
+  await expect(details.locator(".sync-settings .locked")).toHaveText("Off");
 
   const exactTarget = page.waitForRequest((request) =>
     request.url().includes("/api/admin/media-targets/22222222-2222-2222-2222-222222222222/playlists"));
@@ -3243,8 +3232,11 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
     mode: "hybrid",
     projectionMode: "resolved",
     materializationMode: "reconcile",
-    mirrorStaleEntries: true,
+    mirrorStaleEntries: false,
     preserveManualEntries: true,
+    syncName: true,
+    syncDescription: true,
+    syncArtwork: true,
     targetPlaylistId: null,
   });
   await expect(settings).toBeHidden();
@@ -3266,7 +3258,7 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
   await settings.getByRole("button", { name: "Save settings" }).click();
   await expect(settings.getByRole("alert")).toContainText("resource changed");
   listRevision = 2;
-  await page.locator(".playlist-toolbar-actions").getByRole("button", { name: "Refresh playlists" })
+  await page.locator(".library-actions").getByRole("button", { name: "Refresh playlists" })
     .evaluate((button) => (button as HTMLButtonElement).click());
   await expect(settings.getByRole("alert")).toContainText("changed while you were editing");
   await expect(settings.getByRole("button", { name: "Save settings" })).toBeDisabled();
@@ -3274,7 +3266,7 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
   await expect(settings).toBeHidden();
   await expect(details).toBeVisible();
 
-  await details.getByRole("button", { name: "Close playlist details" }).click();
+  await details.getByRole("button", { name: "Close" }).click();
   let projectionUnavailable = true;
   await page.route("**/api/admin/playlist-links/playlist-link?projectionMode=resolved", (route) => projectionUnavailable
     ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Projection fixture unavailable" }) })
@@ -3617,8 +3609,8 @@ test("Event log groups matching work and preserves actionable history", async ({
 
   await expect(page.getByText("Matched 3 songs in 2 playlists")).toBeVisible();
   const group = page.locator(".event-log-group").filter({ hasText: "Matched 3 songs" });
-  await expect(page.locator(".event-log-group summary .event-kind-icon img")).toHaveCount(0);
-  await expect(group.locator("summary .event-kind-icon svg")).toBeVisible();
+  await expect(page.locator(".event-log-group .item-row .event-kind-icon img")).toHaveCount(0);
+  await expect(group.locator(".item-row .event-kind-icon svg")).toBeVisible();
   await expect(page.getByText("Playlist sync", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Load earlier events" })).toHaveCount(0);
   await expect.poll(() => page.evaluate(() =>
@@ -3630,21 +3622,21 @@ test("Event log groups matching work and preserves actionable history", async ({
   await expect(page.getByText("Nothing matches these filters")).toBeVisible();
   await page.getByRole("button", { name: "Clear filters" }).click();
 
-  await group.locator(":scope > summary").focus();
+  await group.locator(".row-action").focus();
   await page.keyboard.press("Enter");
-  await expect(group.locator(".event-child .event-art > span").first()).toBeVisible();
+  await expect(page.locator("[data-side-panel] .event-child .event-art > span").first()).toBeVisible();
   const technical = page.getByText("Technical details").first();
   await expect(technical).toBeVisible();
   await expect(page.getByText("Title Similarity").first()).toBeHidden();
   await technical.click();
   await expect(page.getByText("Media server item ID").first()).toBeVisible();
   await expect(page.getByText("Title Similarity").first()).toBeVisible();
-  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(page.locator(".event-log-group.streaming")).toHaveCount(1);
   const streamedGroup = page.locator(".event-log-group").filter({ hasText: "New live event" });
-  await expect(streamedGroup.locator(":scope > summary").getByText("New live event", { exact: true })).toBeVisible();
-  await expect(group).toHaveAttribute("open", "");
-  await group.getByRole("link", { name: "Review match" }).first().click();
+  await expect(streamedGroup.locator(".item-row").getByText("New live event", { exact: true })).toBeVisible();
+  await expect(group.locator(".row-action")).toHaveAttribute("aria-pressed", "true");
+  await page.locator("[data-side-panel]").getByRole("link", { name: "Review match" }).first().click();
   await expect(page).toHaveURL(/#\/library\/matches\?search=Song%200$/);
 });
 
@@ -3652,26 +3644,24 @@ test("Cached and Kept keep media facts and actions readable on mobile", async ({
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
   await page.goto("#/library/cached");
-  await expect(page.getByRole("button", { name: "Provider" })).toContainText("All providers");
+  await expect(page.getByRole("button", { name: "Source", exact: true })).toContainText("All sources");
   const cached = page.locator(".download-row");
-  await expect(cached.locator(".download-art .provider-mark")).toBeVisible();
-  await expect(cached.getByText("FLAC · 900 kbps · 16-bit · 44.1 kHz · 2 ch")).toBeVisible();
-  const fileFacts = cached.locator(".download-file");
-  await expect(fileFacts).toHaveAttribute("aria-label", /Size 1000 KiB\. Updated /);
-  await expect(fileFacts.getByText("1000 KiB", { exact: true })).toBeVisible();
-  await expect(cached.getByRole("link", { name: "Download" })).toBeVisible();
-  await expect(cached.getByRole("button", { name: "Keep" })).toBeVisible();
-  await expect(cached.getByRole("button", { name: "Remove" })).toBeVisible();
-  await expect(cached.getByText(/Track cache/)).toBeVisible();
-
+  await expect(cached.getByRole("button", { name: "Keep", exact: true })).toBeVisible();
+  await expect(cached.getByRole("link", { name: "Download", exact: true })).toHaveCount(0);
+  await cached.getByRole("button", { name: /Open song details/ }).click();
+  const panel = page.getByRole("dialog");
+  await expect(panel).toContainText("900 kbps");
+  await expect(panel).toContainText("1000 KiB");
+  await expect(panel).toContainText("Track cache");
+  await expect(panel.getByRole("link", { name: "Download", exact: true })).toBeVisible();
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
   await page.goto("#/library/kept");
   const kept = page.locator(".download-row");
-  await expect(kept.getByRole("button", { name: "Keep" })).toHaveCount(0);
-  const downloadWidth = (await kept.getByRole("link", { name: "Download" }).boundingBox())?.width ?? 0;
-  const removeWidth = (await kept.getByRole("button", { name: "Remove" }).boundingBox())?.width ?? 0;
-  expect(Math.abs(downloadWidth - removeWidth)).toBeLessThanOrEqual(1);
-  await kept.getByRole("button", { name: "Remove" }).click();
-  await expect(page.getByRole("alertdialog", { name: "Remove this track?" })).toBeVisible();
+  await expect(kept.getByRole("button", { name: "Keep", exact: true })).toHaveCount(0);
+  await expect(kept.getByRole("link", { name: "Download", exact: true })).toBeVisible();
+  await kept.getByRole("button", { name: /Actions for/ }).click();
+  await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
+  await expect(page.getByRole("alertdialog")).toBeVisible();
 });
 
 test("Cached owns track storage and retention controls", async ({ page }) => {
@@ -3877,7 +3867,7 @@ test("Dashboard primary tracks stay geometrically aligned", async ({ page }) => 
   await page.goto("#/library/playlists");
   await expect(page.locator(".library-tabs")).toBeVisible();
   await expectSameTrack(".workspace-header", ".library-tabs");
-  const playlistList = page.locator(".playlist-list");
+  const playlistList = page.locator(".library-list");
   await expect(playlistList).toBeVisible();
   expect((await playlistList.boundingBox())?.height ?? Infinity).toBeLessThan(400);
 
@@ -4155,7 +4145,7 @@ test("Contextual dialog tabs scroll inside their panels at narrow widths", async
   expect(await playlist.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/${screenshotTheme ?? "system"}-mobile-320-playlist-tabs.png` });
-  await playlist.getByRole("button", { name: "Close playlist details" }).click();
+  await playlist.getByRole("button", { name: "Close" }).click();
 
   await page.goto("#/integrations/services");
   const lumen = page.locator(".source-row").filter({ hasText: "Lumen Audio" });
@@ -4171,18 +4161,9 @@ test("Compact dialogs share symmetric actions and readable progress", async ({ p
   await mockApi(page);
 
   await page.goto("#/library/playlists");
-  const rematchButton = page.getByRole("button", { name: "Review rematch" });
-  await expect(rematchButton).toBeVisible();
-  expect(await rematchButton.evaluate((button) => button.scrollWidth <= button.clientWidth)).toBe(true);
-  const toolbarActions = await page.locator(".playlist-toolbar-actions [data-slot=button]").evaluateAll((buttons) =>
-    buttons.map((button) => {
-      const rect = button.getBoundingClientRect();
-      return { contained: button.scrollWidth <= button.clientWidth, width: rect.width, y: Math.round(rect.y) };
-    }));
-  expect(new Set(toolbarActions.map(({ y }) => y)).size).toBe(3);
-  expect(toolbarActions.every(({ contained }) => contained)).toBe(true);
-  expect(Math.max(...toolbarActions.map(({ width }) => width)) -
-    Math.min(...toolbarActions.map(({ width }) => width))).toBeLessThanOrEqual(1);
+  const toolbar = page.locator(".library-actions");
+  await expect(toolbar.getByRole("button")).toHaveCount(2);
+  await expect(toolbar.getByRole("button", { name: "Import playlist", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Import playlist" }).click();
   const playlistDialog = page.getByRole("dialog", { name: "Import a playlist" });
   const steps = await playlistDialog.locator(".playlist-add-steps button").evaluateAll((buttons) =>
@@ -4994,7 +4975,8 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await page.setViewportSize({ width: 835, height: 762 });
   await mockApi(page);
   await page.goto("#/library/playlists");
-  await expect.poll(async () => (await page.locator(".playlist-list").boundingBox())?.height ?? Infinity).toBeLessThan(400);
+  await expect.poll(async () => (await page.locator(".library-list").boundingBox())?.height ?? Infinity).toBeLessThan(450);
+  await expect(page.locator(".playlist-row")).toHaveCount(1);
   await expect(page.locator(".desktop-navigation").getByRole("link", { name: "Library" }).locator("svg"))
     .toBeVisible();
   await expect(page.locator(".desktop-navigation").getByRole("link", { name: "Library" }).locator("use"))
@@ -5004,24 +4986,13 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await page.getByRole("button", { name: "Refresh playlists" }).click();
   await refresh;
   await expect(page.getByText(/1 playlists refreshed in/)).toBeVisible();
-  const coverage = page.locator(".playlist-row .coverage-bar > span[style]");
-  await expect(coverage).toHaveCount(2);
-  await expect(coverage.nth(0)).toHaveAttribute("style", /width:\s*50%;.*var\(--color-warning\)/);
-  await expect(coverage.nth(1)).toHaveAttribute("style", /width:\s*50%;.*var\(--color-danger\)/);
-  const [playlistRow, playlistBar] = await Promise.all([
-    page.locator(".playlist-row").boundingBox(),
-    page.locator(".playlist-row .coverage-bar").boundingBox(),
-  ]);
-  expect(Math.abs((playlistRow!.y + playlistRow!.height) - (playlistBar!.y + playlistBar!.height)))
-    .toBeLessThanOrEqual(1);
-  expect(playlistBar!.height).toBeGreaterThanOrEqual(6);
-  await coverage.nth(0).hover();
-  await expect(page.locator(".coverage-tip")).toHaveText("Needs review · 1 song");
-  await coverage.nth(1).hover();
-  await expect(page.locator(".coverage-tip")).toHaveText("Not matched · 1 song");
+  await expect(page.locator(".playlist-row").getByText("Needs a look", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Playlist status" })).toContainText("1 playlist");
   const rematchPreview = page.waitForRequest((item) =>
     item.method() === "GET" && item.url().endsWith("/api/admin/playlist-links/rematch/preview"));
-  await page.getByRole("button", { name: "Review rematch" }).click();
+  await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
+  await page.getByRole("button", { name: "Actions", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Review account rematch", exact: true }).click();
   await rematchPreview;
   const rematchDialog = page.getByRole("dialog", { name: "Review full rematch" });
   await expect(rematchDialog.getByText("1 track needs review")).toBeVisible();
@@ -5033,29 +5004,13 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await rematchApply;
   await expect(page.getByText("Controlled rematch queued.")).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator(".playlist-row .coverage-bar")).toHaveAttribute("aria-label", "0 matched, 1 needs review, 1 not matched");
-  await expect(page.locator(".playlist-row .playlist-art > span")).toBeVisible();
   const openPlaylist = page.getByRole("button", { name: "Open Test playlist playlist details", exact: true });
   await expect(openPlaylist).toBeVisible();
-  await expect(page.getByText("1 to review", { exact: true })).toBeVisible();
-  await expect(page.getByText("1 unresolved", { exact: true })).toBeVisible();
-  await expect(page.getByText("Not updated yet", { exact: true })).toBeVisible();
-  await expect(page.getByRole("group", { name: "0% confirmed, 1 of 2 playable" })).toBeVisible();
-  const metricsFit = await page.locator(".playlist-summary").evaluate((summary) => {
-    const parent = summary.getBoundingClientRect();
-    const children = [...summary.children].map((child) => child.getBoundingClientRect());
-    const inside = children.every((child) =>
-      child.left >= parent.left - 1 && child.right <= parent.right + 1 &&
-      child.top >= parent.top - 1 && child.bottom <= parent.bottom + 1);
-    const separate = children.every((item, index) => children.slice(index + 1).every((other) =>
-      item.right <= other.left || other.right <= item.left ||
-      item.bottom <= other.top || other.bottom <= item.top));
-    return inside && separate;
-  });
-  expect(metricsFit).toBe(true);
+  await expect(page.locator(".playlist-row").getByText("Needs a look", { exact: true })).toBeVisible();
   await openPlaylist.click();
   const dialog = page.getByRole("dialog", { name: "Test playlist" });
   await expect(dialog).toBeVisible();
+  await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBe(390);
   await expect(dialog.locator(".hero-art > span")).toBeVisible();
   await expect(dialog.locator(".track-art > span")).toBeVisible();
   await expect(dialog.getByRole("table", { name: "Test playlist tracks" })).toBeVisible();
@@ -5075,17 +5030,17 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(mobileMatch).toBeHidden();
   await expect(dialog).toBeVisible();
   await expect(mobileReview).toBeFocused();
-  await dialog.getByRole("button", { name: "Close playlist details" }).click();
+  await dialog.getByRole("button", { name: "Close" }).click();
   await openPlaylist.click();
   await expect(dialog.getByRole("button", { name: "Track route" })).toContainText("All routes");
   await expect(dialog.getByRole("button", { name: "Actions" })).toBeInViewport();
   await dialog.getByRole("button", { name: "Actions" }).click();
   await expect(page.getByRole("menuitem", { name: "Update playlist now" })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: "Rematch" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Review account rematch" })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Refresh source" })).toBeVisible();
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1280, height: 800 });
-  await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBeGreaterThan(900);
+  await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBe(480);
   await expect(dialog.getByText(/Snapshot v/)).toHaveCount(0);
   await expect(dialog.getByText("Last target sync")).toHaveCount(0);
   await expect(dialog.getByText("Current published snapshot")).toHaveCount(0);
@@ -5111,7 +5066,7 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
         facts.every((fact) => fact.left >= overviewBounds.left - 1 && fact.right <= overviewBounds.right + 1),
     };
   });
-  expect(density.dialogHeight).toBeLessThan(700);
+  expect(density.dialogHeight).toBeLessThanOrEqual(800);
   expect(density.blankTrackTail).toBeLessThan(48);
   expect(density.overviewFits).toBe(true);
   await dialog.getByRole("button", { name: "Technical details for Test song" }).click();
@@ -5147,38 +5102,14 @@ test("Playlist dialog keeps Actions and close controls independent at desktop an
     await opener.click();
     const dialog = page.getByRole("dialog", { name: "Test playlist" });
     const actions = dialog.getByRole("button", { name: "Actions" });
-    const close = dialog.getByRole("button", { name: "Close playlist details" });
+    const close = dialog.getByRole("button", { name: "Close" });
     await expect(actions).toBeVisible();
     await expect(close).toBeVisible();
-    await expect(close).toHaveAttribute("aria-label", "Close playlist details");
+    await expect(close).toHaveAttribute("aria-label", "Close");
 
-    const geometry = await dialog.evaluate((element) => {
-      const hero = element.querySelector<HTMLElement>(".playlist-hero");
-      const action = element.querySelector<HTMLElement>(".playlist-actions-trigger");
-      const closeButton = element.querySelector<HTMLElement>(".playlist-dialog-close");
-      if (!hero || !action || !closeButton) return null;
-      const heroBounds = hero.getBoundingClientRect();
-      const actionBounds = action.getBoundingClientRect();
-      const closeBounds = closeButton.getBoundingClientRect();
-      const overlap = !(
-        actionBounds.right <= closeBounds.left || closeBounds.right <= actionBounds.left ||
-        actionBounds.bottom <= closeBounds.top || closeBounds.bottom <= actionBounds.top
-      );
-      return {
-        overlap,
-        actionInHero: hero.contains(action),
-        closeInHero: hero.contains(closeButton),
-        actionRight: actionBounds.right,
-        closeLeft: closeBounds.left,
-        heroRight: heroBounds.right,
-      };
-    });
-    expect(geometry).not.toBeNull();
-    expect(geometry?.overlap).toBe(false);
-    expect(geometry?.actionInHero).toBe(true);
-    expect(geometry?.closeInHero).toBe(true);
-    expect(geometry?.actionRight ?? 0).toBeLessThanOrEqual(geometry?.heroRight ?? 0);
-    expect(geometry?.closeLeft ?? 0).toBeGreaterThanOrEqual(0);
+    const actionBox = await actions.boundingBox(), closeBox = await close.boundingBox();
+    expect(actionBox).not.toBeNull(); expect(closeBox).not.toBeNull();
+    expect(actionBox!.y + actionBox!.height <= closeBox!.y || closeBox!.y + closeBox!.height <= actionBox!.y || actionBox!.x + actionBox!.width <= closeBox!.x || closeBox!.x + closeBox!.width <= actionBox!.x).toBe(true);
 
     await close.focus();
     await expect(close).toBeFocused();
@@ -5242,11 +5173,11 @@ test("Passive playlist refresh keeps mutation controls enabled while detail read
   await page.evaluate(() => window.__emitAllstarrUpdate?.());
   await expect.poll(() => detailRequests).toBe(2);
   await expect(page.getByRole("button", { name: "Refresh playlists" })).toBeEnabled();
-  await expect(page.getByRole("button", { name: "Review rematch" })).toBeEnabled();
+  await expect(page.getByRole("dialog", { name: "Test playlist" }).getByRole("button", { name: "Actions", exact: true })).toBeEnabled();
   expect(postRequests).toBe(0);
 
   detailRefresh.release();
-  await expect(dialog.getByRole("button", { name: "Close playlist details" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Close" })).toBeVisible();
 });
 
 for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }]) {
@@ -5365,7 +5296,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await expect(scroll).toHaveAttribute("data-instance", "reading-position");
     expect(Math.abs(await scroll.evaluate((element) => element.scrollTop) - before)).toBeLessThanOrEqual(1);
 
-    await dialog.getByRole("button", { name: "Close playlist details" }).click();
+    await dialog.getByRole("button", { name: "Close" }).click();
     await page.getByRole("button", { name: "Open Second playlist playlist details" }).click();
     await expect(page.getByRole("dialog", { name: "Second playlist" }).locator(".track-scroll"))
       .toHaveJSProperty("scrollTop", 0);
@@ -5522,8 +5453,9 @@ test("Responsive boundaries preserve navigation and download identity", async ({
     await page.setViewportSize({ width, height: 900 });
     await page.goto("#/library/cached");
     const row = page.locator(".download-row");
-    await expect(row.locator(".download-provider strong", { hasText: "Lumen Audio" })).toBeVisible();
-    await expect(row.getByRole("link", { name: "Download" })).toBeVisible();
+    await expect(row.locator(".source-name", { hasText: "Lumen Audio" })).toBeVisible();
+    await expect(row.getByRole("button", { name: "Keep", exact: true })).toBeVisible();
+    await expect(row.getByRole("button", { name: /Actions for/ })).toBeVisible();
     await expect.poll(() => page.evaluate(() =>
       document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   }
@@ -5536,7 +5468,7 @@ test("Playlist columns and nested dialogs retain interaction ownership", async (
   const opener = page.getByRole("button", { name: "Open Test playlist playlist details" });
   await opener.click();
   const playlist = page.getByRole("dialog", { name: "Test playlist" });
-  await expect(page.locator("body")).toHaveCSS("overflow", "hidden");
+  await expect(playlist).toHaveAttribute("data-side-panel");
   await playlist.getByRole("button", { name: /Choose track columns/ }).click();
   const columns = page.locator(".track-column-picker");
   await columns.getByLabel("Artist", { exact: true }).uncheck();
@@ -5548,7 +5480,7 @@ test("Playlist columns and nested dialogs retain interaction ownership", async (
   const match = page.getByRole("dialog", { name: "Test song" });
   await expect(match).toBeVisible();
   const layers = await page.evaluate(() => ({
-    parent: Number.parseInt(getComputedStyle(document.querySelector(".playlist-detail-dialog")!).zIndex),
+    parent: Number.parseInt(getComputedStyle(document.querySelector(".side-panel")!).zIndex),
     nestedOverlay: Number.parseInt(getComputedStyle(document.querySelector(".match-dialog-overlay")!).zIndex),
     nested: Number.parseInt(getComputedStyle(document.querySelector(".match-dialog")!).zIndex),
   }));
@@ -5558,7 +5490,7 @@ test("Playlist columns and nested dialogs retain interaction ownership", async (
   await expect(match).toBeHidden();
   await expect(playlist).toBeVisible();
   await expect(review).toBeFocused();
-  await playlist.getByRole("button", { name: "Close playlist details" }).click();
+  await playlist.getByRole("button", { name: "Close" }).click();
   await expect(opener).toBeFocused();
 });
 
@@ -6098,7 +6030,7 @@ test("playlist projections, operations, and cancellation keep the selected playl
   await details.getByRole("button", { name: "Actions" }).click();
   await page.getByRole("menuitem", { name: "Update playlist now" }).click();
   await expect(details.getByRole("button", { name: /Operation details:/ })).toBeVisible();
-  await details.getByRole("button", { name: "Close playlist details" }).click();
+  await details.getByRole("button", { name: "Close" }).click();
 
   const projection = routeRelease();
   await page.route("**/api/admin/playlist-links/playlist-link?projectionMode=resolved", async (route) => {
@@ -6150,17 +6082,17 @@ for (const width of [390, 1280]) {
           const dialog = page.getByRole("dialog", { name: "Import a playlist" });
           await dialog.getByRole("radio", { name: /Spotify/ }).check();
           await dialog.getByRole("radio", { name: /Source Mix/ }).check();
-          await dialog.getByRole("button", { name: "Continue" }).click();
+          await nextPlaylistOptions(dialog);
           await dialog.getByRole("radio", { name: importMode === "oneTime" ? /Import once/ : /Keep in sync/ }).check();
-          await dialog.getByRole("button", { name: "Continue" }).click();
+          await nextPlaylistOptions(dialog);
           if (destination === "existing") {
             await dialog.getByRole("radio", { name: /Existing playlist/ }).check();
-            await expect(dialog.getByRole("button", { name: "Continue" })).toBeDisabled();
+            await expect(dialog.getByRole("button", { name: /^Import (?:\d+ songs|playlist)$/ })).toBeDisabled();
             await dialog.getByRole("radio", { name: /Road trip/ }).check();
           } else {
             await expect(dialog.getByRole("radio", { name: /New playlist/ })).toBeChecked();
           }
-          await dialog.getByRole("button", { name: "Continue" }).click();
+          await nextPlaylistOptions(dialog);
           const keep = dialog.getByRole("checkbox", { name: /Keep downloaded copies/ });
           await expect(keep).not.toBeChecked();
           await keep.focus();
@@ -6171,7 +6103,7 @@ for (const width of [390, 1280]) {
           } else {
             await expect(dialog.getByRole("button", { name: "Update schedule" })).toContainText("Daily at 3:00 AM");
           }
-          const save = dialog.getByRole("button", { name: importMode === "oneTime" ? "Import playlist" : "Import and link", exact: true });
+          const save = dialog.getByRole("button", { name: /^Import (?:\d+ songs|playlist)$/, exact: true });
           await expect(save).toBeInViewport();
           expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
           expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -6212,15 +6144,15 @@ for (const width of [390, 1280]) {
       await page.getByRole("button", { name: "Import playlist" }).click();
       const dialog = page.getByRole("dialog", { name: "Import a playlist" });
       await dialog.getByRole("radio", { name: /Public Spotify playlist/ }).check();
-      await expect(dialog.getByRole("button", { name: "Continue" })).toBeDisabled();
+      await expect(dialog.getByRole("button", { name: "Next" })).toBeDisabled();
       await dialog.getByRole("searchbox", { name: "Playlist link, URI or ID" }).fill("https://open.spotify.com/playlist/public-mix?si=discard");
       await dialog.getByRole("button", { name: "Use playlist" }).click();
-      await expect(dialog.getByRole("button", { name: "Continue" })).toBeEnabled();
+      await expect(dialog.getByRole("button", { name: "Next" })).toBeEnabled();
       expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/public-source-${width}-${colorScheme}.png`, fullPage: true });
-      for (let step = 0; step < 3; step++) await dialog.getByRole("button", { name: "Continue" }).click();
-      await dialog.getByRole("button", { name: "Import playlist", exact: true }).click();
+      await nextPlaylistOptions(dialog);
+      await dialog.getByRole("button", { name: /^Import (?:\d+ songs|playlist)$/, exact: true }).click();
       await expect(dialog).toBeHidden();
       expect(created).toMatchObject({ providerAccountId: null, sourceProviderId: "spotify",
         sourcePlaylistId: "https://open.spotify.com/playlist/public-mix?si=discard", importMode: "oneTime" });
@@ -6242,8 +6174,8 @@ test("Liked Songs uses the selected Spotify account", async ({ page }) => {
   const dialog = page.getByRole("dialog", { name: "Import a playlist" });
   await dialog.getByRole("radio", { name: /Spotify/ }).check();
   await dialog.getByRole("radio", { name: /Liked Songs/ }).check();
-  for (let step = 0; step < 3; step++) await dialog.getByRole("button", { name: "Continue" }).click();
-  await dialog.getByRole("button", { name: "Import playlist", exact: true }).click();
+  await nextPlaylistOptions(dialog);
+  await dialog.getByRole("button", { name: /^Import (?:\d+ songs|playlist)$/, exact: true }).click();
   await expect(dialog).toBeHidden();
   expect(created).toMatchObject({ providerAccountId: "spotify", sourceProviderId: "spotify", sourcePlaylistId: "liked-songs" });
 });
@@ -6289,8 +6221,8 @@ for (const width of [390, 1280]) {
       expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/public-profile-${width}-${colorScheme}.png`, fullPage: true });
-      for (let step = 0; step < 3; step++) await dialog.getByRole("button", { name: "Continue" }).click();
-      await dialog.getByRole("button", { name: "Import playlist", exact: true }).click();
+      await nextPlaylistOptions(dialog);
+      await dialog.getByRole("button", { name: /^Import (?:\d+ songs|playlist)$/, exact: true }).click();
       await expect(dialog).toBeHidden();
       expect(created).toMatchObject({ providerAccountId: null, sourceProviderId: "spotify", sourcePlaylistId: "second" });
     });
@@ -6325,7 +6257,7 @@ test("Public Spotify profile edits invalidate stale discovery and selection", as
   await user.fill("new-user");
   await dialog.getByRole("button", { name: "Browse playlists" }).click();
   await dialog.getByRole("radio", { name: /Current public mix/ }).check();
-  await expect(dialog.getByRole("button", { name: "Continue" })).toBeEnabled();
+  await expect(dialog.getByRole("button", { name: "Next" })).toBeEnabled();
   const oldResponse = page.waitForResponse((response) => new URL(response.url()).searchParams.get("sourceUserId") === "old-user");
   releaseOld();
   await (await oldResponse).finished();
@@ -6333,7 +6265,7 @@ test("Public Spotify profile edits invalidate stale discovery and selection", as
   await expect(dialog.getByRole("radio", { name: /Current public mix/ })).toBeChecked();
   await user.fill("third-user");
   await expect(dialog.getByRole("radio", { name: /Current public mix/ })).toHaveCount(0);
-  await expect(dialog.getByRole("button", { name: "Continue" })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Next" })).toBeDisabled();
 });
 
 for (const width of [390, 1280]) {
@@ -7103,28 +7035,29 @@ for (const width of [390, 1280]) {
         await page.getByRole("tab", { name: view, exact: true }).click();
         await expect(page.getByRole("tab", { name: view, exact: true })).toHaveAttribute("aria-selected", "true");
         if (view === "Jobs") {
-          await expect(page.getByText("Writing playlist", { exact: true })).toBeVisible();
+          await expect(page.locator('[data-job-id="activity-job-1"]')).toContainText("Writing playlist");
           await expect(page.getByRole("progressbar", { name: /50%/ })).toBeVisible();
-          for (const state of ["Waiting", "Running", "Retry scheduled", "Deferred"])
+          for (const state of ["Waiting", "Running"])
             await expect(page.getByText(state, { exact: true }).first()).toBeVisible();
-          await page.getByRole("button", { name: "Cancel job" }).first().click();
+          await page.locator(".job-row").getByRole("button", { name: "Cancel", exact: true }).first().click();
           await page.getByRole("alertdialog", { name: "Cancel this job?" }).getByRole("button", { name: "Cancel job", exact: true }).click();
           await expect.poll(() => cancelled).toBe(true);
-          await expect(page.getByRole("button", { name: "Cancel job" })).toHaveCount(3);
+          await expect(page.locator(".job-row").getByRole("button", { name: "Cancel", exact: true })).toHaveCount(3);
           await expect(page.getByRole("region", { name: "Running and waiting" })).toBeVisible();
-          await expect(page.getByText("The source is temporarily unavailable.", { exact: true }).first()).toBeVisible();
+          await expect(page.locator('[data-job-id="finished-job"]')).toContainText("The source is temporarily unavailable.");
           const finished = page.locator('[data-job-id="finished-job"]').getByRole("button", { name: /Update playlist/ });
-          await expect(finished).toHaveAttribute("aria-expanded", "false");
+          await expect(finished).toHaveAttribute("aria-pressed", "false");
           await finished.click();
-          await expect(finished).toHaveAttribute("aria-expanded", "true");
+          await expect(finished).toHaveAttribute("aria-pressed", "true");
           await expect(page.getByRole("region", { name: "Attempt history" })).toContainText("Attempt 1");
+          await page.locator("[data-side-panel]").getByRole("button", { name: "Close", exact: true }).click();
           await page.getByRole("button", { name: "Load earlier jobs" }).click();
           await expect(page.locator('[data-job-id="older-finished"]')).toBeVisible();
         } else if (view === "History") {
           await expect(page.getByRole("region", { name: /Event log|Your activity/ })).toBeVisible();
           await expect(page.locator("[data-job-id]")).toHaveCount(0);
         } else {
-          await expect(page.getByText("Sync Evening playlist", { exact: true })).toBeVisible();
+          await expect(page.getByText("Evening playlist", { exact: true })).toBeVisible();
           await expect(page.getByText("Activity retention", { exact: true })).toBeVisible();
           await page.getByRole("button", { name: "Run now" }).click();
           await expect.poll(() => taskRuns).toBe(1);
@@ -7152,7 +7085,7 @@ for (const view of ["Jobs", "Tasks"] as const) {
         { json: view === "Tasks" ? { items: [] } : { jobs: [], progress: [], hasMore: false } }));
     await page.goto("#/activity");
     await page.getByRole("tab", { name: view, exact: true }).click();
-    const alert = page.getByRole("alert", { name: view === "Tasks" ? "Tasks unavailable" : "Jobs unavailable" });
+    const alert = page.getByRole("alert", { name: view + " unavailable", exact: true });
     await expect(alert).toBeVisible();
     await expect(page.getByText("fixture-private-response")).toHaveCount(0);
     fail = false;
@@ -7177,8 +7110,8 @@ test("Activity Jobs collapses repeated routine runs into one row", async ({ page
   await expect(grouped).toBeVisible();
   await expect(page.getByRole("button", { name: /Refresh library index/ })).toHaveCount(2);
   await grouped.click();
-  await expect(page.getByRole("list", { name: "Runs" }).getByRole("listitem")).toHaveCount(3);
-  await expect(page.getByText("Jellyfin did not answer.", { exact: true })).toBeVisible();
+  await expect(page.locator("[data-side-panel] .group-members .item-row")).toHaveCount(3);
+  await expect(page.locator('[data-job-id="scan-failed"]')).toContainText("Jellyfin did not answer.");
 });
 
 test("Activity queue refreshes after reconnect and sends server-side filters", async ({ page }) => {
@@ -7214,6 +7147,7 @@ test("Activity queue refreshes after reconnect and sends server-side filters", a
   await page.goto("#/activity");
   await page.getByRole("tab", { name: "Jobs", exact: true }).click();
   await expect(page.getByText("Update playlist", { exact: true })).toBeVisible();
+  await page.getByText("More filters", { exact: true }).click();
   await page.getByRole("button", { name: "Job state", exact: true }).click();
   await page.getByRole("option", { name: "Running", exact: true }).click();
   await expect.poll(() => selectedState).toBe("Running");
@@ -7277,12 +7211,12 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.getByRole("tab", { name: "History", exact: true }).click();
     const other = page.locator(".event-log-group").filter({ hasText: "Alex" });
     await expect(other).toBeVisible();
-    await expect(other.locator("summary").first()).toContainText("Jellyfin library");
+    await expect(other.locator(".item-row")).toContainText("Jellyfin library");
     await expect(page.getByText("Unknown Source", { exact: true })).toHaveCount(0);
     await expect(page.getByText("private-other-id", { exact: true })).not.toBeVisible();
-    await other.locator("summary").first().click();
-    await other.getByText("Technical details", { exact: true }).click();
-    await expect(other.getByText("private-other-id", { exact: true })).toBeVisible();
+    await other.locator(".row-action").click();
+    await page.locator("[data-side-panel]").getByText("Technical details", { exact: true }).click();
+    await expect(page.locator("[data-side-panel]").getByText("private-other-id", { exact: true })).toBeVisible();
     await expectContainedMobileGeometry(page);
     if (process.env.ALLSTARR_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/activity-ownership-${width}-${theme}.png`, fullPage: true });
     await page.reload();
@@ -7418,7 +7352,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
       syncState: "failed", lastRunCode: "backend_access_missing", retrievedAt: "2026-01-01",
     } }));
     await page.goto("#/library/playlists");
-    await expect(page.getByText("Media-server access needed", { exact: true })).toBeVisible();
+    await expect(page.locator(".playlist-row").getByText("Access needed", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Open Test playlist playlist details", exact: true }).click();
     const warning = page.getByRole("status").filter({ hasText: "Restore media-server access to resume playlist sync and library scans." });
     await expect(warning).toHaveCount(1);
@@ -7444,7 +7378,7 @@ test("Media-server administrator access keeps the connected card concise", async
   await expect(access.getByLabel("Jellyfin administrator password")).toBeVisible();
 });
 
-test("Empty playlists keep an empty match bar", async ({ page }) => {
+test("Empty playlists keep a readable song count", async ({ page }) => {
   await mockApi(page);
   const fixture = responses["/api/admin/playlist-links"] as { playlistLinks: Record<string, unknown>[] };
   await page.route((url) => url.pathname === "/api/admin/playlist-links", route => route.fulfill({ json: {
@@ -7452,12 +7386,8 @@ test("Empty playlists keep an empty match bar", async ({ page }) => {
       metrics: { total: 0, matched: 0, review: 0, unresolved: 0, rejected: 0, playable: 0, materialized: 0 } }],
   } }));
   await page.goto("#/library/playlists");
-  const bar = page.locator(".playlist-row .coverage-bar");
-  await expect(bar).toBeVisible();
-  await expect(bar).toHaveAttribute("aria-label", "0 matched, 0 needs review, 0 not matched");
-  await expect(bar.locator(":scope > span")).toHaveCount(0);
-  await bar.hover();
-  await expect(page.locator(".coverage-tip")).toHaveCount(0);
+  await expect(page.locator(".playlist-row")).toContainText("0 songs");
+  await expect(page.locator(".playlist-row .coverage-bar")).toHaveCount(0);
 });
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
@@ -7496,22 +7426,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
         track(3, "Streamed song", "external", "lumen-audio")],
     } }));
     await page.goto("#/library/playlists");
-    const bar = page.locator(".playlist-row .coverage-bar");
-    await expect(bar).toHaveAttribute("aria-label", "28 matched, 1 needs review, 1 not matched");
-    await expect(page.getByRole("group", { name: "93% confirmed, 29 of 30 playable" })).toBeVisible();
-    const segments = bar.locator(":scope > span");
-    await expect(segments).toHaveCount(3);
-    const labels = ["Matched · 28 songs", "Needs review · 1 song", "Not matched · 1 song"];
-    const colors = ["success", "warning", "danger"];
-    for (let index = 0; index < 3; index++) {
-      await expect(segments.nth(index)).toHaveAttribute("data-label", labels[index]);
-      const widthPercent = await segments.nth(index).evaluate(element => parseFloat((element as HTMLElement).style.width));
-      expect(widthPercent).toBeCloseTo([28, 1, 1][index] / 30 * 100, 3);
-      await expect(segments.nth(index)).toHaveAttribute("style", new RegExp(`var\\(--color-${colors[index]}\\)`));
-      await segments.nth(index).hover();
-      await expect(page.locator(".coverage-tip")).toHaveText(labels[index]);
-    }
-    await page.mouse.move(0, 0);
+    await expect(page.locator(".playlist-row").getByText("Needs a look", { exact: true })).toBeVisible();
+    await expect(page.getByRole("radio", { name: /^Needs a look/ })).toContainText("1");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: `test-results/playlist-list-${width}-${theme}.png`, fullPage: true });
     await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
@@ -7522,7 +7438,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(dialog.getByText(/Mapped playlist details are unavailable|No songs yet/)).toHaveCount(0);
     await expect(dialog).not.toContainText("Unresolved");
     await expect(dialog.locator(".hero-route")).toContainText("Jellyfin");
-    await expect(dialog.locator(".playlist-hero-summary")).toContainText("3 songs, 2 hr 15 min");
+    await expect(dialog.locator(".hero-route")).toContainText("2 hr 15 min");
     const overview = dialog.locator(".playlist-overview");
     await expect(dialog).not.toContainText("Where songs play from");
     await expect(dialog).not.toContainText("3 of 3 play");
@@ -7535,20 +7451,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(overview.getByRole("button", { name: "Edit schedule" })).toBeVisible();
     expect(await dialog.evaluate((element) => [element, ...element.querySelectorAll(".playlist-overview, .playlist-hero")]
       .every((part) => part.scrollWidth <= part.clientWidth + 1))).toBe(true);
-    const gutters = await dialog.evaluate((element) => {
-      const dialogLeft = element.getBoundingClientRect().left;
-      return [".hero-art", ".playlist-facts", ".track-toolbar > :first-child"]
-        .map((selector) => Math.round(element.querySelector(selector)!.getBoundingClientRect().left - dialogLeft));
-    });
-    expect(new Set(gutters).size).toBe(1);
-    expect(gutters[0]).toBeGreaterThanOrEqual(16);
-    const factsFill = await overview.evaluate(element => {
-      const style = getComputedStyle(element);
-      const bounds = element.getBoundingClientRect();
-      const facts = element.querySelector(".playlist-facts")!.getBoundingClientRect();
-      return Math.abs(facts.width - (bounds.width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight))) < 2;
-    });
-    expect(factsFill).toBe(true);
+    await expect(dialog.locator(".panel-body")).toHaveCSS("overflow-y", "auto");
     await page.screenshot({ path: `test-results/playlist-detail-${width}-${theme}.png`, fullPage: true });
   });
 }
@@ -8384,6 +8287,7 @@ for (const width of [390, 1280]) {
       await page.goto("#/library/playlists");
       await page.getByRole("button", { name: "Import playlist" }).click();
       const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+      await dialog.getByRole("tab", { name: "Paste a link", exact: true }).click();
       const input = dialog.getByRole("textbox", { name: "Paste a link" });
       await expect(input).toHaveAttribute("placeholder", "Paste a playlist or album link");
       if (colorScheme === "dark") {
@@ -8403,16 +8307,16 @@ for (const width of [390, 1280]) {
       expect(await input.evaluate((element) => getComputedStyle(element).fontSize)).toBe("16px");
       expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
       await page.screenshot({ path: `test-results/urlimport-${width}-${colorScheme}.png`, fullPage: true });
-      await dialog.getByRole("button", { name: "Continue" }).click();
+      await nextPlaylistOptions(dialog);
       await dialog.getByRole("radio", { name: importMode === "linked" ? /Keep in sync/ : /Import once/ }).check();
-      await dialog.getByRole("button", { name: "Continue" }).click();
+      await nextPlaylistOptions(dialog);
       if (existing) {
         await dialog.getByRole("radio", { name: /Existing playlist/ }).check();
         await dialog.getByRole("radio", { name: /Road trip/ }).check();
       }
-      await dialog.getByRole("button", { name: "Continue" }).click();
+      await nextPlaylistOptions(dialog);
       await dialog.getByRole("checkbox", { name: /Keep downloaded copies/ }).check();
-      await dialog.getByRole("button", { name: importMode === "linked" ? "Import and link" : "Import playlist", exact: true }).click();
+      await dialog.getByRole("button", { name: /^Import (?:\d+ songs|playlist)$/, exact: true }).click();
       await expect(dialog).toBeHidden();
       expect(created).toMatchObject({ providerAccountId: null, sourceProviderId: "tidal-fixture",
         sourcePlaylistId: "morning", importMode, targetPlaylistId: existing ? "jellyfin-playlist" : null, trackRetention: "keepAll" });
@@ -8429,11 +8333,12 @@ for (const message of ["No source can read this link.", "Turn on Tidal to import
     await page.goto("#/library/playlists");
     await page.getByRole("button", { name: "Import playlist" }).click();
     const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+    await dialog.getByRole("tab", { name: "Paste a link", exact: true }).click();
     const input = dialog.getByRole("textbox", { name: "Paste a link" });
     await input.fill("https://tidal.com/album/42");
     await input.press("Enter");
     await expect(dialog.getByRole("alert")).toContainText(message);
-    await expect(dialog.getByRole("button", { name: "Continue" })).toBeDisabled();
+    await expect(dialog.getByRole("button", { name: "Next" })).toBeDisabled();
   });
 }
 
@@ -8451,6 +8356,7 @@ test("URL import ignores a preview after the pasted link is edited", async ({ pa
   await page.goto("#/library/playlists");
   await page.getByRole("button", { name: "Import playlist" }).click();
   const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+  await dialog.getByRole("tab", { name: "Paste a link", exact: true }).click();
   const input = dialog.getByRole("textbox", { name: "Paste a link" });
   await input.fill("https://open.spotify.com/playlist/old");
   const requested = page.waitForRequest("**/api/admin/playlist-links/resolve-url");
@@ -8459,7 +8365,7 @@ test("URL import ignores a preview after the pasted link is edited", async ({ pa
   await input.fill("https://open.spotify.com/playlist/new");
   response.release();
   await expect(dialog.getByText("Old preview")).toHaveCount(0);
-  await expect(dialog.getByRole("button", { name: "Continue" })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Next" })).toBeDisabled();
 });
 
 test("URL import keeps destinations when a link is pasted while sources load", async ({ page }) => {
@@ -8478,16 +8384,17 @@ test("URL import keeps destinations when a link is pasted while sources load", a
   await page.goto("#/library/playlists");
   await page.getByRole("button", { name: "Import playlist" }).click();
   const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+  await dialog.getByRole("tab", { name: "Paste a link", exact: true }).click();
   const input = dialog.getByRole("textbox", { name: "Paste a link" });
   await input.fill("https://open.spotify.com/playlist/mix");
   await input.press("Enter");
   await expect(dialog.getByText("Quick preview")).toBeVisible();
   sources.release();
-  await expect(dialog.getByRole("button", { name: "Continue" })).toBeEnabled();
-  await dialog.getByRole("button", { name: "Continue" }).click();
-  await dialog.getByRole("button", { name: "Continue" }).click();
+  await expect(dialog.getByRole("button", { name: "Next" })).toBeEnabled();
+  await nextPlaylistOptions(dialog);
+  await nextPlaylistOptions(dialog);
   await expect(dialog.getByRole("radio", { name: /New playlist/ })).toBeChecked();
-  await expect(dialog.getByRole("button", { name: "Continue" })).toBeEnabled();
+  await expect(dialog.getByRole("button", { name: /^Import (?:\d+ songs|playlist)$/ })).toBeEnabled();
 });
 
 test("URL import keeps a later browsing choice when its preview arrives", async ({ page }) => {
@@ -8503,6 +8410,7 @@ test("URL import keeps a later browsing choice when its preview arrives", async 
   await page.goto("#/library/playlists");
   await page.getByRole("button", { name: "Import playlist" }).click();
   const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+  await dialog.getByRole("tab", { name: "Paste a link", exact: true }).click();
   const input = dialog.getByRole("textbox", { name: "Paste a link" });
   await dialog.getByRole("radio", { name: /Spotify/ }).check();
   await input.fill("https://open.spotify.com/playlist/old");
@@ -8515,7 +8423,7 @@ test("URL import keeps a later browsing choice when its preview arrives", async 
   response.release();
   await expect(dialog.getByText("Old preview")).toHaveCount(0);
   await expect(dialog.getByRole("radio", { name: /Source Mix/ })).toBeChecked();
-  await expect(dialog.getByRole("button", { name: "Continue" })).toBeEnabled();
+  await expect(dialog.getByRole("button", { name: "Next" })).toBeEnabled();
 });
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {

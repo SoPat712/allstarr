@@ -66,6 +66,16 @@ describe("shared pattern accessibility", () => {
     expect(html).toContain('aria-busy="true"');
     expect(render(RowsSkeleton, { props: { count: -1 } }).body).not.toContain('class="skeleton-row ');
   });
+  it("keeps page-specific loading and error names", () => {
+    const loading = render(RowsSkeleton, { props: { label: "Loading jobs" } }).body;
+    expect(loading).toContain('role="status" aria-busy="true" aria-label="Loading jobs"');
+    expect(loading).toContain("Loading jobs…");
+    expect(loading).not.toContain("Loading items");
+    expect(render(RowsSkeleton).body).toContain('aria-label="Loading items"');
+    const error = render(ErrorState, { props: { title: "Please try again.", label: "Jobs unavailable" } }).body;
+    expect(error).toContain('role="alert" aria-label="Jobs unavailable"');
+    expect(error).toContain("Please try again.");
+  });
   it("provides retry only when it can run and names the selected split action scope", () => {
     expect(render(ErrorState, { props: { title: "Matches could not load", onretry: async () => {} } }).body).toContain("Try again");
     expect(render(ErrorState, { props: { title: "Matches could not load" } }).body).not.toContain("Try again");

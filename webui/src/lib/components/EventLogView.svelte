@@ -4,10 +4,8 @@
   import { Button } from "$lib/components/ui/button";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import EventHistoryFeed from "$lib/components/EventHistoryFeed.svelte";
-  import ActivityJobs from "$lib/components/ActivityJobs.svelte";
-  import ActivityTasks from "$lib/components/ActivityTasks.svelte";
-  import ActivityPlays from "$lib/components/ActivityPlays.svelte";
-  import ProblemReportsInbox from "$lib/components/ProblemReportsInbox.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import { liveUpdates } from "$lib/live-updates.svelte";
 
   let { administrator = false, currentUserId = "", initialView = "history", initialReportId = "", initialJobId = "" }: { administrator?: boolean; currentUserId?: string; initialView?: string; initialReportId?: string; initialJobId?: string } = $props();
@@ -79,13 +77,13 @@
 {#if ready}
   {#key `${view}:${scope}:${view === "reports" ? initialReportId : view === "jobs" ? initialJobId : ""}`}
     {#if view === "reports" && administrator}
-      <ProblemReportsInbox {administrator} {initialReportId} />
+      {#await import("./ProblemReportsInbox.svelte")}<RowsSkeleton label="Loading reports" />{:then module}{@const View = module.default}<View {administrator} {initialReportId} />{:catch}<ErrorState title="Reports could not be opened." onretry={() => window.location.reload()} />{/await}
     {:else if view === "tasks"}
-      <ActivityTasks {administrator} {scope} />
+      {#await import("./ActivityTasks.svelte")}<RowsSkeleton label="Loading tasks" />{:then module}{@const View = module.default}<View {administrator} {scope} />{:catch}<ErrorState title="Tasks could not be opened." onretry={() => window.location.reload()} />{/await}
     {:else if view === "plays"}
-      <ActivityPlays {administrator} {scope} {currentUserId} />
+      {#await import("./ActivityPlays.svelte")}<RowsSkeleton label="Loading plays" />{:then module}{@const View = module.default}<View {administrator} {scope} {currentUserId} />{:catch}<ErrorState title="Plays could not be opened." onretry={() => window.location.reload()} />{/await}
     {:else}
-      {#if view === "jobs"}<ActivityJobs {administrator} {scope} {initialJobId} />{:else}<EventHistoryFeed {administrator} {scope} scopeControls={administrator && mobile ? scopeControls : undefined} />{/if}
+      {#if view === "jobs"}{#await import("./ActivityJobs.svelte")}<RowsSkeleton label="Loading jobs" />{:then module}{@const View = module.default}<View {administrator} {scope} {initialJobId} />{:catch}<ErrorState title="Jobs could not be opened." onretry={() => window.location.reload()} />{/await}{:else}<EventHistoryFeed {administrator} {scope} scopeControls={administrator && mobile ? scopeControls : undefined} />{/if}
     {/if}
   {/key}
 {/if}
@@ -93,6 +91,8 @@
 </div>
 
 <style>
+  .activity-content { min-width: 0; }
+  .activity-content :global(:is(button, [data-slot="button"])), :global(body:has(.activity-content) [data-side-panel] :is(button, [data-slot="button"])) { min-width: 44px; min-height: 44px; }
   .activity-content :global(.event-summary-copy > :is(strong, small)) { white-space: normal; overflow-wrap: anywhere; }
   .activity-content :global(:is(.event-kind-icon[data-tone], .activity-outcome)) {
     color: var(--activity-ink, var(--md-sys-color-on-surface-variant));
@@ -105,6 +105,7 @@
   .activity-content :global(:is([data-tone="warning"], .badge-warning)) { --activity-ink: var(--on-warning-container); --activity-container: var(--warning-container); }
   .activity-content :global(:is([data-tone="danger"], .badge-danger)) { --activity-ink: var(--md-sys-color-on-error-container); --activity-container: var(--md-sys-color-error-container); }
 
+  @media (min-width: 900px) { :global(body:has([data-side-panel])) .activity-content { margin-right: min(480px, 40vw); } }
   .activity-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1rem; margin-block: var(--space-5) var(--section-gap); }
   .activity-content :global(.activity-audience) { display: flex; gap: .5rem; }
   .activity-content :global(.activity-audience button) { min-height: var(--control-md); }

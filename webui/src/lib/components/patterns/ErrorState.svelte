@@ -4,10 +4,12 @@
 
   let {
     title,
+    label,
     detail,
     onretry,
   }: {
     title: string;
+    label?: string;
     detail?: string;
     onretry?: () => void | Promise<void>;
   } = $props();
@@ -25,7 +27,7 @@
   }
 </script>
 
-<div class="error-state" role="alert">
+<div class="error-state" role="alert" aria-label={label}>
   <AlertCircle class="error-icon" size={24} aria-hidden="true" />
   <div class="error-copy"><h3>{title}</h3>{#if detail}<p>{detail}</p>{/if}</div>
   {#if onretry}<Button variant="outline" disabled={retrying} onclick={() => void retry()}><RotateCw size={16} aria-hidden="true" />{retrying ? "Trying again…" : "Try again"}</Button>{/if}

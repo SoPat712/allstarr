@@ -1,12 +1,12 @@
 <script lang="ts">
   import { Skeleton } from "$lib/components/ui/skeleton";
 
-  let { count = 6 }: { count?: number } = $props();
+  let { count = 6, label = "Loading items" }: { count?: number; label?: string } = $props();
   const rows = $derived(Array.from({ length: Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 6 }));
 </script>
 
-<div class="rows-skeleton" role="status" aria-busy="true" aria-label="Loading items">
-  <span class="sr-only">Loading items…</span>
+<div class="rows-skeleton" role="status" aria-busy="true" aria-label={label}>
+  <span class="sr-only">{label}…</span>
   {#each rows as _}
     <div class="skeleton-row" aria-hidden="true">
       <Skeleton class="row-square" />
