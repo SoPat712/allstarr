@@ -41,6 +41,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
   await expect(page.locator(".routing-group").getByText("Save order", { exact: true })).toHaveCount(0);
   const up = page.getByRole("button", { name: "Move SoundCloud up", exact: true });
   await up.focus(); await page.keyboard.press("Enter");
+  await expect(page.locator(".routing-group").getByRole("status")).toHaveText("SoundCloud moved to position 1.");
+  await expect(page.getByRole("region", { name: "Notifications", exact: true }).getByRole("status")).toHaveCount(0);
   await page.clock.runFor(600);
   await page.getByRole("button", { name: "Move Media server up", exact: true }).click();
   await page.clock.runFor(799); expect(fixture.writes).toEqual([]);
@@ -58,6 +60,7 @@ test("Source order saves drag and score changes automatically", async ({ page })
   const fixture = await routing(page);
   const rows = page.locator(".routing-group li");
   await rows.nth(1).dispatchEvent("dragstart"); await rows.first().dispatchEvent("drop"); await rows.first().dispatchEvent("dragend");
+  await expect(page.locator(".routing-group").getByRole("status")).toHaveText("SoundCloud moved to position 1.");
   await expect.poll(() => fixture.writes.at(-1)).toEqual({ MULTI_PROVIDER_METADATA_ORDER: "soundcloud,deezer,backend" });
   await page.getByRole("button", { name: "Sort by score", exact: true }).click();
   await expect.poll(() => fixture.writes.at(-1)).toEqual({ MULTI_PROVIDER_METADATA_ORDER: "backend,soundcloud,deezer" });

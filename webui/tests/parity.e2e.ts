@@ -962,8 +962,9 @@ test("core release exposes personal mixes without development APIs", async ({ pa
   const configure = page.getByRole("link", { name: "Configure", exact: true });
   await expect(configure).toHaveAttribute("href", "#/settings/sound-analysis");
   await configure.click();
-  await expect(page.getByRole("heading", { name: "Sound analysis (AudioMuse)", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "AudioMuse connection", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sound analysis", exact: true })).toBeVisible();
+  await page.getByRole("region", { name: "AudioMuse connection", exact: true }).getByRole("button", { name: "Edit connection", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "AudioMuse connection", exact: true })).toBeVisible();
   expect(intelligenceRequests).toEqual([]);
 });
 
@@ -1541,7 +1542,12 @@ for (const viewport of viewports) {
       await expect(soundSettings).toHaveAttribute("href", "#/settings/sound-analysis");
       await expect(page.locator(".service-page")).toContainText("Sound analysis (AudioMuse)");
       await soundSettings.click();
-      await expect(page.getByRole("heading", { name: "AudioMuse connection", exact: true })).toBeVisible();
+      await page.getByRole("button", { name: "Edit connection", exact: true }).click();
+      const soundConnection = page.getByRole("dialog", { name: "AudioMuse connection", exact: true });
+      await expect(soundConnection.getByLabel("AudioMuse address", { exact: true })).toBeVisible();
+      await expect(soundConnection.getByRole("button", { name: "Save", exact: true })).toBeInViewport();
+      await soundConnection.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(soundConnection).toBeHidden();
       await page.goto("#/integrations/accounts");
       await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
       await page.locator(".service-account").getByRole("button", { name: /^Actions for / }).click();
@@ -4957,16 +4963,20 @@ test("authentication operations expose pending state and recover from sign-out f
 test("Administrators can reopen durable setup from Maintenance", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await mockApi(page);
-  await page.goto("#/settings/setup");
-  await page.getByRole("button", { name: "Open setup guide" }).click();
+  await page.goto("#/settings/maintenance");
+  await page.getByRole("tab", { name: "Setup guide", exact: true }).click();
   const setup = page.getByRole("region", { name: "Set up Allstarr" });
   await expect(setup).toBeVisible();
+  await setup.getByRole("button", { name: "Open", exact: true }).click();
+  await expect(setup.getByRole("heading", { name: "Review previous settings", exact: true })).toBeVisible();
+  await setup.getByRole("button", { name: "Back to all steps", exact: true }).click();
+  await expect(setup.getByRole("list", { name: "Setup steps", exact: true })).toBeVisible();
   await setup.getByRole("button", { name: "Finish setup" }).scrollIntoViewIfNeeded();
   await expect(setup.getByRole("button", { name: "Finish setup" })).toBeInViewport();
-  await expect(setup.getByRole("link", { name: "Return to Home" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(setup).toBeVisible();
-  await setup.getByRole("link", { name: "Return to Home" }).click();
+  await setup.getByRole("button", { name: "Finish setup", exact: true }).click();
+  await expect(page).toHaveURL(/#\/$/);
   await expect(setup).toBeHidden();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
@@ -7316,7 +7326,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     const access = page.getByRole("article", { name: "Media-server access" });
     await expect(access.getByRole("status")).toContainText("Media-server access is restored.");
     await expect(access.getByText("Connected", { exact: true })).toBeVisible();
-    await expect(access.getByText("Save administrator credentials to enable full playlist order and removal sync.")).toBeVisible();
+    await expect(access.getByText("Administrator access enables playlist order and removal sync.")).toBeVisible();
     await expect(restore).toBeHidden();
     await expect(page.getByRole("alert")).toHaveCount(0);
     await page.screenshot({ path: `test-results/service-access-restored-${width}-${theme}.png`, fullPage: true });
@@ -8498,8 +8508,10 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await group.getByRole("button", { name: "Move LRCLib up", exact: true }).click();
     await expect.poll(() => saved).toEqual({ MULTI_PROVIDER_LYRICS_ORDER: "lrclib,backend,kept,paxsenix" });
     await expect(group.locator("li strong")).toHaveText(["LRCLib", "Media server lyrics", "Kept LRC", "Paxsenix"]);
-    await expect(page.locator(".routing-policy")).toContainText("Match scores describe the recording evidence");
-    await expect(page.locator(".routing-policy")).not.toContainText("gets 5 confidence points");
+    await expect(group.locator("header")).toContainText("A lyrics choice saved for a song always wins.");
+    await expect(group.locator("header")).toContainText("the best-timed lyrics win: word by word, then line by line, then plain text.");
+    await expect(group.locator("header")).toContainText("This order decides between equally timed lyrics.");
+    await expect(group).not.toContainText("gets 5 confidence points");
     while (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count())
       await page.getByRole("button", { name: "Dismiss notification", exact: true }).first().click();
     await group.getByRole("heading", { name: "Lyrics order", exact: true }).click();

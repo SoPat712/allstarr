@@ -17,7 +17,7 @@ const schema = {
   configSections: [{ id: "general", label: "General", fields: [
     { key: "AUDIO_QUALITY", label: "Audio quality", type: "audio-quality", valuePath: "audio.quality" },
   ] }],
-  priorityGroups: [{ id: "streaming", label: "Playback", envKey: "StreamingOrder", providers: ["lumen-audio"] }],
+  priorityGroups: [{ id: "streaming", label: "Playback", envKey: "StreamingOrder", providers: ["lumen-audio", "spotify", "deezer", "soundcloud", "apple-download", "backend"] }],
 };
 const history = {
   importId: "44444444-4444-4444-8444-444444444444", revision: "a".repeat(64),
@@ -153,12 +153,21 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expectOutline(sort);
     await expect(sort.locator("svg")).toBeVisible();
     await expect(sort.locator("svg")).toHaveAttribute("aria-hidden", "true");
-    await page.locator(".routing-group .routing-copy").click();
-    const hideDetails = page.getByRole("button", { name: "Hide details", exact: true });
-    await expectSignalText(hideDetails);
-    await expect(hideDetails.locator("svg")).toBeVisible();
-    await hideDetails.click();
-    await expect(hideDetails).toBeHidden();
+    const showMore = page.getByRole("button", { name: "Show 1 more", exact: true });
+    await expectSignalText(showMore);
+    await showMore.click();
+    const showFewer = page.getByRole("button", { name: "Show fewer", exact: true });
+    await expectSignalText(showFewer);
+    await expect(page.locator(".routing-group li")).toHaveCount(6);
+    await showFewer.click();
+    await expect(page.locator(".routing-group li")).toHaveCount(5);
+    await page.locator(".routing-group li.has-score .routing-copy").click();
+    const details = page.getByRole("dialog", { name: "Lumen Audio", exact: true });
+    const close = details.getByRole("button", { name: "Close", exact: true });
+    await expect(close).toBeVisible();
+    await expect(close.locator("svg")).toHaveAttribute("aria-hidden", "true");
+    await close.click();
+    await expect(details).toBeHidden();
     await capture("quality");
 
     await page.goto("/#/for-you?section=recap");

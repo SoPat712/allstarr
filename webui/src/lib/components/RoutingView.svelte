@@ -53,6 +53,7 @@
   let error = $state("");
   let dragging = $state<{ groupId: string; index: number } | null>(null);
   let dirtyOrderIds = $state<string[]>([]);
+  let moveAnnouncement = $state<{ groupId: string; message: string } | null>(null);
   const policyKeys = new Set([
     "AUDIO_QUALITY",
     "MATCHING_LOCAL_PREFERENCE_PERCENT",
@@ -133,7 +134,7 @@
     const order = orders[group.id] ?? [];
     const providerId = order[index];
     changeOrder(group, move(order, index, direction));
-    toast.success(`${provider(providerId)?.name ?? humanize(providerId)} moved to position ${index + direction + 1}.`);
+    moveAnnouncement = { groupId: group.id, message: `${provider(providerId)?.name ?? humanize(providerId)} moved to position ${index + direction + 1}.` };
   }
 
   function dropProvider(group: PriorityGroup, index: number) {
@@ -142,7 +143,7 @@
     const [providerId] = order.splice(dragging.index, 1);
     order.splice(index, 0, providerId);
     changeOrder(group, order);
-    toast.success(`${provider(providerId)?.name ?? humanize(providerId)} moved to position ${index + 1}.`);
+    moveAnnouncement = { groupId: group.id, message: `${provider(providerId)?.name ?? humanize(providerId)} moved to position ${index + 1}.` };
     dragging = null;
   }
 
@@ -195,6 +196,7 @@
     <div class="routing-groups">
       {#each groups.filter((item) => item.id === shown) as group}
         <section class="settings-card routing-group">
+          <p class="sr-only" role="status">{moveAnnouncement?.groupId === group.id ? moveAnnouncement.message : ""}</p>
           <header>
             <div><h3>{tabNames[group.id] ?? group.label.replace(/ order$/i, "")} order</h3><small>{group.id === "lyrics" ? "A lyrics choice saved for a song always wins. Otherwise the best-timed lyrics win: word by word, then line by line, then plain text. This order decides between equally timed lyrics." : group.description || "Drag services, or use the arrows, to change the order Allstarr tries them."}</small></div>
             {#if scores.length && group.id !== "lyrics"}<Button variant="outline" onclick={() => sortByScore(group)}><Sparkles size={16} aria-hidden="true" />Sort by score</Button>{/if}

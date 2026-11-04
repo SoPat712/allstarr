@@ -403,6 +403,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
     [Fact]
     public async Task Lyrics_CompletedLookupWarmsTheExistingCache()
     {
+        allstarr.Services.Common.CacheExtensions.InitializeCacheSettings(Mock.Of<IServiceProvider>());
         var entries = new Dictionary<string, ProviderLyricsResult>();
         var cache = new Mock<allstarr.Services.Common.IApplicationCache>(MockBehavior.Strict);
         cache.Setup(item => item.GetAsync<ProviderLyricsResult>(It.IsAny<string>()))
@@ -416,7 +417,10 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var adapter = new AppleDownloadLyricsCapabilityAdapter(http, settings, discovery, AppleProviderTestFactory.Client(), cache.Object);
         var context = Context(Guid.CreateVersion7());
         var request = new ProviderLyricsRequest(Guid.CreateVersion7(), new("apple-musickit", ProviderResourceKind.Track, "103"));
-        Assert.True((await adapter.FetchLyricsAsync(context, request)).IsSuccess);
+        var completed = await adapter.FetchLyricsAsync(context, request);
+        Assert.True(completed.IsSuccess, completed.Error?.Kind.ToString());
+        Assert.Equal("[00:01.00]Fixture lyrics\n", completed.RequireValue().Content);
+        cache.Verify(item => item.SetAsync(It.IsAny<string>(), It.IsAny<ProviderLyricsResult>(), It.IsAny<TimeSpan?>()), Times.Once);
         var calls = handler.Requests.Count;
         var restarted = new AppleDownloadLyricsCapabilityAdapter(http, settings, discovery, AppleProviderTestFactory.Client(), cache.Object);
         var source = (IInternalLyricsCapability)restarted;
