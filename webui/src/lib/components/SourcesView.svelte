@@ -32,10 +32,6 @@
     type UiSchema,
   } from "$lib/api";
   import ScrobbleDeliveries from "$lib/components/ScrobbleDeliveries.svelte";
-  import AccountAccessDialog from "$lib/components/AccountAccessDialog.svelte";
-  import AppleDownloadDialog from "$lib/components/AppleDownloadDialog.svelte";
-  import ConnectSourceDialog from "$lib/components/ConnectSourceDialog.svelte";
-  import ProviderTryDialog from "$lib/components/ProviderTryDialog.svelte";
   import ConnectivityBars from "$lib/components/ConnectivityBars.svelte";
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import PlaylistConsent from "$lib/components/PlaylistConsent.svelte";
@@ -193,6 +189,39 @@
   let removeOpen = $state(false);
   let testResults = $state<Record<string, ConnectivityResult>>({});
   let consumedSourceLink = "";
+  let ConnectSourceDialog = $state<typeof import("$lib/components/ConnectSourceDialog.svelte").default | null>(null);
+  let AccountAccessDialog = $state<typeof import("$lib/components/AccountAccessDialog.svelte").default | null>(null);
+  let AppleDownloadDialog = $state<typeof import("$lib/components/AppleDownloadDialog.svelte").default | null>(null);
+  let ProviderTryDialog = $state<typeof import("$lib/components/ProviderTryDialog.svelte").default | null>(null);
+
+  $effect(() => {
+    if ((connectOpen || configureOpen) && !ConnectSourceDialog)
+      void import("$lib/components/ConnectSourceDialog.svelte").then(module => { ConnectSourceDialog = module.default; }).catch(() => {
+        connectOpen = false; configureOpen = false;
+        toast.error("The connection form could not be loaded. Try again.");
+      });
+  });
+  $effect(() => {
+    if (accessOpen && !AccountAccessDialog)
+      void import("$lib/components/AccountAccessDialog.svelte").then(module => { AccountAccessDialog = module.default; }).catch(() => {
+        accessOpen = false;
+        toast.error("The access editor could not be loaded. Try again.");
+      });
+  });
+  $effect(() => {
+    if (appleDownloadOpen && !AppleDownloadDialog)
+      void import("$lib/components/AppleDownloadDialog.svelte").then(module => { AppleDownloadDialog = module.default; }).catch(() => {
+        appleDownloadOpen = false;
+        toast.error("Apple Music sign-in could not be loaded. Try again.");
+      });
+  });
+  $effect(() => {
+    if (tryOpen && !ProviderTryDialog)
+      void import("$lib/components/ProviderTryDialog.svelte").then(module => { ProviderTryDialog = module.default; }).catch(() => {
+        tryOpen = false;
+        toast.error("Source tests could not be loaded. Try again.");
+      });
+  });
 
   const providers = $derived(
     [...(schema?.providers ?? [])].toSorted((left, right) => {
@@ -940,12 +969,14 @@
 
   </div>
 
-  <ConnectSourceDialog bind:open={connectOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} {currentUserId} testConnection={administrator} initialProviderId={connectProviderId} onSaved={completed} />
-  <ConnectSourceDialog bind:open={configureOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} {currentUserId} testConnection={administrator} account={selectedAccount} onSaved={completed} />
-  {#if tryTarget}<ProviderTryDialog bind:open={tryOpen} provider={tryTarget.provider} account={tryTarget.account} capability={tryTarget.capability} searchSources={lyricSearchSources} providerDefinitions={providers} />{/if}
-  <AppleDownloadDialog bind:open={appleDownloadOpen} onStatus={(status) => { appleRequest++; appleStatus = status; appleStatusError = ""; }} />
+  {#if ConnectSourceDialog}
+    <ConnectSourceDialog bind:open={connectOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} {currentUserId} testConnection={administrator} initialProviderId={connectProviderId} onSaved={completed} />
+    <ConnectSourceDialog bind:open={configureOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} {currentUserId} testConnection={administrator} account={selectedAccount} onSaved={completed} />
+  {/if}
+  {#if ProviderTryDialog && tryTarget}<ProviderTryDialog bind:open={tryOpen} provider={tryTarget.provider} account={tryTarget.account} capability={tryTarget.capability} searchSources={lyricSearchSources} providerDefinitions={providers} />{/if}
+  {#if AppleDownloadDialog}<AppleDownloadDialog bind:open={appleDownloadOpen} onStatus={(status) => { appleRequest++; appleStatus = status; appleStatusError = ""; }} />{/if}
   {#if administrator}<ExtensionsView view="catalog" bind:open={addSourceOpen} onchanged={refresh} />{/if}
-  <AccountAccessDialog bind:open={accessOpen} account={selectedAccount} users={audienceUsers} onSaved={completed} />
+  {#if AccountAccessDialog}<AccountAccessDialog bind:open={accessOpen} account={selectedAccount} users={audienceUsers} onSaved={completed} />{/if}
 
   <ConfirmDialog
     bind:open={removeOpen}

@@ -8,13 +8,13 @@ const aliases: Record<string, string> = {
   melonmusic: "melon", geniemusic: "genie", bugsmusic: "bugs",
   local: "jellyfin", native: "jellyfin", musicbrainzenrichment: "musicbrainz",
 };
-const legacyFiles: Record<string, string> = Object.fromEntries([
-  "allstarr", "amazonmusic", "applemusic", "artistgrid", "deezer", "genius", "jellyfin", "koito", "lastfm",
-  "listenbrainz", "lrclib", "lrcred", "lyricsplus", "monochrome", "musicbrainz", "musixmatch",
-  "paxsenix", "qobuz", "soundcloud", "spotify", "tidal", "unison", "youtubemusic",
-].map(brand => [brand, `${brand}.svg`]));
-legacyFiles.multiscrobbler = "multi-scrobbler.svg";
-legacyFiles.spicylyrics = "spicylyrics.ico";
+const colorFiles: Record<string, string> = Object.fromEntries([
+  "allstarr", "amazonmusic", "applemusic", "artistgrid", "deezer", "genius", "jellyfin", "listenbrainz",
+  "lrcred", "lyricsplus", "monochrome", "multiscrobbler", "musicbrainz", "musixmatch", "paxsenix",
+  "qobuz", "soundcloud", "spicylyrics", "spotify", "tidal", "unison", "youtubemusic",
+].map(brand => [brand, "color.svg"]));
+for (const brand of ["bugs", "genie", "jiosaavn", "koito", "lastfm", "lrclib", "melon"])
+  colorFiles[brand] = "color.png";
 const generic = new Set(["extension", "lyrics"]);
 const markless = new Set(["mediaserverlyrics", "keptlrc"]);
 const key = (value: string) => {
@@ -37,17 +37,19 @@ export function providerMarkSources(id: string, definition?: ProviderDefinition,
   const identity = key(id);
   let brand = "";
   if (variant) {
-    brand = legacyFiles[identity] || ["melon", "genie", "bugs"].includes(identity)
+    brand = colorFiles[identity]
       ? identity : id.toLowerCase().replace(/^spotiflac-/, "").replace(/[^a-z0-9-]/g, "");
-  } else if (suppliedBrand && legacyFiles[suppliedBrand]) {
+  } else if (suppliedBrand && colorFiles[suppliedBrand]) {
     brand = suppliedBrand;
   } else if (!supplied) {
-    brand = legacyFiles[identity] ? identity : legacyFiles[key(icon)] ? key(icon) : "";
+    brand = colorFiles[identity] ? identity : colorFiles[key(icon)] ? key(icon) : "";
   }
 
-  const legacy = `/images/providers/${brand ? legacyFiles[brand] ?? `${identity}.svg` : `${encodeURIComponent(icon || id.toLowerCase())}.svg`}`;
-  const candidates = brand
-    ? [`/images/providers/brands/${brand}/color.svg`, `/images/providers/brands/${brand}/color.png`, supplied, supplied && localFile ? undefined : legacy]
-    : [supplied || legacy];
+  const legacy = `/images/providers/${brand ? `${identity}.svg` : `${encodeURIComponent(icon || id.toLowerCase())}.svg`}`;
+  const candidates = colorFiles[brand]
+    ? [`/images/providers/brands/${brand}/${colorFiles[brand]}`, supplied && !localFile && !colorFile ? supplied : undefined]
+    : brand
+      ? [`/images/providers/brands/${brand}/color.svg`, `/images/providers/brands/${brand}/color.png`, supplied, supplied && localFile ? undefined : legacy]
+      : [supplied || legacy];
   return [...new Set(candidates.filter((value): value is string => Boolean(value)).map(adminUrl))];
 }

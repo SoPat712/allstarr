@@ -5,12 +5,12 @@ import { providerMarkSources } from "./provider-marks";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("provider mark sources", () => {
-  it("prefers color marks and preserves the supplied legacy file", () => {
+  it("uses color masters in place of supplied legacy files", () => {
     expect(providerMarkSources("qobuz", { id: "qobuz", name: "Qobuz", logoUrl: "/images/providers/qobuz.webp" })).toEqual([
-      "/images/providers/brands/qobuz/color.svg", "/images/providers/brands/qobuz/color.png", "/images/providers/qobuz.webp",
+      "/images/providers/brands/qobuz/color.svg",
     ]);
     expect(providerMarkSources("spicylyrics", { id: "spicylyrics", name: "SpicyLyrics", logoUrl: "/images/providers/spicylyrics.ico" })).toEqual([
-      "/images/providers/brands/spicylyrics/color.svg", "/images/providers/brands/spicylyrics/color.png", "/images/providers/spicylyrics.ico",
+      "/images/providers/brands/spicylyrics/color.svg",
     ]);
   });
 
@@ -22,22 +22,22 @@ describe("provider mark sources", () => {
       ["amazon", "amazonmusic"], ["spotiflac-amazon", "amazonmusic"], ["spotiflac-qobuz-web", "qobuz"],
       ["local", "jellyfin"], ["native", "jellyfin"], ["musicbrainz", "musicbrainz"], ["musicbrainz-enrichment", "musicbrainz"]]) {
       expect(providerMarkSources(id)).toEqual([
-        `/images/providers/brands/${brand}/color.svg`, `/images/providers/brands/${brand}/color.png`, `/images/providers/${brand}.svg`,
+        `/images/providers/brands/${brand}/color.svg`,
       ]);
     }
     expect(providerMarkSources("multi-scrobbler")).toEqual([
-      "/images/providers/brands/multiscrobbler/color.svg", "/images/providers/brands/multiscrobbler/color.png", "/images/providers/multi-scrobbler.svg",
+      "/images/providers/brands/multiscrobbler/color.svg",
     ]);
     for (const brand of ["melon", "genie", "bugs"]) {
       expect(providerMarkSources(`spotiflac-${brand}-music`)).toEqual([
-        `/images/providers/brands/${brand}/color.svg`, `/images/providers/brands/${brand}/color.png`, `/images/providers/${brand}.svg`,
+        `/images/providers/brands/${brand}/color.png`,
       ]);
     }
   });
 
-  it("prefers service branding before extension artwork and the legacy mark", () => {
+  it("prefers service branding before extension artwork", () => {
     expect(providerMarkSources("spotiflac-spotify-web", { id: "spotiflac-spotify-web", name: "Web playback", logoUrl: "/extensions/fixture/icon.png" })).toEqual([
-      "/images/providers/brands/spotify/color.svg", "/images/providers/brands/spotify/color.png", "/extensions/fixture/icon.png", "/images/providers/spotify.svg",
+      "/images/providers/brands/spotify/color.svg", "/extensions/fixture/icon.png",
     ]);
     expect(providerMarkSources("spotiflac-custom-service")).toEqual([
       "/images/providers/brands/custom-service/color.svg", "/images/providers/brands/custom-service/color.png", "/images/providers/customservice.svg",
@@ -46,16 +46,16 @@ describe("provider mark sources", () => {
 
   it("uses built-in identity with generic icons and account display labels", () => {
     expect(providerMarkSources("jellyfin", { id: "jellyfin", name: "Jellyfin", icon: "server" }, "Home library")).toEqual([
-      "/images/providers/brands/jellyfin/color.svg", "/images/providers/brands/jellyfin/color.png", "/images/providers/jellyfin.svg",
+      "/images/providers/brands/jellyfin/color.svg",
     ]);
     expect(providerMarkSources("artistgrid", { id: "artistgrid", name: "ArtistGrid", icon: "extension" })).toEqual([
-      "/images/providers/brands/artistgrid/color.svg", "/images/providers/brands/artistgrid/color.png", "/images/providers/artistgrid.svg",
+      "/images/providers/brands/artistgrid/color.svg",
     ]);
   });
 
-  it("retains a legacy fallback when a color URL is supplied", () => {
+  it("uses the available master when a color URL is supplied", () => {
     expect(providerMarkSources("spicylyrics", { id: "spicylyrics", name: "SpicyLyrics", logoUrl: "/images/providers/brands/spicylyrics/color.svg" })).toEqual([
-      "/images/providers/brands/spicylyrics/color.svg", "/images/providers/brands/spicylyrics/color.png", "/images/providers/spicylyrics.ico",
+      "/images/providers/brands/spicylyrics/color.svg",
     ]);
   });
 
@@ -77,10 +77,10 @@ describe("provider mark sources", () => {
         : brand === "jiosaavn" ? "spotiflac-jiosaavn" : brand;
       const sources = providerMarkSources(id);
       const format = existsSync(new URL(`./images/providers/brands/${brand}/color.svg`, root)) ? "svg" : "png";
-      expect(sources.find(source => existsSync(new URL(`.${source}`, root)))).toBe(`/images/providers/brands/${brand}/color.${format}`);
+      expect(sources).toEqual([`/images/providers/brands/${brand}/color.${format}`]);
     }
     expect(providerMarkSources("lastfm", { id: "lastfm", name: "Last.fm", logoUrl: "/images/providers/brands/lastfm/color.png" })).toEqual([
-      "/images/providers/brands/lastfm/color.svg", "/images/providers/brands/lastfm/color.png", "/images/providers/lastfm.svg",
+      "/images/providers/brands/lastfm/color.png",
     ]);
   });
 
@@ -89,10 +89,10 @@ describe("provider mark sources", () => {
     expect(providerMarkSources("kept", undefined, "Kept LRC")).toEqual([]);
   });
 
-  it("prefixes both color and legacy paths for mounted installations", () => {
+  it("prefixes color paths for mounted installations", () => {
     vi.stubGlobal("document", { querySelector: () => ({ getAttribute: () => "/music" }) });
     expect(providerMarkSources("spotify")).toEqual([
-      "/music/images/providers/brands/spotify/color.svg", "/music/images/providers/brands/spotify/color.png", "/music/images/providers/spotify.svg",
+      "/music/images/providers/brands/spotify/color.svg",
     ]);
   });
 });
