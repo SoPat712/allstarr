@@ -19,6 +19,48 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolRouteFixtureTests
 {
+    [Fact]
+    public async Task ClientApi_MixDescriptionsExplainStoredKindsWithoutRepeatingNames()
+    {
+        using var factory = ClientMixFactory(new());
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        await SeedClientMixAsync(factory);
+        await using var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync();
+        var row = await db.ExternalMetadataSnapshots.AsNoTracking().SingleAsync(item => item.ResourceKind == "personal-mixes");
+        var payload = JsonSerializer.Deserialize<PersonalMixDocument>(row.PayloadJson)!;
+        foreach (var kind in PersonalMixRules.Kinds)
+        {
+            var name = PersonalMixRules.Name(kind, kind.StartsWith("daily-", StringComparison.Ordinal) ? "rock" : null);
+            payload.Mixes[kind] = new(Guid.NewGuid(), kind, name, "Made for you · " + name, 3, DateTimeOffset.UtcNow,
+                new(true, "Ready"), true, [])
+            { CoverTag = kind.StartsWith("daily-", StringComparison.Ordinal) ? "rock" : null };
+        }
+        row.Id = Guid.NewGuid(); row.SnapshotVersion++;
+        row.PayloadJson = JsonSerializer.Serialize(payload);
+        db.ExternalMetadataSnapshots.Add(row);
+        await db.SaveChangesAsync();
+        var documents = await db.ExternalMetadataSnapshots.CountAsync();
+        var jobs = await db.Jobs.CountAsync();
+        using var response = await client.GetAsync("/allstarr/v1/mixes");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var cards = body.RootElement.GetProperty("mixes").EnumerateArray().ToArray();
+        Assert.Equal(PersonalMixRules.Kinds.Length + 1, cards.Length);
+        foreach (var card in cards)
+        {
+            var description = card.GetProperty("description").GetString()!;
+            Assert.False(string.IsNullOrWhiteSpace(description));
+            Assert.DoesNotContain(card.GetProperty("name").GetString()!, description, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Made for you", description, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain('\n', description);
+        }
+        Assert.Equal("What you're playing most right now", cards.Single(card => card.GetProperty("kind").GetString() == "on-repeat").GetProperty("description").GetString());
+        Assert.Equal("Rock you play most", cards.First(card => card.GetProperty("kind").GetString() == "daily-1").GetProperty("description").GetString());
+        Assert.Equal(documents, await db.ExternalMetadataSnapshots.CountAsync());
+        Assert.Equal(jobs, await db.Jobs.CountAsync());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

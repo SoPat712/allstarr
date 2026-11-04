@@ -122,9 +122,9 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
             document = payload.Deserialize<PersonalMixDocument>()!;
             await SaveAsync(db, user, document, token);
         }
-        foreach (var kind in new[] { "on-repeat", "rewind", "release-radar", "discover-weekly" })
+        foreach (var kind in PersonalMixRules.Kinds.Where(kind => !kind.StartsWith("daily-", StringComparison.Ordinal)))
             if (document.Mixes.TryGetValue(kind, out var named))
-                document.Mixes[kind] = named with { Name = PersonalMixRules.Name(kind), Description = "Made for you · " + PersonalMixRules.Name(kind) };
+                document.Mixes[kind] = named with { Name = PersonalMixRules.Name(kind), Description = PersonalMixDescriptions.OnRead(named, null) };
         foreach (var kind in PersonalMixRules.Kinds.Where(kind => kind.StartsWith("daily-", StringComparison.Ordinal)))
             if (document.Mixes.TryGetValue(kind, out var blend))
             {
@@ -134,14 +134,13 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 {
                     Name = PersonalMixRules.Name(kind, style),
                     CoverTag = style,
-                    Description = parts.Length > 1 ? "Made for you · " + string.Join(" · ", parts.Skip(1))
-                        : blend.Description.Contains("Daily Mix", StringComparison.Ordinal) ? "Made for you" : blend.Description
+                    Description = PersonalMixDescriptions.OnRead(blend, style)
                 };
             }
         if (publishedOnly) return document;
         foreach (var kind in PersonalMixRules.Kinds.Where(kind => !document.Mixes.ContainsKey(kind)))
             document.Mixes[kind] = new(Id(user, kind), kind, PersonalMixRules.Name(kind),
-                PersonalMixMoods.Kinds.Contains(kind) ? "Updated Monday · Music for " + kind : "Made for you", 0, null,
+                PersonalMixDescriptions.Tagline(kind), 0, null,
                 new(false, "Refresh this mix to look for songs from your music and services."), false, []);
         return document;
     }
@@ -585,7 +584,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 Name = PersonalMixRules.Name(kind, style),
                 Generation = generation,
                 UpdatedAt = clock.UtcNow,
-                Description = mood ? $"Updated Monday · Music for {kind}" : "Made for you · " + PersonalMixRules.Name(kind, style),
+                Description = PersonalMixDescriptions.FromSelection(kind, style, selected, historical),
                 CoverTag = style,
                 RecipeVersion = recipe.Version,
                 Readiness = new(ready, ready ? "Ready" : mood && inputs.Playable.Length == 0 ? PersonalMixMoods.Readiness(selected.Count).Message : shortfall ?? "No eligible songs yet."),
