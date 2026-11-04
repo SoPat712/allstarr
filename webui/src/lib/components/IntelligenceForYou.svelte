@@ -1,6 +1,6 @@
 <script lang="ts">
   import { X } from "@lucide/svelte";
-  import { onMount } from "svelte";
+  import { onMount, type Component } from "svelte";
   import { goto } from "$app/navigation";
   import { ApiError, activityWork, audioMuse, historyImports, mixes, playlistLinks, releaseInbox, type AudioMuseStatus, type MixCard, type PlaylistLink, type PlaylistSourceAccount } from "$lib/api";
   import { greeting, mixOrder } from "$lib/for-you";
@@ -10,12 +10,20 @@
   import { toast } from "$lib/toasts";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { Dialog } from "$lib/components/ui/dialog";
-  import { Skeleton } from "$lib/components/ui/skeleton";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import EmptyState from "$lib/components/patterns/EmptyState.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   import MixShelf from "$lib/components/MixShelf.svelte";
-  import StartMix from "$lib/components/StartMix.svelte";
   import IntelligenceHistoryImports from "$lib/components/IntelligenceHistoryImports.svelte";
   let { administrator = false, listenerId = "", listenerName = "", initialImport = false }: { initialImport?: boolean; administrator?: boolean; listenerId?: string; listenerName?: string } = $props();
+  let startOpen = $state(false);
+  let StartMixDialog = $state<Component<any>>();
+  async function startMix() {
+    try { StartMixDialog ??= (await import("$lib/components/StartMixDialog.svelte")).default; if (!disposed) startOpen = true; }
+    catch { toast.error("The mix form could not be loaded. Try again."); }
+  }
   let cards = $state<MixCard[]>([]), releases = $state<MixCard[]>([]), accounts = $state<PlaylistSourceAccount[]>([]), links = $state<PlaylistLink[]>([]);
   let status = $state<AudioMuseStatus | null>(null), loading = $state(true), error = $state("");
   let hidden = $state(false), importOpen = $state(false), busy = $state("");
@@ -59,6 +67,7 @@
     })().finally(() => { pending = null; });
     return pending;
   }
+  $effect(() => { if (startQuery) void startMix(); });
   $effect(() => { if (initialImport) importOpen = true; });
   function hide() { hidden = true; try { localStorage.setItem(storageKey, "hidden"); } catch { /* Browser storage is optional. */ } }
   function openMix(card: MixCard) { if (card.id.startsWith("add:")) void add(card); else void goto(`#/for-you?mix=${encodeURIComponent(card.id)}`, { keepFocus: true, noScroll: true }); }
@@ -97,6 +106,12 @@
     }
     void poll();
   }
+  async function addAll(shelf: MixCard[]) {
+    for (const card of shelf.filter(item => !item.inApps && item.appsAllowed && item.readiness.ready)) {
+      if (disposed) return;
+      if (!await add(card)) break;
+    }
+  }
   async function add(selected: MixCard) {
     if (busy || !selected.appsAllowed) return;
     busy = selected.id;
@@ -114,9 +129,10 @@
         cards = cards.map(card => card.id === selected.id ? { ...card, inApps: true } : card);
       }
       await pending;
-      if (!disposed) void load();
+      if (!disposed) await load();
+      return true;
     }
-    catch (cause) { if (!disposed) toast.error(cause instanceof ApiError && cause.status === 403 ? "Your admin hasn't allowed adding mixes." : cause instanceof Error ? cause.message : "This mix could not be added. Try again later."); }
+    catch (cause) { if (!disposed) toast.error(cause instanceof ApiError && cause.status === 403 ? "Your admin hasn't allowed adding mixes." : cause instanceof Error ? cause.message : "This mix could not be added. Try again later."); return false; }
     finally { busy = ""; }
   }
   const scheduler = createRefreshScheduler(async () => { if (!busy) await load(); }, 250, 30_000);
@@ -127,8 +143,9 @@
   });
 </script>
 <div class="for-you">
-  <div class="section-heading"><div><h2>{greeting(new Date().getHours(), listenerName)}</h2><p>Mixes refresh every morning.</p></div><RefreshButton variant="secondary" label="Refresh page" onrefresh={async () => { await pending; await load(); }} /></div>
-  {#if loading}{#each ["Made for you", "Moods"] as title}<section aria-label={`Loading ${title}`}><h2>{title}</h2><div class="loading-shelf">{#each [1, 2, 3, 4, 5, 6] as i}<Skeleton class="mix-skeleton" />{/each}</div></section>{/each}
+  <div class="section-heading"><h2>{greeting(new Date().getHours(), listenerName)}</h2><div class="page-actions"><RefreshButton variant="secondary" label="Refresh page" onrefresh={async () => { await pending; await load(); }} /><Button onclick={() => void startMix()}>Start a mix</Button></div></div>
+  <PageStatus items={[{ label: `${cards.filter(card => card.readiness.ready).length} mixes ready` }, { label: "Mixes refresh every morning" }]} />
+  {#if loading}{#each ["Made for you", "Moods"] as title}<section aria-label={`Loading ${title}`}><h2>{title}</h2><RowsSkeleton count={3} /></section>{/each}
   {:else}
     {#if checklist}<section class="settings-card checklist" aria-label="Get more from your mixes">
       <header><h2>Get more from your mixes</h2><button type="button" class="icon-button" aria-label="Hide tips" onclick={hide}><X size={18} aria-hidden="true" /></button></header>
@@ -136,17 +153,17 @@
       {#if !connected}<div class="check-row"><span>Connect Last.fm or ListenBrainz for more discoveries</span><Button variant="secondary" size="sm" href="#/sources">Connect</Button></div>{/if}
       {#if administrator && !soundReady}<div class="check-row"><span>Turn on sound analysis for mood mixes</span><Button variant="secondary" size="sm" href="#/settings/sound-analysis">Set up</Button></div>{/if}
     </section>{/if}
-    {#if error}<p class="muted" role="alert">{error} <Button variant="secondary" onclick={load}>Try again</Button></p>{/if}
-    {#if !error && !made.some(item => item.readiness.ready)}<div class="settings-card empty"><p>Your mixes will appear here. Play some music, or import your history to start right away.</p></div>{/if}
-    <MixShelf title="Made for you" cards={made} onopen={openMix} {busy} onadd={card => void add(card)} />
-    <MixShelf title="Moods" cards={moods} onopen={openMix} {busy} onadd={card => void add(card)} />
-    <StartMix initialQuery={startQuery} onsaved={async () => { await pending; await load(); }} />
-    {#if custom.length}<MixShelf title="Your mixes" cards={custom} onopen={openMix} {busy} onadd={card => void add(card)} />{/if}
-    {#if releases.length}<MixShelf title="New releases" cards={releases} albumArt seeAll="#/for-you?section=releases" onopen={card => { void goto(`#/for-you?section=releases&release=${encodeURIComponent(card.id)}`, { keepFocus: true, noScroll: true }); }} />{/if}
+    {#if error}<ErrorState title="Couldn't load your mixes" detail={error} onretry={load} />{/if}
+    {#if !error && !made.some(item => item.readiness.ready)}<EmptyState title="Your mixes will appear here" description="Your mixes will appear here. Play some music, or import your history to start right away." />{/if}
+    <MixShelf title="Made for you" cards={made} onaddall={() => void addAll(made)} onopen={openMix} {busy} onadd={card => void add(card)} />
+    <MixShelf title="Moods" cards={moods} onaddall={() => void addAll(moods)} onopen={openMix} {busy} onadd={card => void add(card)} />
+    {#if custom.length}<MixShelf title="Your mixes" cards={custom} onaddall={() => void addAll(custom)} onopen={openMix} {busy} onadd={card => void add(card)} />{/if}
+    {#if services.length}<MixShelf title="From your services" columns={5} cards={services} onaddall={() => void addAll(services)} additions={suggestions.map(item => item.id)} onopen={openMix} {busy} onadd={card => void add(card)} />{/if}
+    {#if releases.length}<MixShelf title="New releases" columns={6} cards={releases} albumArt seeAll="#/for-you?section=releases" onopen={card => { void goto(`#/for-you?section=releases&release=${encodeURIComponent(card.id)}`, { keepFocus: true, noScroll: true }); }} />{/if}
     {#if cards.length && !cards.some(card => card.appsAllowed)}<p class="muted apps-hint">Your admin hasn't allowed adding mixes.</p>{/if}
-    {#if services.length}<MixShelf title="From your services" cards={services} additions={suggestions.map(item => item.id)} onopen={openMix} {busy} onadd={card => void add(card)} />{/if}
   {/if}
 </div>
+{#if startOpen && StartMixDialog}<StartMixDialog appsAllowed={cards.some(card => card.appsAllowed)} initialQuery={startQuery} onclose={() => startOpen = false} onsaved={async () => { await pending; await load(); }} />{/if}
 <Dialog.Root bind:open={importOpen}><Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog">
   <header><div><Dialog.Title>Bring in your history</Dialog.Title><Dialog.Description>Start your mixes with the music you've already played.</Dialog.Description></div><Dialog.Close type="button" class="icon-button" aria-label="Close history">×</Dialog.Close></header>
   <IntelligenceHistoryImports onchanged={async () => { await pending; await load(); }} /><footer class="dialog-actions"><Dialog.Close type="button" class={buttonVariants({ variant: "secondary" })}>Done</Dialog.Close></footer>
@@ -154,18 +171,16 @@
 <style>
   .for-you { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--section-gap); min-width: 0; }
   .for-you > :global(section) { min-width: 0; }
+  .page-actions { display: flex; align-items: center; gap: var(--space-2); }
   .section-heading, header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
   h2 { font-size: 1.125rem; font-weight: 600; }
-  .section-heading p, .muted, .empty { color: var(--color-ink-muted); }
+  .muted { color: var(--color-ink-muted); }
   .apps-hint { font-size: var(--text-xs); }
-  .checklist, .empty { padding: var(--surface-gutter); }
+  .checklist { padding: var(--surface-gutter); }
   .checklist header { flex-wrap: nowrap; padding: 0; }
   .checklist h2 { font-size: var(--text-sm); }
   .check-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); min-height: 48px; padding-block: var(--space-2); }
   .check-row :global([data-slot="button"]) { min-height: var(--control-md); }
   .check-row + .check-row { border-top: 1px solid var(--color-edge); }
-  .loading-shelf { display: grid; grid-auto-flow: column; grid-auto-columns: 160px; overflow: hidden; gap: 12px; margin-top: var(--space-3); }
-  .loading-shelf :global(.mix-skeleton) { height: 263px; border-radius: var(--radius-md); }
-  @media (min-width: 900px) { .loading-shelf { grid-auto-columns: 184px; } .loading-shelf :global(.mix-skeleton) { height: 287px; } }
   @media (max-width: 600px) { .check-row { grid-template-columns: minmax(0, 1fr); } .check-row :global([data-slot="button"]) { grid-column: 1; justify-self: start; } }
 </style>

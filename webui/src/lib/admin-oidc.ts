@@ -1,4 +1,5 @@
-import { json, type Session } from "./api";
+import { json } from "./api-client";
+import type { Session } from "./api";
 
 export type OidcStatus = {
   enabled: boolean;

@@ -32,17 +32,15 @@
 </script>
 
 <section class="settings-workspace integrations-workspace">
-  {#if !serviceId}
-    <SegmentedNav
-      class="route-tabs"
-      label="Source sections"
-      active={section === "accounts" ? "accounts" : "services"}
-      items={[
-        { id: "services", label: administrator ? "Services" : "Available services", href: "#/sources/services" },
-        { id: "accounts", label: administrator ? "Accounts" : "My accounts", href: "#/sources/accounts" },
-      ]}
-    />
-  {/if}
+  <SegmentedNav
+    class="route-tabs"
+    label="Source sections"
+    active={section === "accounts" || from === "accounts" || initialSection === "playlist-editing" ? "accounts" : "services"}
+    items={[
+      { id: "services", label: administrator ? "Services" : "Available services", href: "#/sources/services" },
+      { id: "accounts", label: administrator ? "Accounts" : "My accounts", href: "#/sources/accounts" },
+    ]}
+  />
   <SourcesView
     mode={section === "accounts" ? "accounts" : "services"}
     {administrator}

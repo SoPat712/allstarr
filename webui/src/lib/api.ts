@@ -1,5 +1,9 @@
 import { newUuid } from "./uuid";
 import { adminUrl } from "./admin-url";
+import { ApiError, json, normalizeResponse, request } from "./api-client";
+
+export { ApiError, json, normalizeResponse } from "./api-client";
+export { auth, onboarding, setupAccess } from "./access-api";
 
 export type Session = {
   authenticated: boolean;
@@ -1583,70 +1587,6 @@ export type ListeningHistoryImport = {
   preview?: ListeningHistoryImportPreview;
 };
 
-async function request(input: RequestInfo | URL, init?: RequestInit) {
-  const requestInput = typeof input === "string" ? adminUrl(input) : input;
-  const response = await fetch(requestInput, {
-    cache: "no-store",
-    credentials: "same-origin",
-    ...init,
-  });
-
-  if (!response.ok) {
-    const body = normalizeResponse(await response.json().catch(() => null));
-    throw new ApiError(response.status, response.statusText, body);
-  }
-  return response;
-}
-
-export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    statusText: string,
-    readonly details: unknown,
-  ) {
-    const body = details as { error?: string; message?: string; stage?: string } | null;
-    const message = body?.error || body?.message || `${status} ${statusText}`;
-    // Short failure codes need their stage for context; full sentences stand on their own.
-    super(body?.stage && !/\s/.test(message) ? `${body.stage}: ${message}` : message);
-  }
-}
-
-export async function json<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
-  const response = await request(input, init);
-  if (response.status === 204) return undefined as T;
-  return normalizeResponse(await response.json()) as T;
-}
-
-export function normalizeResponse(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(normalizeResponse);
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [
-    key[0].toLowerCase() + key.slice(1),
-    normalizeResponse(item),
-  ]));
-}
-
-export const auth = {
-  session: () => json<Session>("/api/admin/auth/me"),
-  login: (username: string, password: string, rememberMe: boolean, managePlaylists = false) =>
-    json<Session>("/api/admin/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username, password, rememberMe, managePlaylists }),
-    }),
-  playlistConsent: () =>
-    json<PlaylistConsentStatus>("/api/admin/auth/playlist-consent"),
-  grantPlaylistConsent: (password: string) =>
-    json<PlaylistConsentStatus>("/api/admin/auth/playlist-consent", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
-    }),
-  revokePlaylistConsent: () =>
-    json<PlaylistConsentStatus>("/api/admin/auth/playlist-consent", { method: "DELETE" }),
-  logout: () => json<{ success: boolean }>("/api/admin/auth/logout", { method: "POST" }),
-};
-
 export type ProviderFavoriteMember = {
   userId: string; displayName: string; protocol: "jellyfin" | "subsonic"; instanceLabel: string;
   profileCode: string; identityFingerprint: string; lastSeenAt: string | null;
@@ -1687,15 +1627,6 @@ export const providerFavoriteLinks = {
   retry: (id: string, input: { requestId: string; expectedRevision: number }) =>
     json<FavoriteLinkReceipt>(`/api/admin/provider-favorite-links/${encodeURIComponent(id)}/retry`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) }),
-};
-
-export const onboarding = {
-  status: () => json<OnboardingState>("/api/admin/onboarding/status"),
-  complete: () => json<OnboardingState>("/api/admin/onboarding/complete", { method: "POST" }),
-  step: (stepId: string, action: string, expectedRevision: number) => json<OnboardingState>("/api/admin/onboarding/step", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stepId, action, expectedRevision }),
-  }),
-  reopen: () => json<OnboardingState>("/api/admin/onboarding/reopen", { method: "POST" }),
 };
 
 const intelligenceBody = (value: object, method = "POST") => ({
@@ -2827,19 +2758,6 @@ export const activityWork = {
 export type OidcAccess = { enabled: boolean; authority: string; clientId: string; publicUrl: string; displayName: string; hasClientSecret: boolean; needsReview: boolean; revision: string };
 export type BackendAccess = { credentialKind?: string; supported: boolean; connectionSaved: boolean; configured: boolean; needsReview: boolean; revision: string };
 export type FileVerification = { available: boolean; pending: boolean; needsReview: boolean; jobId?: string; jobState?: string; verifiedAt?: string; files: number };
-export const setupAccess = {
-  initial: () => json<{ configured: boolean; storageReady: boolean; csrfToken: string }>("/api/admin/auth/setup"),
-  connect: (value: object, csrf: string) => json<{ requiresRestart: boolean }>("/api/admin/auth/setup", accessBody(value, csrf, "POST")),
-  oidc: () => json<{ settings: OidcAccess; csrfToken: string }>("/api/admin/access/oidc"),
-  backend: () => json<{ settings: BackendAccess; csrfToken: string }>("/api/admin/access/backend"),
-  save: (kind: "oidc" | "backend", value: object, csrf: string) => json<{ requiresRestart: boolean }>(`/api/admin/access/${kind}`, accessBody(value, csrf, "PUT")),
-  files: () => json<{ settings: FileVerification; csrfToken: string }>("/api/admin/storage/files"),
-  verify: (csrf: string) => json<{ message: string }>("/api/admin/storage/files/verify", accessBody({}, csrf, "POST")),
-};
-function accessBody(value: object, csrf: string, method: string) {
-  return { method, headers: { "Content-Type": "application/json", "X-Allstarr-CSRF": csrf }, body: JSON.stringify(value) };
-}
-
 export type AlertChannelKind = "ntfy" | "discord" | "webhook";
 export type AlertChannel = { id: string; displayName: string; kind: AlertChannelKind; enabled: boolean; household: boolean; hasDestination: boolean; revision: number };
 export type AlertChannelInput = { displayName: string; kind: AlertChannelKind; enabled: boolean; household: boolean; destination?: string; expectedRevision: number };

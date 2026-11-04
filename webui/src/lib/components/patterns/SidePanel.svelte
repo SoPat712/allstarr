@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { MediaQuery } from "svelte/reactivity";
   import { ArrowUp, ArrowDown, X } from "@lucide/svelte";
   import { Dialog } from "$lib/components/ui/dialog";
   import { Button, buttonVariants } from "$lib/components/ui/button";
@@ -15,6 +16,8 @@
     footer,
     menu,
     navigationLabel = "song",
+    previousLabel,
+    nextLabel,
     onPrevious,
     onNext,
     onclose,
@@ -28,12 +31,36 @@
     footer?: Snippet;
     menu?: Snippet;
     navigationLabel?: string;
+    previousLabel?: string;
+    nextLabel?: string;
     onPrevious?: () => void;
     onNext?: () => void;
     onclose?: () => void;
   } = $props();
 
-  let opener: HTMLElement | null = null;
+  let navigation: HTMLElement | null = null;
+  let navigationWasInert = false;
+  function restoreNavigation() {
+    if (!navigation) return;
+    navigation.inert = navigationWasInert;
+    navigation = null;
+  }
+  const sheet = new MediaQuery("(max-width: 899px)");
+  $effect(() => {
+    if (!open || !sheet.current) return;
+    navigation = document.querySelector<HTMLElement>(".mobile-navigation");
+    if (!navigation) return;
+    navigationWasInert = navigation.inert;
+    navigation.inert = true;
+    return restoreNavigation;
+  });
+  let footerHeight = $state(0);
+  $effect(() => {
+    if (!open) return;
+    const root = document.documentElement;
+    root.style.setProperty("--side-panel-footer-height", `${footerHeight}px`);
+    return () => root.style.removeProperty("--side-panel-footer-height");
+  });
 
   function navigate(event: KeyboardEvent) {
     if (!open || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || isTypingTarget(event.target)) return;
@@ -57,35 +84,37 @@
       class="side-panel"
       preventScroll={false}
       trapFocus={true}
-      onOpenAutoFocus={() => { opener = document.activeElement instanceof HTMLElement ? document.activeElement : null; }}
-      onCloseAutoFocus={(event) => { if (opener?.isConnected) { event.preventDefault(); opener.focus({ preventScroll: true }); } }}
+      onCloseAutoFocus={restoreNavigation}
     >
-      <div class="panel-grip" aria-hidden="true"><span></span></div>
-      <header class="panel-header" class:with-artwork={Boolean(artwork)}>
-        {#if artwork}<div class="panel-artwork">{@render artwork()}</div>{/if}
-        <div class="panel-title">
-          <Dialog.Title>{title}</Dialog.Title>
-          {#if description}<Dialog.Description>{description}</Dialog.Description>{/if}
-        </div>
-        <div class="panel-controls touch-targets">
-          <nav class="panel-navigation" aria-label="Browse items">
-            <Button variant="ghost" size="icon" aria-label={`Previous ${navigationLabel}`} disabled={!onPrevious} onclick={onPrevious}><ArrowUp size={16} aria-hidden="true" /></Button>
-            <Button variant="ghost" size="icon" aria-label={`Next ${navigationLabel}`} disabled={!onNext} onclick={onNext}><ArrowDown size={16} aria-hidden="true" /></Button>
-          </nav>
-          {@render menu?.()}
-          <Dialog.Close class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label="Close"><X size={18} aria-hidden="true" /></Dialog.Close>
-        </div>
-        {#if header}<div class="panel-header-extra">{@render header()}</div>{/if}
-      </header>
-      <div class="panel-body">{@render children?.()}</div>
-      {#if footer}<footer class="panel-footer">{@render footer()}</footer>{/if}
+      <div class="panel-layout">
+        <div class="panel-grip" aria-hidden="true"><span></span></div>
+        <header class="panel-header" class:with-artwork={Boolean(artwork)}>
+          {#if artwork}<div class="panel-artwork">{@render artwork()}</div>{/if}
+          <div class="panel-title">
+            <Dialog.Title>{title}</Dialog.Title>
+            {#if description}<Dialog.Description>{description}</Dialog.Description>{/if}
+          </div>
+          <div class="panel-controls touch-targets">
+            <nav class="panel-navigation" aria-label="Browse items">
+              <Button variant="ghost" size="icon" aria-label={previousLabel ?? `Previous ${navigationLabel}`} disabled={!onPrevious} onclick={onPrevious}><ArrowUp size={16} aria-hidden="true" /></Button>
+              <Button variant="ghost" size="icon" aria-label={nextLabel ?? `Next ${navigationLabel}`} disabled={!onNext} onclick={onNext}><ArrowDown size={16} aria-hidden="true" /></Button>
+            </nav>
+            {@render menu?.()}
+            <Dialog.Close class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label="Close"><X size={18} aria-hidden="true" /></Dialog.Close>
+          </div>
+          {#if header}<div class="panel-header-extra">{@render header()}</div>{/if}
+        </header>
+        <div class="panel-body">{@render children?.()}</div>
+        {#if footer}<footer class="panel-footer" bind:offsetHeight={footerHeight}>{@render footer()}</footer>{/if}
+      </div>
     </Dialog.Content>
   </Dialog.Portal>
 </Dialog.Root>
 
 <style>
   :global(.side-panel-overlay) { position: fixed; z-index: var(--layer-overlay); inset: 0; background: var(--overlay); }
-  :global(.side-panel) { position: fixed; z-index: var(--layer-dialog); inset: 0 0 0 auto; display: flex; width: 100%; height: 100dvh; flex-direction: column; overflow: hidden; border-left: 1px solid var(--color-edge); outline: none; background: var(--color-panel); box-shadow: var(--shadow-lg); }
+  :global(.side-panel) { position: fixed; z-index: var(--layer-dialog); inset: 0 0 0 auto; display: flex; width: 100%; height: 100dvh; flex-direction: column; overflow: clip; border-left: 1px solid var(--color-edge); outline: none; background: var(--color-panel); box-shadow: var(--shadow-lg); }
+  .panel-layout { display: flex; min-height: 0; height: 100%; flex: 1 1 auto; flex-direction: column; overflow: clip; }
   :global(.side-panel[data-state="open"]) { animation: panel-in var(--motion-standard); }
   :global(.side-panel[data-state="closed"]) { animation: panel-out var(--motion-standard); }
   .panel-grip { display: flex; height: var(--space-5); flex: 0 0 auto; align-items: center; justify-content: center; }
@@ -101,11 +130,17 @@
   .panel-controls :global(button) { display: inline-flex; width: 32px; height: 32px; min-height: var(--touch-target-min, 32px); align-items: center; justify-content: center; padding: 0; color: var(--color-ink-muted); }
   .panel-header-extra { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; color: var(--color-ink-muted); font-size: .8125rem; line-height: 1.4; }
   .panel-body { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior-y: contain; padding: var(--space-4); }
+  :global(body:has(.toaster .toast)) .panel-body { margin-bottom: max(0px, calc(var(--toast-height, 0px) + var(--toast-bottom, 24px) - var(--side-panel-footer-height, 0px) + var(--space-3))); }
   .panel-body :global(.sec-label) { margin: 0 0 var(--space-3); color: var(--color-ink-muted); font-size: .7rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
   .panel-footer { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; border-top: 1px solid var(--color-edge); padding: var(--space-3) var(--space-4) max(var(--space-3), env(safe-area-inset-bottom)); background: var(--color-panel); }
   @media (min-width: 900px) { :global(.side-panel-overlay) { display: none; } :global(.side-panel) { width: min(480px, 40vw); } .panel-grip { display: none; } }
   @keyframes panel-in { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
   @keyframes panel-out { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(100%); } }
-  @media (max-width: 899px) { @keyframes panel-in { from { opacity: 0; transform: translateY(100%); } to { opacity: 1; transform: translateY(0); } } @keyframes panel-out { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(100%); } } }
+  @media (max-width: 899px) {
+    :global(.side-panel-overlay) { z-index: max(var(--layer-overlay), calc(var(--layer-navigation) + 1)); }
+    :global(.side-panel) { z-index: max(var(--layer-dialog), calc(var(--layer-navigation) + 2)); inset: 0; height: 100dvh; max-height: 100dvh; border-left: 0; }
+    @keyframes panel-in { from { opacity: 0; transform: translateY(100%); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes panel-out { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(100%); } }
+  }
   @media (prefers-reduced-motion: reduce) { :global(.side-panel[data-state]) { animation: none; } }
 </style>

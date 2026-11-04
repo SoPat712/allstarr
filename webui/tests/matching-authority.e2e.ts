@@ -359,8 +359,8 @@ test("listener switches a source between On, Manual only and Off for themselves"
   const use = page.getByRole("region", { name: "Use this source", exact: true });
   await expect(use.getByRole("radiogroup", { name: "Use this source for everyone" })).toHaveCount(0);
   const mine = use.getByRole("radiogroup", { name: "Use this source for you" });
-  await expect(mine.getByRole("radio", { name: "Manual only", exact: true })).toHaveAttribute("aria-checked", "true");
-  await expect(use).toContainText("Follows the household setting (Manual only).");
+  await expect(mine.getByRole("radio", { name: "Follow", exact: true })).toHaveAttribute("aria-checked", "true");
+  await expect(use).toContainText("Follows the setting for everyone. Current setting: Manual only.");
   await mine.getByRole("radio", { name: "Off", exact: true }).click();
   await expect.poll(() => writes.length).toBe(1);
   expect(writes[0]).toEqual({ mode: "off", scope: "personal", expectedRevision: "listener-revision" });

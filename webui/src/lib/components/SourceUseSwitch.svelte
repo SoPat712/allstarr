@@ -13,4 +13,4 @@
   ] as const;
 </script>
 
-<ThreeDetentSwitch {value} {label} {options} {disabled} {onchange} widths={[27.5, 45, 27.5]} />
+<ThreeDetentSwitch {value} {label} {options} {disabled} {onchange} compact widths={[27.5, 45, 27.5]} />

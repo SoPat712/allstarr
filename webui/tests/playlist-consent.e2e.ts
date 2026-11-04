@@ -96,13 +96,16 @@ test("Subsonic listener explicitly grants and revokes playlist management", asyn
   }]);
 
   await expect(page.getByText("Library reads and sign-in work without this access.")).toBeVisible();
+  await page.getByRole("button", { name: "Allow playlist management", exact: true }).click();
   await page.getByLabel("Subsonic password").fill("reauth-password");
-  await page.getByRole("button", { name: "Allow playlist management" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Allow playlist management" }).click();
   await expect(page.getByText("Allowed", { exact: true })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "Playlist management allowed" })).toBeVisible();
   expect(fixture.consentWrites[0]).toEqual({ method: "POST", body: { password: "reauth-password" } });
 
   await page.getByRole("button", { name: "Revoke access" }).click();
+  expect(fixture.consentWrites).toHaveLength(1);
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove sign-in" }).click();
   await expect(page.getByRole("button", { name: "Allow playlist management" })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "Playlist management revoked." })).toBeVisible();
   expect(fixture.consentWrites[1]).toEqual({ method: "DELETE" });

@@ -384,6 +384,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
 test("Spotify Sources and Getting started lead to the music import", async ({ page }) => {
   await mockImport(page);
   await page.goto("/#/integrations/services/spotify");
+  await page.getByRole("dialog", { name: "Spotify", exact: true }).locator(".source-more > summary").click();
   await expect(page.getByRole("link", { name: "Move your Spotify collection", exact: true })).toHaveAttribute("href", `#/library/import?account=${accountId}`);
   await page.goto("/#/getting-started");
   await expect(page.getByText("Coming from Spotify?", { exact: true })).toBeVisible();

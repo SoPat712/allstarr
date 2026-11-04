@@ -22,11 +22,9 @@ for (const view of ["taste", "history"] as const) for (const width of [390, 1280
     const skeleton = page.getByRole("status", { name: view === "taste" ? "Loading your taste" : "Loading Your activity", exact: true });
     await expect(skeleton).toBeVisible();
     await expect(skeleton).toHaveAttribute("aria-busy", "true");
-    const rows = skeleton.locator(view === "taste" ? ".list-skeleton-row" : ".skeleton-row");
+    const rows = skeleton.locator(".skeleton-row");
     await expect(rows).toHaveCount(6);
-    const animationName = () => view === "taste"
-      ? skeleton.locator(".list-skeleton-placeholder").first().evaluate(element => getComputedStyle(element).animationName)
-      : rows.first().evaluate(element => getComputedStyle(element, "::after").animationName);
+    const animationName = () => rows.first().evaluate(element => getComputedStyle(element, "::after").animationName);
     const animation = await animationName();
     expect(animation).toBe("none");
     await page.emulateMedia({ reducedMotion: "no-preference" });

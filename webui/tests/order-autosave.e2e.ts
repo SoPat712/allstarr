@@ -130,17 +130,23 @@ for (const conflict of [false, true]) test(`Personal lyrics order ${conflict ? "
     return route.fulfill({ json: snapshot });
   });
   await page.goto("/#/preferences");
-  await page.getByRole("radio", { name: /Hide clean\/edited versions/ }).check();
+  if (!conflict) {
+    await page.getByRole("radio", { name: /Hide clean\/edited versions/ }).check();
+    await expect.poll(() => writes.length).toBe(1);
+    expect(writes[0]).toMatchObject({ explicitFilter: "ExplicitOnly", expectedRevision: "1" });
+    expect(writes[0]).not.toHaveProperty("lyricsOrder");
+  }
   await page.getByRole("button", { name: "Move LRCLib up", exact: true }).click();
   if (conflict) {
     await expect(page.locator(".degraded-banner")).toContainText("These preferences changed in another session. Reload the latest settings before continuing.");
+    await page.getByRole("button", { name: "Reload latest", exact: true }).click();
     await expect(page.locator(".lyrics-order-list strong")).toHaveText(["LRCLib", "Kept LRC", "Media server lyrics"]);
   } else {
-    await expect.poll(() => writes.length).toBe(1);
-    expect(writes[0]).toMatchObject({ lyricsOrder: "backend,lrclib,kept", explicitFilter: "All", expectedRevision: "1" });
-    await expect(page.getByRole("radio", { name: /Hide clean\/edited versions/ })).toBeChecked();
-    await page.getByRole("button", { name: "Undo", exact: true }).click();
     await expect.poll(() => writes.length).toBe(2);
-    expect(writes[1]).toMatchObject({ lyricsOrder: "backend,kept,lrclib", explicitFilter: "All", expectedRevision: "2" });
+    expect(writes[1]).toMatchObject({ lyricsOrder: "backend,lrclib,kept", explicitFilter: "ExplicitOnly", expectedRevision: "2" });
+    await expect(page.getByRole("radio", { name: /Hide clean\/edited versions/ })).toBeChecked();
+    await page.getByRole("status").filter({ hasText: "Order saved" }).getByRole("button", { name: "Undo", exact: true }).click();
+    await expect.poll(() => writes.length).toBe(3);
+    expect(writes[2]).toMatchObject({ lyricsOrder: "backend,kept,lrclib", explicitFilter: "ExplicitOnly", expectedRevision: "3" });
   }
 });

@@ -29,9 +29,9 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.getByRole("button", { name: "Verify and save" }).click();
     await expect(page.getByRole("status")).toContainText("saved");
     await expect.poll(() => pendingPolls).toBeGreaterThan(0);
-    await expect(page.getByRole("heading", { name: "Your music, connected." })).toBeHidden();
+    await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toBeHidden();
     pending = false;
-    await expect(page.getByRole("heading", { name: "Your music, connected." })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }

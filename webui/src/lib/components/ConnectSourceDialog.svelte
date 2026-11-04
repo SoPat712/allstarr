@@ -31,6 +31,7 @@
   } = $props();
 
   let providerId = $state("");
+  let step = $state(1);
   let scope = $state<"Personal" | "Shared">("Personal");
   let ownerUserId = $state("");
   let saving = $state(false);
@@ -48,12 +49,13 @@
   $effect(() => {
     if (!open) {
       choices = providers.filter((provider) => accountSettings(provider).length);
-      initialized = false; error = ""; scope = "Personal"; ownerUserId = "";
+      initialized = false; error = ""; scope = "Personal"; ownerUserId = ""; step = 1;
     } else if (!initialized) {
       choices = providers.filter((provider) => accountSettings(provider).length);
       if (choices[0]) {
         initialized = true;
         providerId = account?.providerId || initialProviderId || choices[0].id;
+        step = account || initialProviderId ? 2 : 1;
         ownerUserId = currentUserId;
       }
     }
@@ -124,45 +126,31 @@
     <Dialog.Content class="source-dialog connect-source-dialog">
       <header>
         <div>
-          <Dialog.Title>{account ? `Configure ${selected?.name ?? "Source"}` : "Connect a Source"}</Dialog.Title>
+          <Dialog.Title>{account ? `Configure ${selected?.name ?? "service"}` : step === 1 ? "Connect an account" : `Connect ${selected?.name ?? "an account"}`}</Dialog.Title>
           <Dialog.Description>{account
-            ? "Replace the encrypted account details. Existing credentials are never displayed."
-            : "Credentials are encrypted before this connection is enabled."}</Dialog.Description>
+            ? "Update the saved sign-in. Leave stored secrets blank to keep them."
+            : step === 1 ? "Pick the service. You’ll sign in on the next step." : "Your sign-in is encrypted and never shown again after you save it."}</Dialog.Description>
         </div>
         <Dialog.Close class="icon-button" aria-label="Close source connection dialog"><X size={18} aria-hidden="true" /></Dialog.Close>
       </header>
 
-      {#if selected}
+      {#if !account}<ol class="connection-steps" aria-label="Connection steps"><li aria-current={step === 1 ? "step" : undefined}>1 · Service</li><li aria-current={step === 2 ? "step" : undefined}>2 · Sign in</li></ol>{/if}
+      {#if !account && step === 1}
+        <div class="connection-tiles" role="radiogroup" aria-label="Service">
+          {#each choices as choice}
+            <button class="connection-tile" type="button" role="radio" aria-checked={providerId === choice.id} onclick={() => providerId = choice.id}><ProviderMark id={choice.id} definition={choice} decorative /><strong>{choice.name}</strong><small>{(choice.categories ?? []).map(category => ({ metadata: "Song details", streaming: "Playback", download: "Downloads", scrobbling: "Listens", playlists: "Playlists", lyrics: "Lyrics" })[category] ?? category).join(", ") || "Your account and library"}</small></button>
+          {/each}
+        </div>
+        <footer class="dialog-actions"><Dialog.Close class={buttonVariants({ variant: "text" })}>Cancel</Dialog.Close><Button disabled={!selected} onclick={() => step = 2}>Next</Button></footer>
+      {:else if selected}
         <form onsubmit={create}>
           {#if account}
             <div class="provider-select source-dialog-provider">
-              <ProviderMark id={selected.id} definition={selected} />
+              <ProviderMark id={selected.id} definition={selected} decorative />
               <span><strong>{selected.name}</strong><small>{accountSubtitle(account)}</small></span>
             </div>
           {:else}
-            <label class="field">
-              <span>Source</span>
-              <span class="provider-select">
-                <ProviderMark id={selected.id} definition={selected} />
-                <SelectField bind:value={providerId} label="Source" options={choices.map((provider) => ({ value: provider.id, label: provider.name }))} />
-              </span>
-            </label>
-            {#if administrator && scope === "Personal" && users.length > 0}
-              <label class="field"><span>Account owner</span><SelectField bind:value={ownerUserId} label="Account owner" options={users.map((user) => ({ value: user.id, label: user.displayName + (user.id === currentUserId ? " (you)" : "") }))} /></label>
-              {#if ownerUserId && ownerUserId !== currentUserId}<p class="credential-safety">Only that user's listening will use this account.</p>{/if}
-            {/if}
-            <label class="field"><span>Connection name</span><input name="displayName" placeholder={selected.name} /></label>
-            <label class="field">
-              <span>Who can use it?</span>
-              <SelectField name="scope" label="Who can use it?" bind:value={scope} options={[
-                ...supportedAudiences(selected).filter((value) => administrator || value === "Personal")
-                  .map((value) => ({ value, label: value })),
-              ]} />
-              <small>{scope === "Shared" ? sharingDescription(selected) : administrator ? "Only the selected owner can use this provider connection." : "Only you can use this provider connection."}</small>
-            </label>
-            {#if scope === "Shared"}
-              <label class="toggle-line"><Checkbox name="confirmShare" required /><span>I agree to share provider access with household users.<small>Other users may consume this account’s provider limits. Credentials stay hidden. Supported capabilities may include playlists and scrobbling.</small></span></label>
-            {/if}
+            <div class="provider-select source-dialog-provider"><ProviderMark id={selected.id} definition={selected} decorative /><strong>{selected.name}</strong></div>
           {/if}
 
           <div class="source-setting-grid">
@@ -200,10 +188,30 @@
               </label>
             {/each}
           </div>
+          {#if !account}
+            {#if administrator && scope === "Personal" && users.length > 0}
+              <label class="field"><span>Account owner</span><SelectField bind:value={ownerUserId} label="Account owner" options={users.map((user) => ({ value: user.id, label: user.displayName + (user.id === currentUserId ? " (you)" : "") }))} /></label>
+              {#if ownerUserId && ownerUserId !== currentUserId}<p class="credential-safety">Only that user's listening will use this account.</p>{/if}
+            {/if}
+            <details class="connection-name"><summary>Give this account a name</summary><label class="field"><span>Connection name</span><input name="displayName" placeholder={selected.name} /></label></details>
+            <label class="field">
+              <span>Who can use it?</span>
+              <SelectField name="scope" label="Who can use it?" bind:value={scope} options={[
+                ...supportedAudiences(selected).filter((value) => administrator || value === "Personal")
+                  .map((value) => ({ value, label: value === "Shared" ? "Everyone in the house" : "Just me" })),
+              ]} />
+              <small>{scope === "Shared" ? sharingDescription(selected) : administrator ? "Only the selected owner can use this provider connection." : "Only you can use this provider connection."}</small>
+            </label>
+            {#if scope === "Shared"}
+              <label class="toggle-line"><Checkbox name="confirmShare" required /><span>I agree to share provider access with household users.<small>Other users may consume this account’s provider limits. Credentials stay hidden. Supported capabilities may include playlists and scrobbling.</small></span></label>
+            {/if}
+          {/if}
+          <p class="connection-check-note">{testConnection ? "The saved connection is checked after you connect." : "You can check the connection after saving."}{#if selected.id === "lastfm"} Your Last.fm password is used once to get a sign-in token.{/if}</p>
           {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
           <footer class="dialog-actions">
-            <Dialog.Close type="button" class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
-            <Button type="submit" disabled={saving}>{saving ? "Saving…" : testConnection ? "Save and test" : "Save connection"}</Button>
+            {#if !account}<Button variant="text" type="button" disabled={saving} onclick={() => step = 1}>Back</Button>{/if}
+            <Dialog.Close type="button" class={buttonVariants({ variant: "text" })}>Cancel</Dialog.Close>
+            <Button type="submit" disabled={saving}>{saving ? "Saving…" : account ? "Save changes" : "Connect"}</Button>
           </footer>
         </form>
       {:else}
@@ -214,6 +222,17 @@
 </Dialog.Root>
 
 <style>
+  .connection-steps { display: flex; gap: var(--space-5); margin: 0; padding: 0; list-style: none; color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .connection-steps [aria-current="step"] { color: var(--color-signal-text); font-weight: 600; }
+  .connection-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+  .connection-tile { display: grid; min-height: 112px; min-width: 0; gap: var(--space-2); align-content: start; border: 1px solid var(--color-edge); border-radius: var(--radius-md); padding: var(--space-3); background: var(--color-panel); color: var(--color-ink); text-align: left; cursor: pointer; }
+  .connection-tile[aria-checked="true"] { border-color: var(--color-signal); background: var(--color-signal-muted); }
+  .connection-tile small, .connection-check-note { color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .connection-tile strong { font-size: var(--text-sm); }
+  .connection-check-note { margin: 0; }
+  .connection-name summary { min-height: 44px; display: flex; align-items: center; color: var(--color-ink-muted); font-size: var(--text-sm); cursor: pointer; }
+  @media (max-width: 599px) { .connection-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
   .account-input {
     min-width: 0;
     border: 1px solid var(--color-edge);

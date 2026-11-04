@@ -7,7 +7,8 @@
     id,
     definition,
     label = definition?.name ?? id,
-  }: { id: string; definition?: ProviderDefinition; label?: string } = $props();
+    decorative = false,
+  }: { id: string; definition?: ProviderDefinition; label?: string; decorative?: boolean } = $props();
   let sourceIndex = $state(0);
   let loaded = $state(false);
   const sources = $derived(providerMarkSources(id, definition, label));
@@ -25,7 +26,7 @@
   {#if source}
     <img src={source} alt="" hidden={!loaded} onload={() => { loaded = true; }} onerror={() => { sourceIndex += 1; loaded = false; }} />
   {/if}
-  <span class="sr-only">{label}</span>
+  {#if !decorative}<span class="sr-only">{label}</span>{/if}
 </span>
 
 <style>

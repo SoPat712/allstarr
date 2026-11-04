@@ -1,5 +1,6 @@
 <script lang="ts">
   import { toast } from "$lib/toasts";
+  import { goto } from "$app/navigation";
   import { onMount } from "svelte";
   import { AlertDialog } from "$lib/components/ui/alert-dialog";
   import { Checkbox } from "$lib/components/ui/checkbox";
@@ -7,7 +8,7 @@
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import { Progress } from "$lib/components/ui/progress";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import { ChevronDown, CircleAlert, Database, Globe, KeyRound, MoreHorizontal, Plus, X } from "@lucide/svelte";
+  import { Check, CircleAlert, Database, Globe, KeyRound, MoreHorizontal, X } from "@lucide/svelte";
   import {
     extensions,
     type ExtensionPackage,
@@ -31,13 +32,14 @@
     open = $bindable(false),
     onchanged,
   }: {
-    view?: "attention" | "catalog" | "package";
+    view?: "attention" | "catalog" | "package" | "remove";
     extensionId?: string;
     open?: boolean;
     onchanged?: () => void | Promise<void>;
   } = $props();
 
   let catalogTab = $state<"catalog" | "url" | "catalogs">("catalog");
+  let catalogDialogOpen = $state(true);
   let packages = $state<ExtensionPackage[]>([]);
   let registries = $state<ExtensionRegistry[]>([]);
   let store = $state<ExtensionStoreItem[]>([]);
@@ -54,15 +56,19 @@
     else toast.error(message);
   }
   let search = $state("");
-  let installOpen = $state(false);
   let reviewOpen = $state(false);
   let reviewPackage = $state<ExtensionPackage | null>(null);
+  let reviewOrigin = $state("");
   let previousPackage = $state<ExtensionPackage | null>(null);
   let permissions = $state<ExtensionPermission[]>([]);
   let previousPermissions = $state<ExtensionPermission[]>([]);
   let decisions = $state<Record<string, boolean>>({});
   let permissionConfirmed = $state(false);
   let activatePackage = $state<ExtensionPackage | null>(null);
+  let activationPermissions = $state<ExtensionPermission[]>([]);
+  let activationAccessLoading = $state(false);
+  let activationAccessReady = $state(true);
+  let activationAccessRequest = 0;
   let removePackage = $state<ExtensionPackage | null>(null);
   let removeRegistry = $state<ExtensionRegistry | null>(null);
   let reviewAccessPackage = $state<ExtensionPackage | null>(null);
@@ -92,7 +98,7 @@
   const bulkChosen = $derived(bulkEntries.filter((entry) => entry.approve).length);
   const catalogTabs = $derived([
     { id: "catalog", label: "Catalog", count: catalog.length },
-    { id: "url", label: "From a URL" },
+    { id: "url", label: "From a link" },
     { id: "catalogs", label: "Manage catalogs", count: registries.length },
   ]);
 
@@ -104,6 +110,8 @@
     reviewPackage?.capabilities ?? [],
     previousPackage?.capabilities ?? [],
   ));
+  const reviewNeedsPermissions = $derived(Boolean(reviewPackage?.permissionReviewRequired ||
+    reviewPackage?.state.toLowerCase() === "reviewrequired"));
 
   function definition(item: ExtensionPackage | ExtensionStoreItem) {
     return {
@@ -161,19 +169,21 @@
   async function stage(item: ExtensionStoreItem) {
     if (action) return;
     action = `install:${item.id}`;
+    catalogError = "";
+    let staged: ExtensionPackage | undefined;
     try {
       const result = await extensions.install(item);
-      installOpen = false;
-      open = false;
       await changed();
-      const staged = packages.find((entry) => entry.id === result.packageId);
-      toast.success(result.message);
-      if (staged?.permissionReviewRequired) await openReview(staged);
+      staged = packages.find((entry) => entry.id === result.packageId);
+      toast.success("Extension downloaded and verified. Review its access before enabling.");
     } catch (cause) {
       reportActionError(cause instanceof Error ? cause.message : "Extension could not be staged.");
     } finally {
       action = "";
     }
+    if (staged && !staged.active && (staged.permissionReviewRequired ||
+      ["reviewrequired", "staged"].includes(staged.state.toLowerCase())))
+      await openReview(staged, networkHost(item.downloadUrl));
   }
 
   async function stageDirect(event: SubmitEvent) {
@@ -205,7 +215,7 @@
     }
   }
 
-  async function openReview(item: ExtensionPackage) {
+  async function openReview(item: ExtensionPackage, origin = "") {
     if (action) return;
     action = `review-load:${item.id}`;
     try {
@@ -215,15 +225,43 @@
         previousPackage ? extensions.permissions(previousPackage.id) : Promise.resolve([]),
       ]);
       reviewPackage = item;
-      decisions = {};
+      reviewOrigin = origin || registryOrigin(item);
+      decisions = item.permissionReviewRequired || item.state.toLowerCase() === "reviewrequired"
+        ? {}
+        : Object.fromEntries(permissions.map((permission) => [permission.id, permission.decision.toLowerCase() === "approved"]));
       permissionConfirmed = false;
       reviewError = "";
       reviewOpen = true;
+      if (view === "catalog") catalogDialogOpen = false;
     } catch (cause) {
       reportActionError(cause instanceof Error ? cause.message : "Permissions could not be loaded.");
     } finally {
       action = "";
     }
+  }
+
+  function networkHost(value: string) {
+    try { return new URL(value).host; } catch { return value; }
+  }
+
+  function registryOrigin(item: ExtensionPackage) {
+    const registry = registries.find((entry) => entry.id === item.registryId);
+    return registry ? `${registry.name} · ${networkHost(registry.registryUrl)}` : "";
+  }
+
+  function networkHosts(rows: ExtensionPermission[], approvedOnly = false) {
+    return [...new Set(rows.filter((item) => item.permissionKind.toLowerCase() === "network" &&
+      (!approvedOnly || item.decision.toLowerCase() === "approved"))
+      .map((item) => networkHost(item.permissionValue)))];
+  }
+
+  function capabilityLabel(value: string) {
+    const labels: Record<string, string> = {
+      metadata: "Search and song details", streaming: "Streaming", download: "Downloads",
+      downloads: "Downloads", playlist: "Playlists", playlists: "Playlists", lyrics: "Lyrics",
+      scrobbling: "Listening history",
+    };
+    return labels[value.toLowerCase()] ?? humanize(value);
   }
 
   function permissionCopy(kind: string, value: string) {
@@ -256,20 +294,22 @@
     if (!reviewPackage || permissions.some((item) => decisions[item.id] === undefined)) return;
     action = `review:${reviewPackage.id}`;
     try {
-      const reviewed = await extensions.review(reviewPackage, permissions.map((item) => ({
+      const reviewed = reviewNeedsPermissions ? await extensions.review(reviewPackage, permissions.map((item) => ({
         kind: item.permissionKind,
         value: item.permissionValue,
         approved: decisions[item.id],
-      })));
+      }))) : reviewPackage;
+      const reviewedPermissions = permissions.map((item) => ({
+        ...item, decision: decisions[item.id] ? "approved" : "denied",
+      }));
       reviewPackage = null;
       reviewOpen = false;
       if (reviewed.state.toLowerCase() === "staged") {
-        activatePackage = reviewed;
-        dialogError = "";
-        confirmOpen = true;
+        await confirmActivation(reviewed, reviewedPermissions);
       } else {
         toast.success("Extension permissions saved.");
         await changed();
+        if (view === "catalog") open = false;
       }
     } catch (cause) {
       reportActionError(cause instanceof Error ? cause.message : "Permission review failed.");
@@ -352,6 +392,7 @@
   function closeReview() {
     reviewPackage = null;
     reviewOpen = false;
+    if (view === "catalog") open = false;
   }
 
   function confirmRemoval(item: ExtensionPackage | ExtensionRegistry) {
@@ -368,13 +409,29 @@
     confirmOpen = true;
   }
 
-  function confirmActivation(item: ExtensionPackage) {
+  async function confirmActivation(item: ExtensionPackage, rows?: ExtensionPermission[]) {
+    const request = ++activationAccessRequest;
     dialogError = "";
     activatePackage = item;
+    activationPermissions = rows ?? [];
+    activationAccessReady = Boolean(rows || !item.hasPermissions);
+    activationAccessLoading = !activationAccessReady;
     removePackage = null;
     removeRegistry = null;
     reviewAccessPackage = null;
     confirmOpen = true;
+    if (activationAccessReady) return;
+    try {
+      const loaded = await extensions.permissions(item.id);
+      if (request !== activationAccessRequest || activatePackage?.id !== item.id) return;
+      activationPermissions = loaded;
+      activationAccessReady = true;
+    } catch (cause) {
+      if (request === activationAccessRequest && activatePackage?.id === item.id)
+        dialogError = cause instanceof Error ? cause.message : "Access could not be loaded. Close this dialog and try again.";
+    } finally {
+      if (request === activationAccessRequest && activatePackage?.id === item.id) activationAccessLoading = false;
+    }
   }
 
   function confirmPermissionReview(item: ExtensionPackage) {
@@ -387,11 +444,12 @@
   }
 
   async function confirm() {
-    if (action) return;
+    if (action || (activatePackage && !activationAccessReady)) return;
     let operation: (() => Promise<unknown>) | null = null;
     let operationKey = "";
     let successMessage = "";
     let resetPackage: ExtensionPackage | null = null;
+    let enabledPackage: ExtensionPackage | null = null;
     if (reviewAccessPackage) {
       const target = reviewAccessPackage;
       operationKey = `review-access:${target.id}`;
@@ -400,7 +458,8 @@
     } else if (activatePackage) {
       const target = activatePackage;
       operationKey = `activate:${target.id}`;
-      successMessage = "Extension enabled.";
+      enabledPackage = target;
+      successMessage = `${target.displayName} ${target.previousPackageId ? "updated and enabled" : target.installed ? "enabled" : "installed and enabled"}.`;
       operation = () => extensions.activate(target);
     } else if (removePackage) {
       const target = removePackage;
@@ -425,8 +484,13 @@
       activatePackage = null;
       removePackage = null;
       removeRegistry = null;
-      toast.success(successMessage);
+      const source = enabledPackage;
+      toast.success(successMessage, source ? {
+        label: "Open source",
+        run: () => goto(`#/sources/services/${encodeURIComponent(source.extensionId)}`, { keepFocus: true, noScroll: true }),
+      } : undefined);
       void changed();
+      if (view === "catalog" && source) open = false;
       succeeded = true;
     } catch (cause) {
       dialogError = cause instanceof Error ? cause.message : `${successMessage} failed.`;
@@ -452,6 +516,39 @@
   onMount(() => void refresh());
 </script>
 
+{#snippet installSteps(current: number)}
+  <ol class="extension-setup-steps" aria-label="Extension setup">
+    {#each ["Where from", "Review access", "Enable"] as label, index}
+      <li aria-current={current === index ? "step" : undefined} class:complete={index < current}>
+        <span class="extension-step-number" aria-hidden="true">{#if index < current}<Check size={14} />{:else}{index + 1}{/if}</span>
+        <span>{label}</span>
+      </li>
+    {/each}
+  </ol>
+{/snippet}
+
+{#snippet accessSummary(item: ExtensionPackage, rows: ExtensionPermission[], approvedOnly = false)}
+  {@const hosts = networkHosts(rows, approvedOnly)}
+  <div class="extension-access-overview">
+    <section aria-label="Extension capabilities">
+      <h3>What it can do</h3>
+      <div class="source-capabilities">
+        {#each item.capabilities ?? [] as capability}<span>{capabilityLabel(capability)}</span>
+        {:else}<p>No capabilities listed.</p>{/each}
+      </div>
+    </section>
+    <section aria-label="Extension network access">
+      <h3>Where it connects</h3>
+      {#if hosts.length}
+        <ul class="extension-hosts" aria-label={approvedOnly ? "Approved network hosts" : "Requested network hosts"}>
+          {#each hosts as host}<li>{host}</li>{/each}
+        </ul>
+        <p>{approvedOnly ? "Only the addresses you approved are allowed." : "Review the exact addresses below before allowing access."}</p>
+      {:else}<p>{approvedOnly ? "No network access approved." : "No network access requested."}</p>{/if}
+    </section>
+  </div>
+{/snippet}
+
 {#snippet packageRow(item: ExtensionPackage, showOpen: boolean)}
   {@const update = updateFor(item)}
   <li class="extension-row" data-state={item.state.toLowerCase()}>
@@ -464,18 +561,19 @@
     </div>
     <Badge state={item.active ? "healthy" : item.state.toLowerCase() === "failed" ? "degraded" : "suggested"}>{stateLabel(item)}</Badge>
     <div class="extension-actions">
-      {#if update}<Button disabled={Boolean(action)} onclick={() => void stage(update)}>{action === `install:${update.id}` ? "Verifying…" : `Update ${item.version} → ${update.version}`}</Button>{/if}
-      {#if item.permissionReviewRequired}<Button disabled={Boolean(action)} onclick={() => void openReview(item)}>{action === `review-load:${item.id}` ? "Loading review…" : "Review permissions"}</Button>
-      {:else if item.state.toLowerCase() === "failed"}<Button disabled={Boolean(action)} onclick={() => void retryPackage(item)}>{action === `retry:${item.id}` ? "Retrying…" : "Retry"}</Button>
-      {:else if item.state.toLowerCase() === "staged"}<Button disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</Button>
-      {:else if item.state.toLowerCase() === "disabled" && item.hasPermissions}<Button disabled={Boolean(action)} onclick={() => confirmPermissionReview(item)}>Review and enable</Button>
-      {:else if item.state.toLowerCase() === "disabled"}<Button disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</Button>
+      {#if update}<Button variant="outline" disabled={Boolean(action)} onclick={() => void stage(update)}>{action === `install:${update.id}` ? "Verifying…" : `Update ${item.version} → ${update.version}`}</Button>
+      {:else if item.permissionReviewRequired}<Button variant="outline" disabled={Boolean(action)} onclick={() => void openReview(item)}>{action === `review-load:${item.id}` ? "Loading review…" : "Review permissions"}</Button>
+      {:else if item.state.toLowerCase() === "failed"}<Button variant="outline" disabled={Boolean(action)} onclick={() => void retryPackage(item)}>{action === `retry:${item.id}` ? "Retrying…" : "Retry"}</Button>
+      {:else if item.state.toLowerCase() === "staged"}<Button variant="outline" disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</Button>
+      {:else if item.state.toLowerCase() === "disabled" && item.hasPermissions}<Button variant="outline" disabled={Boolean(action)} onclick={() => confirmPermissionReview(item)}>Review and enable</Button>
+      {:else if item.state.toLowerCase() === "disabled"}<Button variant="outline" disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</Button>
       {:else if item.active && showOpen}<Button variant="secondary" href={`#/sources/services/${encodeURIComponent(item.extensionId)}`}>Open source</Button>
       {/if}
       <DropdownMenu.Root>
         <DropdownMenu.Trigger class="icon-button" aria-label="Manage extension" title={`More actions for ${item.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
         <DropdownMenu.Portal>
           <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+            {#if item.permissionReviewRequired && update}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void openReview(item)}>Review permissions</DropdownMenu.Item>{/if}
             {#if item.active}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run(item.id, () => extensions.disable(item), "Extension disabled.")}>Disable</DropdownMenu.Item>{/if}
             {#if item.hasPermissions && item.state.toLowerCase() === "active"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmPermissionReview(item)}>Review access</DropdownMenu.Item>{/if}
             {#if item.hasPermissions && item.state.toLowerCase() === "disabled"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmPermissionReview(item)}>Review and enable</DropdownMenu.Item>{/if}
@@ -490,11 +588,17 @@
   </li>
 {/snippet}
 
+{#if view === "remove" && focused}
+  {#if dataUnavailable}<p class="degraded-banner" role="status">{extensionDataUnavailable}</p>{/if}
+  <Button variant="text" class="extension-remove-link" disabled={Boolean(action)} onclick={() => confirmRemoval(focused)}>Remove extension…</Button>
+{/if}
+
 {#if view === "catalog"}
-  <Dialog.Root bind:open>
+  <Dialog.Root bind:open={() => open && catalogDialogOpen, (value) => { if (!action) { catalogDialogOpen = value; if (!value) open = false; } }}>
     <Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog extension-catalog-dialog">
-      <header class="dialog-heading"><div><Dialog.Title>Add a source</Dialog.Title><Dialog.Description>Install an extension from one of your catalogs, or from a package address. Nothing runs until you approve its access.</Dialog.Description></div><Dialog.Close class="icon-button" aria-label="Close add a source"><X size={18} aria-hidden="true" /></Dialog.Close></header>
-      <SegmentedNav items={catalogTabs} active={catalogTab} label="Ways to add a source" class="route-tabs extension-tabs" onchange={(id) => { catalogTab = id as typeof catalogTab; }} />
+      <header class="dialog-heading"><div><Dialog.Title>Add an extension</Dialog.Title><Dialog.Description>Extensions add services Allstarr can search, stream or download from. Choose one, review its access, then enable it.</Dialog.Description></div><Dialog.Close class="icon-button" aria-label="Close add an extension" disabled={Boolean(action)}><X size={18} aria-hidden="true" /></Dialog.Close></header>
+      {#if catalogTab !== "catalogs"}{@render installSteps(0)}{/if}
+      <SegmentedNav items={catalogTabs} active={catalogTab} label="Ways to add an extension" class="route-tabs extension-tabs" onchange={(id) => { if (!action) catalogTab = id as typeof catalogTab; }} />
       <div class="extension-catalog-body">
         {#if catalogError}<p class="notice-error" role="alert">{catalogError}</p>{/if}
 
@@ -503,6 +607,7 @@
           <p class="service-empty">Loading catalogs…</p>
         {:else if catalogTab === "catalog"}
           <section class="extension-catalog">
+            <p class="extension-flow-note">The download is verified before Allstarr reads its capabilities and requested access. It stays off until you review and enable it.</p>
             <SearchField class="extension-search" label="Search extensions" placeholder="Search extensions" hiddenLabel bind:value={search} />
             {#each storeErrors as item}<p class="notice-error">{item.repository}: {item.message}</p>{/each}
             <ul class="source-list" aria-label="Available extensions">
@@ -516,12 +621,12 @@
                   </div>
                   <span></span>
                   <div class="extension-actions">
-                    <Button
+                    <Button variant="outline"
                       disabled={!item.sha256 || Boolean(action)}
                       title={!item.sha256 ? "This registry did not publish the SHA-256 checksum required for a safe install." : undefined}
                       aria-label={!item.sha256 ? `Cannot install ${item.displayName}: checksum unavailable` : undefined}
                       onclick={() => void stage(item)}
-                    >{!item.sha256 ? "Checksum unavailable" : action === `install:${item.id}` ? "Verifying…" : installedVersion ? `Update ${installedVersion} → ${item.version}` : "Install"}</Button>
+                    >{!item.sha256 ? "Checksum unavailable" : action === `install:${item.id}` ? "Downloading and verifying…" : installedVersion ? `Review update ${installedVersion} → ${item.version}` : "Download and review"}</Button>
                   </div>
                 </li>
               {:else}<li class="compact-empty"><strong>Nothing new to install</strong><p>{registries.length ? "Everything from your catalogs is installed and up to date." : "Add a catalog under Manage catalogs to browse extensions."}</p></li>{/each}
@@ -529,8 +634,9 @@
           </section>
         {:else if catalogTab === "url"}
           <form id="extension-install-form" class="extension-install-form" onsubmit={(event) => void stageDirect(event)}>
-            <label class="form-field"><span>Package URL</span><input name="downloadUrl" type="url" required pattern="https://.*" autocomplete="off" placeholder="https://example.org/extension.zip" /></label>
-            <label class="form-field"><span>SHA-256 checksum</span><input name="sha256" required minlength="64" maxlength="64" pattern="[A-Fa-f0-9]{64}" autocomplete="off" spellcheck="false" placeholder="64 hexadecimal characters" /><small>The publisher lists this next to the download.</small></label>
+            <p class="extension-flow-note">Use a direct HTTPS download link and the publisher's checksum. Allstarr must download and verify it before showing its access. Nothing runs yet.</p>
+            <label class="form-field"><span>Download link</span><input name="downloadUrl" type="url" required pattern="https://.*" autocomplete="off" placeholder="https://example.org/extension.zip" disabled={Boolean(action)} /><small>A direct link to the extension archive.</small></label>
+            <label class="form-field"><span>SHA-256 checksum</span><input name="sha256" required minlength="64" maxlength="64" pattern="[A-Fa-f0-9]{64}" autocomplete="off" spellcheck="false" placeholder="64 hexadecimal characters" disabled={Boolean(action)} /><small>The publisher lists this next to the download. It must contain 64 hexadecimal characters.</small></label>
             <label class="form-field"><span>Catalog</span><SelectField name="registryId" label="Registry attribution" value="" options={[{ value: "", label: "None (direct package)" }, ...registries.filter((item) => item.enabled).map((item) => ({ value: item.id, label: item.name }))]} /></label>
           </form>
         {:else}
@@ -548,16 +654,14 @@
                   <span class="extension-registry-icon" aria-hidden="true"><Globe size={18} /></span>
                   <div class="extension-copy"><span class="extension-title"><strong>{item.name}</strong></span><p>{item.registryUrl}</p>{#if usedBy.length}<p class="extension-failure">Remove {usedBy.length} installed package version{usedBy.length === 1 ? "" : "s"} from this catalog first.</p>{/if}</div>
                   <Badge state={item.enabled ? "healthy" : "suggested"}>{item.enabled ? "On" : "Off"}</Badge>
-                  <div class="extension-actions"><Button variant="secondary" size="sm" disabled={Boolean(action)} onclick={() => void run(`registry:${item.id}`, () => extensions.setRegistryEnabled(item, !item.enabled), `Registry ${item.enabled ? "disabled" : "enabled"}.`)}>{action === `registry:${item.id}` ? "Saving…" : item.enabled ? "Disable" : "Enable"}</Button><Button variant="destructive" size="sm" disabled={usedBy.length > 0 || Boolean(action)} onclick={() => confirmRemoval(item)}>Remove</Button></div>
+                  <div class="extension-actions"><Button variant="secondary" size="sm" disabled={Boolean(action)} onclick={() => void run(`registry:${item.id}`, () => extensions.setRegistryEnabled(item, !item.enabled), `Registry ${item.enabled ? "disabled" : "enabled"}.`)}>{action === `registry:${item.id}` ? "Saving…" : item.enabled ? "Disable" : "Enable"}</Button><Button variant="text" class="extension-remove-link" size="sm" disabled={usedBy.length > 0 || Boolean(action)} onclick={() => confirmRemoval(item)}>Remove</Button></div>
                 </li>
               {:else}<li class="compact-empty"><strong>No catalogs connected</strong><p>Add a catalog's registry address to browse its extensions.</p></li>{/each}
             </ul>
           </div>
         {/if}
       </div>
-      {#if catalogTab === "url"}
-        <footer class="dialog-actions"><Button type="submit" form="extension-install-form" disabled={Boolean(action)}>{action === "install:" ? "Verifying…" : "Verify package"}</Button></footer>
-      {/if}
+      <footer class="dialog-actions"><Dialog.Close class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</Dialog.Close>{#if catalogTab === "url"}<Button type="submit" form="extension-install-form" disabled={Boolean(action)}>{action === "install:" ? "Downloading and verifying…" : "Download and review"}</Button>{/if}</footer>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>
 {:else if loading}
@@ -567,7 +671,7 @@
     <section class="extension-attention" aria-labelledby="extension-attention-title">
       <div class="extension-attention-heading">
         <h3 id="extension-attention-title">Extensions that need you</h3>
-        {#if bulkTargets > 1}<Button disabled={Boolean(action)} onclick={() => void startBulk()}>{action === "bulk" ? "Getting updates…" : `Update and review all (${bulkTargets})`}</Button>{/if}
+        {#if bulkTargets > 1}<Button variant="outline" disabled={Boolean(action)} onclick={() => void startBulk()}>{action === "bulk" ? "Getting updates…" : `Update and review all (${bulkTargets})`}</Button>{/if}
       </div>
       {#if dataUnavailable}<p class="degraded-banner" role="status">{extensionDataUnavailable}</p>{/if}
 
@@ -578,7 +682,7 @@
       {/if}
     </section>
   {/if}
-{:else if focused}
+{:else if view === "package" && focused}
   <section class="settings-card service-extension" aria-labelledby="service-extension-title">
     {#if dataUnavailable}<p class="degraded-banner" role="status">{extensionDataUnavailable}</p>{/if}
     <header><div><h3 id="service-extension-title">Extension</h3><small>This source comes from an extension. Updates, permissions and sign-in live here.</small></div></header>
@@ -589,24 +693,35 @@
   </section>
 {/if}
 
-  <Dialog.Root bind:open={reviewOpen}>
+  <Dialog.Root bind:open={() => reviewOpen, (value) => { if (!action) { reviewOpen = value; if (!value && view === "catalog") open = false; } }}>
     <Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog extension-review-dialog">
-      <header class="dialog-heading"><div><Dialog.Title>Review permissions</Dialog.Title><Dialog.Description>{reviewPackage?.displayName} {reviewPackage?.version} needs your approval before it can run.</Dialog.Description></div></header>
+      <header class="dialog-heading"><div><Dialog.Title>Review permissions</Dialog.Title><Dialog.Description>The extension is downloaded and stays off while you review what it can do and where it can connect.</Dialog.Description></div><Dialog.Close class="icon-button" aria-label="Close permission review" disabled={Boolean(action)}><X size={18} aria-hidden="true" /></Dialog.Close></header>
+      {@render installSteps(1)}
       <div class="extension-review-body">
+        {#if reviewPackage}
+          <div class="extension-review-summary">
+            <ProviderArtwork id={reviewPackage.extensionId} definition={definition(reviewPackage)} />
+            <div><strong>{reviewPackage.displayName}</strong><small>Version {reviewPackage.version}{reviewPackage.author ? ` · ${reviewPackage.author}` : ""}</small>{#if reviewOrigin}<small>From {reviewOrigin}</small>{/if}</div>
+            <Badge state="suggested">Not running</Badge>
+          </div>
+          {@render accessSummary(reviewPackage, permissions)}
+          {#if reviewPackage.usesSignedSession}<p class="extension-flow-note">After enabling, open the source to complete its sign-in step.</p>{/if}
+        {/if}
         {#if previousPackage}
           <div class="extension-review-update">
             <strong>Update from {previousPackage.version} to {reviewPackage?.version}</strong>
             <div class="source-capabilities" aria-label={`Capability changes from ${previousPackage.version} to ${reviewPackage?.version}`}>
-              {#each capabilityChanges as item}<span class:ready={item.change === "added"} class:removed={item.change === "removed"}>{item.change === "added" ? "Adds " : item.change === "removed" ? "Drops " : ""}{humanize(item.value)}</span>{/each}
+              {#each capabilityChanges as item}<span class:ready={item.change === "added"} class:removed={item.change === "removed"}>{item.change === "added" ? "Adds " : item.change === "removed" ? "Drops " : ""}{capabilityLabel(item.value)}</span>{/each}
             </div>
           </div>
         {/if}
         {#if permissions.length}
           <div class="permission-bulk">
-            <strong>This extension asks to</strong>
-            <div><Button size="sm" variant="outline" onclick={() => decideAll(true)}>Allow all</Button><Button size="sm" variant="outline" onclick={() => decideAll(false)}>Deny all</Button></div>
+            <strong>{reviewNeedsPermissions ? "Choose what it can access" : "Saved access"}</strong>
+            {#if reviewNeedsPermissions}<div><Button size="sm" variant="outline" disabled={Boolean(action)} onclick={() => decideAll(true)}>Allow all</Button><Button size="sm" variant="outline" disabled={Boolean(action)} onclick={() => decideAll(false)}>Deny all</Button></div>{/if}
           </div>
         {/if}
+        {#if permissions.length || permissionChanges.some((item) => item.change === "removed")}
         <ul class="extension-permissions">
           {#each permissions as item}
             {@const copy = permissionCopy(item.permissionKind, item.permissionValue)}
@@ -622,10 +737,10 @@
                   {#if item.required}<em>Required</em>{/if}
                 </span>
               </span>
-              <div class="permission-decision" role="group" aria-label={`Decision for ${item.permissionKind}`}>
-                <button type="button" aria-pressed={decisions[item.id] === true} onclick={() => { decisions = { ...decisions, [item.id]: true }; }}>Allow</button>
-                <button type="button" class="deny" aria-pressed={decisions[item.id] === false} onclick={() => { decisions = { ...decisions, [item.id]: false }; }}>Deny</button>
-              </div>
+              {#if reviewNeedsPermissions}<div class="permission-decision" role="group" aria-label={`Decision for ${item.permissionKind}`}>
+                <button type="button" disabled={Boolean(action)} aria-pressed={decisions[item.id] === true} onclick={() => { decisions = { ...decisions, [item.id]: true }; }}>Allow</button>
+                <button type="button" disabled={Boolean(action)} class="deny" aria-pressed={decisions[item.id] === false} onclick={() => { decisions = { ...decisions, [item.id]: false }; }}>Deny</button>
+              </div>{:else}<Badge state="suggested">{decisions[item.id] ? "Allowed" : "Denied"}</Badge>{/if}
             </li>
           {/each}
           {#each permissionChanges.filter((item) => item.change === "removed") as item}
@@ -637,11 +752,13 @@
             </li>
           {/each}
         </ul>
+        {:else}<p class="extension-flow-note">This extension asks for no permissions.</p>{/if}
       </div>
       {#if reviewError}<p class="notice-error" role="alert">{reviewError}</p>{/if}
       <div class="extension-review-footer">
         <label class="permission-confirm"><Checkbox bind:checked={permissionConfirmed} /><span>I understand what this extension can access.</span></label>
-        <footer class="dialog-actions"><Button variant="secondary" disabled={Boolean(action)} onclick={closeReview}>Close review</Button><Button disabled={!permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined) || Boolean(action)} onclick={() => void approve()}>{action.startsWith("review:") ? "Approving…" : "Approve"}</Button></footer>
+        <p class="extension-review-hint">{reviewNeedsPermissions ? "Saving access does not start the extension. You will enable it in the next step." : "Its saved access is unchanged. Continue to choose when it starts."}</p>
+        <footer class="dialog-actions"><Button variant="secondary" disabled={Boolean(action)} onclick={closeReview}>Close review</Button><Button disabled={!permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined) || Boolean(action)} onclick={() => void approve()}>{action.startsWith("review:") ? "Approving…" : reviewNeedsPermissions ? "Approve" : "Continue to enable"}</Button></footer>
       </div>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>
@@ -683,11 +800,91 @@
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>
 
-  <AlertDialog.Root bind:open={confirmOpen}>
-    <AlertDialog.Portal><AlertDialog.Overlay class="dialog-overlay" /><AlertDialog.Content class="confirm-dialog">
+  <AlertDialog.Root bind:open={() => confirmOpen, (value) => { if (!action) { confirmOpen = value; if (!value && view === "catalog" && !catalogDialogOpen) open = false; } }}>
+    <AlertDialog.Portal><AlertDialog.Overlay class="dialog-overlay" /><AlertDialog.Content class={`confirm-dialog${activatePackage ? " extension-activation-dialog" : ""}`}>
       <AlertDialog.Title>{reviewAccessPackage ? reviewAccessPackage.state.toLowerCase() === "disabled" ? `Review and enable ${reviewAccessPackage.displayName}?` : `Review access for ${reviewAccessPackage.displayName}?` : activatePackage ? `Activate ${activatePackage.displayName}?` : removePackage ? `Uninstall ${removePackage.displayName}?` : `Remove ${removeRegistry?.name ?? "this registry"}?`}</AlertDialog.Title>
-      <AlertDialog.Description>{reviewAccessPackage ? reviewAccessPackage.active ? "The extension runtime will stop now and remain disabled until you save a fresh permission review and reactivate it." : "The extension will remain disabled until you save a fresh permission review and reactivate it." : activatePackage ? "The reviewed runtime will start with only the approved capabilities and permissions." : removePackage ? "The package and runtime are removed. Encrypted Source accounts remain available for a later reinstall." : "You can add this registry URL again later."}</AlertDialog.Description>
+      <AlertDialog.Description>{reviewAccessPackage ? reviewAccessPackage.active ? "The extension runtime will stop now and remain disabled until you save a fresh permission review and reactivate it." : "The extension will remain disabled until you save a fresh permission review and reactivate it." : activatePackage ? "This starts the extension with the access you approved. You can turn it off or remove it from its source page." : removePackage ? "The package and runtime are removed. Encrypted Source accounts remain available for a later reinstall." : "You can add this registry URL again later."}</AlertDialog.Description>
+      {#if activatePackage}
+        {@render installSteps(2)}
+        <div class="extension-activation-body">
+          {#if activationAccessLoading}<p class="extension-flow-note" role="status">Loading approved access…</p>
+          {:else if activationAccessReady}{@render accessSummary(activatePackage, activationPermissions, true)}{/if}
+          {#if activatePackage.usesSignedSession}<p class="extension-flow-note">Open the source after enabling to complete sign-in.</p>{/if}
+        </div>
+      {/if}
       {#if dialogError}<p class="notice-error" role="alert">{dialogError}</p>{/if}
-      <footer class="dialog-actions"><AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</AlertDialog.Cancel><Button variant={activatePackage || reviewAccessPackage ? "default" : "destructive"} disabled={Boolean(action)} onclick={() => void confirm()}>{action ? reviewAccessPackage ? "Stopping…" : activatePackage ? "Activating…" : "Removing…" : reviewAccessPackage ? "Stop and review" : activatePackage ? "Activate extension" : removePackage ? "Uninstall" : "Remove registry"}</Button></footer>
+      <footer class="dialog-actions"><AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</AlertDialog.Cancel><Button variant={activatePackage || reviewAccessPackage ? "default" : "destructive"} disabled={Boolean(action) || Boolean(activatePackage && !activationAccessReady)} onclick={() => void confirm()}>{action ? reviewAccessPackage ? "Stopping…" : activatePackage ? "Activating…" : "Removing…" : reviewAccessPackage ? "Stop and review" : activatePackage ? "Activate extension" : removePackage ? "Uninstall" : "Remove registry"}</Button></footer>
     </AlertDialog.Content></AlertDialog.Portal>
   </AlertDialog.Root>
+
+<style>
+  :global(.extension-remove-link) { color: var(--danger); }
+  .extension-setup-steps {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    margin: 0;
+    padding: var(--space-4) var(--space-6) 0;
+    list-style: none;
+  }
+  .extension-setup-steps li {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+  }
+  .extension-setup-steps li[aria-current="step"] { color: var(--color-signal-text); font-weight: 600; }
+  .extension-step-number {
+    display: grid;
+    flex: 0 0 auto;
+    place-items: center;
+    width: var(--space-6);
+    height: var(--space-6);
+    border: 1px solid var(--color-edge-strong);
+    border-radius: 50%;
+  }
+  [aria-current="step"] .extension-step-number, .complete .extension-step-number {
+    border-color: var(--color-signal);
+    background: var(--color-signal-muted);
+    color: var(--color-signal-text);
+  }
+  .extension-flow-note {
+    margin: 0 0 var(--space-4);
+    color: var(--color-ink-muted);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+  }
+  .extension-install-form .extension-flow-note, .extension-review-body > .extension-flow-note { margin: 0; }
+  .extension-review-summary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+    padding: var(--space-4);
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+  }
+  .extension-review-summary > div { flex: 1; min-width: 0; }
+  .extension-review-summary strong, .extension-review-summary small { display: block; overflow-wrap: anywhere; }
+  .extension-review-summary small { color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .extension-access-overview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-5); }
+  .extension-access-overview section { min-width: 0; }
+  .extension-access-overview h3 { margin: 0 0 var(--space-2); color: var(--color-ink); font-size: var(--text-sm); font-weight: 600; }
+  .extension-access-overview p { margin: var(--space-2) 0 0; color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.5; }
+  .extension-hosts { display: grid; gap: var(--space-1); margin: 0; padding-left: var(--space-4); font-size: var(--text-sm); overflow-wrap: anywhere; }
+  .extension-review-hint { margin: var(--space-2) 0 0; padding: 0 var(--space-6); color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.5; }
+  :global(.extension-activation-dialog) { --dialog-width: 36rem; }
+  .extension-activation-body { padding: var(--space-5) var(--space-4) 0; }
+  .extension-activation-body > .extension-flow-note { margin-top: var(--space-4); }
+  @media (max-width: 650px) {
+    .extension-setup-steps { gap: var(--space-2); padding: var(--space-4) var(--space-4) 0; }
+    .extension-setup-steps li { gap: var(--space-1); }
+    .extension-access-overview { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
+    .extension-review-summary { flex-wrap: wrap; }
+    .extension-review-hint { padding-inline: var(--space-4); }
+  }
+</style>

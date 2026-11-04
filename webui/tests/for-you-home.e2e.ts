@@ -6,7 +6,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
   test(`Mix shelves at ${width}px ${theme}`, async ({ page }) => {
     await appearance(page, width, theme); await mockForYou(page, { partial: true, custom: true }); await openHome(page);
     await expect(page.getByRole("region", { name: "Made for you", exact: true }).locator(".mix-open")).toHaveCount(8);
-    if (width === 390) expect(await page.getByRole("region", { name: "Made for you", exact: true }).evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
+    if (width === 390) expect(await page.getByRole("region", { name: "Made for you", exact: true }).locator(".mix-shelf").evaluate(el => el.scrollWidth > el.clientWidth)).toBe(true);
     await capture(page, "home", width, theme);
   });
   test(`New listener at ${width}px ${theme}`, async ({ page }) => {
@@ -68,7 +68,7 @@ test("Not-ready mixes are dimmed with a reason and open without an Add chip", as
   await expect(page.getByRole("dialog")).toBeVisible();
 });
 
-test("Cover Add is one click, keeps card height, and the card opens separately", async ({ page }) => {
+test("Shelf Add is one click, keeps card height, and the card opens separately", async ({ page }) => {
   const state = await mockForYou(page, { partial: true }); await openHome(page);
   const card = page.getByRole("group", { name: "Blend 2", exact: true });
   const add = card.getByRole("button", { name: "Add Blend 2", exact: true });
@@ -103,17 +103,17 @@ test("Service suggestion artwork also adds without opening a panel", async ({ pa
 
 test.describe("Cover touch targets", () => {
   test.use({ hasTouch: true });
-  test("A compact Add chip has an invisible forty-four pixel target while adding", async ({ page }) => {
+  test("Add to apps has a forty-four pixel target while adding", async ({ page }) => {
     await appearance(page, 390, "light"); const state = await mockForYou(page); await openHome(page);
     let release!: () => void;
     const waiting = new Promise<void>(resolve => { release = resolve; });
     await page.route("**/api/admin/mixes/daily-2/in-apps", async route => { await waiting; await route.fallback(); });
     const add = page.getByRole("button", { name: "Add Blend 2", exact: true });
     const target = await add.evaluate(button => {
-      const hit = getComputedStyle(button, "::after");
-      return { coarse: matchMedia("(pointer: coarse)").matches, width: parseFloat(hit.minWidth), height: parseFloat(hit.minHeight) };
+      const box = button.getBoundingClientRect();
+      return { coarse: matchMedia("(pointer: coarse)").matches, width: box.width, height: box.height };
     });
-    expect(target).toEqual({ coarse: true, width: 44, height: 44 });
+    expect(target.coarse).toBe(true); expect(target.width).toBeGreaterThanOrEqual(44); expect(target.height).toBeGreaterThanOrEqual(44);
     await add.click(); await expect(add).toHaveText("Adding…"); await expect(add).toBeDisabled();
     release(); await expect(add).toHaveCount(0);
     expect(state.calls.filter(call => call.path === "/api/admin/mixes/daily-2/in-apps")).toHaveLength(1);

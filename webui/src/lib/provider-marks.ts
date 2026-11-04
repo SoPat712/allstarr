@@ -46,8 +46,9 @@ export function providerMarkSources(id: string, definition?: ProviderDefinition,
   }
 
   const legacy = `/images/providers/${brand ? `${identity}.svg` : `${encodeURIComponent(icon || id.toLowerCase())}.svg`}`;
+  const fallback = `/images/providers/${brand === "multiscrobbler" ? "multi-scrobbler.svg" : brand === "spicylyrics" ? "spicylyrics.ico" : `${brand}.svg`}`;
   const candidates = colorFiles[brand]
-    ? [`/images/providers/brands/${brand}/${colorFiles[brand]}`, supplied && !localFile && !colorFile ? supplied : undefined]
+    ? [`/images/providers/brands/${brand}/${colorFiles[brand]}`, !colorFile ? supplied : undefined, fallback]
     : brand
       ? [`/images/providers/brands/${brand}/color.svg`, `/images/providers/brands/${brand}/color.png`, supplied, supplied && localFile ? undefined : legacy]
       : [supplied || legacy];

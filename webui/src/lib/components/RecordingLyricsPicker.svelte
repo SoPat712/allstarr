@@ -71,8 +71,8 @@
     } catch (error) {
       if (!alive) return;
       actionError = error instanceof Error ? error.message : "The lyrics choice could not be saved. Try again.";
-      toast.error(actionError);
       if (error instanceof ApiError && error.status === 409) refresh++;
+      else toast.error(actionError);
     } finally { if (alive) saving = false; }
   }
 </script>
@@ -87,7 +87,7 @@
     </fieldset>
   {/if}
   <p class="lyrics-help">{scope === "household" ? "Household previews use shared or public sources. Listeners with a personal choice keep their own preference." : "Your choice overrides the household default for you. An unavailable source falls back to your automatic source order."}</p>
-  {#if actionError}<p class="lyrics-error">{actionError}</p>{/if}
+  {#if actionError}<p class="lyrics-error" role="alert">{actionError}</p>{/if}
   {#if loading}
     <div class="skeleton" aria-hidden="true" style="height: 6rem"></div><span role="status">Loading lyric sources…</span>
   {:else if loadError}

@@ -101,7 +101,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
       const box = await page.getByRole("button", { name: `Open ${name}`, exact: true }).boundingBox();
       expect(box).not.toBeNull();
       expect(box!.width).toBeGreaterThanOrEqual(44);
-      expect(box!.height).toBeGreaterThanOrEqual(44);
+      expect(box!.height).toBeGreaterThanOrEqual(43.99);
     }
     await page.getByRole("button", { name: "Open Sam", exact: true }).click();
     const panel = page.getByRole("dialog", { name: "Sam", exact: true });

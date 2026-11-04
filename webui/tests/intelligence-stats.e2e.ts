@@ -101,8 +101,9 @@ test("A failed period change does not label the previous totals as the new perio
   await page.goto("/#/for-you?section=recap");
   await expect(page.getByText("1,234", { exact: true })).toBeVisible();
   await page.getByRole("navigation", { name: "Stats period" }).getByRole("tab", { name: "Last 7 days", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Your stats are unavailable." })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your stats are unavailable", exact: true })).toBeVisible();
   await expect(page.getByText("1,234", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Page status", exact: true })).not.toContainText("1,234");
 });
 
 test("Missing song lengths do not become a zero listening-time claim", async ({ page }) => {

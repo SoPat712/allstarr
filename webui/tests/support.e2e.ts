@@ -107,8 +107,8 @@ test("Subsonic listeners get compatible apps and can enter an unconfigured addre
   state.url = null;
   await page.goto("/#/getting-started");
   await expect(page.getByText("Your administrator has not set a music-client address.", { exact: false })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Tempo", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Finamp", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Tempo Android", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Finamp Android and iOS", exact: true })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Open web player", exact: true })).toHaveCount(0);
   const address = page.getByLabel("Music-client address", { exact: true });
   await expect(address).toHaveValue("");
@@ -139,7 +139,8 @@ test("guide rejects private URL fields and offers copy selection when clipboard 
   await expect(page.getByRole("link", { name: "Set the household address" })).toHaveAttribute("href", "#/settings/access");
   await address.fill("https://listener:private@music.test/?api_key=private");
   await expect(page.getByRole("button", { name: "Copy server address" })).toBeDisabled();
-  await expect(page.getByRole("link", { name: "Open web player", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Jellyfin Web Web browser", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Open web player", exact: true })).toBeDisabled();
   await address.fill("https://music.test/gateway%0a");
   await expect(page.getByRole("button", { name: "Copy server address" })).toBeDisabled();
   await address.fill("http://music.test:5274/gateway");
@@ -345,10 +346,10 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(page.getByRole("heading", { name: "Connect apps", level: 1, exact: true })).toBeVisible();
     await expect(page.getByLabel("Music-client address", { exact: true })).toHaveValue("http://music.test:5274");
     await expect(page.getByLabel("Username", { exact: true })).toHaveValue("Listener");
-    await expect(page.getByRole("heading", { name: "Feishin", exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Finamp", exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Jellyfin Web", exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Tempo", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Feishin Desktop", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Finamp Android and iOS", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Jellyfin Web Web browser", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Tempo Android", exact: true })).toHaveCount(0);
     if (width === 390) await expectContainedMobileGeometry(page);
     await page.evaluate(() => { (document.activeElement as HTMLElement)?.blur(); window.scrollTo(0, 0); });
     await page.screenshot({ path: testInfo.outputPath(`getting-started-${width}-${theme}.png`), fullPage: true });
@@ -724,4 +725,35 @@ test("Report context failures still offer retry and preserve the note", async ({
   await expect(page.getByRole("article", { name: "Included report details" })).toBeVisible();
   await expect(note).toHaveValue("The song would not play.");
   expect(state.previews).toHaveLength(2);
+});
+
+
+test("connection cards show one app guide and keep help nearby", async ({ page }) => {
+  await mockSupport(page);
+  await page.goto("/#/connect");
+  await page.getByRole("button", { name: "Finamp Android and iOS", exact: true }).click();
+  const steps = page.getByRole("region", { name: "Set up Finamp", exact: true });
+  await expect(steps).toBeVisible();
+  await expect(steps.getByRole("listitem")).toHaveCount(3);
+  await expect(page.getByRole("region", { name: "Set up Finer Player", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Finamp Android and iOS", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("link", { name: "Move your Spotify collection", exact: true })).toBeVisible();
+  await page.getByText("Read the tips", { exact: true }).click();
+  await expect(page.getByText("Manual-only sources", { exact: true })).toBeVisible();
+  await expect(page.getByText("Finamp formats", { exact: true })).toBeVisible();
+});
+
+test("song reason chips use supported report kinds and still require a note", async ({ page }) => {
+  const state = await mockSupport(page);
+  await page.goto("/#/report?item=ext-deezer-song-fixture");
+  const reasons = page.getByRole("radiogroup", { name: "Problem", exact: true });
+  await expect(reasons.getByRole("radio")).toHaveCount(6);
+  await reasons.getByRole("radio", { name: "Wrong lyrics", exact: true }).click();
+  const send = page.getByRole("button", { name: "Send report", exact: true });
+  await expect(send).toBeDisabled();
+  await page.getByLabel("What happened?", { exact: true }).fill("The words belong to another song.");
+  await send.click();
+  await expect(page.getByRole("heading", { name: "Report saved", level: 2 })).toBeVisible();
+  expect(state.creates[0].kind).toBe("wrong-lyrics");
+  expect(state.creates[0].selector).toEqual({ itemId: "ext-deezer-song-fixture" });
 });

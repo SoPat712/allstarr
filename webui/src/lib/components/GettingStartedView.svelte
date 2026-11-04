@@ -2,9 +2,11 @@
   import { onMount } from "svelte";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { Button } from "$lib/components/ui/button";
-  import { ChevronDown, Copy } from "@lucide/svelte";
-  import { Skeleton } from "$lib/components/ui/skeleton";
-  import RouteError from "$lib/components/RouteError.svelte";
+  import { ChevronDown, Copy, Globe, Headphones, Monitor, Music2, Smartphone } from "@lucide/svelte";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import EmptyState from "$lib/components/patterns/EmptyState.svelte";
   import { toast } from "$lib/toasts";
   import { listenerSupport, musicClientUrl, reportHref, supportError, type ListenerContext } from "$lib/support";
 
@@ -13,6 +15,7 @@
   let address = $state("");
   let error = $state("");
   let loading = $state(true);
+  let selectedApp = $state("");
   let addressField = $state<HTMLInputElement>();
   let usernameField = $state<HTMLInputElement>();
   const usableAddress = $derived(musicClientUrl(address));
@@ -42,6 +45,8 @@
       steps: [`Add a ${context.backend === "Jellyfin" ? "Jellyfin" : "Subsonic / OpenSubsonic"} media provider.`,
         "Enter the music-client address, username and your usual media-server password.", "Sync the provider, then try a song and an offline cache."] },
   ] : []);
+
+  const activeApp = $derived(apps.find(app => app.name === selectedApp) ?? apps[0]);
 
   async function load() {
     loading = !context;
@@ -75,14 +80,39 @@
 </script>
 
 {#if loading}
-  <Skeleton class="settings-card skeleton-panel" aria-label="Loading connection details" aria-busy="true" />
-{:else if error}
-  <RouteError eyebrow="Connection guide unavailable" title="Connection details are unavailable." message={error} onRetry={load} />
+  <RowsSkeleton count={4} />
+{:else if error && !context}
+  <ErrorState title="Connection details are unavailable." detail={error} onretry={load} />
 {:else if context}
   <section class="settings-content connect-apps" aria-label="Listening guide">
     <header class="panel-heading"><div><h2>Listen in the app you already use</h2><p>Allstarr looks like a {context.backend === "Jellyfin" ? "Jellyfin" : "Subsonic"} server, so your music app connects to it with these two details and your usual media-server password.</p></div></header>
 
-    <article class="settings-card connection-card">
+    <PageStatus label="Connection status" items={[
+      { label: `${context.backend === "Jellyfin" ? "Jellyfin" : "Subsonic"} apps` },
+      { label: usableAddress ? "Server address ready to copy" : "Enter your server address", tone: usableAddress ? "good" : "warn" },
+    ]} />
+    {#if error}<ErrorState title="Connection details could not be refreshed." detail={error} onretry={load} />{/if}
+    <div class="connect-section-title"><h3>Choose your app</h3><p>Pick one to see its steps.</p></div>
+    <div class="connect-app-list" aria-label="Compatible music apps">
+      {#each apps as app (app.name)}
+        <button class="settings-card app-choice" class:selected={activeApp?.name === app.name} type="button"
+          aria-pressed={activeApp?.name === app.name} aria-label={`${app.name} ${app.platform}`} aria-controls="app-guide"
+          onclick={() => selectedApp = app.name}>
+          <span class="app-icon" aria-hidden="true">
+            {#if app.name === "Jellyfin Web"}<Globe size={25} />
+            {:else if app.name === "Feishin"}<Monitor size={25} />
+            {:else if app.name === "Symfonium"}<Headphones size={25} />
+            {:else if app.name === "Finamp" || app.name === "Tempo"}<Smartphone size={25} />
+            {:else}<Music2 size={25} />{/if}
+          </span>
+          <span class="app-name">{app.name}</span><small>{app.platform}</small>
+        </button>
+      {/each}
+    </div>
+    {#if activeApp}
+      <section class="settings-card app-guide" id="app-guide" aria-labelledby="app-guide-title">
+        <header><h3 id="app-guide-title">Set up {activeApp.name}</h3></header>
+    <div class="connection-card">
       {#if context.addressSource === "unconfigured"}
         <p class="notice-info" role="status">Your administrator has not set a music-client address. Enter the address they gave you below.</p>
       {/if}
@@ -102,64 +132,76 @@
         </span>
       </div>
       {#if administrator}<footer><Button variant="outline" href="#/settings/access">Set the household address</Button></footer>{/if}
-    </article>
-
-    <div class="connect-section-title"><h3>Choose your app</h3><p>Open one for its steps.</p></div>
-    <div class="connect-app-list">
-      {#each apps as app, index (app.name)}
-        <details class="settings-card connect-app" open={index === 0}>
-          <summary>
-            <span><h3>{app.name}</h3><small>{app.platform}</small></span>
-            <ChevronDown class="disclosure-chevron" size={18} aria-hidden="true" />
-          </summary>
-          <ol>{#each app.steps as step}<li>{step}</li>{/each}</ol>
-          {#if app.url || app.name === "Jellyfin Web"}
-            <footer>
-              {#if app.url}<Button variant="secondary" href={app.url} target="_blank" rel="noopener noreferrer">{app.name === "Jellyfin Web" ? "Web player help" : "Get the app"}</Button>{/if}
-              {#if app.name === "Jellyfin Web"}<Button href={webUrl || undefined} disabled={!usableAddress} target="_blank" rel="noopener noreferrer">Open web player</Button>{/if}
-            </footer>
-          {/if}
-        </details>
-      {/each}
     </div>
 
-    <article class="settings-card">
-      <div class="settings-row"><div><strong>Coming from Spotify?</strong><small>Bring your playlists and liked songs. Nothing changes in Spotify.</small></div>
-        <Button variant="secondary" href="#/library/import">Move your Spotify collection</Button></div>
-      <div class="settings-row"><div><strong>Something not working?</strong><small>Use a song's report action to attach its details, or send a general note. Reports are saved for your administrator inside Allstarr.</small></div>
-        <Button variant="secondary" href={reportHref()}>Report a problem</Button></div>
-    </article>
+        <ol>{#each activeApp.steps as step}<li>{step}</li>{/each}</ol>
+        {#if activeApp.url || activeApp.name === "Jellyfin Web"}
+          <footer>
+            {#if activeApp.url}<Button variant="secondary" href={activeApp.url} target="_blank" rel="noopener noreferrer">{activeApp.name === "Jellyfin Web" ? "Web player help" : "Get the app"}</Button>{/if}
+            {#if activeApp.name === "Jellyfin Web"}<Button href={webUrl || undefined} disabled={!usableAddress} target="_blank" rel="noopener noreferrer">Open web player</Button>{/if}
+          </footer>
+        {/if}
+      </section>
+    {:else}<EmptyState title="No compatible apps available" description="Try refreshing your connection details." />{/if}
 
-    <details class="settings-card connect-app connect-tips">
-      <summary><span><strong>Tips for getting more from Allstarr</strong><small>Hearts, offline listening and beta limits</small></span><ChevronDown class="disclosure-chevron" size={18} aria-hidden="true" /></summary>
+    <div class="connect-help">
+      <article class="settings-card help-card">
+        <h3>Coming from Spotify?</h3><p>Bring your playlists and liked songs. Nothing changes in Spotify.</p>
+        <Button variant="ghost" href="#/library/import">Move your Spotify collection</Button>
+      </article>
+      <article class="settings-card help-card">
+        <h3>Something not working?</h3><p>Use a song's report action to attach its details, or send a general note. Reports stay inside Allstarr for your administrator.</p>
+        <Button variant="ghost" href={reportHref()}>Report a problem</Button>
+      </article>
+    <details class="settings-card connect-tips help-card">
+      <summary><span><strong>Tips</strong><small>Hearts, offline listening and beta limits</small><span class="tips-action">Read the tips</span></span><ChevronDown class="disclosure-chevron" size={18} aria-hidden="true" /></summary>
       <div class="settings-row"><div><strong>Manual-only sources</strong><small>These appear in search and matching for you to choose. Automatic playback uses sources set to On.</small></div><Button variant="secondary" href="#/sources/services">View sources</Button></div>
       <div class="settings-row"><div><strong>Hearts and playlists</strong><small>Favorite provider songs or add them to your playlists to find them in normal browsing. Your listening history alone does not add them to that saved view.</small></div></div>
       <div class="settings-row"><div><strong>Offline listening</strong><small>Download or cache a song in your music app to keep a copy on that device. Check it plays with the device offline before you travel.</small></div></div>
       <div class="settings-row"><div><strong>Temporary source limits</strong><small>Some services can rate-limit requests or ask for verification. Choose another available source or wait a few minutes.</small></div></div>
       {#if context.backend === "Jellyfin"}<div class="settings-row"><div><strong>Finamp formats</strong><small>Some transcoded formats are unavailable. Include the song and app version when reporting a format error.</small></div></div>{/if}
     </details>
+    </div>
   </section>
 {/if}
 
 <style>
-  .connection-card { display: grid; gap: var(--space-4); padding: var(--surface-gutter); }
+  .connect-apps { min-width: 0; }
+  .connection-card { display: grid; gap: var(--space-4); padding: var(--surface-gutter); border-bottom: 1px solid var(--color-edge); }
   .connection-card :global(footer) { padding: 0; border: 0; }
   .connection-field { display: grid; gap: var(--space-2); }
   .connection-field label { font-size: var(--text-sm); font-weight: 600; }
   .connection-value { display: flex; min-width: 0; gap: var(--space-2); align-items: center; }
   .connection-value input { flex: 1; min-width: 0; min-height: var(--control-md); padding-inline: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--md-sys-color-surface-container-lowest); color: var(--color-ink); }
   .connect-apps > :global(.panel-heading) { padding-inline: 0; border: 0; }
-  .connect-section-title { display: flex; align-items: baseline; gap: var(--space-2); margin-top: var(--space-2); }
-  .connect-section-title h3 { font-size: 1.125rem; font-weight: 600; }
+  .connect-section-title { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
+  .connect-section-title h3 { font-size: var(--text-md); font-weight: 600; }
   .connect-section-title p { color: var(--color-ink-muted); font-size: var(--text-sm); }
-  .connect-app-list { display: grid; gap: var(--space-2); grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); align-items: start; }
-  .connect-app > summary { display: flex; min-height: 4rem; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--surface-gutter); cursor: pointer; list-style: none; border-radius: inherit; transition: background-color 160ms var(--ease-standard); }
-  .connect-app > summary::-webkit-details-marker { display: none; }
-  @media (hover: hover) { .connect-app > summary:hover { background: var(--row-hover); } }
-  .connect-app > summary > span { display: grid; min-width: 0; }
-  .connect-app > summary h3 { font-size: var(--text-md); font-weight: 600; }
-  .connect-app > summary small { color: var(--color-ink-muted); font-size: var(--text-sm); }
-  .connect-app[open] > summary :global(.disclosure-chevron) { transform: rotate(180deg); }
-  .connect-app ol { display: grid; gap: var(--space-2); padding: 0 var(--surface-gutter) var(--space-4) calc(var(--surface-gutter) + 1.1rem); list-style: decimal; font-size: var(--text-sm); color: var(--color-ink-muted); }
-  .connect-app footer { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: 0 var(--surface-gutter) var(--surface-gutter); border: 0; }
+  .connect-app-list { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr)); }
+  .app-choice { display: flex; min-width: 0; min-height: 9rem; align-items: center; justify-content: center; flex-direction: column; gap: var(--space-2); padding: var(--space-4) var(--space-2); color: var(--color-ink); font: inherit; text-align: center; cursor: pointer; transition: background var(--motion-standard), border-color var(--motion-standard); }
+  .app-choice:hover { background: var(--row-hover); }
+  .app-choice.selected { border-color: var(--color-signal); background: var(--color-signal-muted); }
+  .app-choice:focus-visible, summary:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
+  .app-icon { display: grid; width: var(--control-lg); height: var(--control-lg); place-items: center; border-radius: var(--radius-lg); background: var(--color-panel-raised); color: var(--color-signal); }
+  .app-name { font-size: var(--text-sm); font-weight: 600; }
+  .app-choice small { color: var(--color-ink-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
+  .app-guide { min-width: 0; overflow: hidden; }
+  .app-guide ol { display: grid; gap: var(--space-3); margin: 0; padding: var(--surface-gutter) var(--surface-gutter) var(--surface-gutter) calc(var(--surface-gutter) + 1.25rem); font-size: var(--text-sm); color: var(--color-ink-muted); }
+  .app-guide li { padding-inline-start: var(--space-2); }
+  .app-guide li::marker { color: var(--color-ink); font-weight: 600; }
+  .app-guide footer { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .connect-help { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: var(--space-3); }
+  .help-card { min-width: 0; padding: var(--space-4); }
+  .help-card h3, .help-card strong { margin: 0; font-size: var(--text-sm); font-weight: 600; }
+  .help-card p { margin: var(--space-2) 0; color: var(--color-ink-muted); font-size: var(--text-sm); line-height: 1.5; }
+  .help-card :global(a) { max-width: 100%; white-space: normal; }
+  .connect-tips > summary { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); list-style: none; cursor: pointer; }
+  .connect-tips > summary::-webkit-details-marker { display: none; }
+  .connect-tips > summary > span { display: grid; gap: var(--space-2); }
+  .connect-tips small { color: var(--color-ink-muted); font-size: var(--text-sm); line-height: 1.5; }
+  .tips-action { display: flex; min-height: var(--control-md); align-items: center; color: var(--color-signal); font-size: var(--text-sm); font-weight: 600; }
+  .connect-tips[open] > summary :global(.disclosure-chevron) { transform: rotate(180deg); }
+  .connect-tips .settings-row { padding-inline: 0; }
+  @media (max-width: 760px) { .connect-help { grid-template-columns: minmax(0, 1fr); } }
+  @media (prefers-reduced-motion: reduce) { .app-choice { transition: none; } }
 </style>

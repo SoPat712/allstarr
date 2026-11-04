@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Button } from "$lib/components/ui/button";
   import { onMount } from "svelte";
-  import { setupAccess } from "$lib/api";
+  import { setupAccess } from "$lib/access-api";
   let missing = $state(false);
   onMount(() => {
     let active = true;

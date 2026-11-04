@@ -18,7 +18,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.goto(`/#/for-you?mix=${kind}`);
     const summary = page.getByText("How this mix is made", { exact: true });
     await expect(summary).toBeVisible(); expect((await summary.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-    const copy = page.getByText(scenario === "legacy" ? "Refresh this mix to see its recipe details." : evidence.recipe.sentence, { exact: true });
+    const copy = page.locator("details.recipe").getByText(scenario === "legacy" ? "Refresh this mix to see its recipe details." : evidence.recipe.sentence, { exact: true });
     await expect(copy).toBeHidden(); await capture(page, `recipes-${scenario}-collapsed`, width, theme);
     await summary.focus(); await page.keyboard.press("Space"); await expect(copy).toBeVisible();
     if (scenario === "historical") await expect(page.getByText(/Only 4 plays in Allstarr in the last 30 days, so this also uses 214 imported plays from 01 Oct 2025–31 Oct 2025/)).toBeVisible();

@@ -4,7 +4,7 @@ import { appearance, capture, mockForYou, openHome, songs } from "./for-you-fixt
 test.afterEach(async ({ page }) => { expect(await page.pageErrors()).toEqual([]); });
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) test(`Mix sheet at ${width}px ${theme}`, async ({ page }) => {
   await appearance(page, width, theme); await mockForYou(page); await openHome(page);
-  await page.getByRole("region", { name: "Made for you", exact: true }).getByRole("button").first().click();
+  await page.getByRole("region", { name: "Made for you", exact: true }).getByRole("button", { name: "Open Blend 1", exact: true }).click();
   await expect(page).toHaveURL(/mix=daily-1/); await expect(page.getByRole("dialog").getByText("Played 6 times in 30 days")).toBeVisible();
   await expect(page.getByRole("dialog").getByRole("list", { name: "Songs", exact: true }).getByRole("listitem")).toHaveCount(songs.length);
   await capture(page, "mix", width, theme); await page.goBack(); await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -54,7 +54,11 @@ test("An add failure leaves the action available for retry", async ({ page }) =>
   await page.goto("/#/for-you?mix=daily-1");
   const add = page.getByRole("dialog").getByRole("button", { name: "Add to apps", exact: true }); await add.click();
   await expect(page.getByRole("alert")).toContainText("Your mix could not be updated. Try again.");
-  await expect(add).toBeEnabled(); failing = false; await add.click();
+  await expect(add).toBeEnabled();
+  const boxes = await Promise.all([add.boundingBox(), page.getByRole("alert").boundingBox()]);
+  expect(boxes[0] && boxes[1]).toBeTruthy();
+  expect(boxes[1]!.y + boxes[1]!.height <= boxes[0]!.y || boxes[1]!.x + boxes[1]!.width <= boxes[0]!.x).toBe(true);
+  failing = false; await add.click();
   await expect(page.getByRole("dialog").getByText("✓ In your apps", { exact: true })).toBeVisible();
 });
 test("Mix detail can retry after the first load fails", async ({ page }) => {
@@ -112,7 +116,7 @@ for (const dismiss of ["back", "close"] as const) test(`Mix ${dismiss} retains t
   await shelf.getByRole("button", { name: /^Open Blend 1/, exact: false }).click();
   await expect(page.getByRole("dialog").getByRole("list", { name: "Songs", exact: true }).getByRole("listitem")).toHaveCount(songs.length);
   if (dismiss === "back") await page.goBack();
-  else await page.getByRole("button", { name: "Close mix", exact: true }).click();
+  else await page.getByRole("button", { name: "Close", exact: true }).click();
   await expect(page).toHaveURL(/#\/for-you$/);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(shelf).toBeVisible();
@@ -146,18 +150,18 @@ test("Repeated songs in a service mix render and unchanged refreshes retain rows
   await expect(dialog.getByText("Blue morning", { exact: true })).toHaveCount(2);
   await expect(page.locator(".for-you .mix-card").first()).toBeAttached();
   await rows.first().evaluate(element => Reflect.set(element, "retainedRow", true));
-  await dialog.locator(".mix-body").evaluate(element => { element.scrollTop = 200; });
-  const scroll = await dialog.locator(".mix-body").evaluate(element => element.scrollTop);
+  await dialog.locator(".panel-body").evaluate(element => { element.scrollTop = 200; });
+  const scroll = await dialog.locator(".panel-body").evaluate(element => element.scrollTop);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await page.clock.runFor(300);
   await expect.poll(() => state.calls.filter(call => call.path === "/api/admin/mixes/similar").length).toBe(2);
   expect(await rows.first().evaluate(element => Reflect.get(element, "retainedRow"))).toBe(true);
-  expect(await dialog.locator(".mix-body").evaluate(element => element.scrollTop)).toBe(scroll);
+  expect(await dialog.locator(".panel-body").evaluate(element => element.scrollTop)).toBe(scroll);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await page.clock.runFor(10_000);
   expect(state.calls.filter(call => call.path === "/api/admin/mixes/similar")).toHaveLength(2);
   await expect.poll(() => state.calls.filter(call => call.path === "/api/admin/mixes").length).toBe(2);
-  await page.getByRole("button", { name: "Close mix", exact: true }).click();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("button", { name: "Refresh page", exact: true }).click();
   await expect.poll(() => state.calls.filter(call => call.path === "/api/admin/mixes").length).toBe(3);
 });
@@ -222,9 +226,32 @@ for (const outcome of ["Succeeded", "Failed"] as const) test(`Queued mix refresh
   if (outcome === "Succeeded") await expect(page.getByRole("dialog").getByText("Freshly refreshed song", { exact: true })).toBeVisible();
   else await expect(page.getByText("Your mix has refreshed.", { exact: true })).toHaveCount(0);
   expect(jobReads).toBe(2);
-  await page.getByRole("button", { name: "Close mix", exact: true }).click();
+  await page.getByRole("button", { name: "Close", exact: true }).click();
   const before = state.calls.filter(call => call.path === "/api/admin/mixes").length;
   await page.getByRole("button", { name: "Refresh page", exact: true }).click();
   await expect.poll(() => state.calls.filter(call => call.path === "/api/admin/mixes").length).toBe(before + 1);
   expect(refreshRequests).toBe(1);
+});
+
+
+test("Mix visibility recovers from failure, saves immediately and Undo restores it", async ({ page }) => {
+  const state = await mockForYou(page);
+  let failing = true;
+  await page.route("**/api/admin/mixes/daily-1/in-apps", route => failing ? route.fulfill({ status: 503, json: {} }) : route.fallback());
+  await page.goto("/#/for-you?mix=daily-1");
+  const visible = page.getByRole("switch", { name: "Show in my apps", exact: true });
+  await expect(visible).toBeChecked();
+  await visible.click();
+  await expect(page.getByRole("alert")).toContainText("Your mix could not be updated");
+  await expect(visible).toBeChecked();
+  await expect(visible).toBeEnabled();
+  failing = false;
+  await visible.uncheck();
+  await expect(visible).not.toBeChecked();
+  await expect(visible).toBeEnabled();
+  await expect(page.getByRole("dialog").getByRole("button", { name: "Add to apps", exact: true })).toBeEnabled();
+  const saved = page.getByRole("status").filter({ hasText: "Mix hidden from your apps" });
+  await saved.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(visible).toBeChecked();
+  expect(state.calls.filter(call => call.path.endsWith("/in-apps")).map(call => call.method)).toEqual(["DELETE", "POST"]);
 });

@@ -1,9 +1,14 @@
 <script lang="ts">
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
-  import { KeyRound, Trash2 } from "@lucide/svelte";
+  import { KeyRound, X } from "@lucide/svelte";
   import { auth, type PlaylistConsentStatus } from "$lib/api";
-  import { Button } from "$lib/components/ui/button";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import StatePill from "$lib/components/patterns/StatePill.svelte";
+  import { Dialog } from "$lib/components/ui/dialog";
+  import { Button, buttonVariants } from "$lib/components/ui/button";
 
   let { backend = "", focus = false }: { backend?: string; focus?: boolean } = $props();
   const jellyfin = $derived(backend.toLowerCase() === "jellyfin");
@@ -14,11 +19,16 @@
   let pending = $state(false);
   let error = $state("");
   let panel = $state<HTMLElement>();
+  let dialogOpen = $state(false), removeOpen = $state(false);
+  let passwordInput = $state<HTMLInputElement>();
+  let focusConsumed = false;
 
   $effect(() => {
-    if (!focus || !panel || loading) return;
-    panel.scrollIntoView({ block: "start", behavior: "instant" });
-    panel.querySelector<HTMLInputElement>("input")?.focus({ preventScroll: true });
+    if (!focus) { focusConsumed = false; return; }
+    if (loading || !status?.supported || focusConsumed) return;
+    focusConsumed = true;
+    panel?.scrollIntoView({ block: "start", behavior: "instant" });
+    if (!status.granted || status.needsSignIn) dialogOpen = true;
   });
 
   function dateLabel(value: string | null) {
@@ -48,6 +58,7 @@
     try {
       status = await auth.grantPlaylistConsent(password);
       password = "";
+      dialogOpen = false;
       toast.success(jellyfin
         ? (status.queuedSyncs ?? 0) > 0
           ? `Playlist editing allowed. Fixing the order of ${status.queuedSyncs} playlists now.`
@@ -67,6 +78,7 @@
     error = "";
     try {
       status = await auth.revokePlaylistConsent();
+      removeOpen = false;
       toast.success(jellyfin ? "Saved Jellyfin sign-in removed." : "Playlist management revoked.");
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Playlist access could not be revoked.";
@@ -80,73 +92,43 @@
 </script>
 
 {#if loading}
-  <section class="panel consent-panel" aria-label="Loading playlist management" aria-busy="true">
-    <p class="consent-muted">Checking playlist access…</p>
-  </section>
+  <RowsSkeleton count={1} />
 {:else if status?.supported}
-  <section bind:this={panel} id="playlist-consent" class="panel consent-panel" aria-labelledby="playlist-consent-title" aria-busy={pending}>
-    <header>
-      <span class="consent-icon" aria-hidden="true"><KeyRound size={20} /></span>
-      <div>
-        <h2 id="playlist-consent-title">{jellyfin ? "Let Allstarr edit your playlists" : "Playlist management"}</h2>
-        <p>{jellyfin ? "Jellyfin only lets a playlist's owner reorder or remove songs. Sign in once and Allstarr keeps a Jellyfin sign-in for your account (not your password) so synced playlists keep the same order as their source. You can remove it at any time." : "Allow Allstarr to create and update playlists for your signed-in Subsonic account. Library reads and sign-in work without this access."}</p>
-      </div>
-    </header>
-
-    {#if jellyfin && status.needsSignIn}
-      <div class="consent-expired">
-        <p class="consent-warning" role="status">Jellyfin no longer accepts the saved sign-in. Sign in again to keep playlists in order.</p>
-        <Button variant="outline" class="consent-remove" disabled={pending} onclick={() => void revoke()}><Trash2 size={16} aria-hidden="true" />{pending ? "Removing…" : "Remove"}</Button>
-      </div>
-    {/if}
-
-    {#if status.granted && !(jellyfin && status.needsSignIn)}
-      <div class="consent-status">
-        {#if jellyfin}
-          <strong>{dateLabel(status.updatedAt) ? `Allowed since ${dateLabel(status.updatedAt)}` : "Allowed"}</strong>
-          <Button variant="outline" class="consent-remove" disabled={pending} onclick={() => void revoke()}><Trash2 size={16} aria-hidden="true" />{pending ? "Removing…" : "Remove"}</Button>
-        {:else}
-          <div><strong>Allowed</strong>{#if dateLabel(status.updatedAt)}<small>Updated {dateLabel(status.updatedAt)}</small>{/if}</div>
-          <Button variant="destructive" disabled={pending} onclick={() => void revoke()}>{pending ? "Revoking…" : "Revoke access"}</Button>
-        {/if}
-      </div>
-    {:else}
-      <form class="consent-form" onsubmit={(event) => { event.preventDefault(); void grant(); }}>
-        <label class="field">
-          <span>{jellyfin ? "Jellyfin password" : "Subsonic password"}</span>
-          <input bind:value={password} type="password" autocomplete="current-password" required maxlength="2000" disabled={pending} />
-          {#if !jellyfin}<small>Reauthenticate as the current listener. Allstarr cannot grant access for another user.</small>{/if}
-        </label>
-        <Button type="submit" disabled={pending || !password}>{pending ? "Allowing…" : jellyfin ? "Allow playlist editing" : "Allow playlist management"}</Button>
-      </form>
-    {/if}
-
-    {#if error}<p class="notice-error" role="alert">{error} <button class="text-button" type="button" onclick={() => void load()}>Retry</button></p>{/if}
-
-  </section>
-{:else if loadFailed}
-  <section class="panel consent-panel consent-error" aria-labelledby="playlist-consent-error-title">
-    <div>
-      <h2 id="playlist-consent-error-title">Playlist management unavailable</h2>
-      <p class="consent-muted" role="alert">{error}</p>
+  <section bind:this={panel} id="playlist-consent" class="consent-row" aria-label={jellyfin ? "Playlist editing in Jellyfin" : "Playlist management"} aria-busy={pending}>
+    <span class="consent-icon" aria-hidden="true"><KeyRound size={20} /></span>
+    <div class="consent-copy"><h2>{jellyfin ? "Playlist editing in Jellyfin" : "Playlist management"}</h2>
+      <p>{status.needsSignIn ? "Jellyfin no longer accepts the saved sign-in. Sign in again to keep playlists in order." : status.granted ? `${dateLabel(status.updatedAt) ? `Allowed since ${dateLabel(status.updatedAt)} · ` : ""}Allstarr keeps a sign-in for you, never your password.` : jellyfin ? "Keep your synced playlists in the same order as their source." : "Library reads and sign-in work without this access."}</p>
     </div>
-    <Button variant="secondary" onclick={() => void load()}>Retry</Button>
+    <StatePill tone={status.granted && !status.needsSignIn ? "ok" : "neutral"} text={status.granted && !status.needsSignIn ? "Allowed" : status.needsSignIn ? "Sign in again" : "Not yet"} />
+    {#if status.granted || status.needsSignIn}<Button variant="text" class="consent-remove" disabled={pending} onclick={() => removeOpen = true}>{jellyfin ? "Remove" : "Revoke access"}</Button>{/if}
+    {#if !status.granted || status.needsSignIn}<Button variant="outline" onclick={() => dialogOpen = true}>{jellyfin ? "Allow editing" : "Allow playlist management"}</Button>{/if}
+    {#if error && !dialogOpen}<p class="notice-error" role="alert">{error}</p>{/if}
   </section>
-{/if}
+{:else if loadFailed}<ErrorState title="Playlist management unavailable" detail={error} onretry={load} />{/if}
+
+<Dialog.Root bind:open={dialogOpen} onOpenChange={open => { if (!open) password = ""; }}>
+  <Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog playlist-consent-dialog" onOpenAutoFocus={event => { event.preventDefault(); passwordInput?.focus(); }}>
+    <header><div><Dialog.Title>{jellyfin ? "Allow playlist editing?" : "Allow playlist management"}</Dialog.Title><Dialog.Description>{jellyfin ? "Jellyfin needs a sign-in from you before Allstarr can reorder or remove songs in your playlists." : "Allow Allstarr to create and update playlists for your signed-in Subsonic account."}</Dialog.Description></div><Dialog.Close class="icon-button" aria-label="Close"><X size={18} /></Dialog.Close></header>
+    <form onsubmit={event => { event.preventDefault(); void grant(); }}>
+      <p class="consent-explanation"><KeyRound size={18} aria-hidden="true" /><span><strong>Allstarr keeps a sign-in token, never your password.</strong> You enter your password once to get that token. Your password is discarded after sign-in.</span></p>
+      <label class="field"><span>{jellyfin ? "Jellyfin password" : "Subsonic password"}</span><input bind:this={passwordInput} bind:value={password} type="password" autocomplete="current-password" required maxlength="2000" disabled={pending} /></label>
+      <ul class="consent-limits"><li>Only for playlists Allstarr syncs for you.</li><li>Remove it any time in Sources › Accounts.</li></ul>
+      {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
+      <footer class="dialog-actions"><Dialog.Close class={buttonVariants({ variant: "text" })}>Not now</Dialog.Close><Button type="submit" disabled={pending || !password}>{pending ? "Allowing…" : jellyfin ? "Allow editing" : "Allow playlist management"}</Button></footer>
+    </form>
+  </Dialog.Content></Dialog.Portal>
+</Dialog.Root>
+
+<ConfirmDialog bind:open={removeOpen} title="Remove playlist editing access?" description="Allstarr removes your saved sign-in. Your playlists and music stay. Synced playlists may need editing access again to keep their order." confirmLabel="Remove sign-in" {error} disabled={pending} closeOnConfirm={false} onConfirm={revoke} />
 
 <style>
-  .consent-panel{display:grid;gap:1rem;border-radius:var(--radius-lg);padding:var(--space-5) var(--space-6);scroll-margin-top:var(--space-5)}
-  .consent-warning{color:var(--color-warning);font-size:var(--text-sm)}
-  .consent-expired{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap}
-  :global(.consent-remove:hover){color:var(--md-sys-color-error);border-color:var(--md-sys-color-error);background:color-mix(in srgb,var(--md-sys-color-error) 8%,transparent)}
-  .consent-panel h2{font-size:1rem;line-height:1.5rem;font-weight:600}
-  .consent-muted{color:var(--color-ink-muted);font-size:var(--text-sm)}
-  .consent-error{grid-template-columns:minmax(0,1fr) auto;align-items:center}
-  .consent-panel header{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:.8rem}
-  .consent-panel h2,.consent-panel p{margin:0}.consent-panel header p:last-child{margin-top:.3rem;color:var(--color-ink-muted)}
-  .consent-icon{display:grid;place-items:center;width:2.75rem;height:2.75rem;border-radius:50%;background:var(--color-signal-muted);color:var(--color-signal-text)}
-  .consent-form,.consent-status{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:1rem}
-  .consent-status{align-items:center;border-top:1px solid var(--color-edge);padding-top:1rem}.consent-status div,.consent-status small{display:block}.consent-status small{margin-top:.2rem;color:var(--color-ink-muted)}
-  .field small{color:var(--color-ink-muted)}.text-button{min-height:2.75rem;color:var(--color-signal-text);text-decoration:underline}
-  @media(max-width:620px){.consent-error{grid-template-columns:1fr}.consent-panel{padding:var(--space-4)}.consent-form,.consent-status{grid-template-columns:1fr}.consent-form>:global([data-slot="button"]),.consent-status>:global([data-slot="button"]){width:100%}}
+  .consent-row { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); background: var(--color-panel); }
+  .consent-icon { display: grid; width: 36px; height: 36px; place-items: center; border-radius: var(--radius-sm); background: var(--color-panel-raised); color: var(--color-ink-muted); }
+  .consent-copy { flex: 1; min-width: 10rem; }.consent-copy h2 { margin: 0; font-size: var(--text-sm); font-weight: 600; }.consent-copy p { margin: var(--space-1) 0 0; color: var(--color-ink-muted); font-size: var(--text-xs); }
+  :global(.consent-remove) { color: var(--danger); }
+  .consent-explanation { display: flex; gap: var(--space-3); align-items: flex-start; margin: 0; border-radius: var(--radius-md); padding: var(--space-3); background: var(--color-signal-muted); color: var(--color-signal-text); font-size: var(--text-sm); }
+  .consent-explanation :global(svg) { flex-shrink: 0; }.consent-explanation strong { display: block; }
+  .consent-limits { margin: 0; padding-left: var(--space-5); color: var(--color-ink-muted); font-size: var(--text-sm); }
+  :global(.playlist-consent-dialog) { max-width: min(32rem, calc(100vw - 2rem)); }
+  @media (max-width: 599px) { .consent-copy { flex-basis: calc(100% - 52px); } .consent-row { padding: var(--space-3); } }
 </style>

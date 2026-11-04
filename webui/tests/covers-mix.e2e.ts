@@ -36,9 +36,9 @@ test.describe("Dense displays", () => {
   state.cards[0].readiness.ready = false;
   await page.goto("/#/for-you?mix=daily-1"); const cover = page.getByRole("dialog").locator("canvas");
   await expectPainted(cover); await expect(cover).toHaveCSS("opacity", "1");
-  expect(await cover.evaluate(element => (element as HTMLCanvasElement).width)).toBe(320);
+  expect(await cover.evaluate(element => (element as HTMLCanvasElement).width)).toBe(112);
   await page.setViewportSize({ width: 390, height: 900 }); await expectPainted(cover);
-  await expect.poll(() => cover.evaluate(element => (element as HTMLCanvasElement).width)).toBe(240);
+  await expect.poll(() => cover.evaluate(element => (element as HTMLCanvasElement).width)).toBe(112);
   await expect(cover).toHaveCSS("opacity", "1");
 });
 

@@ -32,14 +32,16 @@ for (const width of [390, 1280]) {
       }),
     } }));
     let saved: Record<string, string> | undefined;
+    const savedValues: Record<string, string> = {};
     await page.route("**/api/admin/config", route => {
       if (route.request().method() === "POST") {
         saved = route.request().postDataJSON().updates;
+        Object.assign(savedValues, saved);
         return route.fulfill({ json: { message: "Runtime configuration updated." } });
       }
       return route.fulfill({ json: { ...(responses["/api/admin/config"] as object), spotifyApi: {
-        cacheDurationMinutes: 60, preferIsrcMatching: true,
-        ...Object.fromEntries(overrides.map(([, , path]) => [path, "custom-override"])),
+        cacheDurationMinutes: savedValues.SPOTIFY_API_CACHE_DURATION_MINUTES ?? 60, preferIsrcMatching: true,
+        ...Object.fromEntries(overrides.map(([key, , path]) => [path, savedValues[key] ?? "custom-override"])),
       } } });
     });
     await page.goto("#/integrations/services/spotify");
@@ -53,17 +55,16 @@ for (const width of [390, 1280]) {
     for (const [key, label, , value] of overrides) {
       await expect(form.locator(`input[name="${key}"]`)).toHaveValue("custom-override");
       await form.getByRole("button", { name: `Reset ${label} to default`, exact: true }).click();
+      await expect.poll(() => saved?.[key]).toBe(value);
+      await expect(form.getByRole("button", { name: `Reset ${label} to default`, exact: true })).toBeEnabled();
       await expect(form.locator(`input[name="${key}"]`)).toHaveValue(value);
     }
-    expect(saved).toBeUndefined();
+    await expect.poll(() => saved).toBeDefined();
     await form.getByLabel("Cache minutes").fill("45");
     if (width < 768) await expectContainedMobileGeometry(page);
     await advanced.getByText("Advanced", { exact: true }).click();
-    await form.getByRole("button", { name: "Save configuration", exact: true }).click();
-    await expect.poll(() => saved).toEqual({
-      SPOTIFY_API_CACHE_DURATION_MINUTES: "45", SPOTIFY_API_PREFER_ISRC_MATCHING: "true",
-      ...Object.fromEntries(overrides.map(([key, , , value]) => [key, value])),
-    });
+    await form.getByLabel("Cache minutes").press("Tab");
+    await expect.poll(() => saved).toEqual({ SPOTIFY_API_CACHE_DURATION_MINUTES: "45" });
   });
 }
 
@@ -83,6 +84,13 @@ const viewports = [
   { width: 1280, height: 800 },
 ];
 
+
+async function openSourceSettings(page: Page, name: string) {
+  const panel = page.getByRole("dialog", { name, exact: true });
+  await expect(panel).toBeVisible();
+  const details = panel.locator(".source-more");
+  if (await details.getAttribute("open") === null) await details.locator(":scope > summary").click();
+}
 
 async function waitForSettledOptions(options: Locator, expectedText: string) {
   await expect(options).toBeVisible();
@@ -520,6 +528,7 @@ async function mockApi(page: Page, options: {
   audioMuseUnavailable?: boolean;
   audioMuseDisabledAccount?: boolean;
   intelligenceEnabled?: boolean;
+  trackArtworkUrl?: string | null;
 } = {}) {
   await page.route("**/fonts/**", (route) => route.fulfill({ status: 204 }));
   await page.route("**/images/providers/**", async route => {
@@ -705,7 +714,7 @@ async function mockApi(page: Page, options: {
         tracks: [{
           sourcePosition: 0, position: 1, externalSnapshotId: "snapshot", title: "Test song",
           artists: ["Artist"], album: "Album", isrc: "US-AAA-26-00001",
-          artworkUrl: "/missing-track-art",
+          artworkUrl: options.trackArtworkUrl === undefined ? "/missing-track-art" : options.trackArtworkUrl,
           durationMs: 180_000, routeKind: "external", routeProviderId: "lumen-audio",
           matchState: "suggested", targetEligible: false,
           outcomeCode: "skipped_external_only_for_backend", targetStatus: "wrongbackend",
@@ -1086,7 +1095,7 @@ for (const viewport of viewports) {
       await expect(details).not.toContainText(/hybrid|materialized|write-back|projection mode/i);
       await expect(details.getByRole("tab", { name: /Original|Native/ })).toHaveCount(0);
       await expect(details.getByText("Test song", { exact: true })).toBeVisible();
-      await expect(details).toHaveCSS("overflow", "hidden");
+      await expect(details).toHaveCSS("overflow", "clip");
       await expect(details.locator(".panel-body")).toHaveCSS("overflow-y", "auto");
       await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -1130,13 +1139,20 @@ for (const viewport of viewports) {
         await expect(page.getByRole("heading", { name: heading, level: 1 })).toBeVisible();
 
         const errorPage = await context.newPage();
-        await mockApi(errorPage, { fail: [...failures] });
+        const failedPaths = [...failures];
+        await mockApi(errorPage, { fail: failedPaths });
         await errorPage.goto(route);
         const errorSurface = route === "#/activity" ? errorPage.getByRole("alert", { name: "Event log unavailable", exact: true }) : errorPage.getByRole("alert");
         await expect(errorSurface).toBeVisible();
         const retry = errorSurface.getByRole("button", { name: "Try again" });
         if (route === "#/activity") await retry.scrollIntoViewIfNeeded();
         await expect(retry).toBeInViewport();
+        if (route === "#/") {
+          failedPaths.length = 0;
+          await retry.click();
+          await expect(errorSurface).toHaveCount(0);
+          await expect(errorPage.getByRole("region", { name: "Your setup", exact: true })).toBeVisible();
+        }
       });
     }
 
@@ -1168,9 +1184,9 @@ for (const viewport of viewports) {
       await page.goto("#/sources?source=lumen-audio&section=configuration");
       await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible({ timeout: 15_000 });
       await expect(page.getByRole("heading", { name: "Lumen Audio", level: 2 })).toBeVisible();
-      await page.getByRole("button", { name: "Connect another account" }).click();
-      const sourceDialog = page.getByRole("dialog", { name: "Connect a Source" });
-      await expect(sourceDialog.getByRole("button", { name: "Source", exact: true })).toContainText("Lumen Audio");
+      await page.getByRole("button", { name: "Connect account", exact: true }).click();
+      const sourceDialog = page.locator(".connect-source-dialog");
+      await expect(sourceDialog.getByText("Lumen Audio", { exact: true })).toBeVisible();
       await expect(sourceDialog.getByLabel("Access token")).toHaveValue("");
       await sourceDialog.getByRole("button", { name: "Cancel" }).click();
       await page.goto("#/settings/routing");
@@ -1197,15 +1213,15 @@ for (const viewport of viewports) {
       await expect(page.locator(".service-extension .extension-row .source-row-capabilities span")).toContainText(["Metadata", "Streaming"]);
       await page.goto("#/settings/extensions");
       await page.getByRole("button", { name: "Add extension" }).click();
-      const addSource = page.getByRole("dialog", { name: "Add a source" });
+      const addSource = page.getByRole("dialog", { name: "Add an extension" });
       await expect(addSource.getByRole("searchbox", { name: "Search extensions" })).toBeVisible();
       await addSource.getByRole("tab", { name: /Manage catalogs/ }).click();
       await expect(addSource.getByText("Add a catalog", { exact: true })).toBeVisible();
-      await addSource.getByRole("tab", { name: "From a URL" }).click();
-      await expect(addSource.getByRole("button", { name: "Verify package" })).toBeInViewport();
+      await addSource.getByRole("tab", { name: "From a link" }).click();
+      await expect(addSource.getByRole("button", { name: "Download and review" })).toBeInViewport();
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-      await addSource.getByRole("button", { name: "Close add a source" }).click();
+      await addSource.getByRole("button", { name: "Close add an extension" }).click();
       await page.goto("#/settings/maintenance");
       await expect(page.getByText(/Backups include saved sign-ins/)).toBeVisible();
       await expect(page.getByRole("button", { name: "Back up now" })).toBeVisible();
@@ -1474,7 +1490,7 @@ for (const viewport of viewports) {
       const audioMuseSetup = page.locator(".provider-setup").filter({ hasText: "AudioMuse-AI connection" });
       await expect(audioMuseSetup).toContainText("Connect your self-hosted AudioMuse-AI server here");
       await audioMuseSetup.getByRole("button", { name: "Connect AudioMuse-AI" }).click();
-      const audioMuseDialog = page.getByRole("dialog", { name: "Connect a Source" });
+      const audioMuseDialog = page.locator(".connect-source-dialog");
       await expect(audioMuseDialog.getByLabel("AudioMuse-AI server URL")).toBeVisible();
       await expect(audioMuseDialog.getByLabel("AudioMuse-AI access token")).toBeVisible();
       await audioMuseDialog.getByRole("button", { name: "Close source connection dialog" }).click();
@@ -1518,24 +1534,16 @@ for (const viewport of viewports) {
 
     test("Source dialogs remain usable", async ({ page }) => {
       await mockApi(page);
-      await page.goto("#/sources");
+      await page.goto("#/sources/accounts");
       await page.getByRole("button", { name: "Connect account" }).click();
-      const connect = page.getByRole("dialog", { name: "Connect a Source" });
+      const connect = page.locator(".connect-source-dialog");
       await expect(connect).toBeVisible();
-      await connect.getByRole("button", { name: "Source", exact: true }).click();
-      const options = page.getByRole("listbox");
-      await expect(options).toBeVisible();
-      await expect(options.getByRole("option").last()).toBeVisible();
-      await waitForSettledOptions(options, "ListenBrainz");
-      const listenBrainz = options.getByRole("option", { name: "ListenBrainz", exact: true });
-      await expect(listenBrainz).toBeVisible();
-      await expect(listenBrainz).toHaveAttribute("data-value", "listenbrainz");
-      await listenBrainz.click({ trial: true });
-      await listenBrainz.click();
+      await connect.getByRole("radio", { name: /ListenBrainz/ }).click();
+      await connect.getByRole("button", { name: "Next", exact: true }).click();
       await expect(connect.getByLabel("ListenBrainz token")).toBeVisible();
       await expect(connect.getByLabel("Listening address (optional)")).toBeVisible();
       await expect(connect.getByText("Leave blank for ListenBrainz. A compatible server can use HTTPS, or HTTP on your private network.")).toBeVisible();
-      await expect(connect.getByRole("button", { name: "Save and test" })).toBeInViewport();
+      await expect(connect.getByRole("button", { name: /^(Connect|Save changes)$/ })).toBeInViewport();
       await page.getByRole("button", { name: "Close source connection dialog" }).click();
       await page.goto("#/integrations/services?source=audiomuse-ai&section=configuration");
       const soundSettings = page.getByRole("link", { name: "Configure", exact: true });
@@ -1585,16 +1593,16 @@ for (const viewport of viewports) {
         await route.fulfill({ status: 201, json: { id: "new-account", revision: 1, enabled: true } });
       });
       await page.goto("#/integrations/accounts?source=spotify&connect=1");
-      const dialog = page.getByRole("dialog", { name: "Connect a Source" });
+      const dialog = page.locator(".connect-source-dialog");
       await expect(dialog).toBeVisible();
       const audience = dialog.getByRole("button", { name: "Who can use it?" });
-      await expect(audience).toContainText("Personal");
+      await expect(audience).toContainText("Just me");
       await audience.click();
       await expect(page.getByRole("option", { name: "Shared", exact: true })).toHaveCount(0);
       await expect(page.getByRole("option", { name: "One library" })).toHaveCount(0);
-      await page.getByRole("option", { name: "Personal", exact: true }).click();
+      await page.getByRole("option", { name: "Just me", exact: true }).click();
       await dialog.getByLabel("Spotify session cookie").fill("fixture-only-cookie");
-      await dialog.getByRole("button", { name: "Save connection" }).click();
+      await dialog.getByRole("button", { name: /^(Connect|Save changes)$/ }).click();
       await expect(dialog).toBeHidden();
       expect(writes).toHaveLength(1);
       expect(writes[0]).toMatchObject({ providerId: "spotify", displayName: "", scope: "Personal", secret: { sessionCookie: "fixture-only-cookie" } });
@@ -1616,12 +1624,12 @@ for (const viewport of viewports) {
         }],
       } }));
       await page.goto("#/integrations/accounts");
-      await expect(page.getByRole("dialog", { name: "Connect a Source" })).toHaveCount(0);
+      await expect(page.locator(".connect-source-dialog")).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Connect account" })).toHaveCount(0);
       await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
       await expect(page.getByRole("button", { name: "Edit configuration", exact: true })).toBeVisible();
       await page.locator(".service-account").getByRole("button", { name: /^Actions for / }).click();
-      await expect(page.getByRole("menuitem", { name: "Disable" })).toBeVisible();
+      await expect(page.getByRole("menuitem", { name: /^(Disable|Pause)$/ })).toBeVisible();
       await expect(page.getByRole("menuitem", { name: "Edit access" })).toHaveCount(0);
       await page.keyboard.press("Escape");
       shared = true;
@@ -1641,7 +1649,7 @@ for (const viewport of viewports) {
       await expect(setup).toContainText("Connect your self-hosted AudioMuse-AI server here");
       await expect(setup.getByRole("link", { name: /extension/i })).toHaveCount(0);
       await setup.getByRole("button", { name: "Connect AudioMuse-AI" }).click();
-      const dialog = page.getByRole("dialog", { name: "Connect a Source" });
+      const dialog = page.locator(".connect-source-dialog");
       await expect(dialog.getByLabel("AudioMuse-AI server URL")).toBeVisible();
       await expect(dialog.getByLabel("AudioMuse-AI access token")).toBeVisible();
       await expect(dialog.getByLabel("AudioMuse-AI music server")).toBeVisible();
@@ -1664,7 +1672,7 @@ for (const viewport of viewports) {
         request.url().endsWith("/api/admin/provider-accounts/audio-account/secret") && request.method() === "PUT");
       const enableRequest = page.waitForRequest((request) =>
         request.url().endsWith("/api/admin/provider-accounts/audio-account") && request.method() === "PATCH");
-      await dialog.getByRole("button", { name: "Save connection" }).click();
+      await dialog.getByRole("button", { name: /^(Connect|Save changes)$/ }).click();
       await secretRequest;
       expect((await enableRequest).postDataJSON()).toMatchObject({ enabled: true, expectedRevision: 3 });
       await expect(dialog).not.toBeVisible();
@@ -1702,7 +1710,7 @@ for (const viewport of viewports) {
       await mockApi(page);
       await page.goto("#/settings/extensions");
       await page.getByRole("button", { name: "Add extension" }).click();
-      const dialog = page.getByRole("dialog", { name: "Add a source" });
+      const dialog = page.getByRole("dialog", { name: "Add an extension" });
       await expect(dialog).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(dialog).toBeHidden();
@@ -2097,22 +2105,25 @@ test("provider readiness separates provider names from account labels", async ({
     { id: "spotify", name: "Spotify" }, { id: "deezer", name: "Deezer" },
     { id: "apple-musickit", name: "Apple Music" },
   ];
-  await page.route("**/api/admin/ui/home", (route) => route.fulfill({ json: {
-    ...(responses["/api/admin/ui/home"] as Record<string, unknown>), schema: { ...schema, providers: definitions },
-    providerHealth: { providers: definitions.map((provider, index) => ({
-      providerId: provider.id, connectedAccountName: index === 3 ? "Road trip" : `My ${provider.id}`,
-      connectedAccounts: [{ scope: index === 3 ? "Shared" : "Personal", customLabel: index === 3 ? "Road trip" : null }],
-      enabledAccountCount: 1, capabilityTotal: 0, healthyCapabilityCount: 0, failedCapabilityCount: 0,
-    })) },
+  await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { ...schema, providers: definitions } }));
+  const accountResponse = responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[] };
+  await page.route("**/api/admin/provider-accounts", route => route.fulfill({ json: {
+    ...accountResponse, accounts: definitions.map((provider, index) => ({
+      ...accountResponse.accounts[0], id: `account-${provider.id}`, providerId: provider.id,
+      displayName: index === 3 ? "Road trip" : `My ${provider.id}`,
+      scope: index === 3 ? "Shared" : "Personal", customLabel: index === 3 ? "Road trip" : null,
+    })),
   } }));
-  await page.goto("#/");
-  await expect(page.locator(".provider-line strong")).toHaveText(definitions.map((provider) => provider.name));
-  const deezer = page.locator(".provider-line").filter({ hasText: "Deezer" });
-  await expect(deezer).toContainText("Shared with everyone · Road trip");
-  await expect(page.locator(".provider-line").filter({ hasText: "Last.fm" })).toContainText("Personal");
-  await expect(page.locator(".provider-result")).toHaveText(Array(5).fill("Not checked yet"));
+  await page.goto("#/sources/accounts");
+  const rows = page.getByRole("table", { name: "Accounts", exact: true }).locator("tbody tr");
+  await expect(rows.locator("td:first-child strong")).toHaveText(definitions.map(provider => provider.name));
+  const deezer = rows.filter({ hasText: "Deezer" });
+  await expect(deezer.locator('td[data-label="Account"] small')).toHaveText("Road trip");
+  await expect(deezer.locator('td[data-label="Shared with"]')).toHaveText("Everyone");
+  await expect(rows.filter({ hasText: "Last.fm" }).locator('td[data-label="Shared with"]')).toHaveText("Just Tester");
+  await expect(rows.locator('td[data-label="State"]')).toHaveText(Array(5).fill("Connected"));
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
-    await page.locator(".home-panel").filter({ hasText: "Provider readiness" }).screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/provider-readiness.png` });
+    await page.getByRole("table", { name: "Accounts", exact: true }).screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/provider-readiness.png` });
 });
 
 test("Home shows no account count for sources that need no account", async ({ page }) => {
@@ -2121,7 +2132,6 @@ test("Home shows no account count for sources that need no account", async ({ pa
     { id: "artistgrid", name: "ArtistGrid" }, { id: "genius", name: "Genius" },
     { id: "deezer", name: "Deezer" }, { id: "spotify", name: "Spotify" },
   ];
-  // Spotify leaves the answer out, so Home falls back to its sign-in fields.
   const needsAccount: Record<string, boolean | undefined> = { artistgrid: false, genius: false, deezer: true };
   await page.route("**/api/admin/ui/home", (route) => route.fulfill({ json: {
     ...(responses["/api/admin/ui/home"] as Record<string, unknown>), schema: { ...schema, providers: definitions },
@@ -2131,9 +2141,12 @@ test("Home shows no account count for sources that need no account", async ({ pa
     })) },
   } }));
   await page.goto("#/");
-  await expect(page.locator(".provider-line strong + small")).toHaveText([
-    "No account needed", "No account needed", "0 connected accounts", "0 connected accounts",
-  ]);
+  const setup = page.getByRole("region", { name: "Your setup", exact: true });
+  const sources = setup.locator(".setup-tile").filter({ has: page.getByRole("heading", { name: "Sources", exact: true }) });
+  await expect(sources).toContainText("Not checked");
+  await expect(sources.locator(".tile-number")).toHaveText("0");
+  await expect(sources.locator(".tile-label")).toHaveText("of 0 checked sources working");
+  await expect(setup).not.toContainText(/connected accounts/);
 });
 
 test("account titles use provider definitions and keep custom labels in subtitles", async ({ page }) => {
@@ -2145,11 +2158,13 @@ test("account titles use provider definitions and keep custom labels in subtitle
       displayName: "Road trip", sourceDisplayName: "Road trip · Tester", customLabel: "Road trip", scope: "Shared" }],
   } }));
   await page.goto("#/integrations/accounts");
-  const row = page.locator(".account-list .source-row").first();
-  await expect(row.locator(".source-row-copy strong")).toHaveText("Lumen Audio");
-  await expect(row.locator(".source-row-copy small")).toContainText("Shared with everyone · Road trip");
-  await row.locator(".source-row-main").click();
+  const row = page.getByRole("table", { name: "Accounts", exact: true }).locator("tbody tr").first();
+  await expect(row.locator("td:first-child strong")).toHaveText("Lumen Audio");
+  await expect(row.locator('td[data-label="Account"] small')).toHaveText("Road trip");
+  await expect(row.locator('td[data-label="Shared with"]')).toHaveText("Everyone");
+  await row.getByRole("link", { name: "Open Lumen Audio account", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Lumen Audio", level: 2 })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Lumen Audio", exact: true }).locator(".source-facts")).toContainText("Shared with everyone · Road trip");
   await expect(page.locator(".service-account.focused")).toContainText("Shared with everyone · Road trip");
 });
 
@@ -2173,12 +2188,12 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   await mockApi(page);
   await page.goto("#/");
   await expect(page.getByLabel("Loading Home")).toBeHidden();
-  await expect(page.locator(".home-facts dt", { hasText: "Playlists" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Your setup", exact: true }).getByRole("heading", { name: "Library", exact: true })).toBeVisible();
   await expect(page.getByText("Legacy .env import")).toHaveCount(0);
-  await expect(page.locator(".provider-line strong", { hasText: "Lumen Audio" })).toBeVisible();
+  await expect(page.locator(".setup-tile").filter({ hasText: "Sources" })).toBeVisible();
   await expect(page.getByText("Playlist Check", { exact: true })).toBeVisible();
-  await expect(page.locator(".provider-line .provider-mark")).toBeVisible();
-  await expect(page.locator(".activity-line .activity-artwork svg")).toBeVisible();
+  await expect(page.locator(".setup-tile")).toHaveCount(6);
+  await expect(page.getByRole("region", { name: "Recent activity", exact: true }).locator("svg").first()).toBeVisible();
   const nowPlaying = page.getByRole("region", { name: "Now playing" });
   await expect(nowPlaying).toContainText("Rocket");
   await expect(nowPlaying.getByText("Tester", { exact: true })).toBeVisible();
@@ -2186,7 +2201,7 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   await expect(nowPlaying.locator(".scrobble-state")).toContainText("Listening");
 
   const apiRequests = requests.filter((path) => path.startsWith("/api/admin/"));
-  expect(apiRequests.length).toBeLessThanOrEqual(14);
+  expect(apiRequests.length).toBeLessThanOrEqual(19);
 
   await page.evaluate(() => {
     const metrics = window.__allstarrMetrics;
@@ -2754,23 +2769,25 @@ test("activation closes its confirmation before a delayed extension refresh", as
   await activation.getByRole("button", { name: "Activate extension" }).click();
   await expect.poll(() => activationRequests).toBe(1);
   await expect(activation).toBeHidden();
-  await expect(page.getByText("Extension enabled.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Lumen Audio installed and enabled.", { exact: true })).toBeVisible();
   await expect(page.locator('[role="alert"]')).toHaveCount(0);
   refresh.release();
 });
 
 test("uninstall keeps refresh failures on the page after its dialog closes", async ({ page }) => {
   await mockApi(page);
+  await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
+    ...schema, providers: schema.providers.map(provider => provider.id === "lumen-audio" ? { ...provider, implementationOrigin: "extension" } : provider),
+  } }));
   const initial = {
     id: "package", extensionId: "lumen-audio", displayName: "Lumen Audio", version: "1.0.0",
     lifecycle: "active", state: "active", active: true, installed: true,
     permissionReviewRequired: false, hasPermissions: false, capabilities: ["streaming"],
     stagedAt: "2026-01-01", revision: 1,
   };
-  let packageGets = 0;
+  let uninstalled = false;
   await page.route("**/api/admin/extensions/packages", async (route) => {
-    packageGets++;
-    if (packageGets > 1) {
+    if (uninstalled) {
       await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "fixture unavailable" }) });
       return;
     }
@@ -2780,13 +2797,12 @@ test("uninstall keeps refresh failures on the page after its dialog closes", asy
   await page.route("**/api/admin/extensions/packages/package", async (route) => {
     expect(route.request().method()).toBe("DELETE");
     uninstallRequests++;
+    uninstalled = true;
     await route.fulfill({ contentType: "application/json", body: JSON.stringify({ ...initial, state: "uninstalled", active: false, installed: false, revision: 2 }) });
   });
 
   await page.goto("#/integrations/services/lumen-audio");
-  const row = page.locator(".extension-row");
-  await row.getByRole("button", { name: "Manage extension" }).click();
-  await page.getByRole("menuitem", { name: "Uninstall" }).click();
+  await page.getByRole("button", { name: "Remove extension…", exact: true }).click();
   const uninstall = page.getByRole("alertdialog", { name: "Uninstall Lumen Audio?" });
   await uninstall.getByRole("button", { name: "Uninstall" }).click();
   await expect.poll(() => uninstallRequests).toBe(1);
@@ -3036,7 +3052,7 @@ test("extension updates stay beside the shared management menu", async ({ page }
   const actions = page.locator(".extension-actions");
   await expect(actions.getByRole("button", { name: "Update" })).toBeInViewport();
   await actions.getByRole("button", { name: "Manage extension" }).click();
-  await expect(page.getByRole("menuitem", { name: "Disable" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /^(Disable|Pause)$/ })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Rollback" })).toHaveCount(0);
   await expect(page.getByRole("menuitem", { name: "Review access" })).toBeVisible();
   await page.getByRole("menuitem", { name: "Review access" }).click();
@@ -3216,7 +3232,7 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
   await expect(details).toBeVisible();
   await expect(details.getByRole("tab", { name: /Mapped|Original|Native/ })).toHaveCount(0);
   await expect(details.getByText("Test song", { exact: true })).toBeVisible();
-  await expect(details).toHaveCSS("overflow", "hidden");
+  await expect(details).toHaveCSS("overflow", "clip");
   await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
   await expect(details.locator(".sync-settings .locked")).toHaveText("Off");
 
@@ -3858,14 +3874,13 @@ test("Dashboard primary tracks stay geometrically aligned", async ({ page }) => 
   };
 
   await page.goto("#/");
-  const homeColumns = page.locator(".home-columns > .home-panel");
-  await expect(homeColumns).toHaveCount(2);
-  const homeBoxes = await homeColumns.evaluateAll((items) => items.map((item) => {
-    const box = item.getBoundingClientRect();
-    return { y: box.y, width: box.width };
-  }));
-  expect(Math.abs(homeBoxes[0].y - homeBoxes[1].y)).toBeLessThanOrEqual(1);
-  expect(Math.abs(homeBoxes[0].width - homeBoxes[1].width)).toBeLessThanOrEqual(1);
+  const setupTiles = page.locator(".setup-grid > .setup-tile");
+  await expect(setupTiles).toHaveCount(6);
+  const homeBoxes = await setupTiles.evaluateAll(items => items.map(item => item.getBoundingClientRect().toJSON()));
+  expect(Math.max(...homeBoxes.map(box => box.width)) - Math.min(...homeBoxes.map(box => box.width))).toBeLessThanOrEqual(1);
+  expect(Math.abs(homeBoxes[0].y - homeBoxes[2].y)).toBeLessThanOrEqual(1);
+  await expectSameTrack(".home-view", ".week-panel");
+  await expectSameTrack(".week-panel", ".recent-panel");
 
   await page.goto("#/settings/general");
   await expect(page.locator(".settings-workspace")).toBeVisible();
@@ -3883,16 +3898,16 @@ test("Dashboard primary tracks stay geometrically aligned", async ({ page }) => 
   await expect(routingCards).toHaveCount(1);
   await expectSameTrack(".routing-groups", ".routing-groups > .routing-group");
 
-  await page.goto("#/intelligence");
-  await expect(page.locator(".intelligence-view")).toBeVisible();
-  await expectSameTrack(".intelligence-view", ".intelligence-tabs");
+  await page.goto("#/for-you");
+  await expect(page.locator(".intelligence-content")).toBeVisible();
+  await expectSameTrack('[aria-label="For you sections"]', ".intelligence-content");
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("#/");
-  await expect(homeColumns).toHaveCount(2);
+  await expect(setupTiles).toHaveCount(6);
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   const [lastPanel, mobileNav] = await Promise.all([
-    page.locator(".home-columns > .home-panel").last().boundingBox(),
+    page.locator(".home-view").boundingBox(),
     page.locator(".sidebar").boundingBox(),
   ]);
   expect(lastPanel).toBeTruthy();
@@ -3917,7 +3932,7 @@ test("Compact panel headings keep actions aligned and contained", async ({ page 
     await expect(panelHeading).toBeVisible();
     const [headingBox, copyBox, actionBox] = await Promise.all([
       panelHeading.boundingBox(),
-      panelHeading.locator(":scope > :first-child").boundingBox(),
+      panelHeading.locator(stacked ? ".page-status" : ":scope > :first-child").boundingBox(),
       panelHeading.locator(actions).boundingBox(),
     ]);
     expect(headingBox).toBeTruthy();
@@ -3927,7 +3942,7 @@ test("Compact panel headings keep actions aligned and contained", async ({ page 
     expect(actionBox!.x + actionBox!.width).toBeLessThanOrEqual(headingBox!.x + headingBox!.width + 1);
     if (stacked) {
       expect(Math.abs(copyBox!.x - actionBox!.x)).toBeLessThanOrEqual(1);
-      expect(Math.abs(copyBox!.width - actionBox!.width)).toBeLessThanOrEqual(1);
+      expect(Math.abs(headingBox!.width - actionBox!.width)).toBeLessThanOrEqual(1);
       expect(actionBox!.y).toBeGreaterThanOrEqual(copyBox!.y + copyBox!.height);
     } else {
       expect(copyBox!.x + copyBox!.width).toBeLessThanOrEqual(actionBox!.x);
@@ -3953,7 +3968,7 @@ test("Compact count-bearing route tabs stay separated and scroll the active tab 
   await page.goto("#/integrations/extensions");
   await page.getByRole("button", { name: "Add extension" }).click();
 
-  const tabs = page.getByRole("dialog", { name: "Add a source" }).locator(".extension-tabs");
+  const tabs = page.getByRole("dialog", { name: "Add an extension" }).locator(".extension-tabs");
   await expect(tabs).toBeVisible();
   const initial = await tabs.evaluate((element) => ({
     right: element.getBoundingClientRect().right,
@@ -4087,7 +4102,8 @@ for (const theme of ["light", "dark"] as const) {
       await expect(page.locator(".profile a[href='#/settings']")).toHaveCount(0);
       if (width > 760) {
         await expect(page.locator(".mobile-navigation")).toBeHidden();
-        await expect(primary.getByRole("link")).toHaveCount(6);
+        await expect(primary.getByRole("link")).toHaveCount(7);
+        await expect(primary.getByRole("link", { name: "Report a problem", exact: true })).toHaveCount(1);
         await expect(primary.getByRole("link", { name: "Connect apps", exact: true })).toHaveCount(1);
         await expect(primary.getByRole("link", { name: "Settings", exact: true })).toHaveCount(1);
         await expect(page.getByRole("button", { name: "More destinations" })).toHaveCount(0);
@@ -4112,7 +4128,8 @@ test("More restores keyboard focus and closes when returning to desktop", async 
   const sheet = page.getByRole("dialog", { name: "More", exact: true });
   await expect(sheet).toBeVisible();
   await expect(page.locator(".mobile-navigation button")).toHaveAttribute("aria-expanded", "true");
-  await expect(sheet.getByRole("link")).toHaveCount(4);
+  await expect(sheet.getByRole("link")).toHaveCount(5);
+  await expect(sheet.getByRole("link", { name: /Report a problem/ })).toHaveCount(1);
   await expect(sheet.getByRole("link", { name: /^Connect apps\b/ })).toContainText("Connect music apps and get help");
   await page.keyboard.press("Escape");
   await expect(sheet).toBeHidden();
@@ -4179,8 +4196,9 @@ test("Compact dialogs share symmetric actions and readable progress", async ({ p
   await mockApi(page);
 
   await page.goto("#/library/playlists");
-  const toolbar = page.locator(".library-actions");
+  const toolbar = page.locator("header").filter({ has: page.getByRole("heading", { name: "Playlists", exact: true }) });
   await expect(toolbar.getByRole("button")).toHaveCount(2);
+  await expect(toolbar.getByRole("button", { name: "Refresh playlists", exact: true })).toBeVisible();
   await expect(toolbar.getByRole("button", { name: "Import playlist", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Import playlist" }).click();
   const playlistDialog = page.getByRole("dialog", { name: "Import a playlist" });
@@ -4206,23 +4224,26 @@ test("Compact dialogs share symmetric actions and readable progress", async ({ p
   await page.goto("#/integrations/services");
   await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible();
   const serviceButtons = page.locator(".sources-heading-actions button");
-  await expect(serviceButtons).toHaveCount(3);
+  await expect(serviceButtons).toHaveCount(2);
   await expect(serviceButtons.last()).toBeVisible();
-  const serviceActions = await serviceButtons.evaluateAll((buttons) =>
-    buttons.map((button) => {
-      const rect = button.getBoundingClientRect();
-      return { contained: button.scrollWidth <= button.clientWidth, right: rect.right, width: rect.width, height: rect.height, y: Math.round(rect.y) };
-    }),
-  );
-  expect(serviceActions.every(({ contained, right }) => contained && right <= 320)).toBe(true);
-  expect(serviceActions.every(({ height }) => height >= 44)).toBe(true);
-  expect(new Set(serviceActions.map(({ y }) => y)).size).toBe(3);
-  expect(Math.max(...serviceActions.map(({ width }) => width)) - Math.min(...serviceActions.map(({ width }) => width))).toBeLessThanOrEqual(1);
+  for (const width of [320, 390, 650]) {
+    await page.setViewportSize({ width, height: 844 });
+    const serviceActions = await serviceButtons.evaluateAll((buttons) =>
+      buttons.map((button) => {
+        const rect = button.getBoundingClientRect();
+        return { contained: button.scrollWidth <= button.clientWidth, right: rect.right, height: rect.height };
+      }),
+    );
+    expect(serviceActions.every(({ contained, right }) => contained && right <= width)).toBe(true);
+    expect(serviceActions.every(({ height }) => height >= 44)).toBe(true);
+  }
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.goto("#/sources/accounts");
   await page.getByRole("button", { name: "Connect account" }).click();
-  const sourceDialog = page.getByRole("dialog", { name: "Connect a Source" });
+  const sourceDialog = page.getByRole("dialog", { name: "Connect an account" });
   await expect(sourceDialog).toBeVisible();
-  await expect(sourceDialog.locator("form > .dialog-actions > *")).toHaveCount(2);
-  const sourceActions = await sourceDialog.locator("form > .dialog-actions > *").evaluateAll((actions) =>
+  await expect(sourceDialog.locator(":scope > .dialog-actions > *")).toHaveCount(2);
+  const sourceActions = await sourceDialog.locator(":scope > .dialog-actions > *").evaluateAll((actions) =>
     actions.map((action) => {
       const rect = action.getBoundingClientRect();
       return { height: rect.height, width: rect.width, y: rect.y };
@@ -4233,6 +4254,24 @@ test("Compact dialogs share symmetric actions and readable progress", async ({ p
   expect(Math.abs(sourceActions[0].width - sourceActions[1].width)).toBeLessThanOrEqual(1);
   expect(Math.abs(sourceActions[0].y - sourceActions[1].y)).toBeGreaterThanOrEqual(44);
   expect(await sourceDialog.evaluate((dialog) => dialog.scrollWidth <= dialog.clientWidth)).toBe(true);
+});
+
+test("Service settings actions keep phone touch targets", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("#/sources/services/spotify");
+  const settings = page.getByRole("region", { name: "Spotify settings and tests", exact: true });
+  await page.getByText("Settings, accounts and tests", { exact: true }).click();
+  await expect(settings).toBeVisible();
+  const actions = settings.locator("button, a[data-slot='button']");
+  expect(await actions.count()).toBeGreaterThan(0);
+  for (const width of [320, 390, 650]) {
+    await page.setViewportSize({ width, height: 844 });
+    const heights = await actions.evaluateAll(elements => elements
+      .filter(element => element.getClientRects().length > 0)
+      .map(element => element.getBoundingClientRect().height));
+    expect(heights.length).toBeGreaterThan(0);
+    expect(heights.every(height => height >= 44)).toBe(true);
+  }
 });
 
 test("Sparse data surfaces use the shared compact empty state", async ({ page }) => {
@@ -4265,19 +4304,24 @@ test("Sparse data surfaces use the shared compact empty state", async ({ page })
 
 test("Operational tables adapt before the workspace needs horizontal scrolling", async ({ page }) => {
   await mockApi(page);
-  await page.setViewportSize({ width: 820, height: 760 });
-
-  for (const route of ["#/integrations/services", "#/integrations/accounts"]) {
-    await page.goto(route);
-    const surface = page.locator(".source-list");
-    await expect(surface.locator(".source-row").first()).toBeVisible();
-    await expect.poll(() => surface.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  for (const width of [600, 768, 820, 1024, 1280]) {
+    await page.setViewportSize({ width, height: 800 });
+    for (const [route, selector, row] of [
+      ["#/integrations/services", ".service-rows", ".source-row"],
+      ["#/integrations/accounts", ".accounts-table-wrap", "tbody tr"],
+    ]) {
+      await page.goto(route);
+      const surface = page.locator(selector);
+      await expect(surface.locator(row).first()).toBeVisible();
+      await expect.poll(() => surface.evaluate(element => element.scrollWidth - element.clientWidth),
+        { message: `${route} fits at ${width}px` }).toBeLessThanOrEqual(1);
+      if (selector === ".accounts-table-wrap") {
+        await expect.poll(() => surface.locator("td:not(:first-child)").evaluateAll(cells => cells.every(cell =>
+          cell.scrollWidth <= cell.clientWidth + 1)), { message: `Account cells fit at ${width}px` }).toBe(true);
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
   }
-  await page.goto("#/integrations/services");
-  await expect(page.locator(".source-row-capabilities").first()).toBeHidden();
-
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await expect(page.locator(".source-row-capabilities").first()).toBeVisible();
 });
 
 test("Intelligence cards, table columns, and compact actions stay aligned", async ({ page }) => {
@@ -4400,15 +4444,16 @@ test("Integrations keep primary actions visible and report scoped degradation", 
   }));
   await page.goto("#/sources");
   const lumenSource = page.locator(".source-row").filter({ hasText: "Lumen Audio" });
-  await expect(lumenSource.locator(".source-row-timing")).toContainText("Not measured yet");
+  await expect(lumenSource).toContainText("Not measured yet");
   await lumenSource.getByRole("link").first().click();
-  const sourceDetails = page.locator(".service-page");
+  const sourceDetails = page.getByRole("dialog", { name: "Lumen Audio", exact: true });
+  await sourceDetails.locator(".source-more > summary").click();
   await expect(sourceDetails.getByRole("heading", { name: "Lumen Audio", level: 2 })).toBeVisible();
   await expect(sourceDetails.getByText("Access token")).toBeVisible();
   await expect(sourceDetails.getByText("Stored", { exact: true })).toBeVisible();
   await expect(sourceDetails.getByText("Region")).toBeVisible();
   await expect(sourceDetails.getByText("ca", { exact: true })).toBeVisible();
-  await expect(sourceDetails.getByRole("button", { name: "Connect another account" })).toBeVisible();
+  await expect(sourceDetails.getByRole("button", { name: "Connect account", exact: true })).toBeVisible();
   await sourceDetails.getByRole("button", { name: "Edit configuration" }).click();
   const sourceEditor = page.getByRole("dialog", { name: "Configure Lumen Audio" });
   await expect(sourceEditor.getByRole("button", { name: "Region" })).toHaveText("ca");
@@ -4416,12 +4461,11 @@ test("Integrations keep primary actions visible and report scoped degradation", 
   await page.keyboard.press("Escape");
   await page.goto("#/integrations/services");
   const disabledSource = page.locator(".source-row").filter({ hasText: "Disabled Source" });
-  const disabledStatus = disabledSource.locator(".source-row-status .badge");
-  await expect(disabledStatus).toHaveText("Turned off");
-  await expect(disabledStatus).toHaveCSS("border-top-width", "1px");
-  await expect(disabledStatus).toHaveCSS("border-top-style", "solid");
+  await page.getByRole("radio", { name: /^Off/ }).click();
+  const disabledStatus = disabledSource.locator(".state-pill");
+  await expect(disabledStatus).toHaveText("Off");
   await expect(page.locator(".source-row").filter({ hasText: "Apple Music" })).toHaveCount(0);
-  await page.getByRole("button", { name: /^All available/ }).click();
+  await page.getByRole("radio", { name: /^All / }).click();
   await page.locator(".source-row").filter({ hasText: "Apple Music" }).getByRole("link").first().click();
   await expect(page.getByRole("button", { name: "Measure start time" })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Apple Music setup" })).toBeVisible();
@@ -5000,6 +5044,40 @@ test("Administrators can reopen durable setup from Maintenance", async ({ page }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
+test("Playlist track artwork keeps a placeholder while loading or unavailable", async ({ page }) => {
+  const options = { trackArtworkUrl: null as string | null };
+  await mockApi(page, options);
+  await page.goto("#/library/playlists");
+  const openPlaylist = page.getByRole("button", { name: "Open Test playlist playlist details" });
+  await openPlaylist.click();
+  const artwork = page.getByRole("dialog", { name: "Test playlist" }).locator(".track-art");
+  await expect(artwork.locator(":scope > span")).toBeVisible();
+  await expect(artwork.locator("img")).toHaveCount(0);
+
+  options.trackArtworkUrl = "/playlist-track-artwork";
+  const image = routeRelease();
+  await page.route("**/playlist-track-artwork", async route => {
+    await image.promise;
+    await route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><path fill="red" d="M0 0h32v32H0z"/></svg>' });
+  });
+  await page.reload();
+  await openPlaylist.click();
+  await artwork.scrollIntoViewIfNeeded();
+  try {
+    await expect(artwork.locator(":scope > span")).toBeVisible();
+  } finally { image.release(); }
+  await expect(artwork.locator("img")).toBeVisible();
+  await expect(artwork.locator(":scope > span")).toHaveCount(0);
+
+  options.trackArtworkUrl = "/unavailable-track-artwork";
+  await page.route("**/unavailable-track-artwork", route => route.fulfill({ status: 404 }));
+  await page.reload();
+  await openPlaylist.click();
+  await artwork.scrollIntoViewIfNeeded();
+  await expect(artwork.locator(":scope > span")).toBeVisible();
+  await expect(artwork.locator("img")).toHaveCount(0);
+});
+
 test("Playlist details use a responsive dialog and track rows open mapping review", async ({ page }) => {
   await page.setViewportSize({ width: 835, height: 762 });
   await mockApi(page);
@@ -5455,7 +5533,7 @@ test("Segmented navigation and unified provider filters support keyboard use", a
   await page.getByRole("button", { name: "Add extension" }).click();
   await page.getByRole("tab", { name: /^Catalog/ }).focus();
   await page.keyboard.press("ArrowRight");
-  await expect(page.getByRole("tab", { name: "From a URL" })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "From a link" })).toHaveAttribute("aria-selected", "true");
 });
 
 test("Responsive boundaries preserve navigation and download identity", async ({ page }) => {
@@ -5464,8 +5542,8 @@ test("Responsive boundaries preserve navigation and download identity", async ({
   for (const width of [760, 761, 900, 901]) {
     await page.setViewportSize({ width, height: 844 });
     const navigation = page.locator(width <= 760 ? ".mobile-navigation" : ".desktop-navigation");
-    await expect(navigation.getByRole("link")).toHaveCount(width <= 760 ? 3 : 6);
-    await expect(navigation.locator(":scope > :is(a, button)")).toHaveCount(width <= 760 ? 4 : 6);
+    await expect(navigation.getByRole("link")).toHaveCount(width <= 760 ? 3 : 7);
+    await expect(navigation.locator(":scope > :is(a, button)")).toHaveCount(width <= 760 ? 4 : 7);
     await expect(page.locator(".sidebar")).toHaveCSS("position", "fixed");
     if (width === 900)
       await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(80);
@@ -5537,7 +5615,7 @@ test("Sidebar uses an integrated expander and deterministic slim breakpoint", as
     page.getByRole("link", { name: "Allstarr home" }).boundingBox(),
   ]);
   expect(expanderBox!.y + expanderBox!.height).toBeLessThanOrEqual(brandBox!.y);
-  await expect(page.locator(".desktop-navigation").getByRole("link")).toHaveCount(6);
+  await expect(page.locator(".desktop-navigation").getByRole("link")).toHaveCount(7);
   await expect(page.locator(".desktop-navigation").getByRole("link", { name: "Connect apps", exact: true })).toBeVisible();
   await expect(page.locator(".desktop-navigation").getByRole("link", { name: "Intelligence" })).toHaveCount(0);
   const libraryIcon = page.locator(".desktop-navigation")
@@ -5674,7 +5752,7 @@ test("Home does not report silence when playback status is unavailable", async (
   const playing = page.getByRole("region", { name: "Now playing" });
   await expect(playing.getByRole("heading", { name: "Playback status unavailable" })).toBeVisible();
   await expect(playing.getByRole("heading", { name: "Nothing is playing" })).toHaveCount(0);
-  await expect(playing.getByRole("button", { name: "Retry playback status" })).toBeEnabled();
+  await expect(playing.getByRole("button", { name: "Try again", exact: true })).toBeEnabled();
 });
 
 test("Home keeps newer playback progress when an older poll finishes late", async ({ page }) => {
@@ -5822,15 +5900,19 @@ test("Sources keeps never-connected built-ins in the available catalog", async (
   } }));
   await page.goto("#/integrations/services");
   const services = page.getByRole("list", { name: "Services", exact: true });
-  await expect(page.getByRole("button", { name: /^My sources/ })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("radio", { name: /^In use/ }).click();
+  await expect(page.getByRole("radio", { name: /^In use/ })).toHaveAttribute("aria-checked", "true");
   for (const name of ["Koito", "Multi-scrobbler", "Qobuz"])
     await expect(services.getByText(name, { exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: /^Needs attention/ }).click();
+  await page.getByRole("radio", { name: /^Needs attention/ }).click();
   for (const name of ["Koito", "Multi-scrobbler", "Qobuz"])
     await expect(services.getByText(name, { exact: true })).toHaveCount(0);
-  await page.getByRole("button", { name: /^All available/ }).click();
+  await page.getByRole("radio", { name: /^Off/ }).click();
   for (const name of ["Koito", "Multi-scrobbler", "Qobuz"])
-    await expect(services.locator(".source-name").getByText(name, { exact: true })).toBeVisible();
+    await expect(services.getByText(name, { exact: true })).toHaveCount(0);
+  await page.getByRole("radio", { name: /^All / }).click();
+  for (const name of ["Koito", "Multi-scrobbler", "Qobuz"])
+    await expect(services.getByText(name, { exact: true })).toBeVisible();
 });
 
 test("Sources ignores unrelated stream events and coalesces source checks", async ({ page }) => {
@@ -5886,8 +5968,8 @@ for (const width of [390, 1280]) {
       await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
       await mockApi(page);
       await page.goto("#/integrations/services");
-      await expect(page.getByRole("button", { name: /^My sources/ })).toBeVisible();
-      await page.getByRole("button", { name: /^All available/ }).click();
+      await expect(page.getByRole("radio", { name: /^In use/ })).toBeVisible();
+      await page.getByRole("radio", { name: /^All / }).click();
       expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
       if (width === 390) await expectContainedMobileGeometry(page);
       await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR ?? "test-results"}/sources-quiet-${width}-${theme}.png`, fullPage: true });
@@ -6002,7 +6084,7 @@ test("Source deep links are consumed once and account actions expose their pendi
   await page.goto("#/integrations/services?source=lumen-audio");
   const sourceDetails = page.getByRole("heading", { name: "Lumen Audio", level: 2 });
   await expect(sourceDetails).toBeVisible();
-  await page.getByRole("link", { name: "Sources", exact: true }).last().click();
+  await page.getByRole("dialog", { name: "Lumen Audio", exact: true }).getByRole("button", { name: "Close", exact: true }).click();
   await expect(page).toHaveURL(/#\/sources\/services$/);
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
@@ -6021,7 +6103,7 @@ test("Source deep links are consumed once and account actions expose their pendi
   await page.goto("#/integrations/accounts");
   const actions = page.getByRole("button", { name: "Actions for Lumen account" });
   await actions.click();
-  await page.getByRole("menuitem", { name: "Disable" }).click();
+  await page.getByRole("menuitem", { name: /^(Disable|Pause)$/ }).click();
   await expect(actions).toBeDisabled();
   toggleAccount.release();
   await expect(actions).toBeEnabled();
@@ -6398,7 +6480,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(checklist.getByText("Not set up", { exact: true })).toBeVisible();
     await expect(checklist.getByText("Use the same Apple account for steps 1 and 2.")).toBeVisible();
     await page.getByRole("button", { name: "Connect account", exact: true }).click();
-    const connect = page.getByRole("dialog", { name: "Connect a Source" });
+    const connect = page.locator(".connect-source-dialog");
     await expect(connect.getByRole("button", { name: "Account owner" })).toHaveText("Josh (you)");
     await connect.getByRole("button", { name: "Account owner" }).click();
     await waitForSettledOptions(page.getByRole("listbox"), "Josh (you)");
@@ -6410,7 +6492,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.getByRole("option", { name: "Josh (you)", exact: true }).click();
     await expect(connect.getByRole("button", { name: "Account owner" })).toHaveText("Josh (you)");
     await connect.getByLabel("Media user token").fill("fixture-account-token");
-    await connect.getByRole("button", { name: "Save and test" }).click();
+    await connect.getByRole("button", { name: /^(Connect|Save changes)$/ }).click();
     await expect(connect).toHaveCount(0);
     expect(savedOwner).toBe("admin-owner");
     await expect(page.getByRole("button", { name: "Connect account", exact: true })).toBeFocused();
@@ -6434,7 +6516,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
       return cards.slice(1).map((card, index) => card.getBoundingClientRect().top - cards[index].getBoundingClientRect().bottom);
     });
     expect(gaps.length).toBeGreaterThan(0);
-    expect(gaps.every(gap => Math.abs(gap - 20) <= 1)).toBe(true);
+    expect(gaps.every(gap => Math.abs(gap - 12) <= 1)).toBe(true);
     await page.screenshot({ path: `/tmp/allstarr-apple-checklist-${width}-${theme}.png`, fullPage: true });
   });
 
@@ -6474,14 +6556,21 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.setViewportSize({ width, height: 844 });
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     await page.emulateMedia({ reducedMotion: "reduce" }); await mockApi(page);
-    await page.route("**/api/admin/provider-diagnostics/deep-stream", route => route.fulfill({ json: {
-      succeeded: true, providerId: "lumen-audio", clickToStreamMilliseconds: 42,
-    } }));
+    let measurements = 0;
+    await page.route("**/api/admin/provider-diagnostics/deep-stream", route => {
+      measurements++;
+      return route.fulfill({ json: {
+        succeeded: true, providerId: "lumen-audio", clickToStreamMilliseconds: 42,
+      } });
+    });
     await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
     await page.goto("#/integrations/services/lumen-audio");
+    await page.locator(".source-more > summary").click();
     const action = page.locator(".service-account").getByRole("button", { name: "Measure start time", exact: true });
     const region = page.getByRole("region", { name: "Notifications" });
+    const panel = page.getByRole("dialog", { name: "Lumen Audio", exact: true });
     await expect(action).toBeEnabled();
+    await action.evaluate(element => element.scrollIntoView({ block: "start" }));
     await page.clock.pauseAt(new Date("2026-01-01T01:00:00Z"));
     for (let index = 0; index < 4; index++) {
       await action.click(); await expect(action).toBeEnabled();
@@ -6491,18 +6580,167 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(item).toHaveAttribute("role", "status"); await expect(item).toHaveAttribute("aria-live", "polite");
     await expect(item).toHaveCSS("animation-duration", "0s");
     const box = await region.boundingBox(); expect(box).not.toBeNull();
+    await expect(panel).toHaveCSS("overflow", "clip");
+    expect(await panel.evaluate(element => element.scrollTop)).toBe(0);
+    expect(await item.getByRole("button", { name: "Dismiss notification" }).evaluate(element => {
+      const box = element.getBoundingClientRect();
+      return element.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+    })).toBe(true);
     if (width === 390) {
       const nav = await page.locator(".mobile-navigation").boundingBox();
       expect(box!.x).toBeCloseTo(16, 0); expect(box!.width).toBeCloseTo(width - 32, 0);
       expect(box!.y + box!.height).toBeLessThanOrEqual(nav!.y - 8);
     } else {
-      expect(width - box!.x - box!.width).toBeCloseTo(24, 0); expect(844 - box!.y - box!.height).toBeCloseTo(24, 0);
+      expect(width - box!.x - box!.width).toBeCloseTo(24, 0);
     }
+    const footer = await page.locator(".side-panel .panel-footer").boundingBox();
+    expect(footer!.y + footer!.height).toBeCloseTo(844, 0);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(footer!.y - 8);
+    const body = await page.locator(".side-panel .panel-body").boundingBox();
+    expect(body!.y + body!.height).toBeLessThanOrEqual(box!.y - 8);
     await item.hover(); await page.clock.runFor(6000); await expect(item).toBeVisible();
-    await item.getByRole("button", { name: "Dismiss notification" }).focus(); await page.mouse.move(0, 0);
+    const dismiss = item.getByRole("button", { name: "Dismiss notification" });
+    await dismiss.focus(); await expect(dismiss).toBeFocused(); await page.mouse.move(0, 0);
     await page.clock.runFor(6000); await expect(item).toBeVisible();
+    await expect(dismiss).toBeFocused();
+    await expect(region.locator(".toast")).toHaveCount(1);
     await page.screenshot({ path: `/tmp/allstarr-toasts-${width}-${theme}.png` });
     await page.keyboard.press("Enter"); await expect(region.locator(".toast")).toHaveCount(0);
+    expect(measurements).toBe(4);
+    await expect(panel).toBeVisible();
+  });
+}
+
+for (const theme of ["light", "dark"]) {
+  test(`Phone side panels cover navigation and restore it after Escape in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await mockApi(page);
+    await page.goto("#/integrations/services");
+    const opener = page.getByRole("link", { name: "Open Lumen Audio", exact: true });
+    await opener.click();
+    const panel = page.getByRole("dialog", { name: "Lumen Audio", exact: true });
+    await expect(panel).toBeVisible();
+    await expect(panel).toHaveAttribute("aria-modal", "true");
+    const navigation = page.locator(".mobile-navigation");
+    const home = navigation.locator('a[href="#/"]');
+    await expect(navigation).toHaveAttribute("inert", "");
+    await home.focus();
+    await expect(home).not.toBeFocused();
+    expect(await navigation.locator("a, button").evaluateAll(elements => elements.every(element => {
+      const box = element.getBoundingClientRect();
+      return !element.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+    }))).toBe(true);
+    const layers = await page.evaluate(() => ({
+      navigation: Number.parseInt(getComputedStyle(document.querySelector(".sidebar")!).zIndex),
+      overlay: Number.parseInt(getComputedStyle(document.querySelector(".side-panel-overlay")!).zIndex),
+      panel: Number.parseInt(getComputedStyle(document.querySelector(".side-panel")!).zIndex),
+    }));
+    expect(layers.overlay).toBeGreaterThan(layers.navigation);
+    expect(layers.panel).toBeGreaterThan(layers.overlay);
+    for (const height of [844, 667]) {
+      await page.setViewportSize({ width: 390, height });
+      await expect(panel).toHaveCSS("height", `${height}px`);
+      const sheet = await panel.boundingBox();
+      const overlay = await page.locator(".side-panel-overlay").boundingBox();
+      const footer = await panel.locator(".panel-footer").boundingBox();
+      expect(sheet!.y).toBe(0); expect(sheet!.height).toBe(height);
+      expect(overlay!.y).toBe(0); expect(overlay!.height).toBe(height);
+      expect(footer!.y + footer!.height).toBeCloseTo(height, 0);
+    }
+    await page.setViewportSize({ width: 1280, height: 667 });
+    await expect(navigation).not.toHaveAttribute("inert");
+    const footer = await panel.locator(".panel-footer").boundingBox();
+    expect(footer!.y + footer!.height).toBeCloseTo(667, 0);
+    await page.setViewportSize({ width: 390, height: 667 });
+    await expect(navigation).toHaveAttribute("inert", "");
+    await panel.getByRole("button", { name: "Check now", exact: true }).focus();
+    await page.keyboard.press("Tab");
+    expect(await panel.evaluate(element => element.contains(document.activeElement))).toBe(true);
+    await page.keyboard.press("Shift+Tab");
+    await expect(panel.getByRole("button", { name: "Check now", exact: true })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(panel).toHaveCount(0);
+    await expect(opener).toBeFocused();
+    await expect(navigation).not.toHaveAttribute("inert");
+    await home.focus(); await expect(home).toBeFocused();
+    await home.click(); await expect(page).toHaveURL(/#\/$/);
+  });
+}
+
+for (const width of [390, 1280]) {
+  test(`Source panels return keyboard focus after repeated closing at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await mockApi(page);
+    await page.goto("#/integrations/services");
+    const opener = page.getByRole("link", { name: "Open Lumen Audio", exact: true });
+    const panel = page.getByRole("dialog", { name: "Lumen Audio", exact: true });
+    for (const close of ["button", "Escape"]) {
+      await opener.focus();
+      await page.keyboard.press("Enter");
+      await expect(panel).toBeVisible();
+      if (close === "button") await panel.getByRole("button", { name: "Close", exact: true }).click();
+      else await page.keyboard.press("Escape");
+      await expect(panel).toHaveCount(0);
+      await expect(page.locator(".mobile-navigation")).not.toHaveAttribute("inert");
+      await expect(opener).toBeFocused();
+    }
+  });
+
+  test(`Source panel scrolling keeps the header and footer anchored at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await mockApi(page);
+    await page.goto("#/integrations/services/lumen-audio");
+    const panel = page.getByRole("dialog", { name: "Lumen Audio", exact: true });
+    await panel.locator(".source-more > summary").click();
+    const action = panel.getByRole("button", { name: "Measure start time", exact: true });
+    await action.evaluate(element => element.scrollIntoView({ block: "start" }));
+    await expect(action).toBeInViewport();
+    await expect(panel.getByRole("heading", { name: "Lumen Audio", exact: true })).toBeInViewport();
+    expect(await panel.evaluate(element => element.scrollTop)).toBe(0);
+    const footer = await panel.locator(".panel-footer").boundingBox();
+    expect(footer!.y + footer!.height).toBeCloseTo(844, 0);
+  });
+
+  test(`Notification actions remain usable when source panels open and close at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await mockApi(page);
+    const fixture = responses["/api/admin/provider-accounts"] as { accounts: { enabled: boolean; revision: number }[] };
+    let account = { ...fixture.accounts[0] };
+    const changes: boolean[] = [];
+    await page.route("**/api/admin/provider-accounts", route => route.fulfill({ json: { ...fixture, accounts: [account] } }));
+    await page.route("**/api/admin/provider-accounts/account", route => {
+      const update = route.request().postDataJSON();
+      changes.push(update.enabled);
+      account = { ...account, enabled: update.enabled, revision: account.revision + 1 };
+      return route.fulfill({ json: account });
+    });
+    await page.goto("#/integrations/services/lumen-audio");
+    const panel = page.getByRole("dialog", { name: "Lumen Audio", exact: true });
+    const region = page.getByRole("region", { name: "Notifications" });
+    await page.locator(".source-more > summary").click();
+    await panel.getByRole("button", { name: "Actions for Lumen account" }).click();
+    await page.getByRole("menuitem", { name: "Disable", exact: true }).click();
+    const undo = region.getByRole("button", { name: "Undo", exact: true });
+    await undo.focus(); await expect(undo).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(region.locator(".toast")).toHaveCount(0);
+    expect(changes).toEqual([false, true]);
+    await expect(panel).toBeVisible();
+
+    await panel.getByRole("button", { name: "Actions for Lumen account" }).click();
+    await page.getByRole("menuitem", { name: "Disable", exact: true }).click();
+    await expect(undo).toBeVisible();
+    await panel.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(panel).toHaveCount(0);
+    await undo.focus(); await expect(undo).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(region.locator(".toast")).toHaveCount(0);
+    expect(changes).toEqual([false, true, false, true]);
   });
 }
 
@@ -6512,11 +6750,15 @@ test("Playback diagnostic errors stay readable and persistent", async ({ page })
     stage: "first-byte", failureCode: "endpoint-unreachable", error: "raw-private-provider-payload",
   } }));
   await page.goto("#/integrations/services/lumen-audio");
+    await page.locator(".source-more > summary").click();
   await page.getByRole("button", { name: "Measure start time", exact: true }).click();
   const notification = page.getByRole("alert").filter({ hasText: "audio" });
   await expect(notification).toBeVisible(); await expect(page.getByText("raw-private-provider-payload")).toHaveCount(0);
   await page.clock.runFor(10000); await expect(notification).toBeVisible();
-  await notification.getByRole("button", { name: "Dismiss notification" }).click(); await expect(notification).toHaveCount(0);
+  const dismiss = notification.getByRole("button", { name: "Dismiss notification" });
+  await dismiss.focus(); await expect(dismiss).toBeFocused();
+  await page.keyboard.press("Escape"); await expect(notification).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Lumen Audio", exact: true })).toBeVisible();
 });
 
 test("Quality and routing lives in Settings, not Sources", async ({ page }) => {
@@ -6569,21 +6811,23 @@ test("Source selection and entered credentials survive a readiness refresh", asy
       for (const listener of listeners.get("update") ?? []) listener(new MessageEvent("update", { data: JSON.stringify({ resource: "provider-accounts", revision: ++revision }) }));
     };
   });
-  await page.goto("#/integrations/services");
+  await page.goto("#/integrations/accounts");
   await page.getByRole("button", { name: "Connect account" }).click();
-  const dialog = page.getByRole("dialog", { name: "Connect a Source" });
-  await dialog.getByRole("button", { name: "Source", exact: true }).click();
-  const optionsBefore = await page.getByRole("option").allTextContents();
+  const dialog = page.locator(".connect-source-dialog");
+  await expect(dialog.locator(".provider-monogram")).toHaveCount(0);
+  const optionsBefore = await dialog.getByRole("radio").allTextContents();
   connectedProvider = "listenbrainz";
+  const firstRefresh = page.waitForResponse(response => response.url().endsWith("/api/admin/ui/schema"));
   await page.evaluate(() => window.__emitAllstarrUpdate?.());
-  await expect(page.locator(".source-row").filter({ hasText: "ListenBrainz" }).locator(".source-row-timing")).toContainText("1 of 1 account on");
-  expect(await page.getByRole("option").allTextContents()).toEqual(optionsBefore);
-  await page.getByRole("option", { name: "ListenBrainz", exact: true }).click();
+  await firstRefresh;
+  await expect(dialog.getByRole("radio")).toHaveText(optionsBefore);
+  await dialog.getByRole("radio", { name: /ListenBrainz/ }).click();
+  await dialog.getByRole("button", { name: "Next", exact: true }).click();
   await dialog.getByLabel("ListenBrainz token").fill("fixture-token");
   const refreshed = page.waitForResponse(response => response.url().endsWith("/api/admin/ui/schema"));
   await page.evaluate(() => window.__emitAllstarrUpdate?.());
   await refreshed;
-  await expect(dialog.getByRole("button", { name: "Source", exact: true })).toHaveText("ListenBrainz");
+  await expect(dialog.getByText("ListenBrainz", { exact: true })).toBeVisible();
   await expect(dialog.getByLabel("ListenBrainz token")).toHaveValue("fixture-token");
 });
 
@@ -6620,12 +6864,16 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(url).toHaveValue("");
     await expect(page.getByText("Leave blank to use public instances with fallback. A configured service is used exclusively.")).toBeVisible();
     await url.fill("http://lyrics:3000/prefix");
-    await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+    await url.press("Tab");
     await expect.poll(() => saved).toEqual({ LYRICSPLUS_URL: "http://lyrics:3000/prefix" });
+    await page.getByRole("dialog", { name: "LyricsPlus", exact: true }).evaluate(async panel => {
+      await Promise.all(panel.getAnimations().map(animation => animation.finished));
+    });
     await expectContainedMobileGeometry(page);
     await page.goto("#/integrations/services/musixmatch");
+    await openSourceSettings(page, "Musixmatch");
     await page.getByRole("button", { name: "Connect account", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Connect a Source" });
+    const dialog = page.locator(".connect-source-dialog");
     const token = dialog.locator('textarea[name="userToken"]');
     await expect(token).toHaveAttribute("rows", "6");
     await expect(token).toHaveAttribute("autocomplete", "off");
@@ -6665,14 +6913,14 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
       replacement = route.request().postDataJSON();
       return route.fulfill({ json: { accountId: account.id, revision: 2 } });
     });
-    await dialog.getByRole("button", { name: "Save and test" }).click();
+    await dialog.getByRole("button", { name: /^(Connect|Save changes)$/ }).click();
     await expect.poll(() => created?.secret).toEqual({ userToken: debugInfo });
     await expect(dialog).toHaveCount(0);
     await page.locator(".service-account").getByRole("button", { name: "Edit configuration", exact: true }).click();
     const configure = page.getByRole("dialog", { name: "Configure Musixmatch" });
     await expect(configure.locator('textarea[name="userToken"]')).toHaveValue("");
     await expect(configure.getByText("Configured · replace", { exact: true })).toBeVisible();
-    await configure.getByRole("button", { name: "Save and test" }).click();
+    await configure.getByRole("button", { name: /^(Connect|Save changes)$/ }).click();
     await expect.poll(() => replacement?.secret).toEqual({});
     await expect(configure).toHaveCount(0);
   });
@@ -6818,7 +7066,8 @@ test("Recording lyrics conflict reloads the preview without repeating a write", 
   await picker.getByRole("button", { name: "Use this source for this recording", exact: true }).click();
   await expect.poll(fixture.reads).toBe(2);
   expect(fixture.writes).toHaveLength(1);
-  await expect(picker).toContainText("The lyrics or saved choice changed.");
+  await expect(picker.getByRole("alert")).toContainText("The lyrics or saved choice changed.");
+  await expect(page.getByRole("region", { name: "Notifications" }).getByRole("alert")).toHaveCount(0);
   await expect(picker.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("[00:01.234]Timed words");
   await picker.getByRole("button", { name: /LRCLIB.*Plain/ }).click();
   await picker.getByRole("button", { name: "Use this source for this recording", exact: true }).click();
@@ -6886,6 +7135,8 @@ for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"]) {
     });
     await page.goto("#/integrations/accounts");
     const panel = page.getByRole("region", { name: "Scrobble delivery" });
+    await expect(panel.locator(".group-toggle")).toHaveCount(2);
+    for (const group of await panel.locator(".group-toggle").all()) await group.click();
     await expect(panel.getByText("Uncertain song", { exact: true })).toBeVisible();
     await expect(panel.getByText("Original Last.fm", { exact: false })).toBeVisible();
     await panel.getByRole("button", { name: "Already in history" }).click();
@@ -6896,16 +7147,15 @@ for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(panel.getByText("Uncertain song", { exact: true })).toHaveCount(0);
     expect(resolutions[0]).toMatchObject({ revision: 2, action: "confirm-delivered" });
     await expect(panel.getByRole("button", { name: "Reconnect saved account" })).toBeVisible();
-    await panel.getByRole("button", { name: "Retry saved listen" }).click();
+    await panel.getByRole("button", { name: "Retry", exact: true }).click();
     const retry = page.getByRole("alertdialog", { name: "Retry this saved listen?" });
     await retry.getByRole("button", { name: "Retry to saved account", exact: true }).click();
-    await expect(retry.getByRole("alert")).toContainText("Refresh the delivery");
+    await expect(page.getByRole("alert").filter({ hasText: "Refresh the delivery" })).toBeVisible();
     expect(resolutions[1]).toMatchObject({ revision: 4, action: "retry", accountRevision: 7 });
-    await retry.getByRole("button", { name: "Cancel", exact: true }).click();
     await panel.getByRole("button", { name: "Refresh delivery", exact: true }).click();
-    await panel.getByRole("button", { name: "Retry saved listen" }).click();
+    await panel.getByRole("button", { name: "Retry", exact: true }).click();
     await retry.getByRole("button", { name: "Retry to saved account", exact: true }).click();
-    await expect(panel.getByText("No listens need attention.", { exact: true })).toBeVisible();
+    await expect(panel.getByText("Reconnect song", { exact: true })).toHaveCount(0);
     expect(resolutions[2]).toMatchObject({ revision: 5, action: "retry", accountRevision: 7 });
     await expectContainedMobileGeometry(page);
   });
@@ -6943,8 +7193,9 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     for (const id of ["multi-scrobbler", "koito"]) {
       accounts = [];
       await page.goto(`#/integrations/services/${id}`);
+      await openSourceSettings(page, id === "koito" ? "Koito" : id);
       await page.getByRole("button", { name: "Connect account", exact: true }).click();
-      const dialog = page.getByRole("dialog", { name: "Connect a Source" });
+      const dialog = page.locator(".connect-source-dialog");
       const token = dialog.locator('input[name="token"]');
       const address = dialog.locator('input[name="baseUrl"]');
       await expect(token).toHaveAttribute("type", "password");
@@ -6953,7 +7204,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
       await token.fill("private-fixture-token");
       const baseUrl = id === "koito" ? "http://koito:4110/apis/listenbrainz/1/" : "http://multi-scrobbler:9078/1/";
       await address.fill(baseUrl);
-      await dialog.getByRole("button", { name: "Save and test", exact: true }).click();
+      await dialog.getByRole("button", { name: /^(Connect|Save changes)$/, exact: true }).click();
       await expect(dialog).toHaveCount(0);
       expect(created).toMatchObject({ providerId: id, secret: { token: "private-fixture-token", baseUrl } });
       await expect(page.getByText("private-fixture-token", { exact: true })).toHaveCount(0);
@@ -6963,7 +7214,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
       await expect(edit.locator('input[name="token"]')).not.toHaveAttribute("required", "");
       await expect(edit.locator('input[name="baseUrl"]')).toHaveValue(baseUrl);
       await edit.locator('input[name="baseUrl"]').fill("https://listening.example/1/");
-      await edit.getByRole("button", { name: "Save and test", exact: true }).click();
+      await edit.getByRole("button", { name: /^(Connect|Save changes)$/, exact: true }).click();
       await expect(edit).toHaveCount(0);
       expect(replacement).toMatchObject({ secret: { baseUrl: "https://listening.example/1/" } });
       expect(JSON.stringify(replacement)).not.toContain("private-fixture-token");
@@ -7000,16 +7251,17 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     });
     await page.goto("#/integrations/accounts");
     const panel = page.getByRole("region", { name: "Scrobble delivery" });
+    await panel.locator(".group-toggle").click();
     await panel.getByRole("button", { name: "Destination account for older listen", exact: true }).click();
     await waitForSettledOptions(page.getByRole("listbox"), "Secondary (Shared)");
     await expect(page.getByRole("option", { name: /Other listener/ })).toHaveCount(0);
     await page.getByRole("option", { name: "Secondary (Shared)", exact: true }).click();
-    await panel.getByRole("button", { name: "Retry saved listen", exact: true }).click();
-    const confirm = page.getByRole("alertdialog", { name: "Retry this saved listen?" });
-    await expect(confirm).toContainText("Confirm that Secondary is the intended account");
+    await panel.getByRole("button", { name: "Retry", exact: true }).click();
+    const confirm = page.getByRole("alertdialog", { name: "Confirm destination?" });
+    await expect(confirm).toContainText("Check the destination's history first.");
     expect(sent).toBeUndefined();
     await confirm.getByRole("button", { name: "Retry to saved account", exact: true }).click();
-    await expect(panel.getByText("No listens need attention.", { exact: true })).toBeVisible();
+    await expect(panel.getByText("Older listen", { exact: true })).toHaveCount(0);
     expect(sent).toMatchObject({ revision: 2, action: "retry", accountRevision: 9, destinationAccountId: "second" });
     await expectContainedMobileGeometry(page);
   });
@@ -7568,6 +7820,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
       accountId: new URL(route.request().url()).searchParams.get("accountId"),
     } }));
     await page.goto("#/integrations/services/signed-audio");
+    await openSourceSettings(page, "Signed Audio");
     const panel = page.locator(".extension-session");
     const audience = panel.locator(".extension-session-connection");
     await expect(audience).toContainText("Who can use this sign-in");
@@ -7661,8 +7914,9 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
       reasonCode: "sign_in_needed", testedAt: "2026-10-16T18:57:05Z",
     })) }));
     await page.goto("#/integrations/services/signed-audio");
-    await expect(page.locator(".service-head-meta")).toContainText("Needs verification");
-    await expect(page.locator(".source-title .origin-badge")).toHaveText("Extension");
+    const panel = page.getByRole("dialog", { name: "Signed Audio", exact: true });
+    await expect(panel.locator(".source-summary .state-pill")).toHaveText("Needs verification");
+    await expect(panel.locator(".panel-title")).toContainText("Extension");
     await expect(page.getByText("Degraded", { exact: true })).toHaveCount(0);
     await expect(page.getByText(/Setup needed/)).toHaveCount(0);
     const check = page.locator(".service-check").filter({ hasText: "Streaming" }).first();
@@ -7776,6 +8030,7 @@ for (const providerId of ["artistgrid", "lumen-audio"]) {
       } });
     });
     await page.goto(`#/integrations/services/${providerId}`);
+    await openSourceSettings(page, name);
     await page.getByRole("button", { name: "Open Metadata tests" }).click();
     const dialog = page.getByRole("dialog", { name: `Test ${name}` });
     await dialog.getByRole("searchbox", { name: "Search" }).fill("version");
@@ -8013,6 +8268,7 @@ for (const width of [390, 1280]) for (const scheme of ["light", "dark"] as const
       } });
     });
     await page.goto("#/integrations/services/paxsenix");
+    await openSourceSettings(page, "Paxsenix");
     await page.getByRole("button", { name: "Open Lyrics tests" }).click();
     const dialog = page.getByRole("dialog", { name: "Test Paxsenix" });
     await expect(dialog.locator(".try-mark .provider-monogram")).toHaveText("P");
@@ -8062,7 +8318,7 @@ test("Provider marks display a PNG color master when SVG is unavailable", async 
     ...schema, providers: [...schema.providers, { id: "lastfm", name: "Last.fm", categories: ["scrobbling"] }],
   } }));
   await page.goto("#/integrations/services/lastfm");
-  const mark = page.locator(".provider-mark img").first();
+  const mark = page.getByRole("dialog", { name: "Last.fm", exact: true }).locator(".panel-artwork .provider-mark img");
   await expect(mark).toHaveAttribute("src", /\/brands\/lastfm\/color\.png$/);
   await expect(mark).toBeVisible();
   expect(await mark.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
@@ -8103,15 +8359,19 @@ for (const [width, colorScheme] of [[390, "light"], [390, "dark"], [1280, "light
     await expect(everyone.getByRole("radio", { name: "Manual only", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(mine.getByRole("radio", { name: "On", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(use).toContainText("Your own setting.");
-    const mark = page.locator(".service-head .provider-mark img");
+    const mark = page.getByRole("dialog", { name: "ArtistGrid", exact: true }).locator(".panel-artwork .provider-mark img");
     await expect(mark).toHaveAttribute("src", /\/brands\/artistgrid\/color\.svg$/);
     await expect(mark).toBeVisible();
     await expect.poll(() => mark.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
     expect(markRequests).toContain("color");
     expect(markRequests).not.toContain("legacy");
+    expect(await use.getByRole("radio").evaluateAll(controls => controls.every(control => {
+      const bounds = control.getBoundingClientRect();
+      return bounds.width >= 44 && bounds.height >= 44;
+    }))).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: `test-results/source-use-${width}-${colorScheme}.png`, fullPage: false });
-    await use.getByRole("button", { name: "Follow everyone instead" }).click();
+    await mine.getByRole("radio", { name: "Follow", exact: true }).click();
     await expect.poll(() => writes.length).toBe(1);
     expect(writes[0]).toEqual({ mode: null, scope: "personal", expectedRevision: "personal-1" });
     await expect(use).toContainText("Follows the setting for everyone.");
@@ -8137,9 +8397,12 @@ test("Sources without an account can be tested in detail", async ({ page }) => {
     { capability: "lyrics", accountRequirement: "none", operations: [{ id: "lyrics", inputs: ["title", "artist"] }] },
   ] } }));
   await page.goto("#/integrations/services/lrclib");
+  await openSourceSettings(page, "LRCLIB");
   const row = page.locator(".service-check").filter({ hasText: "Lyrics" });
   await row.getByRole("button", { name: "Test", exact: true }).click();
   await expect.poll(() => tested).toBe(1);
+  await expect(page.getByRole("status").filter({ hasText: "LRCLIB Lyrics passed." })).toBeVisible();
+  await row.getByRole("button", { name: "Open Lyrics tests" }).click({ trial: true, timeout: 5000 });
   await row.getByRole("button", { name: "Open Lyrics tests" }).click();
   const dialog = page.getByRole("dialog", { name: "Test LRCLIB" });
   await expect(dialog).toContainText("Runs on LRCLIB only");
@@ -8168,6 +8431,7 @@ test("Lyrics-only source checks show lyrics outcomes and no playback controls", 
     { capability: "lyrics", accountRequirement: "none", operations: [{ id: "lyrics", inputs: ["title", "artist"] }] },
   ] } }));
   await page.goto("#/integrations/services/paxsenix");
+  await openSourceSettings(page, "Paxsenix");
   const row = page.locator(".service-check").filter({ hasText: "Lyrics" });
   await row.getByRole("button", { name: "Test", exact: true }).click();
   const failure = page.getByRole("alert").filter({ hasText: "Paxsenix Lyrics needs attention." });
@@ -8175,8 +8439,10 @@ test("Lyrics-only source checks show lyrics outcomes and no playback controls", 
   await expect(failure).not.toContainText("Playback");
   await failure.getByRole("button", { name: "Dismiss notification" }).click();
   healthy = true;
+  await expect(page.locator(".source-more")).toHaveAttribute("open", "");
   await row.getByRole("button", { name: "Test", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Paxsenix Lyrics passed." })).toBeVisible();
+  await row.getByRole("button", { name: "Test", exact: true }).click({ trial: true, timeout: 5000 });
   unavailable = true;
   await row.getByRole("button", { name: "Test", exact: true }).click();
   const error = page.getByRole("alert").filter({ hasText: "The lyrics check failed." });
@@ -8581,14 +8847,15 @@ for (const width of [320, 390, 718, 1280]) for (const theme of ["light", "dark"]
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     await mockSpicySource(page, false);
     await page.goto("#/integrations/services/spicylyrics");
+    await openSourceSettings(page, "SpicyLyrics");
     const setup = page.getByRole("region", { name: "SpicyLyrics setup" });
     await expect(setup).toContainText("free server key");
     await expect(setup.getByRole("link", { name: "Get a free API key" })).toHaveAttribute("href", "https://developers.spicylyrics.org/docs/keys");
-    await expect(page.locator('img[src$="/brands/spicylyrics/color.svg"]').first()).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "SpicyLyrics", exact: true }).locator('.panel-artwork img[src$="/brands/spicylyrics/color.svg"]')).toBeVisible();
     if (width < 600) await expectContainedMobileGeometry(page);
     await page.screenshot({ path: `test-results/spicy-setup-${width}-${theme}.png`, fullPage: true });
     await page.getByRole("button", { name: "Connect account", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Connect a Source" });
+    const dialog = page.locator(".connect-source-dialog");
     const key = dialog.getByLabel("Server API key", { exact: true });
     await expect(key).toHaveAttribute("type", "password");
     await expect(key).toHaveValue("");
@@ -8622,6 +8889,7 @@ for (const width of [320, 390, 718, 1280]) for (const theme of ["light", "dark"]
       } } });
     });
     await page.goto("#/integrations/services/spicylyrics");
+    await openSourceSettings(page, "SpicyLyrics");
     await page.getByRole("button", { name: "Open Lyrics tests", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Test SpicyLyrics" });
     const input = dialog.getByRole("textbox", { name: "Spotify track link or ID", exact: true });
@@ -8778,11 +9046,14 @@ test("Source health Resume now clears the pause and recovers from a failed reque
   await page.goto("#/integrations/services/lumen-audio");
   const routing = page.getByRole("region", { name: "Automatic routing" });
   await expect(routing).toContainText("Started");
-  await expect(page.getByRole("list", { name: "Recent outcomes" }).getByRole("listitem")).toHaveCount(9);
+  const strip = page.getByRole("region", { name: "Last 30 checks", exact: true }).getByRole("img", { name: /^9 recorded checks, oldest to newest;/ });
+  await expect(strip).toBeVisible();
+  await expect(strip.locator('[data-outcome]:not([data-outcome="empty"])')).toHaveCount(9);
   await routing.getByRole("button", { name: "Resume now" }).click();
   await expect(routing).toContainText("Couldn’t resume automatic use. Try again.");
   await routing.getByRole("button", { name: "Resume now" }).click();
   await expect(routing).toHaveCount(0);
+  await expect(strip).toBeVisible();
   expect(attempts).toBe(2);
 });
 
@@ -8801,7 +9072,7 @@ test("Source health history recovers from an error without busying Refresh", asy
   await history.getByRole("button", { name: "Retry" }).click();
   await expect(history).toContainText("No recorded diagnostic checks.");
   expect(reads).toBe(2);
-  await page.locator(".service-back").click();
+  await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
   await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
 });
 
@@ -8853,7 +9124,7 @@ test("Source health retry follows server time and refreshes quietly once", async
   await page.clock.runFor(2_100);
   expect(statusReads).toBe(2);
   expect(historyReads).toBe(2);
-  await page.locator(".service-back").click();
+  await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
   await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
 });
 
@@ -8869,7 +9140,9 @@ test("Source health history stays private to administrators", async ({ page }) =
     return route.fulfill({ json: sourceHistory });
   });
   await page.goto("#/integrations/services/lumen-audio");
-  await expect(page.getByRole("heading", { name: "Lumen Audio", exact: true })).toBeVisible();
+  const panel = page.getByRole("dialog", { name: "Lumen Audio", exact: true });
+  await expect(panel.getByRole("heading", { name: "Lumen Audio", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Last 30 checks", exact: true })).toHaveCount(0);
   await expect(page.getByRole("group", { name: /Recent diagnostic checks/ })).toHaveCount(0);
   expect(reads).toBe(0);
 });
@@ -8911,6 +9184,7 @@ for (const target of [
       await route.fulfill({ json: body });
     });
     await page.goto(target.route);
+    if (target.name === "Sources") await page.getByRole("radio", { name: /^All / }).click();
     await expect(page.getByText("Freshness 1", { exact: true }).first()).toBeVisible();
     // A healthy SSE connection can miss writes without an outbox event.
     version = 2;

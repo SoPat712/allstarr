@@ -9,7 +9,9 @@
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Popover } from "$lib/components/ui/popover";
   import { Progress } from "$lib/components/ui/progress";
-  import ListSkeleton from "$lib/components/ListSkeleton.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -67,8 +69,9 @@
 {/snippet}
 <div class="your-taste">
   <div class="section-heading"><h2>Your taste</h2><RefreshButton variant="secondary" label="Refresh taste" disabled={action} onrefresh={load} /></div>
-  {#if error}<div class="notice-error" role="alert" aria-label="Your taste unavailable"><p>{error}</p><Button variant="outline" size="sm" onclick={() => void load()}>Try again</Button></div>{/if}
-  {#if loading}<ListSkeleton label="Loading your taste" />{:else if profile}
+  <PageStatus items={[{ label: profile?.paused ? "Learning paused" : "Your listening shapes your mixes" }, { label: profile ? `${profile.nudges.length} active choices` : "Loading your taste" }]} />
+  {#if error}<ErrorState title="Couldn't load your taste" detail={error} onretry={load} />{/if}
+  {#if loading}<RowsSkeleton label="Loading your taste" />{:else if profile}
     <section class="settings-card summary"><p>{#each summaryParts as part}{#if summaryTags.includes(part)}<strong>{part}</strong>{:else}{part}{/if}{/each}</p><small>{profile.latelyWeight >= .5 ? "Today's listening counts most right now." : "Your usual taste counts most right now."}</small></section>
     {#if sound}
       <section class="settings-card taste-section sound-profile" aria-labelledby="sound-heading">

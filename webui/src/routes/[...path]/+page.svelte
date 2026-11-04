@@ -4,14 +4,14 @@
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
   import BackendAccessWarning from "$lib/components/BackendAccessWarning.svelte";
-  import { auth, onboarding, type OnboardingState, type Session } from "$lib/api";
+  import { auth, onboarding } from "$lib/access-api";
+  import type { OnboardingState, Session } from "$lib/api";
   import { adminUrl } from "$lib/admin-url";
   import { adminOidc, type OidcStatus } from "$lib/admin-oidc";
   import { liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { slideIndicator } from "$lib/slide-indicator";
   import RouteError from "$lib/components/RouteError.svelte";
-  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import UiIcon from "$lib/components/UiIcon.svelte";
   import { Dialog } from "$lib/components/ui/dialog";
   import { applyThemeMode, onThemeModeChange, readThemeMode, saveThemeMode, type ThemeMode } from "$lib/theme";
@@ -25,6 +25,7 @@
     { href: "#/activity", label: "Activity", mobileLabel: "Activity", icon: "activity", mobile: true },
     { href: "#/connect", prefix: "/getting-started", label: "Connect apps", mobileLabel: "Connect apps", icon: "guide", mobile: false },
     { href: "#/settings", label: "Settings", mobileLabel: "Settings", icon: "settings", mobile: false },
+    { href: "#/report", label: "Report a problem", mobileLabel: "Report", icon: "activity", mobile: false },
   ];
   const preferencesDestination: (typeof destinations)[number] = {
     href: "#/preferences",
@@ -64,10 +65,19 @@
   let BackendSetupPanel = $state<Component<any>>();
   let sidebarSlim = $state(false);
   let mobileMenuOpen = $state(false);
+  let SignInView = $state<Component<any>>(), signInLoadError = $state(false);
+  async function loadSignIn() {
+    signInLoadError = false;
+    try { SignInView = (await import("$lib/components/SignInView.svelte")).default; }
+    catch { signInLoadError = true; }
+  }
+  $effect(() => { if (!loading && session?.backendConfigured !== false && (!session?.authenticated || oidc.linkPending) && !SignInView && !signInLoadError) void loadSignIn(); });
   let mobileMenuTrigger = $state<HTMLButtonElement>();
   let sidebarExpander = $state<HTMLButtonElement>();
   let themeMode = $state<ThemeMode>("system");
   let ActiveView = $state<Component<any>>();
+  let LibraryNavigation = $state<Component<any>>();
+  $effect(() => { if (route.startsWith("/library/") && !LibraryNavigation) void import("$lib/components/SegmentedNav.svelte").then(module => { LibraryNavigation = module.default; }).catch(() => { toast.error("Library navigation could not be loaded. Reload to try again."); }); });
   let loadedRoute = $state("");
   let loadedViewKey = $state("");
   let viewError = $state("");
@@ -81,7 +91,7 @@
     .filter(item => item.href !== "#/for-you" || !developmentIntelligence)
     .map(item => administrator ? item
       : item.href === "#/settings" ? preferencesDestination
-      : item.prefix === "/integrations/" ? { ...item, label: "Services", mobileLabel: "Services" }
+      : item.prefix === "/integrations/" ? { ...item, label: "Sources", mobileLabel: "Sources" }
       : item));
   const mobileDestinations = $derived(navigationDestinations.filter((item) => item.mobile));
   const moreDestinations = $derived([preferencesDestination, ...navigationDestinations.filter((item) => !item.mobile && item !== preferencesDestination)]);
@@ -235,8 +245,18 @@
     void viewLoader(currentRoute(href.slice(1).split("?")[0]))?.catch(() => {});
   }
 
+  const viewLoads = new Map<string, NonNullable<ReturnType<typeof importView>>>();
   function viewLoader(path: string) {
     if (forbiddenRoute) return;
+    const key = `${viewKey(path)}:${developmentIntelligence}`;
+    const cached = viewLoads.get(key);
+    if (cached) return cached;
+    const pending = importView(path);
+    if (pending) { viewLoads.set(key, pending); void pending.catch(() => viewLoads.delete(key)); }
+    return pending;
+  }
+
+  function importView(path: string) {
     if (path === "/") return import("$lib/components/HomeView.svelte");
     if (path === "/library/import") return import("$lib/components/ImportView.svelte");
     if (path === "/library/playlists") return import("$lib/components/PlaylistsView.svelte");
@@ -495,51 +515,9 @@
 {:else if session?.backendConfigured === false}
   {#if BackendSetupPanel}<BackendSetupPanel onReady={bootstrap} />{/if}
 {:else if !session?.authenticated || oidc.linkPending}
-  <main class="grid min-h-screen place-items-center p-6">
-    <section class="panel w-full max-w-sm p-6 sm:p-8" aria-labelledby="login-title">
-      <div class="brand-mark login-brand mb-6" aria-hidden="true">A</div>
-      <h1 id="login-title" class="mt-2 text-3xl font-semibold tracking-tight">Your music, connected.</h1>
-      <p class="mt-3 text-sm leading-6 text-ink-muted">
-        {#if oidc.linkPending}
-          Link your {session?.backend ?? "media server"} account to SSO. Your media server still controls your access.
-          {#if session?.backend?.toLowerCase() === "subsonic"}
-            Allstarr will keep your media-server credential encrypted to verify future SSO logins.
-          {/if}
-        {:else}
-          Sign in with your {session?.backend ?? "media server"} account.
-        {/if}
-      </p>
-      {#if oidc.enabled && !oidc.linkPending && oidc.loginUrl}
-        <Button class="mt-4 w-full" href={adminUrl(oidc.loginUrl)}>Continue with {oidc.displayName}</Button>
-      {/if}
-
-      <form class="mt-8 space-y-4" aria-busy={authBusy} onsubmit={(event) => { event.preventDefault(); void login(); }}>
-        <label class="field">
-          <span>Username</span>
-          <input bind:value={username} autocomplete="username" required disabled={authBusy} />
-        </label>
-        <label class="field">
-          <span>Password</span>
-          <input bind:value={password} type="password" autocomplete="current-password" required disabled={authBusy} />
-        </label>
-        <label class="flex min-h-11 items-center gap-3 text-sm text-ink-muted">
-          <input bind:checked={rememberMe} type="checkbox" class="size-4 accent-signal" disabled={authBusy} />
-          Keep me signed in
-        </label>
-        {#if session?.backend?.toLowerCase() === "subsonic"}
-          <label class="flex min-h-11 items-center gap-3 text-sm text-ink-muted">
-            <input bind:checked={managePlaylists} type="checkbox" class="size-4 accent-signal" disabled={authBusy} />
-            Let Allstarr manage my playlists
-          </label>
-        {/if}
-        {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
-        <button class="auth-submit w-full" type="submit" disabled={authBusy}>{authBusy ? "Signing in…" : oidc.linkPending ? "Link account and sign in" : "Sign in"}</button>
-        {#if oidc.linkPending}
-          <Button class="w-full" type="button" disabled={authBusy} onclick={() => void cancelSsoLink()}>Continue without linking</Button>
-        {/if}
-      </form>
-    </section>
-  </main>
+  {#if SignInView}<SignInView backend={session?.backend ?? "media server"} {oidc} bind:username bind:password bind:rememberMe bind:managePlaylists busy={authBusy} {error} onlogin={login} oncancel={cancelSsoLink} />
+  {:else if signInLoadError}<RouteError eyebrow="Sign in unavailable" title="The sign-in form could not be loaded." message="Try loading the form again." onRetry={loadSignIn} />
+  {:else}<main class="grid min-h-screen place-items-center p-6" aria-busy="true" aria-label="Loading sign in"><p>Loading sign in…</p></main>{/if}
 {:else}
   <a class="skip-link" href="#main-workspace">Skip to main content</a>
   <div class="app-shell" class:slim={sidebarSlim}>
@@ -662,8 +640,8 @@
         </div>
       </header>
 
-      {#if route.startsWith("/library/") && !forbiddenRoute}
-        <SegmentedNav
+      {#if route.startsWith("/library/") && !forbiddenRoute && LibraryNavigation}
+        <LibraryNavigation
           items={librarySections}
           active={route.split("/").at(-1) ?? "playlists"}
           label="Library sections"
@@ -743,7 +721,7 @@
         <header>
           <div>
             <Dialog.Title>More</Dialog.Title>
-            <Dialog.Description>{administrator ? "Preferences, integrations, settings and your account." : "Preferences, connections and your account."}</Dialog.Description>
+            <Dialog.Description>{administrator ? "Preferences, sources, settings and your account." : "Preferences, connections and your account."}</Dialog.Description>
           </div>
           <Dialog.Close class="icon-button" aria-label="Close more destinations"><X size={18} aria-hidden="true" /></Dialog.Close>
         </header>
@@ -774,7 +752,7 @@
                 <span class="nav-icon"><UiIcon name={destination.icon} /></span>
                 <span>
                   <strong>{destination.label}</strong>
-                  <small>{destination.href === "#/preferences" ? "Content and track labels for your account" : destination.href === "#/connect" ? "Connect music apps and get help" : destination.label === "Sources" ? (administrator ? "Music services, accounts and extensions" : "Music services and your accounts") : "Deployment and operator controls"}</small>
+                  <small>{destination.href === "#/preferences" ? "Content and track labels for your account" : destination.href === "#/connect" ? "Connect music apps and get help" : destination.href === "#/report" ? "Send a note to your administrator" : destination.label === "Sources" ? (administrator ? "Music services, accounts and extensions" : "Music services and your accounts") : "Deployment and operator controls"}</small>
                 </span>
               </a>
             {/each}

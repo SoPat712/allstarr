@@ -78,34 +78,30 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(region).toContainText("lossless");
     await expect(region).toContainText("3 seconds");
     await expect(region).toContainText("highest quality");
-    await expect(page.getByRole("button", { name: "Save preferences", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Save preferences", exact: true })).toHaveCount(0);
 
     await balanced.focus();
     await page.keyboard.press("ArrowLeft");
     await expect(fast).toBeChecked();
-    await expect(fast).toBeFocused();
-    await page.keyboard.press("ArrowLeft");
-    await expect(best).toBeChecked();
-    await expect(best).toBeFocused();
-    await page.keyboard.press("ArrowRight");
-    await expect(fast).toBeChecked();
-    await page.keyboard.press("ArrowDown");
-    await expect(balanced).toBeChecked();
-    await expect(page.getByRole("button", { name: "Save preferences", exact: true })).toBeDisabled();
-    await page.keyboard.press("ArrowRight");
-    await expect(best).toBeChecked();
-    await page.getByRole("button", { name: "Save preferences", exact: true }).click();
     await expect.poll(() => writes).toEqual([{
       method: "PUT",
       body: { explicitFilter: "All", showExternalLabel: true, showExplicitLabel: true,
-        playbackStart: "BestQuality", expectedRevision: "initial" },
+        playbackStart: "FastStart", expectedRevision: "initial" },
     }]);
     for (const radio of [fast, balanced, best]) await expect(radio).toBeDisabled();
     releaseSave();
-    await expect(page.getByRole("status").filter({ hasText: "Listening preferences saved." })).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: "Listening preferences saved." }).last()).toBeVisible();
+    await expect(fast).toBeEnabled();
+    await fast.focus();
+    for (const [key, radio] of [["ArrowLeft", best], ["ArrowRight", fast], ["ArrowDown", balanced], ["ArrowRight", best]] as const) {
+      await page.keyboard.press(key);
+      await expect(radio).toBeChecked();
+      await expect(radio).toBeEnabled();
+      await radio.focus();
+    }
     await expect(best).toBeChecked();
-    await expect(best).toBeEnabled();
-    await expect(page.getByRole("button", { name: "Save preferences", exact: true })).toBeDisabled();
+    await expect.poll(() => writes.length).toBe(5);
+    expect(writes.slice(1).every(write => write.body.expectedRevision === "saved")).toBe(true);
     await region.scrollIntoViewIfNeeded();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     for (const radio of [fast, balanced, best]) {
@@ -121,7 +117,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.getByRole("button", { name: "Reset to household defaults", exact: true }).click();
     await expect(fast).toBeChecked();
     await expect(page.getByRole("status").filter({ hasText: "Household defaults restored." })).toBeVisible();
-    expect(writes[1]).toEqual({ method: "DELETE", body: { expectedRevision: "saved" } });
+    expect(writes.at(-1)).toEqual({ method: "DELETE", body: { expectedRevision: "saved" } });
     await expect(page.getByText("Using household defaults", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Reset to household defaults", exact: true })).toBeDisabled();
   });
@@ -130,9 +126,13 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
 test("Playback start defaults to Balanced when older responses omit the preference", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 320, height: 900 });
   const writes: Record<string, unknown>[] = [];
+  let savedPlayback: string | undefined;
   await mockPreferences(page, async route => {
-    if (route.request().method() === "PUT") writes.push(route.request().postDataJSON());
-    return json(route, { values: defaults, householdDefaults: defaults, revision: "legacy", usesHouseholdDefaults: true });
+    if (route.request().method() === "PUT") {
+      writes.push(route.request().postDataJSON());
+      savedPlayback = String(writes.at(-1)!.playbackStart);
+    }
+    return json(route, { values: { ...defaults, ...(savedPlayback ? { playbackStart: savedPlayback } : {}) }, householdDefaults: defaults, revision: "legacy", usesHouseholdDefaults: true });
   });
   await page.goto("/#/preferences");
   const group = page.getByRole("radiogroup", { name: "Playback start", exact: true });
@@ -142,15 +142,15 @@ test("Playback start defaults to Balanced when older responses omit the preferen
     const radio = group.getByRole("radio", { name, exact: true });
     await radio.click();
     await expect(radio).toBeChecked();
+    await expect(radio).toBeEnabled();
     expect(await radio.locator("span").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
     expect(await radio.locator("span").evaluate(element => element.scrollHeight)).toBeLessThanOrEqual(40);
   }
   await group.scrollIntoViewIfNeeded();
   await page.screenshot({ path: testInfo.outputPath("playback-start-320.png") });
-  await expect(page.getByRole("button", { name: "Save preferences", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save preferences", exact: true })).toHaveCount(0);
   await page.getByRole("switch", { name: "Show [A] for external tracks", exact: true }).click();
-  await page.getByRole("button", { name: "Save preferences", exact: true }).click();
-  await expect.poll(() => writes[0]).toEqual({ explicitFilter: "All", showExternalLabel: false,
+  await expect.poll(() => writes.at(-1)).toEqual({ explicitFilter: "All", showExternalLabel: false,
     showExplicitLabel: true, playbackStart: "Balanced", expectedRevision: "legacy" });
 });
 

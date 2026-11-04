@@ -88,17 +88,16 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await appearance(page, width, theme);
     const state = await mockReleases(page);
     await openReleases(page);
-    await expect(page.getByRole("region", { name: "This week", exact: true })).toContainText("Aurora");
-    await expect(page.getByRole("region", { name: "Last week", exact: true })).toContainText("Contours");
-    await expect(page.getByRole("region", { name: "Earlier", exact: true })).toContainText("Low Tide");
+    await expect(page.locator(".release-card")).toHaveCount(4);
+    await expect(page.locator(".release-card h3")).toHaveText(["Aurora", "Contours", "Low Tide", "Slow Season"]);
     const album = page.getByRole("article", { name: "Aurora by North", exact: true });
     await expect(album).toContainText("Album · Explicit");
     await expect(album).toContainText("Oct 27, 2026 · Deluxe edition");
     await expect(page.getByRole("article", { name: "Contours by Mira", exact: true })).toContainText("EP · Clean");
     await expect(page.getByRole("article", { name: "Low Tide by Cedar", exact: true })).toContainText("Single · Explicit status unknown");
     await expect(page.getByRole("article", { name: "Slow Season by Willow", exact: true })).toContainText("September 2026");
-    await page.getByText("We couldn't check 3 artists", { exact: true }).click();
-    const coverage = page.locator("details").filter({ hasText: "We couldn't check 3 artists" });
+    await page.getByText("Couldn't check 3 artists.", { exact: true }).click();
+    const coverage = page.locator("details").filter({ hasText: "Couldn't check 3 artists." });
     await expect(coverage).toContainText("Some releases may be missing.");
     for (const name of ["North", "Mira", "Cedar"]) await expect(coverage.getByText(name, { exact: true })).toBeVisible();
     await page.getByText("Hidden: 7 releases", { exact: true }).click();
@@ -143,7 +142,9 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
 test("Dismissing a release updates the inbox and keeps other releases", async ({ page }) => {
   const state = await mockReleases(page);
   await openReleases(page);
-  await page.getByRole("button", { name: "Dismiss Aurora", exact: true }).click();
+  await page.getByRole("button", { name: "Actions for Aurora", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Dismiss Aurora", exact: true }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Dismiss release", exact: true }).click();
   await expect(page.getByRole("article", { name: "Aurora by North", exact: true })).toHaveCount(0);
   await expect(page.getByRole("article", { name: "Contours by Mira", exact: true })).toBeVisible();
   expect(state.mutations).toEqual([{ method: "DELETE", path: "/api/admin/releases/aurora" }]);
@@ -155,6 +156,7 @@ test("Unfollowing an artist updates the followed count and release inbox", async
   await page.getByRole("button", { name: "Following (4)", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Followed artists (4)", exact: true });
   await dialog.getByRole("button", { name: "Unfollow North", exact: true }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Unfollow artist", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Followed artists (3)", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Unfollow North", exact: true })).toHaveCount(0);
   await page.getByRole("button", { name: "Done", exact: true }).click();

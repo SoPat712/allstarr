@@ -3,6 +3,8 @@
   import { sources, type ProviderCheckHistory, type ProviderHealth } from "$lib/api";
   import { checkGuide, humanize } from "$lib/sources";
   import { Badge } from "$lib/components/ui/badge";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import { Button } from "$lib/components/ui/button";
 
   let { providerId, statuses, refreshKey, onRetryWindow, automatic = true }: {
@@ -24,6 +26,15 @@
   let now = $state(0);
   let request = 0;
   let controller: AbortController | undefined;
+
+  function stripOutcome(check: ProviderCheckHistory["checks"][number]) {
+    return check.outcome === "failed" ? "failed" : check.outcome === "neutral" ? "neutral"
+      : check.latencyMs != null && Number.isFinite(check.latencyMs) && check.latencyMs >= 1000 ? "slow" : "ok";
+  }
+
+  const recentChecks = $derived(history?.checks.slice(0, 30) ?? []);
+  const stripSlots = $derived([...Array<null>(30 - recentChecks.length).fill(null), ...recentChecks.toReversed()]);
+  const stripSummary = $derived(`${recentChecks.length} recorded ${recentChecks.length === 1 ? "check" : "checks"}, oldest to newest; ${recentChecks.filter(check => stripOutcome(check) === "failed").length} failed, ${recentChecks.filter(check => stripOutcome(check) === "slow").length} slow, ${recentChecks.filter(check => stripOutcome(check) === "ok").length} ok, ${recentChecks.filter(check => stripOutcome(check) === "neutral").length} not checked; ${30 - recentChecks.length} empty slots. Slow means 1 second or more.`);
 
   function dateValue(value?: string | null) {
     return value ? Date.parse(value) : Number.NaN;
@@ -115,22 +126,24 @@
   </section>
 {/if}
 
-{#if history?.checks.length}
-  <section class="settings-card" aria-label="Recent source outcomes">
-    <header><div><h3>Recent outcomes</h3><small>Latest checks and attempts, newest first. A success clears the automatic pause.</small></div></header>
-    <ol aria-label="Recent outcomes" style="display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: var(--space-3) var(--surface-gutter); list-style: none;">
-      {#each history.checks.slice(0, 20) as check}
-        <li title={`${humanize(check.capability)} · ${check.accountLabel} · ${timeLabel(check.testedAt)}`}>
-          <Badge tone={check.outcome === "passed" ? "success" : check.outcome === "failed" ? "danger" : "neutral"}>{humanize(check.outcome)}</Badge>
-        </li>
+<section class="check-history" aria-label="Last 30 checks">
+  <h3>Last 30 checks</h3>
+  {#if loading}<RowsSkeleton count={1} />
+  {:else if error}<ErrorState title="Checks could not be loaded" onretry={() => load(true)} />
+  {:else}
+    <div class="check-strip" role="img" aria-label={stripSummary}>
+      {#each stripSlots as check}
+        <span aria-hidden="true" data-outcome={check ? stripOutcome(check) : "empty"} title={check ? `${humanize(check.outcome)}${stripOutcome(check) === "slow" ? " · Slow" : ""} · ${humanize(check.capability)} · ${check.accountLabel} · ${timeLabel(check.testedAt)}` : "No recorded check"}></span>
       {/each}
-    </ol>
-  </section>
-{/if}
+    </div>
+    {#if recentChecks.length}<div class="check-axis"><span>{timeLabel(recentChecks.at(-1)!.testedAt)}</span><span>Latest</span></div>
+    {:else}<p class="check-empty">No recorded checks yet.</p>{/if}
+  {/if}
+</section>
 
-<details class="settings-card" aria-label="Recent diagnostic checks">
+<details class="settings-card check-details" aria-label="Recent diagnostic checks">
   <summary class="settings-row" style="grid-template-columns: minmax(0, 1fr); min-height: var(--control-md); cursor: pointer;">
-    <div><strong>Recent diagnostic checks ▾</strong><small>{#if history}{history.counts.passed} passed · {history.counts.failed} failed · {history.counts.neutral} neutral{:else if loading}Loading recent checks…{:else}Recent checks unavailable{/if}</small></div>
+    <div><strong>Latest checks</strong><small>{#if history}{history.counts.passed} passed · {history.counts.failed} failed · {history.counts.neutral} neutral{:else if loading}Loading recent checks…{:else}Recent checks unavailable{/if}</small></div>
   </summary>
   <div class="settings-row" style="grid-template-columns: minmax(0, 1fr);">
     <div><small>The latest recorded checks from the last 30 days. Includes recent attempts from this server session. These samples do not measure every stream.</small></div>
@@ -156,9 +169,24 @@
       {/each}
     </ul>
     {#if history.checks.length > visibleCount}
-      <div class="settings-row" style="grid-template-columns: minmax(0, 1fr);"><Button variant="text" onclick={() => visibleCount = 24}>Show more checks</Button></div>
+      <div class="settings-row" style="grid-template-columns: minmax(0, 1fr);"><Button variant="text" onclick={() => visibleCount = history?.checks.length ?? 30}>Show more checks</Button></div>
     {/if}
   {:else if history}
     <div class="settings-row" style="grid-template-columns: minmax(0, 1fr);"><div><small>No recorded diagnostic checks.</small></div></div>
   {/if}
 </details>
+
+<style>
+  .check-history { display: grid; min-width: 0; gap: var(--space-2); }
+  .check-history h3 { margin: 0; color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 600; }
+  .check-strip { display: flex; justify-content: flex-end; height: 26px; gap: 2px; }
+  .check-strip span { flex: 0 0 5px; border-radius: calc(var(--radius-sm) / 3); background: var(--color-ink-muted); }
+  .check-strip [data-outcome="empty"] { opacity: 0.18; }
+  .check-strip [data-outcome="neutral"] { opacity: 0.55; }
+  .check-strip [data-outcome="ok"] { background: var(--success); }
+  .check-strip [data-outcome="slow"] { background: var(--warning); }
+  .check-strip [data-outcome="failed"] { background: var(--danger); }
+  .settings-card.check-details > summary.settings-row { padding-inline: 0; }
+  .check-axis { display: flex; justify-content: space-between; gap: var(--space-2); }
+  .check-axis, .check-empty { margin: 0; color: var(--color-ink-muted); font-size: var(--text-xs); }
+</style>

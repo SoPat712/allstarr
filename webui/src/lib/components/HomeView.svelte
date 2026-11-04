@@ -1,21 +1,49 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ChevronRight, CircleAlert, CircleCheck, CircleDashed, Headphones, KeyRound, Music, Pause } from "@lucide/svelte";
+  import { CircleAlert, CircleCheck, CircleDashed, Headphones, KeyRound, Music, Pause } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
-  import { home } from "$lib/api";
-  import { humanize, relativeTime, isRoutineActivity } from "$lib/activity";
+  import { home, listeningStats, mixes, releaseInbox, settings, type CacheDiagnostics, type ListeningStats, type MixCard, type ReleaseInboxEntry, type StorageOverview } from "$lib/api";
+  import { humanize, relativeTime, isRoutineActivity, isProblem } from "$lib/activity";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import ActivityIcon from "$lib/components/ActivityIcon.svelte";
-  import RouteError from "$lib/components/RouteError.svelte";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import ItemRow from "$lib/components/patterns/ItemRow.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import EmptyState from "$lib/components/patterns/EmptyState.svelte";
+  import HomeSetup from "$lib/components/HomeSetup.svelte";
+  import MixShelf from "$lib/components/MixShelf.svelte";
+  import RecapBars from "$lib/components/RecapBars.svelte";
+  import { listeningTime, recapTimeline } from "$lib/intelligence";
   import { Button } from "$lib/components/ui/button";
-  import { Skeleton } from "$lib/components/ui/skeleton";
   import { playbackProgress, playbackSeekLabel, playbackSourceIssues, summarizeHome, type HomeSnapshot } from "$lib/home";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
-  import { accountSubtitle, findProviderDefinition, providerDisplayName, sourceNeedsAccount } from "$lib/sources";
+  import { findProviderDefinition, providerDisplayName } from "$lib/sources";
   import { reportHref } from "$lib/support";
 
   let { administrator }: { administrator: boolean } = $props();
 
+  let week = $state<ListeningStats | null>(null);
+  let shelf = $state<MixCard[]>([]);
+  let releases = $state<ReleaseInboxEntry[]>([]);
+  let cache = $state<CacheDiagnostics | null>(null);
+  let storage = $state<StorageOverview | null>(null);
+  let extrasPending = false, extrasAt = 0, disposed = false;
+  const daily = $derived(recapTimeline(week?.timeline ?? [], week?.timelineUnit ?? "day"));
+  async function loadExtras() {
+    if (extrasPending || Date.now() - extrasAt < 30_000) return;
+    extrasPending = true;
+    const results = await Promise.allSettled([listeningStats.get("7d"), mixes.list(), releaseInbox.get(), administrator ? settings.cache() : Promise.resolve(null), administrator ? settings.storage() : Promise.resolve(null)] as const);
+    if (!disposed) {
+      if (results[0].status === "fulfilled") week = results[0].value;
+      if (results[1].status === "fulfilled" && Array.isArray(results[1].value)) shelf = results[1].value.filter(card => card.readiness.ready).sort((a, b) => Number(b.inApps) - Number(a.inApps)).slice(0, 6);
+      if (results[2].status === "fulfilled") releases = results[2].value.entries ?? [];
+      if (results[3].status === "fulfilled") cache = results[3].value;
+      if (results[4].status === "fulfilled") storage = results[4].value;
+      extrasAt = Date.now();
+    }
+    extrasPending = false;
+  }
   let snapshot = $state<HomeSnapshot | null>(null);
   let loading = $state(true);
   let refreshing = $state(false);
@@ -59,6 +87,8 @@
     }
 
     refreshing = true;
+    if (includePlayback) extrasAt = 0;
+    void loadExtras();
     const playbackRequest = ++nowPlayingRequest;
     const requests = [
       ["Home overview", home.overview()],
@@ -171,13 +201,7 @@
     return name && name !== "Unknown source" ? `${name} · ` : "";
   };
 
-  // A source that takes no sign-in has nothing to connect, so a zero count would only look like a problem.
-  // Used when the server doesn't say whether the source needs an account.
-  const accountsAt = (providerId: string) => {
-    const definition = providerDefinition(providerId);
-    return definition ? sourceNeedsAccount(definition) : true;
-  };
-    const visibleActivity = $derived((snapshot?.activity ?? []).filter((item) => !isRoutineActivity(item)).slice(0, 8));
+  const visibleActivity = $derived((snapshot?.activity ?? []).filter((item) => !isRoutineActivity(item) && (isProblem(item) || !/record[\s_-]+(?:a[\s_-]+)?listen/i.test(item.label))).slice(0, 5));
 
   const attention = $derived.by(() => {
     if (!snapshot || !summary) return [];
@@ -226,7 +250,7 @@
         href: "#/sources/services",
         action: "Review sources",
       });
-    return items;
+    return administrator ? items : [];
   });
 
   onMount(() => {
@@ -244,6 +268,7 @@
       if (update.reason !== "poll") void refreshNowPlaying();
     });
     return () => {
+      disposed = true;
       unsubscribe();
       refreshScheduler.cancel();
       if (nowPlayingTimer) clearInterval(nowPlayingTimer);
@@ -254,28 +279,16 @@
 </script>
 
 {#if loading}
-  <section class="home-loading" aria-busy="true" aria-label="Loading Home">
-    {#each Array(4) as _}
-      <Skeleton class="skeleton-card" />
-    {/each}
-    <Skeleton class="panel skeleton-panel" />
-  </section>
+  <RowsSkeleton label="Loading Home" />
 {:else if completelyUnavailable}
-  <RouteError
-    eyebrow="Home unavailable"
-    title="Allstarr could not load its current state."
-    message={snapshot?.failures[0] ?? "The server did not return a usable response."}
-    onRetry={refresh}
-  />
+  <ErrorState title="Home could not be loaded" detail={snapshot?.failures[0] ?? "The server did not answer."} onretry={refresh} />
 {:else if snapshot && summary}
 <div class="home-view">
-  {#if snapshot.failures.length}
-    <div class="degraded-banner" role="status">
-      <span aria-hidden="true">!</span>
-      <p><strong>Some live data is unavailable.</strong> {snapshot.failures.join(" · ")}</p>
-      <Button variant="secondary" size="sm" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Trying again…" : "Retry"}</Button>
-    </div>
-  {/if}
+  <PageStatus items={[
+    { label: snapshot.nowPlaying?.length ? `${snapshot.nowPlaying.length} listening` : snapshot.nowPlaying === undefined ? "Playback status unavailable" : "Nothing playing" },
+    ...(administrator ? [{ label: attention.length ? `${attention.length} things need a look` : "Your setup is up to date", tone: attention.length ? "warn" as const : "neutral" as const }, { label: `${summary.activeJobs} jobs running or waiting` }] : []),
+  ]} />
+  {#if snapshot.failures.length}<ErrorState title="Some live data is unavailable" detail={snapshot.failures.join(" · ")} onretry={refresh} />{/if}
 
   <section class="home-now" aria-label="Now playing" aria-live="off">
     {#if snapshot.nowPlaying?.length}
@@ -354,171 +367,77 @@
         </article>
       {/each}
     {:else if snapshot.nowPlaying === undefined || snapshot.failures.some(failure => failure.startsWith("Now playing:"))}
-      <div class="now-playing-empty">
-        <span class="now-playing-artwork" aria-hidden="true"><Headphones size={32} /></span>
-        <div><h2>Playback status unavailable</h2><p>Allstarr could not read the current playback status.</p><Button variant="secondary" onclick={() => void refresh()}>Retry playback status</Button></div>
-      </div>
-    {:else}
-      <div class="now-playing-empty">
-        <span class="now-playing-artwork" aria-hidden="true"><Headphones size={32} /></span>
-        <div>
-          <h2>Nothing is playing</h2>
-          <p>{administrator ? "When someone plays music through Allstarr, it shows up here." : "When you play music through Allstarr, it shows up here."}</p>
-          {#if !snapshot.stats?.currentWeekListens}<Button variant="secondary" href="#/connect">Connect a music app</Button>{/if}
-        </div>
-      </div>
+      <ErrorState title="Playback status unavailable" detail="Allstarr could not read the current playback status." onretry={refresh} />
     {/if}
   </section>
 
   {#if attention.length}
-    <section class="panel home-attention" aria-labelledby="home-attention-title">
-      <h2 id="home-attention-title">Needs your attention</h2>
-      <ul>
-        {#each attention as item (item.key)}
-          <li>
-            <CircleAlert size={20} aria-hidden="true" />
-            <span><strong>{item.title}</strong><small>{item.detail}</small></span>
-            <Button variant="secondary" size="sm" href={item.href}>{item.action}</Button>
-          </li>
-        {/each}
-      </ul>
+    {@const item = attention[0]}
+    <section class="attention-banner" aria-label="Needs your attention">
+      <CircleAlert size={20} aria-hidden="true" />
+      <div><strong>{item.title}</strong><p>{item.detail}{#if attention.length > 1} · {attention.length - 1} more things to review in your setup.{/if}</p></div>
+      <Button variant="outline" size="sm" href={item.href}>{item.action}</Button>
     </section>
   {/if}
+  {#if administrator}<HomeSetup {snapshot} {cache} {storage} />{/if}
 
-  <section class="panel home-overview-panel" aria-label="Overview" aria-busy={refreshing}>
-    <div class="home-listening">
-      <h2>This week</h2>
-      {#if !snapshot.stats}
-        <p class="home-sentence">Listening stats aren't available right now.</p>
-      {:else if !snapshot.stats.currentWeekListens}
-        <p class="home-sentence">No songs finished this week yet.</p>
-      {:else}
-        <p class="home-sentence">
-          <strong>{plural(snapshot.stats.currentWeekListens, "song")}</strong> finished this week,
-          {listenTrend(snapshot.stats.currentWeekListens, snapshot.stats.previousWeekListens)}.
-          {#if snapshot.stats.topArtist?.name}
-            Most played this month: <strong>{snapshot.stats.topArtist.name}</strong>, {plural(snapshot.stats.topArtist.listens, "play")}.
-          {/if}
-        </p>
-      {/if}
-      {#if snapshot.stats}
-        <p class="home-sentence-detail">{plural(snapshot.stats.completedListens, "song")} in the last 24 hours · {plural(snapshot.stats.scrobbleDeliveries, "scrobble")} sent</p>
-      {/if}
-    </div>
-
-    <dl class="home-facts">
-      <a href="#/library/playlists">
-        <dt>Playlists</dt>
-        <dd>{plural(summary.managed, "playlist")}</dd>
-        <ChevronRight size={16} aria-hidden="true" />
-      </a>
-      {#if summary.playable + summary.unresolved > 0}
-      <a href="#/library/matches">
-        <dt>Playable songs</dt>
-        <dd>{summary.playable.toLocaleString()} of {(summary.playable + summary.unresolved).toLocaleString()}</dd>
-        <ChevronRight size={16} aria-hidden="true" />
-      </a>
-      {/if}
-      {#if administrator}
-      <a href="#/activity?view=jobs">
-        <dt>Background work</dt>
-        <dd>{summary.activeJobs ? `${plural(summary.activeJobs, "job")} running` : "Idle"}</dd>
-        <ChevronRight size={16} aria-hidden="true" />
-      </a>
-        <a href="#/library/cached">
-          <dt>Stored songs</dt>
-          <dd>{snapshot.stats?.cacheTracks == null ? "—" : `${(snapshot.stats.cacheTracks + (snapshot.stats.keptTracks ?? 0)).toLocaleString()} (${snapshot.stats.cacheTracks} cached, ${snapshot.stats.keptTracks ?? 0} kept)`}</dd>
-          <ChevronRight size={16} aria-hidden="true" />
-        </a>
-        <a href="#/sources/services">
-          <dt>Media server</dt>
-          <dd>{snapshot.status?.backendType ?? "Unknown"}</dd>
-          <ChevronRight size={16} aria-hidden="true" />
-        </a>
-      {/if}
-    </dl>
+  <section class="week-panel panel" aria-label={administrator ? "This week" : "Your week"} aria-busy={refreshing}>
+    <header><h2>{administrator ? "This week" : "Your week"}</h2><a href="#/for-you?section=recap">Open Recap</a></header>
+    {#if snapshot.stats}
+      <div class="week-numbers">
+        <div><strong>{snapshot.stats.currentWeekListens.toLocaleString()}</strong><span>songs finished</span><small>{listenTrend(snapshot.stats.currentWeekListens, snapshot.stats.previousWeekListens)}</small></div>
+        <div>{#if !administrator && week?.estimatedTimeFromSongLengthsMilliseconds != null}<strong>{listeningTime(week.estimatedTimeFromSongLengthsMilliseconds)}</strong><span>listening time</span>{:else}<strong>{snapshot.stats.completedListens.toLocaleString()}</strong><span>in the last 24 hours</span>{/if}</div>
+        <div><strong>{snapshot.stats.topArtist?.name ?? "—"}</strong><span>most played this month</span>{#if snapshot.stats.topArtist}<small>{plural(snapshot.stats.topArtist.listens, "play")}</small>{/if}</div>
+        <div>{#if !administrator && week?.newArtistCount != null}<strong>{week.newArtistCount.toLocaleString()}</strong><span>new artists</span>{:else}<strong>{snapshot.stats.scrobbleDeliveries.toLocaleString()}</strong><span>scrobbles sent today</span>{/if}</div>
+      </div>
+    {:else}<p class="muted">Listening stats aren't available right now.</p>{/if}
+    {#if daily.length}<div class="week-chart"><p>Your listening each day</p><RecapBars points={daily} label="Your listening each day" unit="songs" /></div>{:else}<p class="muted">Your daily listening chart appears when listening stats are available.</p>{/if}
   </section>
 
-  <section class="home-columns">
-    <article class="panel home-panel">
-      <header>
-        <h2>{administrator ? "Sources" : "Your accounts"}</h2>
-        <a href={administrator ? "#/sources/services" : "#/sources/accounts"}>Manage</a>
-      </header>
-
-      {#if snapshot.providers?.length}
-        <div class="provider-list">
-          {#each snapshot.providers.slice(0, 6) as provider}
-            <a class="provider-line" href={`#/sources/services/${encodeURIComponent(provider.providerId)}`}>
-              <ProviderMark
-                id={provider.providerId}
-                definition={providerDefinition(provider.providerId)}
-              />
-              <span>
-                <strong>{providerName(provider.providerId)}</strong>
-                <small>
-                  {provider.connectedAccounts?.length
-                    ? provider.connectedAccounts.map(accountSubtitle).join("; ")
-                    : provider.enabledAccountCount || (provider.needsAccount ?? accountsAt(provider.providerId))
-                      ? plural(provider.enabledAccountCount, "connected account")
-                      : "No account needed"}
-                </small>
-              </span>
-              <span class="provider-result" class:attention={provider.failedCapabilityCount > 0} class:healthy={provider.capabilityTotal > 0 && provider.failedCapabilityCount === 0}>
-                {#if provider.capabilityTotal}
-                  {provider.failedCapabilityCount ? `${provider.failedCapabilityCount} failing` : "Working"}
-                  <small>{relativeTime(provider.lastCheckedAt, "Not checked yet")}</small>
-                {:else}Not checked yet{/if}
-              </span>
-            </a>
-          {/each}
-        </div>
-      {:else}
-        <div class="compact-empty">
-          {#if administrator}
-            <strong>No sources connected</strong>
-            <p>Connect a music service to play songs you don't have locally.</p>
-            <Button variant="secondary" size="sm" href="#/sources/services">Connect a source</Button>
-          {:else}
-            <strong>Your music is ready to play</strong>
-            <p>You're using your household's services. Connect your own account to bring your library and playlists.</p>
-            <Button variant="secondary" size="sm" href="#/sources/accounts">Connect an account</Button>
-          {/if}
-        </div>
-      {/if}
-    </article>
-
-    <article class="panel home-panel">
-      <header>
-        <h2>Recent activity</h2>
-        <a href="#/activity">View all</a>
-      </header>
-
+  {#if administrator || visibleActivity.length}
+    <section class="recent-panel panel" aria-label="Recent activity">
+      <header><h2>Recent activity</h2><a href="#/activity">View all</a></header>
       {#if visibleActivity.length}
-        <div class="activity-list">
-          {#each visibleActivity as item}
-            <a href="#/activity" class="activity-line">
-              <span
-                class="activity-artwork"
-                class:failed={["failed", "degraded", "unavailable"].includes(item.state.toLowerCase())}
-                data-kind={item.kind}
-                aria-hidden="true"
-              ><ActivityIcon kind={item.kind} /></span>
-              <span>
-                <strong>{humanize(item.label)}</strong>
-                <small>{activitySource(item.source)}{activityDetail(item.detail)}</small>
-              </span>
-              <time datetime={item.occurredAt}>{relativeTime(item.occurredAt)}</time>
-            </a>
-          {/each}
-        </div>
-      {:else}
-        <div class="compact-empty">
-          <strong>Nothing new lately</strong>
-          <p>{administrator ? "Matches, playlist updates and source problems will show up here." : "Your listening, playlists and matches will show up here."}</p>
-        </div>
-      {/if}
-    </article>
-  </section>
+        {#each visibleActivity as item}
+          <ItemRow title={humanize(item.label)} subtitle={`${activitySource(item.source)}${activityDetail(item.detail)} · ${relativeTime(item.occurredAt)}`} href="#/activity">
+            {#snippet leading()}<ActivityIcon kind={item.kind} />{/snippet}
+          </ItemRow>
+        {/each}
+      {:else}<EmptyState title="Nothing new lately" description="Matches, playlist updates and source problems will show up here." />{/if}
+    </section>
+  {/if}
+  {#if shelf.length}<MixShelf title="Pick up where you left off" cards={shelf} columns={6} seeAll="#/for-you" seeAllLabel="All mixes" onopen={card => { window.location.hash = `#/for-you?mix=${encodeURIComponent(card.id)}`; }} />
+  {:else}<EmptyState title="Your mixes start here" description="Play some music or import your history to get mixes made for you.">{#snippet icon()}<Headphones size={24} />{/snippet}{#snippet action()}<Button variant="outline" href="#/for-you">Explore your mixes</Button>{/snippet}</EmptyState>{/if}
+  {#if !administrator && releases.length}<div class="release-note"><span>New from artists you follow: <strong>{releases[0].title}</strong> by {releases[0].artist}</span><a href="#/for-you?section=releases">See releases</a></div>{/if}
 </div>
 {/if}
+<style>
+  .home-view { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
+  .home-now:empty { display: none; }
+  .now-playing-card.hero { grid-template-columns: 88px minmax(0, 1fr); gap: var(--space-4); padding: var(--space-4); border: 1px solid var(--color-edge); }
+  .now-playing-card.hero .now-playing-artwork { width: 88px; }
+  .now-playing-card.hero .now-playing-title h2 { font-size: 1.25rem; line-height: 1.4; }
+  .now-playing-backdrop { display: none; }
+  .now-playing-meta { gap: var(--space-4); }
+  .attention-banner { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--color-edge)); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--warning) 7%, var(--color-panel)); }
+  .attention-banner > :global(svg) { color: var(--warning); flex: 0 0 auto; }
+  .attention-banner > div { min-width: 0; flex: 1; font-size: var(--text-sm); }
+  .attention-banner p, .muted { color: var(--color-ink-muted); font-size: var(--text-sm); }
+  .week-panel { padding: var(--space-4); }
+  header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+  h2 { font-size: 1.125rem; font-weight: 600; }
+  header a, .release-note a { display: inline-flex; min-height: 44px; align-items: center; font-size: var(--text-sm); }
+  .week-numbers { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-4); margin-block: var(--space-3) var(--space-5); }
+  .week-numbers > div { display: grid; align-content: start; gap: var(--space-1); min-width: 0; }
+  .week-numbers strong { font: 600 1.65rem/1.2 var(--font-display); overflow-wrap: anywhere; }
+  .week-numbers span, .week-numbers small, .week-chart > p { color: var(--color-ink-muted); font-size: var(--text-sm); }
+  .week-chart { overflow-x: auto; }
+  .week-chart :global(.recap-bars) { min-width: 348px; }
+  .week-chart > p { margin-bottom: var(--space-4); }
+  .week-chart :global(.plot) { height: 90px; }
+  .week-chart :global(.bar) { max-width: 48px; }
+  .recent-panel { overflow: hidden; }
+  .recent-panel header { padding: var(--space-2) var(--space-4); }
+  .release-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); font-size: var(--text-sm); }
+  @media (max-width: 650px) { .week-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); } .attention-banner { flex-wrap: wrap; } .attention-banner > div { flex-basis: calc(100% - 40px); } .attention-banner > :global(a) { margin-left: 32px; } .now-playing-card.hero { grid-template-columns: 56px minmax(0, 1fr); } .now-playing-card.hero .now-playing-artwork { width: 56px; } .now-playing-card.hero .now-playing-title h2 { font-size: 1.125rem; } .now-playing-meta { flex-wrap: wrap; } }
+</style>

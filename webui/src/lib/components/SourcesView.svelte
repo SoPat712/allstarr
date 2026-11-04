@@ -1,16 +1,23 @@
 <script lang="ts">
-  import ProviderUseControl from "$lib/components/ProviderUseControl.svelte";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
+  import ItemRow from "$lib/components/patterns/ItemRow.svelte";
+  import StatePill from "$lib/components/patterns/StatePill.svelte";
+  import EmptyState from "$lib/components/patterns/EmptyState.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import SearchField from "$lib/components/SearchField.svelte";
+  import { Switch } from "$lib/components/ui/switch";
   import { diagnosticFailureMessage, diagnosticIsNeutral, type DiagnosticFailure } from "$lib/diagnostics";
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
+  import { goto } from "$app/navigation";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
-  import { Skeleton } from "$lib/components/ui/skeleton";
-  import { ArrowLeft, ChevronRight, MoreHorizontal, PackagePlus, Plus } from "@lucide/svelte";
+  import { ChevronRight, LockKeyhole, MoreHorizontal, PackagePlus, Plus, Radio } from "@lucide/svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
-  import { isRanked } from "$lib/provider-score";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   import {
     home,
@@ -30,13 +37,11 @@
     type ProviderScore,
     type ProviderSummary,
     type UiSchema,
+    type ScrobbleDelivery,
   } from "$lib/api";
-  import ScrobbleDeliveries from "$lib/components/ScrobbleDeliveries.svelte";
   import ConnectivityBars from "$lib/components/ConnectivityBars.svelte";
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import PlaylistConsent from "$lib/components/PlaylistConsent.svelte";
-  import RouteError from "$lib/components/RouteError.svelte";
-  import ExtensionsView from "$lib/components/ExtensionsView.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import { fieldValue } from "$lib/settings";
   import { relativeTime } from "$lib/activity";
@@ -45,7 +50,6 @@
     accountSubtitle,
     accountOwnershipLabel,
     providerDisplayName,
-    audienceLabel,
     ctsMeasurementLabel,
     humanize,
     providerReadinessLabel,
@@ -179,11 +183,18 @@
   let accessOpen = $state(false);
   let selectedAccount = $state<ProviderAccount | null>(null);
   let selectedSource = $state<ProviderDefinition | null>(null);
-  let listFilter = $state<"mine" | "all" | "attention" | "accounts">("mine");
-
-  $effect(() => {
-    listFilter = mode === "accounts" ? "accounts" : "mine";
-  });
+  let listFilter = $state("attention");
+  let moreOpen = $state(false);
+  let moreSourceId = "";
+  let sourceUndo = $state<{ providerId: string; run: () => Promise<void> } | null>(null);
+  let undoing = $state(false);
+  let search = $state("");
+  let kind = $state("all");
+  let filterInitialized = false;
+  let deliveries = $state<ScrobbleDelivery[]>([]);
+  let deliveryRefresh = $state(0);
+  const accountsPage = $derived(mode === "accounts" || from === "accounts" || initialSection === "playlist-editing");
+  const panelAccount = $derived(focusAccount ? accounts.find(account => account.id === focusAccount) : undefined);
   let addSourceOpen = $state(false);
   let removal = $state<ProviderAccount | null>(null);
   let removeOpen = $state(false);
@@ -248,13 +259,12 @@
   });
 
   const canConnectAccounts = $derived(administrator || listenersCanConnectOwnAccounts);
-  const mySources = $derived(providers.filter(item => sourceIsInUse(item, accounts, health)));
+  const mySources = $derived(providers.filter(item => sourceIsInUse(item, accounts, health) && item.useMode !== "off" && sourceStatus(item, accounts, health) !== "disabled"));
   const needsSetup = $derived(mySources.filter((item) =>
     ["degraded", "needs_verification", "needs_config", "partial_config"].includes(sourceStatus(item, accounts, health))));
   const pageId = $derived(serviceId || (initialSource && !(initialConnect && mode === "accounts") ? initialSource : ""));
   const pageSource = $derived(pageId ? provider(pageId) ?? null : null);
-  const backHref = $derived(from === "accounts" ? "#/sources/accounts" : "#/sources/services");
-  const backLabel = $derived(from === "accounts" ? "Accounts" : "Sources");
+  const backHref = $derived(accountsPage ? "#/sources/accounts" : "#/sources/services");
 
   $effect(() => {
     selectedSource = pageSource;
@@ -262,10 +272,94 @@
 
   function servicePath(id: string, account?: string) {
     const query = new URLSearchParams();
-    if (listFilter === "accounts") query.set("from", "accounts");
+    if (accountsPage) query.set("from", "accounts");
     if (account) query.set("account", account);
     const search = query.toString();
     return `#/sources/services/${encodeURIComponent(id)}${search ? `?${search}` : ""}`;
+  }
+  const offSources = $derived(providers.filter(item => item.useMode === "off" || sourceStatus(item, accounts, health) === "disabled"));
+  const filteredSources = $derived((listFilter === "attention" ? needsSetup : listFilter === "in-use" ? mySources : listFilter === "off" ? offSources : providers)
+    .filter(item => item.name.toLowerCase().includes(search.trim().toLowerCase()) && (kind === "all" || item.categories?.includes(kind))));
+  const filteredAccounts = $derived(accounts.filter(account => `${providerDisplayName(providers, account.providerId)} ${account.displayName} ${account.ownerDisplayName ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())));
+  const kinds = $derived([...new Set(providers.flatMap(item => item.categories ?? []))].sort());
+
+  $effect(() => {
+    if (!pageSource || moreSourceId === pageSource.id) return;
+    moreSourceId = pageSource.id;
+    moreOpen = initialSection === "configuration" || Boolean(pageSource.usesSignedSession) || pageSource.id === "apple-musickit" || pageSource.connectionKind === "operator_managed";
+  });
+
+  function closePanel() { void goto(backHref, { keepFocus: true, noScroll: true }); }
+  async function undoSourceSetting() {
+    if (!sourceUndo || undoing) return;
+    const change = sourceUndo;
+    undoing = true;
+    try {
+      await change.run();
+      if (sourceUndo === change) sourceUndo = null;
+      toast.success("Source setting restored.");
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "The source setting could not be restored."); }
+    finally { undoing = false; }
+  }
+  function sourceFact(item: ProviderDefinition) {
+    const metrics = sourceMetrics(item, providerHealth(item.id));
+    const problem = sourceProblemLabel(item, accounts, health);
+    const state = sourceStatus(item, accounts, health);
+    const timing = sourceTimingLabel(item, summary(item.id));
+    const fact = item.useMode === "off" || state === "disabled" ? "Not used" : problem
+      ? `${problem}${metrics.total ? ` · ${metrics.passing} of ${metrics.total} ${metrics.total === 1 ? "check" : "checks"} passed` : ""}`
+      : state === "needs_verification" ? "Sign in again" : state === "needs_config" ? "Connect an account to use this source"
+      : [qualityOf(item.id), timing === "Not applicable" ? "" : timing].filter(Boolean).join(" · ") || (sourceNeedsAccount(item) ? "Account connected" : "No account needed");
+    return `${sourceOriginLabel(item)} · ${fact}`;
+  }
+  function sourceLabel(item: ProviderDefinition) {
+    const state = sourceStatus(item, accounts, health);
+    if (item.useMode === "off" || state === "disabled") return "Off";
+    if (item.useMode === "manualOnly") return "Manual only";
+    if (state === "degraded") return "Failing";
+    if (["healthy", "configured"].includes(state)) return "Working";
+    return sourceStatusLabel(state);
+  }
+  function sourceTone(item: ProviderDefinition): "ok" | "stop" | "warn" | "neutral" {
+    const label = sourceLabel(item);
+    return label === "Working" ? "ok" : label === "Failing" ? "stop" : ["Off", "Manual only", "Available"].includes(label) ? "neutral" : "warn";
+  }
+  function waitingFor(account: ProviderAccount) {
+    return deliveries.filter(item => item.destinationAccountId === account.id || !item.destinationAccountId && item.suggestedDestinationAccountId === account.id).length;
+  }
+  function accountState(account: ProviderAccount) {
+    if (!account.enabled) return "Off";
+    const waiting = waitingFor(account);
+    if (waiting) return `${waiting} waiting`;
+    if (!provider(account.providerId)?.usesSignedSession && (!account.secret.configured || account.secret.revoked)) return "Sign in again";
+    const checks = health.filter(item => item.providerAccountId === account.id);
+    return checks.some(item => item.health === "degraded") ? "Needs attention" : checks.length && checks.every(item => item.ready) ? "Working" : "Connected";
+  }
+  const panelIndex = $derived(panelAccount ? filteredAccounts.findIndex(account => account.id === panelAccount.id) : filteredSources.findIndex(item => item.id === pageId));
+  const panelCount = $derived(panelAccount ? filteredAccounts.length : filteredSources.length);
+
+  function panelNavigate(offset: number) {
+    if (panelAccount) {
+      const index = filteredAccounts.findIndex(account => account.id === panelAccount.id);
+      const next = filteredAccounts[index + offset];
+      if (next) void goto(servicePath(next.providerId, next.id), { keepFocus: true, noScroll: true });
+    } else {
+      const index = filteredSources.findIndex(item => item.id === pageId);
+      const next = filteredSources[index + offset];
+      if (next) void goto(servicePath(next.id), { keepFocus: true, noScroll: true });
+    }
+  }
+  function canCheckSource(item: ProviderDefinition) {
+    return providerAccounts(item.id).some(account => account.enabled && account.canManage) || item.runtimeCapabilities?.some(check => check.canTest) || providerHealth(item.id).some(check => check.canTest);
+  }
+  async function checkSource(item: ProviderDefinition) {
+    const account = providerAccounts(item.id).find(account => account.enabled && account.canManage);
+    if (account) await test(account);
+    else {
+      const check = item.runtimeCapabilities?.find(check => check.canTest);
+      const capability = check?.id ?? providerHealth(item.id).find(check => check.canTest)?.capability;
+      if (capability) await testWithoutAccount(item, capability);
+    }
   }
   const canManageAllAccounts = $derived(administrator);
 
@@ -337,6 +431,8 @@
     const failed = results.filter((result) => result.status === "rejected");
     if (failed.length)
       error = failed[0].reason instanceof Error ? failed[0].reason.message : "Source state is unavailable.";
+    if (!filterInitialized && schema) { listFilter = needsSetup.length ? "attention" : "in-use"; filterInitialized = true; }
+    if (accountsPage) deliveryRefresh++;
     loading = false;
   }
 
@@ -390,11 +486,6 @@
     return `Used for ${list}.`;
   }
 
-  function implementationLabel(item: ProviderDefinition) {
-    const count = item.capabilityRoutes?.length ?? 0;
-    return count > 1 ? `${count} interchangeable implementations` : `${sourceOriginLabel(item)} implementation`;
-  }
-
   function accountSettingValue(account: ProviderAccount, field: ProviderSetting) {
     if (field.sensitive)
       return account.configuredFields?.includes(field.key) ? "Stored" : "Not set";
@@ -405,32 +496,21 @@
     return String(value);
   }
 
-  async function saveSourceConfiguration(event: SubmitEvent) {
-    event.preventDefault();
-    if (!selectedSource || action) return;
-    action = `configure:${selectedSource.id}`;
-    const fields = selectedSource.configSchema ?? [];
-    const data = new FormData(event.currentTarget as HTMLFormElement);
-    const updates = Object.fromEntries(fields
-      .filter((field) => !field.readOnly && field.ownership !== "deployment")
-      .map((field) => [
-        field.key,
-        field.type === "toggle" ? String(data.get(field.key) === "on") : String(data.get(field.key) ?? ""),
-      ]));
+  async function saveServerValue(field: ConfigField, value: string, undo = false) {
+    if (action || field.readOnly || field.ownership === "deployment") return;
+    const previous = String(fieldValue(config, field));
+    action = `setting:${field.key}`;
     try {
-      await settings.save(updates);
-      toast.success(`${selectedSource.name} configuration saved.`);
+      await settings.save({ [field.key]: value });
       await refresh();
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "Source configuration could not be saved.");
-    } finally {
-      action = "";
-    }
+      if (!undo) toast.success(`${field.label} saved.`, field.sensitive ? undefined : { label: "Undo", run: () => saveServerValue(field, previous, true) });
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "The setting could not be saved."); }
+    finally { action = ""; }
   }
 
   function resetServerField(event: MouseEvent, field: ConfigField) {
     const input = (event.currentTarget as HTMLButtonElement).form?.elements.namedItem(field.key);
-    if (input instanceof HTMLInputElement) input.value = String(settingDefault(field));
+    if (input instanceof HTMLInputElement) { input.value = String(settingDefault(field)); void saveServerValue(field, input.value); }
   }
 
   function manageAccess(account: ProviderAccount) {
@@ -443,7 +523,11 @@
     action = account.id;
     try {
       await sources.setEnabled(account, !account.enabled);
-      await completed(`${account.sourceDisplayName || account.displayName} ${account.enabled ? "disabled" : "enabled"}.`);
+      await refresh();
+      const saved = accounts.find(item => item.id === account.id);
+      toast.success(`${account.sourceDisplayName || account.displayName} ${account.enabled ? "paused" : "enabled"}.`, saved ? { label: "Undo", run: async () => {
+        try { await sources.setEnabled(saved, account.enabled); await refresh(); } catch (cause) { toast.error(cause instanceof Error ? cause.message : "The account could not be updated."); }
+      } } : undefined);
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "The connection could not be updated.");
     } finally {
@@ -547,6 +631,7 @@
     try {
       await sources.remove(removal.id);
       removeOpen = false;
+      if (focusAccount === removal.id) closePanel();
       await completed(`${removal.sourceDisplayName || removal.displayName} removed.`);
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "The saved connection could not be removed.");
@@ -556,6 +641,7 @@
   }
 
   onMount(() => {
+    try { search = localStorage.getItem("allstarr.sources.search") ?? ""; kind = localStorage.getItem("allstarr.sources.kind") ?? "all"; } catch { /* use the default filters */ }
     void refresh();
     const unsubscribe = liveUpdates.subscribe(update => {
       if (sourceUpdateNeedsRefresh(update)) scheduleRefresh();
@@ -565,58 +651,37 @@
       refreshScheduler.cancel();
     };
   });
+  $effect(() => {
+    try { localStorage.setItem("allstarr.sources.search", search); localStorage.setItem("allstarr.sources.kind", kind); } catch { /* filters work without storage */ }
+  });
 </script>
 
+{#snippet accountMenu(account: ProviderAccount)}
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger class="icon-button" aria-label={`Actions for ${account.displayName}`} disabled={Boolean(action)}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
+    <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+      {#if account.canManage}<DropdownMenu.Item class="bits-menu-item" onSelect={() => configure(account)}>Reconnect</DropdownMenu.Item>{/if}
+      {#if account.canChangeAudience}<DropdownMenu.Item class="bits-menu-item" onSelect={() => manageAccess(account)}>Edit access</DropdownMenu.Item>{/if}
+      {#if administrator && account.canManage}<DropdownMenu.Item class="bits-menu-item" onSelect={() => void test(account)}>Test connection</DropdownMenu.Item>{/if}
+      {#if account.canManage}<DropdownMenu.Item class="bits-menu-item" onSelect={() => void toggle(account)}>{account.enabled ? "Pause" : "Enable"}</DropdownMenu.Item><DropdownMenu.Separator /><DropdownMenu.Item class="bits-menu-item danger-item" onSelect={() => { removal = account; removeOpen = true; }}>Remove…</DropdownMenu.Item>{/if}
+    </DropdownMenu.Content></DropdownMenu.Portal>
+  </DropdownMenu.Root>
+{/snippet}
+
 {#snippet accountList()}
-      <ul class="source-list account-list" aria-label={`${accounts.length} account${accounts.length === 1 ? "" : "s"}`}>
-        {#each accounts as account (account.id)}
-          {@const definition = provider(account.providerId)}
-          {@const capabilities = health.filter((item) => item.providerAccountId === account.id)}
-          {@const cts = measurements.find((item) => item.providerAccountId === account.id)}
-          {@const ready = capabilities.filter((item) => item.ready).length}
-          <li class="source-row" id={`connection-${account.id}`}>
-            <a class="source-row-main" href={servicePath(account.providerId, account.id)} aria-label={`Open ${providerDisplayName(providers, account.providerId)} account`}>
-              <ProviderArtwork id={account.providerId} definition={definition} />
-              <span class="source-row-copy">
-                <span class="source-name"><strong>{providerDisplayName(providers, account.providerId)}</strong>{#if definition}<Badge tone="neutral" class="origin-badge">{sourceOriginLabel(definition)}</Badge>{/if}</span>
-                <small>{accountOwnershipLabel(account)}{definition?.usesSignedSession || account.secret.configured && !account.secret.revoked ? "" : " · Setup needed"}</small>
-              </span>
-              <span class="source-row-owner">
-                <small>Added by</small>
-                {account.creatorDisplayName || account.ownerDisplayName || "Unknown"}
-              </span>
-              <span class="source-row-status">
-                <Badge state={!account.enabled ? "disabled" : readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}>
-                  {!account.enabled ? "Turned off" : capabilities.length && ready === capabilities.length ? "Working" : `${ready} of ${capabilities.length} ready`}
-                </Badge>
-                {#if cts}<small>Starts in {ctsMeasurementLabel(cts)}</small>{/if}
-              </span>
-              <ChevronRight class="source-row-chevron" size={18} aria-hidden="true" />
-            </a>
-            {#if account.canManage || account.canChangeAudience}
-              <DropdownMenu.Root>
-                <DropdownMenu.Trigger class="icon-button source-row-menu" disabled={Boolean(action)} aria-label={`Actions for ${account.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
-                <DropdownMenu.Portal>
-                  <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
-                    {#if account.canChangeAudience}
-                      <DropdownMenu.Item class="bits-menu-item" onSelect={() => manageAccess(account)}>Edit access</DropdownMenu.Item>
-                    {/if}
-                    {#if account.canManage}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void toggle(account)}>{account.enabled ? "Disable" : "Enable"}</DropdownMenu.Item>{/if}
-                    <DropdownMenu.Separator />
-                    {#if account.canManage}<DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => { removal = account; removeOpen = true; }}>Remove</DropdownMenu.Item>{/if}
-                  </DropdownMenu.Content>
-                </DropdownMenu.Portal>
-              </DropdownMenu.Root>
-            {:else}<span class="source-row-readonly">Read only</span>{/if}
-          </li>
-        {:else}
-          <li class="compact-empty connections-empty">
-            <strong>No accounts connected</strong>
-            <p>Connect Spotify, Deezer or another service to import playlists and play songs you don't have locally.</p>
-            {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect account</Button>{/if}
-          </li>
-        {/each}
-      </ul>
+  {#if filteredAccounts.length}
+    <div class="accounts-table-wrap"><table class="accounts-table" aria-label="Accounts"><thead><tr><th>Service</th><th>Account</th><th>Shared with</th><th>State</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>
+      {#each filteredAccounts as account (account.id)}
+        <tr class:account-selected={focusAccount === account.id} id={`connection-${account.id}`}>
+          <td><a class="account-opener" href={servicePath(account.providerId, account.id)} data-sveltekit-keepfocus data-sveltekit-noscroll aria-label={`Open ${providerDisplayName(providers, account.providerId)} account`}><ProviderArtwork id={account.providerId} definition={provider(account.providerId)} decorative /><strong>{providerDisplayName(providers, account.providerId)}</strong></a></td>
+          <td data-label="Account">{account.ownerDisplayName || account.creatorDisplayName || account.displayName}{#if account.customLabel}<small>{account.customLabel}</small>{/if}</td>
+          <td data-label="Shared with">{account.scope === "Shared" ? "Everyone" : `Just ${account.ownerDisplayName || "you"}`}</td>
+          <td data-label="State"><StatePill tone={!account.enabled ? "neutral" : ["Working", "Connected"].includes(accountState(account)) ? "ok" : "warn"} text={accountState(account)} /></td>
+          <td>{#if account.canManage || account.canChangeAudience}{@render accountMenu(account)}{:else}<span class="muted">Read only</span>{/if}</td>
+        </tr>
+      {/each}
+    </tbody></table></div>
+  {:else}<EmptyState title={search ? "No accounts found" : "No accounts connected"} description="Connect a service to add your library and playlists.">{#snippet icon()}<Plus size={24} />{/snippet}</EmptyState>{/if}
 {/snippet}
 
 {#snippet checkRow(label: string, check: Omit<SourceCheck, "id">, result?: ConnectivityResult, onTest?: () => void, canTest = false, testKey = "", onTry?: () => void)}
@@ -639,11 +704,11 @@
               <div class="settings-row setting-field" class:read-only={field.readOnly || field.ownership === "deployment" || source.id === "apple-musickit" && (config.appleDownload as { endpointManagedByDeployment?: boolean })?.endpointManagedByDeployment}>
                 <div><label for={field.key}><strong>{source.id === "apple-musickit" ? "Optional playback gateway URL" : field.label}</strong></label>{#if source.id === "apple-musickit"}<small>{(config.appleDownload as { endpointManagedByDeployment?: boolean })?.endpointManagedByDeployment ? "Configured by deployment." : "Leave blank to use the bundled gateway."}</small>{:else if field.helpText}<small>{field.helpText}</small>{/if}{#if field.ownership === "deployment"}<small>Deployment-owned</small>{/if}</div>
                 {#if field.readOnly || field.ownership === "deployment" || source.id === "apple-musickit" && (config.appleDownload as { endpointManagedByDeployment?: boolean })?.endpointManagedByDeployment}
-                  <output>{field.sensitive ? "Stored" : String(fieldValue(config, field))}</output>
+                  <output><LockKeyhole size={14} aria-label="Managed by deployment" /> {field.sensitive ? "Stored" : String(fieldValue(config, field))}</output>
                 {:else if field.type === "select"}
-                  <SelectField name={field.key} label={source.id === "apple-musickit" ? "Optional playback gateway URL" : field.label} value={field.sensitive ? "" : String(fieldValue(config, field))} options={field.options ?? []} />
+                  <SelectField name={field.key} label={source.id === "apple-musickit" ? "Optional playback gateway URL" : field.label} value={field.sensitive ? "" : String(fieldValue(config, field))} options={field.options ?? []} disabled={Boolean(action)} onchange={value => void saveServerValue(field, value)} />
                 {:else if field.type === "toggle"}
-                  <span class="settings-toggle"><Checkbox id={field.key} name={field.key} checked={Boolean(fieldValue(config, field))} /></span>
+                  <span class="settings-toggle"><Checkbox id={field.key} name={field.key} checked={Boolean(fieldValue(config, field))} disabled={Boolean(action)} onCheckedChange={value => void saveServerValue(field, String(value))} /></span>
                 {:else}
                   <div class="source-setting-control">
                   <input
@@ -655,6 +720,8 @@
                     max={field.max ?? undefined}
                     required={field.required}
                     autocomplete="off"
+                    disabled={Boolean(action)}
+                    onchange={event => { if (event.currentTarget.checkValidity()) void saveServerValue(field, event.currentTarget.value); }}
                   />
                   {#if field.defaultValueJson != null && !field.sensitive}
                     <Button type="button" variant="secondary" size="sm" disabled={Boolean(action)} aria-label={`Reset ${field.label} to default`} onclick={(event) => resetServerField(event, field)}>Reset to default</Button>
@@ -666,57 +733,16 @@
 {/snippet}
 
 {#snippet servicePage(source: ProviderDefinition)}
-  {@const state = sourceStatus(source, accounts, health)}
-  {@const metrics = sourceMetrics(source, providerHealth(source.id))}
   {@const sourceAccounts = providerAccounts(source.id)}
-  {@const sourceCts = measurements.find((item) => item.providerId.toLowerCase() === source.id.toLowerCase() && !item.providerAccountId)}
   {@const fields = accountSettings(source)}
   {@const streams = source.categories?.some((item) => ["streaming", "download"].includes(item.toLowerCase())) ?? false}
   {@const usesAccounts = sourceNeedsAccount(source) || fields.length > 0 || sourceAccounts.length > 0}
-  <section class="service-page" aria-labelledby="service-title">
-    <a class="service-back" href={backHref}><ArrowLeft size={16} aria-hidden="true" />{backLabel}</a>
-    <header class="service-head">
-      <ProviderArtwork id={source.id} definition={source} />
-      <div class="service-head-copy">
-        <div class="source-name source-title"><h2 id="service-title">{source.name}</h2><Badge tone="neutral" class="origin-badge">{sourceOriginLabel(source)}</Badge></div>
-        <p>{sourcePurpose(source)}</p>
-        <div class="service-head-meta">
-          <Badge state={state}>{state === "degraded" ? sourceProblemLabel(source, accounts, health) ?? sourceStatusLabel(state) : sourceStatusLabel(state)}</Badge>
-          <span>{metrics.checkedAt ? `${metrics.passing} of ${metrics.total || 0} checks passed · ${relativeTime(metrics.checkedAt)}` : "Not checked yet"}</span>
-        </div>
-      </div>
-      <div class="sources-heading-actions">
-        {#if administrator && streams && !sourceNeedsAccount(source)}
-          <Button variant="secondary" disabled={Boolean(action)} onclick={() => void measureSource(source)}>{action === `${source.id}:cts` ? "Measuring…" : "Measure start time"}</Button>
-        {/if}
-        {#if canConnectAccounts && usesAccounts && source.id !== "audiomuse-ai"}
-          <Button onclick={() => { connectProviderId = source.id; connectOpen = true; }}><Plus size={16} aria-hidden="true" />{sourceAccounts.length ? "Connect another account" : "Connect account"}</Button>
-        {/if}
-      </div>
-    </header>
-
-    <ProviderUseControl providerId={source.id} {administrator} onSaved={refresh} />
-
-    <section class="settings-card service-overview" aria-label="Overview">
-      <dl>
-        <div><dt>Status</dt><dd>{state === "degraded" ? sourceProblemLabel(source, accounts, health) ?? sourceStatusLabel(state) : sourceStatusLabel(state)}</dd></div>
-        <div><dt>Checks</dt><dd>{metrics.total ? `${metrics.passing} passed · ${metrics.failed} failing` : "None yet"}</dd></div>
-        <div><dt>Last checked</dt><dd>{relativeTime(metrics.checkedAt, "Not checked yet")}</dd></div>
-        <div><dt>Response time</dt><dd>{sourceTimingLabel(source, summary(source.id))}</dd></div>
-        <div><dt>Click to stream</dt><dd>{#if sourceCts}{ctsMeasurementLabel(sourceCts)} · {relativeTime(sourceCts.testedAt)}{:else if streams}Not measured yet{:else}Not applicable{/if}</dd></div>
-        <div><dt>Built from</dt><dd>{implementationLabel(source)}</dd></div>
-      </dl>
-    </section>
-
-    {#if administrator}
-      {#key source.id}
-        {#await import("$lib/components/SourceHealthHistory.svelte") then { default: SourceHealthHistory }}
-          <SourceHealthHistory providerId={source.id} statuses={providerHealth(source.id)} automatic={source.useMode !== "manualOnly" && source.useMode !== "off"}
-            refreshKey={JSON.stringify(providerHealth(source.id))} onRetryWindow={refresh} />
-        {/await}
-      {/key}
-    {/if}
-
+  <section class="service-page service-advanced" aria-label={`${source.name} settings and tests`}>
+    <p class="service-description">{sourcePurpose(source)}</p>
+    <div class="panel-secondary-actions">
+      {#if administrator && streams && !sourceNeedsAccount(source)}<Button variant="outline" size="sm" disabled={Boolean(action)} onclick={() => void measureSource(source)}>Measure start time</Button>{/if}
+      {#if canConnectAccounts && usesAccounts && source.id !== "audiomuse-ai"}<Button variant="outline" size="sm" onclick={() => { connectProviderId = source.id; connectOpen = true; }}>Connect account</Button>{/if}
+    </div>
     {#if source.id === "spicylyrics"}
       <section class="settings-card" aria-label="SpicyLyrics setup">
         <div class="settings-row">
@@ -753,7 +779,7 @@
                 <span class="service-account-actions">
                   {#if administrator && account.canManage}<Button variant="secondary" size="sm" disabled={!account.enabled || Boolean(action)} onclick={() => void test(account)}>{action === `${account.id}:all` ? "Testing…" : "Test connection"}</Button>{/if}
                   {#if administrator && account.canManage && streams}<Button variant="secondary" size="sm" disabled={!account.enabled || Boolean(action)} onclick={() => void measure(account)}>{action === `${account.id}:cts` ? "Measuring…" : "Measure start time"}</Button>{/if}
-                  {#if account.canManage}<Button size="sm" onclick={() => configure(account)}>Edit configuration</Button>{/if}
+                  {#if account.canManage}<Button variant="text" size="sm" onclick={() => configure(account)}>Edit configuration</Button>{/if}
                   {#if account.canManage || account.canChangeAudience}
                     <DropdownMenu.Root>
                       <DropdownMenu.Trigger class="icon-button" disabled={Boolean(action)} aria-label={`Actions for ${account.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
@@ -797,8 +823,8 @@
         </section>
       {/if}
 
-      {#if ["lastfm", "listenbrainz", "multi-scrobbler", "koito"].includes(source.id)}
-        {#key source.id}<ScrobbleDeliveries {accounts} targetId={source.id} onConfigure={configure} />{/key}
+      {#if !panelAccount && ["lastfm", "listenbrainz", "multi-scrobbler", "koito"].includes(source.id)}
+        {#key source.id}{#await import("$lib/components/SourceDeliveryGroups.svelte") then { default: SourceDeliveryGroups }}<SourceDeliveryGroups {accounts} targetId={source.id} onConfigure={configure} />{/await}{/key}
       {/if}
 
       {#if (source.runtimeCapabilities ?? []).length && !sourceAccounts.length}
@@ -828,7 +854,7 @@
               {#if appleStatusError}<p class="service-note">{appleStatusError}</p>{/if}
             </div>{#if administrator}<Button variant="secondary" onclick={() => appleDownloadOpen = true}>{appleStatus?.logged_in ? "Manage Apple Music sign-in" : "Sign in to Apple Music"}</Button>{/if}</li>
             <li><div><strong>3. Test playback</strong><p>Check the saved account and measure how quickly its audio starts.</p>{#if applePlaybackResult}<p role="status">{applePlaybackResult}</p>{/if}</div>
-              {#if administrator}<Button disabled={!appleAccount?.canManage || Boolean(action)} onclick={() => void testApplePlayback()}>Test playback</Button>{/if}
+              {#if administrator}<Button variant="outline" disabled={!appleAccount?.canManage || Boolean(action)} onclick={() => void testApplePlayback()}>Test playback</Button>{/if}
             </li>
           </ol>
         </section>
@@ -836,8 +862,8 @@
 
       {#if (source.connectionKind === "operator_managed" || source.id === "apple-musickit") && source.configSchema?.length}
         {#if administrator}
-          <form class="settings-card source-configuration-form" aria-label={`${source.name} settings`} onsubmit={(event) => void saveSourceConfiguration(event)}>
-            <header><div><h3>Server settings</h3><small>Shared by everyone using this service.</small></div></header>
+          <form class="settings-card source-configuration-form" aria-label={`${source.name} settings`} onsubmit={event => { event.preventDefault(); if (document.activeElement instanceof HTMLInputElement) document.activeElement.blur(); }}>
+            <header><div><h3>Server settings</h3><small>Shared by everyone. Changes save as you make them.</small></div></header>
             {#if source.id === "apple-musickit"}
               <details class="source-advanced-settings"><summary>Advanced server settings</summary>{@render serverFields(source, source.configSchema ?? [])}</details>
             {:else}
@@ -845,129 +871,109 @@
               {@render serverFields(source, fields.standard)}
               {#if fields.advanced.length}<details class="source-advanced-settings"><summary>Advanced</summary>{@render serverFields(source, fields.advanced)}</details>{/if}
             {/if}
-            {#if source.id !== "apple-musickit" || !(config.appleDownload as { endpointManagedByDeployment?: boolean })?.endpointManagedByDeployment}<footer><Button type="submit" disabled={Boolean(action)}>{action === `configure:${source.id}` ? "Saving…" : "Save configuration"}</Button></footer>{/if}
+
           </form>
         {:else}
           <p class="service-empty">Only an administrator can change this service's server settings.</p>
         {/if}
       {/if}
 
-      {#if administrator}<ExtensionsView view="package" extensionId={source.id} onchanged={refreshAndFollow} />{/if}
+      {#if administrator}{#await import("$lib/components/ExtensionsView.svelte") then { default: ExtensionsView }}<ExtensionsView view="package" extensionId={source.id} onchanged={refreshAndFollow} />{/await}{/if}
     {/if}
   </section>
 {/snippet}
 
 {#if loading}
-  <Skeleton class="panel sources-panel skeleton-panel" aria-label={`Loading ${mode === "accounts" ? "Accounts" : "Services"}`} aria-busy="true" />
+  <section aria-label={accountsPage ? "Loading Accounts" : "Loading Services"} aria-busy="true"><RowsSkeleton count={6} /></section>
 {:else if !schema}
-  <RouteError
-    eyebrow={`${mode === "accounts" ? "Accounts" : "Services"} unavailable`}
-    title={`Allstarr could not load ${mode === "accounts" ? "provider accounts" : "the Service catalog"}.`}
-    message={error}
-    onRetry={refresh}
-  />
+  <ErrorState title={`${accountsPage ? "Accounts" : "Services"} could not be loaded`} detail={error} onretry={refresh} />
 {:else}
-  {#if error}
-    <div class="degraded-banner" role="status">
-      <span aria-hidden="true">!</span><p><strong>Source readiness may be stale.</strong> {error}</p>
-      <Button variant="secondary" size="sm" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Trying again…" : "Retry"}</Button>
-    </div>
-  {/if}
-
-
-  {#if mode === "accounts" && !pageId}
-    <ScrobbleDeliveries {accounts} onConfigure={configure} />
-  {/if}
-
-  <div class="sources-layout" aria-busy={refreshing}>
-    {#if pageId}
-      {#if pageSource}
-        {@render servicePage(pageSource)}
-      {:else}
-        <section class="service-page">
-          <a class="service-back" href={backHref}><ArrowLeft size={16} aria-hidden="true" />{backLabel}</a>
-          <div class="compact-empty"><strong>This source isn't available</strong><p>It may have been removed or turned off.</p></div>
-          {#if administrator}<ExtensionsView view="package" extensionId={pageId} onchanged={refreshAndFollow} />{/if}
-        </section>
-      {/if}
+  <section class="sources-redesign" class:panel-open={Boolean(pageId)} aria-busy={refreshing}>
+    <header class="sources-heading">
+      <h2 class="sr-only">{accountsPage ? "Accounts" : "Services"}</h2>
+      <PageStatus label={accountsPage ? "Accounts status" : "Services status"} items={accountsPage
+        ? [{ label: `${accounts.length} ${accounts.length === 1 ? "account" : "accounts"}` }, { label: `${deliveries.length} ${deliveries.length === 1 ? "listen" : "listens"} waiting to send`, tone: deliveries.length ? "warn" : "neutral" }]
+        : [{ label: `${mySources.length - needsSetup.length} working` }, { label: `${needsSetup.length} ${needsSetup.length === 1 ? "needs" : "need"} attention`, tone: needsSetup.length ? "stop" : "neutral" }, { label: `${mySources.length} in use of ${providers.length}` }]} />
+      <div class="sources-heading-actions"><RefreshButton variant="ghost" onrefresh={refresh} />
+        {#if accountsPage}{#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}><Plus size={16} aria-hidden="true" />Connect account</Button>{/if}
+        {:else if administrator}<Button onclick={() => addSourceOpen = true}><PackagePlus size={16} aria-hidden="true" />Add extension</Button>{/if}
+      </div>
+    </header>
+    {#if error}<ErrorState title="Source readiness may be stale." detail={error} onretry={refresh} />{/if}
+    {#if accountsPage}
+      {#await import("$lib/components/SourceDeliveryGroups.svelte") then { default: SourceDeliveryGroups }}<SourceDeliveryGroups {accounts} onConfigure={configure} refreshKey={String(deliveryRefresh)} onloaded={items => deliveries = items} onchanged={() => deliveryRefresh++} />{/await}
+      <PlaylistConsent {backend} focus={initialSection === "playlist-editing"} />
+      <SearchField hiddenLabel bind:value={search} label="Search accounts" placeholder="Search accounts" />
+      {@render accountList()}
+      <p class="source-filter-note">Personal accounts belong to one person; shared accounts work for everyone. Passwords and tokens are never shown again after you save them.</p>
     {:else}
-    <section class="sources-panel" aria-labelledby="services-title">
-      <header class="sources-heading">
-        <div>
-          <h2 id="services-title" class="sr-only">Sources</h2>
-          <p>{administrator
-            ? "Where Allstarr finds music, playlists and lyrics."
-            : "The music services Allstarr can play from for you. Connect your own account to add your library and playlists."}</p>
-        </div>
-        <div class="sources-heading-actions">
-          <RefreshButton variant="secondary" onrefresh={refresh} />
-          {#if administrator}<Button variant="secondary" onclick={() => { addSourceOpen = true; }}><PackagePlus size={16} aria-hidden="true" />Add extension</Button>{/if}
-          {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}><Plus size={16} aria-hidden="true" />Connect account</Button>{/if}
-        </div>
-      </header>
-
-      {#if administrator}<ExtensionsView view="attention" onchanged={refresh} />{/if}
-
-      {#if administrator}<div class="source-filters" role="group" aria-label="Show">
-        <button type="button" class="filter-chip" aria-pressed={listFilter === "mine"} onclick={() => listFilter = "mine"}>My sources <span class="segmented-tab-count">{mySources.length}</span></button>
-        <button type="button" class="filter-chip" aria-pressed={listFilter === "attention"} onclick={() => listFilter = "attention"}>Needs attention <span class="segmented-tab-count">{needsSetup.length}</span></button>
-        <button type="button" class="filter-chip" aria-pressed={listFilter === "all"} onclick={() => listFilter = "all"}>All available <span class="segmented-tab-count">{providers.length}</span></button>
-      </div>{/if}
-
-      {#if listFilter === "accounts" || backend.toLowerCase() === "jellyfin"}
-        <PlaylistConsent {backend} focus={initialSection === "playlist-editing"} />
-      {/if}
-
-      {#if listFilter === "accounts"}
-        <p class="source-filter-note">Personal accounts belong to one person. Shared accounts work for everyone. Passwords and tokens are never shown again after you save them.</p>
-        {@render accountList()}
-      {:else}
-      <ul class="source-list" aria-label="Services">
-        {#each !administrator ? providers : listFilter === "attention" ? needsSetup : listFilter === "mine" ? mySources : providers as item (item.id)}
-          {@const state = sourceStatus(item, accounts, health)}
-          {@const metrics = sourceMetrics(item, providerHealth(item.id))}
-          {@const connected = providerAccounts(item.id)}
-          {@const cts = measurements.find((measurement) =>
-            measurement.providerId.toLowerCase() === item.id.toLowerCase() &&
-            (!measurement.providerAccountId || connected.some((account) => account.id === measurement.providerAccountId)))}
-          {@const timing = sourceTimingLabel(item, summary(item.id))}
-          {@const appleReadiness = item.runtimeCapabilities?.find((capability) =>
-            capability.reasonCode?.startsWith("apple-download-"))?.reasonCode}
-          <li class="source-row" data-state={state}>
-            <a class="source-row-main" href={servicePath(item.id)}>
-              <ProviderArtwork id={item.id} definition={item} />
-              <span class="source-row-copy">
-                <span class="source-name"><strong>{item.name}</strong>{#if administrator}<Badge tone="neutral" class="origin-badge">{sourceOriginLabel(item)}</Badge>{/if}{#if item.useMode === "manualOnly"}<Badge tone="neutral" class="origin-badge">Manual only</Badge>{:else if item.useMode === "off"}<Badge tone="neutral" class="origin-badge">Off</Badge>{/if}</span>
-                <small>{sourcePurpose(item)}</small>
-                {#if appleReadiness}<small class="source-row-warning" role="status">{providerReadinessLabel(appleReadiness)}</small>{/if}
-              </span>
-              <span class="source-row-capabilities">
-                {#each (item.categories ?? []).slice(0, 4) as category}<span>{humanize(category)}</span>{/each}
-              </span>
-              {#if !administrator}
-                <span class="source-row-status">
-                  {#if connected.length}<Badge state="healthy">Connected</Badge>{:else}<Badge tone="neutral">Available</Badge>{/if}
-                </span>
-              {:else}
-              <span class="source-row-status">
-                <Badge state={state}>{state === "degraded" ? sourceProblemLabel(item, accounts, health) ?? sourceStatusLabel(state) : sourceStatusLabel(state)}</Badge>
-                {#if isRanked(item.useMode) && scoreOf(item.id) != null}<small class="source-row-score">Score {scoreOf(item.id)}{#if qualityOf(item.id)} · {qualityOf(item.id)}{/if}</small>{/if}
-                <small>{metrics.checkedAt ? `${metrics.passing} of ${metrics.total || 0} checks passed · ${relativeTime(metrics.checkedAt)}` : "Not checked yet"}</small>
-                <small class="source-row-timing">{connected.length ? `${connected.filter((account) => account.enabled).length} of ${connected.length} account${connected.length === 1 ? "" : "s"} on · ` : ""}{timing}{#if cts} · Starts in {ctsMeasurementLabel(cts)}{/if}</small>
-              </span>
-              {/if}
-              <ChevronRight class="source-row-chevron" size={18} aria-hidden="true" />
-            </a>
-          </li>
-        {:else}
-          <li class="compact-empty"><strong>No services yet</strong><p>Turn on a built-in service or install an extension to add one.</p></li>
-        {/each}
-      </ul>
-      {/if}
-    </section>
+      {#if administrator}{#await import("$lib/components/ExtensionsView.svelte") then { default: ExtensionsView }}<ExtensionsView view="attention" onchanged={refresh} />{/await}{/if}
+      <div class="source-toolbar">
+        <FilterSegments storageKey="allstarr.sources.filter" label="Filter sources" bind:value={listFilter} options={[
+          { id: "attention", label: "Needs attention", count: needsSetup.length }, { id: "in-use", label: "In use", count: mySources.length },
+          { id: "off", label: "Off", count: offSources.length }, { id: "all", label: "All", count: providers.length },
+        ]} />
+        <SearchField hiddenLabel bind:value={search} label="Search sources" placeholder="Search sources" />
+        <SelectField bind:value={kind} label="Source kind" options={[{ value: "all", label: "All kinds" }, ...kinds.map(value => ({ value, label: humanize(value) }))]} />
+      </div>
+      <div class="service-rows" role="list" aria-label="Services" data-sveltekit-keepfocus data-sveltekit-noscroll>
+        {#each filteredSources as item (item.id)}
+          <div class="source-row" role="listitem">
+            <ItemRow title={item.name} subtitle={sourceFact(item)} href={servicePath(item.id)} actionLabel={`Open ${item.name}`} selected={pageId === item.id} attention={needsSetup.includes(item)}>
+              {#snippet leading()}<ProviderArtwork id={item.id} definition={item} decorative />{/snippet}
+              {#snippet pill()}<StatePill tone={sourceTone(item)} text={sourceLabel(item)} />{/snippet}
+            </ItemRow>
+          </div>
+        {:else}<EmptyState title={providers.length ? "No sources in this view" : "No services connected"} description={providers.length ? "Choose another filter or search for a source." : "Connect a service so Allstarr can find songs you don't have."}>{#snippet icon()}<Radio size={24} />{/snippet}</EmptyState>{/each}
+      </div>
     {/if}
+  </section>
 
-  </div>
+  {#if pageId}
+    {#await import("$lib/components/patterns/SidePanel.svelte") then { default: SidePanel }}
+      <SidePanel open={true} title={panelAccount ? providerDisplayName(providers, panelAccount.providerId) : pageSource?.name ?? "Source unavailable"}
+        description={panelAccount ? `${panelAccount.scope === "Personal" ? "Personal account" : "Shared account"} · ${panelAccount.ownerDisplayName || panelAccount.displayName}` : pageSource ? `${sourceOriginLabel(pageSource)} · ${(pageSource.categories ?? []).map(humanize).join(", ")}` : "This source may have been removed"}
+        onclose={closePanel} previousLabel={panelAccount ? "Previous account" : "Previous source"} nextLabel={panelAccount ? "Next account" : "Next source"} onPrevious={panelIndex > 0 ? () => panelNavigate(-1) : undefined} onNext={panelIndex < panelCount - 1 ? () => panelNavigate(1) : undefined}>
+        {#snippet artwork()}<ProviderArtwork id={pageId} definition={pageSource ?? undefined} decorative />{/snippet}
+        <div class="source-panel-content">
+          {#if panelAccount}
+            {#if ["lastfm", "listenbrainz", "multi-scrobbler", "koito"].includes(panelAccount.providerId)}
+              {#await import("$lib/components/SourceDeliveryGroups.svelte") then { default: SourceDeliveryGroups }}<SourceDeliveryGroups {accounts} accountId={panelAccount.id} onConfigure={configure} refreshKey={String(deliveryRefresh)} onchanged={() => deliveryRefresh++} />{/await}
+            {/if}
+            <dl class="source-facts"><dt>Owner</dt><dd>{panelAccount.ownerDisplayName || panelAccount.creatorDisplayName || "Unknown"}</dd><dt>Shared with</dt><dd>{accountSubtitle(panelAccount)}</dd><dt>Connected</dt><dd>{new Date(panelAccount.createdAt).toLocaleDateString()}</dd>
+              {#each accountSettings(pageSource ?? { id: panelAccount.providerId, name: panelAccount.displayName }) as field}<dt>{field.label}</dt><dd>{accountSettingValue(panelAccount, field)}</dd>{/each}
+            </dl>
+            {#if panelAccount.canManage}
+              <div class="account-send-setting"><div><strong>{["lastfm", "listenbrainz", "multi-scrobbler", "koito"].includes(panelAccount.providerId) ? "Send listens" : "Use this account"}</strong><small>Pause without removing this account</small></div>{#key `${panelAccount.id}:${panelAccount.revision}:${action}`}<Switch checked={panelAccount.enabled} aria-label="Use this account" disabled={Boolean(action)} onchange={() => void toggle(panelAccount)} />{/key}</div>
+              <Button variant="outline" onclick={() => configure(panelAccount)}>Reconnect</Button>
+            {/if}
+            {#if panelAccount.canChangeAudience}<Button variant="text" onclick={() => manageAccess(panelAccount)}>Edit access</Button>{/if}
+            {#if panelAccount.providerId === "spotify" && panelAccount.scope === "Personal" && panelAccount.enabled && panelAccount.ownerUserId === currentUserId}<Button variant="outline" href={`#/library/import?account=${encodeURIComponent(panelAccount.id)}`}>Move your Spotify collection</Button>{/if}
+            {#if pageSource}<details class="source-more" open><summary>Settings and tests</summary>{@render servicePage(pageSource)}</details>{/if}
+          {:else if pageSource}
+            <div class="source-summary" data-tone={sourceTone(pageSource)}><StatePill tone={sourceTone(pageSource)} text={sourceLabel(pageSource)} /><p>{sourceFact(pageSource)}</p>{#if needsSetup.includes(pageSource)}<p>{providerHealth(pageSource.id).some(check => !check.canAttempt && check.enabled && check.supported) ? "Playback skips this source while it is paused. Other sources can still play." : "Open the latest checks below for the next step."}</p>{/if}</div>
+            {#if administrator}
+              {#key pageSource.id}{#await import("$lib/components/SourceHealthHistory.svelte") then { default: SourceHealthHistory }}<SourceHealthHistory providerId={pageSource.id} statuses={providerHealth(pageSource.id)} automatic={pageSource.useMode !== "manualOnly" && pageSource.useMode !== "off"} refreshKey={JSON.stringify(providerHealth(pageSource.id))} onRetryWindow={refresh} />{/await}{/key}
+            {/if}
+            {#await import("$lib/components/SourceUseSettings.svelte") then { default: SourceUseSettings }}<SourceUseSettings providerId={pageSource.id} {administrator} onSaved={refresh} onUndo={(providerId, run) => sourceUndo = { providerId, run }} />{/await}
+            <dl class="source-facts"><dt>Quality</dt><dd>{qualityOf(pageSource.id) || "Not measured yet"}</dd><dt>Score</dt><dd>{scoreOf(pageSource.id) ?? "Not measured yet"}</dd><dt>Accounts</dt><dd>{providerAccounts(pageSource.id).filter(account => account.enabled).length} of {providerAccounts(pageSource.id).length} on</dd><dt>Start time</dt><dd>{measurements.find(item => item.providerId === pageSource.id) ? ctsMeasurementLabel(measurements.find(item => item.providerId === pageSource.id)!) : "Not measured yet"}</dd></dl>
+            <details class="source-more" bind:open={moreOpen}><summary>Settings, accounts and tests</summary>{@render servicePage(pageSource)}</details>
+          {:else}<EmptyState title="This source isn't available" description="It may have been removed or turned off." />{#if administrator}{#await import("$lib/components/ExtensionsView.svelte") then { default: ExtensionsView }}<ExtensionsView view="package" extensionId={pageId} onchanged={refreshAndFollow} />{/await}{/if}{/if}
+        </div>
+        {#snippet footer()}
+          {#if sourceUndo}<div class="source-setting-undo" role="status"><span>{providerDisplayName(providers, sourceUndo.providerId)} setting saved.</span><Button variant="text" disabled={undoing} onclick={() => void undoSourceSetting()}>{undoing ? "Restoring…" : "Undo"}</Button></div>{/if}
+          <div class="source-panel-footer">
+            {#if panelAccount?.canManage}<Button variant="text" class="source-remove" onclick={() => { removal = panelAccount ?? null; removeOpen = true; }}>Remove…</Button>{/if}
+            {#if !panelAccount && pageSource}
+              {#if administrator && pageSource.implementationOrigin === "extension"}{#await import("$lib/components/ExtensionsView.svelte") then { default: ExtensionsView }}<ExtensionsView view="remove" extensionId={pageSource.id} onchanged={refreshAndFollow} />{/await}{/if}
+              <Button variant="outline" href="#/sources/accounts">Accounts</Button>
+            {/if}
+            {#if administrator && pageSource && (!panelAccount || !["lastfm", "listenbrainz", "multi-scrobbler", "koito"].includes(panelAccount.providerId))}<Button disabled={Boolean(action) || (panelAccount ? !panelAccount.canManage : !canCheckSource(pageSource))} onclick={() => panelAccount ? void test(panelAccount) : void checkSource(pageSource!)}>{action ? "Checking…" : "Check now"}</Button>{/if}
+          </div>
+        {/snippet}
+      </SidePanel>
+    {/await}
+  {/if}
 
   {#if ConnectSourceDialog}
     <ConnectSourceDialog bind:open={connectOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} {currentUserId} testConnection={administrator} initialProviderId={connectProviderId} onSaved={completed} />
@@ -975,19 +981,86 @@
   {/if}
   {#if ProviderTryDialog && tryTarget}<ProviderTryDialog bind:open={tryOpen} provider={tryTarget.provider} account={tryTarget.account} capability={tryTarget.capability} searchSources={lyricSearchSources} providerDefinitions={providers} />{/if}
   {#if AppleDownloadDialog}<AppleDownloadDialog bind:open={appleDownloadOpen} onStatus={(status) => { appleRequest++; appleStatus = status; appleStatusError = ""; }} />{/if}
-  {#if administrator}<ExtensionsView view="catalog" bind:open={addSourceOpen} onchanged={refresh} />{/if}
+  {#if administrator && addSourceOpen}{#await import("$lib/components/ExtensionsView.svelte") then { default: ExtensionsView }}<ExtensionsView view="catalog" bind:open={addSourceOpen} onchanged={refresh} />{/await}{/if}
   {#if AccountAccessDialog}<AccountAccessDialog bind:open={accessOpen} account={selectedAccount} users={audienceUsers} onSaved={completed} />{/if}
 
   <ConfirmDialog
     bind:open={removeOpen}
-    title="Remove this Source connection?"
-    description="The encrypted credential is revoked and this account can no longer route provider requests. Audit history remains."
-    confirmLabel="Remove connection"
+    title={`Remove ${removal?.sourceDisplayName || removal?.displayName || "this account"}?`}
+    description="This account stops being used. Your listening history stays. You can connect it again later."
+    confirmLabel="Remove account" disabled={Boolean(action)} closeOnConfirm={false}
     onConfirm={remove}
   />
 {/if}
 
 <style>
+  .sources-redesign { display: grid; min-width: 0; gap: var(--space-4); }
+  .sources-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
+  .sources-heading :global(.status-items [data-tone="stop"]), .sources-heading :global(.status-items [data-tone="stop"] strong) { color: var(--danger); }
+  .sources-heading-actions, .panel-secondary-actions { min-width: 0; max-width: 100%; display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+  .sources-heading-actions :global([data-slot="button"]) { min-width: 44px; min-height: 44px; max-width: 100%; }
+  .source-toolbar { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: var(--space-3); }
+  .source-toolbar :global(.search-field) { flex: 1; min-width: 10rem; }
+  .service-rows, .accounts-table-wrap { overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
+  .accounts-table-wrap { container-type: inline-size; }
+  .service-rows .source-row { display: block; padding: 0; border: 0; }
+  .source-row + .source-row { border-top: 1px solid var(--color-edge); }
+  .accounts-table { width: 100%; border-collapse: collapse; background: var(--color-panel); font-size: var(--text-sm); table-layout: fixed; }
+  .accounts-table th:first-child { width: 30%; }
+  .accounts-table th:nth-child(4) { width: 10rem; }
+  .accounts-table th:last-child { width: calc(44px + var(--space-3) * 2); }
+  .accounts-table td { overflow-wrap: anywhere; }
+  .account-opener strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .accounts-table th { color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 500; text-align: left; }
+  .accounts-table th, .accounts-table td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--color-edge); }
+  .accounts-table tbody tr { position: relative; }
+  .accounts-table tbody tr:last-child td { border-bottom: 0; }
+  .accounts-table tbody tr:hover, .account-selected { background: var(--color-panel-raised); }
+  .account-opener { display: flex; align-items: center; gap: var(--space-3); min-height: 44px; color: var(--color-ink); }
+  .account-opener::after { position: absolute; inset: 0; content: ""; }
+  .accounts-table td:last-child { position: relative; pointer-events: none; }
+  .accounts-table td:last-child :global(button) { pointer-events: auto; }
+  .account-opener :global(.provider-art) { width: 28px; height: 28px; flex-shrink: 0; }
+  .accounts-table small { display: block; color: var(--color-ink-muted); }
+  .source-filter-note, .muted { color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .source-panel-content { display: grid; min-width: 0; gap: var(--space-5); }
+  .source-summary { display: grid; gap: var(--space-2); border-radius: var(--radius-md); padding: var(--space-3); background: var(--color-panel-raised); }
+  .source-summary[data-tone="stop"] { background: color-mix(in srgb, var(--danger) 8%, var(--color-panel)); }
+  .source-summary p { margin: 0; font-size: var(--text-sm); color: var(--color-ink-muted); }
+  .source-facts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: var(--space-3); margin: 0; font-size: var(--text-sm); }
+  .source-facts dt { color: var(--color-ink-muted); }.source-facts dd { margin: 0; overflow-wrap: anywhere; }
+  .source-more summary { min-height: 44px; padding-block: var(--space-3); cursor: pointer; font-size: var(--text-sm); }
+  .source-setting-undo { display: flex; width: 100%; min-width: 0; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: var(--text-sm); }
+  .source-setting-undo span { overflow-wrap: anywhere; }
+  .source-panel-footer { display: flex; width: 100%; gap: var(--space-2); justify-content: flex-end; flex-wrap: wrap; }
+  .source-panel-footer :global(.source-remove) { margin-right: auto; color: var(--danger); }
+  .account-send-setting { display: flex; gap: var(--space-3); align-items: center; justify-content: space-between; }
+  .account-send-setting strong, .account-send-setting small { display: block; font-size: var(--text-sm); }.account-send-setting small { color: var(--color-ink-muted); }
+  .service-advanced { padding: 0; min-width: 0; display: grid; gap: var(--space-3); }
+  .service-description { margin: 0; font-size: var(--text-sm); color: var(--color-ink-muted); }
+  .source-panel-content :global(.settings-row), .source-panel-content :global(.service-check) { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+  .source-panel-content :global(.settings-card) { min-width: 0; }
+  .source-panel-content :global(button), .source-panel-content :global([data-slot="button"]) { min-height: 44px; }
+  :global(.side-panel:has(.source-panel-content) .panel-controls button) { width: 44px; height: 44px; min-width: 44px; min-height: 44px; }
+  :global(.side-panel:has(.source-panel-content) .panel-footer) { flex-wrap: wrap; gap: var(--space-2); }
+  .source-panel-content :global(.service-account header), .source-panel-content :global(.service-account-actions) { flex-wrap: wrap; }
+  .source-panel-content :global(.extension-row) { display: flex; flex-wrap: wrap; }
+  .source-panel-footer :global(.extension-remove-link) { margin-right: auto; }
+  .source-panel-content :global(output) { display: flex; align-items: center; gap: var(--space-2); overflow-wrap: anywhere; }
+  @media (min-width: 900px) { .panel-open { margin-right: min(480px, 40vw); } }
+  @media (max-width: 650px) {
+    .sources-heading-actions { display: grid; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .sources-heading-actions :global([data-slot="button"]) { width: 100%; white-space: normal; }
+    .sources-heading-actions :global(button), .service-advanced :global(button), .service-advanced :global([data-slot="button"]) { min-height: 44px; }
+  }
+  @media (max-width: 380px) { .sources-heading-actions { grid-template-columns: minmax(0, 1fr); } }
+  @container (max-width: 640px) {
+    .accounts-table, .accounts-table tbody, .accounts-table tr, .accounts-table td { display: block; }
+    .accounts-table thead { display: none; }.accounts-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: var(--space-3); border-bottom: 1px solid var(--color-edge); }
+    .accounts-table tr:last-child { border: 0; }.accounts-table td { padding: var(--space-1); border: 0; min-width: 0; }.accounts-table td:first-child { grid-column: 1; }.accounts-table td:nth-child(2), .accounts-table td:nth-child(3) { grid-column: 1; padding-left: calc(28px + var(--space-4)); color: var(--color-ink-muted); font-size: var(--text-xs); }
+    .accounts-table td:nth-child(4) { grid-column: 2; grid-row: 1; align-self: center; }.accounts-table td:last-child { grid-column: 2; grid-row: 2 / 4; justify-self: end; }
+  }
+  @media (max-width: 599px) { .source-toolbar { align-items: stretch; }.source-toolbar :global(.filter-segments) { width: 100%; } }
   .source-setting-control {
     display: flex;
     min-width: 0;

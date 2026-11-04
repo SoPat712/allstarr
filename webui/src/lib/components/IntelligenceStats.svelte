@@ -10,12 +10,13 @@
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
-  import RouteError from "$lib/components/RouteError.svelte";
   import IntelligenceHistoryImports from "$lib/components/IntelligenceHistoryImports.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import RecapBars from "$lib/components/RecapBars.svelte";
   import { Button } from "$lib/components/ui/button";
-  import { Skeleton } from "$lib/components/ui/skeleton";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
 
   let stats = $state<ListeningStats | null>(null), before = $state<ListeningStats | null>(null);
   let period = $state("all"), year = $state(""), loading = $state(true), refreshing = $state(false), error = $state(""), expanded = $state("");
@@ -106,12 +107,13 @@
 
 <div class="your-stats" aria-busy={refreshing}>
   <h2 class="visually-hidden">Your listening</h2>
+  <PageStatus items={[{ label: stats && loadedSelection === selection ? `${formatCount(stats.playCount)} plays` : "Your listening recap" }, { label: year || periods.find(item => item.id === period)?.label || "All time" }]} />
   <div class="stats-toolbar">
     <SegmentedNav label="Stats period" items={periods} active={year ? "" : period} onchange={selectPeriod} />
     <div class="stats-actions"><SelectField bind:value={year} label="Year in review" options={years} onchange={() => void load()} /><RefreshButton variant="secondary" label="Refresh stats" onrefresh={load} /></div>
   </div>
-  {#if loading}<Skeleton class="skeleton-panel" aria-label="Loading listening stats" />
-  {:else if !stats || error && loadedSelection !== selection}<RouteError eyebrow="Stats unavailable" title="Your stats are unavailable." message={error} onRetry={load} />
+  {#if loading || refreshing && loadedSelection !== selection}<RowsSkeleton />
+  {:else if !stats || error && loadedSelection !== selection}<ErrorState title="Your stats are unavailable" detail={error} onretry={load} />
   {:else}
     {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
     <section class="recap-hero panel" aria-label="Summary">
