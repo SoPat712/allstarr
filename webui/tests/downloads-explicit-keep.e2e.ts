@@ -169,26 +169,31 @@ for (const width of [390, 1280]) {
       await page.goto("/#/library/kept");
       const keptRow = page.locator(".download-row").filter({ hasText: "Fixture Song" });
       await expect(keptRow).toBeVisible();
-      await expect(keptRow.getByRole("button", { name: "Release Keep", exact: true })).toBeVisible();
+      await keptRow.getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
+      await expect(page.getByRole("menuitem", { name: "Stop keeping", exact: true })).toBeVisible();
+      await page.keyboard.press("Escape");
 
       await page.getByRole("button", { name: "Remove all", exact: true }).click();
-      const bulkDialog = page.getByRole("alertdialog", { name: /Remove all kept tracks/i });
+      const bulkDialog = page.getByRole("alertdialog", { name: /Remove all kept songs/i });
       await expect(bulkDialog).toBeVisible();
       await expect(bulkDialog).toContainText(/1 explicit Keep/i);
       await expect(bulkDialog).toContainText(/24-hour grace period/i);
       await expect(bulkDialog).toContainText(/other household interests remain protected/i);
       await bulkDialog.getByRole("button", { name: "Cancel", exact: true }).click();
 
-      await keptRow.getByRole("button", { name: "Release Keep", exact: true }).click();
-      const dialog = page.getByRole("alertdialog", { name: /Release.*Keep/i });
+      await keptRow.getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Stop keeping", exact: true }).click();
+      const dialog = page.getByRole("alertdialog", { name: /Stop keeping/i });
       await expect(dialog).toBeVisible();
       await expect(dialog).toContainText(/24-hour grace period|other interests/i);
-      await dialog.getByRole("button", { name: "Release Keep", exact: true }).click();
+      await dialog.getByRole("button", { name: "Stop keeping", exact: true }).click();
       await expect(page.getByText(/Keep released\./i)).toBeVisible();
       await expect.poll(() => fixture.releaseRequests).toBe(1);
       expect(fixture.releaseStorage).toEqual(["kept"]);
       await expect(keptRow).toBeVisible();
-      await expect(keptRow.getByRole("button", { name: "Release Keep", exact: true })).toHaveCount(0);
+      await keptRow.getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
+      await expect(page.getByRole("menuitem", { name: "Stop keeping", exact: true })).toHaveCount(0);
+      await page.keyboard.press("Escape");
       await page.goto("/#/library/cached");
       const retainedCacheRow = page.locator(".download-row").filter({ hasText: "Fixture Song" });
       await expect(retainedCacheRow).toHaveCount(0);
@@ -257,7 +262,9 @@ for (const width of [390, 1280]) {
       const row = page.locator(".download-row").filter({ hasText: "Check" });
       await expect(row).toContainText("Apple Music");
       await expect(row).not.toContainText("Unknown source");
-      const remove = row.getByRole("button", { name: "Delete kept copy…", exact: true });
+      const menu = row.getByRole("button", { name: "Actions for Check", exact: true });
+      await menu.click();
+      const remove = page.getByRole("menuitem", { name: "Delete kept copy…", exact: true });
       await expect(remove).toBeVisible();
       if (width === 390) await expectContainedMobileGeometry(page);
       await remove.focus();
@@ -272,6 +279,7 @@ for (const width of [390, 1280]) {
       await page.screenshot({ path: `test-results/kept-delete-confirm-${width}-${colorScheme}.png`, fullPage: true });
       await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
       expect(deletionRequests).toHaveLength(0);
+      await menu.click();
       await remove.click();
       await dialog.getByRole("button", { name: "Delete kept copy", exact: true }).click();
       await expect.poll(() => deletionRequests.length).toBe(1);
@@ -307,13 +315,16 @@ test("kept deletion keeps a changed confirmation open and requires a fresh previ
       : json(route, { jobId: "delete-job", queued: true }, 202);
   });
   await page.goto("/#/library/kept");
-  const remove = page.getByRole("button", { name: "Delete kept copy…", exact: true });
+  const menu = page.getByRole("button", { name: "Actions for Fixture Song", exact: true });
+  await menu.click();
+  const remove = page.getByRole("menuitem", { name: "Delete kept copy…", exact: true });
   await remove.click();
   const dialog = page.getByRole("alertdialog", { name: "Delete the kept copy of Fixture Song?" });
   await dialog.getByRole("button", { name: "Delete kept copy", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("The references changed");
   expect(requests).toHaveLength(1);
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await menu.click();
   await remove.click();
   await dialog.getByRole("button", { name: "Delete kept copy", exact: true }).click();
   await expect.poll(() => requests.length).toBe(2);
@@ -341,40 +352,28 @@ test("completed Keep reports the move and removes the Cache row", async ({ page 
 });
 
 
-for (const storage of ["cached", "kept"]) test(`Downloads show a labeled outlined action in ${storage}`, async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
+for (const storage of ["cached", "kept"]) test(`Downloads have one outlined action and a menu in ${storage}`, async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
   await mockDownloadsApp(page, true, storage === "kept");
   await page.goto(`/#/library/${storage}`);
-  const action = page.locator(".download-actions").first().getByRole("link", { name: "Download", exact: true });
-  await expect(action).toHaveText("Download");
-  await expect(action).toHaveAttribute("data-slot", "button");
-  await expect(action.locator('svg[data-icon="inline-start"]')).toHaveCount(1);
+  const table = page.getByRole("table", { name: `${storage === "cached" ? "Cached" : "Kept"} songs` });
+  await expect(table.locator("thead th")).toHaveText(["Song", "Source", "Quality", storage === "cached" ? "Leaves cache" : "Kept by", "Size", "Actions"]);
+  const row = table.locator(".download-row").first();
+  const action = storage === "cached" ? row.getByRole("button", { name: "Keep", exact: true }) : row.getByRole("link", { name: "Download", exact: true });
+  await expect(action).toBeVisible();
   expect(await action.evaluate(element => getComputedStyle(element).borderTopStyle)).toBe("solid");
-  expect(await action.evaluate(element => getComputedStyle(element).borderTopColor)).not.toBe("rgba(0, 0, 0, 0)");
-  const headerActions = page.locator(".downloads-heading-actions");
-  const removeAll = headerActions.getByRole("button", { name: "Remove all", exact: true });
-  await expect(removeAll).toHaveText("Remove all");
-  await expect(removeAll.locator('svg[data-icon="inline-start"]')).toHaveCount(1);
-  expect(await removeAll.evaluate(element => getComputedStyle(element).borderTopColor)).not.toBe("rgba(0, 0, 0, 0)");
-  const headerHeights = () => headerActions.locator("[data-slot=button]").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().height));
-  expect(new Set(await headerHeights()).size).toBe(1);
-  const actions = page.locator(".download-actions").first();
-  await expect(actions.locator(":scope > :first-child")).toHaveAccessibleName("Download");
+  await expect(row.locator('.download-actions > [data-slot="button"]')).toHaveCount(1);
+  await row.getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
   if (storage === "cached") {
-    const remove = actions.getByRole("button", { name: "Remove", exact: true });
-    await expect(remove).toHaveText("Remove");
-    await expect(remove.locator('svg[data-icon="inline-start"]')).toHaveCount(1);
-    expect(await remove.evaluate(element => getComputedStyle(element).borderTopColor)).not.toBe("rgba(0, 0, 0, 0)");
-  }
-  if (storage === "kept") {
-    await expect(actions.locator("[data-slot=button]")).toHaveText(["Download", "Delete kept copy…", "Release Keep"]);
-    const heights = await actions.locator("[data-slot=button]").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().height));
-    expect(new Set(heights).size).toBe(1);
+    await expect(page.getByRole("menuitem", { name: "Download", exact: true })).toBeVisible();
+    await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
+    await expect(page.getByRole("alertdialog", { name: "Remove this song?" })).toBeVisible();
+  } else {
+    await expect(page.getByRole("menuitem", { name: "Stop keeping", exact: true })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Delete kept copy…", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
   }
   await page.setViewportSize({ width: 390, height: 900 });
-  await expect(action).toHaveText("Download");
-  if (storage === "cached") await expect(actions.getByRole("button", { name: "Remove", exact: true })).toHaveText("Remove");
-  await expect(removeAll).toHaveText("Remove all");
-  expect(new Set(await headerHeights()).size).toBe(1);
+  await expect(action).toBeVisible();
   await expectContainedMobileGeometry(page);
 });

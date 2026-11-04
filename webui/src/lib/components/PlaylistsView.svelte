@@ -5,20 +5,22 @@
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import { Popover } from "$lib/components/ui/popover";
-  import { Skeleton } from "$lib/components/ui/skeleton";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
+  import ItemRow from "$lib/components/patterns/ItemRow.svelte";
+  import SidePanel from "$lib/components/patterns/SidePanel.svelte";
+  import StatePill from "$lib/components/patterns/StatePill.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import EmptyState from "$lib/components/patterns/EmptyState.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import PlaylistSyncSettings from "$lib/components/PlaylistSyncSettings.svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { ArrowRight, ChevronDown, MoreHorizontal, MonitorX, RefreshCw, Server, X } from "@lucide/svelte";
+  import { ChevronDown, MoreHorizontal, RefreshCw, Server } from "@lucide/svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
-  import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
-  import CoverageBar from "$lib/components/CoverageBar.svelte";
+
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
-  import OperationConsole from "$lib/components/OperationConsole.svelte";
-  import PlaylistSettingsDialog from "$lib/components/PlaylistSettingsDialog.svelte";
-  import BulkRematchDialog from "$lib/components/BulkRematchDialog.svelte";
-  import PlaylistSourceUpdateDialog from "$lib/shelved/PlaylistSourceUpdateDialog.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
-  import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import TrackRoutes from "$lib/components/TrackRoutes.svelte";
@@ -39,7 +41,6 @@
   } from "$lib/api";
   import { relativeTime } from "$lib/activity";
   import {
-    confirmationCoverage,
     canRebuildInJellyfin,
     filterPlaylists,
     filterTracks,
@@ -51,7 +52,6 @@
     jellyfinPlaylistWarning,
     playlistOutcomeLabel,
     runBounded,
-    playlistMatchCounts,
     scheduleCadence,
     scheduleZoneLabel,
     type PlaylistMix,
@@ -100,6 +100,10 @@
   let matchReturnFocus: HTMLElement | null = null;
   let refreshInFlight = false;
   let addOpen = $state(false);
+  let LoadedAddDialog = $state<typeof import("$lib/components/AddPlaylistDialog.svelte").default | null>(null);
+  let sourceFilter = $state("");
+  let songsOpen = $state(true);
+  $effect(() => { if (addOpen && !LoadedAddDialog) void import("$lib/components/AddPlaylistDialog.svelte").then(module => LoadedAddDialog = module.default).catch(() => { addOpen = false; toast.error("The import dialog could not load. Try again."); }); });
   let operationJobId = $state("");
   let bulkProgress = $state("");
   let matchOpen = $state(false);
@@ -134,7 +138,26 @@
   let rematchOpen = $state(false);
 
   const playlistCount = $derived(playlists.length + keptMixes.length);
-  const visiblePlaylists = $derived(filterPlaylists<PlaylistLink | PlaylistMix>([...playlists, ...keptMixes], query, stateFilter, sort));
+  const allPlaylists = $derived([...playlists, ...keptMixes]);
+  const attentionCount = $derived(playlists.filter(needsLook).length);
+  const healthyCount = $derived(playlists.filter(item => item.enabled && !needsLook(item)).length);
+  const orderCount = $derived(playlists.filter(item => Boolean(jellyfinPlaylistWarning(item, providerName(item.sourceProviderId)))).length);
+  const totalSongs = $derived(allPlaylists.reduce((sum, item) => sum + (item.trackCount ?? 0), 0));
+  const visiblePlaylists = $derived(filterPlaylists<PlaylistLink | PlaylistMix>(allPlaylists, query, "all", sort).filter(item =>
+    (!sourceFilter || (!("inApps" in item) && item.sourceProviderId === sourceFilter)) &&
+    (stateFilter === "all" || (!("inApps" in item) && (stateFilter === "attention" ? needsLook(item) : stateFilter === "paused" ? !item.enabled : item.enabled && !needsLook(item))))));
+
+  function needsLook(item: PlaylistLink) {
+    return !item.enabled || item.metrics.review > 0 || item.unmatchedCount > 0 || item.metrics.rejected > 0 || Boolean(jellyfinPlaylistWarning(item, providerName(item.sourceProviderId))) || item.lastRunCode === "backend_access_missing";
+  }
+  function rowState(item: PlaylistLink) {
+    if (!item.enabled) return "Paused";
+    if (item.lastRunCode === "backend_access_missing") return "Access needed";
+    if (jellyfinPlaylistWarning(item, providerName(item.sourceProviderId))) return consent?.granted && !consent.needsSignIn && item.lastRunCode?.split(",").some(code => code.trim() === "order") ? "Order fixing" : "Needs a look";
+    return needsLook(item) ? "Needs a look" : "Healthy";
+  }
+  const panelPlaylists = $derived(visiblePlaylists.filter((item): item is PlaylistLink => !("inApps" in item)));
+  const panelPosition = $derived(panelPlaylists.findIndex(item => item.id === selectedId));
   const refreshablePlaylists = $derived(playlists.filter((playlist) => playlist.importMode === "linked"));
   const projectedTracks = $derived.by((): PlaylistTrack[] => {
     if (!details) return [];
@@ -284,6 +307,7 @@
     selectedId = id;
     if (changingPlaylist) {
       details = null;
+      songsOpen = true;
       operationJobId = "";
       exportError = "";
       trackQuery = "";
@@ -398,20 +422,6 @@
     }
   }
 
-  async function syncPlaylist(playlist: PlaylistLink) {
-    if (action || !playlist.enabled) return;
-    action = `sync:${playlist.id}`;
-    try {
-      const result = await playlistLinks.run(playlist.id);
-      toast.success(result.created ? "Playlist update queued." : "A playlist update is already queued.");
-      await refresh();
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "The playlist could not be synced.");
-    } finally {
-      action = "";
-    }
-  }
-
   async function run(name: "sync" | "toggle") {
     if (!selected || action) return;
     action = name;
@@ -515,6 +525,7 @@
       keptMixes = keptMixes.filter(mix => mix.id !== target.id);
       playlists = playlists.filter(playlist => playlist.id !== target.id);
       removingMix = null;
+      detailOpen = false;
     } catch { removeError = "This mix could not be removed. Try again."; }
     finally { removing = false; }
   }
@@ -557,190 +568,83 @@
 </script>
 
 {#if loading}
-  <section class="playlist-layout" aria-label="Loading playlists" aria-busy="true">
-    <Skeleton class="panel playlist-list skeleton-panel" />
-    <Skeleton class="panel playlist-detail skeleton-panel" />
-  </section>
-{:else if error}
-  <RouteError
-    eyebrow="Playlists unavailable"
-    title="Allstarr could not load the canonical playlist list."
-    message={error}
-    onRetry={refresh}
-  />
-{:else if !playlistCount}
-  <section class="panel empty-state">
-    <span class="empty-orbit" aria-hidden="true">♫</span>
-    <h2>No playlists yet</h2>
-    <p>Import a playlist from Spotify or another connected account. Allstarr fills it with songs from your library and streams the rest.</p>
-    <Button class="empty-action" onclick={() => addOpen = true}>Import playlist</Button>
-  </section>
+  <section aria-label="Loading playlists" aria-busy="true"><RowsSkeleton count={8} /></section>
+{:else if error && !playlistCount}
+  <ErrorState title="Playlists could not load" detail={error} onretry={() => void refresh()} />
 {:else}
-  {#if degraded}
-    <div class="degraded-banner" role="status">
-      <span aria-hidden="true">!</span>
-      <p><strong>Some playlist data is unavailable.</strong> {degraded}</p>
-      <Button variant="secondary" size="sm" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Trying again…" : "Retry"}</Button>
-    </div>
-  {/if}
-
-  <section class="playlist-layout" aria-busy={refreshing || passiveRefreshing}>
-    {#if copiesError}<p class="notice-error" role="status">{copiesError}</p>{/if}
-    <article class="panel playlist-list">
-      <header class="panel-heading playlist-toolbar">
-        <div>
-          <h2>Playlists</h2>
-          <p>{playlistCount} {playlistCount === 1 ? "playlist" : "playlists"}</p>
-        </div>
-        <div class="panel-heading-actions playlist-toolbar-actions">
-          <Button onclick={() => addOpen = true}>Import playlist</Button>
-          <Button
-            variant="secondary"
-            disabled={Boolean(action) || refreshing || refreshablePlaylists.length === 0}
-            type="button"
-            onclick={() => rematchOpen = true}
-          >
-            Review rematch
-          </Button>
-          <Button
-            variant="secondary"
-            disabled={Boolean(action) || refreshing}
-            type="button"
-            onclick={() => void refreshSources()}
-          >
-            {action === "refresh-sources" ? `Refreshing ${bulkProgress}` : "Refresh playlists"}
-          </Button>
-        </div>
-      </header>
-
-
-      <div class="playlist-filters">
-        <SearchField bind:value={query} label="Filter playlists" placeholder="Filter playlists" hiddenLabel />
-        <SelectField bind:value={stateFilter} label="Playlist status" options={[
-          { value: "all", label: "All states" }, { value: "ready", label: "Ready" },
-          { value: "attention", label: "Needs attention" }, { value: "paused", label: "Paused" },
+  <section class="library-playlists" class:panel-open={detailOpen} aria-busy={refreshing || passiveRefreshing}>
+    <article class="library-list">
+      <header class="library-heading"><h2>Playlists</h2><div class="library-actions">
+        <Button variant="ghost" size="icon" aria-label="Refresh playlists" disabled={Boolean(action) || refreshing} onclick={() => void refreshSources()}><RefreshCw size={18} /></Button>
+        <Button onclick={() => addOpen = true}>Import playlist</Button>
+      </div></header>
+      <PageStatus label="Playlist status" items={[
+        { label: `${playlistCount} ${playlistCount === 1 ? "playlist" : "playlists"}`, emphasis: true },
+        { label: `${totalSongs.toLocaleString()} songs${playlists.every(item => item.playableCount === item.trackCount) ? ", all playable" : ""}` },
+        ...(orderCount ? [{ label: `${orderCount} ${orderCount === 1 ? "order differs" : "orders differ"} from the source`, tone: "warn" as const }] : []),
+      ]} />
+      {#if error || degraded || copiesError}<div class="degraded-banner" role="status"><p>{error || degraded || copiesError}</p><Button variant="text" onclick={() => void refresh()}>Try again</Button></div>{/if}
+      <div class="library-filters">
+        <FilterSegments label="Playlist filters" value={stateFilter} storageKey="allstarr.library.playlists.filter" onchange={value => stateFilter = value as typeof stateFilter} options={[
+          { id: "attention", label: "Needs a look", count: attentionCount }, { id: "ready", label: "Healthy", count: healthyCount },
+          { id: "all", label: "All", count: playlistCount }, { id: "paused", label: "Paused", count: playlists.filter(item => !item.enabled).length },
         ]} />
-        <SelectField bind:value={sort} label="Sort playlists" options={[
-          { value: "name", label: "Name" }, { value: "tracks", label: "Tracks" },
-          { value: "coverage", label: "Coverage" }, { value: "updated", label: "Updated" },
-        ]} />
+        <div class="library-search"><SearchField bind:value={query} label="Filter playlists" placeholder="Search playlists" hiddenLabel />
+          <SelectField bind:value={sourceFilter} label="Playlist source" options={[{ value: "", label: "All sources" }, ...[...new Set(playlists.map(item => item.sourceProviderId))].map(value => ({ value, label: providerName(value) }))]} />
+          <SelectField bind:value={sort} label="Sort playlists" options={[{ value: "name", label: "Name" }, { value: "tracks", label: "Tracks" }, { value: "coverage", label: "Coverage" }, { value: "updated", label: "Updated" }]} />
+        </div>
       </div>
-
-      <div class="playlist-rows" aria-label="Playlists">
-        {#each visiblePlaylists as playlist}
+      <div class="library-rows" aria-label="Playlists">
+        {#each visiblePlaylists as playlist (playlist.id)}
+          <div class="playlist-row">
           {#if "inApps" in playlist}
-            <div class="playlist-row playlist-row-mix">
-              <a
-                class="playlist-open-button"
-                href={`#/for-you?mix=${encodeURIComponent(playlist.id)}`}
-                aria-label={`Open ${playlist.name} mix`}
-              ></a>
-              <MediaArtwork class="playlist-art" url={`/api/admin/mixes/${encodeURIComponent(playlist.id)}/cover?v=${encodeURIComponent(playlist.updatedAt ?? playlist.recipeVersion ?? "")}`} fallback="♫" />
-              <span class="playlist-copy">
-                <span class="playlist-title-line"><strong>{playlist.name}</strong></span>
-                <small class="playlist-metrics">Mix · in your apps</small>
-              </span>
-              <span class="playlist-summary">
-                <small>{playlist.trackCount === null ? "Song count unavailable" : `${playlist.trackCount} ${playlist.trackCount === 1 ? "song" : "songs"}`}</small>
-                <span class="mix-remove"><Button variant="outline" size="sm" aria-label={`Remove ${playlist.name} from my apps`} onclick={() => { removeError = ""; removingMix = playlist; }}><MonitorX data-icon="inline-start" aria-hidden="true" />Remove from my apps</Button></span>
-              </span>
-            </div>
+            <ItemRow title={playlist.name} subtitle={`Mix · in your apps · ${playlist.trackCount ?? "?"} ${playlist.trackCount === 1 ? "song" : "songs"}`} href={`#/for-you?mix=${encodeURIComponent(playlist.id)}`} actionLabel={`Open ${playlist.name} mix`}>
+              {#snippet leading()}<MediaArtwork class="playlist-art" url={`/api/admin/mixes/${encodeURIComponent(playlist.id)}/cover?v=${encodeURIComponent(playlist.updatedAt ?? playlist.recipeVersion ?? "")}`} />{/snippet}
+              {#snippet menu()}<DropdownMenu.Root><DropdownMenu.Trigger class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end"><DropdownMenu.Item class="bits-menu-item library-danger" onSelect={() => { removeError = ""; removingMix = playlist; }}>Remove from my apps</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/snippet}
+            </ItemRow>
           {:else}
-            {@const confirmedPercent = Math.round(confirmationCoverage(playlist) * 100)}
-            {@const editingWarning = jellyfinPlaylistWarning(playlist, providerName(playlist.sourceProviderId))}
-            <div
-              class:active={playlist.id === selectedId}
-              class="playlist-row"
-            >
-              <button
-                class="playlist-open-button"
-                type="button"
-                aria-label={`Open ${playlist.name} playlist details`}
-                onclick={(event) => void loadDetails(playlist.id, event.currentTarget)}
-              ></button>
-              <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
-              <span class="playlist-copy">
-                <span class="playlist-title-line">
-                  <strong>{playlist.name}</strong>
-                  {#if hasCopy(playlist)}<Badge tone="neutral">Your copy</Badge>{/if}
-                  {#if playlist.importMode === "oneTime"}<Badge tone="neutral">Once</Badge>{/if}
-                  {#if playlist.trackRetention === "keepAll"}<Badge state="healthy">Kept</Badge>{/if}
-                  <small class="route-pair">
-                    <ProviderMark id={playlist.sourceProviderId} definition={provider(playlist.sourceProviderId)} />
-                    <span>{providerName(playlist.sourceProviderId)}</span>
-                    <ArrowRight size={18} aria-hidden="true" />
-                    <ProviderMark id={playlist.targetProtocol} definition={provider(playlist.targetProtocol)} />
-                    <span>{providerName(playlist.targetProtocol)}</span>
-                  </small>
-                </span>
-                <small class="playlist-metrics">
-                  <span>{playlist.matchedCount} confirmed</span>
-                  <span>{playlist.metrics.review} to review</span>
-                  <span>{playlist.unmatchedCount} unresolved</span>
-                  <span>{playlist.lastRunCode === "backend_access_missing" ? "Media-server access needed" : playlist.lastRunAt
-                    ? playlist.mode === "virtual"
-                      ? "Updated in Allstarr"
-                      : `${playlist.materializedCount} in ${providerName(playlist.targetProtocol)}`
-                    : "Not updated yet"}</span>
-                </small>
-                {#if editingWarning}
-                  <span class="playlist-editing-warning">
-                    <small role="status">{consent?.needsSignIn ? "Saved Jellyfin sign-in expired" : editingWarning}</small>
-                    <span class="playlist-repair-actions">
-                      {#if consent?.granted && !consent.needsSignIn && playlist.lastRunCode?.split(",").some(code => code.trim() === "order")}
-                        <small>Fixing order on the next sync</small>
-                        <Button variant="outline" size="sm" disabled={Boolean(action) || !playlist.enabled} onclick={() => void syncPlaylist(playlist)}>Sync now</Button>
-                      {:else}
-                        <Button variant="text" size="sm" href="#/sources/services?section=playlist-editing">Allow editing</Button>
-                      {/if}
-                    </span>
-                  </span>
-                {/if}
-              </span>
-              <span
-                class="playlist-summary"
-                role="group"
-                aria-label={`${confirmedPercent}% confirmed, ${playlist.playableCount} of ${playlist.trackCount} playable${playlist.enabled ? "" : ", paused"}`}
-              >
-                <span class="playlist-coverage">
-                  <strong>{confirmedPercent}%</strong>
-                  <small>confirmed</small>
-                </span>
-                <small>{playlist.playableCount} of {playlist.trackCount} playable</small>
-                {#if !playlist.enabled}<Badge state="suggested">Paused</Badge>{/if}
-                {#if isServiceMix(playlist)}<span class="mix-remove"><Button variant="outline" size="sm" aria-label={`Remove ${playlist.name} from my apps`} onclick={() => { removeError = ""; removingMix = playlist; }}><MonitorX data-icon="inline-start" aria-hidden="true" />Remove from my apps</Button></span>{/if}
-                {#if canRebuildInJellyfin(playlist)}
-                  <span class="playlist-row-menu">
-                    <DropdownMenu.Root>
-                      <DropdownMenu.Trigger class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
-                      <DropdownMenu.Portal>
-                        <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
-                          <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || rebuilding} onSelect={() => confirmRebuild(playlist)}>Rebuild in Jellyfin</DropdownMenu.Item>
-                        </DropdownMenu.Content>
-                      </DropdownMenu.Portal>
-                    </DropdownMenu.Root>
-                  </span>
-                {/if}
-              </span>
-              <!-- A finished playlist already says 100% beside it; the bar is only drawn where something is left to do. -->
-              {#if !(playlist.trackCount > 0 && confirmedPercent === 100 && playlist.playableCount === playlist.trackCount)}<CoverageBar {...playlistMatchCounts(playlist.metrics)} compact />{/if}
-            </div>
+            <ItemRow title={playlist.name} subtitle={`${providerName(playlist.sourceProviderId)} → ${providerName(playlist.targetProtocol)} · ${playlist.trackCount} songs${playlist.routeCoverage.some(route => ["local", playlist.targetProtocol].includes(route.providerId)) ? ` · ${playlist.routeCoverage.filter(route => ["local", playlist.targetProtocol].includes(route.providerId)).reduce((sum, route) => sum + route.count, 0)} from your library` : ""}${hasCopy(playlist) ? " · Your copy" : ""}`} actionLabel={`Open ${playlist.name} playlist details`} selected={playlist.id === selectedId} attention={needsLook(playlist)} onclick={event => void loadDetails(playlist.id, event.currentTarget as HTMLElement)}>
+              {#snippet leading()}<MediaArtwork class="playlist-art" url={playlist.artworkUrl} />{/snippet}
+              {#snippet pill()}<StatePill tone={needsLook(playlist) ? "warn" : "ok"} text={rowState(playlist)} />{/snippet}
+            </ItemRow>
           {/if}
-        {:else}
-          <div class="compact-empty">
-            <strong>No playlists match these filters</strong>
-            <Button variant="secondary" size="sm" onclick={() => { query = ""; stateFilter = "all"; }}>Clear filters</Button>
           </div>
-        {/each}
+        {:else}<EmptyState title={playlistCount ? "No playlists match these filters" : "No playlists yet"} description={playlistCount ? "Try another filter or search." : "Import a playlist. Songs from your library play alongside songs from connected services."}>{#snippet icon()}<Server size={24} />{/snippet}{#snippet action()}<Button variant="text" onclick={() => { query = ""; sourceFilter = ""; stateFilter = "all"; }}>Clear filters</Button>{/snippet}</EmptyState>{/each}
       </div>
     </article>
-
-    <Dialog.Root bind:open={detailOpen}>
-      <Dialog.Portal>
-        <Dialog.Overlay class="dialog-overlay" />
-        <Dialog.Content class="source-dialog playlist-detail playlist-detail-dialog" aria-label={selected?.name ?? "Playlist details"}>
+    <SidePanel bind:open={detailOpen} title={selected?.name ?? "Playlist details"} description={`${providerName(selected?.sourceProviderId)} playlist · in your apps`}
+      onPrevious={panelPosition > 0 ? () => void loadDetails(panelPlaylists[panelPosition - 1].id) : undefined}
+      onNext={panelPosition >= 0 && panelPosition < panelPlaylists.length - 1 ? () => void loadDetails(panelPlaylists[panelPosition + 1].id) : undefined}>
+      {#snippet menu()}{#if selected}
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label="Actions" disabled={!details}>
+            <MoreHorizontal size={18} aria-hidden="true" />
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+              <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("sync")}>{selected.importMode === "oneTime" ? "Rebuild from imported copy" : "Update playlist now"}</DropdownMenu.Item>
+              {#if canRebuildInJellyfin(selected)}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || rebuilding} onSelect={() => confirmRebuild(selected)}>Rebuild in Jellyfin</DropdownMenu.Item>{/if}
+              <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => { detailOpen = false; rematchOpen = true; }}>Review account rematch</DropdownMenu.Item>
+              {#if selected.importMode === "linked"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void refreshSources([selected.id])}>Refresh source</DropdownMenu.Item>{/if}
+              {#if selected.sourceUpdateAvailable}
+                <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => sourceUpdateOpen = true}>
+                  Preview changes to {providerName(selected.sourceProviderId)}
+                </DropdownMenu.Item>
+              {/if}
+              <DropdownMenu.Separator />
+              <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !details?.unresolvedCount} onSelect={() => void exportMissingSongs("csv")}>Export missing songs as CSV</DropdownMenu.Item>
+              <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !details?.unresolvedCount} onSelect={() => void exportMissingSongs("json")}>Export missing songs as JSON</DropdownMenu.Item>
+              <DropdownMenu.Separator />
+              <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => settingsOpen = true}>Edit settings</DropdownMenu.Item>
+              <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run("toggle")}>{selected.enabled ? "Pause" : "Resume"}</DropdownMenu.Item>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
+      {/if}{/snippet}
+      {#snippet artwork()}<MediaArtwork class="hero-art" url={details?.artworkUrl} loading="eager" />{/snippet}
+      {#snippet footer()}{#if selected}<div class="playlist-panel-footer"><Button variant="text" class="library-danger" disabled={!isServiceMix(selected)} title={isServiceMix(selected) ? undefined : "Removal is not available for this playlist yet."} onclick={() => { removeError = ""; removingMix = selected; }}>Remove from my apps</Button><div>{#if canRebuildInJellyfin(selected)}<Button variant="outline" disabled={Boolean(action)} onclick={() => confirmRebuild(selected)}>Rebuild…</Button>{/if}<Button disabled={Boolean(action) || !selected.enabled || !details} onclick={() => void run("sync")}>Sync now</Button></div></div>{/if}{/snippet}
       {#if detailLoading && !details}
-        <div class="detail-loading" aria-busy="true">Loading playlist tracks…</div>
+        <RowsSkeleton count={5} />
       {:else if detailError && !details}
         <div class="compact-empty playlist-projection-empty" role="alert">
           <strong>Playlist details are unavailable</strong>
@@ -748,56 +652,20 @@
           <Button variant="secondary" onclick={() => void loadDetails(selectedId)}>Try again</Button>
         </div>
       {:else if details && selected}
-        <header class="playlist-hero">
-          <MediaArtwork class="hero-art" url={details.artworkUrl} fallback="♫" loading="eager" />
-          <div class="playlist-hero-copy">
-            <Dialog.Title>{details.name}</Dialog.Title>
-            {#if hasCopy(selected)}<Badge tone="neutral">Your copy</Badge><p class="playlist-hero-summary">You edited this playlist, so you have your own copy. The original keeps syncing for everyone else.</p>{/if}
-            <p class="playlist-hero-summary">
-              {details.trackCount} {details.trackCount === 1 ? "song" : "songs"}, {listeningTime(details.durationMs)}
-              {#if details.unknownDurationCount}<span>({details.unknownDurationCount} without a length)</span>{/if}
-            </p>
-            <p class="hero-route">
-              <ProviderMark id={details.sourceProviderId} definition={provider(details.sourceProviderId)} />
-              <span>{providerName(details.sourceProviderId)}</span>
-              <ArrowRight size={16} aria-hidden="true" />
-              <Server size={16} aria-hidden="true" />
-              <span>{targetName}</span>
-              {#if details.hasNewerSourceGeneration}<Badge tone="accent">Source update waiting</Badge>{/if}
-            </p>
-          </div>
-          <div class="playlist-hero-actions">
-            <DropdownMenu.Root>
-              <DropdownMenu.Trigger class={`${buttonVariants({ variant: "secondary" })} playlist-actions-trigger`}>
-                Actions <ChevronDown size={16} aria-hidden="true" />
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
-                  <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !selected.enabled} onSelect={() => void run("sync")}>{selected.importMode === "oneTime" ? "Rebuild from imported copy" : "Update playlist now"}</DropdownMenu.Item>
-                  {#if canRebuildInJellyfin(selected)}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || rebuilding} onSelect={() => confirmRebuild(selected)}>Rebuild in Jellyfin</DropdownMenu.Item>{/if}
-                  <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => { detailOpen = false; rematchOpen = true; }}>Review account rematch</DropdownMenu.Item>
-                  {#if selected.importMode === "linked"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void refreshSources([selected.id])}>Refresh source</DropdownMenu.Item>{/if}
-                  {#if selected.sourceUpdateAvailable}
-                    <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => sourceUpdateOpen = true}>
-                      Preview changes to {providerName(selected.sourceProviderId)}
-                    </DropdownMenu.Item>
-                  {/if}
-                  <DropdownMenu.Separator />
-                  <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !details.unresolvedCount} onSelect={() => void exportMissingSongs("csv")}>Export missing songs as CSV</DropdownMenu.Item>
-                  <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !details.unresolvedCount} onSelect={() => void exportMissingSongs("json")}>Export missing songs as JSON</DropdownMenu.Item>
-                  <DropdownMenu.Separator />
-                  <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => settingsOpen = true}>Edit settings</DropdownMenu.Item>
-                  <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run("toggle")}>{selected.enabled ? "Pause" : "Resume"}</DropdownMenu.Item>
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
-            <Dialog.Close class="icon-button playlist-dialog-close" aria-label="Close playlist details"><X size={18} aria-hidden="true" /></Dialog.Close>
-          </div>
-        </header>
-
+        <div class="playlist-panel-tools">
+          {#if hasCopy(selected)}<p class="playlist-copy-note">Your copy · You edited this playlist, so you have your own copy. The original keeps syncing for everyone else.</p>{/if}
+          <p class="hero-route">{providerName(details.sourceProviderId)} → {targetName} · {listeningTime(details.durationMs)}</p>
+        </div>
         {#if details.lastRunCode === "backend_access_missing"}
           <div class="degraded-banner" role="status"><span aria-hidden="true">!</span><p>Restore media-server access to resume playlist sync and library scans.</p><Button variant="secondary" href="#/settings/access">Open media-server access</Button></div>
         {/if}
+        {@const editingWarning = jellyfinPlaylistWarning(selected, providerName(selected.sourceProviderId))}
+        {#if editingWarning}<div class="playlist-warning" role="status"><strong>{consent?.needsSignIn ? "Saved Jellyfin sign-in expired" : editingWarning}.</strong> {#if consent?.granted && !consent.needsSignIn && selected.lastRunCode?.split(",").some(code => code.trim() === "order")}Fixing order on the next sync{#if details.schedule?.nextRunAt} · {relativeTime(details.schedule.nextRunAt)}{/if}.{:else}<Button variant="text" href="#/sources/services?section=playlist-editing">Allow editing</Button>{/if}</div>{/if}
+        <div class="playlist-kpis"><div><strong>{details.trackCount}</strong><small>songs</small></div><div><strong>{details.playableCount}</strong><small>playable</small></div><div><strong>{details.localCount ?? "—"}</strong><small>from your library</small></div></div>
+        <div class="playlist-match-summary"><strong>{details.reviewCount + details.unresolvedCount ? `${details.reviewCount + details.unresolvedCount} songs need a look` : `All ${details.trackCount} matches are settled`}</strong><Button variant="text" href="#/library/matches">Open in Matches</Button></div>
+        {#key selected.id}<PlaylistSyncSettings playlist={selected} schedule={details.schedule ?? null} sourceName={providerName(selected.sourceProviderId)} {targetName} onPlaylist={value => playlists = playlists.map(item => item.id === value.id ? value : item)} onSchedule={(value, id) => { if (details?.id === id) details = { ...details, schedule: value }; }} />{/key}
+        <dl class="playlist-panel-facts"><dt>Last synced</dt><dd>{relativeTime(selected.lastRunAt, "Not yet")}</dd><dt>Source</dt><dd>{providerName(selected.sourceProviderId)}</dd></dl>
+        <details class="playlist-more" bind:open={songsOpen}><summary>Songs and activity · {details.trackCount} songs</summary>
         {#if exportError}<p class="field-error" role="alert">{exportError}</p>{/if}
 
         <section class="playlist-overview" aria-label="Playlist summary">
@@ -872,11 +740,11 @@
             <div class="playlist-fact-run">
               <dt>Latest run</dt>
               <dd>
-                <OperationConsole
+                {#if details}{#await import("$lib/components/OperationConsole.svelte") then module}<module.default
                   playlistName={details.name}
                   requestedJobId={operationJobId}
                   onTerminal={refresh}
-                />
+                />{/await}{/if}
               </dd>
             </div>
           </dl>
@@ -1051,16 +919,13 @@
             {#if !detailLoading}<p>Update the playlist to fetch its songs from {providerName(details.sourceProviderId)}.</p>{/if}
           </div>
         {/if}
-      {:else}
-        <div class="compact-empty"><strong>Select a playlist to inspect its tracks</strong></div>
-      {/if}
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        </details>
+      {:else}<EmptyState title="Select a playlist" />{/if}
+    </SidePanel>
   </section>
 {/if}
 
-<PlaylistSettingsDialog
+{#if settingsOpen}{#await import("$lib/components/PlaylistSettingsDialog.svelte") then module}<module.default
   bind:open={settingsOpen}
   playlist={selected ?? null}
   {details}
@@ -1071,18 +936,18 @@
     editSchedule();
     scheduleEditorOpen = true;
   }}
-/>
+/>{/await}{/if}
 
-<PlaylistSourceUpdateDialog
+{#if sourceUpdateOpen}{#await import("$lib/shelved/PlaylistSourceUpdateDialog.svelte") then module}<module.default
   bind:open={sourceUpdateOpen}
   playlist={selected ?? null}
   providerName={providerName(selected?.sourceProviderId)}
   targetName={providerName(selected?.targetProtocol)}
   onQueued={sourceUpdateQueued}
-/>
-<BulkRematchDialog kind="playlist" bind:open={rematchOpen} onQueued={sourceUpdateQueued} />
+/>{/await}{/if}
+{#if rematchOpen}{#await import("$lib/components/BulkRematchDialog.svelte") then module}<module.default kind="playlist" bind:open={rematchOpen} onQueued={sourceUpdateQueued} />{/await}{/if}
 
-<AddPlaylistDialog bind:open={addOpen} {providers} onSaved={playlistAdded} />
+{#if LoadedAddDialog}<LoadedAddDialog bind:open={addOpen} {providers} existingPlaylists={playlists} onSaved={playlistAdded} />{/if}
 {#if LoadedMatchDialog}
   <LoadedMatchDialog
     bind:open={matchOpen}
@@ -1095,7 +960,7 @@
   />
 {/if}
 
-<ConfirmDialog bind:open={() => Boolean(removingMix), value => { if (!value) removingMix = null; }} title="Remove from my apps?" description={`${removingMix?.name ?? "This mix"} will be removed from your apps. You can add it again in For you.`} confirmLabel="Remove from my apps" disabled={removing} closeOnConfirm={false} error={removeError} onConfirm={removeMix} />
+<ConfirmDialog bind:open={() => Boolean(removingMix), value => { if (!value) removingMix = null; }} title={`Remove ${removingMix?.name ?? "this playlist"} from your apps?`} description={`${removingMix?.name ?? "This playlist"} leaves your apps for you. Its source is unchanged. Saved matches stay, so adding it back is quick.`} confirmLabel="Remove from my apps" disabled={removing} closeOnConfirm={false} error={removeError} onConfirm={removeMix} />
 <ConfirmDialog
   bind:open={() => Boolean(rebuildingPlaylist), value => { if (!value && !rebuilding) rebuildingPlaylist = null; }}
   title="Rebuild this playlist in Jellyfin?"
@@ -1108,22 +973,22 @@
   onConfirm={rebuildPlaylist}
 />
 <style>
-  .mix-remove { position: relative; z-index: calc(var(--layer-content) + 1); }
-  .playlist-editing-warning { display: flex; align-items: center; flex-wrap: wrap; gap: .25rem .5rem; margin-top: .35rem; }
-  .playlist-editing-warning small { white-space: normal; }
-  .playlist-repair-actions { position: relative; z-index: calc(var(--layer-content) + 1); display: inline-flex; flex-wrap: wrap; gap: .35rem; }
-  .playlist-row-menu { position: relative; z-index: calc(var(--layer-content) + 1); justify-self: end; }
-  @media (max-width: 650px) {
-    .playlist-row-mix {
-      row-gap: 0.18rem;
-    }
+  .library-playlists { min-width: 0; }.library-list { padding: var(--space-5); min-width: 0; }
+  .library-heading, .library-actions, .library-search { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+  .library-heading { justify-content: space-between; margin-bottom: var(--space-3); }.library-heading h2 { margin: 0; font-size: 1.5rem; }
+  .library-filters { display: grid; gap: var(--space-3); margin-block: var(--space-4); }.library-search { min-width: 0; flex-wrap: nowrap; }.library-search > :global(:first-child) { min-width: 0; flex: 1 1 0; }.library-search :global(.select-root) { flex: 0 0 auto; }.library-search :global(.select-trigger) { width: auto; gap: var(--space-2); padding-inline: var(--space-2); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; white-space: nowrap; }
+  .library-search :global(.search-field input) { width: 100%; min-width: 0; height: var(--control-md); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; }
+  .playlist-row { display: block; min-height: 0; min-width: 0; padding: 0; border: 0; }.playlist-panel-tools { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }.hero-route, .playlist-copy-note { margin: 0; font-size: var(--text-xs); color: var(--color-ink-muted); }
+  .playlist-warning { margin-block: var(--space-3); border-radius: var(--radius-md); padding: var(--space-3); background: color-mix(in srgb, var(--warning) 12%, var(--color-panel)); color: var(--warning); font-size: var(--text-sm); }
+  .playlist-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin-block: var(--space-4); }.playlist-kpis > div { background: var(--color-panel-raised); border-radius: var(--radius-md); padding: var(--space-3); }.playlist-kpis strong { display: block; font-size: 1.35rem; }.playlist-kpis small { color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .playlist-match-summary { display: grid; justify-items: start; border: 1px solid var(--color-edge); border-radius: var(--radius-md); padding: var(--space-3); margin-bottom: var(--space-5); font-size: var(--text-sm); }
+  .playlist-panel-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-3); margin-block: var(--space-5); font-size: var(--text-xs); }.playlist-panel-facts dt { color: var(--color-ink-muted); }.playlist-panel-facts dd { text-align: right; margin: 0; }
+  .playlist-more { --detail-gutter: 0px; min-width: 0; }
+  .playlist-more > summary { min-height: 44px; cursor: pointer; font-size: var(--text-sm); padding-block: var(--space-3); }.playlist-more :global(.playlist-facts) { display: grid; grid-template-columns: 1fr; }.playlist-more :global(.track-toolbar) { display: flex; flex-wrap: wrap; }.playlist-more :global(.track-scroll) { max-height: min(60dvh, 32rem); overflow: auto; }
+  .playlist-panel-footer { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); width: 100%; min-width: 0; }.playlist-panel-footer > div { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; }.playlist-panel-footer :global([data-slot="button"]) { padding-inline: var(--space-2); font-size: .75rem; }
+  :global(.library-danger) { color: var(--danger); }
+  @media (min-width: 900px) { .library-playlists.panel-open { margin-right: min(480px, 40vw); } }
+  @media (max-width: 899px) { .library-list { padding: var(--space-3); }.library-search { flex-wrap: wrap; }.library-search > :global(:first-child) { flex-basis: 100%; }.playlist-more :global(.review-filter-button), .playlist-more :global(.schedule-edit-button), .playlist-more :global(.track-menu-trigger) { min-width: 44px; min-height: 44px; } }
+  @media (max-width: 380px) { .playlist-panel-footer :global([data-slot="button"]) { padding-inline: var(--space-1); font-size: .6875rem; } }
 
-    .playlist-row-mix :global(.playlist-art) {
-      grid-row: span 2;
-    }
-
-    .playlist-row-mix .playlist-copy {
-      align-self: end;
-    }
-  }
 </style>

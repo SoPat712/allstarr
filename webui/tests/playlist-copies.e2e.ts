@@ -58,14 +58,14 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     const reads = await mockCopies(page);
     await page.goto("/#/library/playlists");
     const row = page.locator(".playlist-row").filter({ hasText: "Evening mix" });
-    await expect(row.getByText("Your copy", { exact: true })).toBeVisible();
+    await expect(row.getByText(/Your copy/)).toBeVisible();
     await expect(page.locator(".playlist-row").filter({ hasText: "Shared mix" }).getByText("Your copy", { exact: true })).toHaveCount(0);
     const folder = "test-results/shots-uiactivity";
     await mkdir(folder, { recursive: true });
     await page.screenshot({ path: `${folder}/playlist-copy-list-${width}-${theme}.png`, fullPage: true });
     await page.getByRole("button", { name: "Open Evening mix playlist details" }).click();
     const dialog = page.getByRole("dialog");
-    await expect(dialog.getByText("Your copy", { exact: true })).toBeVisible();
+    await expect(dialog.getByText(/Your copy/)).toBeVisible();
     await expect(dialog).toContainText("You edited this playlist, so you have your own copy. The original keeps syncing for everyone else.");
     if (width === 390) await expectContainedMobileGeometry(page);
     await page.screenshot({ path: `${folder}/playlist-copy-details-${width}-${theme}.png`, fullPage: true });
@@ -75,13 +75,13 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
 test("Playlist copy uses its original media-server playlist reference", async ({ page }) => {
   await mockCopies(page, true, true);
   await page.goto("/#/library/playlists");
-  await expect(page.getByText("Your copy", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Your copy/)).toBeVisible();
 });
 test("An imported playlist without personal edits has no copy badge", async ({ page }) => {
   await mockCopies(page, false);
   await page.goto("/#/library/playlists");
   await expect(page.getByRole("button", { name: "Open Evening mix playlist details" })).toBeVisible();
-  await expect(page.getByText("Your copy", { exact: true })).toHaveCount(0);
+  await expect(page.getByText(/Your copy/)).toHaveCount(0);
 });
 
 test("Every imported playlist stays in one filterable and sortable list", async ({ page }) => {
@@ -103,12 +103,10 @@ test("Every imported playlist stays in one filterable and sortable list", async 
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText("Collection 24");
   await page.getByRole("searchbox", { name: "Filter playlists" }).fill("");
-  await page.getByRole("button", { name: "Playlist status", exact: true }).click();
-  await page.getByRole("option", { name: "Paused", exact: true }).click();
+  await page.getByRole("radio", { name: /^Paused/ }).click();
   await expect(rows).toHaveCount(1);
   await expect(rows).toContainText("Collection 24");
-  await page.getByRole("button", { name: "Playlist status", exact: true }).click();
-  await page.getByRole("option", { name: "All states", exact: true }).click();
+  await page.getByRole("radio", { name: /^All/ }).click();
   await page.getByRole("button", { name: "Sort playlists", exact: true }).click();
   await page.getByRole("option", { name: "Tracks", exact: true }).click();
   await expect(rows).toHaveCount(25);
@@ -123,7 +121,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await mockCopies(page, false, false, [mixPlaylist]);
     await page.goto("/#/library/playlists");
     const row = page.locator(".playlist-row").filter({ hasText: mixPlaylist.name });
-    await expect(row.locator(".route-pair > span:not(.provider-mark)").filter({ hasText: /^Last\.fm$/ })).toBeVisible();
+    await expect(row.getByText(/Last\.fm → Jellyfin/)).toBeVisible();
     const rowCover = row.locator(".playlist-art img");
     await expect(rowCover).toHaveAttribute("src", coverUrl);
     await expect(rowCover).toHaveAttribute("loading", "lazy");
@@ -133,7 +131,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await mkdir(folder, { recursive: true });
     await page.screenshot({ path: `${folder}/playlist-cover-list-${width}-${theme}.png`, fullPage: true });
     await row.getByRole("button", { name: `Open ${mixPlaylist.name} playlist details` }).click();
-    await expect(page.getByRole("dialog").locator(".hero-route > span:not(.provider-mark)").filter({ hasText: /^Last\.fm$/ })).toBeVisible();
+    await expect(page.getByRole("dialog").locator(".hero-route")).toBeVisible();
     const heroCover = page.getByRole("dialog").locator(".hero-art img");
     await expect(heroCover).toHaveAttribute("src", coverUrl);
     await expect(heroCover).toHaveAttribute("loading", "eager");
@@ -153,12 +151,12 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     const rows = page.locator(".playlist-row");
     await expect(rows).toHaveCount(4);
     await expect(page.getByText("4 playlists", { exact: true })).toBeVisible();
-    await expect(rows.locator(".playlist-title-line strong")).toHaveText(["After hours mix", "Blend 1", "Evening listening", "Focus"]);
+    await expect(rows.locator("h3")).toHaveText(["After hours mix", "Blend 1", "Evening listening", "Focus"]);
     await expect(rows.filter({ hasText: "Uncharted" })).toHaveCount(0);
     await expect(rows.filter({ hasText: "Just Dropped" })).toHaveCount(0);
     const row = rows.filter({ hasText: keptMix.name });
-    await expect(row.getByText("Mix · in your apps", { exact: true })).toBeVisible();
-    await expect(row.getByText("1 song", { exact: true })).toBeVisible();
+    await expect(row.getByText(/Mix · in your apps/)).toBeVisible();
+    await expect(row.getByText(/1 song/)).toBeVisible();
     await expect(row).not.toContainText("confirmed");
     const cover = row.locator(".playlist-art img");
     await expect(cover).toHaveAttribute("src", `/api/admin/mixes/${keptMix.id}/cover?v=${encodeURIComponent(keptMix.updatedAt!)}`);
@@ -166,34 +164,26 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect.poll(() => cover.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
     if (width === 390) {
       await expectContainedMobileGeometry(page);
-      for (const mixRow of await rows.filter({ hasText: "Mix · in your apps" }).all()) {
-        const label = await mixRow.getByText("Mix · in your apps", { exact: true }).boundingBox();
-        const count = await mixRow.getByText("1 song", { exact: true }).boundingBox();
-        expect(label).not.toBeNull();
-        expect(count).not.toBeNull();
-        expect(count!.y - (label!.y + label!.height)).toBeGreaterThanOrEqual(0);
-        expect(count!.y - (label!.y + label!.height)).toBeLessThanOrEqual(8);
-      }
+      await expect(row.getByText(/Mix · in your apps · 1 song/)).toBeVisible();
     }
     await capture(page, "playlist-added-mixes", width, theme);
     await page.getByRole("searchbox", { name: "Filter playlists" }).fill("blend");
     await expect(rows).toHaveCount(1);
     await expect(rows).toContainText(keptMix.name);
     await page.getByRole("searchbox", { name: "Filter playlists" }).fill("");
-    for (const status of ["Ready", "Needs attention", "Paused"]) {
-      await page.getByRole("button", { name: "Playlist status", exact: true }).click();
-      await page.getByRole("option", { name: status, exact: true }).click();
-      await expect(rows.getByText("Mix · in your apps", { exact: true })).toHaveCount(0);
+    for (const status of ["Healthy", "Needs a look", "Paused"]) {
+      await page.getByRole("radio", { name: new RegExp(`^${status}`) }).click();
+      await expect(rows.getByText(/Mix · in your apps/)).toHaveCount(0);
     }
-    await page.getByRole("button", { name: "Playlist status", exact: true }).click();
-    await page.getByRole("option", { name: "All states", exact: true }).click();
+    await page.getByRole("radio", { name: /^All/ }).click();
     await row.getByRole("link", { name: `Open ${keptMix.name} mix`, exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/#/for-you\\?mix=${keptMix.id}$`));
     await expect(page.getByRole("dialog").getByRole("heading", { name: keptMix.name, exact: true })).toBeVisible();
     expect(reads.filter(path => path === `/api/admin/mixes/${id}`)).toHaveLength(0);
     expect(reads.filter(path => path === `/api/admin/mixes/${builtInMixes[3].id}`)).toHaveLength(0);
     await page.getByRole("dialog").getByRole("link", { name: "Manage in Playlists", exact: true }).click();
-    await page.getByRole("button", { name: `Remove ${keptMix.name} from my apps`, exact: true }).click();
+    await page.getByRole("button", { name: `More options for ${keptMix.name}`, exact: true }).click();
+    await page.getByRole("menuitem", { name: "Remove from my apps", exact: true }).click();
     await page.getByRole("alertdialog").getByRole("button", { name: "Remove from my apps", exact: true }).click();
     await expect(rows.filter({ hasText: keptMix.name })).toHaveCount(0);
     await capture(page, "playlist-after-remove", width, theme);
@@ -216,9 +206,11 @@ test("Kept mixes appear when there are no imported playlists", async ({ page }) 
 test("Removing a mix from playlists keeps it available to add again", async ({ page }) => {
   const cards = [{ ...keptMix }]; const reads = await mockCopies(page, false, false, [], cards);
   await page.goto("/#/library/playlists");
-  const remove = page.getByRole("button", { name: `Remove ${keptMix.name} from my apps`, exact: true }); await remove.click();
+  const remove = page.getByRole("button", { name: `More options for ${keptMix.name}`, exact: true }); await remove.click();
+  await page.getByRole("menuitem", { name: "Remove from my apps", exact: true }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Cancel", exact: true }).click();
   expect(cards[0].inApps).toBe(true); await remove.click();
+  await page.getByRole("menuitem", { name: "Remove from my apps", exact: true }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Remove from my apps", exact: true }).click();
   await expect(page.locator(".playlist-row")).toHaveCount(0);
   expect(reads).toContain(`DELETE /api/admin/mixes/${keptMix.id}/in-apps`);
@@ -232,7 +224,8 @@ test("A failed removal keeps the mix and can be retried", async ({ page }) => {
   const cards = [{ ...keptMix }]; await mockCopies(page, false, false, [], cards); let failing = true;
   await page.route("**/in-apps", route => failing ? route.fulfill({ status: 503, json: {} }) : route.fallback());
   await page.goto("/#/library/playlists");
-  await page.getByRole("button", { name: `Remove ${keptMix.name} from my apps`, exact: true }).click();
+  await page.getByRole("button", { name: `More options for ${keptMix.name}`, exact: true }).click();
+    await page.getByRole("menuitem", { name: "Remove from my apps", exact: true }).click();
   const dialog = page.getByRole("alertdialog"), confirm = dialog.getByRole("button", { name: "Remove from my apps", exact: true });
   await confirm.click(); await expect(dialog.getByRole("alert")).toContainText("Try again.");
   expect(cards[0].inApps).toBe(true); failing = false; await confirm.click();
@@ -240,14 +233,12 @@ test("A failed removal keeps the mix and can be retried", async ({ page }) => {
 });
 
 
-test("Playlist removal uses an outlined control under coverage", async ({ page }) => {
+test("Playlist removal lives in the panel or overflow menu and confirms", async ({ page }) => {
   await mockCopies(page, false, false, [mixPlaylist], builtInMixes);
   await page.goto("/#/library/playlists");
-  for (const name of [mixPlaylist.name, keptMix.name]) {
-    const action = page.getByRole("button", { name: `Remove ${name} from my apps`, exact: true });
-    await expect(action).toHaveText("Remove from my apps");
-    await expect(action.locator('svg[data-icon="inline-start"]')).toHaveCount(1);
-    expect(await action.evaluate(element => getComputedStyle(element).borderTopStyle)).toBe("solid");
-    expect(await action.evaluate(element => getComputedStyle(element).borderTopColor)).not.toBe("rgba(0, 0, 0, 0)");
-  }
+  await page.getByRole("button", { name: `Open ${mixPlaylist.name} playlist details` }).click();
+  const action = page.getByRole("dialog").getByRole("button", { name: "Remove from my apps", exact: true });
+  await expect(action).toBeVisible(); await action.click();
+  await expect(page.getByRole("alertdialog")).toContainText(mixPlaylist.name);
+  await page.getByRole("alertdialog").getByRole("button", { name: "Cancel", exact: true }).click();
 });

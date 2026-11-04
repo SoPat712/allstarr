@@ -103,9 +103,14 @@ async function openImport(page: Page) {
   return dialog;
 }
 
+
+async function nextPlaylistOptions(dialog: Locator) {
+  const next = dialog.getByRole("button", { name: "Next", exact: true });
+  if (await next.count()) await next.click();
+}
 async function finishOnce(dialog: Locator) {
-  for (let step = 0; step < 3; step++) await dialog.getByRole("button", { name: "Continue", exact: true }).click();
-  await dialog.getByRole("button", { name: "Import playlist", exact: true }).click();
+  await nextPlaylistOptions(dialog);
+  await dialog.getByRole("button", { name: /^Import (?:\d+ songs|playlist)$/, exact: true }).click();
   await expect(dialog).toBeHidden();
 }
 
@@ -129,6 +134,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(dialog.getByRole("button", { name: "Top tracks period" })).toContainText("All time");
     await dialog.getByRole("button", { name: "Top tracks period" }).scrollIntoViewIfNeeded();
     await capture(page, "lastfm-import-source", width, theme);
+    await dialog.getByRole("tab", { name: "Paste a link", exact: true }).click();
     await dialog.getByRole("textbox", { name: "Paste a link" }).fill(playlistMbid);
     await dialog.getByRole("textbox", { name: "Paste a link" }).press("Enter");
     await expect(dialog.getByText("Public discoveries", { exact: true })).toBeVisible();
@@ -170,6 +176,7 @@ for (const reference of [playlistMbid, `https://listenbrainz.org/playlist/${play
   test(`ListenBrainz resolves a ${reference === playlistMbid ? "bare playlist MBID" : "playlist URL"}`, async ({ page }) => {
     const state = await mockImport(page, { lastfmAccount: false });
     const dialog = await openImport(page);
+    await dialog.getByRole("tab", { name: "Paste a link", exact: true }).click();
     const input = dialog.getByRole("textbox", { name: "Paste a link" });
     await input.fill(reference);
     await input.press("Enter");
@@ -190,6 +197,7 @@ test("Source availability keeps link import and offers a personal Last.fm connec
   const dialog = page.getByRole("dialog", { name: "Import a playlist" });
   await expect(dialog.getByRole("link", { name: "Connect Last.fm", exact: true })).toHaveAttribute("href", "#/sources/accounts?source=lastfm&connect=1");
   await expect(dialog.getByRole("radio", { name: /Public ListenBrainz playlist/ })).toHaveCount(0);
+  await dialog.getByRole("tab", { name: "Paste a link", exact: true }).click();
   await expect(dialog.getByRole("textbox", { name: "Paste a link" })).toBeVisible();
   await expect(dialog.getByRole("radio", { name: /Loved tracks/ })).toHaveCount(0);
   expect(state.externalRequests).toEqual([]);
@@ -200,15 +208,15 @@ test("A Last.fm source can stay linked to an existing playlist with its chosen s
   const dialog = await openImport(page);
   await dialog.getByRole("radio", { name: /Last\.fm/ }).check();
   await dialog.getByRole("radio", { name: /Loved tracks/ }).check();
-  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await nextPlaylistOptions(dialog);
   await dialog.getByRole("radio", { name: /Keep in sync/ }).check();
-  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await nextPlaylistOptions(dialog);
   await dialog.getByRole("radio", { name: /Existing playlist/ }).check();
   await dialog.getByRole("radio", { name: /Evening music/ }).check();
-  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await nextPlaylistOptions(dialog);
   await dialog.getByRole("button", { name: "Update schedule", exact: true }).click();
   await page.getByRole("option", { name: "Every hour", exact: true }).click();
-  await dialog.getByRole("button", { name: "Import and link", exact: true }).click();
+  await dialog.getByRole("button", { name: /^Import (?:\d+ songs|playlist)$/, exact: true }).click();
   await expect(dialog).toBeHidden();
   expect(state.created).toHaveLength(1);
   expect(state.created[0]).toMatchObject({ importMode: "linked", targetPlaylistId: "existing-playlist",

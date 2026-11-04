@@ -7,6 +7,7 @@
     playlistLinks,
     json,
     type MediaTarget,
+    type PlaylistLink,
     type PlaylistDiscoveryItem,
     type PlaylistSourceAccount,
     type ProviderDefinition,
@@ -15,6 +16,8 @@
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
+  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import { lastFmPeriods } from "$lib/intelligence";
   import {
@@ -47,11 +50,13 @@
     providers,
     onSaved,
     initialSource = null,
+    existingPlaylists = [],
   }: {
     open: boolean;
     providers: ProviderDefinition[];
     onSaved: (message: string) => void | Promise<void>;
     initialSource?: InitialSource | null;
+    existingPlaylists?: PlaylistLink[];
   } = $props();
 
   let pastedUrl = $state("");
@@ -60,6 +65,7 @@
   let linkRequest = 0;
   let prepared = $state(false);
   let step = $state(1);
+  let sourceTab = $state("accounts");
   let accounts = $state<PlaylistSourceAccount[]>([]);
   let providerOrder = $state<string[]>([]);
   let providerNames = $state<Record<string, string>>({});
@@ -131,10 +137,11 @@
     updateCadence,
     trackRetention,
   ));
+  const sourceCount = $derived(linkPreview?.trackCount ?? sourcePlaylists.find(item => item.id === sourcePlaylistId)?.trackCount ?? null);
   const stepReady = $derived(
     step === 1
       ? Boolean(sourcePlaylistId) && !resolvingLink
-      : step === 3
+      : step === 2
         ? Boolean(targetId) && (targetMode === "new" || Boolean(targetPlaylistId))
         : true,
   );
@@ -424,8 +431,8 @@
 
   async function next() {
     if (!stepReady) return;
-    step = Math.min(4, step + 1);
-    if (step === 3 && targetMode === "existing" && targetId && !targetPlaylists.length)
+    step = 2;
+    if (step === 2 && targetMode === "existing" && targetId && !targetPlaylists.length)
       await browseTargets();
   }
 
@@ -492,13 +499,13 @@
       <header>
         <div>
           <Dialog.Title>Import a playlist</Dialog.Title>
-          <Dialog.Description>Bring a playlist from another service into Allstarr.</Dialog.Description>
+          <Dialog.Description>Bring a playlist into your apps. Nothing changes on the service.</Dialog.Description>
         </div>
         <Dialog.Close class="icon-button" aria-label="Close playlist setup"><X size={18} aria-hidden="true" /></Dialog.Close>
       </header>
 
       <nav class="playlist-add-steps" aria-label="Playlist setup progress">
-        {#each ["Source", "Import", "Destination", "Updates"] as label, index}
+        {#each ["Choose", "Options and review"] as label, index}
           <button
             class:active={step === index + 1}
             class:complete={step > index + 1}
@@ -516,7 +523,8 @@
 
       <div class="playlist-add-body" bind:this={addBody} aria-busy={loading}>
         {#if step === 1}
-          <section class="pl-section">
+          <SegmentedNav label="Choose playlist source" items={[{ id: "accounts", label: "From my accounts" }, { id: "link", label: "Paste a link" }]} active={sourceTab} onchange={value => sourceTab = value} />
+          {#if sourceTab === "link"}<section class="pl-section">
             <form class="url-import-form" onsubmit={(event) => { event.preventDefault(); void resolveLink(); }}>
               <label class="url-import-field">
                 <span>Paste a link</span>
@@ -547,12 +555,12 @@
                 <ProviderMark id={linkPreview.source.id} definition={definition(linkPreview.source.id)} label={linkPreview.source.displayName} />
               </div>
             {/if}
-          </section>
+          </section>{/if}
         {/if}
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
 
         {#if loading && step === 1 && !accounts.length && !publicProviders.length}
-          <div class="detail-loading" aria-busy="true">Loading playlist sources…</div>
+          <RowsSkeleton count={4} />
         {:else if error && step === 1 && !accounts.length && !publicProviders.length}
           <div class="compact-empty">
             <strong>Playlist setup is unavailable</strong>
@@ -640,10 +648,11 @@
                     </label>
                   {/if}
                   {#each sourcePlaylists as playlist}
+                    {@const alreadyAdded = existingPlaylists.some(item => item.enabled && item.providerAccountId === accountId && item.sourcePlaylistId === playlist.id && item.sourceProviderId === selectedAccount?.providerId)}
                     <label class="pl-option pl-option-media" class:active={sourcePlaylistId === playlist.id}>
-                      <input bind:group={sourcePlaylistId} type="radio" name="playlist-source" value={playlist.id} />
+                      <input bind:group={sourcePlaylistId} type="radio" name="playlist-source" value={playlist.id} disabled={alreadyAdded} />
                       <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
-                      <span class="pl-option-text"><strong>{playlist.name}</strong><small>{playlist.owner || "Unknown owner"} · {playlist.trackCount ?? "?"} songs</small></span>
+                      <span class="pl-option-text"><strong>{playlist.name}</strong><small>{playlist.owner || "Unknown owner"} · {playlist.trackCount ?? "?"} songs{alreadyAdded ? " · Already in your apps" : ""}</small></span>
                     </label>
                   {:else}{#if !loading}<p class="pl-help">No playlists found.</p>{/if}{/each}
                 </div>
@@ -676,7 +685,8 @@
               </label>
             {/if}
           </section>
-        {:else if step === 3}
+        {/if}
+        {#if step === 2}
           <section class="pl-section">
             <div><h3 id="playlist-add-destination">Destination</h3><p class="pl-help">Listeners can find every source song through Allstarr, and playable songs are also kept in a {targetName} playlist.</p></div>
             <div class="pl-options pl-options-two" role="radiogroup" aria-labelledby="playlist-add-destination">
@@ -722,7 +732,9 @@
               </div>
             </section>
           {/if}
-        {:else}
+        {/if}
+        {#if step === 2}
+          <section class="pl-section import-preview"><h3>What comes over</h3><strong>{sourceCount == null ? "Song count is checked during import" : `${sourceCount} songs from ${sourceName}`}</strong><p class="pl-help">Allstarr checks songs against your library and connected services after you start. Unsure songs go to Matches for you to review.</p></section>
           <div class="pl-summary" role="status">
             <Info size={20} aria-hidden="true" />
             <p><strong>What will happen</strong>{behaviorSummary}</p>
@@ -751,11 +763,11 @@
       </div>
 
       <footer class="dialog-actions">
-        {#if step === 1}<Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>{:else}<Button variant="secondary" onclick={() => step--}>Back</Button>{/if}
-        {#if step < 4}
-          <Button disabled={!stepReady || loading} onclick={() => void next()}>Continue</Button>
+        {#if step > 1}<Button variant="text" onclick={() => step = 1}>Back</Button>{/if}<Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
+        {#if step < 2}
+          <Button disabled={!stepReady || loading} onclick={() => void next()}>Next</Button>
         {:else}
-          <Button disabled={!sourcePlaylistId || !targetId || (targetMode === "existing" && !targetPlaylistId) || saving} onclick={() => void save()}>{saving ? "Starting import…" : importMode === "oneTime" ? "Import playlist" : "Import and link"}</Button>
+          <Button disabled={!sourcePlaylistId || !targetId || (targetMode === "existing" && !targetPlaylistId) || saving} onclick={() => void save()}>{saving ? "Starting import…" : sourceCount == null ? "Import playlist" : `Import ${sourceCount} songs`}</Button>
         {/if}
       </footer>
     </Dialog.Content>
@@ -763,6 +775,8 @@
 </Dialog.Root>
 
 <style>
+  .import-preview > strong { font-size: var(--text-sm); }
+
   .url-import-form, .url-import-field { width: 100%; }
   .url-import-field { display: grid; gap: var(--space-2); }
   .url-import-input { position: relative; display: block; }

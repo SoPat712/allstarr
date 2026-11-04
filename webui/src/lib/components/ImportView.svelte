@@ -10,15 +10,19 @@
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Progress } from "$lib/components/ui/progress";
-  import { Skeleton } from "$lib/components/ui/skeleton";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
+  import ItemRow from "$lib/components/patterns/ItemRow.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import EmptyState from "$lib/components/patterns/EmptyState.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
-  import RouteError from "$lib/components/RouteError.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ActivityOutcome from "$lib/components/ActivityOutcome.svelte";
-  import MatchDialog from "$lib/components/MatchDialog.svelte";
+
 
   let { currentUserId, initialAccount = "", initialRun = "" }: { currentUserId: string; initialAccount?: string; initialRun?: string } = $props();
   let accounts = $state<ProviderAccount[]>([]);
@@ -46,6 +50,15 @@
   let resourceError = $state("");
   let selectedResource = $state<MigrationReviewItem | null>(null);
   let matchOpen = $state(false);
+  let LoadedMatchDialog = $state<typeof import("$lib/components/MatchDialog.svelte").default | null>(null);
+  let kindFilter = $state("all");
+  const kinds = $derived([
+    { id: "liked-songs", label: providerId === "apple-musickit" ? "Library songs" : "Liked Songs", count: choices.filter(item => item.kind === "liked-songs").reduce((sum, item) => sum + (item.count ?? 0), 0) },
+    { id: "playlist", label: "Playlists", count: choices.filter(item => item.kind === "playlist").length },
+    { id: "saved-albums", label: "Albums", count: choices.filter(item => item.kind === "saved-albums").reduce((sum, item) => sum + (item.count ?? 0), 0) },
+    { id: "followed-artists", label: "Artists", count: choices.filter(item => item.kind === "followed-artists").reduce((sum, item) => sum + (item.count ?? 0), 0) },
+  ]);
+  const selectedSongs = $derived(choices.filter(item => selected[item.sourceId] && ["liked-songs", "playlist"].includes(item.kind)).reduce((sum, item) => sum + (item.count ?? 0), 0));
   let matchLoading = $state(false);
   let selectedMatch = $state<MatchReviewItem | null>(null);
   let matchCollection = "";
@@ -137,6 +150,9 @@
         const first = next.collections.find(item => item.counts.review + item.counts.unmatched > 0);
         if (first) { expanded[first.id] = true; await loadPage(first.id); }
       }
+      if (next.provisional) {
+        for (const item of next.collections.filter(item => item.counts.review > 0)) await loadPage(item.id);
+      }
       if (next.run.state === "completed") await loadReceipts(next);
     } catch (cause) {
       if (disposed || id !== runId || version !== selectionVersion) return;
@@ -165,6 +181,7 @@
       runId = initialRun;
       if (!runId && accountId) try { runId = localStorage.getItem(storageKey()) ?? ""; } catch { /* Storage is optional. */ }
       if (runId) await refresh();
+      else if (accountId) await findMusic();
     } catch { error = "Your accounts could not be loaded. Try again."; }
     finally { loading = false; }
   }
@@ -174,6 +191,7 @@
     providerId = accounts.find(item => item.id === value)!.providerId; rememberProvider();
     try { runId = localStorage.getItem(storageKey()) ?? ""; } catch { runId = ""; }
     if (runId) await refresh();
+    else await findMusic();
   }
   async function changeProvider(value: string) {
     if (busy || value === providerId) return;
@@ -221,6 +239,8 @@
       const match = await matchReview.get(item.externalSnapshotId);
       if (disposed || version !== selectionVersion) return;
       if (!match || match.externalSnapshotId !== item.externalSnapshotId) throw new Error();
+      LoadedMatchDialog ??= (await import("$lib/components/MatchDialog.svelte")).default;
+      if (disposed || version !== selectionVersion) return;
       selectedMatch = match; matchCollection = item.collectionId; matchOpen = true;
     } catch { if (version === selectionVersion) error = "This song's match could not be opened. Try again."; }
     finally { if (version === selectionVersion) matchLoading = false; }
@@ -275,9 +295,10 @@
 </script>
 
 <section class="settings-content import-page" aria-label="Move your music collection">
-  <header class="panel-heading"><div><h2>Bring your music</h2><p>Move your music collection into Allstarr. Nothing is changed in Spotify or Apple Music.</p></div>
+  <header class="import-heading"><div><h2>Bring your music</h2></div>
     {#if runId}<RefreshButton variant="secondary" label="Refresh import progress" onrefresh={refresh} />{/if}
   </header>
+  <PageStatus label="Import status" items={[{ label: "Nothing changes in Apple Music or Spotify.", emphasis: true }, ...(status && runState !== "choosing" ? [{ label: `${status.total.accepted} found · ${status.total.review} unsure · ${status.total.unmatched} missing so far` }] : [])]} />
   {#if !loading && providerOptions.length > 1}
     <SegmentedNav items={providerOptions} active={providerId} label="Music service" onchange={changeProvider} />
   {/if}
@@ -289,23 +310,26 @@
       <li class:current={step === index} aria-current={step === index ? "step" : undefined}>{#if index < step}<Check size={16} aria-hidden="true" />{/if}{label}</li>
     {/each}
   </ol>
-  {#if loading}<Skeleton class="settings-card skeleton-panel" aria-label="Loading your music" />
+  {#if loading}<RowsSkeleton count={5} />
   {:else}
     {#if error && !accounts.length && !runId}
-      <RouteError eyebrow="Accounts unavailable" title="Your accounts are unavailable." message={error} onRetry={load} />
+      <ErrorState title="Your accounts could not load" detail={error} onretry={load} />
     {:else if error}<p class="notice-error" role="alert">{error}</p>{/if}
     {#if (!status || runState === "choosing") && (accounts.length || runId || !error)}
       {#if !accounts.length && !runId && !error}
-        <article class="settings-card"><div class="import-body"><p>Connect Spotify or Apple Music first.</p><Button href="#/integrations/services">Connect an account</Button></div></article>
+        <EmptyState title="Connect Spotify or Apple Music first.">{#snippet icon()}<Check size={24} />{/snippet}{#snippet action()}<Button href="#/integrations/services">Connect an account</Button>{/snippet}</EmptyState>
       {:else if !runId}
-        <article class="settings-card"><div class="import-body">
+        <article class="import-section"><div class="import-body">
           <Button disabled={busy || !accountId} onclick={findMusic}>Find my music</Button>
         </div></article>
       {/if}
       {#if runId}
-        <article class="settings-card" aria-label="Choose your music">
+        <article class="import-section" aria-label="Choose your music">
           <header><h3>Choose your music</h3><div class="import-actions"><Button variant="text" disabled={busy} onclick={() => selected = Object.fromEntries(choices.map(item => [item.sourceId, true]))}>Select all</Button><Button variant="outline" disabled={busy} onclick={() => selected = {}}>Clear</Button></div></header>
-          {#each choices as item (item.sourceId)}
+          {#if cursor}<p class="import-count-note">Counts so far. Show more playlists to include the rest.</p>{/if}
+          <section class="import-kind-counts" aria-label="Counts by kind">{#each kinds as kind}<div><strong>{choices.some(item => item.kind === kind.id && item.count == null) ? "?" : kind.count.toLocaleString()}</strong><small>{kind.label}</small></div>{/each}</section>
+          <div class="import-kind-filters"><FilterSegments label="Import kinds" bind:value={kindFilter} storageKey="allstarr.library.import.kind" options={[{ id: "all", label: "All", count: choices.length }, ...kinds]} /></div>
+          {#each choices.filter(item => kindFilter === "all" || item.kind === kindFilter) as item (item.sourceId)}
             <div class="import-choice">
               <label class="import-selection"><Checkbox aria-label={`Select ${collectionName(item.kind, item.name, providerId)}`} checked={!!selected[item.sourceId]} disabled={busy} onCheckedChange={value => selected[item.sourceId] = value === true} />
                 <MediaArtwork url={item.artworkUrl} /><span><strong>{collectionName(item.kind, item.name, providerId)}</strong><small>{item.count === null ? "Size unknown" : collectionCount(item.count, item.kind)}</small>{#if item.kind === "liked-songs"}<small>Become hearts</small>{/if}</span></label>
@@ -317,24 +341,29 @@
             {#if !choices.length}<Button variant="secondary" disabled={busy} onclick={findMusic}>Find my music</Button>{/if}
             <small>Keep in sync updates the playlist when it changes in your connected service. Otherwise it's copied once.</small>
             {#if unavailableCollectionsLine(unsupported, providerId)}<small>{unavailableCollectionsLine(unsupported, providerId)}</small>{/if}
+            <p>{selectedSongs.toLocaleString()} songs selected{cursor ? " · more playlists available" : ""}. Matching runs in the background; you can leave this page.</p>
             <Button disabled={busy || !selectedCount} onclick={() => act(async () => {
               await migrations.choose(runId, choices.filter(item => selected[item.sourceId]).map(item => ({ SourceId: item.sourceId, KeepInSync: item.kind === "playlist" && !!sync[item.sourceId] })));
               await refresh();
-            }, "Your selection could not be saved. Try again.")}>Start matching ({selectedCount} selected)</Button>
+            }, "Your selection could not be saved. Try again.")}>Start import ({selectedCount} selected)</Button>
           </div>
         </article>
       {/if}
     {/if}
     {#if status && (step === 1 || interrupted)}
-      <article class="settings-card" aria-label="Matching progress"><div class="import-body">
+      <article class="import-section" aria-label="Matching progress"><div class="import-body">
         <h3>{interrupted ? runState === "waiting" ? "Your move needs attention" : "Your move is stopped" : "Matching your music…"}</h3>
-        <p>Moving your {providerName} collection.</p>
+        <PageStatus label="Matching status" items={[{ label: `${status.total.selected} songs checked`, emphasis: true }, { label: `${status.total.accepted} found · ${status.total.review} unsure · ${status.total.unmatched} missing so far` }]} />
         <Progress value={migrationProgress(status)} max={100} aria-label="Music matched" />
         <p>You can leave this page. It keeps going and shows in <a href="#/activity">Activity</a>.</p>
         {#each collections as item}
           <div><strong>{collectionName(item.collection.kind, item.collection.name, providerId)}</strong><small>{collectionStateLabel(interrupted && item.collection.state !== "applied" ? runState : item.collection.state)} · {item.counts.accepted} of {item.counts.selected} found</small>
             {#if item.collection.error}<p>{migrationError(item.collection.error, status.run.providerId)}</p>{/if}</div>
         {/each}
+        {#if status.total.review > 0}<section class="import-unsure" aria-label="Unsure so far"><h3>Unsure so far</h3>
+          {#each collections as collection}{#each (pages[collection.id] ?? []).filter(song => Boolean(song.preview) && needsReview(song)) as song (song.sourceEntryId)}
+            <ItemRow title={song.metadata.title ?? "Untitled"} subtitle={`${song.metadata.artists?.join(", ") ?? ""} · ${reviewReason(song)}`} actionLabel={`Fix ${song.metadata.title ?? "song"}`} onclick={event => void fix(song, event.currentTarget as HTMLElement)}>{#snippet leading()}<MediaArtwork url={song.metadata.artworkUrl} />{/snippet}</ItemRow>
+          {/each}{/each}<small>Matches appear here as each collection is checked.</small></section>{/if}
         <div class="import-actions">
           {#if interrupted}<Button variant="secondary" disabled={busy} onclick={() => command("resume")}>Try again</Button>{/if}
           {#if runState !== "cancelled"}<Button variant="outline" disabled={busy} onclick={() => confirmStop = true}>Stop moving</Button>{/if}
@@ -342,10 +371,10 @@
       </div></article>
     {/if}
     {#if status && runState === "applying"}
-      <article class="settings-card"><div class="import-body"><h3>{hasResources ? "Adding your music…" : "Adding playlists and hearts…"}</h3><Progress value={null} aria-label="Adding music" /><div class="import-actions"><Button variant="outline" disabled={busy} onclick={() => confirmStop = true}>Stop moving</Button></div></div></article>
+      <article class="import-section"><div class="import-body"><h3>{hasResources ? "Adding your music…" : "Adding playlists and hearts…"}</h3><Progress value={null} aria-label="Adding music" /><div class="import-actions"><Button variant="outline" disabled={busy} onclick={() => confirmStop = true}>Stop moving</Button></div></div></article>
     {/if}
     {#if status && runState === "completed"}
-      <article class="settings-card" aria-label="Music moved">
+      <article class="import-section" aria-label="Music moved">
         <header><h3>Your music is in Allstarr</h3><ActivityOutcome state="succeeded" label="Moved" /></header>
         <div class="import-body">
         {#each collections as item}
@@ -369,7 +398,7 @@
             if (event.currentTarget.open && !pages[item.id]) void loadPage(item.id);
           }}>
             <summary><strong>{collectionName(item.collection.kind, item.collection.name, providerId)}</strong><small>{collectionCountsLine(item.counts)}</small></summary>
-            {#if !pages[item.id]}<div class="import-body"><Skeleton style="height:44px;width:100%" aria-label="Loading music" /></div>{/if}
+            {#if !pages[item.id]}<div class="import-body"><RowsSkeleton count={3} /></div>{/if}
             {#each (pages[item.id] ?? []).filter(needsReview) as song (song.sourceEntryId)}
               <div class="import-song"><MediaArtwork url={song.metadata.artworkUrl} /><div><strong>{song.metadata.title ?? "Untitled"}</strong>
                 {#if song.metadata.artists?.length}<small>{song.metadata.artists.join(", ")}</small>{/if}
@@ -423,16 +452,25 @@
     </Dialog.Content>
   </Dialog.Portal>
 </Dialog.Root>
-<MatchDialog bind:open={matchOpen} match={selectedMatch} {providers} {backend} showReject={false} onSaved={matchSaved} />
+{#if LoadedMatchDialog}<LoadedMatchDialog bind:open={matchOpen} match={selectedMatch} {providers} {backend} showReject={false} onSaved={matchSaved} />{/if}
 
 <style>
+  .import-heading, .import-section > header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
+  .import-heading h2 { margin: 0; font-size: 1.5rem; font-weight: 600; }
+  .import-section { min-width: 0; }
+  .import-section > header { padding-bottom: var(--space-3); }
+  .import-count-note { font-size: var(--text-xs); color: var(--color-ink-muted); }
+  .import-kind-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); padding-block: var(--space-5); }.import-kind-counts > div { display: grid; gap: var(--space-2); padding: var(--space-3); background: var(--color-panel-raised); border-radius: var(--radius-md); }.import-kind-counts strong { font-size: 1.5rem; font-variant-numeric: tabular-nums; }.import-kind-filters { margin-bottom: var(--space-3); }.import-unsure { width: 100%; min-width: 0; }.import-unsure h3 { margin-bottom: var(--space-3); }
+  @media (max-width: 600px) { .import-kind-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); } }
+
   .import-resource-options { display: grid; gap: var(--space-3); padding: var(--space-4); }
   :global(.import-resource-option) { display: flex; width: 100%; height: auto; min-height: 44px; justify-content: start; gap: var(--space-3); padding: var(--space-3); white-space: normal; text-align: left; border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
   :global(.import-resource-option > span:not(.media-art)) { display: grid; min-width: 0; overflow-wrap: anywhere; }
   :global(.import-resource-option .media-art) { width: 44px; height: 44px; flex: none; }
   :global(.import-resource-option small) { color: var(--color-ink-muted); font-size: var(--text-sm); font-weight: 400; }
   :global(.import-resource-option .import-resource-action) { margin-left: auto; }
-  .import-page { max-width: 64rem; }
+  .import-page { max-width: none; padding: var(--space-5); }
+  .import-section > .import-body { padding-inline: 0; }
   .import-page h3, .import-page p { margin: 0; }
   .import-page small { display: block; color: var(--color-ink-muted); font-size: var(--text-sm); }
   .import-steps { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
@@ -457,6 +495,7 @@
   .import-stat strong { font-size: clamp(1.5rem, 3vw, 2rem); font-weight: 600; line-height: 1.2; }
   summary { padding: var(--space-4) var(--space-6); cursor: pointer; min-height: 44px; overflow-wrap: anywhere; }
   @media (max-width: 40rem) {
+    .import-page { padding: var(--space-3); }
     .import-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .import-choice { flex-wrap: wrap; }
     .import-selection { flex-basis: 100%; }
