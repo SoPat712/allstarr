@@ -155,6 +155,7 @@ public sealed partial class ProtocolRouteFixtureTests
         const string path = "/allstarr/v1/items/ext-deezer-song-lyrics/lyrics";
         var sources = await ReadClientLyricsJsonAsync(client, path + "/sources");
         Assert.Equal(3, sources["sources"]!.AsArray().Count(source => source!["providerId"]!.GetValue<string>() == "lrclib"));
+        Assert.Null(sources["chosen"]);
         Assert.Equal("Concert fireworks", (await ReadClientLyricsJsonAsync(client, path + "?sourceId=lrclib:103"))["lines"]![0]!["text"]!.GetValue<string>());
         using var automatic = await client.GetAsync(path);
         await AssertClientApiError(automatic, 404, "not_found");

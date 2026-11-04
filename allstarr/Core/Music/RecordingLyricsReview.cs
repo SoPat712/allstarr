@@ -30,6 +30,8 @@ public sealed record RecordingLyricsReviewSource(
     public bool Available => PreviewRevision != null;
     [JsonIgnore] public string? TimingFormat { get; init; }
     [JsonIgnore] public string? ShortPreview { get; init; }
+    [JsonIgnore] public string State { get; init; } = "ready";
+    [JsonIgnore] public bool IsDefaultVersion { get; init; } = true;
 }
 
 public sealed record RecordingLyricsReviewResult(
@@ -310,7 +312,7 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
             _ => (null, null)
         };
         if (format == null || content == null)
-            return new RecordingLyricsReviewSource(candidate.SourceId, null, null, null, false);
+            return new RecordingLyricsReviewSource(candidate.SourceId, null, null, null, false) { State = candidate.State };
 
         var revisionInput = string.Concat(
             recordingId.ToString("D"), "\n", candidate.SourceId, "\n", format, "\n", content);
@@ -333,6 +335,7 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
             TimingFormat = rich?.Format,
             ShortPreview = shortPreview,
             Metadata = lyrics?.Metadata,
+            IsDefaultVersion = candidate.IsDefaultVersion,
             FullLyrics = rich == null ? null : rich with { Source = new(candidate.SourceId, RichLyricsMapper.SourceName(candidate.SourceId)) }
         };
     }

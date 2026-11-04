@@ -7,6 +7,26 @@ namespace allstarr.Tests;
 public sealed class BuiltInLyricsCapabilityAdapterTests
 {
     [Fact]
+    public async Task CacheOnlyDoesNotInvokeAnAdapterWithoutACompletionAwareCache()
+    {
+        var called = false;
+        var adapter = new BuiltInLyricsCapabilityAdapter("fixture-lyrics", (_, _) =>
+        {
+            called = true;
+            return Task.FromResult<LyricsInfo?>(new() { PlainLyrics = "network" });
+        });
+
+        var outcome = await ((IInternalLyricsCapability)adapter).FetchAsync(
+            Context("fixture-lyrics"),
+            new(Guid.CreateVersion7(), new("fixture-lyrics", ProviderResourceKind.Track, "lookup")),
+            new(LyricsCompletionMode.CacheOnly, await ((IInternalLyricsCapability)adapter).CaptureSourceAsync(default)));
+
+        Assert.True(outcome.IsSuccess);
+        Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, outcome.Value!.Availability);
+        Assert.False(called);
+    }
+
+    [Fact]
     public async Task FetchLyrics_PreservesTimedContentSourceAndStableRevision()
     {
         var adapter = new BuiltInLyricsCapabilityAdapter("fixture-lyrics", (_, _) => Task.FromResult<LyricsInfo?>(new()

@@ -30,7 +30,7 @@ public sealed class ItemLyricsReader(
     {
         var item = await ResolveAsync(http, execution, itemId);
         if (item == null) return null;
-        if (sourceId == null) return await ReadRichAsync(execution, item);
+        if (sourceId == null) return await ReadRichAsync(execution with { RequestedItemId = itemId }, item);
         var recording = await RecordingAsync(execution, item);
         return recording == null ? null : await review.ReadCandidateAsync(execution, recording.Value, sourceId,
             (id, token) => ReadBackendAsync(http, id, token));
@@ -38,15 +38,25 @@ public sealed class ItemLyricsReader(
 
     public async Task<ClientLyricsSources?> SourcesAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
     {
+        var headers = CopyHeaders(http);
         var item = await ResolveAsync(http, execution, itemId);
         var recording = item == null ? null : await RecordingAsync(execution, item);
         if (item == null || recording == null) return null;
-        var result = await review.GetAsync(execution, recording.Value, "personal",
-            (id, token) => ReadBackendAsync(http, id, token));
-        var chosen = Chosen(result.Choices, await ReadRichAsync(execution, item));
+        var result = await review.GetAsync(execution with { RequestedItemId = itemId }, recording.Value, "personal",
+            (id, token) => ReadBackendAsync(headers, id, token));
+        var known = result.Sources.Where(source => source.FullLyrics != null).ToArray();
+        var defaults = known.Where(source => source.IsDefaultVersion).ToArray();
+        var selected = result.Choices.Effective is { } preference
+            ? known.FirstOrDefault(source => source.SourceId == preference.SourceId) ??
+                defaults.FirstOrDefault(source => LyricsVersions.ProviderId(source.SourceId) == LyricsVersions.ProviderId(preference.SourceId)) ??
+                known.FirstOrDefault(source => LyricsVersions.ProviderId(source.SourceId) == LyricsVersions.ProviderId(preference.SourceId))
+            : null;
+        selected ??= defaults.OrderByDescending(source => LyricsQuality.Rank(source.TimingFormat)).FirstOrDefault();
+        var chosen = Chosen(result.Choices, selected?.FullLyrics);
         return new(result.Sources.Select(source => new ClientLyricsSource(source.SourceId, source.TimingFormat, source.ShortPreview,
             LyricsVersions.ProviderId(source.SourceId), ProviderName(source.SourceId), source.Metadata?.Title,
-            source.Metadata?.Artist, source.Metadata?.Album, source.Metadata?.DurationMs)).ToArray(),
+            source.Metadata?.Artist, source.Metadata?.Album, source.Metadata?.DurationMs)
+        { State = source.Available ? "ready" : source.State == "pending" ? "pending" : "unavailable" }).ToArray(),
             chosen, ClientLyricsRevision.From(result.Choices.Revision));
     }
 
@@ -138,13 +148,20 @@ public sealed class ItemLyricsReader(
         };
         if (item.TryGetProperty("ProviderIds", out var ids) && ids.TryGetProperty("Spotify", out var spotify))
             native.SpotifyId = spotify.GetString();
+        var headers = CopyHeaders(http);
         return new(MusicLyrics.ForLookup(native), itemId,
-            new(Backend: token => ReadBackendAsync(http, itemId, token)));
+            new(Backend: token => ReadBackendAsync(headers, itemId, token)));
     }
 
     private async Task<LyricsInfo?> ReadBackendAsync(HttpContext http, string itemId, CancellationToken token)
+        => await ReadBackendAsync(CopyHeaders(http), itemId, token);
+
+    private static IHeaderDictionary CopyHeaders(HttpContext http) => new HeaderDictionary(
+        http.Request.Headers.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase));
+
+    private async Task<LyricsInfo?> ReadBackendAsync(IHeaderDictionary headers, string itemId, CancellationToken token)
     {
-        var (body, status) = await jellyfin.GetJsonAsync($"Audio/{Uri.EscapeDataString(itemId)}/Lyrics", null, http.Request.Headers, token);
+        var (body, status) = await jellyfin.GetJsonAsync($"Audio/{Uri.EscapeDataString(itemId)}/Lyrics", null, headers, token);
         using (body)
             return status == StatusCodes.Status200OK && body != null ? BackendLyrics.ParseJellyfin(body.RootElement) : null;
     }

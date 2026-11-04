@@ -101,6 +101,9 @@ public sealed class LyricsPlusCapabilityAdapter(
             }
             catch (Exception exception) when (exception is not OperationCanceledException) { }
 
+            if (completion == LyricsCompletionMode.CacheOnly)
+                return Unavailable();
+
             ProviderOutcome<ProviderLyricsResult>? lastFailure = null;
             foreach (var baseUri in bases)
             {

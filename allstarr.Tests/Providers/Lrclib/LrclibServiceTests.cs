@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using allstarr.Core.Providers.Lyrics;
 using Moq;
 using Moq.Protected;
 using Microsoft.Extensions.Logging;
@@ -87,6 +88,41 @@ public class LrclibServiceTests
 
         Assert.NotNull(result);
         Assert.Equal("cached lyrics", result.PlainLyrics);
+        _handler.Protected().Verify(
+            "SendAsync",
+            Times.Never(),
+            ItExpr.IsAny<HttpRequestMessage>(),
+            ItExpr.IsAny<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetLyricsAsync_CacheOnlyMissDoesNotCallProvider()
+    {
+        _mockCache.Setup(cache => cache.GetStringAsync(It.IsAny<string>())).ReturnsAsync((string?)null);
+        var service = CreateService();
+
+        var result = await service.GetLyricsAsync("Missing", ["Artist"], "Album", 180,
+            LyricsCompletionMode.CacheOnly, CancellationToken.None);
+
+        Assert.Null(result);
+        _handler.Protected().Verify(
+            "SendAsync",
+            Times.Never(),
+            ItExpr.IsAny<HttpRequestMessage>(),
+            ItExpr.IsAny<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetLyricsAsync_CacheOnlyHitReturnsWithoutProviderCall()
+    {
+        _mockCache.Setup(cache => cache.GetStringAsync(It.IsAny<string>())).ReturnsAsync(
+            """{"id":7,"trackName":"Cached","artistName":"Artist","plainLyrics":"cached lyrics","versions":[{"id":7,"plainLyrics":"cached lyrics"}]}""");
+        var service = CreateService();
+
+        var result = await service.GetLyricsAsync("Cached", ["Artist"], "Album", 180,
+            LyricsCompletionMode.CacheOnly, CancellationToken.None);
+
+        Assert.Equal("cached lyrics", result!.PlainLyrics);
         _handler.Protected().Verify(
             "SendAsync",
             Times.Never(),

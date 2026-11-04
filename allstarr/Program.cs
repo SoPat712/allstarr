@@ -504,6 +504,7 @@ builder.Services.AddSingleton<MediaCapacityLimits>();
 builder.Services.AddSingleton<ProviderStreamAdmission>();
 builder.Services.AddSingleton<MediaConversionGate>();
 builder.Services.AddSingleton<ManagedTrackCacheService>();
+builder.Services.AddSingleton(builder.Configuration.GetSection("LyricsLookup").Get<LyricsLookupOptions>() ?? new LyricsLookupOptions());
 builder.Services.AddSingleton<ProtocolLyricsResolver>();
 builder.Services.AddSingleton<IProtocolLyricsResolver>(provider => provider.GetRequiredService<ProtocolLyricsResolver>());
 builder.Services.AddSingleton<IHostedService>(provider => provider.GetRequiredService<ProtocolLyricsResolver>());

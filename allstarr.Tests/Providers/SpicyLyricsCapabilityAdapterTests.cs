@@ -298,6 +298,23 @@ public sealed class SpicyLyricsCapabilityAdapterTests
         Assert.Equal(reads, cache.Reads);
     }
 
+    [Fact]
+    public async Task CacheOnlyMissDoesNotReadSecretOrContactProvider()
+    {
+        using var handler = new SpicyLyricsTestHandler(SpicyLyricsTestData.Payload("static"));
+        using var http = new HttpClient(handler);
+        var secrets = new SpicyLyricsTestSecrets();
+        var source = new SpicyLyricsCapabilityAdapter(http, secrets, new SpicyLyricsTestCache());
+        var internalSource = (IInternalLyricsCapability)source;
+        var result = await internalSource.FetchAsync(SpicyLyricsTestData.Context(), SpicyLyricsTestData.Request(), new(
+            LyricsCompletionMode.CacheOnly, await internalSource.CaptureSourceAsync(default)));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, result.Value!.Availability);
+        Assert.Equal(0, handler.Calls);
+        Assert.Equal(0, secrets.Calls);
+    }
+
     [Theory]
     [InlineData("get")]
     [InlineData("http")]
@@ -397,6 +414,24 @@ public sealed class SpicyLyricsCapabilityAdapterTests
             "lyrics", "fixture", DateTimeOffset.UtcNow.AddMinutes(1), default);
         Assert.Equal(ProviderErrorKind.Forbidden, (await source.FetchLyricsAsync(context, SpicyLyricsTestData.Request())).Error!.Kind);
         Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
+    public async Task CacheOnlyHitRevalidatesTheSecretBeforeReturningLyrics()
+    {
+        using var handler = new SpicyLyricsTestHandler(SpicyLyricsTestData.Payload("syllable"));
+        using var http = new HttpClient(handler);
+        var secrets = new SpicyLyricsTestSecrets();
+        var source = new SpicyLyricsCapabilityAdapter(http, secrets, new SpicyLyricsTestCache());
+        var context = SpicyLyricsTestData.Context();
+        var request = SpicyLyricsTestData.Request();
+        Assert.True((await source.FetchLyricsAsync(context, request)).IsSuccess);
+        secrets.Authorized = false;
+        var internalSource = (IInternalLyricsCapability)source;
+        var result = await internalSource.FetchAsync(context, request, new(
+            LyricsCompletionMode.CacheOnly, await internalSource.CaptureSourceAsync(default)));
+        Assert.False(result.IsSuccess && result.Value?.Content != null);
+        Assert.Equal(1, handler.Calls);
     }
 }
 

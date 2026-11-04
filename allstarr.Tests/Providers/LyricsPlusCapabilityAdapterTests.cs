@@ -105,6 +105,41 @@ public sealed class LyricsPlusCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task CacheOnlyMissDoesNotContactAnEndpoint()
+    {
+        var handler = new Handler((_, _) => Response(HttpStatusCode.OK, Timed));
+        var adapter = Adapter(handler, new TestMemoryApplicationCache(), endpoint: "http://lyrics:3000");
+        var source = (IInternalLyricsCapability)adapter;
+        var result = await source.FetchAsync(Context(), Request(), new(
+            LyricsCompletionMode.CacheOnly, await source.CaptureSourceAsync(default)));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, result.Value!.Availability);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
+    public async Task CacheOnlyHitProjectsCachedContentWithoutContactingAnEndpoint()
+    {
+        var handler = new Handler((_, _) => Response(HttpStatusCode.OK, Timed));
+        var cache = new TestMemoryApplicationCache();
+        var request = Request(availability: true);
+        await cache.SetAsync(LyricsPlusCapabilityAdapter.StoredCacheKey("http://lyrics:3000", request),
+            new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lyricsplus",
+                ProviderLyricsFormat.LineTimed, "[00:01.234]Cached", "cached-revision"));
+        var adapter = Adapter(handler, cache, endpoint: "http://lyrics:3000");
+        var source = (IInternalLyricsCapability)adapter;
+        var result = await source.FetchAsync(Context(), request, new(
+            LyricsCompletionMode.CacheOnly, await source.CaptureSourceAsync(default)));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(ProviderLyricsAvailabilityState.Available, result.Value!.Availability);
+        Assert.Null(result.Value.Content);
+        Assert.Equal("cached-revision", result.Value.Revision);
+        Assert.Empty(handler.Requests);
+    }
+
+    [Fact]
     public async Task PublicInstancesFallBackAndCacheFullContentBeforeAvailabilityProjection()
     {
         var handler = new Handler((_, index) => index == 1 ? Response(HttpStatusCode.ServiceUnavailable) : Response(HttpStatusCode.OK, Timed));

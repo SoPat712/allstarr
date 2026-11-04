@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.Lyrics;
 using System.Net;
 using System.Text;
 using allstarr.Core.Capabilities;
@@ -144,6 +145,23 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
         Assert.Null(availability.RequireValue().Content);
         Assert.Equal("Probe then content", content.RequireValue().Content);
         Assert.Equal(1, handler.LyricsRequests);
+    }
+
+    [Fact]
+    public async Task NativeLyrics_CacheOnlyMissDoesNotAcquireTokenOrContactSpotify()
+    {
+        var handler = new LyricsHandler();
+        var secrets = new FakeSecretAccessor("cookie");
+        var adapter = new SpotifyPlaylistCapabilityAdapter(
+            new HttpClient(handler), secrets, cache: new TestMemoryApplicationCache());
+        var lyrics = (IInternalLyricsCapability)new SpotifyLyricsCapabilityAdapter(adapter);
+        var result = await lyrics.FetchAsync(Context(), LyricsRequest(), new(
+            LyricsCompletionMode.CacheOnly, await lyrics.CaptureSourceAsync(default)));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, result.Value!.Availability);
+        Assert.Equal(0, handler.LyricsRequests);
+        Assert.Empty(secrets.AccountIds);
     }
 
     [Fact]

@@ -11,7 +11,7 @@ public sealed partial class ProtocolProviderGateway : IProtocolLyricsExecutionGa
 {
     async ValueTask<PreparedLyricsRead?> IProtocolLyricsExecutionGateway.PrepareAsync(LyricsReadSpec spec, CancellationToken token)
     {
-        var candidate = await PlanAutomaticLyricsAsync(spec, token);
+        var candidate = await PlanAutomaticLyricsAsync(spec, token, cached: true);
         if (candidate == null || candidate.TrackId == null && spec.SourceTrackId.ProviderId == "allstarr") return null;
         var source = await CaptureLyricsSourceAsync(candidate.Context.ProviderId, token);
         var binding = LyricsBinding(candidate, spec);
@@ -23,35 +23,38 @@ public sealed partial class ProtocolProviderGateway : IProtocolLyricsExecutionGa
     async Task<ProviderLyricsResult?> IProtocolLyricsExecutionGateway.ExecuteAsync(PreparedLyricsRead prepared,
         LyricsCompletionMode completion, CancellationToken token)
     {
-        var candidate = await CurrentLyricsCandidateAsync(prepared, token);
+        var cached = completion == LyricsCompletionMode.CacheOnly;
+        var candidate = await CurrentLyricsCandidateAsync(prepared, token, cached);
         if (candidate == null) return null;
         var request = prepared.Spec.Request;
         request = new(request.CanonicalRecordingId, candidate.TrackId ?? request.ProviderTrackId, request.AvailabilityOnly,
             request.PreferredFormat, request.TrackTitle, request.ArtistNames, request.AlbumTitle, request.DurationSeconds, request.Isrc);
+        if (completion == LyricsCompletionMode.CacheOnly && candidate.Implementation is not IInternalLyricsCapability) return null;
         var outcome = candidate.Implementation is IInternalLyricsCapability capability
-            ? await capability.FetchAsync(candidate.Context, request, new(completion, prepared.Source))
+            ? await capability.FetchAsync(candidate.Context, request, new(completion, prepared.Source, prepared.Spec.Snapshot))
             : await candidate.Implementation.FetchLyricsAsync(candidate.Context, request);
         token.ThrowIfCancellationRequested();
         if (!outcome.IsSuccess || outcome.RequireValue().Availability != ProviderLyricsAvailabilityState.Available) return null;
-        if (await CurrentLyricsCandidateAsync(prepared, token) == null) return null;
-        if (prepared.Spec.Actor.EffectiveUserId is { } user)
+        if (await CurrentLyricsCandidateAsync(prepared, token, cached) == null) return null;
+        if (completion != LyricsCompletionMode.CacheOnly && prepared.Spec.Actor.EffectiveUserId is { } user)
             lyricsChanges?.RecordingChanged(user, request.CanonicalRecordingId);
         return outcome.RequireValue();
     }
 
     async ValueTask<bool> IProtocolLyricsExecutionGateway.IsCurrentAsync(PreparedLyricsRead prepared, CancellationToken token) =>
-        await CurrentLyricsCandidateAsync(prepared, token) != null;
+        await CurrentLyricsCandidateAsync(prepared, token, cached: true) != null;
 
     private async Task<ProviderRouteCandidate<IProviderLyricsCapability>?> CurrentLyricsCandidateAsync(
-        PreparedLyricsRead prepared, CancellationToken token)
+        PreparedLyricsRead prepared, CancellationToken token, bool cached = false)
     {
-        var candidate = await PlanAutomaticLyricsAsync(prepared.Spec, token);
+        var candidate = await PlanAutomaticLyricsAsync(prepared.Spec, token, cached);
         if (candidate == null || LyricsBinding(candidate, prepared.Spec) != prepared.Binding) return null;
         LyricsSourceSnapshot source;
         try { source = await CaptureLyricsSourceAsync(candidate.Context.ProviderId, token); }
         catch (Exception exception) when (exception is not (OperationCanceledException or UnauthorizedAccessException)) { return null; }
         if (source.ConfigurationId != prepared.Source.ConfigurationId) return null;
-        if (prepared.MaySpeculate && (!source.DependenciesReady ||
+        if (!cached && !source.DependenciesReady) return null;
+        if (!cached && prepared.MaySpeculate && (!source.DependenciesReady ||
             source.Speculation == LyricsSpeculationMode.RecentHealthy && !HasLyricsHealth(candidate, source))) return null;
         return candidate;
     }
@@ -72,7 +75,7 @@ public sealed partial class ProtocolProviderGateway : IProtocolLyricsExecutionGa
         return observation is { Health: ProviderHealthState.Healthy, ConsecutiveFailures: 0 } && !health.IsCircuitOpen(observation);
     }
 
-    private async Task<ProviderRouteCandidate<IProviderLyricsCapability>?> PlanAutomaticLyricsAsync(LyricsReadSpec spec, CancellationToken token)
+    private async Task<ProviderRouteCandidate<IProviderLyricsCapability>?> PlanAutomaticLyricsAsync(LyricsReadSpec spec, CancellationToken token, bool cached = false)
     {
         token.ThrowIfCancellationRequested();
         if ((timeProvider ?? TimeProvider.System).GetUtcNow() >= spec.Deadline) return null;
@@ -82,12 +85,16 @@ public sealed partial class ProtocolProviderGateway : IProtocolLyricsExecutionGa
         {
             policy = !spec.HouseholdOnly && spec.Actor.EffectiveUserId is { } user
                 ? await effectivePolicies.ResolveForUserAsync(user, token) : await effectivePolicies.ResolveAsync(token);
-            if (!policy.ApplyAutomaticProviderAvailability(ProviderCapabilityKind.Lyrics, [provider]).Contains(provider, StringComparer.Ordinal)) return null;
+            var available = spec.ManualSelection ? policy.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, [provider]) :
+                policy.ApplyAutomaticProviderAvailability(ProviderCapabilityKind.Lyrics, [provider]);
+            if (!available.Contains(provider, StringComparer.Ordinal)) return null;
         }
-        if (!IsAutomaticProvider(provider, policy)) return null;
+        if (!spec.ManualSelection && !IsAutomaticProvider(provider, policy)) return null;
         var request = Request(spec.Actor, ProviderCapabilityKind.Lyrics,
             "protocol-lyrics-auto", [provider], spec.SourceTrackId, correlationId: spec.CorrelationId, deadline: spec.Deadline,
-            cancellationToken: token, allowedAccountScopes: spec.AllowedAccountScopes, purpose: ProviderRoutePurpose.Automatic);
+            cancellationToken: token, allowedAccountScopes: spec.AllowedAccountScopes,
+            purpose: spec.ManualSelection && !spec.HouseholdOnly ? ProviderRoutePurpose.ManualSelection : ProviderRoutePurpose.Automatic) with
+        { CacheOnly = cached };
         if (spec.HouseholdOnly && (spec.AllowedAccountScopes.Count != 1 || spec.AllowedAccountScopes[0] != Core.Storage.ProviderAccountScope.Shared)) return null;
         var plan = spec.HouseholdOnly && router is IHouseholdLyricsRoutePlanner household
             ? await household.PlanHouseholdLyricsAsync(request) : await router.PlanAsync<IProviderLyricsCapability>(request);

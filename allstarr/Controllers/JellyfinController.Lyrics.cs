@@ -75,26 +75,23 @@ public partial class JellyfinController
             }
 
             song.SpotifyId = spotifyTrackId;
-            JsonDocument? backendLyrics = null;
-            try
-            {
-                lyrics = await _protocolLyricsResolver.FindAsync(protocol, MusicLyrics.ForLookup(song), itemId,
-                    new ProtocolLyricsSources(Backend: async token =>
+            string? backendLyrics = null;
+            var headers = new HeaderDictionary(Request.Headers.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase));
+            lyrics = await _protocolLyricsResolver.FindAsync(protocol, MusicLyrics.ForLookup(song), itemId,
+                new ProtocolLyricsSources(Backend: async token =>
+                {
+                    var (body, status) = await _proxyService.GetJsonAsync(
+                        $"Audio/{Uri.EscapeDataString(itemId)}/Lyrics", null, headers, token);
+                    using (body)
                     {
-                        var (body, status) = await _proxyService.GetJsonAsync(
-                            $"Audio/{Uri.EscapeDataString(itemId)}/Lyrics", null, Request.Headers, token);
                         if (status != StatusCodes.Status200OK || body == null)
-                        {
-                            body?.Dispose();
                             return null;
-                        }
-                        backendLyrics = body;
+                        backendLyrics = body.RootElement.GetRawText();
                         return BackendLyrics.ParseJellyfin(body.RootElement);
-                    }));
-                if (lyrics?.Source == "backend" && backendLyrics != null)
-                    return Content(backendLyrics.RootElement.GetRawText(), "application/json", System.Text.Encoding.UTF8);
-            }
-            finally { backendLyrics?.Dispose(); }
+                    }
+                }));
+            if (lyrics?.Source == "backend" && backendLyrics != null)
+                return Content(backendLyrics, "application/json", System.Text.Encoding.UTF8);
         }
 
         if (lyrics == null)

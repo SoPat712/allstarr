@@ -54,6 +54,28 @@ public sealed class SpicyLyricsCapabilityAdapter(
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, timer.Token);
         var token = linked.Token;
         var key = CacheKey(context, trackId);
+
+        if (completion == LyricsCompletionMode.CacheOnly)
+        {
+            if (cache?.IsEnabled != true) return Unavailable();
+            try
+            {
+                var cached = await LyricsAwait.CompleteAsync(cache.GetAsync<CachedLyrics>(key), completion, token);
+                token.ThrowIfCancellationRequested();
+                if (cached is null || !ValidCache(cached, Clock.GetUtcNow())) return Unavailable();
+                await AuthorizeAsync(account, token);
+                return Project(cached.Result, request);
+            }
+            catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+            {
+                return Failure(ProviderErrorKind.Canceled);
+            }
+            catch
+            {
+                return Unavailable();
+            }
+        }
+
         var wrote = false;
         try
         {

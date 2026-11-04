@@ -207,6 +207,10 @@ public static class ObservedProviderCapabilities
         public async Task<ProviderOutcome<ProviderLyricsResult>> FetchAsync(
             ProviderExecutionContext context, ProviderLyricsRequest request, LyricsExecution execution)
         {
+            if (execution.Completion == LyricsCompletionMode.CacheOnly)
+                return Implementation is IInternalLyricsCapability cached
+                    ? await cached.FetchAsync(context, request, execution)
+                    : ProviderOutcome<ProviderLyricsResult>.Success(new(ProviderLyricsAvailabilityState.Unavailable, context.ProviderId));
             if (Implementation is not IInternalLyricsCapability source)
                 return await InvokeAsync(context, () => Implementation.FetchLyricsAsync(context, request));
             var started = Stopwatch.GetTimestamp();

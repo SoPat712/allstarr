@@ -17,24 +17,26 @@ public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapabi
     private readonly AppleMusicClient client;
     private readonly AppleDownloadSettings settings;
     private readonly IAppleDownloadEndpointDiscovery discovery;
+    private readonly IApplicationCache? cache;
 
     public AppleDownloadLyricsCapabilityAdapter(
         IHttpClientFactory clients,
         IOptions<AppleDownloadSettings> settings,
-        IAppleDownloadEndpointDiscovery discovery, AppleMusicClient client)
-        : this(clients.CreateClient(AppleDownloadCapabilityAdapter.HttpClientName), settings.Value, discovery, client)
+        IAppleDownloadEndpointDiscovery discovery, AppleMusicClient client, IApplicationCache? cache = null)
+        : this(clients.CreateClient(AppleDownloadCapabilityAdapter.HttpClientName), settings.Value, discovery, client, cache)
     {
     }
 
     public AppleDownloadLyricsCapabilityAdapter(
         HttpClient http,
         AppleDownloadSettings settings,
-        IAppleDownloadEndpointDiscovery discovery, AppleMusicClient client)
+        IAppleDownloadEndpointDiscovery discovery, AppleMusicClient client, IApplicationCache? cache = null)
     {
         this.http = http;
         this.client = client;
         this.settings = settings;
         this.discovery = discovery;
+        this.cache = cache;
     }
 
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Lyrics;
@@ -45,12 +47,17 @@ public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapabi
         LyricsConfigurationId.From("apple-musickit:lyrics:1:" + BaseUrl), LyricsSpeculationMode.RecentHealthy, true);
     ValueTask<LyricsSourceSnapshot> IInternalLyricsCapability.CaptureSourceAsync(CancellationToken token) =>
         ValueTask.FromResult<LyricsSourceSnapshot>(new SourceSnapshot(settings.BaseUrl));
-    Task<ProviderOutcome<ProviderLyricsResult>> IInternalLyricsCapability.FetchAsync(ProviderExecutionContext context,
-        ProviderLyricsRequest request, LyricsExecution execution) => FetchCoreAsync(context, request, ((SourceSnapshot)execution.Source).BaseUrl);
+    async Task<ProviderOutcome<ProviderLyricsResult>> IInternalLyricsCapability.FetchAsync(
+        ProviderExecutionContext context, ProviderLyricsRequest request, LyricsExecution execution)
+    {
+        var source = (SourceSnapshot)execution.Source;
+        return await FetchCoreAsync(context, request, execution.Completion, source.BaseUrl, execution.Snapshot);
+    }
     public Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(ProviderExecutionContext context, ProviderLyricsRequest request) =>
-        FetchCoreAsync(context, request, settings.BaseUrl);
+        FetchCoreAsync(context, request, LyricsCompletionMode.RequestBound, settings.BaseUrl, null);
     private async Task<ProviderOutcome<ProviderLyricsResult>> FetchCoreAsync(ProviderExecutionContext context,
-        ProviderLyricsRequest request, string configuredUrl)
+        ProviderLyricsRequest request, LyricsCompletionMode completion, string configuredUrl,
+        LyricsExecutionSnapshot? executionSnapshot)
     {
         try
         {
@@ -65,12 +72,30 @@ public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapabi
             if (context.IsExpired(DateTimeOffset.UtcNow))
                 return Failure(ProviderErrorKind.CapabilityUnavailable);
 
-            var snapshot = await discovery.DiscoverAsync(context.CancellationToken);
+            if (!OutboundRequestGuard.TryCreateConfiguredServiceUri(configuredUrl, out var baseUri, out _))
+                return Failure(ProviderErrorKind.AccountNeedsConfiguration);
+            var cacheKey = "lyrics:v3:apple-musickit:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+                JsonSerializer.SerializeToUtf8Bytes(new { context.Actor, context.Account, request, configuredUrl })));
+            try
+            {
+                var stored = cache == null ? null : await LyricsAwait.CompleteAsync(cache.GetAsync<ProviderLyricsResult>(cacheKey), completion, context.CancellationToken);
+                if (stored is { Availability: ProviderLyricsAvailabilityState.Available, Content: not null })
+                    return ProviderOutcome<ProviderLyricsResult>.Success(stored);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException) { }
+            if (completion == LyricsCompletionMode.CacheOnly)
+                return ProviderOutcome<ProviderLyricsResult>.Success(new(
+                    ProviderLyricsAvailabilityState.Unavailable, ProviderId));
+
+            var snapshot = executionSnapshot == null
+                ? await discovery.DiscoverAsync(context.CancellationToken)
+                : await executionSnapshot.GetOrCreateAsync(
+                    "apple-download-capabilities",
+                    discovery.DiscoverAsync,
+                    context.CancellationToken);
             if (snapshot.State != AppleDownloadEndpointState.Available ||
                 snapshot.Capability("synced-lyrics-artifact").State != AppleDownloadCapabilityState.Available)
                 return Failure(ProviderErrorKind.CapabilityUnavailable);
-            if (!OutboundRequestGuard.TryCreateConfiguredServiceUri(configuredUrl, out var baseUri, out _))
-                return Failure(ProviderErrorKind.AccountNeedsConfiguration);
 
             var resolved = await client.ResolveCatalogTrackAsync(context, request.ProviderTrackId.Value);
             if (!resolved.IsSuccess) return ProviderOutcome<ProviderLyricsResult>.Failure(resolved.Error!);
@@ -101,8 +126,14 @@ public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapabi
                          Enum.TryParse<ProviderLyricsFormat>(formatValue.GetString(), true, out var parsed)
                 ? parsed
                 : ProviderLyricsFormat.LineTimed;
-            return ProviderOutcome<ProviderLyricsResult>.Success(new(
-                ProviderLyricsAvailabilityState.Available, source, format, content));
+            var result = new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, source, format, content);
+            try
+            {
+                if (cache != null)
+                    await LyricsAwait.CompleteAsync(cache.SetAsync(cacheKey, result, CacheExtensions.LyricsTTL), completion, context.CancellationToken);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException) { }
+            return ProviderOutcome<ProviderLyricsResult>.Success(result);
         }
         catch (OperationCanceledException)
         {

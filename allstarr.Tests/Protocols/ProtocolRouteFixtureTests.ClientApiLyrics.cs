@@ -20,6 +20,35 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolRouteFixtureTests
 {
+    [Fact]
+    public async Task ClientApi_LyricsSourcesReturnPendingStatesWithoutStartingAnotherLookup()
+    {
+        var recording = Guid.NewGuid();
+        var resolver = new Mock<IProtocolLyricsResolver>(MockBehavior.Strict);
+        resolver.Setup(item => item.FindAllAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>(), It.IsAny<string>(), It.IsAny<ProtocolLyricsSources>()))
+            .ReturnsAsync(new[]
+            {
+                new ProtocolLyricsCandidate("lyricsplus", null) { State = "pending" },
+                new ProtocolLyricsCandidate("lrclib", new allstarr.Models.Lyrics.LyricsInfo { Source = "lrclib", SyncedLyrics = "[00:01]Known words" }),
+                new ProtocolLyricsCandidate("genius", null)
+            });
+        using var factory = ClientLyricsFactory(recording, new(), configure: services =>
+        {
+            services.RemoveAll<IProtocolLyricsResolver>();
+            services.AddSingleton(resolver.Object);
+        });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        await SeedClientLyricsAsync(factory, recording);
+        var result = await ReadClientLyricsJsonAsync(client, "/allstarr/v1/items/ext-deezer-song-lyrics/lyrics/sources");
+        var sources = result["sources"]!.AsArray();
+        Assert.Equal(new[] { "pending", "ready", "unavailable" }, sources.Select(source => source!["state"]!.GetValue<string>()));
+        Assert.Null(sources[0]!["format"]);
+        Assert.Equal("lrclib", result["chosen"]!["sourceId"]!.GetValue<string>());
+        resolver.Verify(item => item.FindAllAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>(), It.IsAny<string>(), It.IsAny<ProtocolLyricsSources>()), Times.Once);
+        resolver.VerifyNoOtherCalls();
+    }
+
     [Theory]
     [InlineData("word", false)]
     [InlineData("word", true)]

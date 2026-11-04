@@ -67,6 +67,9 @@ public class LrclibService
             }
         }
 
+        if (completion == LyricsCompletionMode.CacheOnly)
+            return null;
+
         try
         {
             var searchArtistName = string.Join(" ", artistNames);

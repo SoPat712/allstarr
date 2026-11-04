@@ -42,6 +42,10 @@ public sealed partial class SpotifyPlaylistCapabilityAdapter
             }
         }
 
+        if (completion == LyricsCompletionMode.CacheOnly)
+            return ProviderOutcome<ProviderLyricsResult>.Success(new(
+                ProviderLyricsAvailabilityState.Unavailable, StableProviderId));
+
         context.CancellationToken.ThrowIfCancellationRequested();
         var outcome = await ExecuteAsync(
             context,

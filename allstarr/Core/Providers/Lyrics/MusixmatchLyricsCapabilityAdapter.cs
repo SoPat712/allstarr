@@ -141,6 +141,9 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
                 cached.Content != null)
                 return Project(cached, request);
 
+            if (completion == LyricsCompletionMode.CacheOnly)
+                return Unavailable();
+
             operation.Token.ThrowIfCancellationRequested();
             var loaded = context.Account == null
                 ? await ReadAutomaticLyricsAsync(_http, _automaticTokens, request, operation.Token, _logger, completion)

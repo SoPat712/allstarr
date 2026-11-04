@@ -2537,6 +2537,9 @@
               "integer"
             ],
             "format": "int64"
+          },
+          "state": {
+            "type": "string"
           }
         }
       },

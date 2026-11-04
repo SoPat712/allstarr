@@ -70,7 +70,7 @@ public sealed class ProviderRouter(
         ArgumentNullException.ThrowIfNull(request);
         request = ResolveAliases(request);
         RequireTypedContract<TCapability>(request.Capability);
-        var cacheOnly = request.CacheOnly && request.Capability == ProviderCapabilityKind.Streaming;
+        var cacheOnly = request.CacheOnly && request.Capability is ProviderCapabilityKind.Streaming or ProviderCapabilityKind.Lyrics;
         request.CancellationToken.ThrowIfCancellationRequested();
         if (request.Deadline <= DateTimeOffset.UtcNow)
         {

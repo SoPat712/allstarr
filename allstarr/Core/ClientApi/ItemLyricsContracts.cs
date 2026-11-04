@@ -13,7 +13,10 @@ public sealed record ClientLyricsSource(
     [property: JsonPropertyName("title")] string? Title,
     [property: JsonPropertyName("artist")] string? Artist,
     [property: JsonPropertyName("album")] string? Album,
-    [property: JsonPropertyName("durationMs"), JsonNumberHandling(JsonNumberHandling.Strict)] long? DurationMs);
+    [property: JsonPropertyName("durationMs"), JsonNumberHandling(JsonNumberHandling.Strict)] long? DurationMs)
+{
+    [JsonPropertyName("state")] public string State { get; init; } = "ready";
+}
 
 public sealed record ClientLyricsChosen(
     [property: JsonPropertyName("sourceId")] string SourceId,

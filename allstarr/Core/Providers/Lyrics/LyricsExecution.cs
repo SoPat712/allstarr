@@ -1,11 +1,12 @@
 using allstarr.Core.Routing;
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Capabilities;
 
 namespace allstarr.Core.Providers.Lyrics;
 
-internal enum LyricsCompletionMode { RequestBound, OwnedAutomatic }
+internal enum LyricsCompletionMode { RequestBound, OwnedAutomatic, CacheOnly }
 internal enum LyricsSpeculationMode { ForegroundOnly, Unrestricted, RecentHealthy }
 internal readonly record struct LyricsConfigurationId(string Value, long Revision = 0)
 {
@@ -14,7 +15,42 @@ internal readonly record struct LyricsConfigurationId(string Value, long Revisio
 internal abstract record LyricsSourceSnapshot(LyricsConfigurationId ConfigurationId, LyricsSpeculationMode Speculation, bool DependenciesReady);
 internal sealed record StaticLyricsSourceSnapshot(LyricsConfigurationId Id, LyricsSpeculationMode Mode)
     : LyricsSourceSnapshot(Id, Mode, true);
-internal sealed record LyricsExecution(LyricsCompletionMode Completion, LyricsSourceSnapshot Source);
+internal sealed record LyricsExecution(LyricsCompletionMode Completion, LyricsSourceSnapshot Source,
+    LyricsExecutionSnapshot? Snapshot = null);
+
+internal sealed class LyricsExecutionSnapshot
+{
+    private readonly ConcurrentDictionary<string, Lazy<Task<object?>>> values = new(StringComparer.Ordinal);
+
+    internal async Task<T> GetOrCreateAsync<T>(
+        string key,
+        Func<CancellationToken, Task<T>> factory,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+        ArgumentNullException.ThrowIfNull(factory);
+        var lazy = values.GetOrAdd(key, _ => new(
+            () => LoadAsync(factory, cancellationToken),
+            LazyThreadSafetyMode.ExecutionAndPublication));
+        var task = lazy.Value;
+        try
+        {
+            var value = await task.WaitAsync(cancellationToken);
+            if (value is null) return default!;
+            return value is T typed
+                ? typed
+                : throw new InvalidOperationException($"Lyrics dependency snapshot '{key}' has an unexpected type.");
+        }
+        catch when (task.IsCanceled || task.IsFaulted)
+        {
+            values.TryRemove(new KeyValuePair<string, Lazy<Task<object?>>>(key, lazy));
+            throw;
+        }
+    }
+
+    private static async Task<object?> LoadAsync<T>(Func<CancellationToken, Task<T>> factory,
+        CancellationToken cancellationToken) => await factory(cancellationToken);
+}
 internal interface IInternalLyricsCapability
 {
     ValueTask<LyricsSourceSnapshot> CaptureSourceAsync(CancellationToken token);

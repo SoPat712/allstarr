@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Storage;
 using System.Net;
@@ -9,6 +10,7 @@ using allstarr.Core.Providers.AppleDownload;
 using allstarr.Models.Settings;
 using allstarr.Services.AppleMusic;
 using Microsoft.Extensions.Options;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -345,6 +347,85 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
             uri.AbsolutePath.StartsWith("/api/stream/", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task Lyrics_CacheOnlyReturnsUnavailableWithoutGatewayDiscovery()
+    {
+        var discovery = new CountingDiscovery();
+        var settings = new AppleDownloadSettings { BaseUrl = "https://gateway.test/" };
+        var gateway = new GatewayHandler([], "audio/flac") { AdvertiseLyrics = true };
+        var client = new HttpClient(gateway);
+        var adapter = new AppleDownloadLyricsCapabilityAdapter(client, settings, discovery, AppleProviderTestFactory.Client());
+        var source = (IInternalLyricsCapability)adapter;
+        var result = await source.FetchAsync(Context(Guid.CreateVersion7()), new(
+            Guid.CreateVersion7(), new("apple-musickit", ProviderResourceKind.Track, "103")), new(
+            LyricsCompletionMode.CacheOnly, await source.CaptureSourceAsync(default)));
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, result.Value!.Availability);
+        Assert.Equal(0, discovery.Calls);
+        Assert.Empty(gateway.Requests);
+    }
+
+    [Fact]
+    public async Task Lyrics_SharedLookupChecksGatewayCapabilitiesOnce()
+    {
+        var discovery = new CountingDiscovery();
+        var adapter = new AppleDownloadLyricsCapabilityAdapter(new HttpClient(new GatewayHandler([], "audio/flac")),
+            new AppleDownloadSettings { BaseUrl = "https://gateway.test/" }, discovery, AppleProviderTestFactory.Client());
+        var source = (IInternalLyricsCapability)adapter;
+        var snapshot = new LyricsExecutionSnapshot();
+        var context = Context(Guid.CreateVersion7());
+        var request = new ProviderLyricsRequest(Guid.CreateVersion7(), new("apple-musickit", ProviderResourceKind.Track, "103"));
+        var execution = new LyricsExecution(LyricsCompletionMode.OwnedAutomatic, await source.CaptureSourceAsync(default), snapshot);
+        await Task.WhenAll(source.FetchAsync(context, request, execution), source.FetchAsync(context, request, execution));
+        Assert.Equal(1, discovery.Calls);
+    }
+
+    [Fact]
+    public async Task Lyrics_CacheOnlyReturnsStoredContentWithoutGatewayDiscovery()
+    {
+        var cached = new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "GAMDL", ProviderLyricsFormat.LineTimed, "[00:01]Stored words");
+        var cache = new Moq.Mock<allstarr.Services.Common.IApplicationCache>(Moq.MockBehavior.Strict);
+        cache.Setup(item => item.GetAsync<ProviderLyricsResult>(Moq.It.IsAny<string>())).ReturnsAsync(cached);
+        var discovery = new CountingDiscovery();
+        var adapter = new AppleDownloadLyricsCapabilityAdapter(new HttpClient(new GatewayHandler([], "audio/flac")),
+            new AppleDownloadSettings { BaseUrl = "https://gateway.test/" }, discovery, AppleProviderTestFactory.Client(), cache.Object);
+        var source = (IInternalLyricsCapability)adapter;
+        var result = await source.FetchAsync(Context(Guid.CreateVersion7()), new(
+            Guid.CreateVersion7(), new("apple-musickit", ProviderResourceKind.Track, "103")), new(
+            LyricsCompletionMode.CacheOnly, await source.CaptureSourceAsync(default)));
+        Assert.Same(cached, result.RequireValue());
+        Assert.Equal(0, discovery.Calls);
+        cache.Verify(item => item.GetAsync<ProviderLyricsResult>(Moq.It.IsAny<string>()), Moq.Times.Once);
+        cache.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Lyrics_CompletedLookupWarmsTheExistingCache()
+    {
+        var entries = new Dictionary<string, ProviderLyricsResult>();
+        var cache = new Mock<allstarr.Services.Common.IApplicationCache>(MockBehavior.Strict);
+        cache.Setup(item => item.GetAsync<ProviderLyricsResult>(It.IsAny<string>()))
+            .Returns<string>(key => Task.FromResult(entries.GetValueOrDefault(key)));
+        cache.Setup(item => item.SetAsync(It.IsAny<string>(), It.IsAny<ProviderLyricsResult>(), It.IsAny<TimeSpan?>()))
+            .Callback<string, ProviderLyricsResult, TimeSpan?>((key, result, _) => entries[key] = result).ReturnsAsync(true);
+        var handler = new GatewayHandler([], "audio/flac") { AdvertiseLyrics = true };
+        using var http = new HttpClient(handler);
+        var settings = new AppleDownloadSettings { BaseUrl = "https://gateway.test/" };
+        var discovery = new AppleDownloadEndpointDiscovery(new StaticClientFactory(http), Options.Create(settings));
+        var adapter = new AppleDownloadLyricsCapabilityAdapter(http, settings, discovery, AppleProviderTestFactory.Client(), cache.Object);
+        var context = Context(Guid.CreateVersion7());
+        var request = new ProviderLyricsRequest(Guid.CreateVersion7(), new("apple-musickit", ProviderResourceKind.Track, "103"));
+        Assert.True((await adapter.FetchLyricsAsync(context, request)).IsSuccess);
+        var calls = handler.Requests.Count;
+        var restarted = new AppleDownloadLyricsCapabilityAdapter(http, settings, discovery, AppleProviderTestFactory.Client(), cache.Object);
+        var source = (IInternalLyricsCapability)restarted;
+        var replay = await source.FetchAsync(context, request, new(LyricsCompletionMode.CacheOnly, await source.CaptureSourceAsync(default)));
+        Assert.Equal("[00:01.00]Fixture lyrics\n", replay.RequireValue().Content);
+        Assert.Equal(calls, handler.Requests.Count);
+        Assert.Single(entries);
+    }
+
     private static ProviderExecutionContext Context(Guid user) => new(
         new ProviderActorContext(ProviderActorKind.User, user,
             new ProviderBackendPrincipal("jellyfin", "primary", "user")),
@@ -366,6 +447,19 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
     public void Dispose()
     {
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+    }
+
+    private sealed class CountingDiscovery : IAppleDownloadEndpointDiscovery
+    {
+        public int Calls { get; private set; }
+
+        public Task<AppleDownloadEndpointSnapshot> DiscoverAsync(CancellationToken cancellationToken = default)
+        {
+            Calls++;
+            return Task.FromResult(new AppleDownloadEndpointSnapshot(
+                AppleDownloadEndpointState.Available, null, "2.0", true,
+                [new("synced-lyrics-artifact", AppleDownloadCapabilityState.Available)]));
+        }
     }
 
     private sealed class StaticClientFactory(HttpClient client) : IHttpClientFactory

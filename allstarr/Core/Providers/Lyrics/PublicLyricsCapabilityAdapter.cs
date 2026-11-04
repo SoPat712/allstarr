@@ -64,6 +64,8 @@ public abstract class PublicLyricsCapabilityAdapter(
                 if (cached != null) return Project(cached, request);
             }
             catch (Exception exception) when (exception is not OperationCanceledException) { }
+            if (completion == LyricsCompletionMode.CacheOnly)
+                return Unavailable();
             token.ThrowIfCancellationRequested();
             var result = await ReadWithCompletionAsync(context, request, completion, token);
             token.ThrowIfCancellationRequested();

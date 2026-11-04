@@ -38,6 +38,9 @@ public sealed class BuiltInLyricsCapabilityAdapter(
                 (!string.IsNullOrWhiteSpace(request.TrackTitle) || !string.IsNullOrWhiteSpace(request.Isrc)))
                 return ProviderOutcome<ProviderLyricsResult>.Failure(ProviderError.LyricsArtistRequired());
 
+            if (completion == LyricsCompletionMode.CacheOnly && CompletionFetch == null)
+                return Available(ProviderLyricsAvailabilityState.Unavailable);
+
             var lyrics = CompletionFetch != null ? await CompletionFetch(request, completion, context.CancellationToken) : await fetch(request, context.CancellationToken);
             context.CancellationToken.ThrowIfCancellationRequested();
             if (lyrics == null)

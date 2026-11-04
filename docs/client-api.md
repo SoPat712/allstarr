@@ -118,6 +118,26 @@ selection as the Jellyfin lyrics routes: the effective pin takes precedence,
 then automatic selection prefers the best timing. Unknown or hidden items and
 items without lyrics return 404 `not_found`. Responses use `Cache-Control: no-store`.
 
+A normal GET also warms the provider caches. Known retained, embedded, sidecar,
+and cached provider lyrics can return immediately. Otherwise eligible providers
+run concurrently, with word timing preferred over line timing, then plain text;
+the listener's source order breaks ties. A saved song choice takes precedence.
+The response uses the best result available within the lookup budget, or returns
+earlier when no unfinished source can improve it. If no source has answered yet,
+404 can be temporary: background completion can make lyrics available later.
+
+The `LyricsLookup` configuration section controls `ResponseBudgetMilliseconds`
+(default 1500), `SourceTimeoutMilliseconds` (1000),
+`BackgroundTimeoutMilliseconds` (15000), and `Concurrency` (4, maximum 4).
+These budgets cover lyrics lookup after item access and metadata resolution.
+Concurrent requests for the same listener, song, and source policy share work.
+Up to four lookups retain background work at once. Started provider reads continue
+after the response, within their source timeout and the overall background cap,
+and store successful results in the existing provider caches. A later improvement
+publishes `lyrics.updated` with the existing `{itemId,revision}` payload; refresh
+the lyrics and sources on that event. A separate prefetch route is unnecessary:
+call the ordinary GET when the next song is known.
+
 ```json
 {
   "source": {"id":"lyricsplus","name":"LyricsPlus"},
@@ -146,12 +166,15 @@ Omit `sourceId` to read the effective lyrics.
 `GET /allstarr/v1/items/{itemId}/lyrics/sources` lists candidate versions,
 their formats, a text preview of up to four lines and 1,000 characters, the
 chosen source and layer (`personal`, `household`, or `automatic`), and the
-current revision. An unavailable candidate has null format and preview;
+current revision. Every candidate has `state`: `ready`, `pending`, or `unavailable`.
+Pending and unavailable candidates have null format and preview;
 `chosen` is null when no lyrics can be selected. Each candidate also includes
 `providerId`, `providerName`, and nullable provider metadata: `title`, `artist`,
 `album`, and `durationMs` (an integer in milliseconds). Providers stay in the
 configured order; each provider's best match appears first. Lists contain at
-most five versions per provider and twenty candidates overall.
+most five versions per provider and twenty candidates overall. Source discovery
+uses the same response budget and returns the sources known so far. Pending
+sources can become ready on a later read as background lookups fill the caches.
 
 Version IDs use `<providerId>:<versionKey>`, preserving the provider's record ID
 when available. Otherwise the key is the first sixteen lowercase hexadecimal
@@ -167,7 +190,7 @@ counts are preserved; old best-only LRCLIB cache entries refresh once.
 {
   "sources": [{"sourceId":"lrclib:123","providerId":"lrclib","providerName":"LRCLIB",
     "title":"Two Moons Over Ohio (Live)","artist":"Example Artist","album":null,
-    "durationMs":271000,"format":"line","preview":"Hello\nEcho"}],
+    "durationMs":271000,"format":"line","preview":"Hello\nEcho","state":"ready"}],
   "chosen": {"sourceId":"lrclib:123","layer":"personal"},
   "revision": {"personal":null,"household":null}
 }
