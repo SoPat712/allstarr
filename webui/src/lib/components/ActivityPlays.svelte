@@ -222,7 +222,8 @@
         field.value = text;
         field.setAttribute("aria-hidden", "true");
         field.style.cssText = "position:fixed;left:-9999px;opacity:0";
-        document.body.appendChild(field);
+        const dialog = document.getElementById(`play-${id}`)?.closest('[role="dialog"]');
+        (dialog ?? document.body).appendChild(field);
         try {
           field.select();
           if (!document.execCommand("copy")) throw new Error();

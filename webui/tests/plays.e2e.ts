@@ -102,9 +102,11 @@ test("Diagnostics can be copied when the clipboard service is unavailable", asyn
   await mockPlays(page);
   await page.goto("/#/activity?view=plays");
   await page.getByRole("button", { name: /Evening song/ }).click();
+  await page.evaluate(() => navigator.clipboard.writeText("Earlier clipboard contents"));
   await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined }));
   await page.getByRole("button", { name: "More play actions" }).click();
   await page.getByRole("menuitem", { name: "Copy diagnostics", exact: true }).click();
   await expect(page.getByText("Copied — paste it to your admin.", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => { Reflect.deleteProperty(navigator, "clipboard"); return navigator.clipboard.readText(); })).toBe(redacted);
+  await expect(page.getByRole("button", { name: "More play actions" })).toBeFocused();
 });

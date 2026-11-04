@@ -122,7 +122,8 @@ test("External suggestions respect household availability", async ({ page }) => 
 test("Removing an external playlist makes its recipe available again", async ({ page }) => {
   const state = await mockForYou(page); await openHome(page); await add(page);
   await page.goto("/#/library/playlists");
-  await page.getByRole("button", { name: "Remove Loved on Last.fm from my apps", exact: true }).click();
+  await page.getByRole("button", { name: "Open Loved on Last.fm playlist details", exact: true }).click();
+  await page.getByRole("dialog", { name: "Loved on Last.fm", exact: true }).getByRole("button", { name: "Remove from my apps", exact: true }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Remove from my apps", exact: true }).click();
   await expect(page.getByRole("button", { name: "Open Loved on Last.fm playlist details", exact: true })).toHaveCount(0);
   await openHome(page); await add(page);

@@ -1442,7 +1442,7 @@ for (const viewport of viewports) {
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/intelligence-${viewport.width}-history.png`, fullPage: true });
-      await page.getByRole("tab", { name: "Options and review", exact: true }).click();
+      await page.getByRole("tab", { name: "Import", exact: true }).click();
       await expect(page.getByRole("heading", { name: "Import listening history" })).toBeVisible();
       await expect(page.getByText(/upload the JSON files from your Extended Streaming History download/)).toBeVisible();
       const automationTab = page.getByRole("tab", { name: "Automation", exact: true });
@@ -1687,14 +1687,14 @@ for (const viewport of viewports) {
       await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).pointerEvents)).toBe("auto");
 
       await page.goto("#/library/cached");
-      const removeButton = page.getByRole("button", { name: "Remove", exact: true });
-      await removeButton.click();
-      const removal = page.getByRole("alertdialog", { name: "Remove this track?" });
+      await page.getByRole("button", { name: "Actions for Test song", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
+      const removal = page.getByRole("alertdialog", { name: "Remove this song?" });
       await expect(removal).toBeVisible();
       await expect(removal.locator(".dialog-actions")).toHaveCSS("border-top-width", "0px");
       if (process.env.ALLSTARR_SCREENSHOT_DIR)
         await removal.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/remove-track-${viewport.width}.png` });
-      await expect(removal.getByRole("button", { name: "Remove track" })).toBeInViewport();
+      await expect(removal.getByRole("button", { name: "Remove song" })).toBeInViewport();
     });
 
     test("keyboard dialogs honor reduced motion", async ({ page }) => {
@@ -1733,7 +1733,7 @@ test("Intelligence history imports, corrections, and schedules use the selected 
   });
   await detail.getByRole("button", { name: "Close listen details" }).click();
 
-  await page.getByRole("tab", { name: "Options and review", exact: true }).click();
+  await page.getByRole("tab", { name: "Import", exact: true }).click();
   await expect(page).toHaveURL(/#\/intelligence\?section=imports$/);
   const previews: string[] = [];
   page.on("request", (request) => {
@@ -2027,7 +2027,7 @@ test("Intelligence partial and section error states stay announced", async ({ pa
   await page.getByRole("tab", { name: "History", exact: true }).click();
   await expect(page.locator(".history-workspace").getByRole("alert")).toContainText("Fixture unavailable");
 
-  await page.getByRole("tab", { name: "Options and review", exact: true }).click();
+  await page.getByRole("tab", { name: "Import", exact: true }).click();
   await page.getByLabel("History export files").setInputFiles({
     name: "Streaming_History.json", mimeType: "application/json", buffer: Buffer.from("[]"),
   });
@@ -3546,7 +3546,7 @@ test("Shared search fields reserve icon space", async ({ page }) => {
   for (const [route, label] of [
     ["#/library/playlists", "Filter playlists"],
     ["#/library/mappings", "Search"],
-    ["#/library/cached", "Filter cached tracks"],
+    ["#/library/cached", "Filter cached songs"],
     ["#/activity", "Search"],
   ] as const) {
     await page.goto(route);
@@ -3903,36 +3903,48 @@ test("Dashboard primary tracks stay geometrically aligned", async ({ page }) => 
   expect(workspaceBottomPadding).toBeGreaterThanOrEqual(mobileNav!.height);
 });
 
-test("Compact panel headings share one full-width action track", async ({ page }) => {
+test("Compact panel headings keep actions aligned and contained", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
 
-  for (const { route, heading, actions } of [
-    { route: "#/library/playlists", heading: ".playlist-toolbar", actions: ".playlist-toolbar-actions" },
-    { route: "#/library/cached", heading: ".downloads-heading", actions: ".downloads-heading-actions" },
-    { route: "#/integrations/services", heading: ".sources-heading", actions: ".sources-heading-actions" },
+  for (const { route, heading, actions, stacked } of [
+    { route: "#/library/playlists", heading: ".library-heading", actions: ".library-actions", stacked: false },
+    { route: "#/library/cached", heading: ".library-downloads-heading", actions: ".library-downloads-heading-actions", stacked: false },
+    { route: "#/integrations/services", heading: ".sources-heading", actions: ".sources-heading-actions", stacked: true },
   ]) {
     await page.goto(route);
     const panelHeading = page.locator(heading);
     await expect(panelHeading).toBeVisible();
-    const [copyBox, actionBox] = await Promise.all([
+    const [headingBox, copyBox, actionBox] = await Promise.all([
+      panelHeading.boundingBox(),
       panelHeading.locator(":scope > :first-child").boundingBox(),
       panelHeading.locator(actions).boundingBox(),
     ]);
+    expect(headingBox).toBeTruthy();
     expect(copyBox).toBeTruthy();
     expect(actionBox).toBeTruthy();
-    expect(Math.abs(copyBox!.x - actionBox!.x)).toBeLessThanOrEqual(1);
-    expect(Math.abs(copyBox!.width - actionBox!.width)).toBeLessThanOrEqual(1);
+    expect(actionBox!.x).toBeGreaterThanOrEqual(headingBox!.x - 1);
+    expect(actionBox!.x + actionBox!.width).toBeLessThanOrEqual(headingBox!.x + headingBox!.width + 1);
+    if (stacked) {
+      expect(Math.abs(copyBox!.x - actionBox!.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(copyBox!.width - actionBox!.width)).toBeLessThanOrEqual(1);
+      expect(actionBox!.y).toBeGreaterThanOrEqual(copyBox!.y + copyBox!.height);
+    } else {
+      expect(copyBox!.x + copyBox!.width).toBeLessThanOrEqual(actionBox!.x);
+      expect(Math.abs(copyBox!.y + copyBox!.height / 2 - actionBox!.y - actionBox!.height / 2)).toBeLessThanOrEqual(1);
+    }
+    expect(await panelHeading.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
   }
 
   await page.goto("#/library/playlists");
-  const playlistActionButtons = page.locator(".playlist-toolbar-actions [data-slot=button]");
-  await expect(playlistActionButtons).toHaveCount(3);
-  const actionButtons = await playlistActionButtons.evaluateAll((items) =>
-    items.map((item) => item.getBoundingClientRect().toJSON()));
+  const playlistActions = page.locator(".library-actions");
+  await expect(playlistActions.getByRole("button", { name: "Refresh playlists", exact: true })).toBeVisible();
+  await expect(playlistActions.getByRole("button", { name: "Import playlist", exact: true })).toBeVisible();
+  const actionButtons = await playlistActions.getByRole("button").evaluateAll(items =>
+    items.map(item => item.getBoundingClientRect().toJSON()));
+  expect(actionButtons).toHaveLength(2);
   expect(Math.abs(actionButtons[0].y - actionButtons[1].y)).toBeLessThanOrEqual(1);
-  expect(Math.abs(actionButtons[0].width - actionButtons[1].width)).toBeLessThanOrEqual(1);
-  expect(actionButtons[2].width).toBeGreaterThan(actionButtons[0].width * 1.9);
+  expect(actionButtons[0].x + actionButtons[0].width).toBeLessThanOrEqual(actionButtons[1].x);
 });
 
 test("Compact count-bearing route tabs stay separated and scroll the active tab into view", async ({ page }) => {
@@ -4227,9 +4239,17 @@ test("Sparse data surfaces use the shared compact empty state", async ({ page })
   await page.setViewportSize({ width: 320, height: 844 });
   await mockApi(page);
 
+  const expectCompactEmpty = async (selector: string, title: string) => {
+    const empty = page.locator(selector);
+    await expect(empty.getByRole("heading", { name: title, exact: true })).toBeVisible();
+    await expect(empty).toHaveCSS("min-height", "192px");
+    const bounds = await empty.boundingBox();
+    expect(bounds?.height ?? Infinity).toBeLessThanOrEqual(288);
+    expect(await empty.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  };
+
   await page.goto("#/activity");
-  await expect(page.locator(".event-log-empty")).toBeVisible();
-  expect((await page.locator(".event-log-empty").boundingBox())?.height ?? Infinity).toBeLessThanOrEqual(200);
+  await expectCompactEmpty(".event-log-panel .empty-state", "No activity yet");
 
   await page.route("**/api/admin/downloads**", (route) => route.fulfill({
     contentType: "application/json",
@@ -4240,8 +4260,7 @@ test("Sparse data surfaces use the shared compact empty state", async ({ page })
     }),
   }));
   await page.goto("#/library/cached");
-  await expect(page.locator(".downloads-empty")).toBeVisible();
-  expect((await page.locator(".downloads-empty").boundingBox())?.height ?? Infinity).toBeLessThanOrEqual(200);
+  await expectCompactEmpty(".library-downloads .empty-state", "No cached songs");
 });
 
 test("Operational tables adapt before the workspace needs horizontal scrolling", async ({ page }) => {
@@ -5105,7 +5124,7 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
 
 test("Playlist dialog keeps Actions and close controls independent at desktop and mobile widths", async ({ page }) => {
   await mockApi(page);
-  for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 }]) {
+  for (const viewport of [{ width: 320, height: 844 }, { width: 390, height: 844 }, { width: 1280, height: 800 }]) {
     await page.setViewportSize(viewport);
     await page.goto("#/library/playlists");
     const opener = page.getByRole("button", { name: "Open Test playlist playlist details", exact: true });
@@ -5117,8 +5136,10 @@ test("Playlist dialog keeps Actions and close controls independent at desktop an
     await expect(close).toBeVisible();
     await expect(close).toHaveAttribute("aria-label", "Close");
 
-    const actionBox = await actions.boundingBox(), closeBox = await close.boundingBox();
-    expect(actionBox).not.toBeNull(); expect(closeBox).not.toBeNull();
+    const { actionBox, closeBox } = await dialog.evaluate(element => ({
+      actionBox: element.querySelector('[aria-label="Actions"]')!.getBoundingClientRect().toJSON(),
+      closeBox: element.querySelector('[aria-label="Close"]')!.getBoundingClientRect().toJSON(),
+    }));
     expect(actionBox!.y + actionBox!.height <= closeBox!.y || closeBox!.y + closeBox!.height <= actionBox!.y || actionBox!.x + actionBox!.width <= closeBox!.x || closeBox!.x + closeBox!.width <= actionBox!.x).toBe(true);
 
     await close.focus();

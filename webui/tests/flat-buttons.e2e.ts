@@ -129,7 +129,6 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     };
 
     await page.goto(`/#/library/import?account=${accountId}`);
-    await page.getByRole("button", { name: "Find my music", exact: true }).click();
     await expect(page.getByRole("checkbox", { name: "Select Liked Songs", exact: true })).toBeVisible();
     const selectAll = page.getByRole("button", { name: "Select all", exact: true });
     const clear = page.getByRole("button", { name: "Clear", exact: true });

@@ -9,7 +9,6 @@
   import { adminOidc, type OidcStatus } from "$lib/admin-oidc";
   import { liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
-  import { installRipple } from "$lib/ripple";
   import { slideIndicator } from "$lib/slide-indicator";
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -373,11 +372,16 @@
     colorScheme.addEventListener("change", applySystemTheme);
 
     void bootstrap();
-    const removeRipple = installRipple();
+    let mounted = true;
+    let removeRipple: (() => void) | undefined;
+    void import("$lib/ripple").then(({ installRipple }) => {
+      if (mounted) removeRipple = installRipple();
+    }).catch(() => {});
 
     return () => {
       window.removeEventListener("vite:preloadError", reloadForUpdate);
-      removeRipple();
+      mounted = false;
+      removeRipple?.();
       compactSidebar.removeEventListener("change", applySidebarBreakpoint);
       mobileNavigation.removeEventListener("change", closeDesktopMenu);
       colorScheme.removeEventListener("change", applySystemTheme);

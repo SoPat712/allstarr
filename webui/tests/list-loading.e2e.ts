@@ -19,14 +19,18 @@ for (const view of ["taste", "history"] as const) for (const width of [390, 1280
       return route.fulfill({ json: view === "taste" ? fixture.taste : { items: [], hasMore: false } });
     });
     await page.goto(view === "taste" ? "/#/for-you?section=taste" : "/#/activity?view=history");
-    const skeleton = page.getByRole("status", { name: view === "taste" ? "Loading your taste" : "Loading your activity", exact: true });
+    const skeleton = page.getByRole("status", { name: view === "taste" ? "Loading your taste" : "Loading Your activity", exact: true });
     await expect(skeleton).toBeVisible();
     await expect(skeleton).toHaveAttribute("aria-busy", "true");
-    await expect(skeleton.locator(".list-skeleton-row")).toHaveCount(6);
-    const animation = await skeleton.locator(".list-skeleton-placeholder").first().evaluate(element => getComputedStyle(element).animationName);
+    const rows = skeleton.locator(view === "taste" ? ".list-skeleton-row" : ".skeleton-row");
+    await expect(rows).toHaveCount(6);
+    const animationName = () => view === "taste"
+      ? skeleton.locator(".list-skeleton-placeholder").first().evaluate(element => getComputedStyle(element).animationName)
+      : rows.first().evaluate(element => getComputedStyle(element, "::after").animationName);
+    const animation = await animationName();
     expect(animation).toBe("none");
     await page.emulateMedia({ reducedMotion: "no-preference" });
-    await expect.poll(() => skeleton.locator(".list-skeleton-placeholder").first().evaluate(element => getComputedStyle(element).animationName)).toContain("shimmer");
+    await expect.poll(animationName).toContain("shimmer");
     await page.emulateMedia({ reducedMotion: "reduce" });
     const folder = new URL("../../test-results/uibugs/", import.meta.url).pathname;
     await mkdir(folder, { recursive: true });
