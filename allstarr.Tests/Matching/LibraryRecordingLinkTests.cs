@@ -254,7 +254,14 @@ public sealed partial class TrackIdentityServiceTests
         Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
         Assert.Contains("1 linked", progress!.Message);
         await jobs.CompleteAsync(claim!, result);
-        Assert.Equal(0, await queue.EnqueuePendingAsync(default));
+        await using (var cleanup = await _factory.CreateDbContextAsync())
+            await cleanup.Jobs.ExecuteDeleteAsync();
+        var restartedJobs = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), _clock);
+        Assert.Equal(0, await new LibraryRecordingLinkQueue(_factory, restartedJobs).EnqueuePendingAsync(default));
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        var restartedHandler = new LibraryRecordingLinkJobHandler(identities.Object, _factory, _clock);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await restartedHandler.ExecuteAsync(execution, default)).Kind);
+        identities.VerifyNoOtherCalls();
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Single(await db.LibraryTracks.ToArrayAsync());
         Assert.Single(await db.ProviderTrackIdentities.ToArrayAsync());

@@ -73,17 +73,18 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData("duplicates.complete")]
-    [InlineData("recording-equivalence.complete")]
-    public async Task PruneNowAsync_PreservesCatalogRepairCompletionThroughExpiryAndOverflow(string completionAction)
+    [InlineData("catalog-identity-maintenance", "duplicates.complete")]
+    [InlineData("catalog-identity-maintenance", "recording-equivalence.complete")]
+    [InlineData("library-recording-link", "library-recording-link.complete")]
+    public async Task PruneNowAsync_PreservesMaintenanceCompletionThroughExpiryAndOverflow(string category, string completionAction)
     {
         var now = DateTimeOffset.UtcNow;
-        var completed = Event(now.AddDays(-60), completionAction, "catalog-identity-maintenance");
+        var completed = Event(now.AddDays(-60), completionAction, category);
         await using (var scope = provider.CreateAsyncScope())
         {
             var database = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
             database.AuditEvents.Add(completed);
-            database.AuditEvents.Add(Event(now.AddDays(-60), "detail", "catalog-identity-maintenance"));
+            database.AuditEvents.Add(Event(now.AddDays(-60), "detail", category));
             database.AuditEvents.AddRange(Enumerable.Range(0, 1001)
                 .Select(index => Event(now.AddSeconds(index), $"recent-{index}")));
             await database.SaveChangesAsync();
@@ -93,7 +94,7 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
         var db = verification.ServiceProvider.GetRequiredService<AllstarrDbContext>();
         Assert.True(await db.AuditEvents.AnyAsync(item => item.Id == completed.Id));
         Assert.Equal(1000, await db.AuditEvents.CountAsync());
-        Assert.Single(await db.AuditEvents.Where(item => item.Category == "catalog-identity-maintenance").ToArrayAsync());
+        Assert.Single(await db.AuditEvents.Where(item => item.Category == category).ToArrayAsync());
     }
 
     [Fact]

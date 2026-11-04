@@ -10,6 +10,7 @@ public static class DurableJobRegistration
                           .Get<DurableJobOptions>()
                       ?? new DurableJobOptions();
         options.TypeConcurrencyLimits.TryAdd(allstarr.Core.Migrations.CollectionMigrationService.Type, 1);
+        options.TypeConcurrencyLimits[allstarr.Core.Matching.LibraryRecordingLinkQueue.JobType] = 1;
         options.Validate();
         services.AddSingleton(options);
         services.AddSingleton<JobPayloadPolicy>();

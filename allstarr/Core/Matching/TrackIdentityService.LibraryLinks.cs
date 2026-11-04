@@ -7,31 +7,110 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace allstarr.Core.Matching;
 
 public sealed partial class TrackIdentityService
 {
+    private const int LibraryLinkBatchSize = 25;
+
     public async Task<LibraryRecordingLinkResult> LinkLibraryRecordingsAsync(ProviderActorContext actor,
         string correlationId, Guid? recordingId = null, Guid? libraryTrackId = null,
         CancellationToken cancellationToken = default)
     {
         EnsureStorageReady();
-        var user = actor.EffectiveUserId ?? throw new UnauthorizedAccessException("Library linking requires a user.");
+        _ = actor.EffectiveUserId ?? throw new UnauthorizedAccessException("Library linking requires a user.");
         correlationId = ProviderContractValidation.RequiredText(correlationId, nameof(correlationId), 100);
-        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        await ValidateActorAsync(db, actor, cancellationToken);
+        LibraryLinkCandidates candidates;
+        LibraryLinkPlan[] plans;
+        await using (var discovery = await _contextFactory.CreateDbContextAsync(cancellationToken))
+        {
+            discovery.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
+            await ValidateActorAsync(discovery, actor, cancellationToken);
+            candidates = await ReadLibraryLinkCandidatesAsync(discovery, actor, recordingId, libraryTrackId, null, null, cancellationToken);
+            var prepared = new List<LibraryLinkPlan>();
+            foreach (var recording in candidates.Recordings)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (PlanLibraryLink(candidates, recording, libraryTrackId) is { } plan) prepared.Add(plan);
+            }
+            plans = prepared.ToArray();
+        }
+        var positions = candidates.Recordings.Select((item, index) => (item.Id, index))
+            .ToDictionary(item => item.Id, item => item.index);
+        var skipped = new HashSet<Guid>();
+        var linked = 0;
+        var conflicts = 0;
+        foreach (var batch in plans.Chunk(LibraryLinkBatchSize))
+        {
+            var recordingIds = batch.Select(item => item.Recording.Id).ToArray();
+            var applied = false;
+            while (!applied)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                await using (var db = await _contextFactory.CreateDbContextAsync(cancellationToken))
+                {
+                    // data_version must be compared on the same open connection across preparation and locking.
+                    await db.Database.OpenConnectionAsync(cancellationToken);
+                    db.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
+                    var version = await ReadLibraryLinkDataVersionAsync(db, cancellationToken);
+                    await ValidateActorAsync(db, actor, cancellationToken);
+                    var prepared = await ReadLibraryLinkCandidatesAsync(db, actor, null, libraryTrackId,
+                        recordingIds, null, cancellationToken);
+                    var preparedPlans = prepared.Recordings.Select(item => PlanLibraryLink(prepared, item, libraryTrackId))
+                        .OfType<LibraryLinkPlan>().ToArray();
+                    if (preparedPlans.Length == 0) { applied = true; continue; }
+                    var libraryIds = preparedPlans.SelectMany(item => item.Selected).Select(item => item.Id).Distinct().ToArray();
+                    db.ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.TrackAll;
+                    await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+                    if (version == await ReadLibraryLinkDataVersionAsync(db, cancellationToken))
+                    {
+                        // Only the prepared pairs are reloaded under the writer lock; changed snapshots retry outside it.
+                        var current = await ReadLibraryLinkCandidatesAsync(db, actor, null, libraryTrackId,
+                            recordingIds, libraryIds, cancellationToken);
+                        foreach (var recording in current.Recordings)
+                        {
+                            cancellationToken.ThrowIfCancellationRequested();
+                            if (recording.MergedIntoId != null) continue;
+                            var plan = PlanLibraryLink(current, recording, libraryTrackId);
+                            if (plan == null) continue;
+                            if (plan.Conflict) { conflicts++; continue; }
+                            var result = await ApplyLibraryLinkAsync(db, actor, correlationId, plan, current.Overrides, cancellationToken);
+                            linked += result.Linked;
+                            conflicts += result.Conflicts;
+                            foreach (var merged in db.CanonicalRecordings.Local.Where(item => item.MergedIntoId != null))
+                                if (positions.TryGetValue(merged.Id, out var position) && position > positions[recording.Id])
+                                    skipped.Add(merged.Id);
+                        }
+                        await db.SaveChangesAsync(cancellationToken);
+                        await transaction.CommitAsync(cancellationToken);
+                        applied = true;
+                    }
+                }
+                await Task.Delay(TimeSpan.FromMilliseconds(25), cancellationToken);
+            }
+        }
+        var scanned = candidates.Recordings.Length - skipped.Count;
+        return new(scanned, linked, conflicts);
+    }
+
+    private async Task<LibraryLinkCandidates> ReadLibraryLinkCandidatesAsync(AllstarrDbContext db,
+        ProviderActorContext actor, Guid? recordingId, Guid? libraryTrackId, Guid[]? recordingIds, Guid[]? libraryIds,
+        CancellationToken cancellationToken)
+    {
+        var user = actor.EffectiveUserId!.Value;
         var focusTrack = libraryTrackId.HasValue ? await db.LibraryTracks.AsNoTracking().SingleOrDefaultAsync(
             item => item.Id == libraryTrackId.Value && item.OwnerUserId == user, cancellationToken) : null;
-        if (libraryTrackId.HasValue && focusTrack == null) return new(0, 0, 0);
+        if (libraryTrackId.HasValue && focusTrack == null) return EmptyLibraryLinkCandidates();
         if (recordingId.HasValue)
         {
             recordingId = (await FindSurvivorAsync(db, recordingId.Value, cancellationToken))?.Id;
-            if (recordingId == null) return new(0, 0, 0);
+            if (recordingId == null) return EmptyLibraryLinkCandidates();
         }
         var linkQuery = db.ProviderTrackIdentities.Where(item => item.ResourceKind == ProviderResourceKind.Track &&
             (!recordingId.HasValue || item.CanonicalRecordingId == recordingId.Value) &&
+            (recordingIds == null || recordingIds.Contains(item.CanonicalRecordingId)) &&
             (item.Scope == ProviderIdentityScope.Catalog || db.ProviderAccounts.Any(account =>
                 account.Id == item.ProviderAccountId && account.Enabled &&
                 (account.OwnerUserId == null || account.OwnerUserId == user))));
@@ -67,145 +146,180 @@ public sealed partial class TrackIdentityService
         var snapshotsBySource = snapshots.ToLookup(item => (item.ProviderId, item.ExternalIdHash));
         var linksByRecording = links.ToLookup(item => item.CanonicalRecordingId);
         var libraryQuery = db.LibraryTracks.Where(item => item.OwnerUserId == user);
-        if (recordingId.HasValue || libraryTrackId.HasValue)
+        if (libraryIds != null)
+            libraryQuery = libraryQuery.Where(item => libraryIds.Contains(item.Id));
+        else if (recordingId.HasValue || recordingIds != null || libraryTrackId.HasValue)
         {
             var storedEvidence = snapshots.Select(item => ReadLibraryLinkEvidence(item.PayloadJson)).OfType<LibraryLinkEvidence>().ToArray();
             var isrcs = recordings.SelectMany(item => item.Identifiers).Where(item => item.Kind == RecordingIdentifierKinds.Isrc)
-                .Select(item => item.Value).Concat(storedEvidence.Select(item => item.Isrc).OfType<string>()).Distinct().ToArray();
+                .Select(item => item.Value).Concat(storedEvidence.Select(item => item.Isrc).OfType<string>()).ToHashSet(StringComparer.Ordinal);
             var mbids = recordings.SelectMany(item => item.Identifiers).Where(item => item.Kind == RecordingIdentifierKinds.MusicBrainz)
-                .Select(item => item.Value).Concat(storedEvidence.Select(item => item.Mbid).OfType<string>()).Distinct().ToArray();
-            var titleWords = storedEvidence.Select(item => item.Title.Split(' ').FirstOrDefault() ?? "")
-                .Where(item => item.Length > 0).Distinct().ToArray();
-            libraryQuery = libraryQuery.Where(item => item.Id == libraryTrackId ||
-                item.Isrc != null && isrcs.Contains(item.Isrc) ||
-                item.MusicBrainzRecordingId != null && mbids.Contains(item.MusicBrainzRecordingId) ||
-                titleWords.Any(word => item.Title.ToLower().Contains(word)));
+                .Select(item => item.Value).Concat(storedEvidence.Select(item => item.Mbid).OfType<string>()).ToHashSet(StringComparer.Ordinal);
+            var titles = storedEvidence.Select(item => item.Title).ToHashSet(StringComparer.Ordinal);
+            var labels = await libraryQuery.AsNoTracking()
+                .Select(item => new { item.Id, item.Title, item.Artist, item.Isrc, item.MusicBrainzRecordingId })
+                .ToArrayAsync(cancellationToken);
+            var matchingIds = labels.Where(item => item.Id == libraryTrackId ||
+                NormalizeLibraryIsrc(item.Isrc) is { } isrc && isrcs.Contains(isrc) ||
+                LibraryMbid(item.MusicBrainzRecordingId) is { } mbid && mbids.Contains(mbid) ||
+                titles.Count > 0 && titles.Contains(LibraryLinkTitle(item.Title, item.Artist)))
+                .Select(item => item.Id).ToArray();
+            libraryQuery = libraryQuery.Where(item => matchingIds.Contains(item.Id));
         }
         var libraries = await libraryQuery.ToArrayAsync(cancellationToken);
-        if (libraries.Length == 0) return new(recordings.Length, 0, 0);
-        var libraryIds = libraries.Select(item => item.Id).ToArray();
+        var candidateIds = libraries.Select(item => item.Id).ToArray();
         var overrides = await db.ManualTrackOverrides.AsNoTracking().Where(item => item.RevokedAt == null &&
-            (hashes.Contains(item.SourceExternalIdHash) || item.LibraryTrackId != null && libraryIds.Contains(item.LibraryTrackId.Value)))
+            (hashes.Contains(item.SourceExternalIdHash) || item.LibraryTrackId != null && candidateIds.Contains(item.LibraryTrackId.Value)))
             .ToArrayAsync(cancellationToken);
         var byTitle = libraries.ToLookup(item => LibraryLinkTitle(item.Title, item.Artist));
         var byIsrc = libraries.Where(item => NormalizeLibraryIsrc(item.Isrc) != null).ToLookup(item => NormalizeLibraryIsrc(item.Isrc)!);
         var byMbid = libraries.Where(item => LibraryMbid(item.MusicBrainzRecordingId) != null).ToLookup(item => LibraryMbid(item.MusicBrainzRecordingId)!);
-        var scanned = 0;
-        var linked = 0;
-        var conflicts = 0;
-        foreach (var original in recordings)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (original.MergedIntoId != null) continue;
-            var recording = original;
-            scanned++;
-            var recordingLinks = linksByRecording[recording.Id].ToArray();
-            if (recordingLinks.Any(item => item.Verification == ProviderIdentityVerification.Pinned ||
-                    item.VerificationMethod is ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod or
-                        ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod) ||
-                overrides.Any(choice => recordingLinks.Any(link => choice.SourceProviderId == link.ProviderId &&
-                    choice.SourceExternalIdHash == link.ExternalIdHash))) continue;
-            var evidence = recordingLinks.Where(item => automaticProviders.Contains(item.ProviderId) && IsLibraryLinkSource(item))
-                .Select(link => snapshotsBySource[(link.ProviderId, link.ExternalIdHash)].Where(snapshot =>
-                        (snapshot.ProviderTrackIdentityId == null || snapshot.ProviderTrackIdentityId == link.Id) &&
-                        (link.Scope == ProviderIdentityScope.Catalog && snapshot.ProviderAccountId == null ||
-                         link.Scope == ProviderIdentityScope.Account && snapshot.ProviderAccountId == link.ProviderAccountId))
-                    .OrderByDescending(snapshot => snapshot.RetrievedAt).ThenByDescending(snapshot => snapshot.SnapshotVersion)
-                    .ThenBy(snapshot => snapshot.ResourceKind == "track" ? 0 : 1)
-                    .Select(snapshot => ReadLibraryLinkEvidence(snapshot.PayloadJson)).FirstOrDefault(item => item != null))
-                .OfType<LibraryLinkEvidence>().ToArray();
-            var codes = recording.Identifiers.Where(item => item.Kind == RecordingIdentifierKinds.Isrc).Select(item => item.Value)
-                .Concat(evidence.Select(item => item.Isrc).OfType<string>()).ToHashSet(StringComparer.Ordinal);
-            var mbids = recording.Identifiers.Where(item => item.Kind == RecordingIdentifierKinds.MusicBrainz).Select(item => item.Value)
-                .Concat(evidence.Select(item => item.Mbid).OfType<string>()).ToHashSet(StringComparer.Ordinal);
-            var candidates = new Dictionary<Guid, (LibraryTrackRecord Track, int Strength)>();
-            foreach (var code in codes)
-                foreach (var track in byIsrc[code]) candidates[track.Id] = (track, 3);
-            foreach (var mbid in mbids)
-                foreach (var track in byMbid[mbid]) candidates.TryAdd(track.Id, (track, 2));
-            foreach (var item in evidence)
-                foreach (var track in byTitle[item.Title])
-                    if (HasLibraryCreditEvidence(item, track) &&
-                        (codes.Count == 0 || NormalizeLibraryIsrc(track.Isrc) is not { } localCode || codes.Contains(localCode)))
-                        candidates.TryAdd(track.Id, (track, 1));
-            if (candidates.Count == 0) continue;
-            var strongest = candidates.Values.Max(item => item.Strength);
-            var best = candidates.Values.Where(item => item.Strength == strongest)
-                .Where(item => !overrides.Any(choice => choice.LibraryTrackId == item.Track.Id)).ToArray();
-            if (best.Length == 0) continue;
-            // Multiple copies of one established recording are safe; competing recordings remain separate.
-            var groups = best.GroupBy(item => LibraryLinkKey(item.Track)).ToArray();
-            if (groups.Length != 1) { conflicts++; continue; }
-            var selected = groups[0].Select(item => item.Track).ToArray();
-            if (libraryTrackId.HasValue && !selected.Any(item => item.Id == libraryTrackId.Value)) continue;
-            var localMbid = selected.Select(item => LibraryMbid(item.MusicBrainzRecordingId)).OfType<string>().Distinct().ToArray();
-            if (localMbid.Concat(mbids).Distinct().Count() > 1) { conflicts++; continue; }
-            var local = selected[0];
-            CanonicalRecordingRecord? target;
-            try
-            {
-                target = local.CanonicalRecordingId is { } localId
-                    ? await FindSurvivorAsync(db, localId, cancellationToken)
-                    : await FindCanonicalByExactSignalsAsync(db, NormalizeLibraryIsrc(local.Isrc), LibraryMbid(local.MusicBrainzRecordingId), cancellationToken);
-                var exact = await FindCanonicalByExactSignalsAsync(db, NormalizeLibraryIsrc(local.Isrc),
-                    LibraryMbid(local.MusicBrainzRecordingId), cancellationToken);
-                if (exact != null && target != null && exact.Id != target.Id && exact.Id != recording.Id)
-                { conflicts++; continue; }
-            }
-            catch (InvalidOperationException) { conflicts++; continue; }
-            if (target != null && target.Id != recording.Id)
-            {
-                var targetLinks = await db.ProviderTrackIdentities.Where(item => item.CanonicalRecordingId == target.Id).ToArrayAsync(cancellationToken);
-                if (await HasAvailabilityAuthorityConflictAsync(db, targetLinks, user, cancellationToken) ||
-                    overrides.Any(choice => targetLinks.Any(link => choice.SourceProviderId == link.ProviderId &&
-                        choice.SourceExternalIdHash == link.ExternalIdHash)) ||
-                    !await HasAutomaticProviderIdentityAsync(db, target.Id, actor, cancellationToken) ||
-                    target.Identifiers.Where(item => item.Kind == RecordingIdentifierKinds.MusicBrainz).Select(item => item.Value)
-                        .Concat(mbids).Concat(localMbid).Distinct().Count() > 1)
-                { conflicts++; continue; }
-            }
-            var now = _clock.UtcNow;
-            var previousRecordingId = recording.Id;
-            var previousLocalRecordingId = target?.Id;
-            var changedTracks = selected.Where(item => item.CanonicalRecordingId != recording.Id).Select(item => item.Id).ToHashSet();
-            if (target != null && target.Id != recording.Id)
-            {
-                try { recording = await MergeRecordsAsync(db, recording, target, actor, correlationId, now, cancellationToken); }
-                catch (RecordingMergeConflictException) { conflicts++; continue; }
-            }
-            var changed = changedTracks.Count > 0;
-            linked += changedTracks.Count;
-            foreach (var track in selected)
-            {
-                if (track.CanonicalRecordingId == recording.Id) continue;
-                track.CanonicalRecordingId = recording.Id;
-                track.UpdatedAt = now;
-                track.Revision++;
-            }
-            var enriched = AttachIdentifier(db, recording, RecordingIdentifierKinds.MusicBrainz,
-                localMbid.FirstOrDefault(), "library-link", now);
-            foreach (var code in selected.Select(item => NormalizeLibraryIsrc(item.Isrc)).OfType<string>().Distinct())
-                enriched |= AttachIdentifier(db, recording, RecordingIdentifierKinds.Isrc, code, "library-link", now);
-            if (enriched)
-            {
-                recording.IsProvisional = Identifier(recording, RecordingIdentifierKinds.MusicBrainz) == null;
-                recording.Revision++;
-                recording.UpdatedAt = now;
-            }
-            if (changed || previousRecordingId != recording.Id || previousLocalRecordingId != null && previousLocalRecordingId != recording.Id)
-                AddAudit(db, actor, correlationId, "canonical-recording.library-link", "linked", new
-                {
-                    recordingId = recording.Id,
-                    sourceRecordingId = previousRecordingId,
-                    localRecordingId = previousLocalRecordingId,
-                    libraryTrackIds = selected.Select(item => item.Id),
-                    evidence = strongest switch { 3 => "isrc", 2 => "musicbrainz", _ => "title-artist-duration" }
-                });
-        }
-        await db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return new(scanned, linked, conflicts);
+        return new(recordings, linksByRecording, snapshotsBySource, automaticProviders, overrides, byTitle, byIsrc, byMbid);
     }
+
+    private static LibraryLinkPlan? PlanLibraryLink(LibraryLinkCandidates data, CanonicalRecordingRecord recording,
+        Guid? libraryTrackId)
+    {
+        var recordingLinks = data.Links[recording.Id].ToArray();
+        if (recordingLinks.Any(item => item.Verification == ProviderIdentityVerification.Pinned ||
+                item.VerificationMethod is ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod or
+                    ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod) ||
+            data.Overrides.Any(choice => recordingLinks.Any(link => choice.SourceProviderId == link.ProviderId &&
+                choice.SourceExternalIdHash == link.ExternalIdHash))) return null;
+        var evidence = recordingLinks.Where(item => data.AutomaticProviders.Contains(item.ProviderId) && IsLibraryLinkSource(item))
+            .Select(link => data.Snapshots[(link.ProviderId, link.ExternalIdHash)].Where(snapshot =>
+                    (snapshot.ProviderTrackIdentityId == null || snapshot.ProviderTrackIdentityId == link.Id) &&
+                    (link.Scope == ProviderIdentityScope.Catalog && snapshot.ProviderAccountId == null ||
+                     link.Scope == ProviderIdentityScope.Account && snapshot.ProviderAccountId == link.ProviderAccountId))
+                .OrderByDescending(snapshot => snapshot.RetrievedAt).ThenByDescending(snapshot => snapshot.SnapshotVersion)
+                .ThenBy(snapshot => snapshot.ResourceKind == "track" ? 0 : 1)
+                .Select(snapshot => ReadLibraryLinkEvidence(snapshot.PayloadJson)).FirstOrDefault(item => item != null))
+            .OfType<LibraryLinkEvidence>().ToArray();
+        var codes = recording.Identifiers.Where(item => item.Kind == RecordingIdentifierKinds.Isrc).Select(item => item.Value)
+            .Concat(evidence.Select(item => item.Isrc).OfType<string>()).ToHashSet(StringComparer.Ordinal);
+        var mbids = recording.Identifiers.Where(item => item.Kind == RecordingIdentifierKinds.MusicBrainz).Select(item => item.Value)
+            .Concat(evidence.Select(item => item.Mbid).OfType<string>()).ToHashSet(StringComparer.Ordinal);
+        var candidates = new Dictionary<Guid, (LibraryTrackRecord Track, int Strength)>();
+        foreach (var code in codes)
+            foreach (var track in data.ByIsrc[code]) candidates[track.Id] = (track, 3);
+        foreach (var mbid in mbids)
+            foreach (var track in data.ByMbid[mbid]) candidates.TryAdd(track.Id, (track, 2));
+        foreach (var item in evidence)
+            foreach (var track in data.ByTitle[item.Title])
+                if (HasLibraryCreditEvidence(item, track) &&
+                    (codes.Count == 0 || NormalizeLibraryIsrc(track.Isrc) is not { } localCode || codes.Contains(localCode)))
+                    candidates.TryAdd(track.Id, (track, 1));
+        if (candidates.Count == 0) return null;
+        var strongest = candidates.Values.Max(item => item.Strength);
+        var best = candidates.Values.Where(item => item.Strength == strongest)
+            .Where(item => !data.Overrides.Any(choice => choice.LibraryTrackId == item.Track.Id)).ToArray();
+        if (best.Length == 0) return null;
+        // Multiple copies of one established recording are safe; competing recordings remain separate.
+        var groups = best.GroupBy(item => LibraryLinkKey(item.Track)).ToArray();
+        if (groups.Length != 1) return new(recording, best.Select(item => item.Track).ToArray(), 0, mbids, true);
+        var selected = groups[0].Select(item => item.Track).ToArray();
+        if (libraryTrackId.HasValue && !selected.Any(item => item.Id == libraryTrackId.Value)) return null;
+        var localMbid = selected.Select(item => LibraryMbid(item.MusicBrainzRecordingId)).OfType<string>().Distinct().ToArray();
+        if (localMbid.Concat(mbids).Distinct().Count() > 1) return new(recording, selected, 0, mbids, true);
+        return new(recording, selected, strongest, mbids, false);
+    }
+
+    private async Task<LibraryRecordingLinkResult> ApplyLibraryLinkAsync(AllstarrDbContext db, ProviderActorContext actor,
+        string correlationId, LibraryLinkPlan plan, ManualTrackOverrideRecord[] overrides, CancellationToken cancellationToken)
+    {
+        var user = actor.EffectiveUserId!.Value;
+        var recording = plan.Recording;
+        var selected = plan.Selected;
+        var strongest = plan.Strength;
+        var mbids = plan.Mbids;
+        var localMbid = selected.Select(item => LibraryMbid(item.MusicBrainzRecordingId)).OfType<string>().Distinct().ToArray();
+        var local = selected[0];
+        CanonicalRecordingRecord? target;
+        try
+        {
+            target = local.CanonicalRecordingId is { } localId
+                ? await FindSurvivorAsync(db, localId, cancellationToken)
+                : await FindCanonicalByExactSignalsAsync(db, NormalizeLibraryIsrc(local.Isrc), LibraryMbid(local.MusicBrainzRecordingId), cancellationToken);
+            var exact = await FindCanonicalByExactSignalsAsync(db, NormalizeLibraryIsrc(local.Isrc),
+                LibraryMbid(local.MusicBrainzRecordingId), cancellationToken);
+            if (exact != null && target != null && exact.Id != target.Id && exact.Id != recording.Id)
+                return new(0, 0, 1);
+        }
+        catch (InvalidOperationException) { return new(0, 0, 1); }
+        if (target != null && target.Id != recording.Id)
+        {
+            var targetLinks = await db.ProviderTrackIdentities.Where(item => item.CanonicalRecordingId == target.Id).ToArrayAsync(cancellationToken);
+            if (await HasAvailabilityAuthorityConflictAsync(db, targetLinks, user, cancellationToken) ||
+                overrides.Any(choice => targetLinks.Any(link => choice.SourceProviderId == link.ProviderId &&
+                    choice.SourceExternalIdHash == link.ExternalIdHash)) ||
+                !await HasAutomaticProviderIdentityAsync(db, target.Id, actor, cancellationToken) ||
+                target.Identifiers.Where(item => item.Kind == RecordingIdentifierKinds.MusicBrainz).Select(item => item.Value)
+                    .Concat(mbids).Concat(localMbid).Distinct().Count() > 1)
+                return new(0, 0, 1);
+        }
+        var now = _clock.UtcNow;
+        var previousRecordingId = recording.Id;
+        var previousLocalRecordingId = target?.Id;
+        var changedTracks = selected.Where(item => item.CanonicalRecordingId != recording.Id).Select(item => item.Id).ToHashSet();
+        if (target != null && target.Id != recording.Id)
+        {
+            try { recording = await MergeRecordsAsync(db, recording, target, actor, correlationId, now, cancellationToken); }
+            catch (RecordingMergeConflictException) { return new(0, 0, 1); }
+        }
+        var changed = changedTracks.Count > 0;
+        foreach (var track in selected)
+        {
+            if (track.CanonicalRecordingId == recording.Id) continue;
+            track.CanonicalRecordingId = recording.Id;
+            track.UpdatedAt = now;
+            track.Revision++;
+        }
+        var enriched = AttachIdentifier(db, recording, RecordingIdentifierKinds.MusicBrainz,
+            localMbid.FirstOrDefault(), "library-link", now);
+        foreach (var code in selected.Select(item => NormalizeLibraryIsrc(item.Isrc)).OfType<string>().Distinct())
+            enriched |= AttachIdentifier(db, recording, RecordingIdentifierKinds.Isrc, code, "library-link", now);
+        if (enriched)
+        {
+            recording.IsProvisional = Identifier(recording, RecordingIdentifierKinds.MusicBrainz) == null;
+            recording.Revision++;
+            recording.UpdatedAt = now;
+        }
+        if (changed || previousRecordingId != recording.Id || previousLocalRecordingId != null && previousLocalRecordingId != recording.Id)
+            AddAudit(db, actor, correlationId, "canonical-recording.library-link", "linked", new
+            {
+                recordingId = recording.Id,
+                sourceRecordingId = previousRecordingId,
+                localRecordingId = previousLocalRecordingId,
+                libraryTrackIds = selected.Select(item => item.Id),
+                evidence = strongest switch { 3 => "isrc", 2 => "musicbrainz", _ => "title-artist-duration" }
+            });
+        return new(0, changedTracks.Count, 0);
+    }
+
+    private static async Task<long> ReadLibraryLinkDataVersionAsync(AllstarrDbContext db, CancellationToken cancellationToken)
+    {
+        await using var command = db.Database.GetDbConnection().CreateCommand();
+        command.CommandText = "PRAGMA data_version";
+        command.Transaction = db.Database.CurrentTransaction?.GetDbTransaction();
+        return Convert.ToInt64(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
+    }
+
+    private sealed record LibraryLinkCandidates(CanonicalRecordingRecord[] Recordings,
+        ILookup<Guid, ProviderTrackIdentityRecord> Links,
+        ILookup<(string, string), ExternalMetadataSnapshotRecord> Snapshots,
+        HashSet<string> AutomaticProviders, ManualTrackOverrideRecord[] Overrides,
+        ILookup<string, LibraryTrackRecord> ByTitle, ILookup<string, LibraryTrackRecord> ByIsrc,
+        ILookup<string, LibraryTrackRecord> ByMbid);
+
+    private sealed record LibraryLinkPlan(CanonicalRecordingRecord Recording, LibraryTrackRecord[] Selected,
+        int Strength, HashSet<string> Mbids, bool Conflict);
+
+    private static LibraryLinkCandidates EmptyLibraryLinkCandidates() => new([], Array.Empty<ProviderTrackIdentityRecord>()
+        .ToLookup(item => item.CanonicalRecordingId), Array.Empty<ExternalMetadataSnapshotRecord>()
+        .ToLookup(item => (item.ProviderId, item.ExternalIdHash)), new(StringComparer.Ordinal), [],
+        Array.Empty<LibraryTrackRecord>().ToLookup(item => item.Title),
+        Array.Empty<LibraryTrackRecord>().ToLookup(item => item.Isrc!),
+        Array.Empty<LibraryTrackRecord>().ToLookup(item => item.MusicBrainzRecordingId!));
 
     private static bool IsLibraryLinkSource(ProviderTrackIdentityRecord link) =>
         link.Verification == ProviderIdentityVerification.Verified && CatalogIdentityPolicy.IsPlaybackEligible(link) &&

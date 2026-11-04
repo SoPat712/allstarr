@@ -221,5 +221,6 @@ public sealed class AuditEventRetentionService(
         database.AuditEvents.Where(audit =>
             (audit.Category != CatalogIdentityMaintenance.Category ||
              audit.Action != CatalogIdentityMaintenance.CompletionAction && audit.Action != CatalogIdentityMaintenance.LegacyCompletionAction) &&
+            audit.Action != LibraryRecordingLinkQueue.CompletionAction &&
             !database.LegacyEnvImports.Any(importRecord => importRecord.AuditEventId == audit.Id));
 }
