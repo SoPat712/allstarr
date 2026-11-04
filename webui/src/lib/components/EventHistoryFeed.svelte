@@ -4,7 +4,7 @@
   import { flip } from "svelte/animate";
   import { ArrowRight, ChevronDown, CircleAlert } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
-  import { Skeleton } from "$lib/components/ui/skeleton";
+  import ListSkeleton from "$lib/components/ListSkeleton.svelte";
   import ActivityOutcome from "$lib/components/ActivityOutcome.svelte";
   import { Button } from "$lib/components/ui/button";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
@@ -39,7 +39,6 @@
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ActivityIcon from "$lib/components/ActivityIcon.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
-  import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
@@ -114,7 +113,8 @@
     if (disposed || refreshing || loadingEarlier) return;
     if (mode === "older") loadingEarlier = true;
     else refreshing = true;
-    if (items.length) error = "";
+    if (mode === "initial" && !items.length) loading = true;
+    error = "";
     try {
       const knownIds = new Set(items.map((item) => item.id));
       const knownGroups = new Set(groups.map(group => group.key));
@@ -154,9 +154,9 @@
         if (mode === "refresh" || !hasMore || !cursor ||
           groups.filter(group => mode === "initial" || !knownGroups.has(group.key)).length >= 25) break;
       }
-    } catch (cause) {
+    } catch {
       if (disposed) return;
-      error = cause instanceof Error ? cause.message : "The Event log is unavailable.";
+      error = "History could not be loaded.";
     } finally {
       loading = false;
       refreshing = false;
@@ -294,15 +294,13 @@
 
 {#if loading}
   {#if scopeControls}{@render scopeControls()}{/if}
-  <Skeleton class="panel event-log-panel skeleton-panel" aria-label="Loading Event log" aria-busy="true" />
+  <ListSkeleton />
 {:else if error && !items.length}
   {#if scopeControls}{@render scopeControls()}{/if}
-  <RouteError
-    eyebrow={administrator ? "Event log unavailable" : "Activity unavailable"}
-    title={administrator ? "Allstarr could not load durable activity." : "Allstarr could not load your activity."}
-    message={error}
-    onRetry={() => load("initial")}
-  />
+  <div class="notice-error" role="alert">
+    <p>{error}</p>
+    <Button variant="outline" size="sm" onclick={() => void load("initial")}>Try again</Button>
+  </div>
 {:else}
   {#if error}
     <div class="degraded-banner" role="status">

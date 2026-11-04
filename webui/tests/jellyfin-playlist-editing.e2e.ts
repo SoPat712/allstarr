@@ -14,12 +14,12 @@ const playlist = {
   metrics: { total: 3, matched: 3, unresolved: 0, review: 0, rejected: 0, playable: 3, materialized: 3 },
 };
 
-async function mockJellyfin(page: Page, options: { granted?: boolean; needsSignIn?: boolean; lastRunCode?: string | null; importMode?: string; rebuildError?: boolean } = {}) {
+async function mockJellyfin(page: Page, options: { granted?: boolean; needsSignIn?: boolean; lastRunCode?: string | null; importMode?: string; rebuildError?: boolean; queuedSyncs?: number } = {}) {
   let granted = options.granted ?? false;
   let needsSignIn = options.needsSignIn ?? false;
   let link = { ...playlist, lastRunCode: options.lastRunCode === undefined ? playlist.lastRunCode : options.lastRunCode, importMode: options.importMode ?? "linked" };
   const writes: Array<{ method: string; path: string; body?: unknown }> = [];
-  let listReads = 0;
+  let listReads = 0, consentReads = 0;
   await page.route("**/*", async route => {
     const request = route.request();
     const url = new URL(request.url()), path = url.pathname;
@@ -29,6 +29,7 @@ async function mockJellyfin(page: Page, options: { granted?: boolean; needsSignI
     if (path === "/api/admin/auth/me") return reply({ authenticated: true, backend: "Jellyfin", user: { id: "backend-user", allstarrUserId: listener, name: "Listener", isAdministrator: false } });
     if (path === "/api/admin/auth/oidc/status") return reply({ enabled: false });
     if (path === "/api/admin/auth/playlist-consent") {
+      if (request.method() === "GET") consentReads++;
       if (request.method() === "POST") {
         writes.push({ method: "POST", path, body: request.postDataJSON() });
         granted = true;
@@ -38,13 +39,18 @@ async function mockJellyfin(page: Page, options: { granted?: boolean; needsSignI
         granted = false;
         needsSignIn = false;
       }
-      return reply({ supported: true, granted, needsSignIn, updatedAt: granted ? "2026-10-08T14:00:00Z" : null });
+      return reply({ supported: true, granted, needsSignIn, updatedAt: granted ? "2026-10-08T14:00:00Z" : null, ...(request.method() === "POST" ? { queuedSyncs: options.queuedSyncs ?? 0 } : {}) });
     }
     if (path === "/api/admin/ui/schema") return reply({ listenersCanConnectOwnAccounts: true, providers: [{ id: "spotify", name: "Spotify" }], settings: [], priorityGroups: [], configSections: [] });
     if (path === "/api/admin/provider-accounts") return reply({ listenersCanConnectOwnAccounts: true, audienceUsers: [], accounts: [] });
     if (path === "/api/admin/mixes" || path.endsWith("/playlist-forks")) return reply([]);
     if (path === "/api/admin/playlist-sources") return reply({ accounts: [] });
     if (path === "/api/admin/playlist-links") { listReads++; return reply({ playlistLinks: [link] }); }
+    if (path === `/api/admin/playlist-links/${playlist.id}/run`) {
+      writes.push({ method: request.method(), path, body: request.postDataJSON() });
+      link = { ...link, lastRunCode: null };
+      return reply({ jobId: "sync-job", created: true });
+    }
     if (path === `/api/admin/playlist-links/${playlist.id}/rebuild`) {
       writes.push({ method: request.method(), path });
       if (options.rebuildError) return reply({ error: "Jellyfin is unavailable. Try again." }, 502);
@@ -56,12 +62,13 @@ async function mockJellyfin(page: Page, options: { granted?: boolean; needsSignI
     if (path === "/api/admin/updates/stream") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" });
     return reply({});
   });
-  return { writes, listReads: () => listReads };
+  return { writes, listReads: () => listReads, consentReads: () => consentReads };
 }
 
 async function screenshot(page: Page, name: string) {
-  await mkdir("test-results/jfedit", { recursive: true });
-  await page.screenshot({ path: `test-results/jfedit/${name}.png`, fullPage: true });
+  const folder = new URL("../../test-results/uibugs/", import.meta.url).pathname;
+  await mkdir(folder, { recursive: true });
+  await page.screenshot({ path: `${folder}/${name}.png`, fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
@@ -70,7 +77,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
-    const fixture = await mockJellyfin(page);
+    const fixture = await mockJellyfin(page, { queuedSyncs: 3 });
     await page.goto("/#/sources/services?section=playlist-editing");
     const card = page.getByRole("region", { name: "Let Allstarr edit your playlists" });
     await expect(card).toBeVisible();
@@ -80,6 +87,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await screenshot(page, `consent-${width}-${theme}`);
     await card.getByLabel("Jellyfin password").fill("listener-password");
     await card.getByRole("button", { name: "Allow playlist editing" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Playlist editing allowed. Fixing the order of 3 playlists now." })).toBeVisible();
     await expect(card.getByText(/^Allowed since /)).toBeVisible();
     await expect(card.getByLabel("Jellyfin password")).toHaveCount(0);
     expect(fixture.writes).toEqual([{ method: "POST", path: "/api/admin/auth/playlist-consent", body: { password: "listener-password" } }]);
@@ -104,7 +112,9 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(card).toBeInViewport();
     await expect(card.getByLabel("Jellyfin password")).toBeFocused();
     await page.goto("/#/library/playlists");
-    await row.getByRole("button", { name: "Rebuild", exact: true }).click();
+    await expect(row.getByRole("button", { name: "Rebuild", exact: true })).toHaveCount(0);
+    await row.getByRole("button", { name: "More options for Evening mix" }).click();
+    await page.getByRole("menuitem", { name: "Rebuild in Jellyfin" }).click();
     const dialog = page.getByRole("alertdialog");
     await expect(dialog.getByRole("heading", { name: "Rebuild this playlist in Jellyfin?" })).toBeVisible();
     await expect(dialog).toContainText("Allstarr makes the playlist again in the right order and removes the old copy. Apps see it as a new playlist, so pins, favourites and shortcuts to the old one stop working.");
@@ -202,9 +212,38 @@ for (const code of ["order,removal", "credential_expired"]) {
 test("Rebuild failure leaves its confirmation available for retry", async ({ page }) => {
   await mockJellyfin(page, { rebuildError: true });
   await page.goto("/#/library/playlists");
-  await page.getByRole("button", { name: "Rebuild", exact: true }).click();
+  await page.getByRole("button", { name: "More options for Evening mix" }).click();
+  await page.getByRole("menuitem", { name: "Rebuild in Jellyfin" }).click();
   const dialog = page.getByRole("alertdialog");
   await dialog.getByRole("button", { name: "Rebuild", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("Jellyfin is unavailable. Try again.");
   await expect(dialog.getByRole("button", { name: "Rebuild", exact: true })).toBeEnabled();
+});
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
+  test(`Granted playlist order repair at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    const fixture = await mockJellyfin(page, { granted: true });
+    await page.goto("/#/library/playlists");
+    const row = page.locator(".playlist-row").filter({ hasText: playlist.name });
+    await expect(row.getByText("Fixing order on the next sync", { exact: true })).toBeVisible();
+    await expect(row.getByRole("link", { name: "Allow editing" })).toHaveCount(0);
+    await expect(row.getByRole("button", { name: "Rebuild", exact: true })).toHaveCount(0);
+    await screenshot(page, `playlist-fixing-${width}-${theme}`);
+    await row.getByRole("button", { name: "Sync now", exact: true }).click();
+    await expect(row.getByText("Fixing order on the next sync", { exact: true })).toHaveCount(0);
+    expect(fixture.writes).toEqual([{ method: "POST", path: `/api/admin/playlist-links/${playlist.id}/run`, body: {} }]);
+    expect(fixture.listReads()).toBeGreaterThan(1);
+    expect(fixture.consentReads()).toBe(1);
+  });
+}
+
+test("An expired grant keeps the expired sign-in warning even with an order code", async ({ page }) => {
+  await mockJellyfin(page, { granted: true, needsSignIn: true, lastRunCode: "order" });
+  await page.goto("/#/library/playlists");
+  await expect(page.getByText("Saved Jellyfin sign-in expired", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Allow editing" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sync now", exact: true })).toHaveCount(0);
 });

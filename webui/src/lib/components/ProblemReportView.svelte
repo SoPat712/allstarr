@@ -20,12 +20,12 @@
   let kind = $state<ReportKind>("playback");
   let note = $state("");
   let receipt = $state<ReportReceipt | null>(null);
-  let routeKey = "";
+  let routeKey: string | null = null;
   let requestId = "";
   let submittedKey = "";
   let generation = 0;
   const back = $derived(reportReturnHref(query.get("from") ?? "/"));
-  const blocked = $derived(loading || busy || Boolean(selectionError || contextError) || !context);
+  const blocked = $derived(loading || busy || Boolean(selectionError || contextError) || Boolean(selector && !context));
 
   $effect(() => {
     const key = query.toString();
@@ -40,7 +40,7 @@
   async function preview() {
     const current = ++generation;
     contextError = "";
-    if (selectionError) { loading = false; return; }
+    if (selectionError || !selector) { context = null; loading = false; return; }
     loading = true;
     try {
       const result = await listenerSupport.preview(selector);
@@ -71,7 +71,6 @@
     } finally { busy = false; }
   }
   onMount(() => {
-    if (!routeKey) { const selected = reportSelection(query); selector = selected.selector; selectionError = selected.error ?? ""; void preview(); }
     void home.schema().then(schema => { providers = schema.providers ?? []; }).catch(() => {});
     return () => { generation++; };
   });

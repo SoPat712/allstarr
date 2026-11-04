@@ -9,7 +9,7 @@
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Popover } from "$lib/components/ui/popover";
   import { Progress } from "$lib/components/ui/progress";
-  import { Skeleton } from "$lib/components/ui/skeleton";
+  import ListSkeleton from "$lib/components/ListSkeleton.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -32,11 +32,13 @@
   });
   async function load() {
     if (pending) return pending;
+    if (!profile) loading = true;
+    error = "";
     pending = (async () => {
       // The sound card is extra: it appears when AudioMuse has analyzed enough of the songs this listener plays.
       void taste.sound().then(next => { if (!disposed) sound = next.profile; }).catch(() => {});
       try { const next = await taste.get(); if (!disposed) { profile = next; error = ""; } }
-      catch { if (!disposed) error = "Your taste could not be loaded. Refresh to try again."; }
+      catch { if (!disposed) error = "Your taste could not be loaded."; }
       finally { if (!disposed) loading = false; pending = null; }
     })(); return pending;
   }
@@ -65,8 +67,8 @@
 {/snippet}
 <div class="your-taste">
   <div class="section-heading"><h2>Your taste</h2><RefreshButton variant="secondary" label="Refresh taste" disabled={action} onrefresh={load} /></div>
-  {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
-  {#if loading}<Skeleton class="skeleton-panel" aria-label="Loading your taste" />{:else if profile}
+  {#if error}<div class="notice-error" role="alert"><p>{error}</p><Button variant="outline" size="sm" onclick={() => void load()}>Try again</Button></div>{/if}
+  {#if loading}<ListSkeleton />{:else if profile}
     <section class="settings-card summary"><p>{#each summaryParts as part}{#if summaryTags.includes(part)}<strong>{part}</strong>{:else}{part}{/if}{/each}</p><small>{profile.latelyWeight >= .5 ? "Today's listening counts most right now." : "Your usual taste counts most right now."}</small></section>
     {#if sound}
       <section class="settings-card taste-section sound-profile" aria-labelledby="sound-heading">

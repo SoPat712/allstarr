@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Core.Identity;
+using allstarr.Core.Jobs;
 using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Operations;
@@ -27,12 +28,15 @@ public sealed partial class AdminPlaylistConsentTests : IAsyncLifetime
     private BackendIdentityResolver _identities = null!;
     private EncryptedSecretStore _secrets = null!;
     private AdminAuthSessionService _sessions = null!;
+    private DurableJobQueue _jobs = null!;
     private readonly Backend _backend = new();
 
     public async Task InitializeAsync()
     {
         _database = await SqliteTestDatabase.CreateAsync();
         _factory = new Factory(_database.Options);
+        var jobOptions = new DurableJobOptions();
+        _jobs = new(_factory, jobOptions, new JobPayloadPolicy(jobOptions), new SystemPlatformClock());
         _sessions = new(new MemoryAdminAuthSessionStore(), new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider(),
             NullLogger<AdminAuthSessionService>.Instance, contextFactory: _factory, identityOptions: new(),
             backendSessionValidator: HealthyAdminBackendSessionValidator.Instance);
@@ -166,7 +170,7 @@ public sealed partial class AdminPlaylistConsentTests : IAsyncLifetime
             Options.Create(new SubsonicSettings { Url = "http://backend.test" }), configuration, new Clients(_backend),
             _sessions, NullLogger<AdminAuthController>.Instance,
             new MediaAssetResolver(new TestMemoryApplicationCache(), NullLogger<MediaAssetResolver>.Instance),
-            identityResolver: _identities, secrets: _secrets)
+            identityResolver: _identities, secrets: _secrets, jobs: _jobs)
         { ControllerContext = new() { HttpContext = new DefaultHttpContext() } };
         if (sessionId != null) controller.Request.Headers.Cookie = AdminAuthSessionService.SessionCookieName + "=" + sessionId;
         return controller;

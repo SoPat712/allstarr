@@ -836,13 +836,8 @@ public sealed partial class PlaylistLinksController(
                 if (frozenSnapshot.HasValue && frozenSnapshot != requestedSnapshot)
                     return Conflict(new { error = "A one-time import is frozen to its first published snapshot." });
             }
-            var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMaterializationJobPayload>(
-                "playlist.materialize", $"manual:{id:N}:generation:{generation}",
-                new PlaylistMaterializationJobPayload(id, generation, request?.SnapshotId),
-                link.OwnerUserId,
-                ProviderAccountId: link.ImportMode == PlaylistImportMode.Linked ? link.ProviderAccountId : null,
-                Capability: link.ImportMode == PlaylistImportMode.Linked ? "playlist" : null,
-                CorrelationId: HttpContext.TraceIdentifier), cancellationToken);
+            var result = await jobs.EnqueueManualPlaylistMaterializationAsync(
+                link, generation, request?.SnapshotId, HttpContext.TraceIdentifier, cancellationToken);
             return Accepted(new { jobId = result.JobId, created = result.Created, generation });
         });
     }

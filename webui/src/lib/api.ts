@@ -19,6 +19,7 @@ export type Session = {
 };
 
 export type PlaylistConsentStatus = {
+  queuedSyncs?: number;
   supported: boolean;
   granted: boolean;
   updatedAt: string | null;

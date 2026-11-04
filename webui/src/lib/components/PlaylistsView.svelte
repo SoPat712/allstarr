@@ -24,7 +24,9 @@
   import TrackRoutes from "$lib/components/TrackRoutes.svelte";
   import { reportHref } from "$lib/support";
   import {
+    auth,
     home,
+    type PlaylistConsentStatus,
     matchReview,
     mixes,
     playlistLinks,
@@ -63,6 +65,7 @@
   let { initialId = "", currentUserId = "" }: { initialId?: string; currentUserId?: string } = $props();
 
   let playlists = $state<PlaylistLink[]>([]);
+  let consent = $state<PlaylistConsentStatus | null>(null);
   let removingMix = $state<{ id: string; name: string } | null>(null);
   let removing = $state(false), removeError = $state("");
   let rebuildingPlaylist = $state<PlaylistLink | null>(null);
@@ -395,6 +398,20 @@
     }
   }
 
+  async function syncPlaylist(playlist: PlaylistLink) {
+    if (action || !playlist.enabled) return;
+    action = `sync:${playlist.id}`;
+    try {
+      const result = await playlistLinks.run(playlist.id);
+      toast.success(result.created ? "Playlist update queued." : "A playlist update is already queued.");
+      await refresh();
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "The playlist could not be synced.");
+    } finally {
+      action = "";
+    }
+  }
+
   async function run(name: "sync" | "toggle") {
     if (!selected || action) return;
     action = name;
@@ -528,6 +545,7 @@
     } catch {
       trackColumns = { ...defaultTrackColumns };
     }
+    void auth.playlistConsent().then(status => { consent = status; }).catch(() => {});
     selectedId = initialId;
     void refresh();
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
@@ -667,10 +685,14 @@
                 </small>
                 {#if editingWarning}
                   <span class="playlist-editing-warning">
-                    <small role="status">{editingWarning}</small>
+                    <small role="status">{consent?.needsSignIn ? "Saved Jellyfin sign-in expired" : editingWarning}</small>
                     <span class="playlist-repair-actions">
-                      <Button variant="text" size="sm" href="#/sources/services?section=playlist-editing">Allow editing</Button>
-                      <Button variant="outline" size="sm" disabled={Boolean(action) || rebuilding} onclick={() => confirmRebuild(playlist)}><RefreshCw size={14} aria-hidden="true" />Rebuild</Button>
+                      {#if consent?.granted && !consent.needsSignIn && playlist.lastRunCode?.split(",").some(code => code.trim() === "order")}
+                        <small>Fixing order on the next sync</small>
+                        <Button variant="outline" size="sm" disabled={Boolean(action) || !playlist.enabled} onclick={() => void syncPlaylist(playlist)}>Sync now</Button>
+                      {:else}
+                        <Button variant="text" size="sm" href="#/sources/services?section=playlist-editing">Allow editing</Button>
+                      {/if}
                     </span>
                   </span>
                 {/if}

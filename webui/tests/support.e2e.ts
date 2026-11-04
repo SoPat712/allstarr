@@ -1,3 +1,4 @@
+import { mkdir } from "node:fs/promises";
 import { expect, test, type Page, type Route } from "@playwright/test";
 import { expectContainedMobileGeometry } from "./mobile-geometry";
 
@@ -235,7 +236,8 @@ test("an incomplete report link allows a general report without losing a typed n
   await expect(page.getByRole("alert")).toContainText("incomplete song details");
   await page.getByLabel("What happened?", { exact: true }).fill("I need help connecting my app.");
   await page.getByRole("button", { name: "Continue without song details" }).click();
-  await expect(page.getByText("No song is attached.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("article", { name: "Included report details" })).toHaveCount(0);
   await page.getByRole("button", { name: "Send report", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Report saved", level: 2 })).toBeVisible();
   expect(state.creates[0]).not.toHaveProperty("selector");
@@ -636,4 +638,47 @@ test("reopening a report discards a late match review read", async ({ page }) =>
   await expect(dialog).toBeVisible();
   await expect(page.getByRole("dialog", { name: "Late recording", exact: true })).toHaveCount(0);
   expect(fixture.state.updates).toEqual([]);
+});
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
+  test(`General report opens directly at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    const state = await mockSupport(page);
+    state.contextFailure = true;
+    await page.goto("/#/report");
+    const form = page.getByRole("form", { name: "Problem report" });
+    await expect(form).toBeVisible();
+    await expect(page.getByLabel("Problem", { exact: true })).toBeVisible();
+    await form.getByLabel("What happened?", { exact: true }).fill("The navigation stopped responding.");
+    await expect(form.getByRole("button", { name: "Send report", exact: true })).toBeEnabled();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Refresh details" })).toHaveCount(0);
+    await expect(page.getByRole("article", { name: "Included report details" })).toHaveCount(0);
+    expect(state.previews).toEqual([]);
+    const folder = new URL("../../test-results/uibugs/", import.meta.url).pathname;
+    await mkdir(folder, { recursive: true });
+    await page.screenshot({ path: `${folder}/report-general-${width}-${theme}.png`, fullPage: true });
+    await form.getByRole("button", { name: "Send report", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Report saved", level: 2 })).toBeVisible();
+    expect(state.creates[0]).not.toHaveProperty("selector");
+  });
+}
+
+
+test("Report context failures still offer retry and preserve the note", async ({ page }) => {
+  const state = await mockSupport(page);
+  state.contextFailure = true;
+  await page.goto("/#/report?item=ext-deezer-song-fixture");
+  await expect(page.getByRole("alert")).toContainText("Song details are no longer available.");
+  await expect(page.getByRole("button", { name: "Refresh details", exact: true })).toBeVisible();
+  const note = page.getByLabel("What happened?", { exact: true });
+  await note.fill("The song would not play.");
+  await expect(page.getByRole("button", { name: "Send report", exact: true })).toBeDisabled();
+  state.contextFailure = false;
+  await page.getByRole("button", { name: "Refresh details", exact: true }).click();
+  await expect(page.getByRole("article", { name: "Included report details" })).toBeVisible();
+  await expect(note).toHaveValue("The song would not play.");
+  expect(state.previews).toHaveLength(2);
 });

@@ -48,7 +48,11 @@
     try {
       status = await auth.grantPlaylistConsent(password);
       password = "";
-      toast.success(jellyfin ? "Playlist editing allowed." : "Playlist management allowed for your listener account.");
+      toast.success(jellyfin
+        ? (status.queuedSyncs ?? 0) > 0
+          ? `Playlist editing allowed. Fixing the order of ${status.queuedSyncs} playlists now.`
+          : "Playlist editing allowed."
+        : "Playlist management allowed for your listener account.");
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Playlist access could not be allowed.";
     } finally {

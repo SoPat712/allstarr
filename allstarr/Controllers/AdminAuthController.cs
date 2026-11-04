@@ -7,6 +7,7 @@ using allstarr.Models.Settings;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
 using allstarr.Core.Identity;
+using allstarr.Core.Jobs;
 using allstarr.Core.Secrets;
 using allstarr.Core.Configuration;
 using Microsoft.AspNetCore.Antiforgery;
@@ -35,6 +36,7 @@ public sealed class AdminAuthController : ControllerBase
     private readonly AdminOidcLinks? _oidcLinks;
     private readonly IAntiforgery? _antiforgery;
     private readonly EncryptedSecretStore? _secrets;
+    private readonly DurableJobQueue? _jobs;
     private string? _pendingOidcKey;
 
     public AdminAuthController(
@@ -51,7 +53,8 @@ public sealed class AdminAuthController : ControllerBase
         AdminOidcOptions? oidcOptions = null,
         AdminOidcLinks? oidcLinks = null,
         IAntiforgery? antiforgery = null,
-        EncryptedSecretStore? secrets = null)
+        EncryptedSecretStore? secrets = null,
+        DurableJobQueue? jobs = null)
     {
         _configuration = configuration;
         _jellyfinSettings = jellyfinSettings.Value;
@@ -73,6 +76,7 @@ public sealed class AdminAuthController : ControllerBase
         _oidcLinks = oidcLinks;
         _antiforgery = antiforgery;
         _secrets = secrets;
+        _jobs = jobs;
     }
 
     [HttpPost("login")]
@@ -495,7 +499,17 @@ public sealed class AdminAuthController : ControllerBase
             !root.TryGetProperty("AccessToken", out var token) || token.ValueKind != JsonValueKind.String ||
             string.IsNullOrWhiteSpace(token.GetString()))
             return Unauthorized(new { error = "Backend reauthentication failed." });
-        return Ok(ConsentStatus(await _secrets!.StoreJellyfinPlaylistGrantAsync(principal, token.GetString()!, cancellationToken)));
+        var grant = await _secrets!.StoreJellyfinPlaylistGrantAsync(principal, token.GetString()!, cancellationToken);
+        var queuedSyncs = _jobs == null ? 0 : await _jobs.EnqueueJellyfinPlaylistConsentSyncsAsync(
+            principal.UserId, HttpContext.TraceIdentifier, cancellationToken);
+        return Ok(new
+        {
+            supported = true,
+            granted = true,
+            updatedAt = grant.UpdatedAt,
+            needsSignIn = grant.NeedsSignIn,
+            queuedSyncs
+        });
     }
 
     private static bool SameJellyfinPrincipal(string? left, string right) =>
