@@ -41,7 +41,9 @@ public sealed partial class ProtocolRouteFixtureTests
             return stream;
         });
         using var factory = ClientPlaybackFactory(gateway);
+        using var fixtures = new ProviderIconFiles();
         using var client = CreateClientApiClient(factory);
+        fixtures.Use(factory.Services, cached);
         activity = factory.Services.GetRequiredService<PlaybackDeliveryActivityStore>();
         using var streamRequest = ClientPlaybackRequest("/Audio/ext-deezer-song-42/stream");
         using var stream = await client.SendAsync(streamRequest);
@@ -65,6 +67,7 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal("deezer", root.GetProperty("provider").GetProperty("id").GetString());
             Assert.Equal("Deezer", root.GetProperty("provider").GetProperty("name").GetString());
             Assert.Equal("/allstarr/v1/providers/deezer/icon", root.GetProperty("provider").GetProperty("iconUrl").GetString());
+            Assert.Equal(cached ? "/allstarr/v1/providers/deezer/icon?variant=glyph" : null, root.GetProperty("provider").GetProperty("glyphUrl").GetString());
             Assert.Equal(expectedScope, root.GetProperty("accountScope").GetString());
             Assert.Equal(cached, root.GetProperty("cached").GetBoolean());
             Assert.Equal("provider-priority", root.GetProperty("routeReason").GetString());

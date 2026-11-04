@@ -75,7 +75,8 @@ public sealed record ExtensionSdkManifest(
     string? Compatibility = null,
     ExtensionSignedSessionConfig? SignedSession = null,
     ProviderUseMode DefaultUseMode = ProviderUseMode.Automatic,
-    IReadOnlyList<string>? UrlPatterns = null);
+    IReadOnlyList<string>? UrlPatterns = null,
+    string? GlyphIcon = null);
 
 public sealed record VerifiedExtensionPackage(
     ExtensionSdkManifest Manifest,
@@ -97,7 +98,7 @@ public static partial class ExtensionSdkV1
     private static readonly HashSet<string> AllowedFiles = new(StringComparer.OrdinalIgnoreCase)
     {
         "manifest.json", "index.js", "README.md", "LICENSE", "LICENSE.md", "COPYING", "NOTICE",
-        "icon.png", "icon.jpg", "icon.jpeg", "icon.webp"
+        "icon.png", "icon.jpg", "icon.jpeg", "icon.webp", "icon.svg", "glyph.png", "glyph.svg"
     };
 
     public static ExtensionSdkManifest ParseManifest(string json)
@@ -140,7 +141,7 @@ public static partial class ExtensionSdkV1
             return new(id, displayName, version, sdk, entryPoint, capabilities, permissions,
                 description, author, iconPath, settings, qualityOptions, runtimeFeatures,
                 Optional(root, "compatibility"), ParseSignedSession(root), defaultUseMode,
-                OptionalStringArray(root, "urlPatterns", 64, 1000));
+                OptionalStringArray(root, "urlPatterns", 64, 1000), ParseIconPath(root, "glyphIcon"));
         }
     }
 
@@ -334,16 +335,16 @@ public static partial class ExtensionSdkV1
         return result;
     }
 
-    private static string? ParseIconPath(JsonElement root)
+    private static string? ParseIconPath(JsonElement root, string field = "icon")
     {
-        var icon = Optional(root, "icon");
+        var icon = Optional(root, field);
         if (icon == null) return null;
         var normalized = icon.Replace('\\', '/');
         if (normalized.Length > 300 || Path.IsPathRooted(normalized) || normalized.Contains(':') ||
             normalized.Split('/').Any(segment => segment is "" or "." or "..") ||
-            !new[] { ".png", ".jpg", ".jpeg", ".webp" }.Contains(
+            !(field == "glyphIcon" ? new[] { ".png", ".svg" } : new[] { ".png", ".jpg", ".jpeg", ".webp", ".svg" }).Contains(
                 Path.GetExtension(normalized), StringComparer.OrdinalIgnoreCase))
-            throw new ExtensionSdkValidationException("Extension icon must be a safe PNG, JPEG, or WebP package path.");
+            throw new ExtensionSdkValidationException($"Extension {field} must be a safe supported image package path.");
         return normalized;
     }
 

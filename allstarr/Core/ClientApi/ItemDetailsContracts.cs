@@ -29,7 +29,8 @@ public sealed record ItemDetails(
 public sealed record ItemDetailsProvider(
     [property: JsonPropertyName("id")] string Id,
     [property: JsonPropertyName("name")] string Name,
-    [property: JsonPropertyName("iconUrl")] string? IconUrl);
+    [property: JsonPropertyName("iconUrl")] string? IconUrl,
+    [property: JsonPropertyName("glyphUrl")] string? GlyphUrl = null);
 
 public sealed record ItemDetailsAudio(
     [property: JsonPropertyName("codec")] string? Codec,

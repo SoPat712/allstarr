@@ -11,6 +11,12 @@ public sealed class ClientApiResultFilter : IAlwaysRunResultFilter
     public void OnResultExecuting(ResultExecutingContext context)
     {
         var status = (context.Result as IStatusCodeActionResult)?.StatusCode ?? context.HttpContext.Response.StatusCode;
+        if (status == 400 && context.Controller is allstarr.Controllers.ClientApi.ProviderIconsController &&
+            context.Result is ObjectResult { Value: ProblemDetails problem })
+        {
+            context.Result = new JsonResult(problem) { StatusCode = 400, ContentType = "application/problem+json" };
+            return;
+        }
         if (status >= 400)
         {
             // Users/Me cannot resolve an API key without an explicitly declared user.

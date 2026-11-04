@@ -1,46 +1,29 @@
 <script lang="ts">
-  import { adminUrl } from "$lib/admin-url";
   import type { ProviderDefinition } from "$lib/api";
   import { providerColor } from "$lib/playlists";
+  import { providerMarkSources } from "$lib/provider-marks";
 
   let {
     id,
     definition,
     label = definition?.name ?? id,
   }: { id: string; definition?: ProviderDefinition; label?: string } = $props();
-  let failed = $state(false);
+  let sourceIndex = $state(0);
   let loaded = $state(false);
-  // Extensions and variants reuse the bundled mark of the service they reach.
-  const aliases: Record<string, string> = {
-    amazon: "amazonmusic", appledownload: "applemusic", applemusicdownload: "applemusic", applemusickit: "applemusic", spotifyweb: "spotify",
-    tidalweb: "tidal", qobuzweb: "qobuz", ytmusic: "youtubemusic", ytmusicspotiflac: "youtubemusic", youtube: "youtubemusic",
-  };
-  const key = (value: string) => {
-    const plain = value.toLowerCase().replace(/^spotiflac-/, "").replace(/[^a-z0-9]/g, "");
-    return aliases[plain] ?? plain;
-  };
-  // Category icons ("extension", "lyrics") name no mark of their own, so the source's id picks it.
-  const generic = new Set(["extension", "lyrics"]);
-  // These are places Allstarr already looks, not outside services, so they have no logo to load.
-  const markless = new Set(["mediaserverlyrics", "keptlrc"]);
-  const icon = $derived(
-    definition?.icon && !generic.has(definition.icon)
-      ? definition.icon
-      : definition?.icon && generic.has(definition.icon) || !label ? key(id) : key(label),
-  );
-  const source = $derived(adminUrl(definition?.logoUrl || `/images/providers/${encodeURIComponent(icon || id.toLowerCase())}.svg`));
+  const sources = $derived(providerMarkSources(id, definition, label));
+  const source = $derived(sources[sourceIndex]);
 
   $effect(() => {
-    source;
-    failed = false;
+    sources;
+    sourceIndex = 0;
     loaded = false;
   });
 </script>
 
 <span class="provider-mark" class:provider-mark--monogram={!loaded} style={`--route-color:${providerColor(id)}`}>
   {#if !loaded}<span class="provider-monogram" aria-hidden="true">{(label.trim() || id)[0]?.toUpperCase() ?? "?"}</span>{/if}
-  {#if !failed && !markless.has(icon)}
-    <img src={source} alt="" hidden={!loaded} onload={() => { loaded = true; }} onerror={() => { failed = true; loaded = false; }} />
+  {#if source}
+    <img src={source} alt="" hidden={!loaded} onload={() => { loaded = true; }} onerror={() => { sourceIndex += 1; loaded = false; }} />
   {/if}
   <span class="sr-only">{label}</span>
 </span>

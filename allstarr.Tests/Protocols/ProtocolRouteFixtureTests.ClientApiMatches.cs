@@ -27,8 +27,10 @@ public sealed partial class ProtocolRouteFixtureTests
     public async Task ClientApi_MatchChoicesArePersonalAndKeepHouseholdAndOtherListeners(bool administrator)
     {
         using var factory = ClientMatchFactory(administrator);
+        using var fixtures = new ProviderIconFiles();
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        fixtures.Use(factory.Services, administrator);
         var (owner, other, snapshot) = await SeedClientMatchAsync(factory);
         const string path = "/allstarr/v1/items/ext-deezer-song-match/match";
         var initial = await ReadClientLyricsJsonAsync(client, path);
@@ -39,6 +41,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(210000, candidate["durationMs"]!.GetValue<long>());
         Assert.True(candidate["isExternal"]!.GetValue<bool>());
         Assert.Equal("Deezer", candidate["provider"]!["name"]!.GetValue<string>());
+        Assert.Equal(administrator ? "/allstarr/v1/providers/deezer/icon?variant=glyph" : null, candidate["provider"]!["glyphUrl"]?.GetValue<string>());
         using var set = await client.PutAsJsonAsync(path, new { candidateId = candidate["candidateId"]!.GetValue<string>(), expectedRevision = initial["revision"]!.GetValue<string>() });
         Assert.Equal(HttpStatusCode.OK, set.StatusCode);
         var personal = JsonNode.Parse(await set.Content.ReadAsStringAsync())!;
@@ -167,11 +170,15 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.True(JsonNode.DeepEquals(personal, unchanged));
     }
 
-    [Fact]
-    public async Task ClientApi_MatchCanChooseAnAccessibleLibraryCandidate()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientApi_MatchCanChooseAnAccessibleLibraryCandidate(bool glyph)
     {
         using var factory = ClientMatchFactory(false);
+        using var fixtures = new ProviderIconFiles();
         using var client = CreateClientApiClient(factory);
+        fixtures.Use(factory.Services, glyph);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
         var (owner, _, snapshot) = await SeedClientMatchAsync(factory);
         var localId = Guid.NewGuid();
@@ -187,6 +194,10 @@ public sealed partial class ProtocolRouteFixtureTests
         const string path = "/allstarr/v1/items/ext-deezer-song-match/match";
         var match = await ReadClientLyricsJsonAsync(client, path);
         var candidate = match["candidates"]!.AsArray().Single(item => !item!["isExternal"]!.GetValue<bool>())!;
+        Assert.Equal("/allstarr/v1/providers/jellyfin/icon", candidate["provider"]!["iconUrl"]!.GetValue<string>());
+        Assert.Equal(glyph ? "/allstarr/v1/providers/jellyfin/icon?variant=glyph" : null, candidate["provider"]!["glyphUrl"]?.GetValue<string>());
+        using var iconResponse = await client.GetAsync("/allstarr/v1/providers/jellyfin/icon");
+        Assert.Equal(HttpStatusCode.OK, iconResponse.StatusCode);
         using var response = await client.PutAsJsonAsync(path, new { candidateId = candidate["candidateId"]!.GetValue<string>(), expectedRevision = match["revision"]!.GetValue<string>() });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var chosen = JsonNode.Parse(await response.Content.ReadAsStringAsync())!;

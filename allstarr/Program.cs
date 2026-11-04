@@ -388,6 +388,30 @@ builder.Services.AddOpenApi("v1", options =>
             foreach (var content in image.Content.Values)
                 content.Schema = new OpenApiSchema { Type = JsonSchemaType.String, Format = "binary" };
         }
+        foreach (var parameter in (operation.Parameters ?? []).OfType<OpenApiParameter>())
+        {
+            if (parameter.Name is "variant" or "format")
+            {
+                var variant = parameter.Name == "variant";
+                parameter.Schema = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.String,
+                    Enum = (variant ? new[] { "color", "glyph" } : new[] { "svg", "png" })
+                        .Select(value => (System.Text.Json.Nodes.JsonNode)System.Text.Json.Nodes.JsonValue.Create(value)!).ToList(),
+                    Default = System.Text.Json.Nodes.JsonValue.Create(variant ? "color" : "svg")
+                };
+                if (!variant) parameter.Description = "Defaults to SVG when available for the variant, otherwise PNG. No SVG rasterization is performed.";
+            }
+            else if (parameter.Name == "size")
+                parameter.Schema = new OpenApiSchema
+                {
+                    Type = JsonSchemaType.Integer,
+                    Minimum = "16",
+                    Maximum = "256",
+                    Default = System.Text.Json.Nodes.JsonValue.Create(96)
+                };
+        }
+        if (operation.Responses?.TryGetValue("400", out var invalid) == true) invalid.Content?.Remove("application/json");
         if (operation.Responses?.TryGetValue("304", out var unchanged) == true) unchanged.Content?.Clear();
         return Task.CompletedTask;
     });
@@ -413,6 +437,7 @@ builder.Services.AddSingleton<allstarr.Core.ClientEvents.ClientEventHub>();
 builder.Services.AddSingleton<allstarr.Core.ClientEvents.IClientEventPublisher>(services => services.GetRequiredService<allstarr.Core.ClientEvents.ClientEventHub>());
 builder.Services.AddSingleton<allstarr.Core.ClientEvents.IClientEventChanges, allstarr.Core.ClientEvents.ClientEventChanges>();
 builder.Services.AddSingleton<allstarr.Core.ClientEvents.ClientLyricsUpdates>();
+builder.Services.AddSingleton<ProviderIconRenderer>(_ => new());
 builder.Services.AddScoped<ItemDetailsReader>();
 builder.Services.AddScoped<ItemLyricsReader>();
 builder.Services.AddScoped<LyricsSearchReader>();

@@ -126,12 +126,12 @@ public sealed class ItemMatchReader(
             var targetId = local ? null : route.Value.GetString();
             if (string.IsNullOrEmpty(providerId) || !local && string.IsNullOrWhiteSpace(targetId)) continue;
             var key = local ? $"local:{libraryId}" : $"{providerId}:{targetId}";
-            var icon = registry.TryGet(providerId, out var descriptor)
-                ? await ProviderArtworkResolver.ResolveIconAsync(http.RequestServices, providerId, token) : null;
+            registry.TryGet(providerId, out var descriptor);
+            var icon = (await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, [providerId], token)).GetValueOrDefault(providerId);
             var candidate = new ClientMatchCandidate(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key))),
                 Text(json, "title"), Text(json, "artist"), Text(json, "album"), Milliseconds(json), Text(json, "candidateIsrc"),
-                new(providerId, descriptor?.DisplayName ?? execution.Protocol.ToString(),
-                    icon == null ? null : $"/allstarr/v1/providers/{Uri.EscapeDataString(providerId)}/icon"), !local,
+                icon?.Provider(providerId, descriptor?.DisplayName ?? execution.Protocol.ToString()) ??
+                    new(providerId, descriptor?.DisplayName ?? execution.Protocol.ToString(), null), !local,
                 Number(json, "confidence"), Strings(json, "reasons"));
             candidates.Add(new(candidate, libraryId, local ? null : providerId, targetId));
             if (json.GetProperty("isCurrent").GetBoolean() && projection.ReviewState != TrackMatchState.Rejected) current = candidate;

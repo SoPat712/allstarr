@@ -1818,15 +1818,50 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "variant",
+            "in": "query",
+            "schema": {
+              "enum": [
+                "color",
+                "glyph"
+              ],
+              "type": "string",
+              "default": "color"
+            }
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "description": "Defaults to SVG when available for the variant, otherwise PNG. No SVG rasterization is performed.",
+            "schema": {
+              "enum": [
+                "svg",
+                "png"
+              ],
+              "type": "string",
+              "default": "svg"
+            }
+          },
+          {
+            "name": "size",
+            "in": "query",
+            "schema": {
+              "maximum": 256,
+              "minimum": 16,
+              "type": "integer",
+              "default": 96
+            }
           }
         ],
         "responses": {
           "400": {
             "description": "Bad Request",
             "content": {
-              "application/json": {
+              "application/problem\u002Bjson": {
                 "schema": {
-                  "$ref": "#/components/schemas/ClientApiError"
+                  "$ref": "#/components/schemas/ProblemDetails"
                 }
               }
             }
@@ -1891,24 +1926,6 @@
                 }
               },
               "image/png": {
-                "schema": {
-                  "type": "string",
-                  "format": "binary"
-                }
-              },
-              "image/jpeg": {
-                "schema": {
-                  "type": "string",
-                  "format": "binary"
-                }
-              },
-              "image/webp": {
-                "schema": {
-                  "type": "string",
-                  "format": "binary"
-                }
-              },
-              "image/x-icon": {
                 "schema": {
                   "type": "string",
                   "format": "binary"
@@ -3229,6 +3246,12 @@
               "null",
               "string"
             ]
+          },
+          "glyphUrl": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -3455,6 +3478,42 @@
               "integer"
             ],
             "format": "int32"
+          }
+        }
+      },
+      "ProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "title": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "status": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "format": "int32"
+          },
+          "detail": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "instance": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },

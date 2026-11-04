@@ -19,8 +19,10 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolRouteFixtureTests
 {
-    [Fact]
-    public async Task ClientApi_MixesMatchDashboardWithoutGeneratingAndItemsUsePlayableIdsInPlaylistOrder()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientApi_MixesMatchDashboardWithoutGeneratingAndItemsUsePlayableIdsInPlaylistOrder(bool glyph)
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(service => service.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "mix-song"))
@@ -28,7 +30,9 @@ public sealed partial class ProtocolRouteFixtureTests
         gateway.Setup(service => service.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "mix-song"))
             .ReturnsAsync(ClientMixSong());
         using var factory = ClientMixFactory(gateway);
+        using var fixtures = new ProviderIconFiles();
         using var client = CreateClientApiClient(factory);
+        fixtures.Use(factory.Services, glyph);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
         var mix = await SeedClientMixAsync(factory);
         var owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!.UserId;
@@ -67,6 +71,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("ext-deezer-artist-mix-artist", items[0].GetProperty("artistId").GetString());
         Assert.Equal("deezer", items[0].GetProperty("provider").GetProperty("id").GetString());
         Assert.Equal("/allstarr/v1/providers/deezer/icon", items[0].GetProperty("provider").GetProperty("iconUrl").GetString());
+        Assert.Equal(glyph ? "/allstarr/v1/providers/deezer/icon?variant=glyph" : null, items[0].GetProperty("provider").GetProperty("glyphUrl").GetString());
         Assert.True(items[0].GetProperty("isExternal").GetBoolean());
         Assert.Equal("native-album", items[1].GetProperty("albumId").GetString());
         Assert.Equal("native-artist", items[1].GetProperty("artistId").GetString());

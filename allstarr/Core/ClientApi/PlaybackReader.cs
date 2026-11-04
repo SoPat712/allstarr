@@ -86,8 +86,8 @@ public sealed class PlaybackReader(
     private async Task<ItemDetailsProvider?> ProviderAsync(HttpContext http, string? provider)
     {
         if (provider == null || !registry.TryGet(provider, out var descriptor)) return null;
-        var icon = await ProviderArtworkResolver.ResolveIconAsync(http.RequestServices, provider, http.RequestAborted);
-        return new(provider, descriptor!.DisplayName, icon == null ? null : $"/allstarr/v1/providers/{Uri.EscapeDataString(provider)}/icon");
+        var icon = (await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, [provider], http.RequestAborted)).GetValueOrDefault(provider);
+        return icon?.Provider(provider, descriptor!.DisplayName) ?? new(provider, descriptor!.DisplayName, null);
     }
 
     private static PlaybackAccountScope? Scope(string? value) => value?.ToLowerInvariant() switch

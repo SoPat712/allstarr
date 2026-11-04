@@ -153,6 +153,7 @@ public static class SpotiFlacExtensionCompatibility
             ["description"] = original["description"]?.DeepClone(),
             ["author"] = original["author"]?.DeepClone(),
             ["icon"] = original["icon"]?.DeepClone(),
+            ["glyphIcon"] = original["glyphIcon"]?.DeepClone(),
             ["settings"] = settings,
             ["qualityOptions"] = original["qualityOptions"]?.DeepClone() ?? new JsonArray(),
             ["requiredRuntimeFeatures"] = original["requiredRuntimeFeatures"]?.DeepClone() ?? new JsonArray(),

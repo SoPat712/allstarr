@@ -88,12 +88,16 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(2, requests.Count);
     }
 
-    [Fact]
-    public async Task ClientApi_ItemDetailsUsesStoredPersonalMatchAndMeasuredAudio()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientApi_ItemDetailsUsesStoredPersonalMatchAndMeasuredAudio(bool glyph)
     {
         using var factory = ClientDetailsFactory(request => request.RequestUri!.AbsolutePath == "/Users/Me"
             ? Json(200, """{"Id":"listener"}""") : throw new InvalidOperationException("Unexpected upstream request"));
+        using var fixtures = new ProviderIconFiles();
         using var client = CreateClientApiClient(factory);
+        fixtures.Use(factory.Services, glyph);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
         var recording = await SeedClientDetailsAsync(factory, "listener", "known", personal: true);
         using var response = await client.PostAsJsonAsync("/allstarr/v1/items/details", new { ids = new[] { "ext-deezer-song-known" } });
@@ -106,6 +110,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.True(item.GetProperty("explicit").GetBoolean());
         Assert.Equal("deezer", item.GetProperty("provider").GetProperty("id").GetString());
         Assert.Equal("/allstarr/v1/providers/deezer/icon", item.GetProperty("provider").GetProperty("iconUrl").GetString());
+        Assert.Equal(glyph ? "/allstarr/v1/providers/deezer/icon?variant=glyph" : null, item.GetProperty("provider").GetProperty("glyphUrl").GetString());
         Assert.Equal("flac", item.GetProperty("audio").GetProperty("codec").GetString());
         Assert.Equal(24, item.GetProperty("audio").GetProperty("bitDepth").GetInt32());
         Assert.True(item.GetProperty("saved").GetBoolean());

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512"><defs><filter id="as-k" color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0"/></filter></defs><g filter="url(#as-k)"><svg xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" role="img" x="84.50" y="84.50" width="343.00" height="343.00" viewBox="0 0 3 3">
+  <title>Monochrome icon</title>
+  <g fill="black">
+    <rect x="1" y="0" width="2" height="1"/>
+    <rect x="2" y="1" width="1" height="1"/>
+    <rect x="0" y="2" width="2" height="1"/>
+    <rect x="0" y="1" width="1" height="1"/>
+  </g>
+</svg></g></svg>

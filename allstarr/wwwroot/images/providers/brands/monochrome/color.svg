@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 512 512"><svg xmlns="http://www.w3.org/2000/svg" shape-rendering="crispEdges" role="img" x="0.00" y="0.00" width="512.00" height="512.00" viewBox="0 0 8 8">
+  <title>Monochrome icon</title>
+  <rect width="8" height="8" fill="black"/>
+  <g fill="white">
+    <rect x="3" y="1" width="4" height="2"/>
+    <rect x="5" y="3" width="2" height="2"/>
+    <rect x="1" y="3" width="2" height="2"/>
+    <rect x="1" y="5" width="4" height="2"/>
+  </g>
+</svg></svg>

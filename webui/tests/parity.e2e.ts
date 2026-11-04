@@ -517,11 +517,20 @@ async function mockApi(page: Page, options: {
   intelligenceEnabled?: boolean;
 } = {}) {
   await page.route("**/fonts/**", (route) => route.fulfill({ status: 204 }));
-  await page.route("**/images/providers/**", (route) => route.fulfill({
-    status: 200,
-    contentType: "image/svg+xml",
-    body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>',
-  }));
+  await page.route("**/images/providers/**", async route => {
+    const brand = new URL(route.request().url()).pathname.match(/^\/images\/providers\/brands\/([a-z0-9-]+)\/(color|glyph)\.(svg|png)$/);
+    if (brand) {
+      const body = await readFile(new URL(`../../allstarr/wwwroot/images/providers/brands/${brand[1]}/${brand[2]}.${brand[3]}`, import.meta.url))
+        .catch(error => { if (error.code !== "ENOENT") throw error; return null; });
+      return body ? route.fulfill({ contentType: brand[3] === "svg" ? "image/svg+xml" : "image/png", body })
+        : route.fulfill({ status: 404 });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>',
+    });
+  });
   await page.route("**/api/admin/**", async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === "/api/admin/downloads/artwork/ext-spotify-song-track-a") {
@@ -8138,7 +8147,7 @@ for (const width of [390, 1280]) for (const scheme of ["light", "dark"] as const
         { id: "lyrics", supported: true, ready: true, canAttempt: true, canTest: true, configuration: "not_required" },
       ] }],
     } }));
-    await page.route("**/images/providers/paxsenix.svg", route => route.abort());
+    await page.route(/\/images\/providers\/(?:brands\/paxsenix\/color\.(?:svg|png)|paxsenix\.svg)$/, route => route.abort());
     await page.route("**/api/admin/providers/paxsenix/try**", route => {
       if (route.request().method() === "GET") return route.fulfill({ json: { provider: "paxsenix", capabilities: [tryCatalog.capabilities[1]] } });
       const body = route.request().postDataJSON();
@@ -8192,6 +8201,19 @@ for (const width of [390, 1280]) for (const scheme of ["light", "dark"] as const
   });
 }
 
+test("Provider marks display a PNG color master when SVG is unavailable", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
+    ...schema, providers: [...schema.providers, { id: "lastfm", name: "Last.fm", categories: ["scrobbling"] }],
+  } }));
+  await page.goto("#/integrations/services/lastfm");
+  const mark = page.locator(".provider-mark img").first();
+  await expect(mark).toHaveAttribute("src", /\/brands\/lastfm\/color\.png$/);
+  await expect(mark).toBeVisible();
+  expect(await mark.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+});
+
 for (const [width, colorScheme] of [[390, "light"], [390, "dark"], [1280, "light"], [1280, "dark"]] as const) {
   test(`Source use switch sets the household and personal positions at ${width}px ${colorScheme}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
@@ -8210,10 +8232,18 @@ for (const [width, colorScheme] of [[390, "light"], [390, "dark"], [1280, "light
       if (route.request().method() === "PUT") writes.push(route.request().postDataJSON());
       return route.fulfill({ json: writes.length === 0 ? settings("manualOnly", "automatic") : writes.length === 1 ? settings("manualOnly", null) : settings("off", null) });
     });
-    await page.route("**/images/providers/*.svg", (route) => route.fulfill({
-      path: new URL(`../../allstarr/wwwroot/images/providers/${new URL(route.request().url()).pathname.split("/").pop()}`, import.meta.url).pathname,
-      contentType: "image/svg+xml",
-    }));
+    const markRequests: string[] = [];
+    await page.route(/\/images\/providers\/brands\/artistgrid\/color\.(?:svg|png)$/, route => {
+      markRequests.push("color");
+      return width < 600 ? route.fulfill({ status: 404 }) : route.fallback();
+    });
+    await page.route("**/images/providers/artistgrid.svg", (route) => {
+      markRequests.push("legacy");
+      return route.fulfill({
+        path: new URL("../../allstarr/wwwroot/images/providers/artistgrid.svg", import.meta.url).pathname,
+        contentType: "image/svg+xml",
+      });
+    });
     await page.goto("#/integrations/services/artistgrid");
     const use = page.getByRole("region", { name: "Use this source", exact: true });
     const everyone = use.getByRole("radiogroup", { name: "Use this source for everyone" });
@@ -8221,7 +8251,11 @@ for (const [width, colorScheme] of [[390, "light"], [390, "dark"], [1280, "light
     await expect(everyone.getByRole("radio", { name: "Manual only", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(mine.getByRole("radio", { name: "On", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(use).toContainText("Your own setting.");
-    await expect(page.locator(".provider-mark img").first()).toHaveAttribute("src", /artistgrid\.svg$/);
+    const mark = page.locator(".provider-mark img").first();
+    await expect(mark).toHaveAttribute("src", width < 600 ? /\/artistgrid\.svg$/ : /\/brands\/artistgrid\/color\.svg$/);
+    await expect(mark).toBeVisible();
+    expect(markRequests).toContain("color");
+    expect(markRequests.includes("legacy")).toBe(width < 600);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: `test-results/source-use-${width}-${colorScheme}.png`, fullPage: false });
     await use.getByRole("button", { name: "Follow everyone instead" }).click();
@@ -8689,7 +8723,7 @@ for (const width of [320, 390, 718, 1280]) for (const theme of ["light", "dark"]
     const setup = page.getByRole("region", { name: "SpicyLyrics setup" });
     await expect(setup).toContainText("free server key");
     await expect(setup.getByRole("link", { name: "Get a free API key" })).toHaveAttribute("href", "https://developers.spicylyrics.org/docs/keys");
-    await expect(page.locator('img[src$="spicylyrics.ico"]').first()).toBeVisible();
+    await expect(page.locator('img[src$="/brands/spicylyrics/color.svg"]').first()).toBeVisible();
     if (width < 600) await expectContainedMobileGeometry(page);
     await page.screenshot({ path: `test-results/spicy-setup-${width}-${theme}.png`, fullPage: true });
     await page.getByRole("button", { name: "Connect account", exact: true }).click();

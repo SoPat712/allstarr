@@ -170,8 +170,7 @@ public sealed class ItemDetailsReader(
         foreach (var providerId in providerIds)
         {
             providers[providerId] = registry.TryGet(providerId, out var descriptor)
-                ? new(providerId, descriptor!.DisplayName, icons.GetValueOrDefault(providerId) == null
-                    ? null : $"/allstarr/v1/providers/{Uri.EscapeDataString(providerId)}/icon") : null;
+                ? icons.GetValueOrDefault(providerId)?.Provider(providerId, descriptor!.DisplayName) ?? new(providerId, descriptor!.DisplayName, null) : null;
         }
         var choices = await db.RecordingLyricsChoices.AsNoTracking().Where(item => recordingIds.Contains(item.CanonicalRecordingId) &&
             item.RevokedAt == null && (item.OwnerUserId == owner || item.OwnerUserId == null)).ToArrayAsync(token);

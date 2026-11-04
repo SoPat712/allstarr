@@ -7,14 +7,15 @@ internal static class ExtensionPackageIcon
 {
     internal const int MaximumBytes = 2 * 1024 * 1024;
 
-    internal static (string Path, string ContentType)? Resolve(ExtensionPackageRecord package)
+    internal static (string Path, string ContentType)? Resolve(ExtensionPackageRecord package, bool glyph = false)
     {
         try
         {
             var manifest = ExtensionSdkV1.ParseManifest(package.ManifestJson);
-            var icon = manifest.IconPath;
+            var icon = glyph ? manifest.GlyphIcon : manifest.IconPath;
+            if (glyph && string.IsNullOrWhiteSpace(icon)) return null;
             if (string.IsNullOrWhiteSpace(icon))
-                icon = new[] { "icon.png", "icon.jpg", "icon.jpeg", "icon.webp" }
+                icon = new[] { "icon.svg", "icon.png", "icon.jpg", "icon.jpeg", "icon.webp" }
                     .FirstOrDefault(candidate => File.Exists(Path.Combine(package.PackagePath, candidate)));
             if (string.IsNullOrWhiteSpace(icon)) return null;
             var root = Path.GetFullPath(package.PackagePath);
@@ -24,6 +25,7 @@ internal static class ExtensionPackageIcon
             var contentType = Path.GetExtension(path).ToLowerInvariant() switch
             {
                 ".png" => "image/png",
+                ".svg" => "image/svg+xml",
                 ".jpg" or ".jpeg" => "image/jpeg",
                 ".webp" => "image/webp",
                 _ => null

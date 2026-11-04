@@ -362,7 +362,7 @@ public sealed partial class ProtocolRouteFixtureTests
         {
             if (node.ValueKind == JsonValueKind.Object)
             {
-                if (node.TryGetProperty("type", out var type))
+                if (node.TryGetProperty("type", out var type) && type.ValueKind is JsonValueKind.String or JsonValueKind.Array)
                 {
                     var types = type.ValueKind == JsonValueKind.Array
                         ? type.EnumerateArray().Select(value => value.GetString()).ToArray() : [type.GetString()];
@@ -401,8 +401,12 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.NotEmpty(operations);
             foreach (var operation in operations)
                 foreach (var status in new[] { "400", "401", "403", "404", "409", "503" })
-                    Assert.EndsWith("/ClientApiError", operation.Value.GetProperty("responses").GetProperty(status)
-                        .GetProperty("content").GetProperty("application/json").GetProperty("schema").GetProperty("$ref").GetString());
+                {
+                    var problem = status == "400" && path.Name == "/allstarr/v1/providers/{providerId}/icon";
+                    Assert.EndsWith(problem ? "/ProblemDetails" : "/ClientApiError", operation.Value.GetProperty("responses").GetProperty(status)
+                        .GetProperty("content").GetProperty(problem ? "application/problem+json" : "application/json")
+                        .GetProperty("schema").GetProperty("$ref").GetString());
+                }
         }
         AssertClientApiSchemaNames(root);
     }

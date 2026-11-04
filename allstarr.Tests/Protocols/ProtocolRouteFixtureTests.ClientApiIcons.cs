@@ -26,34 +26,78 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.StartsWith("image/", item.Name);
             Assert.Equal("binary", item.Value.GetProperty("schema").GetProperty("format").GetString());
         });
+        Assert.True(content.TryGetProperty("image/png", out _));
+        Assert.True(content.TryGetProperty("image/svg+xml", out _));
+        Assert.True(responses.TryGetProperty("400", out _));
+        Assert.True(responses.TryGetProperty("404", out _));
+        var parameters = json.RootElement.GetProperty("paths").GetProperty("/allstarr/v1/providers/{providerId}/icon")
+            .GetProperty("get").GetProperty("parameters").EnumerateArray().ToDictionary(item => item.GetProperty("name").GetString()!);
+        var variant = parameters["variant"].GetProperty("schema");
+        Assert.Equal("color", variant.GetProperty("default").GetString());
+        Assert.Equal(["color", "glyph"], variant.GetProperty("enum").EnumerateArray().Select(item => item.GetString()!).ToArray());
+        var format = parameters["format"].GetProperty("schema");
+        Assert.Equal("svg", format.GetProperty("default").GetString());
+        Assert.Equal(["svg", "png"], format.GetProperty("enum").EnumerateArray().Select(item => item.GetString()!).ToArray());
+        var size = parameters["size"].GetProperty("schema");
+        Assert.Equal(16, size.GetProperty("minimum").GetInt32());
+        Assert.Equal(256, size.GetProperty("maximum").GetInt32());
+        Assert.Equal(96, size.GetProperty("default").GetInt32());
+        Assert.True(json.RootElement.GetProperty("components").GetProperty("schemas").GetProperty("ItemDetailsProvider")
+            .GetProperty("properties").TryGetProperty("glyphUrl", out _));
         Assert.False(responses.GetProperty("304").TryGetProperty("content", out var unchanged) && unchanged.EnumerateObject().Any());
     }
 
     [Theory]
-    [InlineData("deezer", "deezer.svg", "image/svg+xml")]
-    [InlineData("apple-musickit", "applemusic.svg", "image/svg+xml")]
-    [InlineData("qobuz", "qobuz.webp", "image/webp")]
-    [InlineData("spicylyrics", "spicylyrics.ico", "image/x-icon")]
+    [InlineData("deezer", "deezer", null)]
+    [InlineData("apple-musickit", "applemusic", null)]
+    [InlineData("qobuz", "qobuz", null)]
+    [InlineData("spicylyrics", "spicylyrics", null)]
+    [InlineData("lastfm", "lastfm", null)]
+    [InlineData("lastfm", "lastfm", 32)]
+    [InlineData("koito", "koito", null)]
+    [InlineData("lrclib", "lrclib", null)]
+    [InlineData("spotiflac-jiosaavn", "jiosaavn", null)]
+    [InlineData("spotiflac-melon-music", "melon", null)]
+    [InlineData("spotiflac-genie-music", "genie", null)]
+    [InlineData("spotiflac-bugs-music", "bugs", null)]
+    [InlineData("fixture-legacy-icon", null, null)]
     public async Task ClientApi_ProviderIconsMatchDashboardAssetsAndSupportRevalidation(
-        string provider, string filename, string contentType)
+        string provider, string? brand, int? size)
     {
         var upstream = new List<string>();
         using var factory = ClientApiFactory(request =>
         {
             upstream.Add(request.RequestUri!.AbsolutePath);
             return Json(200, """{"Id":"listener"}""");
-        });
+        }, services => services.AddProviderDescriptor(new ProviderDescriptor("fixture-legacy-icon", "Fixture", "Fixture provider",
+            ProviderOrigin.BuiltIn, "1", "1",
+            [new(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.ConfiguredOnly,
+                ProviderAccountRequirement.None, "1")],
+            new ProviderPermissionDescriptor(), branding: new("images/providers/deezer.svg"))));
         using var client = CreateClientApiClient(factory);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        var root = Path.Combine(FindClientApiRepositoryRoot(), "allstarr", "wwwroot", "images", "providers");
+        var filename = brand == null ? "deezer.svg" : File.Exists(Path.Combine(root, "brands", brand, "color.svg"))
+            ? $"brands/{brand}/color.svg" : $"brands/{brand}/color.png";
+        if (brand == null) Assert.False(Directory.Exists(Path.Combine(root, "brands", provider)));
+        var svg = filename.EndsWith(".svg", StringComparison.Ordinal);
         using var dashboard = await client.GetAsync($"http://localhost:5275/images/providers/{filename}");
         Assert.Equal(HttpStatusCode.OK, dashboard.StatusCode);
         var expected = await dashboard.Content.ReadAsByteArrayAsync();
 
-        var path = $"/allstarr/v1/providers/{provider}/icon";
+        var path = $"/allstarr/v1/providers/{provider}/icon" + (size.HasValue ? $"?size={size}" : "");
         using var response = await client.GetAsync(path);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(contentType, response.Content.Headers.ContentType?.MediaType);
-        Assert.Equal(expected, await response.Content.ReadAsByteArrayAsync());
+        Assert.Equal(svg ? "image/svg+xml" : "image/png", response.Content.Headers.ContentType?.MediaType);
+        var actual = await response.Content.ReadAsByteArrayAsync();
+        if (svg) Assert.Equal(expected, actual);
+        else
+        {
+            Assert.Equal(allstarr.Services.Common.ProviderIconRenderer.Render(expected, size ?? 96, false), actual);
+            using var raster = SkiaSharp.SKBitmap.Decode(actual);
+            Assert.Equal(size ?? 96, raster.Width);
+            Assert.Equal(size ?? 96, raster.Height);
+        }
         Assert.True(response.Headers.CacheControl?.Private);
         Assert.Equal(TimeSpan.FromDays(1), response.Headers.CacheControl?.MaxAge);
         Assert.NotNull(response.Headers.ETag);
@@ -126,7 +170,9 @@ public sealed partial class ProtocolRouteFixtureTests
             using var response = await client.GetAsync($"/allstarr/v1/providers/{provider}/icon");
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal("image/png", response.Content.Headers.ContentType?.MediaType);
-            Assert.Equal(expected, await response.Content.ReadAsByteArrayAsync());
+            using var raster = SkiaSharp.SKBitmap.Decode(await response.Content.ReadAsByteArrayAsync());
+            Assert.Equal(96, raster.Width);
+            Assert.Equal(96, raster.Height);
             Assert.Equal(TimeSpan.FromDays(1), response.Headers.CacheControl?.MaxAge);
         }
         finally { Directory.Delete(directory, recursive: true); }

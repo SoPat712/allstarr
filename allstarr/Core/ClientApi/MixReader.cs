@@ -73,9 +73,8 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
                 if (registry.TryGet(source, out var descriptor))
                 {
                     if (!icons.TryGetValue(source, out var icon))
-                        icons[source] = icon = await ProviderArtworkResolver.ResolveIconAsync(http.RequestServices, source, execution.CancellationToken);
-                    provider = new(source, descriptor!.DisplayName, icon == null
-                        ? null : $"/allstarr/v1/providers/{Uri.EscapeDataString(source)}/icon");
+                        icons[source] = icon = (await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, [source], execution.CancellationToken)).GetValueOrDefault(source);
+                    provider = icon?.Provider(source, descriptor!.DisplayName) ?? new(source, descriptor!.DisplayName, null);
                 }
                 itemId = ClientCatalogIds.Normalize(itemId)!;
                 albumId = ClientCatalogIds.Normalize(albumId);
