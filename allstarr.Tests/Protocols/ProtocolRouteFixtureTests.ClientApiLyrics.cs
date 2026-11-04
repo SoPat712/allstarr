@@ -277,8 +277,15 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("Library first", rich["lines"]![0]!["text"]!.GetValue<string>());
         var jellyfin = await ReadClientLyricsJsonAsync(client, "/Audio/native/Lyrics");
         Assert.True(JsonNode.DeepEquals(JsonNode.Parse(backend), jellyfin));
-        using var sources = await client.GetAsync("/allstarr/v1/items/native/lyrics/sources");
-        await AssertClientApiError(sources, 404, "not_found");
+        var sources = await ReadClientLyricsJsonAsync(client, "/allstarr/v1/items/native/lyrics/sources");
+        var source = Assert.Single(sources["sources"]!.AsArray(), candidate => candidate!["sourceId"]!.GetValue<string>() == "backend")!;
+        Assert.Equal("ready", source["state"]!.GetValue<string>());
+        Assert.Equal("line", source["format"]!.GetValue<string>());
+        Assert.Equal("Library first\nLibrary second", source["preview"]!.GetValue<string>());
+        Assert.Equal("backend", sources["chosen"]!["sourceId"]!.GetValue<string>());
+        Assert.Equal("automatic", sources["chosen"]!["layer"]!.GetValue<string>());
+        Assert.Null(sources["revision"]!["personal"]);
+        Assert.Null(sources["revision"]!["household"]);
         await using var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync();
         Assert.Empty(await db.CanonicalRecordings.ToArrayAsync());
     }

@@ -18,6 +18,7 @@ public sealed class ItemLyricsReader(
     ILibraryIndexService library,
     ITrackIdentityService identities,
     IRecordingLyricsReview review,
+    IRecordingLyricsChoices choices,
     IProviderRegistry? registry = null)
 {
     public async Task<Guid?> ResolveRecordingIdAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
@@ -38,26 +39,47 @@ public sealed class ItemLyricsReader(
 
     public async Task<ClientLyricsSources?> SourcesAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
     {
-        var headers = CopyHeaders(http);
         var item = await ResolveAsync(http, execution, itemId);
-        var recording = item == null ? null : await RecordingAsync(execution, item);
-        if (item == null || recording == null) return null;
-        var result = await review.GetAsync(execution with { RequestedItemId = itemId }, recording.Value, "personal",
-            (id, token) => ReadBackendAsync(headers, id, token));
-        var known = result.Sources.Where(source => source.FullLyrics != null).ToArray();
-        var defaults = known.Where(source => source.IsDefaultVersion).ToArray();
-        var selected = result.Choices.Effective is { } preference
-            ? known.FirstOrDefault(source => source.SourceId == preference.SourceId) ??
-                defaults.FirstOrDefault(source => LyricsVersions.ProviderId(source.SourceId) == LyricsVersions.ProviderId(preference.SourceId)) ??
-                known.FirstOrDefault(source => LyricsVersions.ProviderId(source.SourceId) == LyricsVersions.ProviderId(preference.SourceId))
+        if (item == null) return null;
+        var layers = await ChoicesAsync(execution, item);
+        var candidates = await lyrics.FindAllAsync(execution with { RequestedItemId = itemId }, item.Song, item.ResourceKey, item.Sources);
+        var sources = candidates.Select(candidate =>
+        {
+            var rich = RichLyricsMapper.Map(candidate.Lyrics);
+            return new { Candidate = candidate, Rich = rich == null ? null : rich with { Source = new(candidate.SourceId, RichLyricsMapper.SourceName(candidate.SourceId)) } };
+        }).ToArray();
+        var known = sources.Where(source => source.Rich != null).ToArray();
+        var defaults = known.Where(source => source.Candidate.IsDefaultVersion).ToArray();
+        var selected = layers.Effective is { } preference
+            ? known.FirstOrDefault(source => source.Candidate.SourceId == preference.SourceId) ??
+                defaults.FirstOrDefault(source => LyricsVersions.ProviderId(source.Candidate.SourceId) == LyricsVersions.ProviderId(preference.SourceId)) ??
+                known.FirstOrDefault(source => LyricsVersions.ProviderId(source.Candidate.SourceId) == LyricsVersions.ProviderId(preference.SourceId))
             : null;
-        selected ??= defaults.OrderByDescending(source => LyricsQuality.Rank(source.TimingFormat)).FirstOrDefault();
-        var chosen = Chosen(result.Choices, selected?.FullLyrics);
-        return new(result.Sources.Select(source => new ClientLyricsSource(source.SourceId, source.TimingFormat, source.ShortPreview,
-            LyricsVersions.ProviderId(source.SourceId), ProviderName(source.SourceId), source.Metadata?.Title,
-            source.Metadata?.Artist, source.Metadata?.Album, source.Metadata?.DurationMs)
-        { State = source.Available ? "ready" : source.State == "pending" ? "pending" : "unavailable" }).ToArray(),
-            chosen, ClientLyricsRevision.From(result.Choices.Revision));
+        selected ??= defaults.OrderByDescending(source => LyricsQuality.Rank(source.Rich?.Format)).FirstOrDefault();
+        return new(sources.Select(source => new ClientLyricsSource(source.Candidate.SourceId, source.Rich?.Format, ShortPreview(source.Rich),
+            LyricsVersions.ProviderId(source.Candidate.SourceId), ProviderName(source.Candidate.SourceId), source.Candidate.Lyrics?.Metadata?.Title,
+            source.Candidate.Lyrics?.Metadata?.Artist, source.Candidate.Lyrics?.Metadata?.Album, source.Candidate.Lyrics?.Metadata?.DurationMs)
+        { State = source.Rich != null ? "ready" : source.Candidate.State == "pending" ? "pending" : "unavailable" }).ToArray(),
+            Chosen(layers, selected?.Rich), ClientLyricsRevision.From(layers.Revision));
+    }
+
+    private async Task<RecordingLyricsChoiceLayers> ChoicesAsync(ProtocolExecutionContext execution, LyricsItem item)
+    {
+        try
+        {
+            var recording = await RecordingAsync(execution, item);
+            if (recording != null) return await choices.GetAsync(execution, recording.Value);
+        }
+        catch (KeyNotFoundException) { }
+        catch (UnauthorizedAccessException) { }
+        return new(null, null);
+    }
+
+    private static string? ShortPreview(RichLyrics? rich)
+    {
+        if (rich == null) return null;
+        var preview = string.Join("\n", rich.Lines.Take(4).Select(line => line.Text));
+        return preview.Length <= 1000 ? preview : preview[..(char.IsHighSurrogate(preview[999]) ? 999 : 1000)];
     }
 
     public async Task<ClientLyricsSelection?> SetAsync(HttpContext http, ProtocolExecutionContext execution, string itemId,
