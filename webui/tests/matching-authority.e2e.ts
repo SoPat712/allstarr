@@ -141,6 +141,7 @@ test("match review hides unlabeled and internal rows while keeping saved manual 
     pagination: { page: 1, pageSize: 50, total: 4, totalPages: 1 },
   }));
   await page.goto("#/library/mappings");
+  await page.getByRole("radiogroup", { name: "Match filters" }).getByRole("radio", { name: /^All\b/ }).click();
   const rows = page.locator(".mapping-row");
   await expect(rows).toHaveCount(4);
   await expect(page.getByText("Unknown song", { exact: true })).toHaveCount(0);
@@ -151,6 +152,7 @@ test("match review hides unlabeled and internal rows while keeping saved manual 
   await expect(rows.filter({ hasText: "Source with unavailable target details" })).toContainText("Metadata unavailable");
   await expect(rows.filter({ hasText: "Unmatched source song" })).toContainText("No match yet");
   await expect(page.getByRole("navigation", { name: "Match review pages" })).toContainText("4 songs");
+  await page.getByRole("button", { name: "Select", exact: true }).click();
   await page.getByRole("checkbox", { name: "Select all songs on this page" }).check();
   await expect(page.getByRole("toolbar", { name: "Actions for selected songs" })).toContainText("4 selected");
 });
@@ -162,20 +164,25 @@ for (const theme of ["light", "dark"] as const) {
     await mockMatching(page, { administrator: false });
     await page.goto("#/library/mappings");
     await expect(page.locator(".mapping-row").first()).toBeVisible();
-    await expect(page.getByRole("button", { name: "Clear personal", exact: true })).toBeVisible();
+    await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
+    const panel = page.getByRole("dialog", { name: "Layered song", exact: true });
+    await expect(panel.getByRole("button", { name: "Clear personal", exact: true })).toBeVisible();
     await expectContainedMobileGeometry(page);
   });
 }
 
-test("match dialog shows field scores at 320px in dark mode", async ({ page }) => {
+test("match panel shows field scores at 320px in dark mode", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await page.setViewportSize({ width: 320, height: 844 });
   await mockMatching(page, { administrator: false });
   await page.goto("#/library/mappings");
-  await page.getByRole("button", { name: "Interactive search" }).click();
+  await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
   const dialog = page.getByRole("dialog", { name: "Layered song" });
-  await expect(dialog.locator(".score-components")).toContainText("title");
-  await expect(dialog.locator(".score-components")).toContainText("duration");
+  await expect(dialog.locator(".evidence-chips")).toContainText("Title matches exactly");
+  await expect(dialog.locator(".evidence-chips")).toContainText("Length within 1 second");
+  await dialog.locator(".evidence details summary").click();
+  await expect(dialog.locator(".evidence details")).toContainText("title");
+  await expect(dialog.locator(".evidence details")).toContainText("duration");
 });
 
 for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as const) {
@@ -218,17 +225,20 @@ for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as 
       ] : [],
     }));
     await page.goto("#/library/mappings");
-    await page.getByRole("button", { name: "Interactive search" }).click();
+    await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
     const dialog = page.getByRole("dialog", { name: "Power Trip (feat. Miguel)" });
-    await expect(dialog.locator(".match-header")).toContainText("Explicit");
+    await expect(dialog.locator(".panel-header-extra")).toContainText("Explicit");
+    await dialog.getByRole("button", { name: "Search for another version…", exact: true }).click();
     await expect(dialog).toContainText("Good matches of the same version follow your streaming priority, then the same album edition");
     await dialog.getByRole("button", { name: "Search", exact: true }).click();
-    const rows = dialog.locator(".target-results > button.match-row");
+    const rows = dialog.locator(".target-results .search-result");
     await expect(rows).toHaveCount(6);
+    for (const row of await rows.all()) await row.locator("summary").click();
     await expect(rows.nth(0)).toContainText("Apple Music");
     await expect(rows.nth(0)).toContainText("Streaming priority 1");
     await expect(rows.nth(0)).toContainText("Same album edition");
-    await expect(rows.nth(0)).toContainText("Reported audio · ALAC · 24-bit · 48 kHz");
+    await expect(rows.nth(0).locator("dl > div").filter({ has: page.locator("dt", { hasText: "Content" }) })).toContainText("Explicit");
+    await expect(rows.nth(0).locator("dl > div").filter({ has: page.locator("dt", { hasText: "Reported audio" }) })).toContainText("ALAC · 24-bit · 48 kHz");
     await expect(rows.nth(1)).toContainText("Apple Music");
     await expect(rows.nth(1)).not.toContainText("Same album edition");
     await expect(rows.nth(2)).toContainText("Deezer");
@@ -236,14 +246,13 @@ for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as 
     await expect(rows.nth(3)).toContainText("Audio format not reported");
     await expect(rows.nth(3)).not.toContainText("Not explicit");
     await expect(rows.nth(4)).toContainText("94%");
-    await expect(rows.nth(4)).toContainText("Limited recording metadata");
+    await expect(rows.nth(4)).toContainText("Some recording details are missing");
     await expect(rows.nth(4)).toContainText("Audio format not reported");
     await expect(rows.nth(5)).toContainText("Not explicit");
     await expect(rows.nth(5)).toContainText("0%");
     for (let index = 0; index < 2; index++) await expect(rows.nth(index)).toContainText("95.45%");
     await expect(rows.nth(2)).toContainText("99.2%");
     const evidence = dialog.locator(".target-evidence").first();
-    await evidence.locator("summary").click();
     await expect(evidence).toContainText("Source ISRCNot provided");
     await expect(evidence).toContainText("the delivered format can differ");
     if (width === 390) await expectContainedMobileGeometry(page);
@@ -251,12 +260,16 @@ for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as 
     expect(bounds).not.toBeNull();
     expect(bounds!.y).toBeGreaterThanOrEqual(0);
     expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(901);
-    await dialog.evaluate(element => { element.scrollTop = 0; });
+    if (width === 390) { expect(bounds!.y).toBe(0); expect(bounds!.height).toBe(900); }
+    await dialog.locator(".panel-body").evaluate(element => { element.scrollTop = 0; });
     await page.screenshot({ path: testInfo.outputPath(`match-priority-${width}-${colorScheme}.png`) });
     await rows.nth(4).scrollIntoViewIfNeeded();
     await page.screenshot({ path: testInfo.outputPath(`match-limited-${width}-${colorScheme}.png`) });
-    await rows.first().focus();
+    await rows.first().locator(".row-action").focus();
     await page.keyboard.press("Enter");
+    expect(writes).toHaveLength(0);
+    await expect(dialog.locator(".preview-label")).toContainText("Apple Music");
+    await dialog.getByRole("button", { name: "Use Apple Music version", exact: true }).click();
     await expect.poll(() => writes.length).toBe(1);
     expect(writes[0]).toMatchObject({ targetType: "provider", externalProvider: "apple-download", externalId: "apple-deluxe", authorityScope: "personal" });
     await expect(dialog).not.toBeVisible();
@@ -280,14 +293,17 @@ for (const [width, colorScheme] of [[320, "light"], [1280, "dark"]] as const) {
         ? [{ id: "exact-v3", externalId: "exact-v3", externalProvider: "artistgrid", title: "Communicate (v3)", artist: "Ariana Grande" }] : [], providers: ["artistgrid"] });
     });
     await page.goto("#/library/mappings");
-    await page.getByRole("button", { name: "Interactive search" }).click();
+    await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
     const dialog = page.getByRole("dialog", { name: "Communicate (v3)" });
     await expect(dialog.getByRole("button", { name: "Search another source" })).toHaveCount(0);
+    await dialog.getByRole("button", { name: "Search for another version…", exact: true }).click();
     await dialog.getByRole("button", { name: "Search", exact: true }).click();
     await expect(dialog.locator(".target-results")).toContainText("Communicate (v3)");
     expect(queries.some(url => url.searchParams.has("provider"))).toBe(false);
     expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
-    await dialog.locator(".target-results button.match-row").click();
+    await dialog.locator(".target-results .search-result .row-action").click();
+    expect(writes).toHaveLength(0);
+    await dialog.getByRole("button", { name: "Use ArtistGrid version", exact: true }).click();
     await expect.poll(() => writes.length).toBe(1);
     expect(writes[0]).toMatchObject({ targetType: "provider", externalProvider: "artistgrid", externalId: "exact-v3", authorityScope: "personal" });
   });
@@ -321,7 +337,7 @@ test("listener switches a source between On, Manual only and Off for themselves"
   await expect(use).toContainText("Off: not used or shown anywhere.");
 });
 
-test("MatchDialog prefills the full title despite a legacy search query", async ({ page }) => {
+test("match panel prefills the full title despite a legacy search query", async ({ page }) => {
   await mockMatching(page, {
     administrator: false,
     match: { title: "Layered song - Live", searchQuery: "Example artist Layered song" },
@@ -332,34 +348,36 @@ test("MatchDialog prefills the full title despite a legacy search query", async 
     await json(route, { tracks: [], providers: [] });
   });
   await page.goto("#/library/mappings");
-  await page.getByRole("button", { name: "Interactive search" }).click();
+  await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
   const dialog = page.getByRole("dialog", { name: "Layered song - Live" });
+  await dialog.getByRole("button", { name: "Search for another version…", exact: true }).click();
   await expect(dialog.getByLabel("Search local library and playable providers"))
     .toHaveValue("Layered song - Live");
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
   await expect.poll(() => queries).toEqual(["Layered song - Live"]);
 });
 
-test("MatchDialog marks only the current candidate in the existing list", async ({ page }) => {
+test("match panel keeps the current recording in comparison and alternatives in choices", async ({ page }) => {
   const candidate = matchFixture(false).candidates[0];
   await mockMatching(page, {
     administrator: false,
     match: {
+      localTrack: { id: "local-track", backendItemId: "local-track", title: "Current recording", artist: "Example artist" },
       candidates: [
-        { ...candidate, isCurrent: true },
+        { ...candidate, title: "Current recording", isCurrent: true },
         { ...candidate, libraryTrackId: "other-track", title: "Alternate recording", isCurrent: false },
       ],
     },
   });
   await page.goto("#/library/mappings");
-  await page.getByRole("button", { name: "Interactive search" }).click();
+  await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
   const dialog = page.getByRole("dialog", { name: "Layered song" });
   const candidates = dialog.locator(".candidate-card");
-  await expect(candidates).toHaveCount(2);
-  await expect(candidates.first()).toContainText("Current match");
-  await expect(candidates.last()).not.toContainText("Current match");
-  await expect(candidates.getByText("· Current match", { exact: true })).toHaveCount(1);
-  await expect(candidates.getByRole("button", { name: "Choose candidate" })).toHaveCount(2);
+  await expect(dialog.locator(".comparison tbody tr").filter({ has: page.getByRole("rowheader", { name: "Title", exact: true }) })).toContainText("Current recording");
+  await expect(candidates).toHaveCount(1);
+  await expect(candidates.first()).toContainText("Alternate recording");
+  await expect(candidates).not.toContainText("Current recording");
+  await expect(candidates.locator(".row-action")).toHaveCount(1);
 });
 
 test("match titles mark only flagged ArtistGrid versions and preserve their scoring reason", async ({ page }) => {
@@ -391,20 +409,25 @@ test("match titles mark only flagged ArtistGrid versions and preserve their scor
     providers: ["artistgrid", "qobuz"],
   }));
   await page.goto("#/library/mappings");
-  await page.getByRole("button", { name: "Interactive search" }).click();
+  await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
   const dialog = page.getByRole("dialog", { name: "Layered song" });
   const candidates = dialog.locator(".candidate-card");
   await expect(candidates).toHaveCount(5);
   const marker = candidates.getByRole("img", { name: "Best version on ArtistGrid", exact: true });
   await expect(marker).toHaveCount(1);
   await expect(marker).toHaveAttribute("title", "Best version on ArtistGrid");
-  await expect(candidates.filter({ hasText: "Preferred version" }).locator(".candidate-copy strong")).toContainText("⭐");
-  await expect(candidates.locator(".candidate-reasons")).toHaveText("ArtistGrid best version +5");
+  await expect(candidates.filter({ hasText: "Preferred version" }).locator(".row-copy h3")).toContainText("⭐");
+  await expect(candidates.filter({ hasText: "Preferred version" }).locator(".candidate-reasons")).toHaveText("ArtistGrid best version +5");
+  await dialog.getByRole("button", { name: "Search for another version…", exact: true }).click();
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
-  const targets = dialog.locator(".target-results button.match-row");
+  const targets = dialog.locator(".target-results .search-result");
   await expect(targets).toHaveCount(5);
   await expect(targets.getByRole("img", { name: "Best version on ArtistGrid", exact: true })).toHaveCount(1);
-  await expect(targets.filter({ hasText: "Preferred version" }).locator("strong").first()).toContainText("⭐");
+  await expect(targets.filter({ hasText: "Preferred version" }).locator(".row-copy h3")).toContainText("⭐");
+  await expect(targets.filter({ hasText: "Ordinary version" }).locator(".row-copy h3")).not.toContainText("⭐");
+  await expect(targets.filter({ hasText: "Older result" }).locator(".row-copy h3")).not.toContainText("⭐");
+  await expect(targets.filter({ hasText: "Other source" }).locator(".row-copy h3")).not.toContainText("⭐");
+  await expect(targets.filter({ hasText: "Library result" }).locator(".row-copy h3")).not.toContainText("⭐");
   expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
 });
 
@@ -419,25 +442,29 @@ test("listener uses personal authority and cannot choose or edit household", asy
     },
   });
   await page.goto("#/library/mappings");
-
-  const household = page.locator(".manual-authority-row").filter({ hasText: "Household" });
+  await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
+  const dialog = page.getByRole("dialog", { name: "Layered song" });
+  const household = dialog.locator(".manual-authority-row").filter({ hasText: "Household" });
   await expect(household).toContainText("Superseded by personal");
   await expect(household.getByRole("button", { name: "Clear household", exact: true })).toBeDisabled();
   await expect(household.getByRole("button", { name: "Clear household and rematch", exact: true })).toBeDisabled();
 
-  await page.getByRole("button", { name: "Interactive search" }).click();
-  const dialog = page.getByRole("dialog", { name: "Layered song" });
-  await expect(dialog.locator(".score-components")).toContainText("title");
-  await expect(dialog.locator(".score-components")).toContainText("artist");
-  await expect(dialog.locator(".score-components")).toContainText("album");
-  await expect(dialog.locator(".score-components")).toContainText("duration");
-  await expect(dialog.locator(".score-components")).toContainText("versionTags");
-  await expect(dialog.locator(".candidate-reasons")).toContainText("title exact");
-  await expect(dialog.getByText("Save decision for")).toHaveCount(0);
-  await expect(dialog.getByRole("radio", { name: /^Household\b/ })).toHaveCount(0);
-  await dialog.getByRole("button", { name: "Cancel" }).click();
-
-  await page.getByRole("button", { name: "Accept", exact: true }).click();
+  await expect(dialog.locator(".evidence-chips")).toContainText("Title matches exactly");
+  await expect(dialog.locator(".evidence-chips")).toContainText("Artist matches exactly");
+  await expect(dialog.locator(".evidence-chips")).toContainText("Album matches exactly");
+  await expect(dialog.locator(".evidence-chips")).toContainText("Length within 1 second");
+  await expect(dialog.locator(".evidence-chips")).toContainText("Version matches exactly");
+  await dialog.locator(".evidence details summary").click();
+  await expect(dialog.locator(".evidence details")).toContainText("versionTags");
+  await expect(dialog.locator(".candidate-reasons")).toContainText("Title matches exactly");
+  await expect(dialog.locator(".split-trigger")).toContainText("For me");
+  await dialog.locator(".split-trigger").click();
+  await expect(page.getByRole("menuitemradio", { name: "For the household", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("menuitemradio", { name: "For me", exact: true })).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("menuitemradio", { name: "For me", exact: true }).click();
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
+  await dialog.getByRole("button", { name: "Use Jellyfin version", exact: true }).click();
   await expect.poll(() => resolution).not.toBeNull();
   expect(resolution).toMatchObject({
     authorityScope: "personal",
@@ -447,15 +474,17 @@ test("listener uses personal authority and cannot choose or edit household", asy
 });
 
 test("matching sends an actual local library filter as backendLibraryId", async ({ page }) => {
-  await mockMatching(page, { administrator: true });
+  await mockMatching(page, { administrator: true, match: {
+    localTrack: { id: "local-track", backendItemId: "local-track", backendLibraryId: "music-library", title: "Layered song", artist: "Example artist" },
+  } });
   await page.goto("#/library/mappings");
-  await page.getByLabel("Library scope").fill("music-library");
+  await page.getByLabel("Library scope", { exact: true }).click();
   const filtered = page.waitForRequest((request) => {
     const url = new URL(request.url());
     return url.pathname === "/api/admin/track-matches" &&
       url.searchParams.get("backendLibraryId") === "music-library";
   });
-  await page.getByRole("button", { name: "Apply" }).click();
+  await page.getByRole("option", { name: "music-library", exact: true }).click();
   const query = new URL((await filtered).url()).searchParams;
   expect(query.has("libraryScopeId")).toBe(false);
 });
@@ -470,11 +499,17 @@ test("administrator household save binds the household row while personal is eff
     },
   });
   await page.goto("#/library/mappings");
-  await page.getByRole("button", { name: "Interactive search" }).click();
+  await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
   const dialog = page.getByRole("dialog", { name: "Layered song" });
-  await dialog.getByRole("radio", { name: /^Household\b/ }).check();
-  await dialog.getByRole("button", { name: "Choose candidate" }).click();
+  await expect(dialog.locator(".split-trigger")).toContainText("For the household");
+  await dialog.locator(".split-trigger").click();
+  await expect(page.getByRole("menuitemradio", { name: "For the household", exact: true })).toHaveAttribute("aria-checked", "true");
+  await page.getByRole("menuitemradio", { name: "For the household", exact: true }).click();
+  await dialog.locator(".candidate-card .row-action").click();
+  expect(requestBody).toBeNull();
+  await dialog.getByRole("button", { name: "Use Jellyfin version", exact: true }).click();
 
+  await expect.poll(() => requestBody).not.toBeNull();
   expect(requestBody).toMatchObject({
     authorityScope: "household",
     expectedAuthority: { id: "household-row", revision: 11 },
@@ -493,8 +528,9 @@ test("authority clear and rematch send their displayed scope and revision", asyn
     },
   });
   await page.goto("#/library/mappings");
-
-  const household = page.locator(".manual-authority-row").filter({ hasText: "Household" });
+  await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
+  const panel = page.getByRole("dialog", { name: "Layered song", exact: true });
+  const household = panel.locator(".manual-authority-row").filter({ hasText: "Household" });
   await household.getByRole("button", { name: "Clear household and rematch", exact: true }).click();
   const rematchDialog = page.getByRole("alertdialog", { name: "Clear household and rematch?" });
   await expect(rematchDialog).toContainText("personal decision remains effective");
@@ -509,7 +545,9 @@ test("authority clear and rematch send their displayed scope and revision", asyn
     authorityScope: "household",
   });
 
-  const personal = page.locator(".manual-authority-row").filter({ hasText: "Personal" });
+  await expect(panel).not.toBeVisible();
+  await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
+  const personal = panel.locator(".manual-authority-row").filter({ hasText: "Personal" });
   await personal.getByRole("button", { name: "Clear personal", exact: true }).click();
   const clearDialog = page.getByRole("alertdialog", { name: "Clear personal decision?" });
   await expect(clearDialog).toContainText("household decision beneath it will become effective");

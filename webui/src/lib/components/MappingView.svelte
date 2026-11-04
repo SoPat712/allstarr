@@ -1,26 +1,14 @@
 <script lang="ts">
   import { toast } from "$lib/toasts";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
-  import { Skeleton } from "$lib/components/ui/skeleton";
-  import { Badge } from "$lib/components/ui/badge";
-  import { Button } from "$lib/components/ui/button";
+  import { Button, buttonVariants } from "$lib/components/ui/button";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
-  import {
-    ArrowRight,
-    Ban,
-    ChevronDown,
-    CircleQuestionMark,
-    Clock3,
-    Hand,
-    List,
-    MoreHorizontal,
-    ScanSearch,
-    Sparkles,
-  } from "@lucide/svelte";
+  import { MoreHorizontal } from "@lucide/svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import {
     home,
+    playlistLinks,
     matchReview,
     type ManualMatchAuthority,
     type MatchAuthorityScope,
@@ -37,15 +25,23 @@
     expectedAuthorityForScope,
     manualMatchAuthority,
   } from "$lib/matching-api";
-  import MatchDialog from "$lib/components/MatchDialog.svelte";
+  import MatchesPanel from "$lib/components/MatchesPanel.svelte";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
+  import StatePill from "$lib/components/patterns/StatePill.svelte";
+  import ItemRow from "$lib/components/patterns/ItemRow.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import EmptyState from "$lib/components/patterns/EmptyState.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import { Dialog } from "$lib/components/ui/dialog";
+  import { ChevronRight, X } from "@lucide/svelte";
+  import { currentSong, defaultMatchFilter, differenceChips, filterCounts, filterStates, keyboardCommand, matchesSearch, summarizeMatches, inFilter, sortMatches, type MatchFilter } from "$lib/matches-presentation";
+  import { installMatchSearchShortcut, takeMatchSearchRequest } from "$lib/matches-search";
   import { reportHref } from "$lib/support";
   import BulkRematchDialog from "$lib/components/BulkRematchDialog.svelte";
-  import ArtworkSimilarity from "$lib/shelved/ArtworkSimilarity.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
-  import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
-  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import {
     candidateResolution,
@@ -54,13 +50,8 @@
     isReviewableMatch,
     playableProviderIds,
     percent,
-    reviewStateLabel,
-    reviewProviderIdentities,
-    scoreComponents,
   } from "$lib/mappings";
-  import { formatDuration } from "$lib/playlists";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
-  import { relativeTime } from "$lib/activity";
   import { findProviderDefinition, providerDisplayName } from "$lib/sources";
 
   type DestructiveAction =
@@ -70,36 +61,31 @@
         match: MatchReviewItem;
         authority: ManualMatchAuthority;
       };
-  type MappingView =
-    | "all"
-    | "manual"
-    | "rejected"
-    | "automatic"
-    | "tentative"
-    | "review"
-    | "unresolved";
-
-  const viewFilters: Record<MappingView, string> = {
-    all: "",
-    manual: "manual_matches",
-    rejected: "manual_rejections",
-    automatic: "automatic",
-    tentative: "suggested",
-    review: "ambiguous",
-    unresolved: "unresolved",
-  };
-
+  type MappingView = MatchFilter;
+  const storageKey = "matches.filter";
   let { initialSearch = "", initialReview = "" }: { initialSearch?: string; initialReview?: string } = $props();
 
   let data = $state<MatchReviewResponse | null>(null);
   let providers = $state<ProviderDefinition[]>([]);
   let backend = $state("Local library");
-  let stateFilter = $state(viewFilters.review);
-  let view = $state<MappingView>("review");
+  let stateFilter = $state("");
+  let view = $state<MappingView>("all");
+  let filterReady = false;
+  let bulkMode = $state(false);
+  let phoneLayout = $state(false);
+  let activeId = $state("");
+  let acceptRequest = $state(0);
+  let lyricsRequest = $state(0);
+  let shortcutsOpen = $state(false);
+  let playlistCount = $state<number | null>(null);
+  let playlistNames = $state<Record<string, string[]>>({});
+  let playlistSortReady = $state(false);
+  let libraryOptions = $state<{ value: string; label: string }[]>([]);
+  let allFiltered: MatchReviewItem[] | null = null;
   let searchInput = $state("");
   let search = $state("");
   let backendLibraryId = $state("");
-  let sort = $state("");
+  let sort = $state("confidence_asc");
   let page = $state(1);
   let loading = $state(true);
   let refreshing = $state(false);
@@ -131,7 +117,41 @@
     return providerDisplayName(providers, providerId);
   }
 
-  const query = (requested = page) => ({ page: requested, pageSize: 50, search, state: stateFilter, sort, backendLibraryId });
+  const query = (requested = page) => ({ page: requested, pageSize: 50, search, state: stateFilter, sort: sort.startsWith("confidence") ? sort : "confidence_asc", backendLibraryId });
+  const counts = $derived(data ? filterCounts(data.stats) : { needs: 0, automatic: 0, manual: 0, rejected: 0, all: 0 });
+  let threshold = $state<number | null>(null);
+  const collections = new Map<string, { response: MatchReviewResponse; rows: MatchReviewItem[] }>();
+  const playlistSearch = () => Boolean(search && Object.values(playlistNames).some(names => names.some(name => name.toLocaleLowerCase().includes(search.toLocaleLowerCase()))));
+  const useCollection = () => view === "needs" || !sort.startsWith("confidence") || playlistSearch();
+  async function collection() {
+    const params = query();
+    const ordering = sort;
+    const term = search;
+    const searchingPlaylists = playlistSearch();
+    const selectedFilter = view;
+    const states = searchingPlaylists ? [""] : [...filterStates[view]];
+    if (searchingPlaylists) params.search = "";
+    const key = JSON.stringify({ view, search, backendLibraryId, ordering });
+    const cached = collections.get(key);
+    if (cached) return cached;
+    const responses: MatchReviewResponse[] = [];
+    const rows: MatchReviewItem[] = [];
+    for (const state of states) {
+      let requested = 1, pages = 1;
+      do {
+        const response = await matchReview.list({ ...params, page: requested, state, pageSize: 200 });
+        responses.push(response); rows.push(...response.matches); pages = response.pagination.totalPages;
+        requested++;
+      } while (requested <= pages);
+    }
+    const unique = [...new Map(rows.map(item => [item.externalSnapshotId, item])).values()];
+    const matching = searchingPlaylists ? unique.filter(item => matchesSearch(item, term, playlistNames[item.externalSnapshotId])) : unique;
+    const response = searchingPlaylists ? { ...responses[0], stats: summarizeMatches(matching) } : responses[0];
+    const result = { response, rows: sortMatches(searchingPlaylists ? matching.filter(item => inFilter(item, selectedFilter)) : matching, ordering, playlistNames) };
+    collections.set(key, result);
+    if (collections.size > 4) collections.delete(collections.keys().next().value!);
+    return result;
+  }
   const cacheKey = (requested = page) => JSON.stringify(query(requested));
 
   function remember(key: string, response: MatchReviewResponse) {
@@ -141,22 +161,41 @@
   }
 
   async function prefetch(requested: number) {
-    const key = cacheKey(requested);
+    if (useCollection()) return;
+    const key = `${view}:${sort}:${cacheKey(requested)}`;
     if (requested < 1 || !data || requested > data.pagination.totalPages || pageCache.has(key)) return;
     try { remember(key, await matchReview.list(query(requested))); } catch { /* the page loads normally when opened */ }
   }
 
   async function load() {
     const version = ++loadVersion;
-    const key = cacheKey();
+    const key = `${view}:${sort}:${cacheKey()}`;
     const cached = pageCache.get(key);
     if (cached) { data = cached; loading = false; }
     refreshing = !cached;
     error = "";
     try {
-      const response = await matchReview.list(query());
+      let response: MatchReviewResponse;
+      if (useCollection()) {
+        const loaded = await collection();
+        if (version !== loadVersion) return;
+        allFiltered = loaded.rows;
+        response = { ...loaded.response, matches: loaded.rows.slice((page - 1) * 50, page * 50), pagination: { page, pageSize: 50, total: loaded.rows.length, totalPages: Math.max(1, Math.ceil(loaded.rows.length / 50)) } };
+      } else { allFiltered = null; response = await matchReview.list(query()); }
+      if (version !== loadVersion) return;
+      threshold = response.matches.find(item => item.threshold != null)?.threshold ?? threshold;
+      const libraries = new Set([...libraryOptions.map(item => item.value), ...response.matches.map(item => item.localTrack?.backendLibraryId).filter((id): id is string => Boolean(id))]);
+      libraryOptions = [...libraries].map(value => ({ value, label: value }));
+      if (!filterReady) {
+        filterReady = true;
+        let saved = "";
+        try { saved = localStorage.getItem(storageKey) || ""; } catch { /* Browser storage is optional. */ }
+        const initial: MappingView = defaultMatchFilter(response.stats, saved, initialSearch);
+        if (initial !== view) { view = initial; stateFilter = filterStates[view][0]; await load(); return; }
+      }
       if (version !== loadVersion) return;
       data = response;
+      if (!activeId && response.matches.length) activeId = response.matches[0].externalSnapshotId;
       remember(key, response);
       for (const match of response.matches) {
         if (!chosen.has(match.externalSnapshotId)) continue;
@@ -180,6 +219,25 @@
       const schema = await home.schema();
       providers = schema.providers;
       backend = schema.activeBackend || backend;
+      const links = await playlistLinks.list();
+      playlistCount = links.playlistLinks?.length ?? null;
+      const names: Record<string, string[]> = {};
+      let failed = false;
+      for (const link of links.playlistLinks ?? []) {
+        try {
+          const details = await playlistLinks.details(link.id);
+          for (const track of details.tracks ?? []) {
+            if (!track.externalSnapshotId) continue;
+            const previous = names[track.externalSnapshotId] ?? [];
+            if (!previous.includes(link.name)) names[track.externalSnapshotId] = [...previous, link.name];
+          }
+        } catch { failed = true; }
+      }
+      playlistNames = names;
+      playlistSortReady = !failed;
+      if (failed) degraded = "Some playlist names could not load.";
+      else degraded = "";
+      if (sort === "playlist" || playlistSearch()) { collections.clear(); await load(); }
     } catch (cause) {
       degraded =
         cause instanceof Error ? cause.message : "Provider presentation is unavailable.";
@@ -202,6 +260,7 @@
   // Decisions change other pages too, so cached pages are dropped before reloading.
   function reload() {
     pageCache.clear();
+    collections.clear();
     return load();
   }
 
@@ -223,23 +282,24 @@
   }
 
   function setView(value: string) {
-    if (!(value in viewFilters)) return;
+    if (!Object.hasOwn(filterStates, value)) return;
     view = value as MappingView;
-    setState(viewFilters[view]);
+    allFiltered = null;
+    setState(filterStates[view][0]);
   }
 
   function removeResolvedFromQueue(match: MatchReviewItem) {
-    if (!data || !["tentative", "review", "unresolved"].includes(view)) return;
+    if (!data || view !== "needs") return;
     const wasVisible = data.matches.some((item) => item.externalSnapshotId === match.externalSnapshotId);
     data = {
       ...data,
       matches: data.matches.filter((item) => item.externalSnapshotId !== match.externalSnapshotId),
       stats: {
         ...data.stats,
-        suggested: Math.max(0, data.stats.suggested - (wasVisible && view === "tentative" ? 1 : 0)),
-        ambiguous: Math.max(0, (data.stats.ambiguous ?? 0) - (wasVisible && view === "review" ? 1 : 0)),
-        attention: Math.max(0, data.stats.attention - (wasVisible && ["tentative", "review"].includes(view) ? 1 : 0)),
-        unresolved: Math.max(0, data.stats.unresolved - (wasVisible && view === "unresolved" ? 1 : 0)),
+        suggested: Math.max(0, data.stats.suggested - (wasVisible && match.state === "suggested" ? 1 : 0)),
+        ambiguous: Math.max(0, (data.stats.ambiguous ?? 0) - (wasVisible && match.state === "ambiguous" ? 1 : 0)),
+        attention: Math.max(0, data.stats.attention - (wasVisible && ["suggested", "ambiguous"].includes(match.state) ? 1 : 0)),
+        unresolved: Math.max(0, data.stats.unresolved - (wasVisible && match.state === "unresolved" ? 1 : 0)),
       },
       pagination: {
         ...data.pagination,
@@ -265,6 +325,7 @@
 
   function openMatch(match: MatchReviewItem) {
     selected = match;
+    activeId = match.externalSnapshotId;
     dialogOpen = true;
   }
 
@@ -273,6 +334,8 @@
     toast.success(message);
     await reload();
     if (resolved) removeResolvedFromQueue(resolved);
+    await tick();
+    focusMatch(activeId);
   }
 
   async function rematchAllQueued(_jobId: string, message: string) {
@@ -283,37 +346,17 @@
   async function rematch(match: MatchReviewItem) {
     if (action) return;
     action = `rematch:${match.externalSnapshotId}`;
+    const pending = toast.progress(`Rematching ${match.title || "song"}…`);
     try {
       await matchReview.rematch(match.externalSnapshotId);
       toast.success(`${match.title || "Track"} rematched.`);
       await reload();
+      if (dialogOpen && selected?.externalSnapshotId === match.externalSnapshotId)
+        selected = data?.matches.find(item => item.externalSnapshotId === match.externalSnapshotId) ?? await matchReview.get(match.externalSnapshotId);
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "Rematch failed.");
     } finally {
-      action = "";
-    }
-  }
-
-  async function accept(match: MatchReviewItem) {
-    const candidate = match.candidates.find((item) =>
-      candidateResolution(item, match.providerId, playbackProviders));
-    const resolution = candidateResolution(candidate, match.providerId, playbackProviders);
-    if (action || !canEditAuthorityScope(match, "personal")) return;
-    if (!resolution) return openMatch(match);
-    action = `accept:${match.externalSnapshotId}`;
-    try {
-      await matchReview.resolve(match.externalSnapshotId, {
-        ...resolution,
-        reason: "Accepted highest-confidence automatic candidate",
-        authorityScope: "personal",
-        expectedAuthority: expectedAuthorityForScope(match, "personal"),
-      });
-      toast.success("Highest-confidence candidate accepted.");
-      await reload();
-      removeResolvedFromQueue(match);
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "The candidate could not be accepted.");
-    } finally {
+      toast.dismiss(pending);
       action = "";
     }
   }
@@ -365,6 +408,8 @@
       dialogOpen = false;
       await reload();
       if (destructive.kind === "reject") removeResolvedFromQueue(destructive.match);
+      await tick();
+      focusMatch(activeId);
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "The action failed.");
     } finally {
@@ -504,13 +549,19 @@
       label: `Clear ${authorityScopeOf(destructive.authority)}`,
     };
     return {
-      title: "Reject this candidate?",
+      title: "Nothing fits?",
       description: "The current candidate will be recorded as rejected. You can rematch it later.",
-      label: "Reject candidate",
+      label: "Reject match",
     };
   }
 
   onMount(() => {
+    const breakpoint = matchMedia("(max-width: 899px)");
+    const syncLayout = () => phoneLayout = breakpoint.matches;
+    syncLayout();
+    breakpoint.addEventListener("change", syncLayout);
+    window.addEventListener("matches-search", focusRequestedSearch);
+    const removeSearchShortcut = installMatchSearchShortcut();
     searchInput = initialSearch;
     search = initialSearch;
     if (initialSearch) {
@@ -524,375 +575,254 @@
     })();
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
+      breakpoint.removeEventListener("change", syncLayout);
+      window.removeEventListener("matches-search", focusRequestedSearch);
+      removeSearchShortcut();
       unsubscribe();
       refreshScheduler.cancel();
     };
   });
+
+  function focusRequestedSearch() {
+    const input = document.querySelector<HTMLInputElement>(".matches-search input");
+    if (input && takeMatchSearchRequest()) input.focus();
+  }
+  $effect(() => { if (!loading && data && !dialogOpen) focusRequestedSearch(); });
+
+  function focusMatch(id: string) {
+    const match = visibleMatches.find(item => item.externalSnapshotId === id) ?? visibleMatches[0];
+    if (!match) { document.querySelector<HTMLInputElement>(".matches-search input")?.focus(); return; }
+    activeId = match.externalSnapshotId;
+    const selector = `[data-snapshot="${CSS.escape(activeId)}"] .open-match, [data-snapshot="${CSS.escape(activeId)}"] .row-action`;
+    [...document.querySelectorAll<HTMLButtonElement>(selector)].find(element => element.getClientRects().length > 0)?.focus();
+  }
+  function moveSelected(delta: number) {
+    const index = visibleMatches.findIndex(item => item.externalSnapshotId === activeId);
+    const next = visibleMatches[Math.min(visibleMatches.length - 1, Math.max(0, (index < 0 ? (delta > 0 ? -1 : 1) : index) + delta))];
+    if (!next) return;
+    activeId = next.externalSnapshotId;
+    if (dialogOpen) selected = next;
+    else focusMatch(activeId);
+  }
+  function keys(event: KeyboardEvent) {
+    if (destructiveOpen || bulkConfirmOpen || shortcutsOpen || event.target instanceof HTMLElement && event.target.closest('[role="alertdialog"]')) return;
+    const command = keyboardCommand(event as unknown as Parameters<typeof keyboardCommand>[0]);
+    if (!command || command === "search") return;
+    const match = visibleMatches.find(item => item.externalSnapshotId === activeId) || visibleMatches[0];
+    if (dialogOpen && ["previous", "next", "open", "close"].includes(command)) return;
+    if (!dialogOpen && event.target instanceof HTMLElement && event.target.closest("button, a") && command === "open") return;
+    event.preventDefault();
+    if (command === "previous") moveSelected(-1);
+    if (command === "next") moveSelected(1);
+    if (command === "open" && match) openMatch(match);
+    if (command === "accept" && match) { if (!dialogOpen) openMatch(match); acceptRequest++; }
+    if (command === "rematch" && match) void rematch(selected && dialogOpen ? selected : match);
+    if (command === "help") shortcutsOpen = true;
+  }
+  function rowSong(match: MatchReviewItem) {
+    const target = currentSong(match);
+    if (target) return target;
+    const candidate = match.candidates.find(item => candidateResolution(item, match.providerId, playbackProviders));
+    const resolution = candidateResolution(candidate, match.providerId, playbackProviders);
+    return candidate && resolution ? { ...candidate, isrc: candidate.candidateIsrc, providerId: resolution.targetType === "provider" ? resolution.externalProvider : "local", identity: resolution.targetType === "provider" ? resolution.externalId : resolution.libraryTrackId } : null;
+  }
+  function pill(match: MatchReviewItem): { text: string; tone: "ok" | "warn" | "stop" | "neutral" } {
+    if (match.state === "rejected") return { text: "Rejected", tone: "stop" };
+    if (match.manualAuthorities?.some(item => item.effective && item.kind !== "rejection") || match.state === "pinned") return { text: "By you", tone: "neutral" };
+    if (match.confidence == null) return { text: "No match", tone: "stop" };
+    return { text: percent(match.confidence), tone: match.threshold != null && match.confidence >= match.threshold ? "ok" : "warn" };
+  }
+  async function selectAll() {
+    if (!data || action) return;
+    action = "select";
+    try {
+      const loaded = allFiltered ?? (await collection()).rows;
+      chosen = new Map(loaded.filter(isReviewableMatch).map(item => [item.externalSnapshotId, item]));
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "Songs could not be selected."); }
+    finally { action = ""; }
+  }
 </script>
 
+<svelte:window onkeydown={keys} />
+
+{#snippet rowMenu(match: MatchReviewItem)}
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger class={`${buttonVariants({ variant: "ghost", size: "icon" })} row-menu`} disabled={Boolean(action)} aria-label={`More actions for ${match.title || "song"}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
+    <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" sideOffset={4} align="end">
+      <DropdownMenu.Item class="bits-menu-item" onSelect={() => { openMatch(match); lyricsRequest++; }} disabled={!match.canonicalRecordingId}>Wrong lyrics?</DropdownMenu.Item>
+      <DropdownMenu.Item class="bits-menu-item" onSelect={() => window.location.hash = reportHref({ externalSnapshotId: match.externalSnapshotId }, "/library/matches")}>Report a problem</DropdownMenu.Item>
+      <DropdownMenu.Item class="bits-menu-item" onSelect={() => void rematch(match)}>Rematch</DropdownMenu.Item>
+      <DropdownMenu.Item class="bits-menu-item danger-item" disabled={!canEditAuthorityScope(match, "personal")} onSelect={() => confirm("reject", match)}>Nothing fits</DropdownMenu.Item>
+      {#each match.manualAuthorities ?? [] as authority (authority.id)}
+        <DropdownMenu.Item class="bits-menu-item" disabled={!canEditAuthority(authority)} onSelect={() => confirmAuthority("manual_rematch", match, authority)}>Clear {authorityScopeOf(authority)} and rematch</DropdownMenu.Item>
+        <DropdownMenu.Item class="bits-menu-item danger-item" disabled={!canEditAuthority(authority)} onSelect={() => confirmAuthority("manual_delete", match, authority)}>Clear {authorityScopeOf(authority)}</DropdownMenu.Item>
+      {/each}
+    </DropdownMenu.Content></DropdownMenu.Portal>
+  </DropdownMenu.Root>
+{/snippet}
+
 {#if loading}
-  <section class="mapping-page" aria-label="Loading match review" aria-busy="true">
-    <Skeleton class="panel skeleton-panel" />
-  </section>
+  <section class="mapping-page" aria-label="Loading match review"><RowsSkeleton count={8} /></section>
 {:else if error && !data}
-  <RouteError
-    eyebrow="Match review unavailable"
-    title="Allstarr could not load canonical match decisions."
-    message={error}
-    onRetry={load}
-  />
+  <ErrorState title="Matches could not load" detail={error} onretry={load} />
 {:else if data}
-  {#if degraded || error}
-    <div class="degraded-banner" role="status">
-      <span aria-hidden="true">!</span>
-      <p><strong>Some mapping data is unavailable.</strong> {error || degraded}</p>
-      <Button variant="secondary" size="sm" onclick={() => { void loadProviders(); void load(); }}>Retry</Button>
-    </div>
-  {/if}
-
-  <section class="mapping-page" aria-busy={refreshing}>
+  <section class="mapping-page" class:panel-open={dialogOpen} aria-busy={refreshing}>
     <article class="panel mapping-queue">
-      <header class="panel-heading playlist-toolbar mapping-heading">
-        <div>
-          <h2>Match review</h2>
-          <p>Check how songs from your playlists were matched to your library and other sources.</p>
-        </div>
-        <div class="panel-heading-actions playlist-toolbar-actions mapping-heading-actions">
-          <Button variant="secondary" disabled={Boolean(action) || refreshing} onclick={() => rematchAllOpen = true}>Rematch all</Button>
-          <RefreshButton variant="secondary" disabled={Boolean(action)} onrefresh={reload} />
-        </div>
-      </header>
-
-      <SegmentedNav
-        items={[
-          {
-            id: "review",
-            label: "Needs review",
-            count: data.stats.ambiguous ?? Math.max(0, data.stats.review - data.stats.suggested),
-            icon: ScanSearch,
-          },
-          { id: "tentative", label: "Unsure", count: data.stats.suggested, icon: Clock3 },
-          { id: "unresolved", label: "No match", count: data.stats.unresolved, icon: CircleQuestionMark },
-          {
-            id: "automatic",
-            label: "Automatic",
-            count: data.stats.automatic ?? Math.max(0, data.stats.accepted - (data.stats.manualMatches ?? 0)),
-            icon: Sparkles,
-          },
-          { id: "manual", label: "By hand", count: data.stats.manualMatches ?? 0, icon: Hand },
-          { id: "rejected", label: "Rejected", count: data.stats.manualRejections ?? 0, icon: Ban },
-          { id: "all", label: "All", count: data.stats.total, icon: List },
-        ]}
-        active={view}
-        label="Mapping views"
-        class="mapping-view-tabs"
-        onchange={setView}
-      />
-
-      <form class="mapping-filters" onsubmit={(event) => { event.preventDefault(); submitFilters(); }}>
-        <SearchField bind:value={searchInput} label="Search" placeholder="Search by song, artist, album or source" hiddenLabel />
-        <label class="mapping-scope">
-          <span class="sr-only">Library scope</span>
-          <input bind:value={backendLibraryId} placeholder="All libraries" aria-label="Library scope" />
-        </label>
-        <SelectField bind:value={sort} label="Confidence" class="mapping-sort" onchange={() => { page = 1; void load(); }} options={[
-          { value: "", label: "Default order" }, { value: "confidence_desc", label: "Most confident first" },
-          { value: "confidence_asc", label: "Least confident first" },
+      <header class="mapping-heading">
+        <h2>Matches</h2>
+        <PageStatus items={[
+          { label: `${data.stats.total.toLocaleString()} songs${playlistCount == null ? "" : ` from ${playlistCount.toLocaleString()} playlists`}`, emphasis: true },
+          ...(threshold == null ? [] : [{ label: `Matches above ${percent(threshold)} are accepted on their own` }]),
+        ]} segments={[
+          { label: "Matched by Allstarr", value: counts.automatic, tone: "info" },
+          { label: "Chosen by you", value: counts.manual, tone: "neutral" },
+          { label: "Unsure", value: data.stats.review, tone: "warn" },
+          { label: "Without a match", value: data.stats.unresolved, tone: "stop" },
         ]} />
-        <Button type="submit" variant="secondary">Apply</Button>
-      </form>
-
-
-
-      {#if visibleMatches.length}
-        <div class="mapping-select-bar">
-          <label class="mapping-check">
-            <input type="checkbox" checked={pageChosen > 0 && pageChosen === pageIds.length}
-              indeterminate={pageChosen > 0 && pageChosen < pageIds.length} onchange={togglePage}
-              aria-label="Select all songs on this page" />
-          </label>
-          <span>{chosen.size ? `${chosen.size} selected` : "Select songs to change several at once"}</span>
-          {#if chosen.size}<button type="button" class="text-button" onclick={() => chosen = new Map()}>Clear selection</button>{/if}
+      </header>
+      {#if degraded || error}<div class="degraded-banner" role="status"><p>{error || degraded}</p><Button variant="text" onclick={() => { void loadProviders(); void load(); }}>Try again</Button></div>{/if}
+      <div class="matches-controls">
+        <FilterSegments options={[
+          { id: "needs", label: "Needs a look", count: counts.needs },
+          { id: "automatic", label: "Matched by Allstarr", count: counts.automatic },
+          { id: "manual", label: "Chosen by you", count: counts.manual },
+          { id: "rejected", label: "Rejected", count: counts.rejected },
+          { id: "all", label: "All", count: counts.all },
+        ]} value={view} {storageKey} onchange={setView} label="Match filters" />
+        <div class="matches-toolbar">
+          <SearchField class="matches-search" bind:value={searchInput} label="Search" placeholder="Search song, artist, album or playlist" hiddenLabel />
+          <SelectField value={backendLibraryId} label="Library scope" options={[{ value: "", label: "All libraries" }, ...libraryOptions]} onchange={(value) => { backendLibraryId = value; page = 1; void load(); }} />
+          <SelectField bind:value={sort} label="Sort matches" options={[
+            { value: "confidence_asc", label: "Least sure first" }, { value: "confidence_desc", label: "Most sure first" },
+            { value: "newest", label: "Newest" }, { value: "title", label: "Title" }, { value: "playlist", label: "Playlist", disabled: !playlistSortReady },
+          ]} onchange={() => { page = 1; void load(); }} />
+          <Button variant="text" size="sm" aria-pressed={bulkMode} onclick={() => { bulkMode = !bulkMode; if (!bulkMode) chosen = new Map(); }}>{bulkMode ? "Done selecting" : "Select"}</Button>
+          <Button variant="outline" size="sm" disabled={Boolean(action) || refreshing} onclick={() => rematchAllOpen = true}>Rematch all</Button>
+          <RefreshButton variant="ghost" size="icon" class="matches-refresh" disabled={Boolean(action)} onrefresh={reload} />
         </div>
-      {/if}
-
-      <div class="mapping-rows" bind:this={rowsElement}>
-        {#each visibleMatches as match (match.externalSnapshotId)}
-          {@const target = currentTarget(match)}
-          {@const candidate = match.candidates.find((item) =>
-            candidateResolution(item, match.providerId, playbackProviders))}
-          {@const resolution = candidateResolution(candidate, match.providerId, playbackProviders)}
-          {@const candidateProviderId = resolution?.targetType === "provider" ? resolution.externalProvider : "local"}
-          {@const candidateExternalId = resolution?.targetType === "provider" ? resolution.externalId : null}
-          {@const candidateArtwork = candidateExternalId
-            ? `/api/admin/downloads/artwork/${encodeURIComponent(`ext-${candidateProviderId}-song-${candidateExternalId}`)}`
-            : candidate?.backendItemId
-              ? `/api/admin/downloads/artwork/${encodeURIComponent(candidate.backendItemId)}`
-              : ""}
-          {@const visibleAuthorities = [...(match.manualAuthorities ?? [])].sort((left, right) =>
-            authorityScopeOf(left) === authorityScopeOf(right)
-              ? 0
-              : authorityScopeOf(left) === "personal" ? -1 : 1)}
-          <article class:needs-attention={isAttention(match.state)} class:chosen={chosen.has(match.externalSnapshotId)} class="mapping-row">
-            <label class="mapping-check mapping-row-check">
-              <input type="checkbox" checked={chosen.has(match.externalSnapshotId)} onchange={() => toggleChosen(match)}
-                aria-label={`Select ${match.title || "song"}`} />
-            </label>
-            <div class="mapping-comparison">
-              <div class="mapping-party">
-                <MediaArtwork
-                  class="mapping-art"
-                  url={match.sourceArtworkUrl || match.artworkUrl}
-                />
-                <span class="mapping-party-copy">
-                  <span class="mapping-provider">
-                    <ProviderMark id={match.providerId} definition={provider(match.providerId)} />
-                    From {providerName(match.providerId)}
-                  </span>
-                  <strong>{match.title || "Unknown song"}</strong>
-                  <small>{match.artist || "Unknown artist"}{match.album ? ` · ${match.album}` : ""}</small>
-                  <small>{formatDuration(match.durationMilliseconds)}</small>
-                </span>
-              </div>
-
-              <ArrowRight class="mapping-arrow" size={20} aria-hidden="true" />
-
-              <div class:unresolved={!target && !candidate} class="mapping-party">
-                {#if target || candidate}
-                  <MediaArtwork
-                    class="mapping-art"
-                    url={target?.artworkUrl || match.candidateArtworkUrl || candidateArtwork}
-                  />
-                {:else}
-                  <span class="mapping-route-missing" aria-hidden="true">?</span>
-                {/if}
-                <span class="mapping-party-copy">
-                  <span class="mapping-provider">
-                    {#if target || candidate}
-                      <ProviderMark
-                        id={(target?.providerId ?? candidateProviderId) === "local" ? backend.toLowerCase() : (target?.providerId ?? candidateProviderId)}
-                        definition={provider(target?.providerId ?? candidateProviderId)}
-                        label={providerName(target?.providerId ?? candidateProviderId)}
-                      />
-                    {/if}
-                    {target
-                      ? `Plays from ${providerName(target.providerId)}`
-                      : candidate
-                        ? `Best guess · ${providerName(candidateProviderId)}`
-                        : "No match yet"}
-                  </span>
-                  <strong>{target?.title || candidate?.title || "Nothing found"}</strong>
-                  <small>{target?.artist || candidate?.artist || "Rematch, or search for the right song yourself."}{(target?.album || candidate?.album) ? ` · ${target?.album || candidate?.album}` : ""}</small>
-                  {#if target || candidate}<small>{formatDuration(target?.durationMilliseconds ?? candidate?.durationMilliseconds)}</small>{/if}
-                </span>
-              </div>
-            </div>
-
-            <div class="mapping-row-footer">
-              <div class="mapping-evidence">
-                <Badge state={match.state}>{reviewStateLabel(match.state)}</Badge>
-                {#if candidate || target}
-                  <span class="mapping-confidence" aria-hidden="true"><span style={`width: ${Math.round((match.confidence ?? 0) * 100)}%`}></span>{#if match.threshold != null}<i style={`left: ${Math.round(match.threshold * 100)}%`}></i>{/if}</span>
-                {/if}
-                <span class="mapping-evidence-summary">
-                  {candidate || target ? `${percent(match.confidence)} confidence` : "Not scored"}
-                  {#if match.threshold != null} · {percent(match.threshold)} auto threshold{/if}
-                  · {relativeTime(match.decidedAt, "Not decided")}
-                  {#if match.reasons.length || match.warnings.length}
-                    · {[...match.reasons, ...match.warnings].slice(0, 2).map((reason) => reason.replaceAll("_", " ")).join(" · ")}
-                  {/if}
-                </span>
-                {#if match.sourceArtworkUrl && match.candidateArtworkUrl}
-                  <ArtworkSimilarity source={match.sourceArtworkUrl} candidate={match.candidateArtworkUrl} />
-                {/if}
-              </div>
-
-              <div class="mapping-row-actions">
-                {#if !target && resolution}
-                  <span class="mapping-action-confidence sr-only">
-                    <strong>{percent(candidate?.confidence ?? match.confidence)}</strong>
-                    <small>Confidence</small>
-                  </span>
-                  <Button disabled={Boolean(action) || !canEditAuthorityScope(match, "personal")} onclick={() => void accept(match)}>{action === `accept:${match.externalSnapshotId}` ? "Accepting…" : "Accept"}</Button>
-                {/if}
-                <Button class="mapping-search-action" variant={!target && resolution ? "secondary" : "default"} onclick={() => openMatch(match)}>
-                  {target ? "Review match" : "Interactive search"}
-                </Button>
-                {#if !target}
-                  <Button class="mapping-rematch-action" variant="secondary" disabled={Boolean(action)} onclick={() => void rematch(match)}>{action === `rematch:${match.externalSnapshotId}` ? "Rematching…" : "Rematch"}</Button>
-                {/if}
-                <DropdownMenu.Root>
-                  <DropdownMenu.Trigger class="track-menu-trigger" disabled={Boolean(action)} aria-label={`More actions for ${match.title || "track"}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
-                  <DropdownMenu.Portal>
-                    <DropdownMenu.Content class="bits-menu" sideOffset={4} align="end">
-                      <DropdownMenu.Item class="bits-menu-item" onSelect={() => window.location.hash = reportHref({ externalSnapshotId: match.externalSnapshotId }, "/library/matches")}>Report a problem</DropdownMenu.Item>
-                      <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void rematch(match)}>Rematch</DropdownMenu.Item>
-                      <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action) || !canEditAuthorityScope(match, "personal")} onSelect={() => confirm("reject", match)}>Reject candidate</DropdownMenu.Item>
-                      {#each match.manualAuthorities ?? [] as authority (authority.id)}
-                        <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !canEditAuthority(authority)} onSelect={() => confirmAuthority("manual_rematch", match, authority)}>
-                          Clear {authorityScopeOf(authority)} and rematch
-                        </DropdownMenu.Item>
-                        <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action) || !canEditAuthority(authority)} onSelect={() => confirmAuthority("manual_delete", match, authority)}>
-                          Clear {authorityScopeOf(authority)}
-                        </DropdownMenu.Item>
-                      {/each}
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Portal>
-                </DropdownMenu.Root>
-              </div>
-            </div>
-
-            {#if visibleAuthorities.length}
-              <div class="manual-authority-list" aria-label={`Manual decisions for ${match.title || "track"}`}>
-                {#each visibleAuthorities as authority (authority.id)}
-                  <div class="manual-authority-row">
-                    <Hand size={16} aria-hidden="true" />
-                    <span>
-                      <strong>{authorityLabel(authority)}</strong>
-                      <small>
-                        {authority.reason}
-                        · {authorityState(match, authority)}
-                      </small>
-                    </span>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={Boolean(action) || !canEditAuthority(authority)}
-                      onclick={() => confirmAuthority("manual_rematch", match, authority)}
-                    >Clear {authorityScopeOf(authority)} and rematch</Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      disabled={Boolean(action) || !canEditAuthority(authority)}
-                      onclick={() => confirmAuthority("manual_delete", match, authority)}
-                    >Clear {authorityScopeOf(authority)}</Button>
-                  </div>
-                {/each}
-              </div>
-            {/if}
-
-            <details class="mapping-details">
-              <summary>Why this score? <ChevronDown size={16} aria-hidden="true" /></summary>
-              <p>
-                Allstarr compares the title, artist, album, length, ISRC, artwork and
-                verified source IDs when they're available. Missing details are skipped, not
-                counted as zero. A match is accepted automatically at {percent(match.threshold)}
-                or higher, unless it's ambiguous or has warnings. Your local and extension
-                preferences only apply after that.
-              </p>
-              <dl>
-                {#if candidate}
-                  {#each scoreComponents(candidate) as [name, value]}
-                    <div><dt>{name.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ")}</dt><dd>{percent(value)}</dd></div>
-                  {/each}
-                {/if}
-                <div><dt>Source snapshot</dt><dd>{match.externalSnapshotId}</dd></div>
-                {#if target?.identity || candidate?.libraryTrackId || candidateExternalId}<div><dt>Matched item</dt><dd>{target?.identity || candidate?.libraryTrackId || candidateExternalId}</dd></div>{/if}
-                {#if match.canonicalRecordingId}<div><dt>Canonical recording</dt><dd>{match.canonicalRecordingId}</dd></div>{/if}
-                {#if match.libraryTrackId}<div><dt>Library track</dt><dd>{match.libraryTrackId}</dd></div>{/if}
-                {#if match.isrc}<div><dt>ISRC</dt><dd>{match.isrc}</dd></div>{/if}
-                {#if match.algorithmVersion}<div><dt>Algorithm</dt><dd>{match.algorithmVersion}</dd></div>{/if}
-                {#each reviewProviderIdentities(match) as identity}
-                  <div><dt>{providerName(identity.providerId)}</dt><dd>{identity.externalId} · {identity.verification}</dd></div>
-                {/each}
-              </dl>
-            </details>
-          </article>
-        {:else}
-          <div class="compact-empty">
-            <strong>Nothing here</strong>
-            <p>{view === "review" ? "No songs need your review right now." : "Try another filter, or wait for the next playlist match."}</p>
-          </div>
-        {/each}
       </div>
-
-      <nav class="playlist-pagination mapping-pagination" aria-label="Match review pages">
-        <span>{data.pagination.total} {data.pagination.total === 1 ? "song" : "songs"}</span>
-        <div>
-          <Button variant="secondary" size="sm" disabled={data.pagination.page <= 1} onclick={() => goToPage(page - 1)}>Previous</Button>
-          <span>Page {data.pagination.page} of {data.pagination.totalPages}</span>
-          <Button variant="secondary" size="sm" disabled={data.pagination.page >= data.pagination.totalPages} onclick={() => goToPage(page + 1)}>Next</Button>
-        </div>
-      </nav>
-
-      {#if chosen.size}
-        <div class="mapping-bulk" role="toolbar" aria-label="Actions for selected songs">
-          <strong>{chosen.size} selected</strong>
-          <div>
-            {#if bulkAccept.length}<Button disabled={Boolean(action)} onclick={() => void bulkAcceptBest()}>Accept best ({bulkAccept.length})</Button>{/if}
-            <Button variant="secondary" disabled={Boolean(action)} onclick={() => void bulkRematch()}>Rematch ({chosen.size})</Button>
-            {#if bulkShare.length}<Button variant="secondary" disabled={Boolean(action)} onclick={() => void bulkShareHousehold()}>Share with household ({bulkShare.length})</Button>{/if}
-            {#if bulkClear.length}<Button variant="secondary" disabled={Boolean(action)} onclick={() => { bulkConfirm = "clear"; bulkConfirmOpen = true; }}>Clear my decisions ({bulkClear.length})</Button>{/if}
-            {#if bulkReject.length}<Button variant="secondary" disabled={Boolean(action)} onclick={() => { bulkConfirm = "reject"; bulkConfirmOpen = true; }}>Reject ({bulkReject.length})</Button>{/if}
-            <Button variant="text" disabled={Boolean(action)} onclick={() => chosen = new Map()}>Cancel</Button>
-          </div>
-        </div>
-      {/if}
+      {#if counts.needs === 0}<div class="quiet-success"><EmptyState title="Nothing needs you right now" /></div>{/if}
+      {#if bulkMode && visibleMatches.length}<div class="mapping-select-bar">
+        <label class="select-target"><input type="checkbox" checked={pageChosen > 0 && pageChosen === pageIds.length} indeterminate={pageChosen > 0 && pageChosen < pageIds.length} onchange={togglePage} aria-label="Select all songs on this page" /> Select page</label>
+        <Button variant="text" disabled={Boolean(action) || refreshing} onclick={() => void selectAll()}>Select all {data.pagination.total} in this filter</Button>
+      </div>{/if}
+      <div class="mapping-rows" bind:this={rowsElement}>
+        {#if visibleMatches.length}
+          <table class="matches-table">{#if !phoneLayout}<thead><tr>{#if bulkMode}<th class="check-cell"><span class="sr-only">Select</span></th>{/if}<th>From your playlist</th><th>Plays as</th><th>Sure</th><th>What differs</th><th><span class="sr-only">Actions</span></th></tr></thead>{/if}
+            <tbody>{#each visibleMatches as match (match.externalSnapshotId)}
+              {@const target = rowSong(match)}{@const differences = differenceChips(match, target)}{@const state = pill(match)}
+              <tr class="mapping-row" data-snapshot={match.externalSnapshotId} aria-label={`Open match for ${match.title || "song"}`} onfocusin={() => activeId = match.externalSnapshotId} class:needs-review={isAttention(match.state)} class:chosen={chosen.has(match.externalSnapshotId) || activeId === match.externalSnapshotId}>
+                {#if phoneLayout}
+                  <td class="phone-cell" colspan={bulkMode ? 6 : 5}>
+                    <ItemRow title={match.title || "Song"} actionLabel={`Open match for ${match.title || "song"}`} subtitle={target ? `${providerName(target.providerId)} · ${differences[0] || "Same song"}` : "No match yet"} attention={isAttention(match.state)} selected={activeId === match.externalSnapshotId} selection={bulkMode} checked={chosen.has(match.externalSnapshotId)} oncheck={() => toggleChosen(match)} onclick={() => openMatch(match)}>
+                      {#snippet leading()}<MediaArtwork url={match.sourceArtworkUrl || match.artworkUrl} />{/snippet}
+                      {#snippet pill()}<StatePill tone={state.tone} text={state.text} />{/snippet}
+                      {#snippet menu()}{@render rowMenu(match)}{/snippet}
+                    </ItemRow>
+                  </td>
+                {:else}
+                  {#if bulkMode}<td class="desktop-cell check-cell"><label class="select-target"><input type="checkbox" checked={chosen.has(match.externalSnapshotId)} onchange={() => toggleChosen(match)} aria-label={`Select ${match.title || "song"}`} /></label></td>{/if}
+                  <td class="desktop-cell source-cell">
+                    <button type="button" class="open-match" aria-label={`Open match for ${match.title || "song"}`} onclick={() => openMatch(match)}></button>
+                    <div class="source-copy"><MediaArtwork url={match.sourceArtworkUrl || match.artworkUrl} /><div><strong>{match.title}</strong><small>{match.artist}{match.album ? ` · ${match.album}` : ""}</small>{#if playlistNames[match.externalSnapshotId]?.length}<small class="playlist-names">{playlistNames[match.externalSnapshotId].join(", ")}</small>{/if}</div></div>
+                  </td>
+                  <td class="desktop-cell"><div class="plays-as">{#if target}<span><ProviderMark id={target.providerId === "local" ? backend.toLowerCase() : target.providerId} definition={provider(target.providerId)} />{providerName(target.providerId)}</span>{#if target.title !== match.title}<small>{target.title || "Metadata unavailable"}</small>{/if}{:else}<span class="no-match">No match yet</span>{/if}</div></td>
+                  <td class="desktop-cell"><StatePill tone={state.tone} text={state.text} /></td>
+                  <td class="desktop-cell"><div class="difference-chips" title={differences.join(" · ") || undefined}>{#if target}{#each differences as difference}<span>{difference}</span>{:else}<span class="same-song">✓ Same song</span>{/each}{/if}</div></td>
+                  <td class="desktop-cell actions-cell"><div class="row-actions">{@render rowMenu(match)}<Button variant="ghost" size="icon" class="row-chevron" aria-label={`Show match for ${match.title || "song"}`} onclick={() => openMatch(match)}><ChevronRight size={16} aria-hidden="true" /></Button></div></td>
+                {/if}
+              </tr>
+            {/each}</tbody>
+          </table>
+        {:else}<EmptyState title="No songs in this filter" description="Try another filter or search." />{/if}
+      </div>
+      <nav class="playlist-pagination mapping-pagination" aria-label="Match review pages"><span>{data.pagination.total} {data.pagination.total === 1 ? "song" : "songs"}</span><div>
+        <Button variant="text" disabled={page <= 1} onclick={() => goToPage(page - 1)}>Previous</Button><span>Page {page} of {data.pagination.totalPages}</span><Button variant="text" disabled={page >= data.pagination.totalPages} onclick={() => goToPage(page + 1)}>Next</Button>
+      </div></nav>
+      {#if chosen.size}<div class="mapping-bulk" role="toolbar" aria-label="Actions for selected songs"><strong>{chosen.size} selected</strong><div>
+        <Button disabled={Boolean(action) || !bulkAccept.length} onclick={() => void bulkAcceptBest()}>Accept</Button>
+        <Button variant="outline" disabled={Boolean(action)} onclick={() => void bulkRematch()}>Rematch</Button>
+        <Button variant="text" disabled={Boolean(action) || !bulkReject.length} onclick={() => { bulkConfirm = "reject"; bulkConfirmOpen = true; }}>Reject</Button>
+        {#if bulkShare.length}<Button variant="text" disabled={Boolean(action)} onclick={() => void bulkShareHousehold()}>Share with household ({bulkShare.length})</Button>{/if}
+        {#if bulkClear.length}<Button variant="text" disabled={Boolean(action)} onclick={() => { bulkConfirm = "clear"; bulkConfirmOpen = true; }}>Clear my decisions ({bulkClear.length})</Button>{/if}
+        <Button variant="text" disabled={Boolean(action)} onclick={() => chosen = new Map()}>Clear selection</Button>
+      </div></div>{/if}
     </article>
   </section>
-
-  <MatchDialog
-    bind:open={dialogOpen}
-    match={selected}
-    {providers}
-    {backend}
-    onSaved={matchSaved}
-    onReject={(match, authorityScope) => confirm("reject", match, authorityScope)}
-  />
-
+  <MatchesPanel bind:open={dialogOpen} match={selected} {providers} {backend} {acceptRequest} {lyricsRequest} playlists={selected ? playlistNames[selected.externalSnapshotId] ?? [] : []} onSaved={matchSaved} onReject={(match, scope) => confirm("reject", match, scope)} onRematch={rematch}
+    onPrevious={visibleMatches.findIndex(item => item.externalSnapshotId === activeId) > 0 ? () => moveSelected(-1) : undefined}
+    onNext={visibleMatches.findIndex(item => item.externalSnapshotId === activeId) < visibleMatches.length - 1 ? () => moveSelected(1) : undefined}>
+    {#snippet authorities()}{#if selected?.manualAuthorities?.length}<section aria-label="Saved decisions"><h3 class="sec-label">Saved decisions</h3>
+      {#each selected.manualAuthorities as authority}<div class="manual-authority-row"><strong>{authorityLabel(authority)}</strong><small>{authority.reason} · {authorityState(selected, authority)}</small><div>
+        <Button variant="text" disabled={Boolean(action) || !canEditAuthority(authority)} onclick={() => confirmAuthority("manual_rematch", selected!, authority)}>Clear {authorityScopeOf(authority)} and rematch</Button>
+        <Button variant="text" disabled={Boolean(action) || !canEditAuthority(authority)} onclick={() => confirmAuthority("manual_delete", selected!, authority)}>Clear {authorityScopeOf(authority)}</Button>
+      </div></div>{/each}
+    </section>{/if}{/snippet}
+  </MatchesPanel>
   <BulkRematchDialog kind="automatic" bind:open={rematchAllOpen} onQueued={rematchAllQueued} />
-  <ConfirmDialog
-    bind:open={bulkConfirmOpen}
-    title={bulkConfirm === "reject" ? `Reject ${songs(bulkReject.length)}?` : `Clear your decisions for ${songs(bulkClear.length)}?`}
-    description={bulkConfirm === "reject"
-      ? "Their current candidates are recorded as rejected for you. You can rematch them later."
-      : "Your personal decisions stop applying; household decisions or automatic matching take over. Audit history is kept."}
-    confirmLabel={bulkConfirm === "reject" ? "Reject songs" : "Clear decisions"}
-    onConfirm={applyBulkConfirm}
-  />
-
-  <ConfirmDialog
-    bind:open={destructiveOpen}
-    preventScroll={!dialogOpen}
-    title={confirmationCopy().title}
-    description={confirmationCopy().description}
-    confirmLabel={confirmationCopy().label}
-    onConfirm={applyDestructive}
-  />
+  <ConfirmDialog bind:open={bulkConfirmOpen} title={bulkConfirm === "reject" ? `Reject ${songs(bulkReject.length)}?` : `Clear your decisions for ${songs(bulkClear.length)}?`} description={bulkConfirm === "reject" ? "Their current candidates are recorded as rejected for you. You can rematch them later." : "Your personal decisions stop applying; household decisions or automatic matching take over. Audit history is kept."} confirmLabel={bulkConfirm === "reject" ? "Reject songs" : "Clear decisions"} onConfirm={applyBulkConfirm} />
+  <ConfirmDialog bind:open={destructiveOpen} preventScroll={!dialogOpen} title={confirmationCopy().title} description={confirmationCopy().description} confirmLabel={confirmationCopy().label} onConfirm={applyDestructive} />
 {/if}
+<Dialog.Root bind:open={shortcutsOpen}><Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="shortcuts-card"><Dialog.Title>Matches shortcuts</Dialog.Title><Dialog.Description>Use these keys while you are outside a text field.</Dialog.Description>
+  <dl>{#each [["↑ / ↓", "Previous / next song"], ["Enter", "Open song"], ["A", "Use selected version and choose scope"], ["R", "Rematch selected song"], ["/", "Focus search"], ["Esc", "Close panel"], ["?", "Show shortcuts"]] as [key, label]}<div><dt><kbd>{key}</kbd></dt><dd>{label}</dd></div>{/each}</dl>
+  <Dialog.Close class="icon-button" aria-label="Close shortcuts"><X size={18} /></Dialog.Close>
+</Dialog.Content></Dialog.Portal></Dialog.Root>
 
 <style>
-  .mapping-select-bar {
-    display: flex; align-items: center; gap: var(--space-2); min-height: 2.75rem;
-    padding: 0 var(--space-5) 0 calc(var(--space-5) - .75rem); color: var(--color-ink-muted); font-size: .8125rem;
-  }
-  .mapping-check {
-    display: grid; flex: none; width: 2.75rem; height: 2.75rem; place-items: center; cursor: pointer; border-radius: 50%;
-  }
-  .mapping-check:hover { background: color-mix(in srgb, var(--color-ink) 6%, transparent); }
-  .mapping-check input { width: 1.125rem; height: 1.125rem; margin: 0; accent-color: var(--md-sys-color-primary); cursor: pointer; }
-  .mapping-rows .mapping-row { position: relative; padding-left: calc(var(--space-5) + 2.25rem); }
-  .mapping-rows .mapping-row.chosen { background: color-mix(in srgb, var(--md-sys-color-primary) 8%, transparent); }
-  .mapping-row-check { position: absolute; top: calc(var(--space-4) + 1rem); left: calc(var(--space-5) - .75rem); }
-  .mapping-bulk {
-    position: sticky; z-index: 5; bottom: var(--space-4); display: flex; flex-wrap: wrap; align-items: center;
-    justify-content: space-between; gap: var(--space-3); margin: var(--space-4) var(--space-5) 0; padding: var(--space-3) var(--space-4);
-    border-radius: var(--radius-lg); background: var(--md-sys-color-inverse-surface); color: var(--md-sys-color-inverse-on-surface);
-    box-shadow: 0 8px 24px #0004;
-  }
+  .mapping-queue { padding: var(--space-5); overflow: visible; }
+  .mapping-heading { display: grid; gap: var(--space-3); margin-bottom: var(--space-5); }
+  .mapping-heading h2 { margin: 0; font-size: 1.5rem; }
+  .matches-controls { display: grid; gap: var(--space-3); margin-bottom: var(--space-4); min-width: 0; }
+  .matches-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+  .matches-toolbar :global(.matches-search) { min-width: 280px; flex: 1 1 280px; }
+  .matches-toolbar :global(.matches-search input) { width: 100%; min-width: 0; height: var(--control-md); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; }
+  .matches-toolbar :global(.select-root) { flex: 0 0 auto; }
+  .matches-toolbar :global(.select-trigger) { width: auto; gap: var(--space-2); padding-inline: var(--space-2); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; white-space: nowrap; }
+  .matches-toolbar :global([data-slot="button"]) { padding-inline: var(--space-2); }
+  .matches-toolbar :global(.matches-refresh) { width: 32px; height: 32px; padding: 0; color: var(--color-ink-muted); }
+  .matches-toolbar :global(.matches-refresh span) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .mapping-rows { overflow: auto; min-width: 0; }
+  .matches-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: .8125rem; }
+  .matches-table th { text-align: left; font-weight: 500; color: var(--color-ink-muted); padding: var(--space-2); font-size: .75rem; border-bottom: 1px solid var(--color-edge); }
+  .matches-table th:nth-last-child(5) { width: 32%; }.matches-table th:nth-last-child(4) { width: 20%; }.matches-table th:nth-last-child(3) { width: 84px; }.matches-table th:last-child { width: 80px; }
+  .mapping-row { display: table-row; position: relative; height: 64px; padding: 0; border: 0; color: var(--color-ink); }
+  .mapping-row td { padding: var(--space-2); border-bottom: 1px solid var(--color-edge); vertical-align: middle; }
+  .mapping-row:hover { background: color-mix(in srgb, var(--color-ink) 5%, transparent); }
+  .mapping-row.chosen { background: color-mix(in srgb, var(--color-signal) 9%, transparent); }
+  .mapping-row.needs-review .source-cell { box-shadow: inset 3px 0 var(--warning); }
+  .open-match { position: absolute; inset: 0; width: 100%; border: 0; background: transparent; cursor: pointer; z-index: 1; border-radius: var(--radius-sm); }
+  .open-match:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+  .source-copy, .plays-as, .difference-chips { pointer-events: none; position: relative; }
+  .source-copy { display: flex; gap: var(--space-3); align-items: center; min-width: 0; }
+  .source-copy :global(.media-art) { width: 36px; height: 36px; flex: none; }.source-copy > div { min-width: 0; }
+  .source-copy strong, .source-copy small, .plays-as small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .source-copy strong, .plays-as { color: var(--color-ink); }
+  small { color: var(--color-ink-muted); font-size: .75rem; }
+  .plays-as > span { display: flex; gap: var(--space-2); align-items: center; }
+  .plays-as .no-match { color: var(--color-ink-muted); }
+  .difference-chips { display: flex; flex-wrap: wrap; align-content: start; gap: var(--space-1); max-height: calc(2.8em + 12px + var(--space-1)); overflow: hidden; font-size: .6875rem; line-height: 1.4; }
+  .difference-chips span { max-width: 100%; overflow: hidden; border-radius: var(--radius-sm); background: var(--color-panel-raised); color: var(--color-ink-muted); padding: 3px 6px; text-overflow: ellipsis; white-space: nowrap; }
+  .difference-chips .same-song { color: var(--success); background: transparent; }
+  .actions-cell { position: relative; }
+  .row-actions { display: flex; min-height: 44px; align-items: center; justify-content: flex-end; }
+  .row-actions :global(button), :global(.row-menu) { position: relative; z-index: 2; width: 32px; height: 32px; min-height: var(--touch-target-min, 32px); padding: 0; color: var(--color-ink-muted); }
+  .check-cell { width: 44px; position: relative; }.check-cell .select-target { position: relative; z-index: 2; }
+  .select-target { display: inline-flex; gap: var(--space-2); min-height: 44px; min-width: 44px; align-items: center; justify-content: center; cursor: pointer; }
+  input[type="checkbox"] { accent-color: var(--color-signal); width: 18px; height: 18px; }
+  .mapping-select-bar { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+  .mapping-bulk { position: sticky; z-index: var(--layer-control); bottom: var(--space-3); background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); border-radius: var(--radius-lg); padding: var(--space-3); display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); box-shadow: var(--shadow-md); }
   .mapping-bulk > div { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .mapping-bulk :global([data-slot="button"]:last-child) { color: inherit; }
-  @media (max-width: 767px) {
-    .mapping-bulk { bottom: calc(var(--mobile-nav-height, 72px) + var(--space-3)); margin-inline: 0; }
-    .mapping-rows .mapping-row { padding-left: calc(var(--space-4) + 2.25rem); }
-    .mapping-row-check { left: calc(var(--space-4) - .75rem); }
-  }
-  .manual-authority-row :global([data-slot="button"]) {
-    min-width: 0;
-    height: auto;
-    min-height: var(--control-md);
-    padding-block: var(--space-2);
-    line-height: 1.25;
-    white-space: normal;
+  .quiet-success :global(.empty-state) { min-height: 0; align-items: flex-start; padding: var(--space-2); text-align: start; }
+  .quiet-success :global(h3) { color: var(--success); font-size: .8125rem; font-weight: 400; }
+  .phone-cell { display: none; }
+  .manual-authority-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); padding-block: var(--space-3); border-bottom: 1px solid var(--color-edge); }
+  .manual-authority-row > div { display: flex; flex-wrap: wrap; }
+  :global(.shortcuts-card) { position: fixed; z-index: var(--layer-dialog); top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(420px, calc(100vw - 32px)); background: var(--color-panel); padding: var(--space-6); border-radius: var(--radius-xl); }
+  :global(.shortcuts-card dl > div) { display: flex; gap: var(--space-4); margin-block: var(--space-2); }:global(.shortcuts-card dd) { margin: 0; }:global(.shortcuts-card > .icon-button) { position: absolute; top: var(--space-2); right: var(--space-2); }
+  @media (min-width: 900px) { .panel-open { margin-right: min(480px, 40vw); } }
+  @media (min-width: 1100px) { .matches-toolbar { flex-wrap: nowrap; }.panel-open .matches-toolbar { flex-wrap: wrap; } }
+  @media (max-width: 899px) {
+    .mapping-queue { padding: var(--space-3); }.matches-toolbar { flex-wrap: wrap; }.matches-table, .matches-table tbody { display: block; }.matches-table thead, .desktop-cell { display: none; }.mapping-row { display: block; height: auto; }.mapping-row .phone-cell { display: block; padding: 0; border: 0; }.matches-table { table-layout: auto; }
+    .mapping-bulk { bottom: calc(var(--mobile-nav-height) + var(--space-2)); }.mapping-pagination { flex-wrap: wrap; gap: var(--space-2); }.mapping-pagination > div { display: flex; align-items: center; }
   }
 </style>

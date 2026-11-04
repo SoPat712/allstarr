@@ -435,6 +435,21 @@ test("report review keeps saved-match links and hides unavailable lyric actions"
   await expect(page.getByRole("button", { name: "Review lyrics", exact: true })).toHaveCount(0);
   expect(fixture.scopes).toEqual([]);
   expect(fixture.state.updates).toEqual([]);
+  await page.route("**/api/admin/track-matches?*", route => reply(route, {
+    matches: [{ externalSnapshotId: snapshotId, providerId: "deezer", title: captured.song.title,
+      artist: captured.song.artist, album: captured.song.album, state: "accepted", decisionSource: "track_match_decision",
+      confidence: .95, threshold: .88, providerIdentities: [], candidates: [], reasons: [], warnings: [],
+      target: { providerId: "qobuz", externalId: "saved-target", title: "Saved recording", artist: captured.song.artist } }],
+    stats: { total: 1, matched: 1, accepted: 1, automatic: 1, suggested: 0, review: 0, unresolved: 0, rejected: 0, attention: 0 },
+    pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
+  }));
+  await page.getByRole("link", { name: "Review match", exact: true }).click();
+  const panel = page.getByRole("dialog", { name: captured.song.title, exact: true });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole("table")).toContainText("Saved recording");
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(panel).toBeHidden();
+  expect(fixture.state.updates).toEqual([]);
 });
 
 test("report review actions both fit on a phone without opening sources", async ({ page }) => {

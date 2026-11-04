@@ -134,6 +134,7 @@
   );
   const moreDestinationActive = $derived(!activeDestination.mobile);
   const nextTheme = $derived<ThemeMode>(themeMode === "system" ? "light" : themeMode === "light" ? "dark" : "system");
+  const ThemeIcon = $derived(themeMode === "system" ? Monitor : themeMode === "light" ? Sun : Moon);
   const initials = $derived(
     session?.user?.name
       ?.split(/\s+/)
@@ -648,9 +649,7 @@
             aria-label={`Theme: ${themeMode}. Switch to ${nextTheme}.`}
             onclick={cycleTheme}
           >
-            {#if themeMode === "system"}<Monitor aria-hidden="true" />
-            {:else if themeMode === "light"}<Sun aria-hidden="true" />
-            {:else}<Moon aria-hidden="true" />{/if}
+            <ThemeIcon aria-hidden="true" />
           </button>
           <div class="live-state" data-state={liveUpdates.state.status} role="status" aria-label={`Live updates ${liveUpdates.state.status}`}>
             <span aria-hidden="true"></span>
@@ -779,9 +778,7 @@
 
           <div class="mobile-menu-actions">
             <button type="button" onclick={cycleTheme}>
-              {#if themeMode === "system"}<Monitor aria-hidden="true" />
-              {:else if themeMode === "light"}<Sun aria-hidden="true" />
-              {:else}<Moon aria-hidden="true" />{/if}
+              <ThemeIcon aria-hidden="true" />
               <span><strong>Appearance</strong><small>{themeMode[0].toUpperCase() + themeMode.slice(1)} · switch to {nextTheme}</small></span>
             </button>
             <button type="button" disabled={authBusy} onclick={() => void logout()}>

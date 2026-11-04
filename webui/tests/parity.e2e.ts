@@ -1677,16 +1677,16 @@ for (const viewport of viewports) {
     test("Match and removal dialogs remain usable", async ({ page }) => {
       await mockApi(page);
       await page.goto("#/library/mappings");
-      await page.getByRole("button", { name: "Interactive search" }).click();
+      await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
       await expect(page.getByRole("dialog", { name: "Test song" })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Reject candidate" })).toBeInViewport();
-      await page.getByRole("button", { name: "Reject candidate" }).click();
-      const reject = page.getByRole("alertdialog", { name: "Reject this candidate?" });
+      await expect(page.getByRole("button", { name: "Nothing fits" })).toBeInViewport();
+      await page.getByRole("button", { name: "Nothing fits" }).click();
+      const reject = page.getByRole("alertdialog", { name: "Nothing fits?" });
       await expect(reject).toBeVisible();
-      await expect(reject.getByRole("button", { name: "Reject candidate" })).toBeInViewport();
+      await expect(reject.getByRole("button", { name: "Reject match" })).toBeInViewport();
       await reject.getByRole("button", { name: "Cancel" }).click();
       await expect(reject).toBeHidden();
-      await page.getByRole("button", { name: "Close match dialog" }).click();
+      await page.getByRole("button", { name: "Close", exact: true }).click();
       await expect(page.getByRole("dialog", { name: "Test song" })).toBeHidden();
       await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).pointerEvents)).toBe("auto");
 
@@ -3413,7 +3413,8 @@ test("Manual and Rejected tabs expose explicit rematch and delete controls", asy
     route.fulfill({ status: 204, body: "" }));
   await page.goto("#/library/mappings");
 
-  await page.getByRole("tab", { name: /^By hand 1$/ }).click();
+  await page.getByRole("radio", { name: "Chosen by you 1", exact: true }).click();
+  await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
   const manualMatch = page.locator(".manual-authority-row");
   await expect(manualMatch).toContainText("Manual Jellyfin match");
   const rematch = page.waitForRequest((request) =>
@@ -3424,7 +3425,8 @@ test("Manual and Rejected tabs expose explicit rematch and delete controls", asy
   await rematchDialog.getByRole("button", { name: "Clear personal and rematch" }).click();
   expect((await rematch).postDataJSON()).toEqual({ kind: "local_match", expectedRevision: 3, authorityScope: "personal" });
 
-  await page.getByRole("tab", { name: /^Rejected 1$/ }).click();
+  await page.getByRole("radio", { name: "Rejected 1", exact: true }).click();
+  await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
   const manualRejection = page.locator(".manual-authority-row");
   await expect(manualRejection).toContainText("Manual rejection");
   const deletion = page.waitForRequest((request) =>
@@ -3438,119 +3440,38 @@ test("Manual and Rejected tabs expose explicit rematch and delete controls", asy
   expect(deleteUrl.searchParams.get("authorityScope")).toBe("personal");
 });
 
-test("MatchDialog deep links preserve title prefill and tentative mapping review", async ({ page }) => {
+test("Matches deep links preserve full title, provider search and review decisions", async ({ page }) => {
   await mockApi(page);
-  const delayedSearch = routeRelease();
   const searches: Record<string, string>[] = [];
-  let localSearches = 0;
-  await page.route("**/api/admin/track-matches/targets/local?*", (route) => {
-    localSearches += 1;
-    return route.fulfill({ json: { tracks: [] } });
-  });
-  await page.route("**/api/admin/track-matches/targets/provider?*", async (route) => {
-    const params = new URL(route.request().url()).searchParams;
-    searches.push(Object.fromEntries(params));
-    await delayedSearch.promise;
-    return route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        tracks: [...(params.get("query") === "Kiss Me More" && params.get("includeLocal") === "true" ? [{
-          id: "jellyfin-kiss-me-more", backendItemId: "jellyfin-kiss-me-more",
-          title: "Kiss Me More", artist: "Doja Cat feat. SZA", album: "Planet Her",
-          durationMilliseconds: 208_000, confidence: 0.91,
-          components: { priorityWindow: 0.07, routingPriority: 0, acceptanceQualified: 1 },
-        }] : []), {
-          id: "provider-kiss-me-more", externalId: "provider-kiss-me-more",
-          externalProvider: "lumen-audio", title: "Kiss Me More",
-          artist: "Doja Cat feat. SZA", album: "Planet Her",
-          durationMilliseconds: 208_000, confidence: 0.94,
-          components: { priorityWindow: 0.05, routingPriority: 1, acceptanceQualified: 1 },
-        }],
-        providers: ["lumen-audio", "qobuz"],
-      }),
-    });
+  await page.route("**/api/admin/track-matches/targets/provider?*", route => {
+    searches.push(Object.fromEntries(new URL(route.request().url()).searchParams));
+    return route.fulfill({ json: { tracks: [{ id: "provider-track", externalId: "provider-track", externalProvider: "lumen-audio",
+      title: "Kiss Me More", artist: "Doja Cat", album: "Planet Her", confidence: .94, durationMilliseconds: 208000 }], providers: ["lumen-audio"] } });
   });
   await page.goto("#/library/mappings?search=Test%20song&review=snapshot");
-  const dialog = page.getByRole("dialog", { name: "Test song" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel("Search local library and playable providers")).toHaveValue("Test song - Remix");
-  await expect(dialog.getByText("ISRC US-AAA-26-00001")).toHaveCount(2);
-  await expect(dialog.locator(".candidate-provider").filter({ hasText: "Apple Music" })).toBeVisible();
-  await expect(dialog.getByText("MusicBrainz album")).toHaveCount(0);
-  await expect(dialog.locator(".candidate-card .mapping-art > span").first()).toBeVisible();
-  await expect(
-    dialog.locator(".automatic-candidates .candidate-provider")
-      .filter({ hasText: "Jellyfin · 7% tentative window" }),
-  ).toBeVisible();
-  await expect(dialog.locator(".automatic-candidates .candidate-confidence").getByText("82%"))
-    .toHaveCount(2);
-  await dialog.getByLabel("Search local library and playable providers").fill("Kiss Me More");
-  await dialog.getByRole("button", { name: "Search", exact: true }).click();
-  await expect(dialog.getByRole("button", { name: "Searching…" })).toBeVisible();
-  await expect(dialog.locator(".provider-result-summary")).toHaveCount(0);
-  await expect.poll(() => searches).toEqual([{
-    query: "Kiss Me More", externalSnapshotId: "snapshot", limit: "50", includeLocal: "true",
-  }]);
-  delayedSearch.release();
-  await expect(dialog.getByRole("button", { name: /Jellyfin 1/ })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: /Lumen Audio 1/ })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: /Qobuz/ })).toHaveCount(0);
-  await expect(dialog.getByText("Planet Her")).toHaveCount(2);
-  await expect(dialog.locator(".target-results > button .target-score")).toHaveCount(2);
-  await expect(dialog.locator(".target-results").getByText("· Local first")).toHaveCount(1);
-  await expect(dialog.locator(".target-results").getByText("· Streaming priority 1")).toHaveCount(1);
-  await expect(dialog.locator(".target-results")).toHaveCSS("overflow-y", "visible");
-  await expect(dialog.locator(":scope > footer")).toHaveCSS("position", "sticky");
-  await expect(
-    dialog.locator(".target-results > button").filter({ hasText: "Jellyfin" })
-      .locator(".target-score").getByText("91%"),
-  ).toBeVisible();
-  await expect(
-    dialog.locator(".target-results > button").filter({ hasText: "Lumen Audio" })
-      .locator(".target-score").getByText("94%"),
-  ).toBeVisible();
-  await expect(dialog.getByText("result #1")).toBeVisible();
-  await dialog.locator(".candidate-card").first().getByText("Full scoring evidence").click();
-  await expect(dialog.locator(".candidate-card").first().getByText("Candidate ID")).toBeVisible();
-  await expect(dialog.locator(".candidate-card").first().getByText("Artist overlap")).toBeVisible();
-  await expect(dialog.locator(".candidate-card").first().getByText("Duration difference")).toBeVisible();
-  await expect(dialog.locator(".candidate-card").first().getByText("Apple Music track ID")).toBeVisible();
-  await dialog.locator(".candidate-card").last().getByText("Full scoring evidence").click();
-  await expect(dialog.locator(".candidate-card").last().getByRole("term")
-    .filter({ hasText: "Routing preference" }))
-    .toBeVisible();
-  await dialog.getByLabel("Search local library and playable providers").fill("No local copy");
-  await dialog.getByRole("button", { name: "Search", exact: true }).click();
-  await expect.poll(() => searches).toEqual([
-    { query: "Kiss Me More", externalSnapshotId: "snapshot", limit: "50", includeLocal: "true" },
-    { query: "No local copy", externalSnapshotId: "snapshot", limit: "50", includeLocal: "true" },
-  ]);
-  await expect(dialog.getByRole("button", { name: /Jellyfin 0/ })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: /Lumen Audio 1/ })).toBeVisible();
-  await expect(dialog.locator(".target-results > button .target-score")).toHaveCount(1);
-  expect(localSearches).toBe(0);
-  await dialog.getByRole("button", { name: "Close match dialog" }).click();
-
-  const request = page.waitForRequest((item) =>
-    item.url().includes("/api/admin/track-matches") &&
-    new URL(item.url()).searchParams.get("sort") === "confidence_desc");
-  await page.getByRole("button", { name: "Confidence", exact: true }).click();
-  await page.getByRole("option", { name: "Most confident first" }).click();
+  const panel = page.getByRole("dialog", { name: "Test song - Remix", exact: true });
+  await expect(panel).toBeVisible();
+  await panel.getByRole("button", { name: "Search for another version…", exact: true }).click();
+  const input = panel.getByLabel("Search local library and playable providers");
+  await expect(input).toHaveValue("Test song - Remix");
+  await expect(panel).toContainText("US-AAA-26-00001");
+  await expect(panel).not.toContainText("MusicBrainz album");
+  await input.fill("Kiss Me More");
+  await panel.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(panel.locator(".target-results .search-result")).toHaveCount(1);
+  expect(searches).toEqual([{ query: "Kiss Me More", externalSnapshotId: "snapshot", limit: "50", includeLocal: "true" }]);
+  await panel.locator(".target-results .row-action").click();
+  await expect(panel.getByRole("table")).toContainText("Kiss Me More");
+  const write = page.waitForRequest(request => request.url().endsWith("/snapshot/resolve") && request.method() === "POST");
+  await panel.getByRole("button", { name: "Use Lumen Audio version", exact: true }).click();
+  expect((await write).postDataJSON()).toMatchObject({ targetType: "provider", externalProvider: "lumen-audio", externalId: "provider-track" });
+  await expect(panel).toBeHidden();
+  const request = page.waitForRequest(request => new URL(request.url()).searchParams.get("sort") === "confidence_desc");
+  await page.getByRole("button", { name: "Sort matches", exact: true }).click();
+  await page.getByRole("option", { name: "Most sure first", exact: true }).click();
   await request;
-  const unresolved = page.waitForRequest((item) =>
-    item.url().includes("/api/admin/track-matches") &&
-    new URL(item.url()).searchParams.get("state") === "unresolved");
-  await page.getByRole("tab", { name: "No match 0" }).click();
-  await unresolved;
-  const tentative = page.waitForRequest((item) =>
-    item.url().includes("/api/admin/track-matches") &&
-    new URL(item.url()).searchParams.get("state") === "suggested");
-  await page.getByRole("tab", { name: "Unsure 1" }).click();
-  await tentative;
-  await expect(page.getByRole("button", { name: "Accept" })).toBeVisible();
-  await page.getByRole("button", { name: "Accept" }).click();
-  await expect(page.locator(".mapping-row")).toHaveCount(0);
+  await page.getByRole("radio", { name: "Needs a look 1", exact: true }).click();
+  await expect(page.locator(".mapping-row")).toHaveCount(1);
 });
 
 test("Match review pages from cache and acts on several selected songs", async ({ page }) => {
@@ -3573,6 +3494,7 @@ test("Match review pages from cache and acts on several selected songs", async (
     rematched.push(new URL(route.request().url()).pathname.split("/")[4]);
     return route.fulfill({ json: { rematched: true, state: "suggested" } });
   });
+  await page.addInitScript(() => localStorage.setItem("matches.filter", "all"));
   await page.goto("#/library/mappings");
   await expect(page.getByText("First song", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Next" }).click();
@@ -3582,47 +3504,33 @@ test("Match review pages from cache and acts on several selected songs", async (
   await expect(page.getByText("First song", { exact: true })).toBeVisible({ timeout: 1000 });
   holdFirstPage = false;
 
+  await page.getByRole("button", { name: "Select", exact: true }).click();
   await page.getByRole("checkbox", { name: "Select all songs on this page" }).check();
   const bar = page.getByRole("toolbar", { name: "Actions for selected songs" });
   await expect(bar).toContainText("2 selected");
   await page.getByRole("checkbox", { name: "Select Second song" }).uncheck();
   await expect(page.getByRole("checkbox", { name: "Select all songs on this page" })).toHaveJSProperty("indeterminate", true);
   await page.getByRole("checkbox", { name: "Select Second song" }).check();
-  await bar.getByRole("button", { name: "Rematch (2)" }).click();
+  await bar.getByRole("button", { name: "Rematch", exact: true }).click();
   await expect.poll(() => rematched.toSorted()).toEqual(["one", "two"]);
   await expect(page.getByRole("status").filter({ hasText: "Rematched 2 songs." })).toBeVisible();
   await expect(bar).toHaveCount(0);
 });
 
-test("Mappings keep mobile tabs, evidence, and actions readable", async ({ page }) => {
+test("Mappings keep phone filters, differences and menus readable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
   await page.goto("#/library/mappings");
-
-  for (const label of ["Library sections", "Mapping views"]) {
-    const tabs = page.getByRole("navigation", { name: label }).getByRole("tab");
-    expect(await tabs.evaluateAll((items) => items.every((item) => item.scrollWidth <= item.clientWidth))).toBe(true);
-  }
-
-  const mappingTabs = page.getByRole("navigation", { name: "Mapping views" });
-  const geometry = await mappingTabs.getByRole("tab").evaluateAll((tabs) => tabs.map((tab) => {
-    const bounds = tab.getBoundingClientRect();
-    return { left: bounds.left, right: bounds.right };
-  }));
-  expect(geometry.every((tab, index) => index === 0 || geometry[index - 1].right <= tab.left)).toBe(true);
-  expect(await mappingTabs.getByRole("tablist").evaluate((rail) => rail.scrollWidth > rail.clientWidth)).toBe(true);
-
+  const filters = page.getByRole("radiogroup", { name: "Match filters" });
+  await expect(filters).toBeVisible();
+  expect(await filters.evaluate(rail => rail.scrollWidth > rail.clientWidth)).toBe(true);
+  expect(await filters.getByRole("radio").evaluateAll(items => items.every(item => item.getBoundingClientRect().height >= 44))).toBe(true);
   const row = page.locator(".mapping-row").first();
-  await row.scrollIntoViewIfNeeded();
-  await expect(row.getByRole("button", { name: "Accept" })).toBeInViewport();
-  await expect(row.getByRole("button", { name: "Interactive search" })).toBeInViewport();
-  await expect(row.locator(".mapping-evidence-summary")).toContainText("title match");
-  expect(await row.locator(".mapping-evidence-summary").evaluate((item) => item.scrollWidth <= item.clientWidth)).toBe(true);
-
+  await expect(row.locator(".item-row")).toContainText("Not Remix");
   const more = row.getByRole("button", { name: "More actions for Test song - Remix" });
   await expect(more).toBeInViewport();
   await more.click();
-  await expect(page.getByRole("menuitem", { name: "Rematch" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Rematch", exact: true })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: "Report a problem", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
 });
@@ -4006,7 +3914,6 @@ test("Compact panel headings share one full-width action track", async ({ page }
 
   for (const { route, heading, actions } of [
     { route: "#/library/playlists", heading: ".playlist-toolbar", actions: ".playlist-toolbar-actions" },
-    { route: "#/library/mappings", heading: ".mapping-heading", actions: ".mapping-heading-actions" },
     { route: "#/library/cached", heading: ".downloads-heading", actions: ".downloads-heading-actions" },
     { route: "#/integrations/services", heading: ".sources-heading", actions: ".sources-heading-actions" },
   ]) {
@@ -5565,8 +5472,9 @@ test("Segmented navigation and unified provider filters support keyboard use", a
   await expect(page).toHaveURL(/#\/library\/matches$/);
   await expect(page.getByRole("tab", { name: "Matches" })).toHaveAttribute("aria-selected", "true");
 
-  await page.getByRole("button", { name: "Interactive search" }).click();
-  const dialog = page.getByRole("dialog", { name: "Test song" });
+  await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
+  const dialog = page.getByRole("dialog", { name: "Test song - Remix", exact: true });
+  await dialog.getByRole("button", { name: "Search for another version…", exact: true }).click();
   await dialog.getByLabel("Search local library and playable providers").fill("Kiss Me More");
   await dialog.getByRole("button", { name: "Search", exact: true }).click();
   await dialog.getByRole("button", { name: /Jellyfin 1/ }).focus();
@@ -6066,10 +5974,9 @@ test("mapping and playlist review actions communicate work instead of silently i
   });
   await page.goto("#/library/mappings");
   const mappingRow = page.locator(".mapping-row").first();
-  await mappingRow.getByRole("button", { name: "Rematch", exact: true }).click();
-  await expect(mappingRow.getByRole("button", { name: "Rematching…" })).toBeDisabled();
-  await expect(mappingRow.getByRole("button", { name: "Accept" })).toBeDisabled();
-  await expect(mappingRow.getByRole("button", { name: /More actions/ })).toBeDisabled();
+  await mappingRow.getByRole("button", { name: /More actions/ }).filter({ visible: true }).click();
+  await page.getByRole("menuitem", { name: "Rematch", exact: true }).click();
+  await expect(mappingRow.getByRole("button", { name: /More actions/ }).filter({ visible: true })).toBeDisabled();
   mappingRematch.release();
   await expect(page.getByText("Test song - Remix rematched.", { exact: true })).toBeVisible();
 
@@ -6884,12 +6791,12 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     const fixture = await mockRecordingLyrics(page);
     await page.goto("#/library/mappings?review=snapshot");
     const dialog = page.getByRole("dialog", { name: "Fixture song" });
-    const open = dialog.getByRole("button", { name: "Wrong lyrics?" });
-    await open.focus();
-    await page.keyboard.press("Enter");
+    const open = dialog.getByRole("button", { name: "More", exact: true });
+    await open.click();
+    await page.getByRole("menuitem", { name: "Wrong lyrics?", exact: true }).click();
     const picker = dialog.getByRole("region", { name: "Lyrics sources" });
     await expect(picker).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Reject candidate", exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "Nothing fits", exact: true })).toHaveCount(0);
     await expect(dialog.getByRole("button", { name: "Back to match", exact: true })).toBeVisible();
     await expect(picker.getByRole("button", { name: /Spotify.*Unavailable/ })).toBeDisabled();
     await picker.getByRole("button", { name: /LRCLIB.*Plain/ }).click();
@@ -6922,8 +6829,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await dialog.getByRole("button", { name: "Back to match", exact: true }).focus();
     await page.keyboard.press("Enter");
     await expect(picker).toHaveCount(0);
-    await expect(dialog.getByRole("button", { name: "Reject candidate", exact: true })).toBeVisible();
-    await expect(dialog.getByRole("button", { name: "Wrong lyrics?" })).toBeFocused();
+    await expect(dialog.getByRole("button", { name: "Nothing fits", exact: true })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "More", exact: true })).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(dialog).toBeHidden();
   });
@@ -6932,7 +6839,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
 test("Recording lyrics conflict reloads the preview without repeating a write", async ({ page }) => {
   const fixture = await mockRecordingLyrics(page, { administrator: false, conflict: true });
   await page.goto("#/library/mappings?review=snapshot");
-  await page.getByRole("button", { name: "Wrong lyrics?" }).click();
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Wrong lyrics?", exact: true }).click();
   const picker = page.getByRole("region", { name: "Lyrics sources" });
   await expect(picker.getByRole("radio", { name: "Household", exact: true })).toHaveCount(0);
   await picker.getByRole("button", { name: /LRCLIB.*Plain/ }).click();
@@ -6950,7 +6858,8 @@ test("Recording lyrics conflict reloads the preview without repeating a write", 
 test("Recording lyrics unavailable sources can be reloaded", async ({ page }) => {
   const fixture = await mockRecordingLyrics(page, { failFirst: true });
   await page.goto("#/library/mappings?review=snapshot");
-  await page.getByRole("button", { name: "Wrong lyrics?" }).click();
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Wrong lyrics?", exact: true }).click();
   const picker = page.getByRole("region", { name: "Lyrics sources" });
   await expect(picker).toContainText("Lyrics sources are temporarily unavailable.");
   await picker.getByRole("button", { name: "Reload sources", exact: true }).click();
@@ -8821,7 +8730,8 @@ for (const width of [320, 390, 718, 1280]) for (const theme of ["light", "dark"]
       ],
     } }));
     await page.goto("#/library/mappings?review=snapshot");
-    await page.getByRole("dialog", { name: "Fixture song" }).getByRole("button", { name: "Wrong lyrics?" }).click();
+    await page.getByRole("dialog", { name: "Fixture song" }).getByRole("button", { name: "More", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Wrong lyrics?", exact: true }).click();
     const picker = page.getByRole("region", { name: "Lyrics sources" });
     const credits = picker.getByRole("region", { name: "Lyrics credits" });
     await expect(credits).toContainText(`Synced by ${spicyUnlinkedMaker}`);

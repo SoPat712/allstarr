@@ -1087,6 +1087,7 @@ export type MatchReviewItem = {
   localTrack?: {
     id: string;
     backendItemId: string;
+    backendLibraryId?: string | null;
     title: string;
     artist?: string | null;
     album?: string | null;
