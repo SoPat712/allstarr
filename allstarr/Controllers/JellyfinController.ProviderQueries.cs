@@ -54,7 +54,7 @@ public partial class JellyfinController
 
     private async Task<ContentResult> ShapeProviderQueryAsync(IEnumerable<Dictionary<string, object?>> rows,
         string? defaultSort = null, bool deduplicate = true, bool nativeAlreadyFiltered = false, int defaultLimit = int.MaxValue,
-        int? totalRecordCount = null)
+        int? totalRecordCount = null, string? searchPaginationScope = null)
     {
         var items = rows.ToList();
         var context = HttpContext.RequireProtocolExecutionContext();
@@ -72,6 +72,11 @@ public partial class JellyfinController
         var query = new JellyfinProviderQuery(Request.Query, GetEffectiveSearchTerm(Request.Query["SearchTerm"], Request.QueryString.Value), defaultLimit);
         Func<IEnumerable<Dictionary<string, object?>>, IEnumerable<Dictionary<string, object?>>>? reconcile = deduplicate ? ReconcileQueryRows : null;
         var ordered = query.FilterAndSort(items, defaultSort, deduplicate, nativeAlreadyFiltered, reconcile);
+        if (searchPaginationScope != null)
+            ordered = _musicSearch.PreserveSearchOrder(context,
+                GetEffectiveSearchTerm(Request.Query["SearchTerm"], Request.QueryString.Value) ?? "",
+                searchPaginationScope, query.StartIndex, query.Limit, ordered,
+                item => GetItemType(item) + ":" + GetItemStringValue(item, "Id")).ToList();
         if (!HttpContext.Items.ContainsKey(JellyfinItemFields.PlaylistMembersKey))
             foreach (var item in ordered.Where(IsProviderQueryItem)) new JellyfinItemFields(Request.Query).Apply(item);
         var response = _searchProtocolAdapter.ShapeItemsResponse(ordered, query.StartIndex, query.Limit, totalRecordCount);

@@ -1144,6 +1144,17 @@ for (const viewport of viewports) {
 
     test("Settings dialogs remain usable", async ({ page }) => {
       await mockApi(page);
+      let saved: Record<string, string> | null = null;
+      await page.route("**/api/admin/config", route => {
+        if (route.request().method() === "POST") {
+          saved = route.request().postDataJSON().updates;
+          return route.fulfill({ json: { message: "Runtime configuration updated.", updatedKeys: Object.keys(saved ?? {}) } });
+        }
+        return route.fulfill({ json: {
+          ...(responses["/api/admin/config"] as object),
+          providers: { streamingOrder: saved?.StreamingOrder ?? "lumen-audio" },
+        } });
+      });
       await page.goto("#/settings/general");
       await expect(page.getByText("Public URL", { exact: true }).locator("..").getByText("Deployment-owned")).toBeVisible();
       await page.goto("#/settings/appearance");
@@ -1170,14 +1181,17 @@ for (const viewport of viewports) {
       await expect(page.getByRole("button", { name: "Move Jellyfin up" })).toHaveCount(0);
       await expect(page.locator(".provider-art").first()).toHaveCSS("border-top-width", "0px");
       const savePlayback = page.getByRole("button", { name: "Save Playback", exact: true });
-      await expect(savePlayback).toBeDisabled();
+      await expect(savePlayback).toHaveCount(0);
       const routes = page.locator(".routing-group li[draggable=true]");
       // Dragging while the view is still easing in can land on the wrong row.
       await page.evaluate(() => Promise.all(document.getAnimations()
         .filter((animation) => animation.effect?.getTiming().iterations !== Infinity).map((animation) => animation.finished)));
       await routes.nth(0).dragTo(routes.nth(1));
       await expect(routes.nth(0)).toContainText("Future Audio");
-      await expect(savePlayback).toBeEnabled();
+      await expect.poll(() => saved).toEqual({ StreamingOrder: "future-audio,lumen-audio" });
+      await expect(page.getByText("Order saved", { exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeVisible();
+      await expect(savePlayback).toHaveCount(0);
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.goto("#/integrations/services/lumen-audio");
@@ -7745,7 +7759,6 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(group).toContainText(description);
     await expect(group.getByRole("listitem").first()).toContainText("Deezer");
     await group.getByRole("button", { name: "Move SoundCloud up", exact: true }).click();
-    await group.getByRole("button", { name: "Save Metadata search order", exact: true }).click();
     await expect.poll(() => writes.at(-1)?.MULTI_PROVIDER_METADATA_ORDER).toBe("soundcloud,deezer");
     await expect(group.getByRole("listitem").first()).toContainText("SoundCloud");
     await page.screenshot({ path: `test-results/search-order-${width}-${theme}.png`, fullPage: true });
@@ -8620,7 +8633,6 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.keyboard.press("Enter");
     await expect(group.locator("li strong")).toHaveText(["Media server lyrics", "LRCLib", "Kept LRC", "Paxsenix"]);
     await group.getByRole("button", { name: "Move LRCLib up", exact: true }).click();
-    await group.getByRole("button", { name: "Save Lyrics", exact: true }).click();
     await expect.poll(() => saved).toEqual({ MULTI_PROVIDER_LYRICS_ORDER: "lrclib,backend,kept,paxsenix" });
     await expect(group.locator("li strong")).toHaveText(["LRCLib", "Media server lyrics", "Kept LRC", "Paxsenix"]);
     await expect(page.locator(".routing-policy")).toContainText("Match scores describe the recording evidence");

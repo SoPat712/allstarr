@@ -2,7 +2,7 @@ import type { CoverDescription, CoverStyle } from "./cover-for";
 import { INK, PAPER, paletteFor } from "./palettes";
 import { alpha, between, type Random } from "./random";
 import { DISPLAY, paper, ink, cut, blob, pen, penCircle, halftone, pasted, fitSize, label, stamp, type Point } from "./toolkit";
-export type CoverDrawer = (ctx: CanvasRenderingContext2D, S: number, L: Random, J: Random, m: CoverDescription) => void;
+export type CoverDrawer = (ctx: CanvasRenderingContext2D, S: number, L: Random, J: Random, m: CoverDescription, minimum: number) => void;
 const LASTFM = ("M10.584 17.21l-.88-2.392s-1.43 1.594-3.573 1.594c-1.897 0-3.244-1.649-3.244-4.288 0-3.382 1.704-4.591 3.381-4.591 2.42 0 3.189 1.567 3.849 3.574l.88 2.749c.88 2.666 2.529 4.81 7.285 4.81 3.409 0 5.718-1.044 5.718-3.793 0-2.227-1.265-3.381-3.63-3.931l-1.758-.385c-1.21-.275-1.567-.77-1.567-1.595 0-.934.742-1.484 1.952-1.484 1.32 0 2.034.495 2.144 1.677l2.749-.33c-.22-2.474-1.924-3.492-4.729-3.492-2.474 0-4.893.935-4.893 3.932 0 1.87.907 3.051 3.189 3.601l1.87.44c1.402.33 1.869.907 1.869 1.704 0 1.017-.99 1.43-2.86 1.43-2.776 0-3.93-1.457-4.59-3.464l-.907-2.75c-1.155-3.573-2.997-4.893-6.653-4.893C2.144 5.333 0 7.89 0 12.233c0 4.18 2.144 6.434 5.993 6.434 3.106 0 4.591-1.457 4.591-1.457z");
 let lastfmPath: Path2D | undefined;
 
@@ -31,11 +31,11 @@ export const STYLES: Record<Exclude<CoverStyle, "liquid">, CoverDrawer> = {
     paper(ctx, S, PAPER.white, L);
     for (let i = 0; i < 9; i++) stamp(ctx, S, J, S * between(L, 0.2, 0.8), S * between(L, 0.12, 0.88), m.lines.join(" ").toUpperCase(), i % 3 === 0 ? INK.red : INK.navy, between(L, -0.5, 0.5), between(L, 0.6, 1));
   },
-  sun(ctx, S, L, J, m) { // Long Lost: a two-ink print of an old sunset, a bit faded.
+  sun(ctx, S, L, J, m, minimum) { // Long Lost: a two-ink print of an old sunset, a bit faded.
     paper(ctx, S, PAPER.cream, L);
     ink(ctx, S, INK.orange, J, g => halftone(g, S, S * 0.03, 0.4, (x, y) => Math.max(0, Math.min(1, 1.15 - Math.hypot(x - S * 0.5, y - S * 0.52) / (S * 0.3)))), { alpha: 0.85 });
     ink(ctx, S, INK.pink, J, g => { for (let i = 0; i < 6; i++) cut(g, [[0, S * (0.56 + i * 0.05)], [S, S * (0.55 + i * 0.05)], [S, S * (0.575 + i * 0.05)], [0, S * (0.58 + i * 0.05)]], J, S, 0.004); }, { alpha: 0.8 });
-    label(ctx, S, J, L, S * 0.08, S * 0.08, S * 0.44, [m.lines.join(" ").toLowerCase(), "side b"], { rot: -0.04 });
+    label(ctx, S, J, L, S * 0.08, S * 0.08, S * 0.44, [m.lines.join(" ").toLowerCase(), "side b"], { rot: -0.04, minimum });
   },
   waves(ctx, S, L, J, m) { // Chill: wavy lines in one blue pen.
     paper(ctx, S, PAPER.white, L);
@@ -72,22 +72,22 @@ export const STYLES: Record<Exclude<CoverStyle, "liquid">, CoverDrawer> = {
     moon.width = moon.height = 0;
     ctx.fillStyle = "#e9e2d0"; pasted(ctx, "Sleep", S * 0.07, S * 0.92, S * 0.2, "700 " + DISPLAY, J);
   },
-  letter(ctx, S, L, J, m) { // A saved mix: the seed's first letter, cut big, over a halftone in its genre's inks.
+  letter(ctx, S, L, J, m, minimum) { // A saved mix: the seed's first letter, cut big, over a halftone in its genre's inks.
     const p = paletteFor(m.tag), blend = p.dark ? "source-over" : "multiply"; paper(ctx, S, p.paper, L, p.dark);
     ink(ctx, S, p.inks[1], J, g => halftone(g, S, S * 0.034, 0.79, (x, y) => 0.25 + 0.6 * (x / S) * (1 - y / S)), { blend });
     ink(ctx, S, p.inks[0], J, g => { g.font = `700 ${S * 0.95}px ${DISPLAY}`; g.save(); g.translate(S * 0.08, S * 0.82); g.rotate(between(L, -0.08, 0.05)); g.fillText(m.seed[0].toUpperCase(), 0, 0); g.restore(); }, { alpha: 0.9, blend });
-    label(ctx, S, J, L, S * 0.4, S * 0.74, S * 0.54, ["mix from", m.seed.toLowerCase()], { plain: false });
+    label(ctx, S, J, L, S * 0.4, S * 0.74, S * 0.54, ["mix from", m.seed.toLowerCase()], { plain: false, minimum });
   },
-  lastfm(ctx, S, L, J, m) { // Last.fm: their red paper, their logo as a rubber stamp, a typed label.
+  lastfm(ctx, S, L, J, m, minimum) { // Last.fm: their red paper, their logo as a rubber stamp, a typed label.
     paper(ctx, S, "#d51007", L, true);
     ink(ctx, S, "#f6efe6", J, g => { g.save(); g.translate(S * 0.1, S * 0.08); g.rotate(between(L, -0.08, 0.02)); g.scale(S * 0.5 / 24, S * 0.5 / 24); g.fill(lastfmPath ??= new Path2D(LASTFM)); g.restore(); }, { blend: "source-over", alpha: 0.95, specks: 2600 });
-    label(ctx, S, J, L, S * 0.07, S * 0.66, S * 0.7, [...m.lines.map(l => l.toLowerCase()), m.sub.toLowerCase()]);
+    label(ctx, S, J, L, S * 0.07, S * 0.66, S * 0.7, [...m.lines.map(l => l.toLowerCase()), m.sub.toLowerCase()], { minimum });
   },
-  listenbrainz(ctx, S, L, J, m) { // ListenBrainz: their colours as cut paper; their name typed (no logo drawn).
+  listenbrainz(ctx, S, L, J, m, minimum) { // ListenBrainz: their colours as cut paper; their name typed (no logo drawn).
     paper(ctx, S, "#353070", L, true);
     ink(ctx, S, "#eb743b", J, g => { cut(g, [[S * 0.1, S * 0.1], [S * 0.62, S * 0.14], [S * 0.56, S * 0.56], [S * 0.12, S * 0.5]], J, S, 0.01); }, { blend: "source-over" });
     ink(ctx, S, "#9a93e6", J, g => blob(g, S * 0.66, S * 0.42, S * 0.17, J, 0.05), { blend: "source-over", alpha: 0.9 });
-    label(ctx, S, J, L, S * 0.07, S * 0.66, S * 0.72, ["listenbrainz", ...m.lines.map(l => l.toLowerCase())], { plain: false });
+    label(ctx, S, J, L, S * 0.07, S * 0.66, S * 0.72, ["listenbrainz", ...m.lines.map(l => l.toLowerCase())], { plain: false, minimum });
   },
 };
 

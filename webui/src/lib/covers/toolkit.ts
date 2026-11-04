@@ -1,3 +1,4 @@
+import { layoutLabel } from "./label-layout";
 import { INK } from "./palettes";
 import { alpha, between, type Random } from "./random";
 export type Point = [number, number];
@@ -70,14 +71,27 @@ export function pasted(g: CanvasRenderingContext2D, text: string, x: number, y: 
 }
 export function fitSize(g: CanvasRenderingContext2D, text: string, font: string, max: number, size: number) { let s = size; g.font = fontStr(s, font); while (g.measureText(text).width > max && s > 3) { s -= 0.5; g.font = fontStr(s, font); } return s; }
 // A torn paper label with typed text on it.
-export function label(ctx: CanvasRenderingContext2D, S: number, J: Random, L: Random, x: number, y: number, w: number, lines: string[], opts: { rot?: number; paper?: string; ink?: string; plain?: boolean } = {}) {
-  const lh = S * 0.052, h = lh * lines.length + S * 0.045, rot = opts.rot ?? between(L, -0.05, 0.03);
-  ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
+export function label(ctx: CanvasRenderingContext2D, S: number, J: Random, L: Random, x: number, y: number, w: number, lines: string[], opts: { rot?: number; paper?: string; ink?: string; plain?: boolean; minimum?: number } = {}) {
+  const layout = layoutLabel(S, x, y, w, lines, opts.minimum ?? S * 0.075, (text, size, bold) => {
+    ctx.font = fontStr(size, (bold ? "700 " : "") + TYPED);
+    return ctx.measureText(text).width;
+  }, opts.plain);
+  const h = layout.height;
+  w = layout.width;
+  const rot = opts.rot ?? between(L, -0.05, 0.03);
+  const sin = Math.sin(rot), cos = Math.cos(rot), margin = S * 0.012;
+  const minX = Math.min(0, -sin * h), maxX = cos * w + Math.max(0, -sin * h);
+  const minY = Math.min(0, sin * w), maxY = cos * h + Math.max(0, sin * w);
+  ctx.save();
+  ctx.translate(Math.max(margin - minX, Math.min(layout.x, S - margin - maxX)), Math.max(margin - minY, Math.min(layout.y, S - margin - maxY)));
+  ctx.rotate(rot);
   ctx.fillStyle = alpha("#000000", 0.18); cut(ctx, [[S * 0.006, S * 0.008], [w + S * 0.006, S * 0.008], [w + S * 0.006, h + S * 0.008], [S * 0.006, h + S * 0.008]], J, S, 0.003);
   ctx.fillStyle = opts.paper || "#fbf7ee"; cut(ctx, [[0, 0], [w, 0], [w, h], [0, h]], J, S, 0.003);
   ctx.fillStyle = opts.ink || INK.black;
-  lines.forEach((line, i) => { const bold = i === 0 && !opts.plain;     const size = fitSize(ctx, line, (bold ? "700 " : "") + TYPED, w - S * 0.05, S * 0.042); ctx.globalAlpha = between(J, 0.82, 0.95);
-    pasted(ctx, line, S * 0.025, S * 0.022 + lh * (i + 1) - lh * 0.25, size, (bold ? "700 " : "") + TYPED, J, 0.35); });
+  layout.lines.forEach((line, i) => {
+    ctx.globalAlpha = between(J, 0.82, 0.95);
+    pasted(ctx, line.text, S * 0.025, S * 0.025 + layout.lineHeight * (i + 0.8), layout.size, (line.bold ? "700 " : "") + TYPED, J, 0.35);
+  });
   ctx.restore(); ctx.globalAlpha = 1;
 }
 

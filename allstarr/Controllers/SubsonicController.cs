@@ -198,27 +198,46 @@ public partial class SubsonicController : ControllerBase
             return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
 
-        var native = new SubsonicNativeMusicSearch(_proxyService, _modelMapper, _responseBuilder, parameters, format, method);
-        var playlists = _subsonicSettings.EnableExternalPlaylists
-            ? new MusicSearchWindow(window.AlbumFetchCount, window.AlbumOffset, window.AlbumCount)
+        var nativeParameters = parameters;
+        if (window.SongOffset > 0 && window.SongCount > 0)
+            nativeParameters = nativeParameters.SetValue("songOffset", "0").SetValue("songCount", window.SongFetchCount.ToString());
+        if (window.AlbumOffset > 0 && window.AlbumCount > 0)
+            nativeParameters = nativeParameters.SetValue("albumOffset", "0").SetValue("albumCount", window.AlbumFetchCount.ToString());
+        if (window.ArtistOffset > 0 && window.ArtistCount > 0)
+            nativeParameters = nativeParameters.SetValue("artistOffset", "0").SetValue("artistCount", window.ArtistFetchCount.ToString());
+        var native = new SubsonicNativeMusicSearch(_proxyService, _modelMapper, _responseBuilder, nativeParameters, format, method);
+        var playlists = _subsonicSettings.EnableExternalPlaylists && window.AlbumCount > 0
+            ? new MusicSearchWindow(window.AlbumFetchCount, Take: window.AlbumOffset == 0 ? window.AlbumCount : null)
             : MusicSearchWindow.None;
+        var context = CurrentProtocolContext;
         var merged = await _musicSearch.SearchAsync(
-            CurrentProtocolContext,
+            context,
             new MusicSearchRequest(
                 cleanQuery,
-                new MusicSearchWindow(window.SongFetchCount, window.SongOffset, window.SongCount),
-                new MusicSearchWindow(window.AlbumFetchCount, window.AlbumOffset, window.AlbumCount),
-                new MusicSearchWindow(window.ArtistFetchCount, window.ArtistOffset, window.ArtistCount),
+                new MusicSearchWindow(window.SongCount > 0 ? window.SongFetchCount : 0, Take: window.SongOffset == 0 ? window.SongCount : null),
+                new MusicSearchWindow(window.AlbumCount > 0 ? window.AlbumFetchCount : 0, Take: window.AlbumOffset == 0 ? window.AlbumCount : null),
+                new MusicSearchWindow(window.ArtistCount > 0 ? window.ArtistFetchCount : 0, Take: window.ArtistOffset == 0 ? window.ArtistCount : null),
                 playlists,
                 HideProviderArtistsNamedLikeNative: true),
             native,
             HttpContext.RequestAborted);
+        var paginationScope = System.Text.Json.JsonSerializer.Serialize(new { Method = method, native.IsJson, MusicFolderId = parameters.GetValueOrDefault("musicFolderId") });
+        merged = new(
+            _musicSearch.ApplySubsonicSearchWindow(context, cleanQuery, paginationScope + ":songs", window.SongOffset, window.SongCount,
+                merged.Songs, SearchEntryId),
+            _musicSearch.ApplySubsonicSearchWindow(context, cleanQuery, paginationScope + ":albums", window.AlbumOffset, window.AlbumCount,
+                merged.Albums, SearchEntryId),
+            _musicSearch.ApplySubsonicSearchWindow(context, cleanQuery, paginationScope + ":artists", window.ArtistOffset, window.ArtistCount,
+                merged.Artists, SearchEntryId));
         var rendered = _modelMapper.RenderSearchResult(
             merged,
             native.IsJson,
             SubsonicSearchProtocolAdapter.UsesDirectoryAlbums(method));
         return RenderSearchResult(rendered, native.IsJson, SubsonicSearchProtocolAdapter.ResultElement(method));
     }
+
+    private static string SearchEntryId(MusicSearchEntry<object> entry) => entry.Native?.Id ?? entry.Song?.Id ??
+        entry.Album?.Id ?? entry.Artist?.Id ?? entry.Playlist!.Id;
 
     [AcceptVerbs("GET", "POST", "HEAD")]
     [Route("rest/stream")]

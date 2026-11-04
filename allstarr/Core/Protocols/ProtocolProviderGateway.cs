@@ -1032,16 +1032,35 @@ public sealed partial class ProtocolProviderGateway(
     }
 
     private async Task<List<ExternalPlaylist>> SearchPlaylistsCachedAsync(ProviderRouteCandidate<IProviderPlaylistCapability> candidate,
-        string query, int limit, CacheSettings settings, SemaphoreSlim gate)
+        string query, int limit, CacheSettings settings, SemaphoreSlim gate, bool allowSmallerWindow = true)
     {
         var context = candidate.Context;
+        var scope = JsonSerializer.Serialize(new { context.Actor, context.Policy, Kind = "playlists" });
         var key = CacheKeyBuilder.BuildProviderSearchKey(candidate.Provider.Id, context.Account?.AccountId, context.Account?.Revision,
-            JsonSerializer.Serialize(new { context.Actor, context.Policy, Kind = "playlists" }), query, limit, false, false, false);
+            scope, query, limit, false, false, false);
+        var windowKey = "search-window:" + CacheKeyBuilder.BuildProviderSearchKey(candidate.Provider.Id, context.Account?.AccountId, context.Account?.Revision,
+            scope, query, 0, false, false, false);
         var clock = timeProvider ?? TimeProvider.System;
         try
         {
             if (applicationCache?.IsEnabled == true && await applicationCache.GetStringAsync(key) is { } cached &&
                 JsonSerializer.Deserialize<List<ExternalPlaylist>>(cached) is { } known) return known;
+            if (applicationCache?.IsEnabled == true && allowSmallerWindow &&
+                await applicationCache.GetStringAsync(windowKey) is { } window &&
+                JsonSerializer.Deserialize<CachedSearchWindow>(window) is { Limit: > 0 } previous && previous.Limit < limit &&
+                await applicationCache.GetStringAsync(CacheKeyBuilder.BuildProviderSearchKey(candidate.Provider.Id,
+                    context.Account?.AccountId, context.Account?.Revision, scope, query, previous.Limit, false, false, false)) is { } previousSnapshot &&
+                JsonSerializer.Deserialize<List<ExternalPlaylist>>(previousSnapshot) is { } smaller)
+            {
+                var expansionKey = key + ":expand";
+                var expansion = searchWork.GetOrAdd(expansionKey, entryKey => new(() => Task.Run(async () =>
+                {
+                    try { return (string?)JsonSerializer.Serialize(await SearchPlaylistsCachedAsync(candidate, query, limit, settings, gate, false)); }
+                    finally { searchWork.TryRemove(expansionKey, out _); }
+                })));
+                _ = expansion.Value;
+                return smaller;
+            }
             // A late answer is still worth keeping, so this outlives the request that started it.
             using var timeout = new CancellationTokenSource(settings.SearchBackgroundWindow, clock);
             await gate.WaitAsync(timeout.Token);
@@ -1056,7 +1075,12 @@ public sealed partial class ProtocolProviderGateway(
             if (!outcome.IsSuccess) return [];
             var playlists = outcome.RequireValue().Items.Select(Map).ToList();
             if (applicationCache?.IsEnabled == true)
-                await applicationCache.SetStringAsync(key, JsonSerializer.Serialize(playlists), settings.SearchResultsTTL);
+            {
+                var serialized = JsonSerializer.Serialize(playlists);
+                await applicationCache.SetStringAsync(windowKey,
+                    JsonSerializer.Serialize(new CachedSearchWindow(limit)), settings.SearchResultsTTL);
+                await applicationCache.SetStringAsync(key, serialized, settings.SearchResultsTTL);
+            }
             return playlists;
         }
         catch (Exception error)

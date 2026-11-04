@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { createOrderSave } from "$lib/order-save";
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
@@ -59,8 +60,7 @@
     showExternalLabel !== snapshot?.values.showExternalLabel ||
     showExplicitLabel !== snapshot?.values.showExplicitLabel ||
     playbackStart !== (snapshot?.values.playbackStart ?? "Balanced") ||
-    qualityLimit !== (snapshot?.values.qualityLimit ?? "") ||
-    lyricsOrder.join(",") !== initialLyricsOrder
+    qualityLimit !== (snapshot?.values.qualityLimit ?? "")
   ));
 
   function completeLyricsOrder(value?: string | null) {
@@ -77,7 +77,52 @@
   }
 
   function moveLyrics(index: number, direction: -1 | 1) {
-    lyricsOrder = move(lyricsOrder, index, direction);
+    changeLyrics(move(lyricsOrder, index, direction));
+  }
+
+  const orderSave = createOrderSave({
+    save: async (_, order) => {
+      if (!snapshot) return;
+      busy = true;
+      try {
+        const next = await listeningPreferences.save({
+          explicitFilter: snapshot.values.explicitFilter as ExplicitFilter,
+          showExternalLabel: snapshot.values.showExternalLabel,
+          showExplicitLabel: snapshot.values.showExplicitLabel,
+          playbackStart: snapshot.values.playbackStart ?? "Balanced",
+          lyricsOrder: order.join(","),
+          expectedRevision: snapshot.revision,
+        });
+        snapshot = next;
+        initialLyricsOrder = completeLyricsOrder(next.values.lyricsOrder).join(",");
+      } finally { busy = false; }
+    },
+    saved: (_, order, previous) => {
+      error = "";
+      conflict = false;
+      if (lyricsOrder.join(",") === order.join(",")) lyricsOrder = initialLyricsOrder.split(",");
+      toast.success("Order saved", { label: "Undo", run: () => changeLyrics(previous) });
+    },
+    failed: async (_, cause) => {
+      const message = messageFor(cause, "Lyrics source order could not be saved.");
+      if (cause instanceof ApiError && cause.status === 409) {
+        try {
+          snapshot = await listeningPreferences.get();
+          lyricsOrder = completeLyricsOrder(snapshot.values.lyricsOrder);
+          initialLyricsOrder = lyricsOrder.join(",");
+          conflict = false;
+        } catch { /* Keep the conflict and reload action if the latest order is unavailable. */ }
+      }
+      error = message;
+      toast.error(message);
+    },
+  });
+
+  function changeLyrics(order: string[]) {
+    const previous = lyricsOrder;
+    if (previous.join(",") === order.join(",")) return;
+    lyricsOrder = order;
+    orderSave.change("lyrics", order, previous);
   }
 
   const lyricsName = (id: string) => lyricsSourceDisplayName(providerDefinitions, id);
@@ -108,7 +153,7 @@
   }
 
   async function load(passive = false) {
-    if (passive && (busy || dirty)) return;
+    if (passive && (busy || dirty || lyricsOrder.join(",") !== initialLyricsOrder)) return;
     loading = !snapshot;
     busy = Boolean(snapshot);
     error = "";
@@ -128,6 +173,8 @@
 
   async function save() {
     if (!snapshot || !selectedFilter || busy) return;
+    await orderSave.flush();
+    if (!snapshot || conflict) return;
     busy = true;
     error = "";
     conflict = false;
@@ -138,7 +185,6 @@
         showExplicitLabel,
         playbackStart,
         ...(qualityLimit !== (snapshot.values.qualityLimit ?? "") ? { qualityLimit } : {}),
-        ...(lyricsOrder.join(",") !== initialLyricsOrder ? { lyricsOrder: lyricsOrder.join(",") } : {}),
         expectedRevision: snapshot.revision,
       }));
       toast.success("Listening preferences saved.");
@@ -151,6 +197,8 @@
 
   async function reset() {
     if (!snapshot || busy) return;
+    await orderSave.flush();
+    if (!snapshot || conflict) return;
     busy = true;
     error = "";
     conflict = false;
@@ -168,7 +216,7 @@
   onMount(() => {
     void load();
     const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
-    return () => { unsubscribe(); scheduler.cancel(); };
+    return () => { unsubscribe(); scheduler.cancel(); void orderSave.flush(); };
   });
 </script>
 

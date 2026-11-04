@@ -10,9 +10,9 @@ export function mountCover(canvas: HTMLCanvasElement, getMix: () => CoverDescrip
   const release = retainWater(), preference = matchMedia("(prefers-reduced-motion: reduce)");
   const host = canvas.closest<HTMLElement>("button, a, [tabindex]") ?? canvas.parentElement!;
   let disposed = false, ready = false, onScreen = false, hovering = false, focused = host.matches(":focus-within");
-  let raf = 0, lastDraw = -Infinity, lastFrame = -1;
+  let raf = 0, lastDraw = -Infinity, lastFrame = -1, minimum = 0;
   function restingTime() { return getMix().style === "liquid" && !preference.matches ? flowTime(performance.now()) : 0; }
-  function draw(t = restingTime()) { if (ready && canvas.width > 0) drawCover(ctx!, canvas.width, getMix(), t); }
+  function draw(t = restingTime()) { if (ready && canvas.width > 0) drawCover(ctx!, canvas.width, getMix(), t, minimum); }
   function enabled() {
     return ready && shouldAnimate({ reduced: preference.matches, onScreen, pageVisible: !document.hidden, liquid: getMix().style === "liquid", engaged: hovering || focused });
   }
@@ -33,7 +33,9 @@ export function mountCover(canvas: HTMLCanvasElement, getMix: () => CoverDescrip
     } else { stop(); draw(); }
   }
   function resize() {
-    const size = Math.round(canvas.getBoundingClientRect().width * Math.min(2, window.devicePixelRatio || 1));
+    const width = canvas.getBoundingClientRect().width;
+    const size = Math.round(width * Math.min(2, window.devicePixelRatio || 1));
+    minimum = width ? parseFloat(getComputedStyle(canvas).fontSize) * size / width : 0;
     if (size !== canvas.width) { canvas.width = canvas.height = size; draw(); }
   }
   const observer = new IntersectionObserver(entries => { onScreen = entries[0].isIntersecting; sync(); });

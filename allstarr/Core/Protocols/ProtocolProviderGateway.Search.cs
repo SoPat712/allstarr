@@ -110,6 +110,8 @@ public sealed partial class ProtocolProviderGateway
         var scope = JsonSerializer.Serialize(new { context.Actor, context.Policy });
         var key = CacheKeyBuilder.BuildProviderSearchKey(candidate.Provider.Id, context.Account?.AccountId,
             context.Account?.Revision, scope, query, limit, songs, albums, artists);
+        var windowKey = "search-window:" + CacheKeyBuilder.BuildProviderSearchKey(candidate.Provider.Id, context.Account?.AccountId,
+            context.Account?.Revision, scope, query, 0, songs, albums, artists);
         var workKey = Intelligence.HistoryRequestBudget.Current == null ? key : key + ":history";
         // Some sources do real work before their first await, so each starts on its own and can't hold up the others.
         var work = searchWork.GetOrAdd(workKey, _ => new(() => Task.Run(SearchAsync)));
@@ -139,7 +141,7 @@ public sealed partial class ProtocolProviderGateway
             }
         }
 
-        async Task<string?> FetchAsync()
+        async Task<string?> FetchAsync(bool allowSmallerWindow = true)
         {
             var clock = timeProvider ?? TimeProvider.System;
             var deadline = clock.GetUtcNow() + settings.SearchBackgroundWindow;
@@ -149,9 +151,28 @@ public sealed partial class ProtocolProviderGateway
                 try
                 {
                     var cached = await applicationCache.GetStringAsync(key).WaitAsync(timeout.Token);
-                    if (cached != null && JsonSerializer.Deserialize<SearchSnapshot>(cached) is { } snapshot &&
-                        snapshot.Durations?.Length == snapshot.Result.Songs.Count &&
-                        snapshot.TrackIds?.Length == snapshot.Result.Songs.Count) return cached;
+                    if (ValidSnapshot(cached)) return cached;
+                    if (allowSmallerWindow && await applicationCache.GetStringAsync(windowKey).WaitAsync(timeout.Token) is { } window &&
+                        JsonSerializer.Deserialize<CachedSearchWindow>(window) is { Limit: > 0 } previous &&
+                        previous.Limit < limit && await applicationCache.GetStringAsync(CacheKeyBuilder.BuildProviderSearchKey(
+                            candidate.Provider.Id, context.Account?.AccountId, context.Account?.Revision, scope, query,
+                            previous.Limit, songs, albums, artists)).WaitAsync(timeout.Token) is { } smaller && ValidSnapshot(smaller))
+                    {
+                        // Keep the smaller cached answer available while the wider prefix fills in the background.
+                        var expansionKey = workKey + ":expand";
+                        var expansion = searchWork.GetOrAdd(expansionKey, entryKey => new(() => Task.Run(async () =>
+                        {
+                            try { return await FetchAsync(false); }
+                            catch (Exception)
+                            {
+                                logger?.LogDebug("Provider search expansion failed for {ProviderId}", candidate.Provider.Id);
+                                return null;
+                            }
+                            finally { searchWork.TryRemove(expansionKey, out _); }
+                        })));
+                        _ = expansion.Value;
+                        return smaller;
+                    }
                 }
                 catch (OperationCanceledException) when (timeout.IsCancellationRequested)
                 {
@@ -234,6 +255,8 @@ public sealed partial class ProtocolProviderGateway
             {
                 try
                 {
+                    await applicationCache.SetStringAsync(windowKey,
+                        JsonSerializer.Serialize(new CachedSearchWindow(limit)), settings.SearchResultsTTL).WaitAsync(timeout.Token);
                     await applicationCache.SetStringAsync(key, serialized, settings.SearchResultsTTL).WaitAsync(timeout.Token);
                 }
                 catch (Exception)
@@ -257,6 +280,10 @@ public sealed partial class ProtocolProviderGateway
             }
         }
     }
+
+    private static bool ValidSnapshot(string? serialized) => serialized != null &&
+        JsonSerializer.Deserialize<SearchSnapshot>(serialized) is { } snapshot &&
+        snapshot.Durations?.Length == snapshot.Result.Songs.Count && snapshot.TrackIds?.Length == snapshot.Result.Songs.Count;
 
     private IReadOnlyList<Song> CollapseMetadataSearchTracks(IReadOnlyList<Song> songs,
         IReadOnlyList<string> providerOrder, EffectiveProviderPolicySnapshot? policy, ProtocolExecutionContext protocol,
@@ -319,6 +346,8 @@ public sealed partial class ProtocolProviderGateway
 
     private sealed record SearchSnapshot(SearchResult Result, TimeSpan?[] Durations, ProviderExternalResourceId[] TrackIds,
         ProviderError? Error = null);
+
+    private sealed record CachedSearchWindow(int Limit);
 
     private sealed class SearchFailureState
     {

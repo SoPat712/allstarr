@@ -5,9 +5,29 @@ test.afterEach(async ({ page }) => { expect(await page.pageErrors()).toEqual([])
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) test(`Drawn home covers at ${width}px ${theme}`, async ({ page }) => {
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
+  await page.addInitScript(() => {
+    const sizes = new WeakMap<HTMLCanvasElement, number[]>(), original = CanvasRenderingContext2D.prototype.fillText;
+    CanvasRenderingContext2D.prototype.fillText = function(...args: Parameters<typeof original>) {
+      if (this.canvas.isConnected && this.font.includes("Courier Prime")) {
+        const values = sizes.get(this.canvas) ?? [];
+        values.push(Number(this.font.match(/(?:^|\s)([\d.]+)px(?:\s|$)/)?.[1]));
+        sizes.set(this.canvas, values.slice(-500));
+      }
+      return original.apply(this, args);
+    };
+    Object.assign(window, { coverLabelSizes: (canvas: HTMLCanvasElement) => sizes.get(canvas) ?? [] });
+  });
   await appearance(page, width, theme); await mockCovers(page); await openHome(page);
   const covers = page.locator(".mix-shelf canvas");
   await expect(covers).toHaveCount(19); await expectPainted(covers);
+  const sizes = await covers.evaluateAll(elements => elements.flatMap(element => {
+    const canvas = element as HTMLCanvasElement;
+    return (window as unknown as { coverLabelSizes: (canvas: HTMLCanvasElement) => number[] }).coverLabelSizes(canvas)
+      .map(size => size * canvas.getBoundingClientRect().width / canvas.width);
+  }));
+  expect(sizes.length).toBeGreaterThan(0);
+  expect(sizes.every(Number.isFinite)).toBe(true);
+  expect(Math.min(...sizes)).toBeGreaterThanOrEqual(12);
   await expect(page.getByRole("region", { name: "New releases", exact: true }).locator("canvas")).toHaveCount(0);
   for (const shelf of ["Made for you", "Moods", "Your mixes", "New releases", "From your services"]) {
     await expect(page.getByRole("region", { name: shelf, exact: true })).toBeVisible();
@@ -15,6 +35,25 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
   expect(await page.evaluate(async () => Promise.all(['700 40px "Archivo Narrow"', '400 40px "Courier Prime"', '700 40px "Courier Prime"'].map(font => document.fonts.load(font).then(faces => faces.length))))).toEqual([1, 1, 1]);
   for (const name of ["R&B Blend", "Indie Rock Blend", "Electronic Blend", "Hip-Hop Blend", "Uncharted", "Just Dropped", "Heavy Rotation", "Long Lost"]) {
     await expect(page.getByRole("region", { name: "Made for you", exact: true }).getByRole("button", { name: `Open ${name}`, exact: true })).toBeVisible();
+  }
+  const layout = await page.locator(".for-you").evaluate(element => {
+    const shelves = [...element.querySelectorAll<HTMLElement>(":scope > section:has(.mix-shelf)")];
+    const start = element.querySelector<HTMLElement>('section[aria-label="Start a mix"]')!;
+    const moods = shelves[1], made = shelves[0];
+    return {
+      gaps: [moods.getBoundingClientRect().top - made.getBoundingClientRect().bottom, start.getBoundingClientRect().top - moods.getBoundingClientRect().bottom],
+      cards: shelves.flatMap(shelf => [...shelf.querySelectorAll<HTMLElement>(".mix-card")].map(card => ({
+        shelf: shelf.querySelector("h2")!.textContent,
+        height: card.getBoundingClientRect().height,
+        bottom: card.querySelector("small")!.getBoundingClientRect().bottom,
+      }))),
+    };
+  });
+  expect(layout.gaps[1]).toBeCloseTo(layout.gaps[0], 0);
+  for (const shelf of new Set(layout.cards.map(card => card.shelf))) {
+    const cards = layout.cards.filter(card => card.shelf === shelf);
+    expect(new Set(cards.map(card => Math.round(card.height))).size).toBe(1);
+    expect(new Set(cards.map(card => Math.round(card.bottom))).size).toBe(1);
   }
   await capture(page, "home", width, theme);
   expect(errors).toEqual([]);
@@ -44,30 +83,36 @@ test("Visible water drifts within its frame cap and printed covers return to sti
     } as typeof original;
     Object.assign(window, { waterContexts: () => contexts });
   });
+  await page.clock.install();
   await openHome(page); await expectPainted(page.locator(".mix-shelf canvas"));
+  await page.clock.pauseAt(new Date());
   const liquid = page.getByRole("region", { name: "Made for you", exact: true }).locator("canvas").first();
-  const sample = await liquid.evaluate(async element => {
-    const canvas = element as HTMLCanvasElement;
-    const draws = (window as unknown as { coverDraws: (canvas: HTMLCanvasElement) => number }).coverDraws;
-    const before = canvas.toDataURL(), count = draws(canvas), start = performance.now();
-    await new Promise(resolve => setTimeout(resolve, 650));
-    const elapsed = performance.now() - start, frames = draws(canvas) - count;
-    return { before, after: canvas.toDataURL(), elapsed, frames };
-  });
-  expect(sample.after).not.toBe(sample.before);
-  expect(sample.frames).toBeGreaterThan(0);
-  expect(sample.frames).toBeLessThanOrEqual(Math.ceil(sample.elapsed * 30 / 1000) + 2);
+  const before = await pixels(liquid), count = await drawCount(liquid);
+  await page.clock.runFor(650);
+  expect(await pixels(liquid)).not.toBe(before);
+  expect(await drawCount(liquid) - count).toBeGreaterThan(0);
+  expect(await drawCount(liquid) - count).toBeLessThanOrEqual(Math.ceil(650 * 30 / 1000) + 2);
   expect(await page.evaluate(() => (window as unknown as { waterContexts: () => number }).waterContexts())).toBe(1);
   const printed = page.getByRole("region", { name: "Moods", exact: true }).locator("canvas").first();
-  await page.mouse.move(0, 0); const still = await pixels(printed);
-  await printed.hover(); await expect.poll(() => pixels(printed)).not.toBe(still);
+  await page.mouse.move(0, 0);
+  await printed.evaluate(element => (element.closest("button") as HTMLButtonElement).blur());
+  const still = await pixels(printed);
+  const expectMoving = async () => {
+    for (let step = 0; step < 20 && await pixels(printed) === still; step++) await page.clock.runFor(50);
+    expect(await pixels(printed)).not.toBe(still);
+  };
+  await printed.hover(); await expectMoving();
   await page.mouse.move(0, 0); await expect.poll(() => pixels(printed)).toBe(still);
-  await printed.locator("..").locator("..").focus(); await expect.poll(() => pixels(printed)).not.toBe(still);
+  await printed.locator("..").locator("..").focus(); await expectMoving();
   await printed.evaluate(element => (element.closest("button") as HTMLButtonElement).blur());
   await expect.poll(() => pixels(printed)).toBe(still);
   await liquid.evaluate(element => element.closest(".mix-shelf")!.scrollTo({ left: 3000, behavior: "instant" }));
   await expect(liquid).not.toBeInViewport();
-  await expect.poll(async () => { const before = await drawCount(liquid); await page.waitForTimeout(300); return await drawCount(liquid) - before; }, { timeout: 5000 }).toBe(0);
+  await expect.poll(async () => {
+    const hiddenCount = await drawCount(liquid);
+    await page.clock.runFor(300);
+    return await drawCount(liquid) - hiddenCount;
+  }).toBe(0);
 });
 
 test("Water falls back to painted colours when the graphics context is unavailable", async ({ page }) => {

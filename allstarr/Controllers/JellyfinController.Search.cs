@@ -334,7 +334,11 @@ public partial class JellyfinController
             items.AddRange(allSongs);
         }
 
-        if (artistSearch) return await ShapeProviderQueryAsync(items, nativeAlreadyFiltered: true, defaultLimit: limit);
+        if (artistSearch) return await ShapeProviderQueryAsync(items, nativeAlreadyFiltered: true, defaultLimit: limit,
+            searchPaginationScope: SearchPaginationScope(includeItemTypes));
+        items = _musicSearch.PreserveSearchOrder(context, cleanQuery,
+            SearchPaginationScope(includeItemTypes), startIndex, limit, items,
+            item => GetItemType(item) + ":" + GetItemStringValue(item, "Id")).ToList();
         var response = _searchProtocolAdapter.ShapeItemsResponse(items, startIndex, limit);
         return new ContentResult { Content = response.Body, ContentType = response.ContentType, StatusCode = response.StatusCode };
     }
@@ -344,6 +348,15 @@ public partial class JellyfinController
         if (entry.Native != null) return entry.Native.Payload;
         return _responseBuilder.ConvertArtistForQuery(entry.Artist!);
     }
+
+    private string SearchPaginationScope(string? includeItemTypes) => JsonSerializer.Serialize(new
+    {
+        IncludeItemTypes = includeItemTypes,
+        Filters = Request.Query.Where(item => item.Key.ToLowerInvariant() is not
+                ("startindex" or "limit" or "searchterm" or "api_key" or "apikey" or "access_token"))
+            .OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(item => new { Key = item.Key.ToLowerInvariant(), Value = item.Value.ToString() })
+    });
 
     private Dictionary<string, object?> RenderSearchEntry(MusicSearchEntry<Dictionary<string, object?>> entry)
     {

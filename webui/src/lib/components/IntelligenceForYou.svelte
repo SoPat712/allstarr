@@ -152,7 +152,7 @@
   <IntelligenceHistoryImports onchanged={async () => { await pending; await load(); }} /><footer class="dialog-actions"><Dialog.Close type="button" class={buttonVariants({ variant: "secondary" })}>Done</Dialog.Close></footer>
 </Dialog.Content></Dialog.Portal></Dialog.Root>
 <style>
-  .for-you { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-6); min-width: 0; }
+  .for-you { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--section-gap); min-width: 0; }
   .for-you > :global(section) { min-width: 0; }
   .section-heading, header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
   h2 { font-size: 1.125rem; font-weight: 600; }

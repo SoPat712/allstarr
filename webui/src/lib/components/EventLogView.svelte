@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { readActivityScope, rememberActivityScope, type ActivityScope } from "$lib/activity-scope";
   import { Button } from "$lib/components/ui/button";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -15,43 +15,65 @@
   let scope = $state<ActivityScope>("mine");
   let ready = $state(false);
   let attention = $state(false);
+  let mobile = $state(false);
+  let mineButton = $state<HTMLButtonElement>();
   let everyoneButton = $state<HTMLButtonElement>();
+  let scopeFocus = $state<ActivityScope | null>(null);
   $effect(() => { view = ["history", "plays", ...(administrator ? ["jobs", "tasks", "reports"] : [])].includes(initialView) ? initialView : "history"; });
   onMount(() => {
+    const breakpoint = matchMedia("(max-width: 650px)");
+    const syncMobile = () => mobile = breakpoint.matches;
+    syncMobile();
+    breakpoint.addEventListener("change", syncMobile);
     scope = readActivityScope(administrator);
     ready = true;
-    return liveUpdates.subscribe((update) => {
+    const unsubscribe = liveUpdates.subscribe((update) => {
       if (administrator && scope === "mine" && update.requiresAdministrator) attention = true;
     });
+    return () => { unsubscribe(); breakpoint.removeEventListener("change", syncMobile); };
   });
-  function chooseScope(next: ActivityScope) {
+  async function chooseScope(next: ActivityScope) {
+    scopeFocus = next;
     scope = next;
     attention = false;
     rememberActivityScope(next);
     liveUpdates.setScope(next);
+    await tick();
+    const button = next === "mine" ? mineButton : everyoneButton;
+    if (button?.isConnected && (!mobile || view !== "history")) { button.focus(); scopeFocus = null; }
+  }
+  function restoreScopeFocus(button: HTMLButtonElement, id: ActivityScope) {
+    void tick().then(() => {
+      if (scopeFocus === id && button.isConnected) {
+        button.focus();
+        if (!mobile || view !== "history" || button.closest(".event-log-chip-row")) scopeFocus = null;
+      }
+    });
   }
 </script>
+
+{#snippet scopeControls()}
+  <div class="activity-audience" role="group" aria-label="Activity scope">
+    <button bind:this={mineButton} use:restoreScopeFocus={"mine"} type="button" class="filter-chip" aria-pressed={scope === "mine"} onclick={() => void chooseScope("mine")}>Mine</button>
+    <button bind:this={everyoneButton} use:restoreScopeFocus={"everyone"} type="button" class="filter-chip" aria-pressed={scope === "everyone"} onclick={() => void chooseScope("everyone")}>Everyone</button>
+  </div>
+{/snippet}
 
 <div class="activity-content">
 <SegmentedNav label="Activity views" items={[
   { id: "history", label: "History" }, { id: "plays", label: "Plays" },
   ...(administrator ? [{ id: "jobs", label: "Jobs" }, { id: "tasks", label: "Tasks" }, { id: "reports", label: "Reports" }] : []),
-]} active={view} onchange={(next) => view = next} />
+]} active={view} onchange={(next) => { scopeFocus = null; view = next; }} />
 {#if view !== "reports"}
 <div class="activity-toolbar">
-  {#if administrator}
-    <div class="activity-audience" role="group" aria-label="Activity scope">
-      <button type="button" class="filter-chip" aria-pressed={scope === "mine"} onclick={() => chooseScope("mine")}>Mine</button>
-      <button bind:this={everyoneButton} type="button" class="filter-chip" aria-pressed={scope === "everyone"} onclick={() => chooseScope("everyone")}>Everyone</button>
-    </div>
-  {/if}
+  {#if administrator && (!mobile || view !== "history")}{@render scopeControls()}{/if}
   <p class="activity-scope">{scope === "everyone" ? "Your household’s activity" : "Your activity"} · <span role="status" aria-live="polite">{liveUpdates.state.status === "live" ? "Live updates connected" : "Reconnecting to live updates; checking periodically"}</span></p>
 </div>
 {/if}
 {#if view !== "reports" && administrator && scope === "mine" && attention}
   <div class="degraded-banner" role="status">
     <p><strong>Household work needs attention.</strong> Open Everyone to review failed background work.</p>
-    <Button variant="secondary" onclick={() => { chooseScope("everyone"); everyoneButton?.focus(); }}>Review household work</Button>
+    <Button variant="secondary" onclick={() => void chooseScope("everyone")}>Review household work</Button>
   </div>
 {/if}
 {#if ready}
@@ -63,7 +85,7 @@
     {:else if view === "plays"}
       <ActivityPlays {administrator} {scope} {currentUserId} />
     {:else}
-      {#if view === "jobs"}<ActivityJobs {administrator} {scope} {initialJobId} />{:else}<EventHistoryFeed {administrator} {scope} />{/if}
+      {#if view === "jobs"}<ActivityJobs {administrator} {scope} {initialJobId} />{:else}<EventHistoryFeed {administrator} {scope} scopeControls={administrator && mobile ? scopeControls : undefined} />{/if}
     {/if}
   {/key}
 {/if}
@@ -84,7 +106,7 @@
   .activity-content :global(:is([data-tone="danger"], .badge-danger)) { --activity-ink: var(--md-sys-color-on-error-container); --activity-container: var(--md-sys-color-error-container); }
 
   .activity-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1rem; margin-block: var(--space-5) var(--section-gap); }
-  .activity-audience { display: flex; gap: .5rem; }
-  .activity-audience button { min-height: var(--control-md); }
+  .activity-content :global(.activity-audience) { display: flex; gap: .5rem; }
+  .activity-content :global(.activity-audience button) { min-height: var(--control-md); }
   .activity-scope { margin: 0; color: var(--md-sys-color-on-surface-variant); font-size: .8125rem; }
 </style>

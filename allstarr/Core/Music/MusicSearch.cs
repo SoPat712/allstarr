@@ -86,11 +86,12 @@ public interface INativeMusicSearch<TPayload>
 /// provider songs the listener already owns are replaced by the native copy, and each kind is
 /// ranked by relevance with native rows winning ties.
 /// </summary>
-public sealed class MusicSearchService(
+public sealed partial class MusicSearchService(
     IProtocolProviderGateway providers,
     ILibraryIndexService? libraryIndex = null,
     SavedLibraryReader? savedLibrary = null,
-    ILogger<MusicSearchService>? logger = null)
+    ILogger<MusicSearchService>? logger = null,
+    TimeProvider? timeProvider = null)
 {
     /// <summary>Two songs can only be the same recording when this matches, which makes it a cheap way to narrow down comparisons.</summary>
     internal static string RecordingKey(Song song) =>

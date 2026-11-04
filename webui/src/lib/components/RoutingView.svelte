@@ -6,7 +6,7 @@
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import { home, settings, sources, type PriorityGroup, type ProviderScore, type UiSchema } from "$lib/api";
+  import { ApiError, home, settings, sources, type PriorityGroup, type ProviderScore, type UiSchema } from "$lib/api";
   import AudioQualityField from "$lib/components/AudioQualityField.svelte";
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import ProviderScoreDetails from "$lib/components/ProviderScoreDetails.svelte";
@@ -14,6 +14,7 @@
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import { canonicalProviderId, humanize, lyricsSourceDisplayName, sourceOriginLabel } from "$lib/sources";
+  import { createOrderSave } from "$lib/order-save";
   import { fieldValue, mergeRoutingOrders, move } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
 
@@ -29,14 +30,13 @@
   const toggleScore = (key: string) => { openScore = openScore === key ? "" : key; };
   const scoreFor = (providerId: string) => scores.find((item) => item.providerId.toLowerCase() === providerId.toLowerCase());
 
-  // Manual sources sink to the bottom whatever their score. Nothing saves until Save order.
+  // Manual sources sink to the bottom whatever their score.
   function sortByScore(group: PriorityGroup) {
     const order = orders[group.id] ?? group.providers;
     const fixed: string[] = order.filter((id) => id === "kept" || id === "backend");
     const sorted = orderByScore(order.filter((id) => !fixed.includes(id)),
       (id) => capabilityScore(scoreFor(id), group.id), (id) => isRanked(provider(id)?.useMode));
-    orders = { ...orders, [group.id]: [...fixed, ...sorted] };
-    if (!dirtyOrderIds.includes(group.id)) dirtyOrderIds = [...dirtyOrderIds, group.id];
+    changeOrder(group, [...fixed, ...sorted]);
   }
 
   let schema = $state<UiSchema | null>(null);
@@ -64,11 +64,14 @@
     return schema?.providers.find((item) => item.id.toLowerCase() === id.toLowerCase());
   }
 
+  let refreshPending: Promise<unknown> | null = null;
   async function refresh() {
     if (refreshing) return;
     refreshing = true;
     error = "";
-    const results = await Promise.allSettled([home.schema(), settings.config()]);
+    const pending = Promise.allSettled([home.schema(), settings.config()]);
+    refreshPending = pending;
+    const results = await pending;
     if (results[0].status === "fulfilled") schema = results[0].value as UiSchema;
     const nextConfig = results[1].status === "fulfilled"
       ? results[1].value as Record<string, unknown>
@@ -84,31 +87,50 @@
       error = failed[0].reason instanceof Error ? failed[0].reason.message : "Routing state is unavailable.";
     loading = false;
     refreshing = false;
+    refreshPending = null;
   }
 
   const refreshScheduler = createRefreshScheduler(refresh);
   const scheduleRefresh = refreshScheduler.schedule;
 
-  async function saveOrder(group: PriorityGroup) {
-    if (action) return;
-    action = group.id;
-    try {
-      await settings.save({ [group.envKey]: (orders[group.id] ?? []).join(",") });
-      dirtyOrderIds = dirtyOrderIds.filter((id) => id !== group.id);
-      toast.success(`${group.label} saved.`);
-      await refresh();
-    } catch (cause) {
+  const orderSave = createOrderSave({
+    save: async (id, order) => {
+      const group = groups.find(item => item.id === id);
+      if (group) {
+        await settings.save({ [group.envKey]: order.join(",") });
+        await refreshPending;
+        await refresh();
+      }
+    },
+    saved: (id, order, previous) => {
+      if (orders[id]?.join(",") === order.join(",")) dirtyOrderIds = dirtyOrderIds.filter(item => item !== id);
+      toast.success("Order saved", { label: "Undo", run: () => {
+        const group = groups.find(item => item.id === id);
+        if (group) changeOrder(group, previous);
+      } });
+    },
+    failed: async (id, cause) => {
+      if (cause instanceof ApiError && cause.status === 409) {
+        dirtyOrderIds = dirtyOrderIds.filter(item => item !== id);
+        await refreshPending;
+        await refresh();
+      }
       toast.error(cause instanceof Error ? cause.message : "Provider routing could not be saved.");
-    } finally {
-      action = "";
-    }
+    },
+  });
+
+  function changeOrder(group: PriorityGroup, order: string[]) {
+    const previous = orders[group.id] ?? group.providers;
+    if (previous.join(",") === order.join(",")) return;
+    orders = { ...orders, [group.id]: order };
+    if (!dirtyOrderIds.includes(group.id)) dirtyOrderIds = [...dirtyOrderIds, group.id];
+    orderSave.change(group.id, order, previous);
   }
 
   function moveProvider(group: PriorityGroup, index: number, direction: -1 | 1) {
     const order = orders[group.id] ?? [];
     const providerId = order[index];
-    orders = { ...orders, [group.id]: move(order, index, direction) };
-    if (!dirtyOrderIds.includes(group.id)) dirtyOrderIds = [...dirtyOrderIds, group.id];
+    changeOrder(group, move(order, index, direction));
     toast.success(`${provider(providerId)?.name ?? humanize(providerId)} moved to position ${index + direction + 1}.`);
   }
 
@@ -117,8 +139,7 @@
     const order = [...(orders[group.id] ?? [])];
     const [providerId] = order.splice(dragging.index, 1);
     order.splice(index, 0, providerId);
-    orders = { ...orders, [group.id]: order };
-    if (!dirtyOrderIds.includes(group.id)) dirtyOrderIds = [...dirtyOrderIds, group.id];
+    changeOrder(group, order);
     toast.success(`${provider(providerId)?.name ?? humanize(providerId)} moved to position ${index + 1}.`);
     dragging = null;
   }
@@ -149,6 +170,7 @@
     return () => {
       unsubscribe();
       refreshScheduler.cancel();
+      orderSave.flush();
     };
   });
 </script>
@@ -217,7 +239,6 @@
           <header>
             <div><h3>{tabNames[group.id] ?? group.label.replace(/ order$/i, "")} order</h3><small>{group.id === "lyrics" ? "A lyrics choice saved for a song always wins. Otherwise the best-timed lyrics win: word by word, then line by line, then plain text. This order decides between equally timed lyrics." : group.description || "Drag services, or use the arrows, to change the order Allstarr tries them."}</small></div>
             {#if scores.length && group.id !== "lyrics"}<Button variant="outline" onclick={() => sortByScore(group)}><Sparkles size={16} aria-hidden="true" />Sort by score</Button>{/if}
-            <Button aria-label={`Save ${group.label}`} disabled={Boolean(action) || !dirtyOrderIds.includes(group.id)} onclick={() => void saveOrder(group)}>{action === group.id ? "Saving…" : "Save order"}</Button>
           </header>
           <ol>
             {#if group.pinnedProvider}
@@ -276,11 +297,12 @@
   :global(.routing-group li) { grid-template-columns: 3rem 2.5rem minmax(0, 1fr) auto auto; }
   :global(.routing-group li.pinned) { grid-template-columns: 3rem 2.5rem minmax(0, 1fr); }
   .routing-name { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+  .score-toggle { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 2.5rem; padding: var(--space-1) var(--space-2); border: 0; border-radius: 999px; background: transparent; color: var(--color-ink-muted); font-size: 0.8125rem; font-weight: 500; cursor: pointer; transition: background-color 200ms var(--ease-emphasized), color 200ms var(--ease-emphasized); }
   @media (max-width: 560px) {
     :global(.routing-group li) { grid-template-columns: 2.25rem 2.5rem minmax(0, 1fr) auto; row-gap: var(--space-2); }
     :global(.routing-group li.pinned) { grid-template-columns: 2.25rem 2.5rem minmax(0, 1fr); }
     .routing-copy { grid-column: 3 / -1; }
-    .score-toggle { grid-column: 3; grid-row: 2; justify-self: start; }
+    .score-toggle { grid-column: 3; grid-row: 2; justify-self: start; min-height: 44px; }
     .routing-actions { grid-column: 4; grid-row: 2; }
   }
   .routing-quality-label { color: var(--color-ink-muted); font-size: var(--text-xs); }
@@ -288,7 +310,6 @@
   :global(.dark) .routing-quality-label.lossy { color: var(--warning); }
   :global(.routing-group li.has-score) { cursor: pointer; transition: background-color 200ms var(--ease-emphasized); }
   :global(.routing-group li.has-score:hover) { background: color-mix(in srgb, var(--color-ink) 4%, transparent); }
-  .score-toggle { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 2.5rem; padding: var(--space-1) var(--space-2); border: 0; border-radius: 999px; background: transparent; color: var(--color-ink-muted); font-size: 0.8125rem; font-weight: 500; cursor: pointer; transition: background-color 200ms var(--ease-emphasized), color 200ms var(--ease-emphasized); }
   .score-toggle:hover { background: color-mix(in srgb, var(--color-ink) 8%, transparent); color: var(--color-ink); }
   .score-toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .score-toggle :global(svg) { transition: transform 240ms var(--ease-emphasized); }

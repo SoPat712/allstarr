@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { expectContainedMobileGeometry } from "./mobile-geometry";
+import { capture } from "./for-you-fixtures";
 const jobId = "11111111-1111-4111-8111-111111111111";
 const rows = [
   { id: "cache", kind: "caching", label: "Song cached", state: "verified", detail: "Housewife · Tate McRae · Complete original file saved for 72 hours.", sourceTitle: "Housewife", sourceArtist: "Tate McRae", providerId: "applemusic", source: "Apple Music" },
@@ -306,4 +307,40 @@ test("Activity uses readable retry badges and local retry times", async ({ page 
   const localTime = await page.evaluate(() => new Intl.DateTimeFormat(undefined, { timeStyle: "short" }).format(new Date("2026-11-03T04:00:27Z")));
   await expect(group.locator(".notice-copy")).toContainText(localTime);
   await expect(group.locator(".notice-copy")).not.toContainText("UTC");
+});
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) test(`Activity filters share a phone row at ${width}px ${theme}`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
+  await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+  await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+  await mockActivity(page); await page.goto("/#/activity");
+  const search = page.getByRole("searchbox", { name: "Search", exact: true });
+  await expect(search).toBeVisible();
+  if (width === 390) {
+    const bar = page.locator(".event-log-chip-row");
+    const geometry = await bar.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      return { width: element.clientWidth, content: element.scrollWidth, top: rect.top,
+        controls: [...element.querySelectorAll<HTMLElement>("button, select")].filter(control => control.getBoundingClientRect().width).map(control => {
+          const box = control.getBoundingClientRect(); return { top: box.top, bottom: box.bottom, width: box.width, height: box.height };
+        }) };
+    });
+    expect(geometry.content).toBeGreaterThan(geometry.width);
+    expect(Math.max(...geometry.controls.map(control => control.top)) - Math.min(...geometry.controls.map(control => control.top))).toBeLessThanOrEqual(4);
+    for (const control of geometry.controls) { expect(control.height).toBeGreaterThanOrEqual(44); expect(control.width).toBeGreaterThanOrEqual(44); }
+    const searchBox = (await search.boundingBox())!;
+    expect(searchBox.y + searchBox.height).toBeLessThan(geometry.top);
+    const problems = page.getByRole("button", { name: "Problems only", exact: true });
+    await problems.focus();
+    expect(await problems.evaluate(element => getComputedStyle(element).outlineStyle)).not.toBe("none");
+    await page.keyboard.press("Enter"); await expect(problems).toHaveAttribute("aria-pressed", "true");
+    await page.keyboard.press("Enter");
+    await bar.evaluate(element => element.scrollTo({ left: 0, behavior: "instant" }));
+    await page.getByRole("button", { name: "Everyone", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Everyone", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(bar.getByRole("button", { name: "Everyone", exact: true })).toBeFocused();
+  } else {
+    await expect(page.locator(".activity-toolbar").getByRole("group", { name: "Activity scope", exact: true })).toBeVisible();
+  }
+  await capture(page, "activity-filters", width, theme);
 });

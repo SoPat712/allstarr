@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import { onMount, tick, untrack } from "svelte";
   import { flip } from "svelte/animate";
   import { ArrowRight, ChevronDown, CircleAlert } from "@lucide/svelte";
@@ -44,7 +45,7 @@
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { findProviderDefinition } from "$lib/sources";
 
-  let { administrator = false, scope = "mine" }: { administrator?: boolean; scope?: "mine" | "everyone" } = $props();
+  let { administrator = false, scope = "mine", scopeControls }: { administrator?: boolean; scope?: "mine" | "everyone"; scopeControls?: Snippet } = $props();
 
   let disposed = false;
   let earlierButton = $state<HTMLButtonElement | null>(null);
@@ -292,8 +293,10 @@
 </script>
 
 {#if loading}
+  {#if scopeControls}{@render scopeControls()}{/if}
   <Skeleton class="panel event-log-panel skeleton-panel" aria-label="Loading Event log" aria-busy="true" />
 {:else if error && !items.length}
+  {#if scopeControls}{@render scopeControls()}{/if}
   <RouteError
     eyebrow={administrator ? "Event log unavailable" : "Activity unavailable"}
     title={administrator ? "Allstarr could not load durable activity." : "Allstarr could not load your activity."}
@@ -315,22 +318,25 @@
       <form class="event-log-search" onsubmit={(event) => event.preventDefault()}>
         <SearchField bind:value={query} label="Search" placeholder="Search songs, playlists or sources" hiddenLabel />
       </form>
-      <div class="event-log-chips" role="group" aria-label="Category">
-        <button type="button" class="filter-chip" aria-pressed={category === ""} onclick={() => category = ""}>All</button>
-        {#each presentCategories as item (item.id)}
-          <button type="button" class="filter-chip" aria-pressed={category === item.id} onclick={() => category = category === item.id ? "" : item.id}>{item.label}</button>
-        {/each}
-        <span class="event-log-chip-divider" aria-hidden="true"></span>
-        {#if administrator}<button type="button" class="filter-chip" aria-pressed={showBackground} onclick={() => showBackground = !showBackground}>Background work</button>{/if}
-        <button type="button" class="filter-chip problems" aria-pressed={problemsOnly} onclick={() => problemsOnly = !problemsOnly}><CircleAlert size={16} aria-hidden="true" />Problems only</button>
-      </div>
-      <div class="event-log-toolbar-end">
-        {#if eventProviders.length > 1}
-          <SelectField bind:value={providerFilter} label="Provider" class="event-log-provider" options={[
-            { value: "", label: "All sources" }, ...eventProviders.map((value) => ({ value, label: providerName(value) })),
-          ]} />
-        {/if}
-        <RefreshButton variant="secondary" class="event-log-refresh" disabled={loadingEarlier} onrefresh={() => load("refresh")} />
+      <div class="event-log-chip-row">
+        {#if scopeControls}{@render scopeControls()}{/if}
+        <div class="event-log-chips" role="group" aria-label="Category">
+          <button type="button" class="filter-chip" aria-pressed={category === ""} onclick={() => category = ""}>All</button>
+          {#each presentCategories as item (item.id)}
+            <button type="button" class="filter-chip" aria-pressed={category === item.id} onclick={() => category = category === item.id ? "" : item.id}>{item.label}</button>
+          {/each}
+          <span class="event-log-chip-divider" aria-hidden="true"></span>
+          {#if administrator}<button type="button" class="filter-chip" aria-pressed={showBackground} onclick={() => showBackground = !showBackground}>Background work</button>{/if}
+          <button type="button" class="filter-chip problems" aria-pressed={problemsOnly} onclick={() => problemsOnly = !problemsOnly}><CircleAlert size={16} aria-hidden="true" />Problems only</button>
+        </div>
+        <div class="event-log-toolbar-end">
+          {#if eventProviders.length > 1}
+            <SelectField bind:value={providerFilter} label="Provider" class="event-log-provider" options={[
+              { value: "", label: "All sources" }, ...eventProviders.map((value) => ({ value, label: providerName(value) })),
+            ]} />
+          {/if}
+          <RefreshButton variant="secondary" class="event-log-refresh" disabled={loadingEarlier} onrefresh={() => load("refresh")} />
+        </div>
       </div>
     </div>
 
@@ -455,6 +461,16 @@
 
 
 <style>
+  .event-log-chip-row { display: contents; }
   .event-technical > summary { min-height: var(--control-md); display: flex; align-items: center; }
   .event-log-chips .filter-chip { min-height: var(--control-md); }
+  @media (max-width: 650px) {
+    .event-log-chip-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; grid-row: 2; overflow-x: auto; scrollbar-width: none; padding: var(--space-1); }
+    .event-log-chip-row::-webkit-scrollbar { display: none; }
+    .event-log-chips { display: contents; }
+    .event-log-toolbar-end { flex: none; gap: var(--space-2); }
+    .event-log-chip-row :global(.activity-audience) { flex: none; }
+    .event-log-chip-row :global(button), .event-log-chip-row :global(select) { min-height: 44px; min-width: 44px; }
+    .event-log-chip-divider { flex: none; }
+  }
 </style>

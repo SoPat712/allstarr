@@ -13,5 +13,5 @@
 </script>
 <canvas bind:this={canvas} width="0" height="0" aria-hidden="true"></canvas>
 <style>
-  canvas { display: block; width: 100%; aspect-ratio: 1; border-radius: var(--radius-md); background: var(--color-panel-raised); }
+  canvas { font-size: var(--text-xs); display: block; width: 100%; aspect-ratio: 1; border-radius: var(--radius-md); background: var(--color-panel-raised); }
 </style>

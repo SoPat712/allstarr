@@ -67,10 +67,16 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     }
 
     [Theory]
-    [InlineData("songs")]
-    [InlineData("albums")]
-    [InlineData("artists")]
-    public async Task MetadataSearch_ReturnsWithinBudgetAndCachesLateResults(string kind)
+    [InlineData("songs", null)]
+    [InlineData("albums", null)]
+    [InlineData("artists", null)]
+    [InlineData("songs", ProtocolKind.Jellyfin)]
+    [InlineData("albums", ProtocolKind.Jellyfin)]
+    [InlineData("artists", ProtocolKind.Jellyfin)]
+    [InlineData("songs", ProtocolKind.Subsonic)]
+    [InlineData("albums", ProtocolKind.Subsonic)]
+    [InlineData("artists", ProtocolKind.Subsonic)]
+    public async Task MetadataSearch_ReturnsWithinBudgetAndCachesLateResults(string kind, ProtocolKind? protocol)
     {
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -84,17 +90,23 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             .Returns(async (string key, string result, TimeSpan? ttl) =>
             {
                 var saved = await cache.SetStringAsync(key, result, ttl);
-                writes.Writer.TryWrite(key);
+                if (!key.StartsWith("search-window:", StringComparison.Ordinal)) writes.Writer.TryWrite(key);
                 return saved;
             });
         var fast = DelayedSearchProvider("deezer", clock, TimeSpan.Zero);
         var slow = DelayedSearchProvider("qobuz", clock, TimeSpan.FromSeconds(8));
         var gateway = BudgetGateway(clock, observedCache.Object, fast.Object, slow.Object);
         using var requestCancellation = new CancellationTokenSource();
-        var context = WithSearchCancellation(Context(), requestCancellation.Token);
-        var songs = kind == "songs" ? 10 : 0;
-        var albums = kind == "albums" ? 10 : 0;
-        var artists = kind == "artists" ? 10 : 0;
+        var original = Context();
+        var context = protocol.HasValue
+            ? new ProtocolExecutionContext(protocol.Value, original.BackendInstanceId, original.VerifiedBackendPrincipalId,
+                original.Principal! with { BackendType = protocol.Value.ToString().ToLowerInvariant() },
+                original.CorrelationId, original.Deadline, requestCancellation.Token)
+            : WithSearchCancellation(original, requestCancellation.Token);
+        var firstLimit = protocol.HasValue ? 1 : 10;
+        var songs = kind == "songs" ? firstLimit : 0;
+        var albums = kind == "albums" ? firstLimit : 0;
+        var artists = kind == "artists" ? firstLimit : 0;
 
         var search = gateway.SearchAsync(context, "Track", songs, albums, artists);
         await clock.WaitForTimersAsync(TimeSpan.FromSeconds(8), TimeSpan.FromMilliseconds(1200));
@@ -108,10 +120,19 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         clock.Advance(TimeSpan.FromMilliseconds(6800));
         await writes.Reader.ReadAsync(guard.Token);
         var repeated = await BudgetGateway(clock, cache, fast.Object, slow.Object)
-            .SearchAsync(WithSearchCancellation(context, CancellationToken.None), "Track", songs, albums, artists);
+            .SearchAsync(WithSearchCancellation(context, CancellationToken.None), "Track",
+                songs > 0 && protocol.HasValue ? 2 : songs,
+                albums > 0 && protocol.HasValue ? 2 : albums,
+                artists > 0 && protocol.HasValue ? 2 : artists).WaitAsync(guard.Token);
         Assert.Equal(["deezer", "qobuz"], SearchProviders(repeated));
-        VerifySearchCount(fast, kind, 1);
-        VerifySearchCount(slow, kind, 1);
+        foreach (var provider in new[] { fast, slow })
+        {
+            var calls = provider.Invocations.Where(item => item.Method.Name == "Search" +
+                (kind == "songs" ? "Tracks" : kind == "albums" ? "Albums" : "Artists") + "Async").ToArray();
+            Assert.Single(calls, item => ((ProviderMetadataSearchRequest)item.Arguments[1]).Page.Limit == firstLimit);
+            Assert.All(calls, item => Assert.InRange(((ProviderMetadataSearchRequest)item.Arguments[1]).Page.Limit,
+                firstLimit, protocol.HasValue ? 2 : firstLimit));
+        }
     }
 
     [Fact]
@@ -188,7 +209,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             .Returns(async (string key, string result, TimeSpan? ttl) =>
             {
                 var saved = await cache.SetStringAsync(key, result, ttl);
-                writes.Writer.TryWrite(key);
+                if (!key.StartsWith("search-window:", StringComparison.Ordinal)) writes.Writer.TryWrite(key);
                 return saved;
             });
         var fast = DelayedSearchProvider("deezer", clock, TimeSpan.Zero);
@@ -284,7 +305,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             .Returns(async (string key, string value, TimeSpan? ttl) =>
             {
                 var saved = await cache.SetStringAsync(key, value, ttl);
-                writes.Writer.TryWrite(key);
+                if (!key.StartsWith("search-window:", StringComparison.Ordinal)) writes.Writer.TryWrite(key);
                 return saved;
             });
         var slow = DelayedSearchProvider("deezer", clock, TimeSpan.FromSeconds(12));
