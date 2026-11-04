@@ -242,9 +242,12 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await region.getByRole("button", { name: "Move Media server lyrics down", exact: true }).focus();
     await page.keyboard.press("Enter");
     await expect(region.getByRole("listitem")).toHaveText(["Spotify", "Media server lyrics", "Kept LRC", "LRCLIB", "LyricsPlus"]);
-    await page.getByRole("button", { name: "Save preferences", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Save preferences", exact: true })).toBeDisabled();
     await expect.poll(() => writes[0]).toEqual({ explicitFilter: "All", showExternalLabel: true, showExplicitLabel: true,
       playbackStart: "Balanced", lyricsOrder: "spotify,backend,kept,lrclib,lyricsplus", expectedRevision: "initial" });
+    const savedToast = page.getByRole("status").filter({ hasText: "Order saved" });
+    await expect(savedToast).toBeVisible();
+    await expect(savedToast.getByRole("button", { name: "Undo", exact: true })).toBeVisible();
     await expect(page.getByText("Personal choices", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Reset to household defaults", exact: true }).click();
     await expect(region.getByRole("listitem")).toHaveText(["Media server lyrics", "Kept LRC", "Spotify", "LRCLIB", "LyricsPlus"]);

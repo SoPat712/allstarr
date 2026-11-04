@@ -19,4 +19,9 @@ describe("list loading placeholders", () => {
     expect(html).not.toContain("list-skeleton-avatar");
     expect(html.match(/class="list-skeleton-placeholder list-skeleton-bar/g)).toHaveLength(6);
   });
+
+  it("announces a custom loading label", () => {
+    const html = render(ListSkeleton, { props: { label: "Loading your activity" } }).body;
+    expect(html).toContain('aria-label="Loading your activity"');
+  });
 });

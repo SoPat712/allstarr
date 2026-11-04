@@ -6089,13 +6089,14 @@ test("retry and refresh controls expose pending work", async ({ page }) => {
     return route.fallback();
   });
   await page.goto("#/activity");
-  await expect(page.getByRole("heading", { name: "Allstarr could not load durable activity." })).toBeVisible();
+  const errorSurface = page.getByRole("alert", { name: "Event log unavailable" });
+  await expect(errorSurface).toBeVisible();
 
   failures.length = 0;
   const retry = routeRelease();
   delayedRequest = retry.promise;
-  await page.getByRole("alert", { name: "Event log unavailable" }).getByRole("button", { name: "Try again" }).click();
-  await expect(page.getByRole("button", { name: "Trying again…" })).toBeDisabled();
+  await errorSurface.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByRole("status", { name: "Loading Event log" })).toHaveAttribute("aria-busy", "true");
   retry.release();
   delayedRequest = null;
   await expect(page.getByRole("region", { name: "Event log" })).toBeVisible();

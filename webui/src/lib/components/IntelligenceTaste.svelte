@@ -67,8 +67,8 @@
 {/snippet}
 <div class="your-taste">
   <div class="section-heading"><h2>Your taste</h2><RefreshButton variant="secondary" label="Refresh taste" disabled={action} onrefresh={load} /></div>
-  {#if error}<div class="notice-error" role="alert"><p>{error}</p><Button variant="outline" size="sm" onclick={() => void load()}>Try again</Button></div>{/if}
-  {#if loading}<ListSkeleton />{:else if profile}
+  {#if error}<div class="notice-error" role="alert" aria-label="Your taste unavailable"><p>{error}</p><Button variant="outline" size="sm" onclick={() => void load()}>Try again</Button></div>{/if}
+  {#if loading}<ListSkeleton label="Loading your taste" />{:else if profile}
     <section class="settings-card summary"><p>{#each summaryParts as part}{#if summaryTags.includes(part)}<strong>{part}</strong>{:else}{part}{/if}{/each}</p><small>{profile.latelyWeight >= .5 ? "Today's listening counts most right now." : "Your usual taste counts most right now."}</small></section>
     {#if sound}
       <section class="settings-card taste-section sound-profile" aria-labelledby="sound-heading">

@@ -294,10 +294,10 @@
 
 {#if loading}
   {#if scopeControls}{@render scopeControls()}{/if}
-  <ListSkeleton />
+  <ListSkeleton label={administrator ? "Loading Event log" : "Loading your activity"} />
 {:else if error && !items.length}
   {#if scopeControls}{@render scopeControls()}{/if}
-  <div class="notice-error" role="alert">
+  <div class="notice-error" role="alert" aria-label={administrator ? "Event log unavailable" : "Your activity unavailable"}>
     <p>{error}</p>
     <Button variant="outline" size="sm" onclick={() => void load("initial")}>Try again</Button>
   </div>

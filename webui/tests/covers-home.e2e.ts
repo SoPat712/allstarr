@@ -85,7 +85,7 @@ test("Visible water drifts within its frame cap and printed covers return to sti
   });
   await page.clock.install();
   await openHome(page); await expectPainted(page.locator(".mix-shelf canvas"));
-  await page.clock.pauseAt(new Date());
+  await page.clock.pauseAt(new Date(await page.evaluate(() => Date.now()) + 50));
   const liquid = page.getByRole("region", { name: "Made for you", exact: true }).locator("canvas").first();
   const before = await pixels(liquid), count = await drawCount(liquid);
   await page.clock.runFor(650);

@@ -1,8 +1,8 @@
 <script lang="ts">
-  let { rows = 6, avatar = true }: { rows?: number; avatar?: boolean } = $props();
+  let { rows = 6, avatar = true, label = "Loading" }: { rows?: number; avatar?: boolean; label?: string } = $props();
 </script>
 
-<div class="list-skeleton" role="status" aria-busy="true" aria-label="Loading">
+<div class="list-skeleton" role="status" aria-busy="true" aria-label={label}>
   {#each Array.from({ length: rows }) as _}
     <div class="list-skeleton-row" aria-hidden="true">
       {#if avatar}<span class="list-skeleton-placeholder list-skeleton-avatar"></span>{/if}
