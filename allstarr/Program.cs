@@ -438,6 +438,13 @@ builder.Services.AddSingleton<allstarr.Core.ClientEvents.IClientEventPublisher>(
 builder.Services.AddSingleton<allstarr.Core.ClientEvents.IClientEventChanges, allstarr.Core.ClientEvents.ClientEventChanges>();
 builder.Services.AddSingleton<allstarr.Core.ClientEvents.ClientLyricsUpdates>();
 builder.Services.AddSingleton<ProviderIconRenderer>(_ => new());
+builder.Services.AddHttpClient(LibraryBackendBrandResolver.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(5);
+    client.MaxResponseContentBufferSize = 1024 * 1024;
+});
+builder.Services.AddScoped<LibraryBackendBrandResolver>();
+builder.Services.AddScoped<LibraryProviderResolver>();
 builder.Services.AddScoped<ItemDetailsReader>();
 builder.Services.AddScoped<ItemLyricsReader>();
 builder.Services.AddScoped<LyricsSearchReader>();

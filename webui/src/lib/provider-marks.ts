@@ -6,10 +6,10 @@ const aliases: Record<string, string> = {
   applemusickit: "applemusic", spotifyweb: "spotify", tidalweb: "tidal", qobuzweb: "qobuz",
   ytmusic: "youtubemusic", ytmusicspotiflac: "youtubemusic", youtube: "youtubemusic",
   melonmusic: "melon", geniemusic: "genie", bugsmusic: "bugs",
-  local: "jellyfin", native: "jellyfin", musicbrainzenrichment: "musicbrainz",
+  opensubsonic: "subsonic", local: "jellyfin", native: "jellyfin", musicbrainzenrichment: "musicbrainz",
 };
 const colorFiles: Record<string, string> = Object.fromEntries([
-  "allstarr", "amazonmusic", "applemusic", "artistgrid", "deezer", "genius", "jellyfin", "listenbrainz",
+  "allstarr", "amazonmusic", "applemusic", "artistgrid", "deezer", "genius", "jellyfin", "navidrome", "subsonic", "listenbrainz",
   "lrcred", "lyricsplus", "monochrome", "multiscrobbler", "musicbrainz", "musixmatch", "paxsenix",
   "qobuz", "soundcloud", "spicylyrics", "spotify", "tidal", "unison", "youtubemusic",
 ].map(brand => [brand, "color.svg"]));

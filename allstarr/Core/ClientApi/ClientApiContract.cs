@@ -8,14 +8,13 @@ public static class ClientApiContract
     public const string GroupName = "allstarr-client-v1";
     public static JsonSerializerOptions JsonOptions { get; } = new(JsonSerializerDefaults.Web)
     { DictionaryKeyPolicy = JsonNamingPolicy.CamelCase, NumberHandling = JsonNumberHandling.Strict };
-
-    public static ClientCapabilities Capabilities { get; } = new(AppVersion.Version, 1, new());
 }
 
 public sealed record ClientCapabilities(
     [property: JsonPropertyName("serverVersion")] string ServerVersion,
     [property: JsonPropertyName("apiVersion")] int ApiVersion,
-    [property: JsonPropertyName("features")] ClientFeatures Features);
+    [property: JsonPropertyName("features")] ClientFeatures Features,
+    [property: JsonPropertyName("library")] ItemDetailsProvider Library);
 
 public sealed record ClientFeatures
 {

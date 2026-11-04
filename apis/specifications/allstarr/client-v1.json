@@ -2295,7 +2295,8 @@
         "required": [
           "serverVersion",
           "apiVersion",
-          "features"
+          "features",
+          "library"
         ],
         "type": "object",
         "properties": {
@@ -2308,6 +2309,9 @@
           },
           "features": {
             "$ref": "#/components/schemas/ClientFeatures"
+          },
+          "library": {
+            "$ref": "#/components/schemas/ItemDetailsProvider"
           }
         }
       },

@@ -204,6 +204,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("Library fixture", chosen["current"]!["title"]!.GetValue<string>());
         Assert.Equal("personal", chosen["authority"]!.GetValue<string>());
         Assert.False(chosen["current"]!["isExternal"]!.GetValue<bool>());
+        AssertLibraryProvider(JsonSerializer.SerializeToElement(chosen["current"]!["provider"]), glyph);
         await using var saved = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync();
         Assert.Equal(localId, (await saved.ManualTrackOverrides.SingleAsync(item => item.OwnerUserId == owner && item.RevokedAt == null)).LibraryTrackId);
     }

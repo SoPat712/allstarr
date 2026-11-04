@@ -104,15 +104,18 @@ public sealed partial class ProtocolRouteFixtureTests
             services => services.Configure<MvcOptions>(options => options.Filters.Add(
                 new ClientApiObservationFilter(context => observed = context))));
         using var client = CreateClientApiClient(factory);
+        using var fixtures = new ProviderIconFiles();
+        fixtures.Use(factory.Services);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
 
         using var response = await client.GetAsync("/allstarr/v1/capabilities");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var root = document.RootElement;
-        Assert.Equal(["apiVersion", "features", "serverVersion"], root.EnumerateObject().Select(item => item.Name).Order().ToArray());
+        Assert.Equal(["apiVersion", "features", "library", "serverVersion"], root.EnumerateObject().Select(item => item.Name).Order().ToArray());
         Assert.Equal(1, root.GetProperty("apiVersion").GetInt32());
         Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("serverVersion").GetString()));
+        AssertLibraryProvider(root.GetProperty("library"));
         var features = root.GetProperty("features");
         Assert.Equal(["events", "fixesMatch", "follow", "itemDetails", "lyricsRich", "lyricsSearch", "lyricsSources", "lyricsVersions", "mixes", "playback", "releases", "reports", "titleMarkers"],
             features.EnumerateObject().Select(item => item.Name).Order().ToArray());

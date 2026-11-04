@@ -69,6 +69,8 @@ public sealed partial class ProtocolRouteFixtureTests
             return Json(200, """{"Items":[{"Id":"native","Type":"Audio","UserData":{"IsFavorite":true}}]}""");
         });
         using var client = CreateClientApiClient(factory);
+        using var fixtures = new ProviderIconFiles();
+        fixtures.Use(factory.Services);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
         using var response = await client.PostAsJsonAsync("/allstarr/v1/items/details", new { ids = new[] { "native", "foreign", "ext-deezer-song-unknown" } });
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -76,8 +78,9 @@ public sealed partial class ProtocolRouteFixtureTests
         var item = Assert.Single(json.RootElement.GetProperty("items").EnumerateArray());
         Assert.Equal("native", item.GetProperty("id").GetString());
         Assert.False(item.GetProperty("isExternal").GetBoolean());
+        AssertLibraryProvider(item.GetProperty("provider"));
         Assert.True(item.GetProperty("saved").GetBoolean());
-        foreach (var field in new[] { "canonicalRecordingId", "isrc", "provider", "audio", "explicit", "match" })
+        foreach (var field in new[] { "canonicalRecordingId", "isrc", "audio", "explicit", "match" })
             Assert.Equal(JsonValueKind.Null, item.GetProperty(field).ValueKind);
         Assert.Equal("none", item.GetProperty("keep").GetProperty("state").GetString());
         Assert.Equal(JsonValueKind.Null, item.GetProperty("keep").GetProperty("progress").ValueKind);

@@ -74,6 +74,43 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Contains(allstarr.Services.Common.ProviderArtworkResolver.Brand(provider.Id), brands);
     }
 
+    private static void AssertLibraryProvider(JsonElement provider, bool glyph = true)
+    {
+        Assert.Equal(["glyphUrl", "iconUrl", "id", "name"], provider.EnumerateObject().Select(item => item.Name).Order().ToArray());
+        Assert.Equal("jellyfin", provider.GetProperty("id").GetString());
+        Assert.Equal("Jellyfin", provider.GetProperty("name").GetString());
+        Assert.Equal("/allstarr/v1/providers/jellyfin/icon", provider.GetProperty("iconUrl").GetString());
+        Assert.Equal(glyph ? "/allstarr/v1/providers/jellyfin/icon?variant=glyph" : null, provider.GetProperty("glyphUrl").GetString());
+    }
+
+    [Theory]
+    [InlineData("jellyfin")]
+    [InlineData("navidrome")]
+    [InlineData("subsonic")]
+    [InlineData("opensubsonic")]
+    public async Task ClientApi_LibraryProviderIconsSupportVariantsFormatsAndSizes(string provider)
+    {
+        using var fixtures = new ProviderIconFiles();
+        using var factory = ClientApiFactory(_ => Json(200, """{"Id":"listener"}"""));
+        using var client = CreateClientApiClient(factory);
+        fixtures.Use(factory.Services);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        foreach (var query in new[] { "", "?format=svg", "?format=png&size=16", "?variant=glyph&format=png&size=256", "?variant=glyph&format=svg" })
+        {
+            using var response = await client.GetAsync($"/allstarr/v1/providers/{provider}/icon" + query);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            if (!query.Contains("png", StringComparison.Ordinal))
+            {
+                Assert.Equal("image/svg+xml", response.Content.Headers.ContentType?.MediaType);
+                continue;
+            }
+            Assert.Equal("image/png", response.Content.Headers.ContentType?.MediaType);
+            using var bitmap = SKBitmap.Decode(await response.Content.ReadAsByteArrayAsync());
+            Assert.Equal(query.Contains("256", StringComparison.Ordinal) ? 256 : 16, bitmap.Width);
+            Assert.Equal(bitmap.Width, bitmap.Height);
+        }
+    }
+
     private sealed class ProviderIconFiles : IDisposable
     {
         private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-client-icon-fixtures", Guid.NewGuid().ToString("N"));
@@ -81,11 +118,13 @@ public sealed partial class ProtocolRouteFixtureTests
 
         internal ProviderIconFiles()
         {
-            foreach (var brand in new[] { "deezer", "spotify", "jellyfin", "allstarr" })
+            foreach (var brand in new[] { "deezer", "spotify", "jellyfin", "navidrome", "subsonic", "allstarr" })
             {
                 var path = Path.Combine(_root, "images/providers/brands", brand);
                 Directory.CreateDirectory(path);
                 File.WriteAllText(Path.Combine(path, "color.svg"), """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path fill="#000" d="M4 4h8v8H4z"/></svg>""");
+                if (brand is "jellyfin" or "navidrome" or "subsonic")
+                    File.Copy(Path.Combine(path, "color.svg"), Path.Combine(path, "glyph.svg"));
                 if (brand == "spotify") continue;
                 using var bitmap = new SKBitmap(512, 512);
                 bitmap.Erase(SKColors.Transparent);
@@ -103,7 +142,10 @@ public sealed partial class ProtocolRouteFixtureTests
         {
             if (!glyph)
                 foreach (var brand in new[] { "deezer", "jellyfin" })
+                {
                     File.Delete(Path.Combine(_root, "images/providers/brands", brand, "glyph.png"));
+                    File.Delete(Path.Combine(_root, "images/providers/brands", brand, "glyph.svg"));
+                }
             var environment = services.GetRequiredService<IWebHostEnvironment>();
             environment.WebRootFileProvider = _files;
             environment.ContentRootFileProvider = _files;

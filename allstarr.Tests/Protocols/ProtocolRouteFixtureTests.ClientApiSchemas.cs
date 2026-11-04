@@ -6,6 +6,19 @@ namespace allstarr.Tests;
 public sealed partial class ProtocolRouteFixtureTests
 {
     [Fact]
+    public async Task ClientApi_OpenApiRequiresTheLibraryProviderInCapabilities()
+    {
+        using var factory = ClientApiFactory(_ => throw new InvalidOperationException("Unexpected upstream request"));
+        using var client = CreateClientApiClient(factory);
+        using var response = await client.GetAsync("/allstarr/v1/openapi.json");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var schema = document.RootElement.GetProperty("components").GetProperty("schemas").GetProperty("ClientCapabilities");
+        Assert.Contains(schema.GetProperty("required").EnumerateArray(), value => value.GetString() == "library");
+        Assert.Equal("#/components/schemas/ItemDetailsProvider", schema.GetProperty("properties").GetProperty("library").GetProperty("$ref").GetString());
+    }
+
+    [Fact]
     public async Task ClientApi_OpenApiNullableReferencesDeclareTypesAndKeepValidation()
     {
         using var factory = ClientApiFactory(_ => throw new InvalidOperationException("Unexpected upstream request"));

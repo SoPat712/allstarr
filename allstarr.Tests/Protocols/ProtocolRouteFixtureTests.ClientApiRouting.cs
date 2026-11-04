@@ -20,6 +20,8 @@ public sealed partial class ProtocolRouteFixtureTests
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         using var factory = ClientMixFactory(gateway);
         using var client = CreateClientApiClient(factory);
+        using var fixtures = new ProviderIconFiles();
+        fixtures.Use(factory.Services);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
         var recording = await SeedClientDetailsAsync(factory, "listener", "mix-song", personal: false);
         var mix = await SeedClientMixAsync(factory, serviceSong: ClientMixSong());
@@ -35,7 +37,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var item = Assert.Single(json.RootElement.GetProperty("items").EnumerateArray());
         Assert.Equal("native-mix-song", item.GetProperty("itemId").GetString());
         Assert.False(item.GetProperty("isExternal").GetBoolean());
-        Assert.Equal(JsonValueKind.Null, item.GetProperty("provider").ValueKind);
+        AssertLibraryProvider(item.GetProperty("provider"));
         gateway.VerifyNoOtherCalls();
     }
 
@@ -44,6 +46,8 @@ public sealed partial class ProtocolRouteFixtureTests
     {
         using var factory = ClientMixFactory(new Mock<IProtocolProviderGateway>(MockBehavior.Strict));
         using var client = CreateClientApiClient(factory);
+        using var fixtures = new ProviderIconFiles();
+        fixtures.Use(factory.Services);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
         var recording = await SeedClientDetailsAsync(factory, "listener", "linked-details", personal: false);
         await SeedClientMixAsync(factory);
@@ -58,7 +62,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var item = Assert.Single(json.RootElement.GetProperty("items").EnumerateArray());
         Assert.False(item.GetProperty("isExternal").GetBoolean());
-        Assert.Equal(JsonValueKind.Null, item.GetProperty("provider").ValueKind);
+        AssertLibraryProvider(item.GetProperty("provider"));
         Assert.Equal(recording.ToString("D"), item.GetProperty("canonicalRecordingId").GetString());
     }
 

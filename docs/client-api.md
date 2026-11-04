@@ -16,8 +16,12 @@ header or a MediaBrowser authorization header. Tokens must belong to a user.
 API keys and tokens without an Allstarr user are forbidden. Administrators
 receive the same personal scope as other listeners.
 
-`GET /allstarr/v1/capabilities` returns `serverVersion`, `apiVersion`, and a
-`features` object. Check feature flags before using optional routes.
+`GET /allstarr/v1/capabilities` returns `serverVersion`, `apiVersion`, a
+`features` object, and `library: {id,name,iconUrl,glyphUrl}`. The library identifies
+the configured media backend: `jellyfin` / "Jellyfin", `navidrome` / "Navidrome"
+when a Subsonic-compatible server identifies itself as Navidrome, or `subsonic` /
+"Subsonic server" otherwise. Server identification is cached. Check feature flags
+before using optional routes.
 `titleMarkers`, `itemDetails`, `playback`, `lyricsRich`, `lyricsSources`, `lyricsVersions`,
 `fixesMatch`, `reports`, `mixes`, `releases`, `follow`, and `events` are available;
 the other flags remain false until supported.
@@ -60,7 +64,7 @@ Both routes return the following fields and use `Cache-Control: no-store`:
 
 | Field | Meaning |
 | --- | --- |
-| `provider` | Serving source `{id,name,iconUrl}`, or `null` for own-library playback. Icons use the authenticated `/allstarr/v1/providers/{id}/icon` route; unavailable icons have a null URL. |
+| `provider` | Serving source `{id,name,iconUrl,glyphUrl}`; own-library playback uses the same provider object as `capabilities.library`. Icons use the authenticated `/allstarr/v1/providers/{id}/icon` route; unavailable icons have a null URL. |
 | `accountScope` | `personal`, `shared`, or `null` when unavailable or account-free. Account names and identifiers are never returned. |
 | `cached` | Whether the stream came from a retained or cached file. |
 | `delivered` | Actual output `{format,codec,bitDepth,sampleRate,bitrate}`, or `null` when unavailable. Individual unknown measurements are null; bitrate is in bits per second. Converted streams describe the converted output. |
@@ -83,13 +87,18 @@ Every item includes all of these fields, with `null` for unknown values:
 | --- | --- |
 | `id`, `isExternal` | Requested ID and whether it identifies a service song. |
 | `canonicalRecordingId`, `isrc` | Stored recording identity, when known. |
-| `provider` | Catalog source `{id,name,iconUrl}`, or `null`. An unavailable icon has a null URL. |
+| `provider` | Catalog source `{id,name,iconUrl,glyphUrl}`; library items always use `capabilities.library`. An unavailable icon has a null URL. |
 | `audio` | Measured `{codec,bitDepth,sampleRate,bitrate}`, or `null`. Catalog format advertisements are excluded; bitrate is in bits per second. |
 | `explicit` | `true`, `false`, or `null`. |
 | `saved` | Whether the listener has hearted the item. |
 | `keep` | `{state,progress}`. State is `none`, `inProgress`, `kept`, or `failed`; progress is null when no measurement is stored. |
 | `match` | Effective `{state,confidence,authority}`, or `null`. Authority is `automatic`, `household`, or `personal`, with personal choices taking precedence. |
 | `lyrics` | Stored `{available,format,source}`. Format is `word`, `line`, `plain`, or `null`. |
+
+`provider` is always present for library items in details, mix items, local match
+candidates and the current local match, and playback facts. Apps must keep using
+`isExternal` to distinguish library items (`false`) from service items (`true`);
+the presence of `provider` does not indicate an external service.
 
 Native visibility and native hearts are checked in batched Jellyfin requests using
 the listener's token. Service metadata, match choices, and measured audio come
@@ -236,10 +245,10 @@ used by the Jellyfin lyrics route. An item without a known recording returns
 `{state,confidence,authority,current,candidates,revision}`. Authority is
 `automatic`, `household`, or `personal`. Each candidate has `candidateId`,
 `title`, `artist`, `album`, `durationMs`, `isrc`, `provider` (`id`, `name`,
-`iconUrl`), `isExternal`, `confidence`, and `reasons` containing the same
+`iconUrl`, `glyphUrl`), `isExternal`, `confidence`, and `reasons` containing the same
 saved evidence shown in the dashboard. Unknown metadata is null. Own-library
-candidates identify Jellyfin as their provider. `current` is null when no
-candidate is selected, including after rejection.
+candidates and the local `current` choice use `capabilities.library` as their
+provider. `current` is null when no candidate is selected, including after rejection.
 
 Choose a returned candidate with `PUT /allstarr/v1/items/{itemId}/match`:
 
@@ -317,9 +326,9 @@ or null when unpublished.
 `GET /allstarr/v1/mixes/{mixId}/items` returns `{mixId,updatedAt,items}`. Items
 retain mix order and include `itemId`, `title`, `artist`, `album`, `albumId`,
 `artistId`, `durationMs`, `isExternal`, `provider`, and the stored per-song
-`reason`. Provider metadata has the same `{id,name,iconUrl}` shape as item
-details; library songs have a null provider. Missing relationships and durations
-are null. Library songs no longer visible to the caller's token are omitted.
+`reason`. Provider metadata has the same `{id,name,iconUrl,glyphUrl}` shape as item
+details; library songs use `capabilities.library` as their provider. Missing
+relationships and durations are null. Library songs no longer visible to the caller's token are omitted.
 Song, album, and artist IDs use the Jellyfin surface, including native
 library IDs, service `ext-...` IDs, stored recording IDs, and Apple catalog
 aliases. These JSON routes use `Cache-Control: no-store`.

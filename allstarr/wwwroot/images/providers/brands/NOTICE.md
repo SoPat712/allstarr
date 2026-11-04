@@ -19,6 +19,8 @@ These files show which service or source a song comes from. Every mark is a trad
 | Genius | genius.com; glyph from Simple Icons (CC0) on Genius yellow | Genius trademark |
 | Musixmatch | Musixmatch press kit and site; colour tile is the white mark on #131313 | Musixmatch trademark |
 | Jellyfin | jellyfin/jellyfin-ux | CC BY-SA 4.0, Jellyfin contributors |
+| Navidrome | navidrome/website brand folder; glyph keeps the mark's lines | Navidrome project (GPL-3.0) |
+| Subsonic | Subsonic mark from the navidrome/website icon set, white on a dark tile | Subsonic |
 | LRCLIB | tranxuanthang/lrclib | MIT |
 | Unison | better-lyrics/unison | AGPL-3.0 |
 | Spicy Lyrics | spicylyrics.org; Spikerko/spicy-lyrics | AGPL-3.0 |

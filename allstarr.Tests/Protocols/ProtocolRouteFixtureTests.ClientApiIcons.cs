@@ -48,6 +48,10 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Theory]
+    [InlineData("jellyfin", "jellyfin", null)]
+    [InlineData("navidrome", "navidrome", null)]
+    [InlineData("subsonic", "subsonic", null)]
+    [InlineData("opensubsonic", "subsonic", null)]
     [InlineData("deezer", "deezer", null)]
     [InlineData("apple-musickit", "applemusic", null)]
     [InlineData("qobuz", "qobuz", null)]

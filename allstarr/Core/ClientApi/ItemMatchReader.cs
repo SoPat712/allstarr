@@ -20,7 +20,7 @@ public sealed class ItemMatchReader(
     TrackMatchCommandService commands,
     IProtocolProviderGateway providers,
     IProviderRegistry registry,
-    IEffectiveProviderPolicyResolver policies)
+    IEffectiveProviderPolicyResolver policies, LibraryProviderResolver libraryProvider)
 {
     public async Task<ClientItemMatch?> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string itemId) =>
         (await LoadAsync(http, execution, itemId))?.Value;
@@ -122,7 +122,8 @@ public sealed class ItemMatchReader(
             var routes = json.GetProperty("providerTrackIds");
             var route = !local && routes.ValueKind == JsonValueKind.Object ? routes.EnumerateObject()
                 .FirstOrDefault(pair => playableProviders.Contains(ExternalTrackPlaybackPolicy.Normalize(pair.Name))) : default;
-            var providerId = local ? execution.Protocol.ToString().ToLowerInvariant() : route.Name;
+            var library = local ? await libraryProvider.ResolveAsync(http, execution) : null;
+            var providerId = local ? library!.Id : route.Name;
             var targetId = local ? null : route.Value.GetString();
             if (string.IsNullOrEmpty(providerId) || !local && string.IsNullOrWhiteSpace(targetId)) continue;
             var key = local ? $"local:{libraryId}" : $"{providerId}:{targetId}";
@@ -130,7 +131,7 @@ public sealed class ItemMatchReader(
             var icon = (await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, [providerId], token)).GetValueOrDefault(providerId);
             var candidate = new ClientMatchCandidate(Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(key))),
                 Text(json, "title"), Text(json, "artist"), Text(json, "album"), Milliseconds(json), Text(json, "candidateIsrc"),
-                icon?.Provider(providerId, descriptor?.DisplayName ?? execution.Protocol.ToString()) ??
+                library ?? icon?.Provider(providerId, descriptor?.DisplayName ?? execution.Protocol.ToString()) ??
                     new(providerId, descriptor?.DisplayName ?? execution.Protocol.ToString(), null), !local,
                 Number(json, "confidence"), Strings(json, "reasons"));
             candidates.Add(new(candidate, libraryId, local ? null : providerId, targetId));

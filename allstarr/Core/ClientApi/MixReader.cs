@@ -14,7 +14,7 @@ namespace allstarr.Core.ClientApi;
 
 public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<AllstarrDbContext> factory,
     IBackendLibraryAccessResolver libraryAccess, IDurableRuntimeSettings settings, IProviderRegistry registry,
-    IProtocolProviderGateway providers, JellyfinProxyService jellyfin)
+    IProtocolProviderGateway providers, JellyfinProxyService jellyfin, LibraryProviderResolver libraryProvider)
 {
     public async Task<ClientMixes> ListAsync(ProtocolExecutionContext execution, string? timeZoneId)
     {
@@ -42,6 +42,7 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
             .OfType<string>().Distinct(StringComparer.Ordinal).ToArray();
         var icons = (await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, providerIds, execution.CancellationToken))
             .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
+        var library = songs.Any(item => item.Song.IsLocal) ? await libraryProvider.ResolveAsync(http, execution) : null;
         var result = new List<ClientMixItem>(songs.Count);
         foreach (var item in songs)
         {
@@ -53,6 +54,7 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
             if (song.IsLocal)
             {
                 if (!native.TryGetValue(song.Id, out var root)) continue;
+                provider = library;
                 itemId = root.GetProperty("Id").GetString()!;
                 albumId = root.TryGetProperty("AlbumId", out var album) ? album.GetString() : null;
                 artistId = root.TryGetProperty("ArtistItems", out var artists) && artists.ValueKind == JsonValueKind.Array &&

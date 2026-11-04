@@ -117,7 +117,8 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.True(items[0].GetProperty("isExternal").GetBoolean());
         Assert.Equal("native-album", items[1].GetProperty("albumId").GetString());
         Assert.Equal("native-artist", items[1].GetProperty("artistId").GetString());
-        Assert.Equal(JsonValueKind.Null, items[1].GetProperty("provider").ValueKind);
+        Assert.False(items[1].GetProperty("isExternal").GetBoolean());
+        AssertLibraryProvider(items[1].GetProperty("provider"), glyph);
         using var playlistResponse = await client.GetAsync($"/Playlists/{playlist}/Items");
         Assert.Equal(HttpStatusCode.OK, playlistResponse.StatusCode);
         using var playlistBody = JsonDocument.Parse(await playlistResponse.Content.ReadAsStringAsync());

@@ -145,6 +145,8 @@ public sealed partial class ProtocolRouteFixtureTests
     {
         using var factory = ClientPlaybackFactory();
         using var client = CreateClientApiClient(factory);
+        using var fixtures = new ProviderIconFiles();
+        fixtures.Use(factory.Services);
         using var streamRequest = new HttpRequestMessage(HttpMethod.Get,
             "/Audio/native-song/stream?api_key=listener-token&deviceId=phone");
         using var stream = await client.SendAsync(streamRequest);
@@ -160,7 +162,7 @@ public sealed partial class ProtocolRouteFixtureTests
             using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
             var root = json.RootElement;
             Assert.Equal("native-song", root.GetProperty("itemId").GetString());
-            Assert.Equal(JsonValueKind.Null, root.GetProperty("provider").ValueKind);
+            AssertLibraryProvider(root.GetProperty("provider"));
             Assert.Equal(JsonValueKind.Null, root.GetProperty("accountScope").ValueKind);
             Assert.Equal(JsonValueKind.Null, root.GetProperty("delivered").ValueKind);
             Assert.False(root.GetProperty("cached").GetBoolean());
@@ -173,6 +175,25 @@ public sealed partial class ProtocolRouteFixtureTests
         using var otherRequest = ClientPlaybackRequest("/allstarr/v1/playback/current", device: "tablet");
         using var other = await client.SendAsync(otherRequest);
         await AssertClientApiError(other, 404, "not_found");
+    }
+
+    [Fact]
+    public async Task ClientApi_PlaybackSamplesIdentifyTheLibraryProvider()
+    {
+        using var factory = ClientPlaybackFactory();
+        using var client = CreateClientApiClient(factory);
+        using var fixtures = new ProviderIconFiles();
+        fixtures.Use(factory.Services);
+        var id = await SeedClientPlaybackAsync(factory, "local");
+        await SetClientPlaybackAsync(factory, "listener", "phone", "native-song");
+        foreach (var path in new[] { $"/allstarr/v1/playback/{id:N}", "/allstarr/v1/playback/current" })
+        {
+            using var request = ClientPlaybackRequest(path);
+            using var response = await client.SendAsync(request);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+            AssertLibraryProvider(json.RootElement.GetProperty("provider"));
+        }
     }
 
     [Theory]
@@ -230,7 +251,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var timing = new PlaybackStartTimings(TimeProvider.System);
         timing.Enable();
         timing.BeginPlay(new(ProtocolKind.Jellyfin, "primary", "listener", principal, "fixture",
-            DateTimeOffset.UtcNow.AddMinutes(1), default, new(deviceId: "phone")), "ext-deezer-song-42");
+            DateTimeOffset.UtcNow.AddMinutes(1), default, new(deviceId: "phone")), kind == "local" ? "native-song" : "ext-deezer-song-42");
         timing.Select("deezer", true, scope);
         timing.Route("deezer", true, "provider-priority", "Any", "Personal");
         timing.AccountLabel("private-account-name");

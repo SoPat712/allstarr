@@ -175,6 +175,7 @@ public sealed class ItemDetailsReader(
         var choices = await db.RecordingLyricsChoices.AsNoTracking().Where(item => recordingIds.Contains(item.CanonicalRecordingId) &&
             item.RevokedAt == null && (item.OwnerUserId == owner || item.OwnerUserId == null)).ToArrayAsync(token);
         var lyricsEndpoint = (await settings.GetAsync("LyricsPlus:BaseUrl", token)).NormalizedValue;
+        var libraryProvider = native.Count > 0 ? await http.RequestServices.GetRequiredService<LibraryProviderResolver>().ResolveAsync(http, execution) : null;
         var items = new Dictionary<string, ItemDetails>(StringComparer.Ordinal);
         foreach (var id in requested)
         {
@@ -224,7 +225,7 @@ public sealed class ItemDetailsReader(
             var explicitContent = song?.ExplicitContentLyrics switch { 1 => true, 0 => false, _ => (bool?)null };
             explicitContent ??= recordingId.HasValue ? recordings.GetValueOrDefault(recordingId.Value)?.IsExplicit : null;
             items[id] = new(id, song != null, recordingId?.ToString("D"), identity?.Isrc ?? song?.Isrc ?? local?.Isrc ?? identifiers.FirstOrDefault(item => item.RecordingId == recordingId)?.Value,
-                song == null ? null : providers.GetValueOrDefault(servingProviders.ContainsKey(id) ? servingProviders[id] ?? "allstarr" : song.ExternalProvider!), audio, explicitContent,
+                song == null ? libraryProvider : providers.GetValueOrDefault(servingProviders.ContainsKey(id) ? servingProviders[id] ?? "allstarr" : song.ExternalProvider!), audio, explicitContent,
                 song == null ? native[id] : saved.Contains(id), keep, match, lyrics);
         }
         return new(ids.Where(items.ContainsKey).Select(id => items[id]).ToArray(), ids.Where(id => !items.ContainsKey(id)).ToArray());

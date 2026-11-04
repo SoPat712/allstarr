@@ -14,7 +14,8 @@ public sealed class PlaybackReader(
     TimeProvider clock,
     IProviderRegistry registry,
     IEnumerable<IPlaybackActivitySource> activity,
-    IPlaybackDeliveryActivitySource deliveries)
+    IPlaybackDeliveryActivitySource deliveries,
+    LibraryProviderResolver libraryProvider)
 {
     public async Task<ClientPlayback?> ReadAsync(HttpContext http, ProtocolExecutionContext execution, Guid id)
     {
@@ -22,7 +23,7 @@ public sealed class PlaybackReader(
         await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
         var row = await Visible(db, execution).SingleOrDefaultAsync(item => item.Id == id, execution.CancellationToken);
         var sample = row == null ? null : Read(row, execution);
-        return sample == null ? null : await ProjectAsync(http, sample);
+        return sample == null ? null : await ProjectAsync(http, execution, sample);
     }
 
     public async Task<ClientPlayback?> CurrentAsync(HttpContext http, ProtocolExecutionContext execution)
@@ -42,17 +43,17 @@ public sealed class PlaybackReader(
         var sample = rows.Select(row => Read(row, execution)).OfType<PlaybackStartSample>()
             .FirstOrDefault(sample => SameItem(sample.Trace!.Request.ItemId, state.ItemId) &&
                 (stream == null || stream.PlaybackRequestId == sample.Id));
-        if (sample != null) return await ProjectAsync(http, sample);
+        if (sample != null) return await ProjectAsync(http, execution, sample);
         if (stream != null)
         {
             var scope = stream.AccountId is { } accountId ? await db.ProviderAccounts.AsNoTracking()
                 .Where(account => account.Id == accountId && (account.OwnerUserId == null || account.OwnerUserId == owner))
                 .Select(account => (ProviderAccountScope?)account.Scope).SingleOrDefaultAsync(execution.CancellationToken) : null;
-            return new(await ProviderAsync(http, stream.ProviderId), Scope(scope?.ToString()), stream.Cached,
+            return new(await ProviderAsync(http, execution, stream.ProviderId, state.ItemId), Scope(scope?.ToString()), stream.Cached,
                 null, ProblemReportText.Route(stream.SelectionReason), state.ItemId, stream.OpenedAt);
         }
         if (ExternalPlaybackMetadataResolver.ParseTrackIdentity(state.ItemId) != null) return null;
-        return new(null, null, false, null, "native-local-library", state.ItemId,
+        return new(await libraryProvider.ResolveAsync(http, execution), null, false, null, "native-local-library", state.ItemId,
             state.StartedAt ?? new DateTimeOffset(DateTime.SpecifyKind(state.LastActivity, DateTimeKind.Utc)));
     }
 
@@ -75,16 +76,18 @@ public sealed class PlaybackReader(
         catch (JsonException) { return null; }
     }
 
-    private async Task<ClientPlayback> ProjectAsync(HttpContext http, PlaybackStartSample sample)
+    private async Task<ClientPlayback> ProjectAsync(HttpContext http, ProtocolExecutionContext execution, PlaybackStartSample sample)
     {
         var trace = sample.Trace!;
         var media = trace.Delivery?.Converted == true ? trace.Delivery.Output : trace.Received?.Media;
-        return new(await ProviderAsync(http, trace.Resolution.Provider ?? sample.Provider), Scope(sample.AccountScope),
+        return new(await ProviderAsync(http, execution, trace.Resolution.Provider ?? sample.Provider, trace.Request.ItemId), Scope(sample.AccountScope),
             trace.Resolution.Cached ?? sample.Cached, Delivered(media), trace.Resolution.Route, trace.Request.ItemId, sample.StartedAt);
     }
 
-    private async Task<ItemDetailsProvider?> ProviderAsync(HttpContext http, string? provider)
+    private async Task<ItemDetailsProvider?> ProviderAsync(HttpContext http, ProtocolExecutionContext execution, string? provider, string? itemId)
     {
+        if (itemId != null && ExternalPlaybackMetadataResolver.ParseTrackIdentity(itemId) == null)
+            return await libraryProvider.ResolveAsync(http, execution);
         if (provider == null || !registry.TryGet(provider, out var descriptor)) return null;
         var icon = (await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, [provider], http.RequestAborted)).GetValueOrDefault(provider);
         return icon?.Provider(provider, descriptor!.DisplayName) ?? new(provider, descriptor!.DisplayName, null);
