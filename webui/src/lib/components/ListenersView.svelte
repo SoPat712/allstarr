@@ -1,110 +1,113 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ApiError, listeningPreferences, playlistLinks, sources, type ListenerPlaylistCopy, type PersonalListeningPreferences, type PlaylistLink } from "$lib/api";
+  import { ApiError, listeningPreferences, playlistLinks, sources, type ListenerPlaylistCopy, type PersonalListeningPreferences, type PlaylistLink, type ProviderAccount } from "$lib/api";
   import { originalCopyName } from "$lib/listeners";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
-  import RefreshButton from "$lib/components/RefreshButton.svelte";
-  import RouteError from "$lib/components/RouteError.svelte";
-  import { Checkbox } from "$lib/components/ui/checkbox";
-  import { Skeleton } from "$lib/components/ui/skeleton";
+  import { Users } from "@lucide/svelte";
+  import { Button } from "$lib/components/ui/button";
+  import { Switch } from "$lib/components/ui/switch";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import EmptyState from "$lib/components/patterns/EmptyState.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import ItemRow from "$lib/components/patterns/ItemRow.svelte";
 
-  type Listener = { id: string; displayName: string; preferences: PersonalListeningPreferences | null;
-    copies: ListenerPlaylistCopy[] | null; error: string };
-  let listeners = $state<Listener[]>([]), links = $state<PlaylistLink[]>([]);
-  let loading = $state(true), error = $state(""), action = $state("");
-  let fetching = false;
-
+  type Listener = { id: string; displayName: string; preferences: PersonalListeningPreferences | null; copies: ListenerPlaylistCopy[] | null; error: string };
+  let { initialPanel = "" }: { initialPanel?: string } = $props();
+  let listeners = $state<Listener[]>([]), links = $state<PlaylistLink[]>([]), accounts = $state<ProviderAccount[]>([]);
+  let loading = $state(true), error = $state(""), action = $state(""), selected = $state(""), panelOpen = $state(false), filter = $state("all");
+  let fetching = false, initialized = false;
+  const current = $derived(listeners.find(item => item.id === selected));
+  const lockedCount = $derived(listeners.filter(item => item.preferences?.cleanOnlyLocked).length);
+  const filtered = $derived(listeners.filter(item => filter === "all" || item.preferences?.cleanOnlyLocked));
+  const selectedIndex = $derived(filtered.findIndex(item => item.id === selected));
+  const ownAccounts = (id: string) => accounts.filter(account => account.ownerUserId === id);
   async function load() {
     if (fetching || action) return;
     fetching = true;
     try {
       const [users, playlists] = await Promise.allSettled([sources.accounts(), playlistLinks.list()]);
       if (users.status === "rejected") throw users.reason;
+      accounts = users.value.accounts ?? [];
       if (playlists.status === "fulfilled") links = playlists.value.playlistLinks ?? [];
       listeners = await Promise.all((users.value.audienceUsers ?? []).map(async user => {
         const previous = listeners.find(item => item.id === user.id);
-        const [preferences, copies] = await Promise.allSettled([
-          listeningPreferences.lock(user.id), listeningPreferences.copies(user.id),
-        ]);
-        return { ...user,
-          preferences: preferences.status === "fulfilled" ? preferences.value : previous?.preferences ?? null,
+        const [preferences, copies] = await Promise.allSettled([listeningPreferences.lock(user.id), listeningPreferences.copies(user.id)]);
+        return { ...user, preferences: preferences.status === "fulfilled" ? preferences.value : previous?.preferences ?? null,
           copies: copies.status === "fulfilled" ? copies.value : previous?.copies ?? null,
-          error: preferences.status === "rejected" || copies.status === "rejected" ? "Some listener settings could not be loaded. Refresh to try again." : "",
-        };
+          error: preferences.status === "rejected" || copies.status === "rejected" ? "Some listener settings could not be loaded. Try again." : "" };
       }));
-      error = playlists.status === "rejected" ? "Original playlist names could not be loaded. Refresh to try again." : "";
-    } catch {
-      error = "Listeners could not be loaded. Refresh to try again.";
-    } finally { fetching = false; loading = false; }
+      if (!initialized && initialPanel && listeners.some(item => item.id === initialPanel)) { selected = initialPanel; panelOpen = true; }
+      initialized = true;
+      error = playlists.status === "rejected" ? "Original playlist names could not be loaded. Try again." : "";
+    } catch { error = "Listeners could not be loaded. Try again."; }
+    finally { fetching = false; loading = false; }
   }
-
-  async function toggle(listener: Listener, locked: boolean) {
+  async function toggle(listener: Listener, locked: boolean, undo = true) {
     if (!listener.preferences || action || fetching) return;
+    const previous = listener.preferences;
+    listener.preferences = { ...previous, cleanOnlyLocked: locked };
     action = listener.id;
     try {
       listener.preferences = await listeningPreferences.saveLock(listener.id, locked, listener.preferences.revision);
-      toast.success("Listener settings saved.");
+      toast.success("Listener settings saved.", undo ? { label: "Undo", run: async () => { const current = listeners.find(item => item.id === listener.id); if (current) await toggle(current, previous.cleanOnlyLocked ?? false, false); } } : undefined);
     } catch (cause) {
+      listener.preferences = previous;
       if (cause instanceof ApiError && cause.status === 409) {
-        try {
-          listener.preferences = await listeningPreferences.lock(listener.id);
-          toast.info("Changed elsewhere — reloaded.");
-        } catch { listener.preferences = null; toast.error("Listener settings could not be reloaded. Refresh to try again."); }
+        try { listener.preferences = await listeningPreferences.lock(listener.id); toast.info("Changed elsewhere — reloaded."); }
+        catch { listener.preferences = null; toast.error("Listener settings could not be reloaded. Try again."); }
       } else toast.error("Listener settings could not be saved. Try again.");
     } finally { action = ""; }
   }
-
+  function open(listener: Listener) { selected = listener.id; panelOpen = true; }
   const scheduler = createRefreshScheduler(load);
-  onMount(() => {
-    void load();
-    const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
-    return () => { unsubscribe(); scheduler.cancel(); };
-  });
+  onMount(() => { void load(); const unsubscribe = liveUpdates.subscribe(scheduler.schedule); return () => { unsubscribe(); scheduler.cancel(); }; });
 </script>
 
-{#if loading}
-  <Skeleton class="panel skeleton-panel" aria-label="Loading listeners" />
-{:else}
-  <div class="flex justify-end"><RefreshButton variant="secondary" onrefresh={load} /></div>
-  {#if error && !listeners.length}
-    <RouteError eyebrow="Listeners unavailable" title="Listeners could not be loaded." message={error} onRetry={load} />
+<div class="settings-stack">
+  <PageStatus items={[{ label: `${listeners.length} listeners` }, { label: `${lockedCount} locked to clean` }]} />
+  {#if loading}<RowsSkeleton />
+  {:else if error && !listeners.length}<ErrorState title="Listeners could not be loaded" detail={error} onretry={load} />
   {:else}
-    {#if error}<p class="notice-error" role="status">{error}</p>{/if}
-    {#each listeners as listener (listener.id)}
-      <section class="settings-card" aria-label={listener.displayName}>
-        <header><h3>{listener.displayName}</h3></header>
-        <label class="settings-row">
-          <div><strong>Lock clean only</strong><small>This listener can't turn it off.</small></div>
-          <span class="settings-toggle"><Checkbox aria-label="Lock clean only"
-            bind:checked={() => listener.preferences?.cleanOnlyLocked ?? false, checked => void toggle(listener, checked)}
-            disabled={Boolean(action) || !listener.preferences} /></span>
-        </label>
-        {#if listener.error}<p class="settings-impact" role="status">{listener.error}</p>{/if}
-        <details class="copies">
-          <summary>Playlist copies</summary>
-          {#if listener.copies === null}
-            <p>Personal copies could not be loaded.</p>
-          {:else if !listener.copies.length}
-            <p>No personal copies</p>
-          {:else}
-            <ul>{#each listener.copies as copy (copy.id)}<li>{copy.name} → {originalCopyName(copy, links)}</li>{/each}</ul>
-          {/if}
-        </details>
-      </section>
-    {:else}
-      <section class="settings-card"><p class="settings-impact">No listeners</p></section>
-    {/each}
+    {#if error}<ErrorState title="Some listener details are unavailable" detail={error} onretry={load} />{/if}
+    <div class="settings-toolbar"><FilterSegments bind:value={filter} storageKey="allstarr.settings.listeners.filter" label="Filter listeners" options={[{ id: "all", label: "All", count: listeners.length }, { id: "locked", label: "Locked to clean", count: lockedCount }]} /><Button variant="text" onclick={load}>Refresh</Button></div>
+    <section class="settings-card" aria-label="Listeners">
+      {#if filtered.length}
+        <table class="settings-table"><thead><tr><th>Listener</th><th class="desktop-column">Last active</th><th class="desktop-column">Plays this week</th><th class="desktop-column">Accounts</th><th class="desktop-column">Playlist editing</th><th>Clean only, locked</th><th></th></tr></thead><tbody>
+          {#each filtered as listener (listener.id)}
+            <tr aria-label={listener.displayName} class:selected={selected === listener.id && panelOpen}>
+              <td><button class="row-button" type="button" aria-label={`Open ${listener.displayName}`} onclick={() => open(listener)}>{listener.displayName}</button></td>
+              <td class="desktop-column settings-muted">Unavailable</td><td class="desktop-column settings-muted">—</td>
+              <td class="desktop-column">{ownAccounts(listener.id).map(account => account.displayName).join(", ") || "—"}</td>
+              <td class="desktop-column settings-muted">Unavailable</td>
+              <td><Switch class="table-control" aria-label={`Lock clean only for ${listener.displayName}`} checked={listener.preferences?.cleanOnlyLocked ?? false} disabled={Boolean(action) || !listener.preferences} onchange={event => void toggle(listener, event.currentTarget.checked)} /></td>
+              <td aria-hidden="true">›</td>
+            </tr>
+          {/each}
+        </tbody></table>
+      {:else}<EmptyState title={listeners.length ? "No listeners locked to clean" : "No listeners yet"} description="Listeners appear after using Allstarr with their media-server account.">{#snippet icon()}<Users size={24} />{/snippet}</EmptyState>{/if}
+    </section>
   {/if}
-{/if}
+</div>
 
-<style>
-  .settings-toggle :global([data-slot="checkbox"]) { box-sizing: border-box; width: 44px; height: 44px; padding: 0; margin: 0; border: 0; background: transparent; outline: 0; }
-  .settings-toggle :global([data-slot="checkbox-indicator"]) { width: 20px; height: 20px; border: 2px solid var(--md-sys-color-on-surface-variant); border-radius: 3px; }
-  .settings-toggle :global([data-checked] [data-slot="checkbox-indicator"]) { border-color: var(--md-sys-color-primary); background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
-  .copies { border-top: 1px solid var(--color-edge); padding: 0 var(--space-6) var(--space-2); }
-  .copies summary { min-height: var(--control-md); line-height: var(--control-md); cursor: pointer; font-size: var(--text-sm); }
-  .copies p, .copies ul { margin: 0 0 var(--space-3); color: var(--color-ink-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
-  .copies ul { padding-left: var(--space-4); }
-  @media (max-width: 650px) { .copies { padding-inline: var(--space-4); } }
-</style>
+{#if current}
+  {#await import("./patterns/SidePanel.svelte") then { default: SidePanel }}
+    <SidePanel bind:open={panelOpen} title={current.displayName} description="Listener" navigationLabel="listener" onPrevious={selectedIndex > 0 ? () => open(filtered[selectedIndex - 1]) : undefined} onNext={selectedIndex >= 0 && selectedIndex < filtered.length - 1 ? () => open(filtered[selectedIndex + 1]) : undefined}>
+      <div class="settings-stack">
+        <PageStatus items={[{ label: `${current.copies?.length ?? 0} playlist copies` }, { label: `${ownAccounts(current.id).length} own accounts` }]} />
+        {#if current.error}<ErrorState title="Some listener details are unavailable" detail={current.error} onretry={load} />{/if}
+        <section class="settings-card"><div class="settings-row"><div><strong>Clean only, locked</strong><small>This listener can't turn explicit songs back on.</small></div><Switch aria-label="Lock clean only" checked={current.preferences?.cleanOnlyLocked ?? false} disabled={Boolean(action) || !current.preferences} onchange={event => void toggle(current!, event.currentTarget.checked)} /></div></section>
+        <p class="settings-muted">Each listener allows playlist editing in Sources › Accounts.</p>
+        <section class="settings-card" aria-label="Playlist copies"><header><h3>Playlist copies</h3></header>
+          {#if current.copies === null}<ErrorState title="Personal copies could not be loaded" onretry={load} />
+          {:else if !current.copies.length}<EmptyState title="No personal copies" description="A listener's own versions of playlists appear here." />
+          {:else}{#each current.copies as copy (copy.id)}<ItemRow title={copy.name} subtitle={`From ${originalCopyName(copy, links)}`} />{/each}{/if}
+        </section>
+        <section class="settings-card"><header><h3>Own accounts</h3></header>{#each ownAccounts(current.id) as account (account.id)}<ItemRow title={account.displayName} subtitle={account.providerId} />{:else}<EmptyState title="No own accounts" description="Listeners connect their own accounts in Sources." />{/each}</section>
+      </div>
+      {#snippet footer()}<Button variant="outline" href="#/activity">See activity</Button>{/snippet}
+    </SidePanel>
+  {/await}
+{/if}

@@ -20,7 +20,7 @@ test("Connection editing keeps a blank key write-only and retries conflicts", as
 
 test("Admins choose whether listeners can add mixes to their apps", async ({ page }) => {
   const state = await mockForYou(page, { admin: true, publish: false }); await page.goto("/#/settings/sound-analysis");
-  const toggle = page.getByRole("checkbox", { name: "Let listeners add mixes to their apps", exact: true });
+  const toggle = page.getByRole("switch", { name: "Let listeners add mixes to their apps", exact: true });
   await expect(toggle).toBeEnabled(); await expect(toggle).not.toBeChecked();
   await toggle.click(); await expect.poll(() => state.publish).toBe(true);
   await expect(page.getByRole("alertdialog")).toHaveCount(0);

@@ -81,36 +81,26 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.goto("/#/settings/backups");
     const form = page.getByRole("form", { name: "Backup schedule", exact: true });
     await expect(form).toBeVisible();
-    await expect(form.getByRole("checkbox", { name: "Daily backups", exact: true })).toBeChecked();
+    await expect(form.getByRole("switch", { name: "Daily backups", exact: true })).toBeChecked();
     await expect(form.getByLabel("Backup time (UTC)", { exact: true })).toHaveValue("03:00");
     await expect(form.getByLabel("Daily copies", { exact: true })).toHaveValue("14");
     await expect(form.getByLabel("Weekly copies", { exact: true })).toHaveValue("8");
+    await form.getByText("Advanced: folder and manual copies", { exact: true }).click();
     await expect(form.getByLabel("Manual copies", { exact: true })).toHaveValue("10");
     await page.screenshot({ path: testInfo.outputPath(`backups-status-${width}-${theme}.png`) });
-    const save = form.getByRole("button", { name: "Save schedule", exact: true });
-    await expect(save).toBeDisabled();
+    await expect(form.getByRole("button", { name: "Save schedule", exact: true })).toHaveCount(0);
     await form.getByLabel("Daily copies", { exact: true }).fill("0");
-    await save.click();
+    await form.getByLabel("Daily copies", { exact: true }).blur();
     expect(mock.writes).toHaveLength(0);
-    await form.getByLabel("Backup time (UTC)", { exact: true }).fill("02:30");
-    await form.getByLabel("Backup folder", { exact: true }).fill("/mnt/backup-sync");
-    await form.getByLabel("Daily copies", { exact: true }).fill("21");
-    await form.getByLabel("Weekly copies", { exact: true }).fill("12");
-    await form.getByLabel("Manual copies", { exact: true }).fill("7");
-    await save.focus();
-    await page.keyboard.press("Enter");
-    await expect.poll(() => mock.writes.length).toBe(1);
-    expect(mock.writes[0]).toEqual({ enabled: true, timeUtc: "02:30", directory: "/mnt/backup-sync",
-      dailyRetentionCount: 21, weeklyRetentionCount: 12, manualRetentionCount: 7, expectedRevision: "first" });
-    await expect(page.getByText("Backup schedule saved.", { exact: true })).toBeVisible();
-    await expect(save).toBeDisabled();
-    await page.getByRole("button", { name: "Dismiss notification", exact: true }).click();
+    for (const [label, value] of [["Daily copies", "21"], ["Backup time (UTC)", "02:30"], ["Backup folder", "/mnt/backup-sync"], ["Weekly copies", "12"], ["Manual copies", "7"]]) {
+      const before = mock.writes.length;
+      await form.getByLabel(label, { exact: true }).fill(value); await form.getByLabel(label, { exact: true }).blur();
+      await expect.poll(() => mock.writes.length).toBe(before + 1);
+      await expect(form.getByLabel(label, { exact: true })).toBeEnabled();
+    }
+    expect(mock.writes.at(-1)).toMatchObject({ enabled: true, timeUtc: "02:30", directory: "/mnt/backup-sync", dailyRetentionCount: 21, weeklyRetentionCount: 12, manualRetentionCount: 7, expectedRevision: "second" });
+    await expect(page.getByText("Backup schedule saved.", { exact: true }).last()).toBeVisible();
     if (width === 390) await expectContainedMobileGeometry(page);
-    await form.getByRole("heading", { name: "Backup schedule", exact: true }).click();
-    await page.screenshot({ path: testInfo.outputPath(`backups-form-${width}-${theme}.png`) });
-    await save.scrollIntoViewIfNeeded();
-    await expect(save).toBeInViewport();
-    await page.screenshot({ path: testInfo.outputPath(`backups-footer-${width}-${theme}.png`) });
     await page.screenshot({ path: testInfo.outputPath(`backups-${width}-${theme}.png`), fullPage: true });
   });
 }
@@ -123,13 +113,13 @@ test("Back up now reports queued work until verification completes", async ({ pa
   await run.click();
   await expect(run).toBeDisabled();
   await expect(page.getByText("Backup queued.", { exact: true })).toBeVisible();
-  await expect(page.getByText(artifact.fileName, { exact: true })).toHaveCount(0);
+  await expect(page.locator(`tr[title="${artifact.fileName}"]`)).toHaveCount(0);
   await expect(page.getByRole("status", { name: "Backup status", exact: true })).toHaveText("Queued");
   await expect(page.getByRole("status", { name: "Backup status", exact: true })).toHaveText("Backing up");
-  await expect(page.getByText(artifact.fileName, { exact: true })).toBeVisible();
+  await expect(page.locator(`tr[title="${artifact.fileName}"]`)).toBeVisible();
   await expect(run).toBeEnabled();
   await expect(page.getByRole("link", { name: "Download", exact: true })).toHaveAttribute("href", `/api/admin/storage/backups/${artifact.id}/download`);
-  await expect(page.getByRole("article", { name: "Saved backups", exact: true }).getByText("Manual", { exact: true })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Saved backups", exact: true }).getByText(/^Manual/).first()).toBeVisible();
   expect(mock.state.creations).toBe(1);
   await expectContainedMobileGeometry(page);
   await page.getByRole("article", { name: "Saved backups", exact: true }).scrollIntoViewIfNeeded();
@@ -141,7 +131,7 @@ test("A staged restore disables backup work and policy saves", async ({ page }) 
   mock.state.restorePending = true;
   await page.goto("/#/settings/backups");
   await expect(page.getByRole("button", { name: "Back up now", exact: true })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Save schedule", exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Daily copies", { exact: true })).toBeDisabled();
   expect(mock.state.creations).toBe(0);
 });
 
@@ -157,23 +147,21 @@ test("Refresh and revision conflicts preserve an unsaved backup policy", async (
   await page.goto("/#/settings/backups");
   const form = page.getByRole("form", { name: "Backup schedule", exact: true });
   const time = form.getByLabel("Backup time (UTC)", { exact: true });
-  await time.fill("04:00");
+  mock.state.conflict = true;
+  await time.fill("04:00"); await time.blur();
+  await expect.poll(() => mock.writes.length).toBe(1);
+  expect(mock.writes[0].expectedRevision).toBe("first");
+  await expect(page.getByRole("alert").filter({ hasText: "Reload them before saving." })).toBeVisible();
   mock.state.policy = { ...mock.state.policy, timeUtc: "05:00", revision: "third" };
   await page.getByRole("button", { name: "Refresh status", exact: true }).click();
   await expect(page.getByText("Your unsaved edits are kept.", { exact: false })).toBeVisible();
   await expect(time).toHaveValue("04:00");
-  mock.state.conflict = true;
-  await form.getByRole("button", { name: "Save schedule", exact: true }).click();
-  await expect.poll(() => mock.writes.length).toBe(1);
-  expect(mock.writes[0].expectedRevision).toBe("first");
-  await expect(page.getByRole("alert").filter({ hasText: "Reload them before saving." })).toBeVisible();
-  await expect(time).toHaveValue("04:00");
   await page.getByRole("button", { name: "Reload server values", exact: true }).click();
   await expect(time).toHaveValue("05:00");
-  await expect(form.getByRole("button", { name: "Save schedule", exact: true })).toBeDisabled();
+  await expect(form.getByRole("button", { name: "Save schedule", exact: true })).toHaveCount(0);
   mock.state.conflict = false;
   await time.fill("06:00");
-  await form.getByRole("button", { name: "Save schedule", exact: true }).click();
+  await time.blur();
   await expect.poll(() => mock.writes.length).toBe(2);
   expect(mock.writes[1].expectedRevision).toBe("third");
 });
@@ -186,9 +174,10 @@ test("Unavailable storage and a missing backup folder block new work truthfully"
   const run = page.getByRole("button", { name: "Back up now", exact: true });
   await expect(page.getByRole("status", { name: "Backup status", exact: true })).toHaveText("Unavailable");
   await expect(run).toBeDisabled();
+  await form.getByText("Advanced: folder and manual copies", { exact: true }).click();
   await expect(form.getByLabel("Backup folder", { exact: true })).toBeDisabled();
   await expect(page.getByText("The backup list is unavailable until durable storage is ready.", { exact: true })).toBeVisible();
-  await expect(page.getByText("No backups yet.", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("No backups yet", { exact: true })).toHaveCount(0);
   mock.state.ready = true;
   mock.state.directoryState = "unavailable";
   await page.getByRole("button", { name: "Refresh status", exact: true }).click();
@@ -206,10 +195,10 @@ test("A failed backup admission shows its safe reason and can be retried", async
   await run.click();
   await expect(page.getByRole("alert").filter({ hasText: "The backup could not be queued. Try again." })).toBeVisible();
   await expect(run).toBeEnabled();
-  await expect(page.getByText(artifact.fileName, { exact: true })).toHaveCount(0);
+  await expect(page.locator(`tr[title="${artifact.fileName}"]`)).toHaveCount(0);
   mock.state.mode = "idle";
   await run.click();
-  await expect(page.getByText(artifact.fileName, { exact: true })).toBeVisible();
+  await expect(page.locator(`tr[title="${artifact.fileName}"]`)).toBeVisible();
   expect(mock.state.creations).toBe(2);
 });
 
@@ -232,7 +221,7 @@ test("An accepted job can fail without appearing as a completed backup", async (
   await expect(page.getByRole("status", { name: "Backup status", exact: true })).toHaveText("Queued");
   await expect(page.getByRole("status", { name: "Backup status", exact: true })).toHaveText("Last backup failed");
   await expect(page.getByText(/The backup directory is unavailable\. Check its mount, permissions and free space\./)).toBeVisible();
-  await expect(page.getByText(artifact.fileName, { exact: true })).toHaveCount(0);
+  await expect(page.locator(`tr[title="${artifact.fileName}"]`)).toHaveCount(0);
   await expect(page.getByText("Backup completed.", { exact: true })).toHaveCount(0);
   await expect(run).toBeEnabled();
 });
@@ -246,10 +235,10 @@ test("Unknown backup facts stay neutral and changed archives cannot be downloade
     backups: [{ ...artifact, createdAt: "bad-date", verifiedAt: null, bytes: 0, status: "changed", verification: "changed" }],
   }));
   await page.goto("/#/settings/backups");
-  await expect(page.getByText("Size unavailable", { exact: false })).toHaveCount(2);
+  await expect(page.getByText("Size unavailable", { exact: false })).toHaveCount(1);
   await expect(page.getByText("File changed", { exact: false })).toBeVisible();
   await expect(page.getByRole("link", { name: "Download", exact: true })).toBeDisabled();
   await expect(page.getByRole("link", { name: "Download", exact: true })).not.toHaveAttribute("href");
   await expect(page.getByText(/Invalid Date|0 MiB/)).toHaveCount(0);
-  await expect(page.getByRole("article", { name: "Database backup status", exact: true }).getByText("Not available", { exact: true })).toHaveCount(2);
+  await expect(page.getByLabel("Page status")).toContainText("Not available");
 });

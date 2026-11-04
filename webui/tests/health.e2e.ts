@@ -72,10 +72,12 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(page.getByRole("heading", { name: "Health", exact: true })).toBeVisible();
     await expect(page.getByText("Check provider playback and listener actions with a dedicated test account.", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Server API key ready", { exact: true })).toBeVisible();
-    await expect(page.getByText("No checks yet", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Page status", { exact: true }).getByText("No checks yet", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "No checks yet", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Run now", exact: true })).toBeDisabled();
     const form = page.getByRole("form", { name: "Health monitoring", exact: true });
     await expect(form.getByLabel("Check interval (minutes)")).toHaveValue("30");
+    await form.getByText("Advanced: sample song, timing and webhook", { exact: true }).click();
     await expect(form.getByLabel("Search query", { exact: true })).toHaveValue("Get Lucky Daft Punk");
     await expect(form.getByLabel("First audio byte budget (seconds)")).toHaveValue("15");
     for (const label of ["Health listener", "Listener username", "Listener password"])
@@ -84,37 +86,26 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(form).toContainText("Read-only checks leave listening history and saved music unchanged.");
     if (width === 390) await expectContainedMobileGeometry(page);
     await form.getByLabel("Webhook URL", { exact: true }).fill("https://example.invalid/fixture-webhook");
-    await form.getByLabel("Enable scheduled checks", { exact: true }).check();
-    await form.getByLabel("Check interval (minutes)").fill("60");
-    await form.getByRole("button", { name: "Save health settings", exact: true }).click();
-    await expect.poll(() => writes[0]).toEqual({
-      enabled: true, intervalMinutes: 60, searchQuery: "Get Lucky Daft Punk", firstByteBudgetSeconds: 15,
-      expectedRevision: 0, webhookUrl: "https://example.invalid/fixture-webhook", clearWebhook: false,
-    });
-    await expect(page.getByRole("status").filter({ hasText: "Health settings saved." })).toBeVisible();
+    await form.getByLabel("Webhook URL", { exact: true }).blur();
+    await expect.poll(() => writes.length).toBe(1);
+    expect(writes[0]).toEqual({ enabled: false, intervalMinutes: 30, searchQuery: "Get Lucky Daft Punk", firstByteBudgetSeconds: 15, expectedRevision: 0, webhookUrl: "https://example.invalid/fixture-webhook", clearWebhook: false });
     await expect(form.getByLabel("Webhook URL", { exact: true })).toHaveValue("");
-    await expect(form.getByLabel("Check interval (minutes)")).toHaveValue("60");
-    await expect(page.getByRole("button", { name: "Run now", exact: true })).toBeEnabled();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    const saveButton = form.getByRole("button", { name: "Save health settings", exact: true });
-    await saveButton.scrollIntoViewIfNeeded();
-    if (width === 390) {
-      const buttonBox = await saveButton.boundingBox();
-      const navigationBox = await page.locator(".mobile-navigation").boundingBox();
-      expect(buttonBox!.y + buttonBox!.height).toBeLessThanOrEqual(navigationBox!.y);
-    }
-    await page.screenshot({ path: testInfo.outputPath(`health-form-${width}-${theme}.png`) });
-    await page.evaluate(() => window.scrollTo(0, 0));
-    await page.screenshot({ path: testInfo.outputPath(`health-${width}-${theme}.png`) });
-    await form.getByLabel("Enable scheduled checks", { exact: true }).uncheck();
-    await form.getByRole("button", { name: "Save health settings", exact: true }).click();
+    await form.getByLabel("Enable scheduled checks", { exact: true }).check();
     await expect.poll(() => writes.length).toBe(2);
-    expect(writes[1]).toEqual({ enabled: false, intervalMinutes: 60,
-      searchQuery: "Get Lucky Daft Punk", firstByteBudgetSeconds: 15, expectedRevision: 1, clearWebhook: false });
-    await form.getByLabel("Remove saved webhook", { exact: true }).check();
-    await form.getByRole("button", { name: "Save health settings", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Run now", exact: true })).toBeEnabled();
+    await form.getByLabel("Check interval (minutes)").fill("60"); await form.getByLabel("Check interval (minutes)").blur();
     await expect.poll(() => writes.length).toBe(3);
-    expect(writes[2].clearWebhook).toBe(true);
+    await expect(form.getByLabel("Check interval (minutes)")).toHaveValue("60");
+    await expect(page.getByText("Health settings saved.", { exact: true }).first()).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    if (width === 390) await expectContainedMobileGeometry(page);
+    await page.screenshot({ path: testInfo.outputPath(`health-${width}-${theme}.png`), fullPage: true });
+    await form.getByLabel("Enable scheduled checks", { exact: true }).uncheck();
+    await expect.poll(() => writes.length).toBe(4);
+    expect(writes[3]).toMatchObject({ enabled: false, intervalMinutes: 60, expectedRevision: 3 });
+    await form.getByLabel("Remove saved webhook", { exact: true }).check();
+    await expect.poll(() => writes.length).toBe(5);
+    expect(writes[4].clearWebhook).toBe(true);
     for (const body of writes) for (const key of ["username", "password", "listenerUserId", "apiKey"])
       expect(body).not.toHaveProperty(key);
   });
@@ -149,16 +140,17 @@ test("Health runs while schedule is off, polls pending work and shows failure an
     return respond(route, view);
   });
   await page.goto("/#/settings/health");
-  await page.getByLabel("Search query", { exact: true }).fill("Unsaved query");
+  await page.getByText("Advanced: sample song, timing and webhook", { exact: true }).click();
+  await page.getByLabel("Search query", { exact: true }).fill("");
   await page.getByRole("button", { name: "Run now", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "A check is running." })).toBeVisible();
   await expect(page.getByRole("button", { name: "Run now", exact: true })).toBeDisabled();
-  const latest = page.getByRole("article", { name: "Latest health check", exact: true });
+  const latest = page.getByRole("region", { name: "Latest health check", exact: true });
   await expect(latest).toContainText("The step exceeded its time limit.");
   await expect(latest).toContainText("Playback");
   await expect(latest).toContainText("16 s");
   await expect(latest).toContainText("Alert delivery failed");
-  await expect(page.getByLabel("Search query", { exact: true })).toHaveValue("Unsaved query");
+  await expect(page.getByLabel("Search query", { exact: true })).toHaveValue("");
   await expect.poll(() => polls).toBe(1);
   await expectContainedMobileGeometry(page);
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -190,7 +182,7 @@ test("Health explains skipped checks and source availability at 320px", async ({
     ], alertStatus: "not_configured" });
   await mockHealth(page, route => respond(route, view));
   await page.goto("/#/settings/health");
-  const latest = page.getByRole("article", { name: "Latest health check", exact: true });
+  const latest = page.getByRole("region", { name: "Latest health check", exact: true });
   await expect(latest).toContainText("No eligible provider song was found. Check the query and automatic sources.");
   await expect(latest).toContainText("Search must pass before this step can run.");
   await expect(latest).toContainText("Skipped");
@@ -211,12 +203,12 @@ test("Health identifies a download seek failure independently of playback seekin
     ], alertStatus: "none" });
   await mockHealth(page, route => respond(route, view));
   await page.goto("/#/settings/health");
-  const latest = page.getByRole("article", { name: "Latest health check", exact: true });
+  const latest = page.getByRole("region", { name: "Latest health check", exact: true });
   await expect(latest).toContainText("Seek in download failed.");
   await expect(latest).toContainText("The source did not return the requested byte range.");
-  const steps = latest.getByRole("list", { name: "Check steps", exact: true });
-  await expect(steps.getByRole("listitem").filter({ has: page.getByText("Seek", { exact: true }) })).toContainText("Passed");
-  await expect(steps.getByRole("listitem").filter({ has: page.getByText("Seek in download", { exact: true }) })).toContainText("Failed");
+  const steps = latest.getByRole("table", { name: "Check steps", exact: true });
+  await expect(steps.getByRole("row").filter({ has: page.getByText("Seek", { exact: true }) })).toContainText("Passed");
+  await expect(steps.getByRole("row").filter({ has: page.getByText("Seek in download", { exact: true }) })).toContainText("Failed");
   await expectContainedMobileGeometry(page);
   await page.screenshot({ path: testInfo.outputPath("health-download-seek-390.png") });
 });
@@ -234,15 +226,15 @@ test("Health conflicts keep edits and offer a safe reload", async ({ page }) => 
   });
   await page.goto("/#/settings/health");
   await page.getByLabel("Check interval (minutes)").fill("60");
-  await page.getByRole("button", { name: "Save health settings", exact: true }).click();
+  await page.getByLabel("Check interval (minutes)").blur();
   await expect(page.getByRole("alert")).toContainText("Health settings changed. Reload settings and try again.");
   await expect(page.getByLabel("Check interval (minutes)")).toHaveValue("60");
   view.configuration.revision = 2;
   conflict = false;
-  await page.getByRole("button", { name: "Reload health settings", exact: true }).click();
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
   await expect(page.getByLabel("Check interval (minutes)")).toHaveValue("30");
   await page.getByLabel("Check interval (minutes)").fill("45");
-  await page.getByRole("button", { name: "Save health settings", exact: true }).click();
+  await page.getByLabel("Check interval (minutes)").blur();
   await expect.poll(() => writes.length).toBe(2);
   expect(writes[1]).toMatchObject({ expectedRevision: 2, intervalMinutes: 45 });
 });
@@ -256,7 +248,7 @@ for (const [code, message] of [
       ? respond(route, { code, error: code }, 409) : respond(route, snapshot(true)));
     await page.goto("/#/settings/health");
     await page.getByRole("button", { name: "Run now", exact: true }).click();
-    await expect(page.getByRole("alert")).toHaveText(message);
+    await expect(page.getByRole("alert")).toContainText(message);
     await expect(page.getByRole("button", { name: "Refresh results", exact: true })).toBeEnabled();
   });
 }
@@ -280,7 +272,7 @@ test("Health requires a server API key and never offers a Jellyfin listener logi
   await expect(page.getByRole("button", { name: "Run now", exact: true })).toBeDisabled();
   await expect(page.getByLabel("Listener username", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Listener password", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Open Setup", exact: true })).toHaveAttribute("href", "/#/settings/setup");
+  await expect(page.getByRole("link", { name: "Open Setup", exact: true })).toHaveAttribute("href", "#/settings/setup");
 });
 
 test("Health keeps unavailable optional media neutral and identifies legacy listener results", async ({ page }) => {
@@ -294,9 +286,9 @@ test("Health keeps unavailable optional media neutral and identifies legacy list
     steps: [{ name: "heart", status: "passed", latencyMilliseconds: 40, reason: null }], alertStatus: "none" });
   await mockHealth(page, route => respond(route, view));
   await page.goto("/#/settings/health");
-  const latest = page.getByRole("article", { name: "Latest health check", exact: true });
-  await expect(latest).toContainText("Partly checked");
-  await expect(latest).toContainText("Not checked");
+  const latest = page.getByRole("region", { name: "Latest health check", exact: true });
+  await expect(latest).toContainText("Passing");
+  await expect(latest).toContainText("Skipped");
   await expect(latest).toContainText("Server connection");
   await expect(page.getByRole("region", { name: "Check history", exact: true })).toContainText("Listener check");
 });

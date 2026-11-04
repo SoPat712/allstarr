@@ -14,6 +14,7 @@
     children,
     footer,
     menu,
+    navigationLabel = "song",
     onPrevious,
     onNext,
     onclose,
@@ -26,6 +27,7 @@
     children?: Snippet;
     footer?: Snippet;
     menu?: Snippet;
+    navigationLabel?: string;
     onPrevious?: () => void;
     onNext?: () => void;
     onclose?: () => void;
@@ -67,8 +69,8 @@
         </div>
         <div class="panel-controls touch-targets">
           <nav class="panel-navigation" aria-label="Browse items">
-            <Button variant="ghost" size="icon" aria-label="Previous song" disabled={!onPrevious} onclick={onPrevious}><ArrowUp size={16} aria-hidden="true" /></Button>
-            <Button variant="ghost" size="icon" aria-label="Next song" disabled={!onNext} onclick={onNext}><ArrowDown size={16} aria-hidden="true" /></Button>
+            <Button variant="ghost" size="icon" aria-label={`Previous ${navigationLabel}`} disabled={!onPrevious} onclick={onPrevious}><ArrowUp size={16} aria-hidden="true" /></Button>
+            <Button variant="ghost" size="icon" aria-label={`Next ${navigationLabel}`} disabled={!onNext} onclick={onNext}><ArrowDown size={16} aria-hidden="true" /></Button>
           </nav>
           {@render menu?.()}
           <Dialog.Close class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label="Close"><X size={18} aria-hidden="true" /></Dialog.Close>

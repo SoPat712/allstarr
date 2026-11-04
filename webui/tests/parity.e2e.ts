@@ -934,7 +934,7 @@ const stateRoutes = [
   ["#/library/cached", "Library", "Loading Cached tracks", "/api/admin/downloads", ["/api/admin/downloads"]],
   ["#/activity", "Activity", "Loading Event log", "/api/admin/ui/activity", ["/api/admin/ui/activity"]],
   ["#/integrations/services", "Sources", "Loading Services", "/api/admin/provider-accounts", ["/api/admin/ui/schema", "/api/admin/provider-accounts"]],
-  ["#/settings/general", "Settings", "Loading Settings", "/api/admin/ui/schema", ["/api/admin/ui/schema"]],
+  ["#/settings/general", "Settings", "Loading items", "/api/admin/ui/schema", ["/api/admin/ui/schema"]],
 ] as const;
 
 test("core release exposes personal mixes without development APIs", async ({ page }) => {
@@ -1165,11 +1165,12 @@ for (const viewport of viewports) {
         } });
       });
       await page.goto("#/settings/general");
-      await expect(page.getByText("Public URL", { exact: true }).locator("..").getByText("Deployment-owned")).toBeVisible();
+      const publicUrl = page.locator(".setting-field").filter({ has: page.getByText("Public URL", { exact: true }) });
+      await expect(publicUrl.getByText("Set in your deployment", { exact: true })).toBeVisible();
+      await expect(publicUrl.locator("output")).toBeVisible();
+      await expect(publicUrl.getByRole("textbox")).toHaveCount(0);
       await page.goto("#/settings/appearance");
-      await page.getByLabel("Color theme").click();
-      await expect(page.getByRole("option", { name: "Dark" })).toBeVisible();
-      await page.getByRole("option", { name: "Dark" }).click();
+      await page.getByRole("radiogroup", { name: "Color theme", exact: true }).getByRole("radio", { name: "Dark", exact: true }).click();
       await expect(page.locator("html")).toHaveClass(/dark/);
       await page.keyboard.press("Escape");
       await page.goto("#/settings/accounts");
@@ -1186,7 +1187,7 @@ for (const viewport of viewports) {
       await page.goto("#/settings/routing");
       await expect(page.getByRole("heading", { name: "Quality and routing", level: 2 })).toBeVisible();
       await expect(page.getByText(/always tried first/)).toBeVisible();
-      await expect(page.getByRole("button", { name: "Save playback and matching" })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Save playback and matching" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Move Jellyfin up" })).toHaveCount(0);
       await expect(page.locator(".provider-art").first()).toHaveCSS("border-top-width", "0px");
       const savePlayback = page.getByRole("button", { name: "Save Playback", exact: true });
@@ -1217,17 +1218,18 @@ for (const viewport of viewports) {
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await addSource.getByRole("button", { name: "Close add a source" }).click();
       await page.goto("#/settings/maintenance");
-      await expect(page.getByText("Backups include saved sign-ins. Keep downloaded files private.")).toBeVisible();
+      await expect(page.getByText(/Backups include saved sign-ins/)).toBeVisible();
       await expect(page.getByRole("button", { name: "Back up now" })).toBeVisible();
-      await expect(page.getByText("No backups yet.")).toBeVisible();
+      await expect(page.getByText("No backups yet", { exact: true })).toBeVisible();
       await expect(page.locator(".transfer-card")).toHaveCount(0);
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.goto("#/settings/storage");
+      await page.getByText("Advanced: activity retention, cache durations, saved-file verification", { exact: true }).click();
       await page.getByRole("button", { name: "Purge all cache" }).click();
-      const dialog = page.getByRole("alertdialog", { name: "Purge the application cache?" });
+      const dialog = page.getByRole("alertdialog", { name: "Remove cached files?" });
       await expect(dialog).toBeVisible();
-      await expect(dialog.getByRole("button", { name: "Purge cache" })).toBeInViewport();
+      await expect(dialog.getByRole("button", { name: "Remove cache" })).toBeInViewport();
     });
 
     test("Intelligence results remain usable", async ({ page, context }) => {
@@ -2390,9 +2392,8 @@ test("Shared selects and settings tabs animate without remounting", async ({ pag
   await selectedNav.hover();
   await expect(selectedNav).toHaveCSS("background-color", selectedNavBackground);
   await page.goto("#/settings/appearance");
-  await page.getByLabel("Color theme").click();
-  await expect(page.locator(".select-content")).toHaveCSS("animation-name", "dropdown-in");
-  await page.keyboard.press("Escape");
+  await page.getByRole("radiogroup", { name: "Color theme", exact: true }).getByRole("radio", { name: "Dark", exact: true }).click();
+  await expect(page.locator("html")).toHaveClass(/dark/);
   await page.goto("#/library/playlists");
   const tabs = page.locator(".library-tabs");
   await tabs.evaluate((element) => element.setAttribute("data-instance", "stable"));
@@ -3694,18 +3695,12 @@ test("Cached owns track storage and retention controls", async ({ page }) => {
   await expect(page.getByText("Playback cache on", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Cache settings", exact: true }).click();
   await expect(page.locator('input[name="CACHE_DURATION_HOURS"]')).toHaveValue("24");
+  await page.getByText("Advanced: activity retention, cache durations, saved-file verification", { exact: true }).click();
   await expect(page.locator('input[name="CACHE_TRANSCODE_MINUTES"]')).toHaveValue("60");
-  const saveCache = page.getByRole("button", { name: "Save track cache" });
-  await expect(saveCache).toBeDisabled();
   await page.locator('input[name="CACHE_DURATION_HOURS"]').fill("48");
-  await expect(saveCache).toBeEnabled();
-  await saveCache.click();
-  await expect.poll(() => saved).toEqual({
-    STORAGE_MODE: "Cache",
-    CACHE_DURATION_HOURS: "48",
-    CACHE_TRANSCODE_MINUTES: "60",
-  });
-  await expect(page.getByText("Track cache settings saved.")).toBeVisible();
+  await page.locator('input[name="CACHE_DURATION_HOURS"]').blur();
+  await expect.poll(() => saved).toEqual({ CACHE_DURATION_HOURS: "48" });
+  await expect(page.getByText("Saved · Keep cached songs for (hours)", { exact: true })).toBeVisible();
 
   await page.goto("#/settings/general");
   await expect(page.getByRole("button", { name: "Storage mode" })).toHaveCount(0);
@@ -3728,8 +3723,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.route("**/api/admin/config", route => {
       if (route.request().method() === "POST") {
         saved = route.request().postDataJSON().updates;
-        mode = saved!.STORAGE_MODE;
-        hours = Number(saved!.CACHE_DURATION_HOURS);
+        if (saved!.STORAGE_MODE) mode = saved!.STORAGE_MODE;
+        if (saved!.CACHE_DURATION_HOURS) hours = Number(saved!.CACHE_DURATION_HOURS);
         return route.fulfill({ json: { message: "Runtime configuration updated.", requiresRestart: false } });
       }
       return route.fulfill({ json: {
@@ -3743,24 +3738,25 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(page.getByText("Playback cache off", { exact: true })).toBeVisible();
     await expect(page.getByText(/New playback is not being added to Cached/)).toBeVisible();
     await page.getByRole("link", { name: "Cache settings", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Playback caching", exact: true })).toContainText("Do not cache playback");
-    await expect(page.getByText(/Hearts, Keep and retained playlists protect their copies in either mode/)).toBeVisible();
+    await expect(page.getByRole("switch", { name: "Cache played songs", exact: true })).not.toBeChecked();
     if (width === 390) await expectContainedMobileGeometry(page);
     await page.screenshot({ path: test.info().outputPath(`cache-off-${width}-${theme}.png`) });
-    await page.getByRole("button", { name: "Playback caching", exact: true }).click();
-    await page.getByRole("option", { name: "Cache played songs", exact: true }).click();
+    await page.getByRole("switch", { name: "Cache played songs", exact: true }).check();
+    await expect.poll(() => saved).toEqual({ STORAGE_MODE: "Cache" });
+    await expect(page.getByRole("switch", { name: "Cache played songs", exact: true })).toBeEnabled();
     await page.locator('input[name="CACHE_DURATION_HOURS"]').fill("72");
-    await page.getByRole("button", { name: "Save track cache", exact: true }).click();
-    await expect.poll(() => saved).toEqual({ STORAGE_MODE: "Cache", CACHE_DURATION_HOURS: "72", CACHE_TRANSCODE_MINUTES: "60" });
+    await page.locator('input[name="CACHE_DURATION_HOURS"]').blur();
+    await expect.poll(() => saved).toEqual({ CACHE_DURATION_HOURS: "72" });
     await expect(page.locator('input[name="CACHE_DURATION_HOURS"]')).toHaveValue("72");
-    await expect(page.getByText(/The size limit can evict cached tracks sooner/)).toBeVisible();
-    expect(writes).toEqual(["/api/admin/config"]);
-    await page.getByRole("button", { name: "Dismiss notification", exact: true }).click();
+    expect(writes).toEqual(["/api/admin/config", "/api/admin/config"]);
+    const dismiss = page.getByRole("button", { name: "Dismiss notification", exact: true });
+    while (await dismiss.count()) await dismiss.first().click();
     await page.locator('input[name="CACHE_DURATION_HOURS"]').click();
     if (width === 390) await expectContainedMobileGeometry(page);
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     if (width === 390) {
-      const save = await page.getByRole("button", { name: "Save track cache", exact: true }).boundingBox();
+      await page.locator('input[name="CACHE_DURATION_HOURS"]').scrollIntoViewIfNeeded();
+      const save = await page.locator('input[name="CACHE_DURATION_HOURS"]').boundingBox();
       const navigation = await page.locator(".mobile-navigation").boundingBox();
       expect(save!.y + save!.height).toBeLessThanOrEqual(navigation!.y);
     }
@@ -3819,7 +3815,7 @@ test("Settings fields share columns, control baselines, and a compact action rai
   }));
 
   await page.goto("#/settings/general");
-  const section = page.getByRole("form", { name: "General settings" });
+  const section = page.getByRole("form", { name: "Defaults for everyone settings" });
   const fields = section.locator(".setting-field");
   await expect(fields).toHaveCount(3);
 
@@ -3830,7 +3826,7 @@ test("Settings fields share columns, control baselines, and a compact action rai
   expect(Math.max(...fieldBoxes.map((box) => box.x)) - Math.min(...fieldBoxes.map((box) => box.x))).toBeLessThanOrEqual(1);
   expect(Math.max(...fieldBoxes.map((box) => box.width)) - Math.min(...fieldBoxes.map((box) => box.width))).toBeLessThanOrEqual(1);
 
-  const controls = section.locator(".setting-field :is(output, .select-trigger)");
+  const controls = section.locator(".setting-field :is(.locked-setting, .select-trigger)");
   const controlBoxes = await controls.evaluateAll((items) => items.map((item) => item.getBoundingClientRect().x));
   expect(Math.max(...controlBoxes) - Math.min(...controlBoxes)).toBeLessThanOrEqual(1);
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
@@ -3843,13 +3839,11 @@ test("Settings fields share columns, control baselines, and a compact action rai
   }));
   expect(Math.max(...mobileBoxes.map((box) => box.x)) - Math.min(...mobileBoxes.map((box) => box.x))).toBeLessThanOrEqual(1);
   expect(Math.max(...mobileBoxes.map((box) => box.width)) - Math.min(...mobileBoxes.map((box) => box.width))).toBeLessThanOrEqual(1);
-  const saveButton = section.getByRole("button", { name: "Save changes to General" });
-  await expect(saveButton).toBeDisabled();
+  await expect(section.getByRole("button", { name: "Save changes to General" })).toHaveCount(0);
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/settings-aligned-fields-mobile.png`, fullPage: true });
-  await section.getByRole("button", { name: "Download mode" }).click();
-  await page.getByRole("option", { name: "The whole album" }).click();
-  await expect(saveButton).toBeEnabled();
+  await section.getByRole("radiogroup", { name: "Download mode", exact: true }).getByRole("radio", { name: "Whole album", exact: true }).click();
+  await expect(page.getByText("Saved · Download mode", { exact: true })).toBeVisible();
 });
 
 test("Dashboard primary tracks stay geometrically aligned", async ({ page }) => {
@@ -4510,7 +4504,8 @@ test("Settings loads only the active section owners", async ({ page }) => {
   expect(requests).not.toContain("/api/admin/cache");
 
   requests.length = 0;
-  await page.locator(".settings-nav").getByRole("link", { name: "Setup" }).click();
+  await page.locator(".settings-nav").getByRole("link", { name: "Setup guide", exact: true }).click();
+  await page.getByRole("button", { name: "Review previous settings", exact: true }).click();
   await expect.poll(() => requests.includes("/api/admin/config/migration/status")).toBe(true);
 });
 
@@ -4556,8 +4551,10 @@ test("Maintenance creates verified backups, lists downloads, and reports failure
   await page.goto("#/settings/maintenance");
   const card = page.getByRole("article", { name: "Saved backups", exact: true });
   await page.getByRole("button", { name: "Back up now" }).click();
-  await expect(card.getByText(backup.fileName)).toBeVisible();
-  await expect(card.getByText(/Sep 30, 2026.*2 MiB.*Verified/)).toBeVisible();
+  const row = card.locator(`tr[title="${backup.fileName}"]`);
+  await expect(row).toBeVisible();
+  await expect(row).toContainText(/Sep 30, 2026/);
+  await expect(row).toContainText("Verified");
   await expect(card.getByRole("link", { name: "Download" })).toHaveAttribute(
     "href", "/api/admin/storage/backups/11111111-1111-4111-8111-111111111111/download",
   );
@@ -4601,33 +4598,29 @@ test("Maintenance stages a backup restore only after keyboard confirmation", asy
   await card.getByLabel("Backup ZIP file").setInputFiles({
     name: "restore.zip", mimeType: "application/zip", buffer: Buffer.from("fixture zip"),
   });
-  const stage = card.getByRole("button", { name: "Restore on restart" });
-  await expect(stage).toBeEnabled();
-  await stage.click();
-  const dialog = page.getByRole("alertdialog", { name: "Stage backup restore?" });
+  const dialog = page.getByRole("dialog", { name: "Restore a backup?", exact: true });
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText("The next restart replaces saved state and credentials");
-  await expect(dialog).toContainText("Previous files are preserved.");
+  await expect(dialog).toContainText("Replaced");
+  await expect(dialog).toContainText("Kept as they are");
+  await expect(dialog.getByRole("button", { name: "Restore on restart", exact: true })).toBeDisabled();
   await page.keyboard.press("Escape");
-  await expect(dialog).toBeHidden();
-  expect(restoreRequests).toBe(0);
-
-  await stage.click();
+  await expect(dialog).toBeHidden(); expect(restoreRequests).toBe(0);
+  await card.getByLabel("Backup ZIP file").setInputFiles({ name: "restore.zip", mimeType: "application/zip", buffer: Buffer.from("fixture zip") });
   await expect(dialog).toBeVisible();
-  const confirm = dialog.getByRole("button", { name: "Restore on restart" });
-  await confirm.focus();
-  await expect(confirm).toBeFocused();
-  await page.keyboard.press("Enter");
+  await expect(dialog.getByRole("checkbox", { name: "Back up the current state first", exact: true })).toBeChecked();
+  await dialog.getByRole("checkbox", { name: "Back up the current state first", exact: true }).uncheck();
+  await dialog.getByLabel("Type RESTORE to confirm", { exact: true }).fill("RESTORE");
+  const confirm = dialog.getByRole("button", { name: "Restore on restart", exact: true });
+  await confirm.focus(); await page.keyboard.press("Enter");
   await expect(dialog.getByRole("alert")).toHaveText("Backup restore failed.");
-  await expect(confirm).toBeEnabled();
-  expect(restoreRequests).toBe(1);
+  await expect(confirm).toBeEnabled(); expect(restoreRequests).toBe(1);
 
   failRestore = false;
   await dialog.getByRole("button", { name: "Restore on restart" }).focus();
   await expect(dialog.getByRole("button", { name: "Restore on restart" })).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.getByText("A restore is staged. Restart Allstarr to finish replacing saved state and credentials.")).toBeVisible();
-  await expect(stage).toBeDisabled();
+  await expect(card.getByLabel("Backup ZIP file")).toBeDisabled();
   expect(restoreRequests).toBe(2);
   await page.reload();
   await page.goto("#/settings/maintenance");
@@ -4657,7 +4650,8 @@ test("Score details open from the whole row, close again, and dim what does not 
   await expect(chip).toHaveAttribute("aria-expanded", "false");
 
   await row.locator(".routing-copy").click();
-  const details = row.locator(".score-details");
+  const panel = page.getByRole("dialog", { name: "Lumen Audio", exact: true });
+  const details = panel.locator(".score-details");
   await expect(details).toBeVisible();
   await expect(row.locator(".score-toggle-label")).toHaveText("Hide");
   await expect(details.locator(".score-part").filter({ hasText: "Quality" })).toContainText("Meets your CD lossless setting");
@@ -4665,11 +4659,11 @@ test("Score details open from the whole row, close again, and dim what does not 
   await expect(details.locator(".score-row.current")).toContainText("Streaming");
   await expect(details.locator(".score-row.dimmed")).toContainText("Download");
 
-  await details.getByRole("button", { name: "Hide details" }).click();
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
   await expect(details).toHaveCount(0);
   await chip.click();
   await expect(details).toBeVisible();
-  await chip.click();
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
   await expect(details).toHaveCount(0);
 });
 
@@ -4721,15 +4715,15 @@ test("Audio quality supports keyboard changes, provider outcomes, save, and relo
   await page.getByText("Music source quality details", { exact: true }).click();
   await expect(page.getByText("Apple Music: AAC 320 kbps")).toBeVisible();
   await expect(page.getByText("Deezer: MP3 320 kbps")).toBeVisible();
-  await expect(page.getByLabel("Tentative local window")).toHaveValue("7");
-  await page.getByRole("button", { name: "Save playback and matching" }).click();
+  await page.getByText("Preference window", { exact: true }).click();
+  await expect(page.getByLabel("Preference window (points)", { exact: true })).toHaveValue("7");
   await expect.poll(() => saved).toBe("High");
   await page.reload();
   await expect(page.getByRole("slider", { name: "Audio quality" }))
     .toHaveAttribute("aria-valuetext", /High lossy/);
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator(".audio-quality-field")).toBeVisible();
-  expect(await page.locator(".audio-quality-field").evaluate((element) =>
+  await expect(page.locator(".quality-control")).toBeVisible();
+  expect(await page.locator(".quality-control").evaluate((element) =>
     element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
@@ -4771,7 +4765,8 @@ test("Settings preserves dirty drafts during live refresh and scrolls mobile tab
     }),
   }));
   await page.goto("#/settings/storage");
-  const cache = page.getByRole("form", { name: "Cache settings" });
+  await page.getByText("Advanced: activity retention, cache durations, saved-file verification", { exact: true }).click();
+  const cache = page.getByRole("form", { name: "Retention and cache settings" });
   const input = cache.getByLabel("Search results minutes");
   await input.fill("27");
   await input.evaluate((element) => element.setAttribute("data-instance", "draft"));
@@ -4794,9 +4789,9 @@ test("Settings preserves dirty drafts during live refresh and scrolls mobile tab
   expect(tabSizes.every(({ height, fontSize }) => height >= 44 && fontSize >= 14)).toBe(true);
   const storageTab = tabs.getByRole("tab", { name: "Storage" });
   const selectedUnderline = await storageTab.evaluate((element) => getComputedStyle(element, "::after").backgroundColor);
-  await tabs.getByRole("tab", { name: "Setup" }).click();
-  await expect(tabs.getByRole("tab", { name: "Setup" })).toHaveAttribute("aria-selected", "true");
-  const setupTab = tabs.getByRole("tab", { name: "Setup" });
+  await tabs.getByRole("tab", { name: "Setup guide", exact: true }).click();
+  await expect(tabs.getByRole("tab", { name: "Setup guide", exact: true })).toHaveAttribute("aria-selected", "true");
+  const setupTab = tabs.getByRole("tab", { name: "Setup guide", exact: true });
   await expect.poll(() => setupTab.evaluate((element) => getComputedStyle(element, "::after").backgroundColor))
     .toBe(selectedUnderline);
   await expect.poll(() => tabs.evaluate((element) => {
@@ -4812,6 +4807,7 @@ test("Maintenance previews, retries, and applies a legacy import on mobile", asy
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
   await page.goto("#/settings/setup");
+  await page.getByRole("button", { name: "Review previous settings", exact: true }).click();
   const card = page.locator(".maintenance-card").filter({ hasText: "Import from Allstarr v2" });
   const legacyFile = {
     name: "allstarr.env",
@@ -4842,9 +4838,8 @@ test("Maintenance reports cache budgets and confirms category purge", async ({ p
   page.on("request", (request) => requests.push(new URL(request.url()).pathname));
   await mockApi(page);
   await page.goto("#/settings/storage");
-  const cacheSettings = page.getByRole("form", { name: "Cache settings" });
-  await expect(cacheSettings.getByText(/Memory cache is capped at 16 MiB/)).toBeVisible();
-  await expect(cacheSettings).toContainText("Audio has its own limit.");
+  await page.getByText("Advanced: activity retention, cache durations, saved-file verification", { exact: true }).click();
+  await expect(page.getByRole("form", { name: "Retention and cache settings" })).toBeVisible();
   const card = page.locator(".cache-diagnostics-card");
 
   await expect(card.getByText("Memory hit / miss")).toBeVisible();
@@ -4854,9 +4849,9 @@ test("Maintenance reports cache budgets and confirms category purge", async ({ p
   await card.getByText("Category budgets").click();
   await expect(card.getByText(/media-assets/)).toBeVisible();
   await card.getByRole("button", { name: "Purge", exact: true }).click();
-  const dialog = page.getByRole("alertdialog", { name: "Purge Artwork cache?" });
+  const dialog = page.getByRole("alertdialog", { name: "Remove cached files?" });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "Purge cache" }).click();
+  await dialog.getByRole("button", { name: "Remove cache" }).click();
   await expect.poll(() => requests).toContain("/api/admin/cache/categories/Artwork");
   await expect(dialog).toBeHidden();
   await expect.poll(() => page.evaluate(() =>
@@ -7755,7 +7750,7 @@ test("Cross-service links explain built-in lookups and preserve the optional mas
     configSections: [{ id: "operator", label: "Service settings", fields: [
       { key: "ODESLI_ENABLED", label: "Enable cross-service song links", type: "toggle", valuePath: "operatorSettings.Odesli:Enabled" },
       { key: "ODESLI_RATE_LIMIT_MS", label: "Optional song.link request interval (ms)", type: "number", valuePath: "operatorSettings.Odesli:RateLimitMs" },
-      { key: "ODESLI_API_KEY", label: "Optional song.link API key", type: "password", sensitive: true, valuePath: "operatorSettings.Odesli:ApiKey" },
+      { key: "ODESLI_API_KEY", label: "Optional song.link API key", type: "password", sensitive: true, requiresRestart: true, valuePath: "operatorSettings.Odesli:ApiKey" },
     ] }],
   } }));
   await page.route("**/api/admin/config", route => {
@@ -7768,21 +7763,24 @@ test("Cross-service links explain built-in lookups and preserve the optional mas
     } } });
   });
   await page.goto("#/settings/general");
-  const card = page.getByRole("form", { name: "Song links and extension installs" });
+  const card = page.getByRole("form", { name: "Song links and extensions settings" });
   await expect(card).toContainText("Deezer, Apple Music and enabled sources");
   await expect(card).toContainText("Song.link Web, UniTune, MusicBrainz and Squigly");
   await expect(card).toContainText("With a key, the official API is tried first");
   const key = card.getByLabel(/^song\.link API key/);
   await expect(key).toHaveAttribute("type", "password");
-  await card.getByRole("button", { name: "Save and restart" }).click();
-  await expect.poll(() => writes.length).toBe(1);
-  expect(writes[0]).not.toHaveProperty("ODESLI_API_KEY");
-  await key.fill("replacement-fixture-key");
-  await card.getByRole("button", { name: "Save and restart" }).click();
-  await expect.poll(() => writes[1]?.ODESLI_API_KEY).toBe("replacement-fixture-key");
-  await key.fill("");
-  await card.getByRole("button", { name: "Save and restart" }).click();
-  await expect.poll(() => writes[2]?.ODESLI_API_KEY).toBe("");
+  await expect(key).toHaveValue("");
+  expect(writes).toEqual([]);
+  await key.fill("replacement-fixture-key"); await key.blur();
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  expect(writes).toEqual([]);
+  await page.getByRole("alertdialog").getByRole("button", { name: "Restart and apply", exact: true }).click();
+  await expect.poll(() => writes[0]?.ODESLI_API_KEY).toBe("replacement-fixture-key");
+  await card.getByRole("button", { name: "Remove key…", exact: true }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("Remove the key and restart Allstarr?");
+  expect(writes).toHaveLength(1);
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove key and restart", exact: true }).click();
+  await expect.poll(() => writes[1]?.ODESLI_API_KEY).toBe("");
 });
 
 const tryCatalog = {
@@ -8275,10 +8273,11 @@ for (const width of [390, 1280]) for (const scheme of ["light", "dark"] as const
         { key: "CHALLENGE_SOLVER_TIMEOUT_SECONDS", label: "Challenge solver timeout (seconds)", type: "number", valuePath: "operatorSettings.ChallengeSolver:TimeoutSeconds" },
       ] }],
     } }));
-    await page.route("**/api/admin/config", route => route.fulfill({ json: {
-      ...(responses["/api/admin/config"] as Record<string, unknown>),
-      operatorSettings: { "ChallengeSolver:Url": "http://saved-solver:8191", "ChallengeSolver:TimeoutSeconds": 60 },
-    } }));
+    let solverUrl = "http://saved-solver:8191";
+    await page.route("**/api/admin/config", route => {
+      if (route.request().method() === "POST") { solverUrl = route.request().postDataJSON().updates.CHALLENGE_SOLVER_URL ?? solverUrl; return route.fulfill({ json: { requiresRestart: false } }); }
+      return route.fulfill({ json: { ...(responses["/api/admin/config"] as Record<string, unknown>), operatorSettings: { "ChallengeSolver:Url": solverUrl, "ChallengeSolver:TimeoutSeconds": 60 } } });
+    });
     const requests: unknown[] = [];
     await page.route("**/api/admin/challenge-solver/test", route => {
       expect(route.request().method()).toBe("POST");
@@ -8289,7 +8288,7 @@ for (const width of [390, 1280]) for (const scheme of ["light", "dark"] as const
     await expect(page.getByRole("heading", { name: "General", level: 2 })).toBeVisible();
     await expect(page.getByLabel(/^Challenge solver URL/)).toHaveCount(0);
     await page.locator(`a[href="#/settings/access"]:visible`).first().click();
-    await expect(page.getByRole("heading", { name: "Network", level: 2 })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Access and network", level: 2 })).toBeVisible();
     const url = page.getByRole("textbox", { name: /^Challenge solver URL/ });
     await expect(url).toHaveValue("http://saved-solver:8191");
     await expect(url).toHaveAttribute("placeholder", "http://flaresolverr:8191");
@@ -8299,7 +8298,7 @@ for (const width of [390, 1280]) for (const scheme of ["light", "dark"] as const
     await expect(page.getByRole("status").filter({ hasText: "Solver reachable" })).toBeVisible();
     expect(requests).toEqual([{ url: "http://flaresolverr:8191", timeoutSeconds: 60 }]);
     await expect(url).toHaveValue("http://flaresolverr:8191");
-    await expect(page.getByText("Unsaved changes", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Save changes/ })).toHaveCount(0);
     await expectContainedMobileGeometry(page);
     await page.screenshot({ path: `test-results/solver-${width}-${scheme}.png`, fullPage: true });
   });

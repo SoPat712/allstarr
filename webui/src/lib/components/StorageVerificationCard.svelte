@@ -15,12 +15,15 @@
   }
   onMount(() => { void load(); const timer = setInterval(() => { if (status?.pending) void load(); }, 5000); return () => clearInterval(timer); });
 </script>
-<article class="settings-card p-5 space-y-4" aria-label="Saved-file verification">
+<article class="settings-card verification-card" aria-label="Saved-file verification">
   <header><h3>Saved-file verification</h3></header>
-  <p>After copying a stopped installation's complete data folder, Allstarr verifies owned songs before resuming file jobs. Original songs stay in place. Changed, missing or linked files remain unavailable until repaired.</p>
-  <p class="text-ink-muted">In Activity, select Everyone → Queue to follow this household task.</p>
-  {#if status}<p role="status">{status.pending ? "Verifying saved files. Follow progress in Activity." : status.needsReview ? "Some saved files need review. Restore the original bytes at their existing paths, then verify again." : status.verifiedAt ? "Saved files verified." : "No copied-folder verification is pending."} {status.files} owned files.</p>{/if}
-  {#if message}<p role="status">{message}</p>{/if}
+  <p class="settings-impact">Kept and downloaded songs are checked where they are. Nothing is moved, retagged or deleted.</p>
+  {#if status}<p class="settings-impact" role="status">{status.pending ? "Verifying saved files. Follow progress in Activity." : status.needsReview ? "Some saved files need review. Restore the original bytes at their existing paths, then verify again." : status.verifiedAt ? "Saved files verified." : "No copied-folder verification is pending."} {status.files} owned files.</p>{/if}
+  {#if message}<p class="settings-impact" role="status">{message}</p>{/if}
   {#if error}<p role="alert" class="notice-error">{error}</p>{/if}
-  <div class="flex flex-wrap gap-2"><Button variant="secondary" disabled={busy || status?.pending || !status?.available} onclick={() => void verify()}>{busy ? "Queuing…" : "Verify saved files"}</Button><a class="button secondary" href="#/activity">Open Activity</a>{#if error}<Button variant="secondary" onclick={() => void load()}>Retry status</Button>{/if}</div>
+  <footer><Button variant="secondary" disabled={busy || status?.pending || !status?.available} onclick={() => void verify()}>{busy ? "Queuing…" : "Verify saved files"}</Button><a class="button secondary" href="#/activity">Open Activity</a>{#if error}<Button variant="secondary" onclick={() => void load()}>Try again</Button>{/if}</footer>
 </article>
+
+<style>
+  .verification-card > footer { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+</style>

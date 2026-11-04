@@ -1,495 +1,172 @@
 <script lang="ts">
-  import { waitForRestart } from "$lib/restart";
-  import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
-  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
-  import { Switch } from "$lib/components/ui/switch";
+  import { toast } from "$lib/toasts";
+  import { home, settings, downloads, type DownloadsResponse, type ConfigSection, type UiSchema, type OnboardingState } from "$lib/api";
   import { slideIndicator } from "$lib/slide-indicator";
-  import { Button } from "$lib/components/ui/button";
-  import { Skeleton } from "$lib/components/ui/skeleton";
-  import {
-    home,
-    settings,
-    type ConfigSection,
-    type PlaybackStart,
-    type UiSchema,
-  } from "$lib/api";
-  import ServicePolicyCard from "$lib/components/ServicePolicyCard.svelte";
-  import TrackCacheCard from "$lib/components/TrackCacheCard.svelte";
-  import SetupGuide from "$lib/components/SetupGuide.svelte";
-  import AccessSettingsCard from "$lib/components/AccessSettingsCard.svelte";
-  import StorageVerificationCard from "$lib/components/StorageVerificationCard.svelte";
-  import HealthView from "$lib/components/HealthView.svelte";
-  import BackupsView from "$lib/components/BackupsView.svelte";
-  import ListenersView from "$lib/components/ListenersView.svelte";
-  import AlertsView from "$lib/components/AlertsView.svelte";
-  import SoundAnalysisSettings from "$lib/components/SoundAnalysisSettings.svelte";
-  import type { OnboardingState } from "$lib/api";
-  import RouteError from "$lib/components/RouteError.svelte";
-  import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
-  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
-  import SelectField from "$lib/components/SelectField.svelte";
-  import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
-  import { humanize } from "$lib/sources";
-  import { fieldValue, playbackStartLabel, playbackStartOptions } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
-  import { onThemeModeChange, readThemeMode, saveThemeMode, themeOptions, type ThemeMode } from "$lib/theme";
   import { Activity, Archive, AudioLines, Bell, Gauge, HardDrive, Headphones, Lock, Palette, Rocket, SlidersHorizontal, Users } from "@lucide/svelte";
+  import { Button } from "$lib/components/ui/button";
+  import SettingsRestartNotice from "$lib/components/SettingsRestartNotice.svelte";
+  import SettingsFields from "$lib/components/SettingsFields.svelte";
+  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import "$lib/components/settings-surface.css";
 
-  let {
-    section = "general",
-    initialPanel = "",
-    administrator,
-    onOpenSetup,
-    onboardingState = null,
-    onSetupChanged = () => {},
-  }: {
-    section?: string;
-    initialPanel?: string;
-    administrator: boolean;
-    onOpenSetup: () => void | Promise<void>;
-    onboardingState?: OnboardingState | null;
-    onSetupChanged?: (state: OnboardingState) => void;
+  let { section = "general", initialPanel = "", administrator, onOpenSetup, onboardingState = null, onSetupChanged = () => {} }: {
+    section?: string; initialPanel?: string; administrator: boolean; onOpenSetup: () => void | Promise<void>;
+    onboardingState?: OnboardingState | null; onSetupChanged?: (state: OnboardingState) => void;
   } = $props();
-
   const allPages = [
-    { id: "appearance", label: "Appearance", group: "You", icon: Palette, title: "Appearance", description: "How Allstarr looks in this browser. Other devices keep their own choice." },
-    { id: "preferences", label: "Listening preferences", group: "You", icon: Headphones, title: "Listening preferences", description: "", href: "#/preferences" },
-    { id: "general", label: "General", group: "Server", icon: SlidersHorizontal, title: "General", description: "Server-wide behavior for every listener." },
-    { id: "quality", label: "Quality and routing", group: "Server", icon: Gauge, title: "Quality and routing", description: "The highest quality Allstarr plays and downloads, and the order it tries sources. Your media server always comes first when it has the song." },
-    { id: "access", label: "Access and network", group: "Server", icon: Lock, title: "Access and network", description: "Who can sign in, media-server access, and how Allstarr is reached." },
-    { id: "listeners", label: "Listeners", group: "Server", icon: Users, title: "Listeners", description: "Manage clean listening and see personal playlist copies." },
-    { id: "alerts", label: "Alerts", group: "Server", icon: Bell, title: "Alerts", description: "Choose where Allstarr sends problem alerts." },
-    { id: "storage", label: "Storage", group: "Server", icon: HardDrive, title: "Storage", description: "Manage saved music, cache space, and playback capacity." },
-    { id: "sound-analysis", label: "Sound analysis", group: "Server", icon: AudioLines, title: "Sound analysis (AudioMuse)", description: "Connect AudioMuse for sound analysis and choose whether listeners can add mixes to their apps." },
-    { id: "backups", label: "Backups", group: "Maintenance", icon: Archive, title: "Backups", description: "Save and restore Allstarr's database, accounts and encryption keys." },
-    { id: "health", label: "Health", group: "Maintenance", icon: Activity, title: "Health", description: "Monitor server checks, and run tests when playback or playlists misbehave." },
-    { id: "setup", label: "Setup guide", group: "Maintenance", icon: Rocket, title: "Setup", description: "Reopen the setup guide or import settings from Allstarr v2." },
+    { id: "appearance", label: "Appearance", group: "You", icon: Palette, description: "How Allstarr looks on this device." },
+    { id: "preferences", label: "Listening preferences", group: "You", icon: Headphones, description: "", href: "#/preferences" },
+    { id: "general", label: "General", group: "Server", icon: SlidersHorizontal, description: "Server-wide behavior for every listener. Changes save as you make them." },
+    { id: "quality", label: "Quality and routing", group: "Server", icon: Gauge, description: "The highest quality Allstarr plays and downloads, and the order it tries sources. Your own music always comes first." },
+    { id: "access", label: "Access and network", group: "Server", icon: Lock, description: "Who can sign in, media-server access, and how Allstarr is reached." },
+    { id: "listeners", label: "Listeners", group: "Server", icon: Users, description: "Everyone who uses Allstarr through your media server." },
+    { id: "alerts", label: "Alerts", group: "Server", icon: Bell, description: "Problems that need attention, and where to send alerts." },
+    { id: "storage", label: "Storage", group: "Server", icon: HardDrive, description: "Saved music, cache space, and playback capacity." },
+    { id: "sound-analysis", label: "Sound analysis", group: "Server", icon: AudioLines, description: "Connect AudioMuse to analyze the sound of your music." },
+    { id: "backups", label: "Backups", group: "Maintenance", icon: Archive, description: "Save and restore settings, accounts and listening history." },
+    { id: "health", label: "Health", group: "Maintenance", icon: Activity, description: "Checks against your media server. Skipped checks don't mean a problem." },
+    { id: "setup", label: "Setup guide", group: "Maintenance", icon: Rocket, description: "Walk through setup again. Nothing is reset; progress is saved for your account." },
   ] as const;
-  const pages = $derived(allPages.filter(item => administrator || item.id === "alerts"));
-  const navGroups = ["You", "Server", "Maintenance"] as const;
-  const legacySections: Record<string, string> = { network: "access", diagnostics: "health", maintenance: "backups" };
-  const pageHref = (item: (typeof allPages)[number]) => "href" in item ? item.href : `#/settings/${item.id}`;
-  const sectionPages: Record<string, string> = { general: "general", paths: "storage", cache: "storage", "audio-limits": "storage", network: "access", "client-address": "access" };
-  const contextualTrackCacheKeys = new Set([
-    "STORAGE_MODE",
-    "CACHE_DURATION_HOURS",
-    "CACHE_TRANSCODE_MINUTES",
-  ]);
-  const integrationRoutingKeys = new Set([
-    "AUDIO_QUALITY",
-    "MATCHING_LOCAL_PREFERENCE_PERCENT",
-  ]);
-  const shellPreferenceKeys = new Set(["THEME"]);
-  // Stored values stay as they are; the choices read as what they do.
-  const optionLabels: Record<string, Record<string, string>> = {
-    DOWNLOAD_MODE: { Track: "Just the song", Album: "The whole album" },
-    EXPLICIT_FILTER: { All: "Show everything", ExplicitOnly: "Hide clean/edited versions", CleanOnly: "Clean only" },
-  };
-  const optionLabel = (key: string, value: string) => optionLabels[key]?.[value] ?? value;
-
-  let schema = $state<UiSchema | null>(null);
-  let config = $state<Record<string, unknown>>({});
-  let cache = $state<Awaited<ReturnType<typeof settings.cache>> | null>(null);
-  let cachePreview = $state<Awaited<ReturnType<typeof settings.cachePreview>> | null>(null);
-  let loading = $state(true);
-  let refreshing = $state(false);
-  let action = $state("");
-  let error = $state("");
-  let purgeTarget = $state("");
-  let purgeOpen = $state(false);
-  let loadedSection = $state("");
-  let dirtyOwners = $state<string[]>([]);
-  let serverChanged = $state(false);
-  let themeMode = $state<ThemeMode>("system");
-
-  const requestedSection = $derived(legacySections[section] ?? section);
-  const active = $derived(pages.some((item) => item.id === requestedSection) ? requestedSection : administrator ? "general" : "alerts");
-  const activePage = $derived(pages.find((item) => item.id === active) ?? pages[0]);
-  const configSections = $derived.by(() => {
-    return (schema?.configSections ?? [])
-      .filter((item) => item.id !== "spotify-import")
-      .map((item) => ({
-        ...item,
-        fields: item.fields.filter((field) =>
-          !/^(ODESLI_|EXTENSIONS_ALLOW_REMOTE_INSTALL)/.test(field.key) && !contextualTrackCacheKeys.has(field.key) && !integrationRoutingKeys.has(field.key) && !shellPreferenceKeys.has(field.key.toUpperCase())),
-      }))
-      .filter((item) => item.fields.length);
-  });
-  const pageSections = $derived(configSections.map((item) => ({ ...item,
-    fields: item.fields.filter((field) => item.id !== "operator" ||
-      (/Cors:|ChallengeSolver:/.test(field.valuePath ?? "") ? "access" : /BackupRetention|EventLog/.test(field.valuePath ?? "") ? "storage" : "general") === active),
-  })).filter((item) => item.fields.length && (item.id === "operator" || (sectionPages[item.id] ?? "general") === active)));
-  const cacheDiskCeiling = $derived(
-    Number((config.cache as Record<string, unknown> | undefined)?.mediaMaximumMegabytes ?? 512),
-  );
-  $effect(() => {
-    const section = active;
-    if (section === loadedSection) return;
-    const hadSection = loadedSection.length > 0;
-    loadedSection = section;
-    if (hadSection) void refresh();
-  });
-
-  function markDirty(owner: string) {
-    if (!dirtyOwners.includes(owner)) dirtyOwners = [...dirtyOwners, owner];
-  }
-
-  function markSaved(owner: string) {
-    dirtyOwners = dirtyOwners.filter((item) => item !== owner);
-    if (!dirtyOwners.length) serverChanged = false;
-  }
+  const pages = $derived(allPages.filter(item => administrator || item.id === "alerts" || item.id === "appearance"));
+  const legacy: Record<string, string> = { network: "access", diagnostics: "health", maintenance: "backups", routing: "quality" };
+  const requested = $derived(legacy[section] ?? section);
+  const active = $derived(pages.some(item => item.id === requested) ? requested : administrator ? "general" : "alerts");
+  const activePage = $derived(pages.find(item => item.id === active) ?? pages[0]);
+  const href = (item: (typeof allPages)[number]) => "href" in item ? item.href : `#/settings/${item.id}`;
+  let schema = $state<UiSchema | null>(null), config = $state<Record<string, unknown>>({});
+  let cache = $state<Awaited<ReturnType<typeof settings.cache>> | null>(null), preview = $state<Awaited<ReturnType<typeof settings.cachePreview>> | null>(null);
+  let cachedSongs = $state<DownloadsResponse | null>(null), keptSongs = $state<DownloadsResponse | null>(null);
+  let loading = $state(true), refreshing = $state(false), error = $state(""), action = $state("");
+  let purgeOpen = $state(false), purgeTarget = $state("");
+  let loadedSection = "";
+  const generic = $derived(["general", "storage", "access"].includes(active));
+  const fields = $derived((schema?.configSections ?? []).filter(item => item.id !== "spotify-import").flatMap(item => item.fields));
+  const qualityKeys = new Set(["AUDIO_QUALITY", "MATCHING_LOCAL_PREFERENCE_PERCENT"]);
+  const linkKeys = (key: string) => /^(ODESLI_|EXTENSIONS_ALLOW_REMOTE_INSTALL)/.test(key);
+  const sectionFor = (id: string) => schema?.configSections?.find(item => item.id === id)?.fields ?? [];
+  const group = (id: string, label: string, selected: typeof fields): ConfigSection => ({ id, label, fields: selected });
+  const generalGroups = $derived([
+    group("library", "Library", fields.filter(field => field.key === "BACKEND_TYPE" || /MusicLibraryIds/.test(field.valuePath ?? ""))),
+    group("general", "Defaults for everyone", sectionFor("general").filter(field => !qualityKeys.has(field.key) && !["BACKEND_TYPE", "STORAGE_MODE"].includes(field.key))),
+    group("links", "Song links and extensions", fields.filter(field => linkKeys(field.key) && field.key !== "ODESLI_RATE_LIMIT_MS")),
+    ...((schema?.configSections ?? []).filter(item => !["operator", "general", "paths", "cache", "audio-limits", "network", "client-address", "spotify-import"].includes(item.id))),
+  ].filter(item => item.fields.length));
+  const accessFields = $derived(fields.filter(field => /Cors:|ChallengeSolver:/.test(field.valuePath ?? "") || sectionFor("network").includes(field) || field.key === "PUBLIC_LISTENER_URL"));
+  const storageAdvanced = $derived(fields.filter(field => /BackupRetention|EventLog/.test(field.valuePath ?? "") || sectionFor("cache").includes(field)).filter(field => field.key !== "CACHE_DURATION_HOURS"));
+  const bytes = (value: number) => `${(value / 1024 / 1024).toLocaleString(undefined, { maximumFractionDigits: 1 })} MiB`;
+  const audioMaximum = $derived(Number((config.cache as Record<string, unknown> | undefined)?.audioMaximumGiB ?? 2) * 1024 ** 3);
+  const cacheAudioBytes = $derived(typeof cachedSongs?.totalSize === "number" ? cachedSongs.totalSize : null);
+  const keptAudioBytes = $derived(typeof keptSongs?.totalSize === "number" ? keptSongs.totalSize : null);
+  const storageItems = $derived([{ label: cacheAudioBytes === null ? "Cached song usage unavailable" : `${bytes(cacheAudioBytes)} cached of ${bytes(audioMaximum)}` }, { label: keptAudioBytes === null ? "Kept song usage unavailable" : `${bytes(keptAudioBytes)} kept` }]);
+  const storageSegments = $derived(cacheAudioBytes !== null && keptAudioBytes !== null ? [
+    { label: "Cached songs (MiB)", value: Math.round(cacheAudioBytes / 1024 ** 2), tone: "info" as const },
+    { label: "Kept songs (MiB)", value: Math.round(keptAudioBytes / 1024 ** 2), tone: "good" as const },
+    { label: "Cache room left (MiB)", value: Math.round(Math.max(0, audioMaximum - cacheAudioBytes) / 1024 ** 2), tone: "neutral" as const },
+  ] : []);
 
   async function refresh() {
     if (refreshing) return;
-    refreshing = true;
-    error = "";
+    refreshing = true; error = "";
     const requests: Array<[string, Promise<unknown>]> = [["schema", home.schema()]];
-    if (["general", "storage", "access"].includes(active))
-      requests.push(["config", settings.config()]);
-    if (active === "storage") requests.push(
-      ["cache", settings.cache()],
-      ["cachePreview", settings.cachePreview()],
-    );
-    const results = await Promise.allSettled(requests.map((request) => request[1]));
+    if (generic) requests.push(["config", settings.config()]);
+    if (active === "storage") requests.push(["cache", settings.cache()], ["preview", settings.cachePreview()], ["cachedSongs", downloads.list("cache")], ["keptSongs", downloads.list("kept")]);
+    const results = await Promise.allSettled(requests.map(item => item[1]));
     results.forEach((result, index) => {
-      if (result.status !== "fulfilled") return;
-      const label = requests[index][0];
-      if (label === "schema") schema = result.value as UiSchema;
-      if (label === "config") {
-        if (dirtyOwners.length) serverChanged = JSON.stringify(config) !== JSON.stringify(result.value);
-        else config = result.value as Record<string, unknown>;
-      }
-      if (label === "cache")
-        cache = result.value as Awaited<ReturnType<typeof settings.cache>>;
-      if (label === "cachePreview")
-        cachePreview = result.value as Awaited<ReturnType<typeof settings.cachePreview>>;
+      if (result.status === "rejected") { error = result.reason instanceof Error ? result.reason.message : "Settings could not be loaded."; return; }
+      if (requests[index][0] === "schema") schema = result.value as UiSchema;
+      if (requests[index][0] === "config") config = result.value as Record<string, unknown>;
+      if (requests[index][0] === "cache") cache = result.value as typeof cache;
+      if (requests[index][0] === "preview") preview = result.value as typeof preview;
+      if (requests[index][0] === "cachedSongs") cachedSongs = result.value as DownloadsResponse;
+      if (requests[index][0] === "keptSongs") keptSongs = result.value as DownloadsResponse;
     });
-    const failed = results.filter((result) => result.status === "rejected");
-    if (failed.length)
-      error = failed[0].reason instanceof Error ? failed[0].reason.message : "Some settings are unavailable.";
-    loading = false;
-    refreshing = false;
+    loading = false; refreshing = false;
   }
-
-  const refreshScheduler = createRefreshScheduler(refresh);
-  const scheduleRefresh = refreshScheduler.schedule;
-
-  async function saveSection(event: SubmitEvent, item: ConfigSection) {
-    event.preventDefault();
-    if (action) return;
-    action = item.id;
-    const data = new FormData(event.currentTarget as HTMLFormElement);
-    const updates = Object.fromEntries(item.fields
-      .filter((field) => !field.readOnly && field.ownership !== "deployment")
-      .map((field) => [
-        field.key,
-        isToggle(field) ? String(data.get(field.key) === "on") : String(data.get(field.key) ?? ""),
-      ]));
-    try {
-      const result = await settings.save(updates);
-      if (result.requiresRestart) { toast.info("Settings saved. Waiting for restart…"); await waitForRestart(); window.location.reload(); return; }
-      markSaved(item.id);
-      toast.success(`${item.label} settings saved.`);
-      await refresh();
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : `${item.label} could not be saved.`);
-    } finally {
-      action = "";
-    }
-  }
-
+  const scheduler = createRefreshScheduler(refresh);
+  $effect(() => { if (loadedSection && loadedSection !== active) void refresh(); loadedSection = active; });
   async function run(name: string, operation: () => Promise<unknown>, message: string) {
     if (action) return;
     action = name;
-    try {
-      const result = await operation();
-      toast.success("message" in (result as object)
-        ? String((result as { message: unknown }).message)
-        : message);
-      await refresh();
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : `${message} failed.`);
-    } finally {
-      action = "";
-    }
+    try { await operation(); toast.success(message); await refresh(); }
+    catch (cause) { toast.error(cause instanceof Error ? cause.message : "This action could not finish. Try again."); }
+    finally { action = ""; }
   }
-
-  async function testChallengeSolver(event: MouseEvent) {
-    const form = (event.currentTarget as HTMLButtonElement).form;
-    if (action || !form) return;
-    const url = String(new FormData(form).get("CHALLENGE_SOLVER_URL") ?? "");
-    action = "challenge-solver-test";
-    try {
-      const result = await settings.testChallengeSolver(url);
-      if (result.ok) toast.success(result.message);
-      else toast.error(result.message);
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "Solver could not be reached.");
-    } finally {
-      action = "";
-    }
-  }
-
   async function purge() {
-    if (!purgeTarget) return;
-    const scope = ["metadata", "media", "all"].includes(purgeTarget)
-      ? purgeTarget as "metadata" | "media" | "all"
-      : null;
-    await run(
-      `purge-${purgeTarget}`,
-      () => scope ? settings.purgeCache(scope) : settings.purgeCacheCategory(purgeTarget),
-      `${humanize(purgeTarget)} cache purged.`,
-    );
+    const scope = ["metadata", "media", "all"].includes(purgeTarget) ? purgeTarget as "metadata" | "media" | "all" : null;
+    await run("purge", () => scope ? settings.purgeCache(scope) : settings.purgeCacheCategory(purgeTarget), "Cache removed.");
     purgeOpen = false;
   }
-
-  const isToggle = (field: ConfigSection["fields"][number]) => field.type === "toggle" || field.type === "boolean";
-  const fieldEnabled = (field: ConfigSection["fields"][number]) => {
-    const value = fieldValue(config, field);
-    return typeof value === "string" ? value.toLowerCase() === "true" : Boolean(value);
-  };
-
-  function deploymentOwned(field: ConfigSection["fields"][number]) {
-    return field.readOnly || field.ownership === "deployment";
-  }
-
-  onMount(() => {
-    themeMode = readThemeMode();
-    const unsubscribeTheme = onThemeModeChange((mode) => { themeMode = mode; });
-    void refresh();
-    const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
-    return () => {
-      unsubscribe();
-      unsubscribeTheme();
-      refreshScheduler.cancel();
-    };
-  });
+  onMount(() => { void refresh(); const unsubscribe = liveUpdates.subscribe(scheduler.schedule); return () => { unsubscribe(); scheduler.cancel(); }; });
 </script>
 
-{#if loading}
-  <Skeleton class="panel settings-panel skeleton-panel" aria-label="Loading Settings" aria-busy="true" />
-{:else if !schema}
-  <RouteError
-    eyebrow="Settings unavailable"
-    title="Allstarr could not load runtime settings."
-    message={error}
-    onRetry={refresh}
-  />
-{:else}
-  <section class="settings-workspace settings-layout" aria-busy={refreshing}>
-    <nav class="settings-nav" aria-label="Settings sections" use:slideIndicator={'a[aria-current="page"]'}>
-      {#each navGroups as group}
-        {#if pages.some(item => item.group === group)}
-          <p>{group}</p>
-          {#each pages.filter((item) => item.group === group) as item (item.id)}
-            {@const Icon = item.icon}
-            <a href={pageHref(item)} aria-current={active === item.id ? "page" : undefined}>
-              <Icon size={18} aria-hidden="true" />{item.label}
-            </a>
-          {/each}
-        {/if}
-      {/each}
-    </nav>
-    <SegmentedNav items={pages.map((item) => ({ id: item.id, label: item.label, href: pageHref(item) }))} {active} label="Settings sections" class="route-tabs settings-tabs" />
-
-    <div class="settings-content">
-      <header class="settings-page-head">
-        <h2>{activePage.title}</h2>
-        <p>{activePage.description}</p>
-      </header>
-
-      {#if error}
-        <div class="degraded-banner" role="status">
-          <span aria-hidden="true">!</span><p><strong>Some settings may be out of date.</strong> {error}</p>
-          <Button variant="secondary" size="sm" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Trying again…" : "Retry"}</Button>
-        </div>
-      {/if}
-
-      {#if serverChanged}
-        <div class="degraded-banner" role="status">
-          <p><strong>Someone else changed these settings.</strong> Your unsaved edits are kept.</p>
-          <Button variant="secondary" size="sm" onclick={() => { dirtyOwners = []; serverChanged = false; void refresh(); }}>Reload server values</Button>
-        </div>
-      {/if}
-
-      {#if active === "appearance"}
-        <section class="settings-card">
-          <div class="settings-row">
-            <div><strong>Color theme</strong><small>Match your device, or always use light or dark.</small></div>
-            <SelectField bind:value={themeMode} label="Color theme" options={themeOptions} onchange={(value) => saveThemeMode(value as ThemeMode)} />
-          </div>
-        </section>
-      {:else if active === "quality" && administrator}
-        {#await import("$lib/components/RoutingView.svelte")}
-          <Skeleton class="skeleton-panel" aria-label="Loading quality and routing" />
-        {:then { default: RoutingView }}
-          <RoutingView embedded />
-        {:catch}
-          <RouteError eyebrow="Quality unavailable" title="Quality and routing could not be loaded." message="Reload to try again." onRetry={() => window.location.reload()} />
-        {/await}
-      {:else if active === "listeners" && administrator}
-        <ListenersView />
-      {:else if active === "alerts"}
-        <AlertsView {administrator} />
-      {:else if active === "sound-analysis" && administrator}
-        <SoundAnalysisSettings />
-      {:else if ["general", "storage", "access"].includes(active)}
-        {#if active === "access"}<AccessSettingsCard kind="backend" />{/if}
-        {#if administrator && active === "access"}<AccessSettingsCard kind="oidc" />{/if}
-        {#if administrator && active === "storage"}<TrackCacheCard />{/if}
-        {#if administrator && active === "storage"}<StorageVerificationCard />{/if}
-        {#each pageSections as item (item.id)}
-          {@const editable = item.fields.filter((field) => !deploymentOwned(field))}
-          <form class="settings-card settings-disclosure" aria-label={`${item.label} settings`} oninput={() => markDirty(item.id)} onsubmit={(event) => void saveSection(event, item)}>
-            <header><h3>{item.label}</h3></header>
-            <div class="settings-fields">
-              {#each item.fields as field}
-                {#if field.key === "CHALLENGE_SOLVER_URL" && !deploymentOwned(field)}
-                  <div class="setting-field settings-row">
-                    <div>
-                      <label for="challenge-solver-url"><strong>{field.label}</strong></label>
-                      {#if field.helpText}<small id="challenge-solver-help">{field.helpText}</small>{/if}
-                    </div>
-                    <span class="solver-control">
-                      <input id="challenge-solver-url" name={field.key} type="text" value={String(fieldValue(config, field))} placeholder={field.placeholder ?? "http://flaresolverr:8191"} aria-describedby={field.helpText ? "challenge-solver-help" : undefined} />
-                      <Button type="button" variant="secondary" disabled={Boolean(action)} onclick={(event) => void testChallengeSolver(event)}>{action === "challenge-solver-test" ? "Testing…" : "Test"}</Button>
-                    </span>
-                  </div>
-                {:else if field.valuePath === "playback.startPreference"}
-                  <div class="setting-field settings-row playback-start-row" class:read-only={deploymentOwned(field)}>
-                    <div>
-                      <strong>{field.label}</strong>
-                      {#if field.helpText}<small>{field.helpText}</small>{/if}
-                      {#if deploymentOwned(field)}<small class="settings-owned"><Lock size={12} aria-hidden="true" />Deployment-owned · change it in your deployment config</small>{/if}
-                    </div>
-                    {#if deploymentOwned(field)}
-                      <output>{playbackStartLabel(fieldValue(config, field) as PlaybackStart)}</output>
-                    {:else}
-                      <ThreeDetentSwitch name={field.key} label={field.label}
-                        value={(fieldValue(config, field) || "Balanced") as PlaybackStart} options={playbackStartOptions}
-                        compact disabled={Boolean(action)} onchange={value => {
-                          config.playback = { ...(config.playback as Record<string, unknown> | undefined), startPreference: value };
-                          markDirty(item.id);
-                        }} />
-                    {/if}
-                  </div>
-                {:else}
-                <label class="setting-field settings-row" class:read-only={deploymentOwned(field)}>
-                  <div>
-                    <strong>{field.label}</strong>
-                    {#if field.helpText}<small>{field.helpText}</small>{/if}
-                    {#if deploymentOwned(field)}<small class="settings-owned"><Lock size={12} aria-hidden="true" />Deployment-owned · change it in your deployment config</small>{/if}
-                  </div>
-                  {#if deploymentOwned(field)}
-                    <output>{isToggle(field) ? (fieldEnabled(field) ? "On" : "Off") : optionLabel(field.key, String(fieldValue(config, field))) || "Not set"}</output>
-                  {:else if field.type === "select"}
-                    <SelectField
-                      name={field.key}
-                      label={field.label}
-                      value={String(fieldValue(config, field))}
-                      options={(field.options ?? []).map((value) => ({ value, label: optionLabel(field.key, value) }))}
-                      onchange={() => markDirty(item.id)}
-                    />
-                  {:else if isToggle(field)}
-                    <span class="settings-toggle">
-                      <Switch name={field.key} checked={fieldEnabled(field)} aria-label={field.label} />
-                    </span>
-                  {:else}
-                    <input
-                      name={field.key}
-                      type={field.type === "number" ? "number" : "text"}
-                      value={String(fieldValue(config, field))}
-                      min={field.min ?? undefined}
-                      max={field.max ?? undefined}
-                    />
-                  {/if}
-                </label>
-                {/if}
-              {/each}
-              {#if item.id === "cache"}
-                <p class="settings-impact">
-                  Memory cache is capped at 16 MiB and response files at {cacheDiskCeiling.toLocaleString()} MiB on disk. Audio has its own limit. These times only change how often data is refreshed.
-                </p>
-              {:else if item.id === "audio-limits"}
-                <p class="settings-impact">Limits apply to new work; music already being served can finish. Audio cleanup preserves kept songs, downloaded copies and media-server files.</p>
-              {/if}
-              {#if editable.length}
-                <footer>
-                  {#if dirtyOwners.includes(item.id)}<span>Unsaved changes</span>{/if}
-                  <Button type="submit" aria-label={`Save changes to ${item.label}`} disabled={Boolean(action) || !dirtyOwners.includes(item.id)}>{action === item.id ? "Saving…" : "Save changes"}</Button>
-                </footer>
-              {/if}
-            </div>
-          </form>
-        {:else}
-          <div class="compact-empty"><strong>Nothing to change here</strong><p>This server doesn't expose any settings in this section.</p></div>
+<SettingsRestartNotice />
+<section class="settings-workspace settings-layout settings-surface" aria-busy={refreshing}>
+  <nav class="settings-nav" aria-label="Settings sections" use:slideIndicator={'a[aria-current="page"]'}>
+    {#each ["You", "Server", "Maintenance"] as navGroup}
+      {#if pages.some(item => item.group === navGroup)}
+        <p>{navGroup}</p>
+        {#each pages.filter(item => item.group === navGroup) as item (item.id)}
+          {@const Icon = item.icon}<a href={href(item)} aria-current={active === item.id ? "page" : undefined}><Icon size={18} aria-hidden="true" />{item.label}</a>
         {/each}
-        {#if administrator && active === "general" && schema}
-          <ServicePolicyCard fields={(schema.configSections ?? []).flatMap((section) => section.fields).filter((field) => /^(ODESLI_|EXTENSIONS_ALLOW_REMOTE_INSTALL)/.test(field.key))} {config} />
-        {/if}
-        {#if active === "storage"}
-          <CacheDiagnosticsCard
-            snapshot={cache}
-            preview={cachePreview}
-            busy={Boolean(action)}
-            onClean={() => void run("cleanup", settings.cleanCache, "Cache cleanup complete.")}
-            onPurge={(target) => { purgeTarget = target; purgeOpen = true; }}
-          />
-        {/if}
-      {:else if active === "backups"}
-        <BackupsView {administrator} />
-      {:else if active === "health" && administrator}
-        <HealthView />
-        <section class="settings-card" aria-label="Diagnostics">
-          <div class="settings-row maintenance-card">
-            <div><strong>Media pipeline</strong><small>Checks metadata, artwork and authenticated playback.</small></div>
-            <Button variant="secondary" disabled={Boolean(action)} onclick={() => void run("media", settings.mediaProbe, "Media pipeline checked.")}>{action === "media" ? "Testing…" : "Test media pipeline"}</Button>
-          </div>
-          <div class="settings-row maintenance-card">
-            <div><strong>Playlist readiness</strong><small>Checks source access and which songs listeners can play.</small></div>
-            <Button variant="secondary" disabled={Boolean(action)} onclick={() => void run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>{action === "playlists" ? "Testing…" : "Test playlist readiness"}</Button>
-          </div>
-        </section>
-      {:else if active === "setup"}
-        {#if administrator}
-          <section class="settings-card">
-            <div class="settings-row maintenance-card">
-              <div><strong>Setup guide</strong><small>Walk through connecting your media server and accounts again. Nothing is reset.</small></div>
-              <Button variant="secondary" onclick={() => void onOpenSetup()}>Open setup guide</Button>
-            </div>
-          </section>
-          {#if onboardingState}<SetupGuide state={onboardingState} onChanged={onSetupChanged} />{/if}
-        {/if}
       {/if}
-    </div>
-  </section>
-
-  <ConfirmDialog
-    bind:open={purgeOpen}
-    title={purgeTarget === "all" ? "Purge the application cache?" : `Purge ${humanize(purgeTarget)} cache?`}
-    description="Disposable metadata and media payloads will be removed. Durable business state, accounts, mappings, playlists, and kept audio are not affected."
-    confirmLabel="Purge cache"
-    onConfirm={purge}
-  />
-{/if}
-
-<style>
-  .solver-control {
-    display: flex;
-    min-width: 0;
-    gap: var(--space-2);
-    align-items: center;
-  }
-
-  .solver-control input {
-    min-width: 0;
-    flex: 1;
-  }
-
-  @media (min-width: 651px) {
-    .settings-card .setting-field.playback-start-row {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 23rem);
-    }
-  }
-</style>
+    {/each}
+  </nav>
+  <SegmentedNav items={pages.map(item => ({ id: item.id, label: item.label, href: href(item) }))} {active} label="Settings sections" class="route-tabs settings-tabs" />
+  <div class="settings-content">
+    <header class="settings-page-head"><h2>{activePage.label}</h2><p>{activePage.description}</p></header>
+    {#if loading}<RowsSkeleton count={5} />
+    {:else if !schema || error}<ErrorState title="Some settings could not be loaded" detail={error} onretry={refresh} />{/if}
+    {#if !loading && schema}
+      {#if ["general", "access", "storage", "setup"].includes(active)}
+        <PageStatus segments={active === "storage" ? storageSegments : []} items={active === "storage" ? storageItems : active === "setup" ? [{ label: `${onboardingState?.steps?.filter(step => step.state !== "pending").length ?? 0} steps reviewed or skipped` }, { label: "Progress saved for your account" }] : [{ label: "Changes save as you make them" }, { label: "Restart changes ask first" }]} />
+      {/if}
+      {#if active === "appearance"}
+        {#await import("./SettingsAppearance.svelte")}<RowsSkeleton count={1} />{:then { default: Appearance }}<Appearance />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
+      {:else if active === "quality"}
+        {#await import("./RoutingView.svelte")}<RowsSkeleton />{:then { default: Routing }}<Routing embedded />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
+      {:else if active === "listeners"}
+        {#await import("./ListenersView.svelte")}<RowsSkeleton />{:then { default: Listeners }}<Listeners {initialPanel} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
+      {:else if active === "alerts"}
+        {#await import("./AlertsView.svelte")}<RowsSkeleton />{:then { default: Alerts }}<Alerts {administrator} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
+      {:else if active === "sound-analysis"}
+        {#await import("./SoundAnalysisSettings.svelte")}<RowsSkeleton count={2} />{:then { default: Sound }}<Sound />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
+      {:else if active === "backups"}
+        {#await import("./BackupsView.svelte")}<RowsSkeleton />{:then { default: Backups }}<Backups {administrator} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
+      {:else if active === "health"}
+        {#await import("./HealthView.svelte")}<RowsSkeleton />{:then { default: Health }}<Health {initialPanel} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
+        <details class="settings-fold"><summary>Advanced: media and playlist tests</summary><section class="settings-card" aria-label="Diagnostics">
+          <div class="settings-row"><div><strong>Media pipeline</strong><small>Checks song details, artwork and playback.</small></div><Button variant="outline" disabled={Boolean(action)} onclick={() => run("media", settings.mediaProbe, "Media pipeline checked.")}>Test media pipeline</Button></div>
+          <div class="settings-row"><div><strong>Playlist readiness</strong><small>Checks source access and which songs listeners can play.</small></div><Button variant="outline" disabled={Boolean(action)} onclick={() => run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>Test playlist readiness</Button></div>
+        </section></details>
+      {:else if active === "setup"}
+        {#await import("./SetupGuide.svelte")}<RowsSkeleton />{:then { default: Guide }}
+          {#if onboardingState}<Guide state={onboardingState} onChanged={onSetupChanged} embedded={onboardingState.completed} />{:else}<Button variant="outline" onclick={() => onOpenSetup()}>Open setup guide</Button>{/if}
+        {:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
+      {:else if active === "general"}
+        {#each generalGroups as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh} />{/each}
+        {#if fields.some(field => field.key === "ODESLI_RATE_LIMIT_MS")}<details class="settings-fold"><summary>Advanced: wait between song.link lookups</summary><SettingsFields section={group("link-timing", "Song link timing", fields.filter(field => field.key === "ODESLI_RATE_LIMIT_MS"))} {config} onChanged={refresh} /></details>{/if}
+      {:else if active === "access"}
+        {#await import("./AccessSettingsCard.svelte")}<RowsSkeleton count={2} />{:then { default: Access }}<Access kind="backend" /><Access kind="oidc" />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
+        {#if accessFields.some(field => !/Cors:/.test(field.valuePath ?? ""))}<SettingsFields section={group("network", "Addresses and network", accessFields.filter(field => !/Cors:/.test(field.valuePath ?? "")))} {config} onChanged={refresh} />{/if}
+        <details class="settings-fold"><summary>Advanced: browser access (origins, methods, headers)</summary><SettingsFields section={group("browser-access", "Browser access", accessFields.filter(field => /Cors:/.test(field.valuePath ?? "")))} {config} onChanged={refresh} /></details>
+      {:else if active === "storage"}
+        {#if fields.some(field => ["STORAGE_MODE", "CACHE_DURATION_HOURS", "CACHE_AUDIO_MAXIMUM_GIB"].includes(field.key))}<SettingsFields section={group("track-cache", "Track cache", fields.filter(field => ["STORAGE_MODE", "CACHE_DURATION_HOURS", "CACHE_AUDIO_MAXIMUM_GIB"].includes(field.key)))} {config} onChanged={refresh} />{/if}
+        {#if sectionFor("audio-limits").some(field => field.key !== "CACHE_AUDIO_MAXIMUM_GIB")}<SettingsFields section={group("audio-limits", "Audio limits", sectionFor("audio-limits").filter(field => field.key !== "CACHE_AUDIO_MAXIMUM_GIB"))} {config} onChanged={refresh} />{/if}
+        {#if sectionFor("paths").length}<SettingsFields section={group("paths", "Folders", sectionFor("paths"))} {config} onChanged={refresh} />{/if}
+        <details class="settings-fold"><summary>Advanced: activity retention, cache durations, saved-file verification</summary>
+          {#if storageAdvanced.length}<SettingsFields section={group("storage-advanced", "Retention and cache", storageAdvanced)} {config} onChanged={refresh} />{/if}
+          {#await import("./StorageVerificationCard.svelte")}<RowsSkeleton count={1} />{:then { default: Verification }}<Verification />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
+          <CacheDiagnosticsCard snapshot={cache} {preview} busy={Boolean(action)} onClean={() => run("clean", settings.cleanCache, "Cache cleanup complete.")} onPurge={target => { purgeTarget = target; purgeOpen = true; }} />
+        </details>
+      {/if}
+    {/if}
+  </div>
+</section>
+<ConfirmDialog bind:open={purgeOpen} title="Remove cached files?" description="Temporary cached files will be removed. Kept songs, downloads and media-server files stay safe." confirmLabel="Remove cache" onConfirm={purge} />

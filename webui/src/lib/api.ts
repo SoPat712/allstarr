@@ -378,6 +378,7 @@ export type ConfigField = {
   required?: boolean;
   ownership?: string;
   readOnly?: boolean;
+  requiresRestart?: boolean;
   helpText?: string | null;
   advanced?: boolean;
   defaultValueJson?: string | null;

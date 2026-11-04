@@ -5,17 +5,18 @@
   import { ArrowDown, ArrowUp, ChevronDown, GripVertical, Lock, Sparkles } from "@lucide/svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
-  import { Skeleton } from "$lib/components/ui/skeleton";
   import { ApiError, home, settings, sources, type PriorityGroup, type ProviderScore, type UiSchema } from "$lib/api";
-  import AudioQualityField from "$lib/components/AudioQualityField.svelte";
+  import SettingsFields from "$lib/components/SettingsFields.svelte";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
-  import ProviderScoreDetails from "$lib/components/ProviderScoreDetails.svelte";
+
   import { capabilityScore, isRanked, scoreTier, sortByScore as orderByScore } from "$lib/provider-score";
   import RouteError from "$lib/components/RouteError.svelte";
-  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import { canonicalProviderId, humanize, lyricsSourceDisplayName, sourceOriginLabel } from "$lib/sources";
   import { createOrderSave } from "$lib/order-save";
-  import { fieldValue, mergeRoutingOrders, move } from "$lib/settings";
+  import { mergeRoutingOrders, move } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
 
   // One order at a time; five near-identical lists in a row were hard to tell apart.
@@ -27,7 +28,9 @@
   let qualityTarget = $state<string | undefined>();
   const loadScores = () => void sources.scores().then((result) => { scores = result.providers ?? []; qualityTarget = result.qualityTarget; }).catch(() => {});
   let openScore = $state("");
-  const toggleScore = (key: string) => { openScore = openScore === key ? "" : key; };
+  let expanded = $state(false);
+  let scoreOpen = $state(false);
+  const toggleScore = (key: string) => { scoreOpen = !(scoreOpen && openScore === key); openScore = scoreOpen ? key : ""; };
   const scoreFor = (providerId: string) => scores.find((item) => item.providerId.toLowerCase() === providerId.toLowerCase());
 
   // Manual sources sink to the bottom whatever their score.
@@ -50,7 +53,6 @@
   let error = $state("");
   let dragging = $state<{ groupId: string; index: number } | null>(null);
   let dirtyOrderIds = $state<string[]>([]);
-  let policyDirty = $state(false);
   const policyKeys = new Set([
     "AUDIO_QUALITY",
     "MATCHING_LOCAL_PREFERENCE_PERCENT",
@@ -76,7 +78,7 @@
     const nextConfig = results[1].status === "fulfilled"
       ? results[1].value as Record<string, unknown>
       : null;
-    if (nextConfig && !policyDirty) config = nextConfig;
+    if (nextConfig) config = nextConfig;
     if (schema && nextConfig) {
       // Older saved orders can list one service under two names; show it once.
       orders = Object.fromEntries(Object.entries(mergeRoutingOrders(nextConfig, schema.priorityGroups ?? [], orders, dirtyOrderIds))
@@ -144,25 +146,6 @@
     dragging = null;
   }
 
-  async function savePolicy(event: SubmitEvent) {
-    event.preventDefault();
-    if (action) return;
-    action = "policy";
-    const data = new FormData(event.currentTarget as HTMLFormElement);
-    const updates = Object.fromEntries(policyFields.map((field) => [field.key, String(data.get(field.key) ?? "")]));
-    try {
-      await settings.save(updates);
-      loadScores();
-      policyDirty = false;
-      toast.success("Playback and matching preferences saved.");
-      await refresh();
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : "Playback and matching preferences could not be saved.");
-    } finally {
-      action = "";
-    }
-  }
-
   onMount(() => {
     void refresh();
     loadScores();
@@ -176,7 +159,7 @@
 </script>
 
 {#if loading}
-  <Skeleton class="panel settings-panel skeleton-panel" aria-label="Loading routing" aria-busy="true" />
+  <RowsSkeleton />
 {:else if !schema}
   <RouteError
     eyebrow="Routing unavailable"
@@ -201,37 +184,13 @@
       </div>
     {/if}
 
+    <PageStatus items={[{ label: `${groups.length} source orders` }, { label: "Changes save as you make them" }]} />
     {#if policyFields.length}
-      <form class="settings-card routing-policy" aria-label="Playback and matching" oninput={() => { policyDirty = true; }} onsubmit={savePolicy}>
-        <header><div><h3>Quality and matching</h3><small>Match scores describe the recording evidence. Streaming priority breaks score ties and guides playback; preference windows apply only to tentative matches.</small></div></header>
-        {#each policyFields as field (field.key)}
-          {#if field.type === "audio-quality"}
-            <div class="settings-row routing-quality audio-quality-field">
-              <div><strong>{field.label}</strong>{#if field.helpText}<small>{field.helpText}</small>{/if}</div>
-              <AudioQualityField name={field.key} value={String(fieldValue(config, field))} onchange={() => { policyDirty = true; }} />
-            </div>
-          {:else}
-            <label class="settings-row">
-              <div><strong>{field.label}</strong>{#if field.helpText}<small>{field.helpText}</small>{/if}</div>
-              <input
-                name={field.key}
-                type="number"
-                value={String(fieldValue(config, field))}
-                min={field.min ?? undefined}
-                max={field.max ?? undefined}
-              />
-            </label>
-          {/if}
-        {/each}
-        <footer>
-          {#if policyDirty}<span>Unsaved changes</span>{/if}
-          <Button type="submit" disabled={Boolean(action) || !policyDirty}>{action === "policy" ? "Saving…" : "Save playback and matching"}</Button>
-        </footer>
-      </form>
+      <SettingsFields section={{ id: "quality-policy", label: "Audio quality", fields: policyFields }} {config} onChanged={async () => { await refresh(); loadScores(); }} />
     {/if}
     {#if groups.length > 1}
-      <SegmentedNav label="Source orders" items={groups.map((item) => ({ id: item.id, label: tabNames[item.id] ?? item.label.replace(/ (?:priority |search |discovery )?order$/i, "") }))}
-        active={shown ?? ""} onchange={chooseTab} />
+      <FilterSegments label="Source orders" options={groups.map(item => ({ id: item.id, label: tabNames[item.id] ?? item.label, count: (orders[item.id] ?? item.providers).length }))}
+        value={shown ?? ""} storageKey={tabKey} onchange={id => { chooseTab(id); expanded = false; }} />
     {/if}
     <div class="routing-groups">
       {#each groups.filter((item) => item.id === shown) as group}
@@ -248,7 +207,7 @@
                 <span class="routing-copy"><strong>{group.pinnedProvider.name}</strong><small>{group.pinnedProvider.reason} · always tried first</small></span>
               </li>
             {/if}
-            {#each orders[group.id] ?? group.providers as providerId, index}
+            {#each (orders[group.id] ?? group.providers).slice(0, expanded ? undefined : 5) as providerId, index}
               {@const definition = provider(providerId)}
               {@const label = group.id === "lyrics" ? lyricsSourceDisplayName(schema?.providers ?? [], providerId) : definition?.name ?? providerId}
               {@const scoreKey = `${group.id}:${providerId}`}
@@ -269,11 +228,11 @@
                 {#if scoreFor(providerId)}
                   {@const ranked = isRanked(definition?.useMode)}
                   {@const value = ranked ? capabilityScore(scoreFor(providerId), group.id) : null}
-                  <button type="button" class="score-toggle" aria-expanded={openScore === scoreKey}
-                    aria-label={ranked ? `${label} score ${value ?? "not rated yet"}. ${openScore === scoreKey ? "Hide" : "Show"} details.` : `${label} is ${definition?.useMode === "off" ? "turned off" : "manual only"} and isn't scored. ${openScore === scoreKey ? "Hide" : "Show"} details.`}
+                  <button type="button" class="score-toggle" aria-expanded={scoreOpen && openScore === scoreKey}
+                    aria-label={ranked ? `${label} score ${value ?? "not rated yet"}. ${scoreOpen && openScore === scoreKey ? "Hide" : "Show"} details.` : `${label} is ${definition?.useMode === "off" ? "turned off" : "manual only"} and isn't scored. ${scoreOpen && openScore === scoreKey ? "Hide" : "Show"} details.`}
                     onclick={() => toggleScore(scoreKey)}>
                     <span class="score-chip" data-tier={scoreTier(value)}>{ranked ? value ?? "New" : definition?.useMode === "off" ? "Off" : "Manual"}</span>
-                    <span class="score-toggle-label">{openScore === scoreKey ? "Hide" : "Details"}</span>
+                    <span class="score-toggle-label">{scoreOpen && openScore === scoreKey ? "Hide" : "Details"}</span>
                     <ChevronDown size={16} aria-hidden="true" />
                   </button>
                 {/if}
@@ -281,19 +240,33 @@
                   <Button variant="ghost" size="icon" aria-label={`Move ${label} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
                   <Button variant="ghost" size="icon" aria-label={`Move ${label} down`} disabled={index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
                 </span>
-                {#if openScore === scoreKey && scoreFor(providerId)}
-                  <ProviderScoreDetails score={scoreFor(providerId)!} capability={group.id} ranked={isRanked(definition?.useMode)} {qualityTarget} onclose={() => toggleScore(scoreKey)} />
-                {/if}
               </li>
             {/each}
           </ol>
+          {#if (orders[group.id] ?? group.providers).length > 5}<footer><Button variant="text" onclick={() => expanded = !expanded}>{expanded ? "Show fewer" : `Show ${(orders[group.id] ?? group.providers).length - 5} more`}</Button></footer>{/if}
         </section>
       {/each}
     </div>
   </div>
 {/if}
 
+{#if openScore}
+  {@const groupId = openScore.slice(0, openScore.indexOf(":"))}
+  {@const providerId = openScore.slice(openScore.indexOf(":") + 1)}
+  {@const selectedScore = scoreFor(providerId)}
+  {@const scoreOrder = (orders[groupId] ?? []).filter(id => scoreFor(id))}
+  {@const scoreIndex = scoreOrder.indexOf(providerId)}
+  {#if selectedScore}
+    {#await import("./patterns/SidePanel.svelte") then { default: SidePanel }}
+      <SidePanel bind:open={scoreOpen} title={provider(providerId)?.name ?? humanize(providerId)} description="Source score" navigationLabel="source" onPrevious={scoreIndex > 0 ? () => toggleScore(`${groupId}:${scoreOrder[scoreIndex - 1]}`) : undefined} onNext={scoreIndex >= 0 && scoreIndex < scoreOrder.length - 1 ? () => toggleScore(`${groupId}:${scoreOrder[scoreIndex + 1]}`) : undefined}>
+        <div class="routing-score-panel">{#await import("./ProviderScoreDetails.svelte") then { default: Details }}<Details score={selectedScore} capability={groupId} ranked={isRanked(provider(providerId)?.useMode)} {qualityTarget} />{/await}</div>
+      </SidePanel>
+    {/await}
+  {/if}
+{/if}
+
 <style>
+  .routing-score-panel :global(.score-details) { padding: 0; }
   :global(.routing-group li) { grid-template-columns: 3rem 2.5rem minmax(0, 1fr) auto auto; }
   :global(.routing-group li.pinned) { grid-template-columns: 3rem 2.5rem minmax(0, 1fr); }
   .routing-name { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }

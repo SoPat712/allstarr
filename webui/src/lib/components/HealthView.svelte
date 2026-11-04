@@ -1,16 +1,35 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { toast } from "$lib/toasts";
+  import { Activity } from "@lucide/svelte";
+  import { Switch } from "$lib/components/ui/switch";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
+  import StatePill from "$lib/components/patterns/StatePill.svelte";
+  import ItemRow from "$lib/components/patterns/ItemRow.svelte";
+  import EmptyState from "$lib/components/patterns/EmptyState.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  let { initialPanel = "" }: { initialPanel?: string } = $props();
+  let snapshot = $state<HealthSnapshot | null>(null);
+  let panelOpen = $state(false), selectedRun = $state(""), selectedStep = $state(""), filter = $state("all");
+  let form = $state<HTMLFormElement>();
+  let saveTimer: ReturnType<typeof setTimeout>;
+  const currentRun = $derived(snapshot?.runs.find(run => run.id === selectedRun));
+  const selectedRunIndex = $derived(snapshot?.runs.findIndex(run => run.id === selectedRun) ?? -1);
+  const currentStep = $derived(currentRun?.steps.find(step => step.name === selectedStep));
+  const passing = (run: HealthRun) => !run.steps.some(step => step.status === "failed") && run.steps.some(step => step.status === "passed");
+  const filteredRuns = $derived((snapshot?.runs ?? []).filter(run => filter === "all" || (filter === "passing" ? passing(run) : run.steps.some(step => step.status === "failed"))));
+  function openDetail(run: HealthRun, step?: HealthStep) { selectedRun = run.id; selectedStep = step?.name ?? ""; panelOpen = true; }
+  function scheduleSave() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { if (form?.checkValidity()) void save(); }, 150);
+  }
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { health, healthError, healthReason, type HealthRun, type HealthSnapshot, type HealthStep } from "$lib/health";
   import SelectField from "$lib/components/SelectField.svelte";
-  import RouteError from "$lib/components/RouteError.svelte";
-  import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
-  import RefreshButton from "$lib/components/RefreshButton.svelte";
-  import { Checkbox } from "$lib/components/ui/checkbox";
-  import { Skeleton } from "$lib/components/ui/skeleton";
 
-  let snapshot = $state<HealthSnapshot | null>(null);
   let loading = $state(true), action = $state(""), error = $state(""), message = $state("");
   let enabled = $state(false), listenerUserId = $state(""), intervalMinutes = $state(30);
   let searchQuery = $state("Get Lucky Daft Punk"), firstByteBudgetSeconds = $state(15), revision = $state(0);
@@ -57,11 +76,10 @@
   function stepLabel(step: HealthStep) { return stepLabels[step.name] ?? "Check"; }
 
   function outcome(run: HealthRun) {
-    if (run.steps.some(step => step.status === "failed")) return { label: "Failed", tone: "danger" as const };
-    if (run.mode === "server-api-key" && run.steps.some(step => step.status === "skipped"))
-      return { label: run.steps.some(step => step.status === "passed") ? "Partly checked" : "Not checked", tone: "neutral" as const };
-    return run.passed ? { label: "Passed", tone: "success" as const } : { label: "Not checked", tone: "neutral" as const };
+    if (run.steps.some(step => step.status === "failed")) return { label: "Failed", tone: "stop" as const };
+    return passing(run) ? { label: "Passing", tone: "ok" as const } : { label: "Not checked", tone: "neutral" as const };
   }
+  const counts = (run: HealthRun) => `${run.steps.filter(step => step.status === "passed").length} checks passed, ${run.steps.filter(step => step.status === "skipped").length} skipped`;
 
   function applyConfiguration(value: HealthSnapshot) {
     const config = value.configuration;
@@ -99,9 +117,11 @@
     }
   }
 
-  async function save(event: SubmitEvent) {
-    event.preventDefault();
+  async function save(undo = true) {
     if (!snapshot || locked || !serverMode && !listenerUserId) return;
+    if (credentialsNeeded && (!username || !password)) return;
+    const previous = snapshot.configuration;
+    const reversible = !username && !password && !webhookUrl && !clearWebhook;
     action = "save"; error = ""; message = "";
     try {
       const value = await health.save({
@@ -111,6 +131,12 @@
         ...(!clearWebhook && webhookUrl.trim() ? { webhookUrl: webhookUrl.trim() } : {}),
       }, abort.signal);
       snapshot = value; applyConfiguration(value); message = "Health settings saved.";
+      toast.success(message, undo && reversible ? { label: "Undo", run: async () => {
+        if (locked) return;
+        enabled = previous.enabled; listenerUserId = previous.listenerUserId ?? ""; intervalMinutes = previous.intervalMinutes;
+        searchQuery = previous.searchQuery; firstByteBudgetSeconds = previous.firstByteBudgetSeconds;
+        await save(false);
+      } } : undefined);
       schedulePoll();
     } catch (cause) { if (!abort.signal.aborted) error = healthError(cause); }
     finally { action = ""; }
@@ -129,132 +155,88 @@
 
   const scheduler = createRefreshScheduler(() => load());
   onMount(() => {
-    void load(true);
+    void load(true).then(() => {
+      if (initialPanel && snapshot?.runs.length) {
+        const run = snapshot.runs.find(item => item.id === initialPanel) ?? snapshot.runs[0];
+        openDetail(run, run.steps.find(step => step.name === initialPanel));
+      }
+    });
     const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
-    return () => { unsubscribe(); scheduler.cancel(); clearTimeout(timer); abort.abort(); };
+    return () => { unsubscribe(); scheduler.cancel(); clearTimeout(timer); clearTimeout(saveTimer); abort.abort(); };
   });
 </script>
 
-{#if loading}
-  <Skeleton class="settings-card skeleton-panel" aria-label="Loading Health" aria-busy="true" />
-{:else if !snapshot}
-  <RouteError eyebrow="Health unavailable" title="Health monitoring could not be loaded." message={error} onRetry={() => load(true)} />
-{:else}
-  <article class="settings-card" aria-label="Health checks">
-    <header>
-      <div><h3>{snapshot.protocol} checks</h3><small>{serverMode ? "Read-only server and library checks" : "Provider search, playback and listener actions"}</small></div>
-      <Badge tone={running ? "accent" : snapshot.configuration.enabled ? "success" : "neutral"}>{running ? "Running" : snapshot.configuration.enabled ? "Scheduled" : "Off"}</Badge>
-    </header>
-    <div class="settings-row">
-      <div>
-        {#if serverMode}
-          <strong>{serviceReady ? "Server API key ready" : "Server API key needed"}</strong>
-          <small>{serviceReady ? "Uses the server connection saved in Setup. No test listener is needed." : "Set up a Jellyfin server API key before enabling checks."}</small>
-          {#if serviceReady && !configured}<small>Save monitoring settings, then run a check.</small>{/if}
-          {#if !serviceReady}<Button href="/#/settings/setup" variant="secondary">Open Setup</Button>{/if}
-        {:else}
-          <strong>{configured ? "Listener configured" : "Choose a dedicated test listener"}</strong>
-          <small>{configured ? "Run a check now, or enable a schedule below." : "Save a verified listener sign-in before running checks."}</small>
-        {/if}
-        <small>{snapshot.inactiveProtocol} is not exposed by this deployment.</small>
-      </div>
-      <Button disabled={locked || !canRun} onclick={() => void run()}>{action === "run" ? "Queuing…" : "Run now"}</Button>
-    </div>
-    {#if running}<p class="settings-impact" role="status">A check is running. {pollLimitReached ? "Refresh results to keep following it." : "Results update automatically."}</p>{/if}
-    {#if snapshot.configuration.enabled && snapshot.configuration.nextRunAt}<p class="settings-impact">Next check: {when(snapshot.configuration.nextRunAt)}</p>{/if}
-    {#if error}<p role="alert" class="notice-error">{error}</p>{/if}
-    <footer>
-      {#if error}<Button variant="secondary" disabled={Boolean(action)} onclick={() => void load(true)}>Reload health settings</Button>{/if}
-      <RefreshButton variant="secondary" disabled={Boolean(action)} onrefresh={() => { polls = 0; pollLimitReached = false; return load(); }} label="Refresh results" />
-    </footer>
-  </article>
-
-  {#if latest}
-    <article class="settings-card" aria-label="Latest health check">
-      <header>
-        <div><h3>Latest check</h3><small>{latest.protocol} · {latest.mode === "server-api-key" ? "Server API-key check" : "Listener check"} · {when(latest.completedAt ?? latest.startedAt)}</small></div>
-        <Badge tone={outcome(latest).tone}>{outcome(latest).label}</Badge>
-      </header>
-      {#if failure}<p class="settings-impact"><strong>{stepLabel(failure)} failed.</strong> {healthReason(failure.reason, latest.mode)} {latency(failure.latencyMilliseconds)}</p>{/if}
-      <ul class="backup-list" aria-label="Check steps">
-        {#each latest.steps as step, index (`${step.name}-${index}`)}
-          <li>
-            <span><strong>{stepLabel(step)}</strong>{#if step.status !== "skipped"}<small>{latency(step.latencyMilliseconds)}</small>{/if}{#if step.reason && step !== failure}<small>{healthReason(step.reason, latest.mode)}</small>{/if}</span>
-            <Badge tone={step.status === "passed" ? "success" : step.status === "failed" ? "danger" : "neutral"}>{step.status === "passed" ? "Passed" : step.status === "failed" ? "Failed" : latest.mode === "server-api-key" ? "Not checked" : "Skipped"}</Badge>
-          </li>
-        {/each}
-      </ul>
-      <p class="settings-impact">{alertLabels[latest.alertStatus]}</p>
-    </article>
+<div class="settings-stack">
+  <PageStatus items={latest ? [{ label: outcome(latest).label, tone: outcome(latest).tone === "stop" ? "stop" : outcome(latest).tone === "ok" ? "good" : "neutral" }, { label: counts(latest) }, { label: snapshot?.configuration.enabled ? `Every ${snapshot.configuration.intervalMinutes} min` : "Scheduled checks off" }, ...(snapshot?.configuration.nextRunAt ? [{ label: `Next ${when(snapshot.configuration.nextRunAt)}` }] : [])] : [{ label: "No checks yet" }, { label: "Set up monitoring, then run a check" }]} />
+  {#if loading}<RowsSkeleton />
+  {:else if !snapshot}<ErrorState title="Health monitoring could not be loaded" detail={error} onretry={() => load(true)} />
   {:else}
-    <div class="compact-empty"><strong>No checks yet</strong><p>{configured ? "Run a check to see each step and its timing." : "Save monitoring settings, then run a check to see each step and its timing."}</p></div>
-  {/if}
-
-  <form class="settings-card" aria-label="Health monitoring" onsubmit={(event) => void save(event)}>
-    <header><h3>Monitoring</h3></header>
-    <div class="settings-row">
-      <div><label for="health-enabled"><strong>Enable scheduled checks</strong></label><small>{serverMode ? "Checks use your saved server API key and library media." : "Checks use the selected listener and provider tracks."}</small></div>
-      <span class="settings-toggle"><Checkbox id="health-enabled" bind:checked={enabled} disabled={locked} /></span>
-    </div>
-    {#if !serverMode}<div class="settings-row">
-      <div><strong>Health listener</strong><small>A dedicated, active listener without administrator permissions.</small></div>
-      <SelectField label="Health listener" bind:value={listenerUserId} options={listenerOptions} placeholder="Choose a listener" disabled={locked || !listenerOptions.length} onchange={() => { username = ""; password = ""; }} />
-    </div>
-    {#if !listenerOptions.length}<p class="settings-impact">No eligible listeners. Sign in with a dedicated non-administrator account first.</p>{/if}
-    <div class="settings-row">
-      <div><label for="health-username"><strong>Listener username</strong></label><small>{credentialsNeeded || !snapshot.configuration.hasListenerCredential ? "Sign in as the exact selected listener to verify access." : "A sign-in is saved. Leave both fields blank to keep it for this listener."}</small></div>
-      <input id="health-username" autocomplete="username" bind:value={username} required={credentialsNeeded || Boolean(password)} disabled={locked} />
-    </div>
-    <div class="settings-row">
-      <div><label for="health-password"><strong>Listener password</strong></label><small>Used to verify and save encrypted listener access.</small></div>
-      <input id="health-password" type="password" autocomplete="current-password" bind:value={password} required={credentialsNeeded || Boolean(username)} disabled={locked} />
-    </div>{/if}
-    <div class="settings-row">
-      <div><label for="health-interval"><strong>Check interval (minutes)</strong></label><small>Between 1 and 1,440 minutes.</small></div>
-      <input id="health-interval" type="number" min="1" max="1440" required bind:value={intervalMinutes} disabled={locked} />
-    </div>
-    <div class="settings-row">
-      <div><label for="health-query"><strong>Search query</strong></label><small>{serverMode ? "A library song to look for. Another library sample can be used if unavailable." : "The provider track to find for each check."}</small></div>
-      <input id="health-query" maxlength="200" required bind:value={searchQuery} disabled={locked} />
-    </div>
-    <div class="settings-row">
-      <div><label for="health-budget"><strong>First audio byte budget (seconds)</strong></label><small>Between 1 and 60 seconds.</small></div>
-      <input id="health-budget" type="number" min="1" max="60" required bind:value={firstByteBudgetSeconds} disabled={locked} />
-    </div>
-    <div class="settings-row">
-      <div><label for="health-webhook"><strong>Webhook URL</strong></label><small>{snapshot.configuration.hasWebhook ? "A webhook is saved. Leave blank to keep it." : "Optional. Receive failure and recovery alerts."}</small></div>
-      <input id="health-webhook" type="password" autocomplete="new-password" bind:value={webhookUrl} disabled={locked || clearWebhook} />
-    </div>
-    {#if snapshot.configuration.hasWebhook}
-      <div class="settings-row">
-        <div><label for="health-clear-webhook"><strong>Remove saved webhook</strong></label><small>Save to stop sending webhook alerts.</small></div>
-        <span class="settings-toggle"><Checkbox id="health-clear-webhook" bind:checked={clearWebhook} disabled={locked} /></span>
+    <div class="settings-toolbar"><span class="settings-muted">{serverMode ? serviceReady ? "Server API key ready" : "Server API key needed" : configured ? "Listener configured" : "Choose a dedicated test listener"}</span><div class="health-actions"><Button variant="text" disabled={Boolean(action)} onclick={() => { polls = 0; pollLimitReached = false; void load(); }}>Refresh results</Button><Button disabled={locked || !canRun} onclick={() => void run()}>{action === "run" ? "Queuing…" : "Run now"}</Button></div></div>
+    {#if !serviceReady && serverMode}<Button href="#/settings/setup" variant="outline">Open Setup</Button>{/if}
+    {#if running}<p role="status">A check is running. {pollLimitReached ? "Refresh results to keep following it." : "Results update automatically."}</p>{/if}
+    {#if error}<ErrorState title="Health could not finish that request" detail={error} onretry={() => load(true)} />{/if}
+    <section class="settings-card check-strip-card" aria-label="Recent checks"><header><h3>Last 30 checks</h3></header>
+      <div class="check-strip" role="group" aria-label="Last 30 checks">
+        {#each Array(Math.max(0, 30 - snapshot.runs.length)).fill(0) as _}<span class="check-slot" title="No check recorded"></span>{/each}
+        {#each snapshot.runs.slice(0, 30).toReversed() as run (run.id)}<button type="button" class="check-slot" data-tone={outcome(run).tone} aria-label={`${outcome(run).label}, ${when(run.completedAt ?? run.startedAt)}`} title={`${outcome(run).label} · ${when(run.completedAt ?? run.startedAt)}`} onclick={() => openDetail(run)}></button>{/each}
       </div>
-    {/if}
-    {#if serverMode}
-      <p class="settings-impact">Read-only checks leave listening history and saved music unchanged. App sign-in, favorites and playlist actions remain manual checks. Source diagnostics are in Integrations → Services.</p>
-    {:else}
-      <p class="settings-impact">Saving permanently marks this listener as synthetic. Its provider playback is excluded from listening history, recommendations and external scrobbles, even after monitoring is disabled or another listener is selected.</p>
-    {/if}
-    {#if message}<p class="settings-impact" role="status">{message}</p>{/if}
-    <footer><Button type="submit" disabled={locked || !serverMode && !listenerUserId}>{action === "save" ? "Saving…" : "Save health settings"}</Button></footer>
-  </form>
-
-  {#if snapshot.runs.length > 1}
-    <section class="settings-card" aria-label="Check history">
-      <header><h3>Recent checks</h3></header>
-      <ul class="backup-list">
-        {#each snapshot.runs.slice(1) as run (run.id)}
-          {@const failed = run.steps.find(step => step.status === "failed")}
-          <li>
-            <span>
-              <strong>{when(run.completedAt ?? run.startedAt)}</strong><small>{run.protocol} · {run.mode === "server-api-key" ? "Server API-key check" : "Listener check"} · {alertLabels[run.alertStatus]}</small>
-              {#if failed}<small>{stepLabel(failed)}: {healthReason(failed.reason, run.mode)} {latency(failed.latencyMilliseconds)}</small>{/if}
-            </span>
-            <Badge tone={outcome(run).tone}>{outcome(run).label}</Badge>
-          </li>
-        {/each}
-      </ul>
+      <div class="strip-axis"><span>{snapshot.runs.length ? when(snapshot.runs[Math.min(29, snapshot.runs.length - 1)].startedAt) : "No checks recorded"}</span><span>Now</span></div>
     </section>
+    {#if latest}
+      <section class="settings-card" aria-label="Latest health check"><header><div><h3>Latest check</h3><small>{when(latest.completedAt ?? latest.startedAt)} · {latest.protocol}</small></div><StatePill tone={outcome(latest).tone} text={outcome(latest).label} /></header>
+        {#if failure}<p class="settings-impact"><strong>{stepLabel(failure)} failed.</strong> {healthReason(failure.reason, latest.mode)} {latency(failure.latencyMilliseconds)}</p>{/if}
+        <table class="settings-table" aria-label="Check steps"><thead><tr><th>Check</th><th>Time</th><th>Result</th></tr></thead><tbody>
+          {#each latest.steps as step, index (`${step.name}-${index}`)}<tr><td><button type="button" class="row-button" aria-label={`Open ${stepLabel(step)}`} onclick={() => openDetail(latest, step)}>{stepLabel(step)}</button></td><td class="number">{latency(step.latencyMilliseconds) || "—"}</td><td><StatePill tone={step.status === "passed" ? "ok" : step.status === "failed" ? "stop" : "neutral"} text={step.status === "passed" ? "Passed" : step.status === "failed" ? "Failed" : "Skipped"} />{#if step.reason}<small>{healthReason(step.reason, latest.mode)}</small>{/if}</td></tr>{/each}
+        </tbody></table><p class="settings-impact">{alertLabels[latest.alertStatus]}</p>
+      </section>
+    {:else}<EmptyState title="No checks yet" description="Save monitoring settings, then run a check to see each step and its timing.">{#snippet icon()}<Activity size={24} />{/snippet}</EmptyState>{/if}
+
+    <form bind:this={form} class="settings-card" aria-label="Health monitoring" onchange={scheduleSave} onsubmit={event => { event.preventDefault(); scheduleSave(); }}>
+      <header><h3>Monitoring</h3></header>
+      <div class="settings-row"><div><label for="health-enabled"><strong>Enable scheduled checks</strong></label><small>{serverMode ? "Checks use your saved server API key and library media." : "Checks use the selected listener and source tracks."}</small></div><span class="settings-toggle"><Switch id="health-enabled" bind:checked={enabled} disabled={locked} /></span></div>
+      {#if !serverMode}
+        <div class="settings-row"><div><strong>Health listener</strong><small>A dedicated listener without administrator permissions.</small></div><SelectField label="Health listener" bind:value={listenerUserId} options={listenerOptions} placeholder="Choose a listener" disabled={locked || !listenerOptions.length} onchange={() => { username = ""; password = ""; scheduleSave(); }} /></div>
+        {#if !listenerOptions.length}<p class="settings-impact">No eligible listeners. Sign in with a dedicated non-administrator account first.</p>{/if}
+        <label class="settings-row"><div><strong>Listener username</strong><small>{credentialsNeeded ? "Verify the selected listener's sign-in." : "A sign-in is saved. Leave both fields blank to keep it."}</small></div><input aria-label="Listener username" autocomplete="username" bind:value={username} required={credentialsNeeded || Boolean(password)} disabled={locked} /></label>
+        <label class="settings-row"><div><strong>Listener password</strong></div><input aria-label="Listener password" type="password" autocomplete="current-password" bind:value={password} required={credentialsNeeded || Boolean(username)} disabled={locked} /></label>
+      {/if}
+      <label class="settings-row"><div><strong>Check interval (minutes)</strong><small>Between 1 and 1,440 minutes.</small></div><input aria-label="Check interval (minutes)" type="number" min="1" max="1440" required bind:value={intervalMinutes} disabled={locked} /></label>
+      <details class="settings-fold"><summary>Advanced: sample song, timing and webhook</summary>
+        <label class="settings-row"><div><strong>Search query</strong><small>{serverMode ? "A library song to look for. Another sample can be used if unavailable." : "The source track to find for each check."}</small></div><input aria-label="Search query" maxlength="200" required bind:value={searchQuery} disabled={locked} /></label>
+        <label class="settings-row"><div><strong>First audio byte budget (seconds)</strong><small>Between 1 and 60 seconds.</small></div><input aria-label="First audio byte budget (seconds)" type="number" min="1" max="60" required bind:value={firstByteBudgetSeconds} disabled={locked} /></label>
+        <label class="settings-row"><div><strong>Webhook URL</strong><small>{snapshot.configuration.hasWebhook ? "A webhook is saved. Leave blank to keep it." : "Optional. Receive failure and recovery alerts."}</small></div><input aria-label="Webhook URL" type="password" autocomplete="new-password" bind:value={webhookUrl} disabled={locked || clearWebhook} /></label>
+        {#if snapshot.configuration.hasWebhook}<label class="settings-row"><div><strong>Remove saved webhook</strong></div><span class="settings-toggle"><Switch aria-label="Remove saved webhook" bind:checked={clearWebhook} disabled={locked} /></span></label>{/if}
+      </details>
+      <p class="settings-impact">{serverMode ? "Read-only checks leave listening history and saved music unchanged. App sign-in, favorites and playlist actions are checked separately. Source diagnostics are in Sources." : "Saving permanently marks this listener as a test listener. Its playback is excluded from listening history, recommendations and external scrobbles, even after monitoring is disabled."}</p>
+      {#if message}<p class="settings-impact" role="status">{message}</p>{/if}
+    </form>
+    {#if snapshot.runs.length > 1}
+      <FilterSegments value={filter} storageKey="allstarr.settings.health.filter" label="Filter checks" onchange={value => filter = value} options={[{ id: "all", label: "All", count: snapshot.runs.length }, { id: "passing", label: "Passing", count: snapshot.runs.filter(passing).length }, { id: "failed", label: "Failed", count: snapshot.runs.filter(run => run.steps.some(step => step.status === "failed")).length }]} />
+      <section class="settings-card" aria-label="Check history">{#each filteredRuns as run (run.id)}<ItemRow title={when(run.completedAt ?? run.startedAt)} subtitle={`${run.mode === "server-api-key" ? "Server check" : "Listener check"} · ${counts(run)}`} onclick={() => openDetail(run)}>{#snippet pill()}<StatePill tone={outcome(run).tone} text={outcome(run).label} />{/snippet}</ItemRow>{:else}<EmptyState title="No checks match this filter" />{/each}</section>
+    {/if}
   {/if}
+</div>
+
+{#if currentRun}
+  {#await import("./patterns/SidePanel.svelte") then { default: SidePanel }}
+    <SidePanel bind:open={panelOpen} title={currentStep ? stepLabel(currentStep) : `${currentRun.protocol} check`} description={when(currentRun.completedAt ?? currentRun.startedAt)} navigationLabel="check" onPrevious={snapshot && selectedRunIndex > 0 ? () => openDetail(snapshot!.runs[selectedRunIndex - 1]) : undefined} onNext={snapshot && selectedRunIndex >= 0 && selectedRunIndex < snapshot.runs.length - 1 ? () => openDetail(snapshot!.runs[selectedRunIndex + 1]) : undefined}>
+      <div class="settings-stack"><PageStatus items={[{ label: outcome(currentRun).label }, { label: counts(currentRun) }]} />
+        {#if currentStep}<section class="settings-card"><div class="settings-row"><div><strong>{stepLabel(currentStep)}</strong><small>{healthReason(currentStep.reason, currentRun.mode) || (currentStep.status === "passed" ? "This check passed." : "This check did not complete.")}</small></div><StatePill tone={currentStep.status === "passed" ? "ok" : currentStep.status === "failed" ? "stop" : "neutral"} text={currentStep.status === "passed" ? "Passed" : currentStep.status === "failed" ? "Failed" : "Skipped"} /></div><p class="settings-impact">{latency(currentStep.latencyMilliseconds) || "No timing recorded"}</p></section>{/if}
+        <section class="settings-card"><header><h3>Check steps</h3></header>{#each currentRun.steps as step}<ItemRow title={stepLabel(step)} subtitle={healthReason(step.reason, currentRun.mode) || latency(step.latencyMilliseconds)} onclick={() => selectedStep = step.name}>{#snippet pill()}<StatePill tone={step.status === "passed" ? "ok" : step.status === "failed" ? "stop" : "neutral"} text={step.status === "skipped" ? "Skipped" : step.status === "passed" ? "Passed" : "Failed"} />{/snippet}</ItemRow>{/each}</section>
+        <p class="settings-muted">{alertLabels[currentRun.alertStatus]}</p>
+      </div>
+    </SidePanel>
+  {/await}
 {/if}
+<style>
+  .health-actions { display: flex; align-items: center; gap: var(--space-2); }
+  .check-strip { display: flex; gap: 3px; padding: var(--space-1) var(--space-4); }
+  .check-slot { flex: 1; min-width: 0; height: 24px; border: 0; border-radius: var(--radius-sm); padding: 0; background: var(--color-panel-raised); }
+  button.check-slot { cursor: pointer; }
+  .check-slot[data-tone="ok"] { background: var(--success); }
+  .check-slot[data-tone="stop"] { background: var(--danger); }
+  .check-slot[data-tone="neutral"] { background: var(--color-ink-muted); }
+  .strip-axis { display: flex; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-4) var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .settings-table td:last-child { width: 45%; }
+  @media (max-width: 650px) { .check-strip { gap: var(--space-1); overflow-x: auto; } .check-slot { min-width: 44px; height: 44px; flex: 0 0 44px; } span.check-slot { display: none; } }
+</style>

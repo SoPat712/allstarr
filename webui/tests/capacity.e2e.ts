@@ -31,9 +31,9 @@ async function mockCapacity(page: Page, administrator = true) {
       if (route.request().method() === "POST") {
         const values = route.request().postDataJSON().updates as Record<string, string>;
         writes.push(values);
-        config.cache.audioMaximumGiB = Number(values.CACHE_AUDIO_MAXIMUM_GIB);
-        config.playback.providerStreamsPerListener = Number(values.PROVIDER_STREAMS_PER_LISTENER);
-        config.media.maximumConcurrentConversions = Number(values.MEDIA_MAXIMUM_CONCURRENT_CONVERSIONS);
+        if (values.CACHE_AUDIO_MAXIMUM_GIB) config.cache.audioMaximumGiB = Number(values.CACHE_AUDIO_MAXIMUM_GIB);
+        if (values.PROVIDER_STREAMS_PER_LISTENER) config.playback.providerStreamsPerListener = Number(values.PROVIDER_STREAMS_PER_LISTENER);
+        if (values.MEDIA_MAXIMUM_CONCURRENT_CONVERSIONS) config.media.maximumConcurrentConversions = Number(values.MEDIA_MAXIMUM_CONCURRENT_CONVERSIONS);
         return respond(route, { message: "Saved", updatedKeys: Object.keys(values), requiresRestart: false });
       }
       configReads++;
@@ -69,28 +69,21 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.goto("/#/settings/storage");
     const form = page.getByRole("form", { name: "Audio limits settings", exact: true });
     await expect(form).toBeVisible();
-    const quota = form.locator('[name="CACHE_AUDIO_MAXIMUM_GIB"]');
+    const quota = page.locator('[name="CACHE_AUDIO_MAXIMUM_GIB"]');
     const streams = form.locator('[name="PROVIDER_STREAMS_PER_LISTENER"]');
     const conversions = form.locator('[name="MEDIA_MAXIMUM_CONCURRENT_CONVERSIONS"]');
     await expect(quota).toHaveValue("2");
     await expect(streams).toHaveValue("6");
     await expect(conversions).toHaveValue("2");
     await expect(quota).toHaveAccessibleName(/Maximum audio cache/);
-    const save = form.getByRole("button", { name: "Save changes to Audio limits", exact: true });
-    await expect(save).toBeDisabled();
-    await quota.fill("0");
-    await save.click();
+    await expect(form.getByRole("button", { name: /Save changes/ })).toHaveCount(0);
+    await quota.fill("0"); await quota.blur();
     expect(await quota.evaluate((input: HTMLInputElement) => input.validity.rangeUnderflow)).toBe(true);
     expect(mock.writes).toHaveLength(0);
-    await quota.fill("4");
-    await streams.fill("8");
-    await conversions.fill("3");
-    await save.focus();
-    await page.keyboard.press("Enter");
-    await expect.poll(() => mock.writes.length).toBe(1);
-    expect(mock.writes[0]).toEqual({ CACHE_AUDIO_MAXIMUM_GIB: "4", PROVIDER_STREAMS_PER_LISTENER: "8", MEDIA_MAXIMUM_CONCURRENT_CONVERSIONS: "3" });
-    await expect(page.getByText("Audio limits settings saved.", { exact: true })).toBeVisible();
-    await expect(save).toBeDisabled();
+    for (const [input, value] of [[quota, "4"], [streams, "8"], [conversions, "3"]] as const) {
+      await input.fill(value); await input.blur(); await expect(input).toBeEnabled();
+    }
+    await expect.poll(() => mock.writes).toEqual([{ CACHE_AUDIO_MAXIMUM_GIB: "4" }, { PROVIDER_STREAMS_PER_LISTENER: "8" }, { MEDIA_MAXIMUM_CONCURRENT_CONVERSIONS: "3" }]);
     await expect(quota).toHaveValue("4");
     await expect(streams).toHaveValue("8");
     await expect(conversions).toHaveValue("3");

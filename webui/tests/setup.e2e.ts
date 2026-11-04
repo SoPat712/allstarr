@@ -154,7 +154,7 @@ test("Guide revision conflict preserves the step and supports reload", async ({ 
   await page.goto("#/settings/setup");
   await page.getByRole("button", { name: "Reviewed, continue" }).click();
   await expect(page.getByRole("alert")).toContainText("another tab");
-  await page.getByRole("button", { name: "Reload guide" }).click();
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Your media server", exact: true })).toBeVisible();
 });
@@ -188,11 +188,15 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     const access = page.getByRole("article", { name: "Single sign-on" });
     await expect(access.getByLabel("Client secret", { exact: true })).toHaveValue("");
     await expect(access.getByText(/A secret is saved/)).toBeVisible();
-    await access.getByRole("button", { name: "Save and restart" }).focus(); await page.keyboard.press("Enter");
+    await access.getByLabel("Sign-in button name", { exact: true }).fill("New sign-in");
+    await access.getByLabel("Sign-in button name", { exact: true }).blur();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Restart and apply", exact: true }).click();
     await expect(access.getByRole("alert")).toContainText("Reload and try again"); expect(attempted).toBe(true);
-    await access.getByRole("button", { name: "Reload access settings" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Cancel", exact: true }).click();
+    await access.getByRole("button", { name: "Try again", exact: true }).click();
     await expect(access.getByRole("alert")).toHaveCount(0);
     await page.goto("#/settings/storage");
+    await page.getByText("Advanced: activity retention, cache durations, saved-file verification", { exact: true }).click();
     const files = page.getByRole("article", { name: "Saved-file verification" });
     await expect(files.getByRole("status")).toContainText("need review");
     await files.getByRole("button", { name: "Verify saved files" }).click();

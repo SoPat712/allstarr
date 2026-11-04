@@ -37,42 +37,58 @@ async function mockListeners(page: Page, administrator = true) {
     }
     return json(route, {});
   });
-  return { writes, conflict() { conflict = true; }, unavailable() { unavailable = true; }, get gets() { return gets; } };
+  return { writes, conflict() { conflict = true; }, unavailable(value = true) { unavailable = value; }, get gets() { return gets; } };
 }
 
 test("administrator toggles lock and reloads a revision conflict", async ({ page }) => {
   const fixture = await mockListeners(page);
   await page.goto("/#/settings/listeners");
-  const sam = page.getByRole("region", { name: "Sam", exact: true });
-  const toggle = sam.getByRole("checkbox", { name: "Lock clean only", exact: true });
+  await page.getByRole("button", { name: "Open Sam", exact: true }).click();
+  const sam = page.getByRole("dialog", { name: "Sam", exact: true });
+  const toggle = sam.getByRole("switch", { name: "Lock clean only", exact: true });
   await toggle.click();
   await expect(toggle).toBeChecked();
+  await expect(page.getByRole("status").filter({ hasText: "Listener settings saved." })).toBeVisible();
   expect(fixture.writes).toEqual([{ locked: true, expectedRevision: "first" }]);
   fixture.conflict();
   const before = fixture.gets;
   await toggle.click();
   await expect(page.getByRole("status").filter({ hasText: "Changed elsewhere — reloaded." })).toBeVisible();
   await expect(toggle).toBeChecked();
+  await expect(page.getByRole("switch", { name: "Lock clean only for Sam", exact: true })).toBeChecked();
   expect(fixture.writes[1]).toEqual({ locked: false, expectedRevision: "saved" });
   expect(fixture.gets).toBeGreaterThan(before);
 });
 
-test("failed lock save preserves the saved choice", async ({ page }) => {
+for (const surface of ["table", "panel"]) test(`failed lock save preserves the saved choice in the ${surface}`, async ({ page }) => {
   const fixture = await mockListeners(page);
   await page.goto("/#/settings/listeners");
-  const toggle = page.getByRole("region", { name: "Sam", exact: true }).getByRole("checkbox", { name: "Lock clean only", exact: true });
+  const tableToggle = page.getByRole("switch", { name: "Lock clean only for Sam", exact: true });
+  await expect(tableToggle).toBeEnabled();
+  if (surface === "panel") await page.getByRole("button", { name: "Open Sam", exact: true }).click();
+  const toggle = surface === "panel"
+    ? page.getByRole("dialog", { name: "Sam", exact: true }).getByRole("switch", { name: "Lock clean only", exact: true })
+    : tableToggle;
   await expect(toggle).toBeEnabled();
   fixture.unavailable();
   await toggle.click();
   await expect(page.getByRole("alert").filter({ hasText: "Listener settings could not be saved." })).toBeVisible();
   await expect(toggle).not.toBeChecked();
+  await expect(tableToggle).not.toBeChecked();
+  await expect(toggle).toBeEnabled();
+  fixture.unavailable(false);
+  await toggle.click();
+  await expect(page.getByRole("status").filter({ hasText: "Listener settings saved." })).toBeVisible();
+  await expect(toggle).toBeChecked();
+  await expect(tableToggle).toBeChecked();
+  expect(fixture.writes).toEqual(Array(2).fill({ locked: true, expectedRevision: "first" }));
 });
 
 test("listeners page is restricted to administrators", async ({ page }) => {
   await mockListeners(page, false);
   await page.goto("/#/settings/listeners");
   await expect(page.getByRole("heading", { name: "This workspace is for administrators." })).toBeVisible();
-  await expect(page.getByRole("checkbox", { name: "Lock clean only" })).toHaveCount(0);
+  await expect(page.getByRole("switch", { name: "Lock clean only" })).toHaveCount(0);
 });
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
@@ -81,13 +97,19 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     await mockListeners(page);
     await page.goto("/#/settings/listeners");
-    const sam = page.getByRole("region", { name: "Sam", exact: true });
-    const pat = page.getByRole("region", { name: "Pat", exact: true });
-    await sam.getByText("Playlist copies", { exact: true }).click();
-    await pat.getByText("Playlist copies", { exact: true }).click();
-    await expect(sam.getByText("Sam's road trip → Road trip", { exact: true })).toBeVisible();
-    await expect(pat.getByText("No personal copies", { exact: true })).toBeVisible();
-    await expect(sam.getByText("This listener can't turn it off.", { exact: true })).toBeVisible();
+    for (const name of ["Sam", "Pat"]) {
+      const box = await page.getByRole("button", { name: `Open ${name}`, exact: true }).boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.width).toBeGreaterThanOrEqual(44);
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+    }
+    await page.getByRole("button", { name: "Open Sam", exact: true }).click();
+    const panel = page.getByRole("dialog", { name: "Sam", exact: true });
+    await expect(panel).toContainText("Sam's road trip");
+    await expect(panel).toContainText("From Road trip");
+    await expect(panel).toContainText("This listener can't turn explicit songs back on.");
+    await panel.getByRole("button", { name: "Next listener", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Pat", exact: true })).toContainText("No personal copies");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     if (width === 390) await expectContainedMobileGeometry(page);
     await page.screenshot({ path: `test-results/shots-uisettings/listeners-${width}-${theme}.png`, fullPage: true });

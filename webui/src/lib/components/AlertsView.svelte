@@ -1,12 +1,20 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { X } from "@lucide/svelte";
+  import { X, Bell, CircleCheck, MoreHorizontal } from "@lucide/svelte";
+  import { Switch } from "$lib/components/ui/switch";
+  import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import GroupedRow from "$lib/components/patterns/GroupedRow.svelte";
+  import ItemRow from "$lib/components/patterns/ItemRow.svelte";
+  import EmptyState from "$lib/components/patterns/EmptyState.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
   import { problemAlerts, type AlertSettings, type AlertChannel, type AlertChannelKind, type AlertIncident } from "$lib/api";
   import { alertDate, alertDeliveryLabel, destinationHost, parsePermittedHosts, thresholdDraft, thresholdsFromDraft, type AlertThresholdDraft } from "$lib/alerts";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { Checkbox } from "$lib/components/ui/checkbox";
   import { Dialog } from "$lib/components/ui/dialog";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
@@ -36,6 +44,11 @@
   const thresholds = $derived(thresholdsFromDraft(draft));
   const permittedHosts = $derived(parsePermittedHosts(hosts));
   const openIncidents = $derived(incidents.filter(incident => incident.state === "open"));
+  const incidentGroups = $derived.by(() => {
+    const groups = new Map<string, AlertIncident[]>();
+    for (const incident of openIncidents) { const key = `${incident.kind}:${incident.message}`; groups.set(key, [...(groups.get(key) ?? []), incident]); }
+    return [...groups.values()];
+  });
   const validChannel = $derived(Boolean(name.trim() && name.trim().length <= 80 && !/[\x00-\x1f\x7f]/.test(name) &&
     (destination.trim() ? destinationHost(destination) : editing?.hasDestination)));
   const message = (cause: unknown, fallback: string) => cause instanceof Error ? cause.message : fallback;
@@ -75,6 +88,7 @@
   }
   async function saveChannel() {
     if (action || !validChannel) return;
+    const previous = editing, reversible = Boolean(editing && !destination.trim() && kind === editing.kind);
     action = "channel"; editorError = "";
     try {
       await loading;
@@ -83,11 +97,19 @@
         enabled, household, expectedRevision: editing?.revision ?? 0, ...(destination.trim() ? { destination: destination.trim() } : {}) });
       if (host) hostHints = { ...hostHints, [channel.id]: { host, revision: channel.revision } };
       destination = ""; open = false;
-      toast.success("Alert channel saved."); await load();
+      toast.success("Alert channel saved.", reversible && previous ? { label: "Undo", run: async () => {
+        if (action) return;
+        const current = data?.channels.find(item => item.id === channel.id);
+        if (!current) return;
+        action = current.id;
+        try { await problemAlerts.saveChannel(current.id, { displayName: previous.displayName, kind: previous.kind, enabled: previous.enabled, household: previous.household, expectedRevision: current.revision }); await load(); }
+        catch (cause) { toast.error(message(cause, "The channel change could not be undone. Try again.")); }
+        finally { action = ""; }
+      } } : undefined); await load();
     } catch (cause) { editorError = message(cause, "The channel could not be saved. Reload alerts and retry."); }
     finally { action = ""; }
   }
-  async function toggle(channel: AlertChannel, value: boolean) {
+  async function toggle(channel: AlertChannel, value: boolean, undo = true) {
     if (action || value === channel.enabled) return;
     action = channel.id;
     try {
@@ -97,7 +119,7 @@
       const host = savedHost(channel);
       if (host) hostHints = { ...hostHints, [saved.id]: { host, revision: saved.revision } };
       if (data) data = { ...data, channels: data.channels.map(item => item.id === saved.id ? saved : item) };
-      toast.success(`Alert channel turned ${saved.enabled ? "on" : "off"}.`);
+      toast.success(`Alert channel turned ${saved.enabled ? "on" : "off"}.`, undo ? { label: "Undo", run: async () => { const current = data?.channels.find(item => item.id === saved.id); if (current) await toggle(current, channel.enabled, false); } } : undefined);
     } catch (cause) {
       if (data) data = { ...data, channels: data.channels.map(item => item.id === channel.id ? { ...channel } : item) };
       toast.error(message(cause, "The channel could not be changed. Refresh alerts and retry."));
@@ -114,13 +136,17 @@
     } catch (cause) { toast.error(message(cause, "The test could not be queued. Try again.")); }
     finally { action = ""; }
   }
-  async function saveConfiguration(section: "thresholds" | "hosts") {
+  async function saveConfiguration(section: "thresholds" | "hosts", undo = true) {
     if (action || changed || !administrator || (section === "thresholds" ? !thresholds : !permittedHosts)) return;
+    const previous = section === "thresholds" ? thresholdSaved : hostsSaved;
     action = section; error = "";
     try {
       await loading;
       const next = section === "thresholds" ? await problemAlerts.thresholds(thresholds!, revision) : await problemAlerts.destinations(permittedHosts!, revision);
-      apply(next, section, true); toast.success(section === "thresholds" ? "Disk alert thresholds saved." : "Allowed destination hosts saved.");
+      apply(next, section, true); toast.success(section === "thresholds" ? "Disk alert thresholds saved." : "Allowed destination hosts saved.", undo ? { label: "Undo", run: async () => {
+        if (section === "thresholds") draft = JSON.parse(previous); else hosts = previous;
+        await saveConfiguration(section, false);
+      } } : undefined);
     } catch (cause) { error = message(cause, "Alert settings could not be saved. Reload alerts and retry."); }
     finally { action = ""; }
   }
@@ -131,129 +157,91 @@
 </script>
 
 <div class="alerts-settings">
-  <article class="settings-card" role="region" aria-label="Open problems">
-    <header><div><h3>Open problems</h3><small>Problems that need attention now.</small></div>
-      <RefreshButton variant="secondary" label="Refresh alerts" disabled={Boolean(action)} onrefresh={() => load()} /></header>
-    {#if error}<p class="notice-error alert-notice" role="alert">{error}</p>{/if}
-    {#if !data && !error}<p class="alert-empty" role="status">Loading alert settings…</p>
-    {:else if data && !openIncidents.length}<p class="alert-empty">No open problems.</p>
-    {:else if openIncidents.length}
-      <ul class="alert-list">
-        {#each openIncidents as incident (incident.id)}
-          <li><div><strong>{incident.message}</strong><small>{incident.action}</small>
-            <small>{incident.severity === "critical" ? "Critical" : "Warning"} · Started <time datetime={incident.openedAt ?? undefined}>{alertDate(incident.openedAt)}</time></small></div></li>
-        {/each}
-      </ul>
-    {/if}
-  </article>
-
+  <PageStatus items={[{ label: `${openIncidents.length} open problems`, tone: openIncidents.length ? "warn" : "good" }, { label: data?.channels.length ? `${data.channels.length} alert channels` : "No alert channels yet" }]} />
+  {#if error}<ErrorState title="Alerts could not be loaded" detail={error} onretry={() => load()} />{/if}
+  {#if !data && !error}<RowsSkeleton count={3} />{/if}
+  <section class="settings-stack" aria-label="Open problems">
+    <div class="settings-toolbar"><h3>Open problems</h3><RefreshButton variant="ghost" label="Refresh alerts" disabled={Boolean(action)} onrefresh={() => load()} /></div>
+    {#if data && !openIncidents.length}<section class="settings-card"><EmptyState title="No open problems" description="Allstarr will show problems here when something needs attention.">{#snippet icon()}<CircleCheck size={24} />{/snippet}</EmptyState></section>{/if}
+    {#each incidentGroups as group (group[0].id)}
+      <GroupedRow count={group.length} summary={group[0].message}>
+        {#snippet action()}<Button variant="outline" size="sm" href={group[0].kind.includes("source") ? "#/sources" : "#/settings/health"}>{group[0].kind.includes("source") ? "Review sources" : "Review health"}</Button>{/snippet}
+        {#snippet members()}{#each group as incident (incident.id)}<ItemRow title={incident.resource || incident.message} subtitle={`${incident.action} · Started ${alertDate(incident.openedAt)}`} />{/each}{/snippet}
+      </GroupedRow>
+    {/each}
+  </section>
   {#if data}
-    {#each administrator ? [false, true] : [false] as forHousehold}
-      {@const channels = data.channels.filter(channel => channel.household === forHousehold)}
-      <article class="settings-card" role="region" aria-label={forHousehold ? "Household alerts" : "Your alert channels"}>
-        <header><div><h3>{forHousehold ? "Household alerts" : "Your alert channels"}</h3>
-          <small>{forHousehold ? "Notify you about household problems, including disk space and health checks." : "Notify you when your source connections need attention."}</small></div></header>
-        {#if channels.length}
-          <ul class="alert-list">
+    <div class="channel-grid">
+      {#each administrator ? [false, true] : [false] as forHousehold}
+        {@const channels = data.channels.filter(channel => channel.household === forHousehold)}
+        <article class="settings-card" role="region" aria-label={forHousehold ? "Household alerts" : "Your alert channels"}>
+          {#if channels.length}
+            <header><h3>{forHousehold ? "Household alerts" : "Your alert channels"}</h3><Button variant="text" disabled={Boolean(action)} aria-label={forHousehold ? "Add household channel" : "Add your channel"} onclick={() => edit(null, forHousehold)}>Add channel</Button></header>
             {#each channels as channel (channel.id)}
               {@const delivery = lastDelivery(channel.id)}
-              <li>
-                <div><strong>{channel.displayName}</strong><small>{kindLabel(channel.kind)} · {channel.hasDestination ? `Saved${savedHost(channel) ? ` · ${savedHost(channel)}` : ""}` : "No destination saved"}</small>
-                  <small>Last delivery: {alertDeliveryLabel(delivery)}{delivery ? ` · ${alertDate(delivery.createdAt)}` : ""}</small>
-                  {#if delivery?.safeError}<small>{delivery.safeError}</small>{/if}
-                  {#if delivery?.status === "retrying" && delivery.nextAttemptAt}<small>Next attempt: {alertDate(delivery.nextAttemptAt)}</small>{/if}
+              <div class="channel-row"><div><strong>{channel.displayName}</strong><small>{kindLabel(channel.kind)} · {channel.hasDestination ? `Saved${savedHost(channel) ? ` · ${savedHost(channel)}` : ""}` : "No destination saved"}</small><small>Last delivery: {alertDeliveryLabel(delivery)}{delivery ? ` · ${alertDate(delivery.createdAt)}` : ""}</small>{#if delivery?.safeError}<small>{delivery.safeError}</small>{/if}{#if delivery?.status === "retrying" && delivery.nextAttemptAt}<small>Next attempt: {alertDate(delivery.nextAttemptAt)}</small>{/if}</div>
+                <div class="channel-actions"><Switch aria-label={`Enable ${channel.displayName}`} checked={channel.enabled} disabled={Boolean(action)} onchange={event => toggle(channel, event.currentTarget.checked)} /><Button variant="outline" size="sm" disabled={Boolean(action)} aria-label={`Edit ${channel.displayName}`} onclick={() => edit(channel, forHousehold)}>Edit</Button>
+                  <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label={`More actions for ${channel.displayName}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="menu-content"><DropdownMenu.Item class="menu-item" disabled={Boolean(action) || !channel.enabled} onSelect={() => testChannel(channel)}>Send test to {channel.displayName}</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
                 </div>
-                <div class="alert-actions">
-                  <label class="alert-enabled"><span class="settings-toggle"><Checkbox aria-label={`Enable ${channel.displayName}`} disabled={Boolean(action)}
-                    bind:checked={() => channel.enabled, (value) => void toggle(channel, value)} /></span><span>{channel.enabled ? "On" : "Off"}</span></label>
-                  <Button variant="secondary" disabled={Boolean(action)} aria-label={`Edit ${channel.displayName}`} onclick={() => edit(channel, forHousehold)}>Edit</Button>
-                  <Button variant="secondary" disabled={Boolean(action) || !channel.enabled} aria-label={`Send test to ${channel.displayName}`} onclick={() => void testChannel(channel)}>Send test</Button>
-                </div>
-              </li>
+              </div>
             {/each}
-          </ul>
-        {:else}<p class="alert-empty">No {forHousehold ? "household " : ""}channels yet. Add one to receive notifications.</p>{/if}
-        <footer class="alert-footer"><Button variant="secondary" disabled={Boolean(action)} aria-label={forHousehold ? "Add household channel" : "Add your channel"} onclick={() => edit(null, forHousehold)}>Add channel</Button></footer>
-      </article>
-    {/each}
+          {:else}
+            <EmptyState title={forHousehold ? "Household alerts" : "Your alert channels"} description={forHousehold ? "Disk space and health checks. Nothing set up yet." : "When your own source connections need attention. Nothing set up yet."}>
+              {#snippet icon()}<Bell size={24} />{/snippet}
+              {#snippet action()}<Button variant={forHousehold ? "outline" : "default"} disabled={Boolean(action)} aria-label={forHousehold ? "Add household channel" : "Add your channel"} onclick={() => edit(null, forHousehold)}>Add channel</Button>{/snippet}
+            </EmptyState>
+          {/if}
+        </article>
+      {/each}
+    </div>
     {#if administrator && data.thresholds}
-      {#if changed}<div class="degraded-banner" role="status"><p>Alert settings changed elsewhere. Your edits are kept. Reload the saved values before saving.</p><Button variant="secondary" onclick={() => void load(true)}>Reload saved values</Button></div>{/if}
-      <article class="settings-card" role="region" aria-label="Disk alert thresholds">
-        <header><div><h3>Disk alert thresholds</h3><small>Warn when either free-space limit is reached. Critical limits must be no higher than warning limits.</small></div></header>
-        <form aria-label="Disk alert thresholds" onsubmit={event => { event.preventDefault(); void saveConfiguration("thresholds"); }}>
+      {#if changed}<ErrorState title="Alert settings changed elsewhere" detail="Your edits are kept. Reload the saved values before changing them." onretry={() => load(true)} />{/if}
+      <article class="settings-card" role="region" aria-label="Disk alert thresholds"><header><h3>Low disk space</h3></header>
+        <form aria-label="Disk alert thresholds" onsubmit={event => event.preventDefault()} onchange={event => { if (event.currentTarget.checkValidity() && thresholdDirty) void saveConfiguration("thresholds"); }}>
           <fieldset class="settings-fields" disabled={Boolean(action)}>
-            {#each thresholdFields.filter(field => field.key === "warningGiB" || field.key === "criticalGiB") as field}
-              <label class="setting-field settings-row"><div><strong>{field.label}</strong></div>
-                <input type="number" aria-label={field.label} required min="0" max={field.max} step={field.step} bind:value={draft[field.key]} /></label>
-            {/each}
-            <details class="source-advanced-settings"><summary>Advanced</summary>
-              {#each thresholdFields.filter(field => field.key !== "warningGiB" && field.key !== "criticalGiB") as field}
-                <label class="setting-field settings-row"><div><strong>{field.label}</strong></div>
-                  <input type="number" aria-label={field.label} required min={field.key === "cooldownMinutes" ? 1 : 0} max={field.max} step={field.step} bind:value={draft[field.key]} /></label>
-              {/each}
-              <p class="settings-impact">Recovery requires this much additional free space above the warning limits. The repeat interval limits repeated notifications for an ongoing problem.</p>
+            {#each thresholdFields.filter(field => field.key === "warningGiB" || field.key === "criticalGiB") as field}<label class="setting-field settings-row"><div><strong>{field.label}</strong><small>{field.key === "warningGiB" ? "Warn below this much free space." : "Must be no higher than the warning."}</small></div><input type="number" aria-label={field.label} required min="0" max={field.max} step={field.step} bind:value={draft[field.key]} /></label>{/each}
+            <details class="settings-fold"><summary>Advanced: percentages, recovery margin and repeat alerts</summary>
+              {#each thresholdFields.filter(field => field.key !== "warningGiB" && field.key !== "criticalGiB") as field}<label class="setting-field settings-row"><div><strong>{field.label}</strong></div><input type="number" aria-label={field.label} required min={field.key === "cooldownMinutes" ? 1 : 0} max={field.max} step={field.step} bind:value={draft[field.key]} /></label>{/each}
             </details>
-            {#if !thresholds}<p class="notice-error alert-notice">Check the limits and recovery margins. Warning limits must be at least the critical limits.</p>{/if}
-            <footer><span>{thresholdDirty ? "Unsaved changes" : ""}</span><Button type="submit" disabled={!thresholdDirty || !thresholds || changed || Boolean(action)}>{action === "thresholds" ? "Saving…" : "Save thresholds"}</Button></footer>
+            {#if !thresholds}<p class="notice-error alert-notice" role="alert">Check the limits and recovery margins. Warning limits must be at least the critical limits.</p>{/if}
           </fieldset>
         </form>
       </article>
-      <article class="settings-card" role="region" aria-label="Allowed destination hosts">
-        <header><div><h3>Allowed destination hosts</h3><small>Listeners can use only these destination hosts. Administrators can use other hosts.</small></div></header>
-        <form aria-label="Allowed destination hosts" onsubmit={event => { event.preventDefault(); void saveConfiguration("hosts"); }}>
-          <fieldset class="settings-fields" disabled={Boolean(action)}>
-            <label class="setting-field settings-row"><div><strong>Allowed hosts</strong><small>One host per line, with an optional port. Up to 32 hosts. Leave empty to allow no listener destinations.</small></div>
-              <textarea aria-label="Allowed hosts" rows="4" bind:value={hosts} placeholder="notify.example&#10;webhook.example:8443" spellcheck="false"></textarea></label>
-            {#if !permittedHosts}<p class="notice-error alert-notice">Enter host names with optional ports, without a scheme, path or username.</p>{/if}
-            <footer><span>{hostsDirty ? "Unsaved changes" : ""}</span><Button type="submit" disabled={!hostsDirty || !permittedHosts || changed || Boolean(action)}>{action === "hosts" ? "Saving…" : "Save hosts"}</Button></footer>
-          </fieldset>
-        </form>
-      </article>
+      <details class="settings-fold"><summary>Advanced: hosts listeners may send alerts to</summary>
+        <form class="settings-card" aria-label="Allowed destination hosts" onsubmit={event => event.preventDefault()} onchange={() => { if (hostsDirty) void saveConfiguration("hosts"); }}><label class="settings-row"><div><strong>Allowed hosts</strong><small>One host per line, with an optional port. Administrators can use other hosts. Leave empty to allow no listener destinations.</small></div><textarea aria-label="Allowed hosts" rows="4" bind:value={hosts} spellcheck="false" disabled={Boolean(action)}></textarea></label>{#if !permittedHosts}<p class="notice-error alert-notice" role="alert">Enter host names with optional ports, without a scheme, path or username.</p>{/if}</form>
+      </details>
     {/if}
   {/if}
 </div>
 
 <Dialog.Root bind:open onOpenChange={value => { if (!value) { destination = ""; editorError = ""; } }}>
-  <Dialog.Portal>
-    <Dialog.Overlay class="dialog-overlay" />
-    <Dialog.Content class="source-dialog">
-      <header><div><p class="eyebrow">{household ? "Household alerts" : "Your alerts"}</p><Dialog.Title>{editing ? "Edit alert channel" : "Add alert channel"}</Dialog.Title>
-        <Dialog.Description>Choose where to receive alerts. Saved destinations stay hidden.</Dialog.Description></div>
-        <Dialog.Close class="icon-button" aria-label="Close channel editor"><X size={18} aria-hidden="true" /></Dialog.Close></header>
-      <form onsubmit={event => { event.preventDefault(); void saveChannel(); }}>
-        <label class="field"><span>Channel type</span><SelectField label="Channel type" options={kinds} bind:value={kind} disabled={Boolean(action)} /></label>
-        <label class="field"><span>Channel name</span><input aria-label="Channel name" required maxlength="80" bind:value={name} disabled={Boolean(action)} /></label>
-        <label class="field"><span>Destination URL</span><input type="password" inputmode="url" aria-label="Destination URL" autocomplete="new-password" required={!editing?.hasDestination} maxlength="2048" bind:value={destination} disabled={Boolean(action)} />
-          <small>{editing?.hasDestination ? `Saved${savedHost(editing) ? ` · ${savedHost(editing)}` : ""}. Leave blank to keep this destination.` : "Enter the ntfy topic URL, Discord webhook URL, or webhook destination URL."}</small></label>
-        <label class="alert-enabled"><span class="settings-toggle"><Checkbox aria-label="Channel enabled" bind:checked={enabled} disabled={Boolean(action)} /></span><span>Channel enabled</span></label>
-        {#if editorError}<p class="notice-error" role="alert">{editorError}</p>{/if}
-        <footer class="dialog-actions"><Dialog.Close type="button" class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</Dialog.Close>
-          <Button type="submit" disabled={Boolean(action) || !validChannel}>{action === "channel" ? "Saving…" : "Save channel"}</Button></footer>
-      </form>
-    </Dialog.Content>
-  </Dialog.Portal>
+  <Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog settings-flow-dialog">
+    <header><div><Dialog.Title>{editing ? "Edit alert channel" : "Add an alert channel"}</Dialog.Title><Dialog.Description>Get a message when something needs attention.</Dialog.Description></div><Dialog.Close class="icon-button" aria-label="Close channel editor"><X size={18} /></Dialog.Close></header>
+    <form class="settings-dialog-content" onsubmit={event => { event.preventDefault(); void saveChannel(); }}>
+      <div class="field"><span>Channel type</span><ThreeDetentSwitch label="Channel type" options={kinds} value={kind} onchange={value => kind = value} compact disabled={Boolean(action)} /></div>
+      <label class="field"><span>Channel name</span><input aria-label="Channel name" required maxlength="80" bind:value={name} disabled={Boolean(action)} /></label>
+      <label class="field"><span>{kind === "ntfy" ? "Topic URL" : kind === "discord" ? "Discord webhook URL" : "Destination URL"}</span><input type="password" inputmode="url" aria-label="Destination URL" autocomplete="new-password" required={!editing?.hasDestination} maxlength="2048" bind:value={destination} disabled={Boolean(action)} /><small>{editing?.hasDestination ? "Saved. Leave blank to keep this destination." : "Kept private. The destination is never shown after saving."}</small></label>
+      {#if administrator}<label class="field"><span>Alerts for</span><SelectField label="Alerts for" value={household ? "household" : "personal"} options={[{ value: "personal", label: "Your source connections" }, { value: "household", label: "Household: disk space and health" }]} onchange={value => household = value === "household"} disabled={Boolean(action)} /></label>{/if}
+      <label class="channel-actions"><Switch aria-label="Channel enabled" bind:checked={enabled} disabled={Boolean(action)} /><span>Channel enabled</span></label>
+      <div class="channel-preview"><strong>What you'll receive</strong><p>{household ? "Warnings about low disk space and health checks, followed by recovery messages." : "Warnings when your source connections need attention, followed by recovery messages."}</p><small>Save the channel, then use Send test from its menu to check delivery.</small></div>
+      {#if !administrator && data?.permittedDestinations?.length}<p class="settings-muted">Allowed hosts: {data.permittedDestinations.join(", ")}</p>{/if}
+      {#if editorError}<p class="notice-error" role="alert">{editorError}</p>{/if}
+      <footer class="dialog-actions"><Dialog.Close type="button" class={buttonVariants({ variant: "text" })} disabled={Boolean(action)}>Cancel</Dialog.Close><Button type="submit" disabled={Boolean(action) || !validChannel}>{action === "channel" ? "Saving…" : "Save channel"}</Button></footer>
+    </form>
+  </Dialog.Content></Dialog.Portal>
 </Dialog.Root>
-
 <style>
-  .alerts-settings { display: grid; gap: var(--space-5); min-width: 0; }
-  .alert-list { list-style: none; padding: 0; margin: 0; }
-  .alert-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-4) var(--space-6); }
-  .alert-list li + li { border-top: 1px solid var(--color-edge); }
-  .alert-list li > div:first-child { display: grid; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
-  .alert-list strong { font-size: var(--text-sm); font-weight: 500; }
-  .alert-list small { color: var(--color-ink-muted); font-size: var(--text-xs); }
-  .alert-actions, .alert-enabled { display: flex; align-items: center; gap: var(--space-3); }
-  .alert-actions { flex-wrap: wrap; flex-shrink: 0; }
-  .alert-enabled { min-height: 44px; color: var(--color-ink); }
-  .alert-enabled :global([data-slot="checkbox"]) { box-sizing: border-box; width: 44px; height: 44px; padding: 0; margin: 0; border: 0; background: transparent; outline: 0; }
-  .alert-enabled :global([data-slot="checkbox-indicator"]) { width: 20px; height: 20px; border: 2px solid var(--md-sys-color-on-surface-variant); border-radius: 3px; }
-  .alert-enabled :global([data-checked] [data-slot="checkbox-indicator"]) { border-color: var(--md-sys-color-primary); background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
-  .alert-empty, .alert-notice, .alert-footer { margin: 0; padding: var(--space-4) var(--space-6); }
-  .alert-footer { border-top: 1px solid var(--color-edge); }
-  @media (max-width: 760px) {
-    .alerts-settings .settings-card > header { flex-wrap: wrap; }
-    .alert-list li { align-items: stretch; flex-direction: column; }
-    .alert-actions { justify-content: flex-end; }
-    .alert-enabled { margin-right: auto; }
-  }
+  .alerts-settings { display: grid; gap: var(--space-4); min-width: 0; }
+  .settings-toolbar h3 { margin: 0; font-size: var(--text-sm); }
+  .channel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+  .channel-row { display: grid; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-edge); }
+  .channel-row > div:first-child { display: grid; min-width: 0; gap: var(--space-1); overflow-wrap: anywhere; }
+  .channel-row strong { font-size: var(--text-sm); }
+  .channel-row small, .channel-preview small { color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .channel-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+  .channel-actions :global(.ui-switch) { margin-right: auto; }
+  .channel-preview { border: 1px solid var(--color-edge); border-radius: var(--radius-md); padding: var(--space-3); background: var(--color-panel-raised); font-size: var(--text-sm); }
+  .channel-preview p { margin: var(--space-2) 0; }
+  .alert-notice { padding: var(--space-3) var(--space-4); }
+  @media (max-width: 760px) { .channel-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

@@ -36,7 +36,7 @@ async function mockSoundSettings(page: Page, administrator = true, initialStatus
 
 async function openSoundSettings(page: Page) {
   await page.goto("/#/settings/sound-analysis");
-  await expect(page.getByRole("heading", { name: "Sound analysis (AudioMuse)", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sound analysis", exact: true })).toBeVisible();
 }
 
 test("Administrator connects and a blank key keeps the saved key", async ({ page }) => {
@@ -68,7 +68,7 @@ test("Listeners cannot access sound analysis connection settings", async ({ page
   const state = await mockSoundSettings(page, false);
   await page.goto("/#/settings/sound-analysis");
   await expect(page.getByRole("heading", { name: "This workspace is for administrators.", exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Sound analysis (AudioMuse)", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Sound analysis", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Edit connection", exact: true })).toHaveCount(0);
   expect(state.calls.some(call => call.path === "connection")).toBe(false);
 });
@@ -90,7 +90,7 @@ test("Unavailable connection and incomplete coverage preserve an open draft on r
   await expect(dialog.getByLabel("AudioMuse address")).toHaveValue("http://draft.invalid");
   await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toHaveAttribute("type", "button");
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Refresh sound analysis", exact: true })).toHaveAttribute("aria-busy", "false");
+  await expect(page.getByRole("button", { name: "Edit connection", exact: true })).toBeEnabled();
   expect(state.calls.filter(call => call.method === "PUT")).toEqual([]);
 });
 

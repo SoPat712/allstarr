@@ -5,7 +5,11 @@
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { Dialog } from "$lib/components/ui/dialog";
-  import { Checkbox } from "$lib/components/ui/checkbox";
+  import { Switch } from "$lib/components/ui/switch";
+  import PageStatus from "$lib/components/patterns/PageStatus.svelte";
+  import StatePill from "$lib/components/patterns/StatePill.svelte";
+  import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
 
   let status = $state<AudioMuseStatus | null>(null), connection = $state<AudioMuseConnection | null>(null);
@@ -42,26 +46,34 @@
   }
   async function configure() {
     if (action || !connection) return;
+    const previous = connection.baseUrl, changingKey = Boolean(key);
     action = "connection"; connectionError = ""; refreshRequest++; refreshing = false;
     try {
       const next = await audioMuse.configure(address.trim(), key, connection.revision);
       if (disposed) return;
       connection = next; key = ""; connectionOpen = false;
-      toast.success("AudioMuse connection saved.");
+      toast.success("AudioMuse connection saved.", !changingKey ? { label: "Undo", run: async () => {
+        if (action || !connection) return;
+        action = "connection";
+        try { connection = await audioMuse.configure(previous, "", connection.revision); await refresh(); }
+        catch { toast.error("The connection could not be restored. Try again."); }
+        finally { action = ""; void refresh(); }
+      } } : undefined);
     } catch (cause) {
       if (!disposed) connectionError = cause instanceof ApiError && cause.status === 409
         ? "The connection changed. Close and reopen to load it before saving."
         : "The connection could not be saved. Check the address and try again.";
     } finally { if (!disposed) { action = ""; void refresh(); } }
   }
-  async function setPublishing(enabled: boolean) {
+  async function setPublishing(enabled: boolean, undo = true) {
     if (action || publishEnabled === null) return;
+    const previous = publishEnabled;
     action = "publish"; publishError = ""; refreshRequest++; refreshing = false;
     try {
       await mixes.setPublishSetting(enabled);
       if (disposed) return;
       publishEnabled = enabled;
-      toast.success(enabled ? "Listeners can add mixes to their apps." : "Listeners can no longer add mixes to their apps.");
+      toast.success(enabled ? "Listeners can add mixes to their apps." : "Listeners can no longer add mixes to their apps.", undo ? { label: "Undo", run: () => setPublishing(previous, false) } : undefined);
     } catch {
       if (!disposed) publishError = "The mix setting could not be saved. Try again.";
     } finally { if (!disposed) { action = ""; void refresh(); } }
@@ -74,23 +86,20 @@
 </script>
 
 <div class="sound-settings" aria-busy={refreshing}>
-  <div class="sound-settings-actions"><RefreshButton variant="secondary" label="Refresh sound analysis" disabled={Boolean(action)} onrefresh={refresh} /></div>
-  {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
-  <section class="settings-card" aria-label="AudioMuse connection">
-    <header><h3>AudioMuse connection</h3></header>
-    <div class="settings-row"><div><strong>{statusLabel}</strong>{#if connection?.keyConfigured}<small>Key saved</small>{/if}</div><Button type="button" variant="secondary" disabled={Boolean(action)} onclick={editConnection}>Edit connection</Button></div>
-  </section>
-  <section class="settings-card" aria-label="Mix publishing">
-    <label class="settings-row">
-      <div><strong>Let listeners add mixes to their apps</strong><small>Each listener chooses which mixes to show as playlists in their music apps.</small>{#if publishEnabled === null}<small>Checking availability…</small>{/if}</div>
-      <span class="settings-toggle"><Checkbox checked={publishEnabled === true} disabled={publishEnabled === null || Boolean(action)} aria-label="Let listeners add mixes to their apps" onCheckedChange={enabled => void setPublishing(enabled === true)} /></span>
-    </label>
-    {#if publishError}<p class="notice-error" role="alert">{publishError}</p>{/if}
-  </section>
+  <PageStatus items={[{ label: statusLabel }, { label: connection?.keyConfigured ? "Key saved" : "No key saved" }]} />
+  <div class="sound-refresh"><RefreshButton variant="ghost" label="Refresh sound analysis" disabled={Boolean(action)} onrefresh={refresh} /></div>
+  {#if error}<ErrorState title="Some sound analysis settings are unavailable" detail={error} onretry={refresh} />{/if}
+  {#if !status && refreshing}<RowsSkeleton count={2} />{:else}
+    <section class="settings-card" aria-label="AudioMuse connection"><header><h3>AudioMuse</h3></header>
+      <div class="settings-row"><div><strong>Connection</strong><small>{status?.analyzedSongs?.toLocaleString() ?? 0} songs analyzed{connection?.keyConfigured ? " · key saved" : ""}</small></div><div class="connection-actions"><StatePill tone={status?.reason === null ? "ok" : "neutral"} text={status?.reason === null ? "Connected" : "Not connected"} /><Button type="button" variant="outline" disabled={Boolean(action)} onclick={editConnection}>Edit connection</Button></div></div>
+      <label class="settings-row"><div><strong>Let listeners add mixes to their apps</strong><small>Each listener picks which mixes show as playlists.</small></div><span class="settings-toggle"><Switch checked={publishEnabled === true} disabled={publishEnabled === null || Boolean(action)} aria-label="Let listeners add mixes to their apps" onchange={event => void setPublishing(event.currentTarget.checked)} /></span></label>
+      {#if publishError}<p class="notice-error settings-impact" role="alert">{publishError}</p>{/if}
+    </section>
+  {/if}
 </div>
 
 <Dialog.Root bind:open={connectionOpen} onOpenChange={open => { if (!open) { key = ""; connectionRequest++; } }}>
-  <Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog">
+  <Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog settings-flow-dialog">
     <header><div><Dialog.Title>AudioMuse connection</Dialog.Title><Dialog.Description>Connect AudioMuse to analyze sounds in your library.</Dialog.Description></div></header>
     <form onsubmit={event => { event.preventDefault(); void configure(); }}>
       <div class="connection-fields">
@@ -105,10 +114,9 @@
 </Dialog.Root>
 
 <style>
+  .sound-refresh { display: flex; justify-content: end; }
   .sound-settings, .connection-fields { display: grid; gap: var(--space-4); min-width: 0; }
-  .sound-settings-actions { display: flex; justify-content: end; }
-  .settings-toggle :global([data-slot="checkbox"]) { box-sizing: border-box; width: 44px; height: 44px; padding: 0; margin: 0; border: 0; background: transparent; outline: 0; }
-  .settings-toggle :global([data-slot="checkbox"]:focus-visible) { outline: 2px solid var(--md-sys-color-primary); }
-  .settings-toggle :global([data-slot="checkbox-indicator"]) { width: 20px; height: 20px; border: 2px solid var(--md-sys-color-on-surface-variant); border-radius: 3px; }
-  .settings-toggle :global([data-checked] [data-slot="checkbox-indicator"]) { border-color: var(--md-sys-color-primary); background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
+  .connection-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: var(--space-2); }
+  .connection-fields { padding: var(--space-4); }
+  @media (max-width: 650px) { .connection-actions { justify-content: start; } }
 </style>
