@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using allstarr.Services.Deezer;
+using allstarr.Core.Capabilities;
 
 namespace allstarr.Core.Providers.Deezer;
 
@@ -85,6 +86,8 @@ public sealed class DeezerMediaClient(DeezerHttpClient http, ILogger<DeezerMedia
                 media = new[] { new { type = "FULL", formats = formats.Select(format => new { cipher = "BF_CBC_STRIPE", format }).ToArray() } },
                 track_tokens = new[] { selected.Token }
             }), cancellationToken);
+        if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.NotFound or HttpStatusCode.Gone)
+            throw new ProviderTrackUnavailableException(response.StatusCode);
         using var document = await ReadJsonAsync(response, cancellationToken);
         var root = document.RootElement;
         if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Array ||

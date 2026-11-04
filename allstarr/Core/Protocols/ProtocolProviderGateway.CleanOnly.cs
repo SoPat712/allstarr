@@ -8,7 +8,7 @@ namespace allstarr.Core.Protocols;
 public sealed partial class ProtocolProviderGateway
 {
     private async Task<bool> AllowsCleanPlaybackAsync(ProtocolExecutionContext protocol,
-        ProviderExternalResourceId track, ProviderExecutionContext? execution = null)
+        ProviderExternalResourceId track, ProviderExecutionContext? execution = null, bool storedOnly = false)
     {
         var policy = effectivePolicies == null ? protocol.Policy : protocol.Actor?.EffectiveUserId is { } user
             ? await effectivePolicies.ResolveForUserAsync(user, protocol.CancellationToken)
@@ -22,7 +22,7 @@ public sealed partial class ProtocolProviderGateway
             song = (await identities.GetStoredSongsAsync(actor, ProtocolItemId(track), protocol.CancellationToken))?
                 .FirstOrDefault(item => NormalizeProvider(item.ExternalProvider) == track.ProviderId && item.ExternalId == track.Value);
         if (song != null) return CleanRecordingPolicy.IsVerifiedClean(song);
-        if (track.ProviderId == "allstarr") return false;
+        if (storedOnly || track.ProviderId == "allstarr") return false;
         var routed = await PlanExactAsync<IProviderMetadataCapability>(protocol, track.ProviderId,
             ProviderCapabilityKind.Metadata, "clean-playback-evidence");
         if (routed.Candidate == null) return false;

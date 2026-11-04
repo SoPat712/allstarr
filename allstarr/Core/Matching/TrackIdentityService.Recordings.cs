@@ -15,6 +15,8 @@ public sealed partial class TrackIdentityService
         CancellationToken cancellationToken = default)
     {
         var recordingId = await RememberSourceCoreAsync(execution, externalId, publicId, scope, isrc, cancellationToken);
+        await LinkLibraryRecordingsAsync(execution.Actor, execution.CorrelationId, recordingId, cancellationToken: cancellationToken);
+        recordingId = (await ResolveRecordingAsync(execution.Actor, recordingId.ToString("D"), cancellationToken))?.Id ?? recordingId;
         var songs = await GetStoredSongsAsync(execution.Actor, recordingId.ToString("D"), cancellationToken);
         var retained = songs.FirstOrDefault(song => song.CanonicalRecordingId == recordingId &&
             song.ExternalProvider == externalId.ProviderId && song.ExternalId == externalId.Value);

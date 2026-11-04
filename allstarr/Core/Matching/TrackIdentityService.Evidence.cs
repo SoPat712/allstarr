@@ -104,7 +104,8 @@ public sealed partial class TrackIdentityService
         }
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return ToIdentity(recording);
+        await LinkLibraryRecordingsAsync(actor, correlationId, recording.Id, cancellationToken: cancellationToken);
+        return await ResolveRecordingAsync(actor, recording.Id.ToString("D"), cancellationToken) ?? ToIdentity(recording);
     }
 
     private async Task<bool> HasAutomaticProviderIdentityAsync(

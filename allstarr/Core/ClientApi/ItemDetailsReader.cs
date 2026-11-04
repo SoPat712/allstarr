@@ -22,7 +22,8 @@ public sealed class ItemDetailsReader(
     FavoriteViewReader favorites,
     JellyfinProxyService jellyfin,
     IApplicationCache cache,
-    IDurableRuntimeSettings settings)
+    IDurableRuntimeSettings settings,
+    IProtocolProviderGateway? gateway = null, ILibraryIndexService? libraryIndex = null)
 {
     public async Task<ItemDetailsResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids)
     {
@@ -33,9 +34,19 @@ public sealed class ItemDetailsReader(
         var external = requested.Where(id => id.Length <= 500).Select(id => (Id: id, Parsed: LocalLibraryService.ParseExternalResource(id)))
             .Where(item => item.Parsed.isExternal && item.Parsed.type == "song" && ValidProvider(item.Parsed.provider!))
             .Select(item => new Source(item.Id, registry.ResolveProviderId(item.Parsed.provider!), item.Parsed.externalId!)).ToArray();
+        IReadOnlyDictionary<string, string> localIds = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (libraryIndex != null && external.Length > 0)
+        {
+            var known = await identities.ResolveRecordingsAsync(execution.RequireActor(), external.Select(source => source.Id).ToArray(), token);
+            var lookups = external.Where(source => known.GetValueOrDefault(source.Id) != null).Select(source => new LibraryRecordingLookup(
+                source.Id, known[source.Id]!.Id, known[source.Id]!.Isrc, source.Provider, source.ExternalId)).ToArray();
+            if (lookups.Length > 0) localIds = await libraryIndex.FindKnownRecordingTracksAsync(execution, lookups, token);
+        }
         var nativeIds = requested.Where(id => !id.StartsWith("ext-", StringComparison.Ordinal) &&
-            id.Length is > 0 and <= 500 && !id.Contains(',')).ToArray();
+            id.Length is > 0 and <= 500 && !id.Contains(',')).Concat(localIds.Values).Distinct(StringComparer.Ordinal).ToArray();
         var native = await ReadNativeAsync(http, execution, nativeIds);
+        foreach (var pair in localIds)
+            if (native.TryGetValue(pair.Value, out var nativeSaved)) native[pair.Key] = nativeSaved;
         var nativeLookupIds = nativeIds.SelectMany(id => Guid.TryParse(id, out var parsed)
             ? new[] { id, parsed.ToString("N"), parsed.ToString("D") } : [id]).Distinct(StringComparer.Ordinal).ToArray();
         await using var db = await factory.CreateDbContextAsync(token);
@@ -113,6 +124,7 @@ public sealed class ItemDetailsReader(
         var selectedSnapshots = new Dictionary<string, ExternalMetadataSnapshotRecord>(StringComparer.Ordinal);
         foreach (var source in external)
         {
+            if (native.ContainsKey(source.Id)) continue;
             var recording = resolved.GetValueOrDefault(source.Id);
             var candidates = source.Provider == "allstarr" && recording != null
                 ? snapshots.Where(snapshot => links.Any(link => link.CanonicalRecordingId == recording.Id && link.ProviderId == snapshot.ProviderId && link.ExternalIdHash == snapshot.ExternalIdHash) ||
@@ -134,7 +146,7 @@ public sealed class ItemDetailsReader(
                     song = await ReadCachedSongAsync(execution.RequireActor(), link.ProviderId, link.ExternalId, accounts, token);
                     if (song != null) break;
                 }
-            if (song == null || !policy.IsEnabled(song.ExternalProvider!) || !policy.Includes(song)) continue;
+            if (song == null || source.Provider != "allstarr" && !policy.IsEnabled(song.ExternalProvider!) || !policy.Includes(song)) continue;
             song.Id = source.Id;
             song.CanonicalRecordingId = recording?.Id ?? decisions.Where(item => item.ExternalSnapshotId == snapshot?.Id)
                 .OrderByDescending(item => item.DecisionVersion).ThenByDescending(item => item.DecidedAt).FirstOrDefault()?.CanonicalRecordingId;
@@ -149,8 +161,11 @@ public sealed class ItemDetailsReader(
         }
         if (identities is ITrackMediaFactsStore mediaFacts)
             await mediaFacts.ApplyStoredMediaFactsAsync(execution.RequireActor(), songs.Values.ToArray(), token);
+        var servingProviders = new Dictionary<string, string?>(StringComparer.Ordinal);
+        foreach (var source in external.Where(source => source.Provider == "allstarr" && songs.ContainsKey(source.Id)))
+            servingProviders[source.Id] = gateway == null ? null : await gateway.GetStreamingProviderAsync(execution, source.Provider, source.ExternalId);
         var providers = new Dictionary<string, ItemDetailsProvider?>(StringComparer.Ordinal);
-        var providerIds = songs.Values.Select(item => item.ExternalProvider!).Distinct(StringComparer.Ordinal).ToArray();
+        var providerIds = songs.Values.Select(item => item.ExternalProvider!).Concat(servingProviders.Values.OfType<string>()).Distinct(StringComparer.Ordinal).ToArray();
         var icons = await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, providerIds, token);
         foreach (var providerId in providerIds)
         {
@@ -166,7 +181,7 @@ public sealed class ItemDetailsReader(
         {
             var song = songs.GetValueOrDefault(id);
             if (song == null && !native.ContainsKey(id)) continue;
-            var local = library.FirstOrDefault(item => SameNativeId(item.BackendItemId, id));
+            var local = library.FirstOrDefault(item => SameNativeId(item.BackendItemId, localIds.GetValueOrDefault(id) ?? id));
             var identity = song == null && local?.CanonicalRecordingId is { } localRecording
                 ? resolved.GetValueOrDefault(localRecording.ToString("D")) : resolved.GetValueOrDefault(id);
             var recordingId = identity?.Id ?? song?.CanonicalRecordingId;
@@ -210,7 +225,7 @@ public sealed class ItemDetailsReader(
             var explicitContent = song?.ExplicitContentLyrics switch { 1 => true, 0 => false, _ => (bool?)null };
             explicitContent ??= recordingId.HasValue ? recordings.GetValueOrDefault(recordingId.Value)?.IsExplicit : null;
             items[id] = new(id, song != null, recordingId?.ToString("D"), identity?.Isrc ?? song?.Isrc ?? local?.Isrc ?? identifiers.FirstOrDefault(item => item.RecordingId == recordingId)?.Value,
-                song == null ? null : providers.GetValueOrDefault(song.ExternalProvider!), audio, explicitContent,
+                song == null ? null : providers.GetValueOrDefault(servingProviders.ContainsKey(id) ? servingProviders[id] ?? "allstarr" : song.ExternalProvider!), audio, explicitContent,
                 song == null ? native[id] : saved.Contains(id), keep, match, lyrics);
         }
         return new(ids.Where(items.ContainsKey).Select(id => items[id]).ToArray(), ids.Where(id => !items.ContainsKey(id)).ToArray());

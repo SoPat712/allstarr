@@ -24,6 +24,7 @@ public sealed class Song
     public string? ArtistId { get; set; }
 
     public List<string> Artists { get; set; } = [];
+    public List<string> ArtistAliases { get; set; } = [];
 
     // Index-matched with Artists.
     public List<string> ArtistIds { get; set; } = [];

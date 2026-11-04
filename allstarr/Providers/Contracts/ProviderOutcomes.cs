@@ -51,6 +51,11 @@ public sealed record ProviderError
 
     public string Code { get; }
 
+    public bool IsTrackScoped => Code == "track-unavailable";
+
+    public static ProviderError TrackUnavailable(ProviderErrorKind kind = ProviderErrorKind.NotFound) =>
+        new(kind, "track-unavailable", "This track is unavailable from this source.", TimeSpan.FromSeconds(30));
+
     public string SafeMessage { get; }
 
     public TimeSpan? RetryAfter { get; }
@@ -213,3 +218,6 @@ public readonly record struct ProviderUnit
 {
     public static ProviderUnit Value { get; } = new();
 }
+
+public sealed class ProviderTrackUnavailableException(System.Net.HttpStatusCode status)
+    : HttpRequestException("This track is unavailable from this source.", null, status);

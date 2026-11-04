@@ -11,6 +11,27 @@ namespace allstarr.Tests;
 
 public sealed class ProviderRuntimeHealthTests
 {
+    [Theory]
+    [InlineData(ProviderErrorKind.Forbidden)]
+    [InlineData(ProviderErrorKind.NotFound)]
+    public void TrackRefusal_CoolsOnlyTheTrackWithoutPausingStreaming(ProviderErrorKind kind)
+    {
+        var store = Store();
+        var context = Context();
+        var track = new ProviderExternalResourceId("deezer", ProviderResourceKind.Track, "refused");
+        var failure = ProviderError.TrackUnavailable(kind);
+        for (var index = 0; index < 5; index++)
+        {
+            store.Observe(context, ProviderCapabilityKind.Streaming, failure, TimeSpan.Zero);
+            store.ObservePlayback(context, track, ProviderAudioQuality.Any, failure, TimeSpan.Zero);
+        }
+        Assert.Null(store.Get(Key(), context.Account!.Revision));
+        Assert.True(store.IsPlaybackCoolingDown(context, track, ProviderAudioQuality.Any));
+        Assert.False(store.IsPlaybackCoolingDown(context, new("deezer", ProviderResourceKind.Track, "other"), ProviderAudioQuality.Any));
+        _clock.UtcNow += TimeSpan.FromMinutes(6);
+        Assert.False(store.IsPlaybackCoolingDown(context, track, ProviderAudioQuality.Any));
+    }
+
     [Fact]
     public void LyricsConfigurationChangesResetOnlyTheirOwnFailureEvidence()
     {

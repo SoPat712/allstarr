@@ -12,6 +12,33 @@ namespace allstarr.Core.Protocols;
 
 public sealed partial class ProtocolProviderGateway
 {
+    private async Task<PlaybackStartCandidate?> ReadPlaybackStartCandidateAsync(ProtocolExecutionContext protocol,
+        ProviderRouteCandidate<IProviderStreamingCapability> candidate, ProviderExternalResourceId requestedTrack,
+        ProviderAudioQuality quality, int index)
+    {
+        var track = candidate.TrackId ?? requestedTrack;
+        if (!await AllowsCleanPlaybackAsync(protocol, track, candidate.Context, storedOnly: protocol.IsReadOnly)) return null;
+        var measurement = outcomes?.GetPlaybackStart(candidate.Context, quality);
+        var media = measurement?.Media;
+        var cached = await AvailableCachedMediaAsync(protocol, candidate.Context, track, quality, protocol.CancellationToken);
+        if (cached != null)
+        {
+            media = cached;
+        }
+        else if (MediaFacts is { } mediaStore)
+        {
+            var song = new Song { ExternalProvider = track.ProviderId, ExternalId = track.Value };
+            try { await mediaStore.ApplyStoredMediaFactsAsync(protocol.RequireActor(), [song], protocol.CancellationToken); }
+            catch (Exception error) when (error is not OperationCanceledException)
+            { logger?.LogDebug("Stored playback format is unavailable ({ErrorType})", error.GetType().Name); }
+            if (song.Codec != null)
+                media = new(AudioMediaFacts.Mime(song.Container ?? "unknown"), song.Container ?? "unknown", song.Codec,
+                    song.Bitrate, song.SampleRate, song.BitDepth, song.Channels);
+        }
+        return cached != null || outcomes?.IsPlaybackCoolingDown(candidate.Context, track, quality) != true
+            ? new PlaybackStartCandidate(index, media, measurement?.MedianStart, cached != null) : null;
+    }
+
     private async Task<ProtocolProviderStream?> OpenWithStartPreferenceAsync(ProtocolExecutionContext protocol,
         ProviderRoutePlan<IProviderStreamingCapability> plan, ProviderExternalResourceId requestedTrack,
         ProviderAudioQuality quality, EffectiveProviderPolicySnapshot policy,
@@ -20,7 +47,8 @@ public sealed partial class ProtocolProviderGateway
         Func<ProtocolProviderStream, ProviderExecutionContext?, ProviderExternalResourceId?, Task<ProtocolProviderStream>> opened,
         Func<Task<ProviderRoutePlan<IProviderStreamingCapability>?>> resolveAvailability,
         HashSet<(string Provider, Guid? Account, string Track)>? attempted = null,
-        Func<CancellationToken, Task<ProviderRoutePlan<IProviderStreamingCapability>?>>? laterSources = null)
+        Func<CancellationToken, Task<ProviderRoutePlan<IProviderStreamingCapability>?>>? laterSources = null,
+        ProviderError? originalFailure = null)
     {
         var clock = timeProvider ?? TimeProvider.System;
         attempted ??= [];
@@ -40,30 +68,8 @@ public sealed partial class ProtocolProviderGateway
             finally { checks.Release(); }
         }));
         var facts = gathered.OfType<PlaybackStartCandidate>().ToList();
-        async Task<PlaybackStartCandidate?> StartFactsAsync(ProviderRouteCandidate<IProviderStreamingCapability> candidate, int index)
-        {
-            var track = candidate.TrackId ?? requestedTrack;
-            if (!await AllowsCleanPlaybackAsync(protocol, track, candidate.Context)) return null;
-            var measurement = outcomes?.GetPlaybackStart(candidate.Context, quality);
-            var media = measurement?.Media;
-            var cached = await AvailableCachedMediaAsync(protocol, candidate.Context, track, quality, protocol.CancellationToken);
-            if (cached != null)
-            {
-                media = cached;
-            }
-            else if (MediaFacts is { } mediaStore)
-            {
-                var song = new Song { ExternalProvider = track.ProviderId, ExternalId = track.Value };
-                try { await mediaStore.ApplyStoredMediaFactsAsync(protocol.RequireActor(), [song], protocol.CancellationToken); }
-                catch (Exception error) when (error is not OperationCanceledException)
-                { logger?.LogDebug("Stored playback format is unavailable ({ErrorType})", error.GetType().Name); }
-                if (song.Codec != null)
-                    media = new(AudioMediaFacts.Mime(song.Container ?? "unknown"), song.Container ?? "unknown", song.Codec,
-                        song.Bitrate, song.SampleRate, song.BitDepth, song.Channels);
-            }
-            return cached != null || outcomes?.IsPlaybackCoolingDown(candidate.Context, track, quality) != true
-                ? new PlaybackStartCandidate(index, media, measurement?.MedianStart, cached != null) : null;
-        }
+        Task<PlaybackStartCandidate?> StartFactsAsync(ProviderRouteCandidate<IProviderStreamingCapability> candidate, int index) =>
+            ReadPlaybackStartCandidateAsync(protocol, candidate, requestedTrack, quality, index);
         var order = PlaybackStartPolicy.Order(mode, facts);
         var startReason = mode switch
         {
@@ -104,20 +110,21 @@ public sealed partial class ProtocolProviderGateway
             }
             if (result.Error?.Code == LocalCapacityException.Code) throw new LocalCapacityException();
             lastFailure = result.Error ?? new(ProviderErrorKind.TransientFailure);
+            originalFailure ??= lastFailure;
             var fallback = router.EvaluateFallback(plan, result.Index, lastFailure);
             if (fallback.Disposition == ProviderFallbackDisposition.Exhausted && attempted.Count < 4 &&
                 await resolveAvailability() is { } refreshed)
                 return await OpenWithStartPreferenceAsync(protocol, refreshed, requestedTrack, quality, policy,
-                    startDeadline, transferDeadline, requestedRange, startDeadlineCancellation, streamCancellation, opened, resolveAvailability, attempted);
-            if (fallback.Disposition != ProviderFallbackDisposition.Advance) ThrowRouteFailure(lastFailure);
+                    startDeadline, transferDeadline, requestedRange, startDeadlineCancellation, streamCancellation, opened, resolveAvailability, attempted, originalFailure: originalFailure);
+            if (fallback.Disposition != ProviderFallbackDisposition.Advance) ThrowRouteFailure(originalFailure);
             fallbackReason = $"fallback-{lastFailure.Code}";
             if (hedged) index++;
         }
-        ThrowRouteFailure(lastFailure ?? new(ProviderErrorKind.TransientFailure));
+        ThrowRouteFailure(originalFailure ?? lastFailure ?? new(ProviderErrorKind.TransientFailure));
         return null;
 
         static bool Ready(PlaybackStartResult item) =>
-            item.Stream != null || item.Error?.Code == LocalCapacityException.Code || item.Error?.Kind is ProviderErrorKind.Unauthorized or ProviderErrorKind.Forbidden;
+            item.Stream != null || item.Error?.Code == LocalCapacityException.Code || item.Error?.IsTrackScoped != true && item.Error?.Kind is (ProviderErrorKind.Unauthorized or ProviderErrorKind.Forbidden);
 
         // A song known at only one source waits for that source alone. When another source is found while it is still
         // starting, that source races it the way a second known source would.

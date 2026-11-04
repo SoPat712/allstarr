@@ -186,7 +186,7 @@ public abstract class ExtensionCapabilityAdapterBase : IProviderUrlCapability
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
             return ProviderError.ServiceUnavailable();
         if (exception is HttpRequestException { StatusCode: HttpStatusCode.NotFound or HttpStatusCode.Gone } ||
-            Regex.IsMatch(message, @"\btrack[ _-]+(?:not[ _-]+found|unavailable)\b|\bnot[ _-]+found\b|\bhttp\s*[:=]?\s*(?:404|410)\b|\bno[ _-]+longer[ _-]+playable\b|\b(?:track|song)\b.*\bremoved\b|\b(?:geo|region)(?:graphically)?[ _-]*(?:blocked|restricted)\b|\b(?:not[ _-]+available|unavailable|blocked|restricted)\b.*\b(?:region|country|territory)\b",
+            Regex.IsMatch(message, @"\b(?:track|song|recording)\b.*\b(?:not[ _-]+licensed|unlicensed|license[ _-]+(?:unavailable|restricted))\b|\btrack[ _-]+(?:not[ _-]+found|unavailable)\b|\bnot[ _-]+found\b|\bhttp\s*[:=]?\s*(?:404|410)\b|\bno[ _-]+longer[ _-]+playable\b|\b(?:track|song)\b.*\bremoved\b|\b(?:geo|region)(?:graphically)?[ _-]*(?:blocked|restricted)\b|\b(?:not[ _-]+available|unavailable|blocked|restricted)\b.*\b(?:region|country|territory)\b",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
             return new(ProviderErrorKind.NotFound);
         if (Regex.IsMatch(message,

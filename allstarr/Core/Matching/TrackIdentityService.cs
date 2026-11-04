@@ -101,8 +101,14 @@ public sealed record TrackIdentityLookup(
     ProviderExecutionContext Context,
     ProviderExternalResourceId ExternalId);
 
+public sealed record LibraryRecordingLinkResult(int Scanned, int Linked, int Conflicts);
+
 public interface ITrackIdentityService
 {
+    Task<LibraryRecordingLinkResult> LinkLibraryRecordingsAsync(ProviderActorContext actor, string correlationId,
+        Guid? recordingId = null, Guid? libraryTrackId = null, CancellationToken cancellationToken = default) =>
+        Task.FromResult(new LibraryRecordingLinkResult(0, 0, 0));
+
     Task<IReadOnlyList<allstarr.Models.Domain.Song>> GetStoredSongsAsync(
         ProviderActorContext actor, string publicId, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyList<allstarr.Models.Domain.Song>>([]);
@@ -381,12 +387,11 @@ public sealed partial class TrackIdentityService : ITrackIdentityService, ITrack
         try
         {
             await context.SaveChangesAsync(cancellationToken);
-            if (availabilityTransaction != null) await availabilityTransaction.CommitAsync(cancellationToken);
-            return new TrackIdentityLinkResult(
+            return await CompleteAsync(Task.FromResult(new TrackIdentityLinkResult(
                 TrackIdentityLinkStatus.Created,
                 request.CanonicalRecordingId,
                 link.Id,
-                null);
+                null)));
         }
         catch (DbUpdateException)
         {
@@ -416,6 +421,13 @@ public sealed partial class TrackIdentityService : ITrackIdentityService, ITrack
         {
             var result = await operation;
             if (availabilityTransaction != null) await availabilityTransaction.CommitAsync(cancellationToken);
+            if (result.Status is TrackIdentityLinkStatus.Created or TrackIdentityLinkStatus.AlreadyLinked)
+            {
+                await LinkLibraryRecordingsAsync(executionContext.Actor, executionContext.CorrelationId,
+                    result.CanonicalRecordingId, cancellationToken: cancellationToken);
+                var linked = await ResolveRecordingAsync(executionContext.Actor, result.CanonicalRecordingId.ToString("D"), cancellationToken);
+                if (linked != null) result = result with { CanonicalRecordingId = linked.Id };
+            }
             return result;
         }
     }

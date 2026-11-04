@@ -68,6 +68,8 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
                     artistId = metadata.ArtistId ?? metadata.ArtistIds.FirstOrDefault() ?? artistId;
                     source = metadata.ExternalProvider ?? source;
                 }
+                if (song.ExternalProvider == "allstarr" && song.ExternalId is { } recordingId)
+                    source = await providers.GetStreamingProviderAsync(execution, "allstarr", recordingId) ?? "allstarr";
                 if (registry.TryGet(source, out var descriptor))
                 {
                     if (!icons.TryGetValue(source, out var icon))

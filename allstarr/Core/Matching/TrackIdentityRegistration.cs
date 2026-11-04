@@ -29,6 +29,9 @@ public static class TrackIdentityRegistration
         services.TryAddSingleton<RecordingMusicBrainzEnrichmentQueue>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableJobHandler, RecordingMusicBrainzEnrichmentJobHandler>());
         services.AddHostedService<RecordingMusicBrainzEnrichmentService>();
+        services.TryAddSingleton<LibraryRecordingLinkQueue>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableJobHandler, LibraryRecordingLinkJobHandler>());
+        services.AddHostedService<LibraryRecordingLinkDiscoveryService>();
         services.AddSingleton<Enrichment.SharedTagStore>();
         services.AddSingleton<Enrichment.SharedTagSources>();
         services.AddSingleton<Enrichment.SharedTagQueue>();

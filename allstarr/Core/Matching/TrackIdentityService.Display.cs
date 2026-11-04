@@ -178,6 +178,7 @@ public sealed partial class TrackIdentityService
             Title = title,
             Artist = artist,
             Artists = artists,
+            ArtistAliases = Strings("ArtistAliases"),
             ArtistIds = artistIds,
             ArtistId = Resource(Property(root, "ArtistId"), "artist") ?? artistIds.FirstOrDefault(),
             Album = Field("Album", "AlbumTitle") ?? string.Empty,

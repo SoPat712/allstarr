@@ -1753,6 +1753,8 @@ public sealed partial class ExtensionCapabilityAdapterTests
     [InlineData("Download media tools are unavailable.", "media-tools-unavailable")]
     [InlineData("Track not found", "not-found")]
     [InlineData("Track unavailable", "not-found")]
+    [InlineData("Track is not licensed for playback", "not-found")]
+    [InlineData("Recording license unavailable", "not-found")]
     [InlineData("This SoundCloud track does not offer a full playable stream", "incompatible-media")]
     [InlineData("No supported full SoundCloud stream is available", "incompatible-media")]
     [InlineData("Track not found: 123", "not-found")]

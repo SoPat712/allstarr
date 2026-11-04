@@ -51,7 +51,8 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     SharedTagStore tags, TasteService taste, MusicMixService radio, IProtocolProviderGateway providers,
     NewReleasesService releases, IDurableRuntimeSettings settings, IEffectiveProviderPolicyResolver policies,
     IBackendLibraryAccessResolver libraryAccess, AudioMuseDiscovery? audioMuse = null, SharedTagSources? tagSources = null, IProviderRegistry? registry = null, LastFmSimilarTracks? similarTracks = null,
-    ILogger<PersonalMixService>? logger = null, IClientEventPublisher? events = null)
+    ILogger<PersonalMixService>? logger = null, IClientEventPublisher? events = null,
+    ILibraryIndexService? libraryIndex = null, ITrackIdentityService? identities = null)
 {
     public const string PublishKey = "Mixes:PublishToApps", JobType = "mixes.refresh";
     // Saved songs carry dozens of empty fields; leaving them out keeps a listener's mixes well under the 1 MB a stored
@@ -610,6 +611,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         Artist = song.Artist,
         ArtistId = song.ArtistId,
         Artists = song.Artists,
+        ArtistAliases = song.ArtistAliases,
         ArtistIds = song.ArtistIds,
         Album = song.Album,
         Duration = song.Duration,
@@ -629,7 +631,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         var songs = document.Mixes.Values.SelectMany(mix => mix.Songs).Select(item => item.Song).ToArray();
         var blocked = await taste.BlockedSongsAsync(owner, songs, token);
         var policy = await policies.ResolveForUserAsync(owner, token);
-        return document.Mixes.Values.Select(mix =>
+        var visibleMixes = document.Mixes.Values.Select(mix =>
         {
             var visible = mix.Songs.Where(item => !blocked.Contains(item.Song) && policy.Includes(item.Song)).ToArray();
             var readiness = PersonalMixMoods.Kinds.Contains(mix.Kind) && mix.Generation > 0 && visible.Length < 25 && visible.Length < mix.Songs.Count
@@ -638,6 +640,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 readiness = new(false, "No playable songs are available for this mix yet. Refresh after more listening or new releases.");
             return mix with { Songs = visible, Readiness = readiness };
         }).ToArray();
+        return await PreferLocalCopiesAsync(owner, visibleMixes, token);
     }
 
     public async Task SetInAppsAsync(Guid owner, Guid id, bool enabled, CancellationToken token)
@@ -704,7 +707,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
         document.Mixes = document.Mixes.Where(pair => pair.Value.Added &&
             (playlistId == null || pair.Value.Id == playlistId)).ToDictionary(pair => pair.Key, pair => pair.Value);
         var visible = summariesOnly ? document.Mixes.Values.ToArray() : await VisibleAsync(owner, document, token);
-        var localIds = document.Mixes.Values.SelectMany(mix => mix.Songs).Where(item => item.Song.IsLocal).Select(item => item.Song.Id).ToArray();
+        var localIds = visible.SelectMany(mix => mix.Songs).Where(item => item.Song.IsLocal).Select(item => item.Song.Id).ToArray();
         var allowed = summariesOnly || localIds.Length == 0 ? [] : await LibraryTrackAccess.Query(db, context, await libraryAccess.ResolveAsync(context, token))
             .Where(item => localIds.Contains(item.BackendItemId)).Select(item => item.BackendItemId).ToArrayAsync(token);
         return visible.Where(mix => mix.Generation > 0 && mix.Added).Select(mix =>

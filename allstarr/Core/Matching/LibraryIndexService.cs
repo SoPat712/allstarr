@@ -253,6 +253,9 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
             });
         }
         await db.SaveChangesAsync(cancellationToken);
+        await _identities.LinkLibraryRecordingsAsync(executionContext.RequireActor(), executionContext.CorrelationId,
+            libraryTrackId: record.Id, cancellationToken: cancellationToken);
+        await db.Entry(record).ReloadAsync(cancellationToken);
         if (changed) _lyricsChanges?.LibraryChanged(record.Id);
         return Map(record);
     }

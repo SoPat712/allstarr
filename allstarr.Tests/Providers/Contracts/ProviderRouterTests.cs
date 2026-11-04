@@ -222,6 +222,19 @@ public sealed partial class ProviderRouterTests
         Assert.Single(identity.Translations);
     }
 
+    [Fact]
+    public async Task Fallback_TrackRefusalAdvancesWithoutBypassingAccountFailures()
+    {
+        var router = Router([Metadata("spotify"), Metadata("deezer")],
+            identity: new FakeIdentityService(ProviderIdentityVerification.Verified));
+        var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(ProviderCapabilityKind.Metadata,
+            ["spotify", "deezer"], source: Track("spotify", "source")));
+        Assert.Equal(ProviderFallbackDisposition.Advance,
+            router.EvaluateFallback(plan, 0, ProviderError.TrackUnavailable(ProviderErrorKind.Forbidden)).Disposition);
+        Assert.Equal(ProviderFallbackDisposition.Exhausted,
+            router.EvaluateFallback(plan, 1, ProviderError.TrackUnavailable(ProviderErrorKind.Forbidden)).Disposition);
+    }
+
     [Theory]
     [InlineData(ProviderErrorKind.AccountNeedsConfiguration)]
     [InlineData(ProviderErrorKind.Unauthorized)]

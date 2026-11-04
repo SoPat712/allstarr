@@ -108,7 +108,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
     public void Observe(ProviderExecutionContext context, ProviderCapabilityKind capability,
         ProviderError? error, TimeSpan elapsed)
     {
-        if (error?.Code == LocalCapacityException.Code) return;
+        if (error?.Code == LocalCapacityException.Code || error?.IsTrackScoped == true) return;
         if (error?.Kind is ProviderErrorKind.Canceled or ProviderErrorKind.NotFound or
             ProviderErrorKind.NotSupported or ProviderErrorKind.IncompatibleMedia or ProviderErrorKind.Forbidden)
             return;
@@ -140,7 +140,7 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
         ProviderAudioQuality quality, ProviderError? error, TimeSpan elapsed, ProviderMediaFormat? media = null)
     {
         if (error?.Code == LocalCapacityException.Code) return;
-        if (context.IsReadOnly || error?.Kind is ProviderErrorKind.Canceled or ProviderErrorKind.Forbidden or
+        if (context.IsReadOnly || error?.Kind == ProviderErrorKind.Forbidden && !error.IsTrackScoped || error?.Kind is ProviderErrorKind.Canceled or
             ProviderErrorKind.Unauthorized or ProviderErrorKind.AccountNeedsConfiguration or ProviderErrorKind.AccountNeedsReauthentication)
             return;
         lock (_sync)

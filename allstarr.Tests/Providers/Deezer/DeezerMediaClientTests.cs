@@ -9,6 +9,22 @@ namespace allstarr.Tests;
 public sealed class DeezerMediaClientTests
 {
     [Theory]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.NotFound)]
+    [InlineData(HttpStatusCode.Gone)]
+    public async Task MediaRefusal_IsTrackScopedAfterSuccessfulAuthentication(HttpStatusCode status)
+    {
+        using var fixture = new Fixture(request => IsAuth(request) ? Auth() :
+            request.RequestUri!.AbsolutePath == "/track/42" ? Track("42", "token", true) : new(status));
+        var error = await Assert.ThrowsAsync<allstarr.Core.Capabilities.ProviderTrackUnavailableException>(() =>
+            fixture.Client.ResolveDownloadAsync("42", "account-a", null, "FLAC", CancellationToken.None));
+        Assert.Equal(status, error.StatusCode);
+        var classified = DeezerDownloadCapabilityAdapter.HttpError(error);
+        Assert.True(classified.IsTrackScoped);
+        Assert.NotEqual(allstarr.Core.Capabilities.ProviderErrorKind.Unauthorized, classified.Kind);
+    }
+
+    [Theory]
     [InlineData(true, true)]
     [InlineData(false, false)]
     public async Task ReadableOriginal_PreservesOriginalIdAndToken(bool includeId, bool includeReadable)

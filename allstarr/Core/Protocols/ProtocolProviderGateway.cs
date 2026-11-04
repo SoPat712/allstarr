@@ -147,6 +147,9 @@ public interface IProtocolProviderGateway
         string providerId,
         string externalId);
 
+    Task<string?> GetStreamingProviderAsync(ProtocolExecutionContext protocol, string providerId, string externalId) =>
+        Task.FromResult<string?>(null);
+
     Task<ProtocolProviderStream?> OpenStreamAsync(
         ProtocolExecutionContext protocol,
         string providerId,
@@ -235,7 +238,8 @@ public sealed partial class ProtocolProviderGateway(
     TimeProvider? timeProvider = null,
     IOptions<CacheSettings>? searchSettings = null,
     IProviderAudioVerifier? audioVerifier = null,
-    Enrichment.SharedTagQueue? sharedTags = null, LyricsSearchChanges? lyricsChanges = null) : IProtocolProviderGateway
+    Enrichment.SharedTagQueue? sharedTags = null, LyricsSearchChanges? lyricsChanges = null,
+    TrackMatchDecisionEngine? playbackMatcher = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
     private readonly IProviderAudioVerifier streamVerifier = audioVerifier ?? new ProviderAudioVerifier();
@@ -1407,15 +1411,35 @@ public sealed partial class ProtocolProviderGateway(
                 { logger?.LogDebug("Playback alternatives are unavailable ({ErrorType})", error.GetType().Name); }
             }
         }
-        async Task<bool> ResolveAvailabilityAsync()
+        async Task<bool> ResolveAvailabilityAsync(bool afterFailure = false)
         {
-            if (protocol.IsOriginalDownload || protocol.IsReadOnly || availabilityAttempted || !hasPlaybackIdentity && providerId != "allstarr" ||
+            if (protocol.IsOriginalDownload || protocol.IsReadOnly || protocol.IsPreparation || availabilityAttempted ||
+                !afterFailure && !hasPlaybackIdentity && providerId != "allstarr" ||
                 providerId != "allstarr" && !IsAutomaticProvider(providerId, effectivePolicy)) return false;
             availabilityAttempted = true;
-            var linked = await TryResolvePlaybackAvailabilityAsync(plan, availabilityOrder, trackId,
-                exactRouteMissKey, effectivePolicy, quality);
-            if (linked) plan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
-            return linked;
+            if (afterFailure && !hasPlaybackIdentity && providerId != "allstarr")
+            {
+                providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming, effectivePolicy)
+                    .Append(providerId).Distinct(StringComparer.Ordinal).ToArray();
+                streamRequest = Request(protocol, actor, ProviderCapabilityKind.Streaming, "protocol-stream-open",
+                    providerOrder, trackId, quality, allowFallback: true, allowManagedDownloads: true);
+                var expanded = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
+                if (expanded.Candidates.Any(candidate => candidate.Provider.Id != providerId))
+                {
+                    plan = expanded;
+                    return true;
+                }
+                plan = expanded;
+            }
+            try
+            {
+                var linked = await TryResolvePlaybackAvailabilityAsync(plan, availabilityOrder, trackId,
+                    exactRouteMissKey, effectivePolicy, quality);
+                if (!linked && afterFailure) linked = await TryMatchPlaybackAlternativeAsync(protocol, trackId, availabilityOrder, effectivePolicy, quality);
+                if (linked) plan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
+                return linked;
+            }
+            catch (OperationCanceledException) when (afterFailure && !streamCancellation.IsCancellationRequested) { return false; }
         }
         if (plan.Candidates.Count == 0) await ResolveAvailabilityAsync();
         if (plan.Candidates.Count == 0)
@@ -1466,13 +1490,14 @@ public sealed partial class ProtocolProviderGateway(
             return await OpenWithStartPreferenceAsync(protocol, plan, trackId, quality,
                 effectivePolicy, startDeadline, DownloadTransferDeadline(streamOpeningStartedAt, protocolDeadline),
                 parsedRange, openingTimeout.Token, streamCancellation, OpenedAsync,
-                async () => await ResolveAvailabilityAsync() ? plan : null,
+                async () => await ResolveAvailabilityAsync(afterFailure: true) ? plan : null,
                 laterSources: laterLookup == null ? null : async token => await laterLookup.WaitAsync(token)
                     ? await router.PlanAsync<IProviderStreamingCapability>(streamRequest) : null);
         }
 
         string? fallbackReason = null;
         ProviderError? lastFailure = null;
+        ProviderError? originalFailure = null;
         var sourceAttempts = 0;
         var attemptedRoutes = new HashSet<(string Provider, Guid? Account, string Track)>();
         for (var candidateIndex = 0; candidateIndex < plan.Candidates.Count; candidateIndex++)
@@ -1703,6 +1728,7 @@ public sealed partial class ProtocolProviderGateway(
                 }, candidateExecution, servingTrack);
             }
             lastFailure = outcome.Error;
+            originalFailure ??= outcome.Error;
             if (pinnedDownload != null) ThrowRouteFailure(outcome.Error!);
             if (outcome.Error?.Code == "stream-range-unavailable") ThrowRouteFailure(outcome.Error);
             var fallback = router.EvaluateFallback(plan, candidateIndex, outcome.Error!);
@@ -1716,17 +1742,17 @@ public sealed partial class ProtocolProviderGateway(
                     : $"fallback-{fallback.ReasonCode}";
                 continue;
             }
-            if (fallback?.Disposition == ProviderFallbackDisposition.Exhausted && await ResolveAvailabilityAsync())
+            if (fallback?.Disposition == ProviderFallbackDisposition.Exhausted && await ResolveAvailabilityAsync(afterFailure: true))
             {
                 candidateIndex = -1;
                 fallbackReason = $"fallback-{outcome.Error!.Code}";
                 continue;
             }
-            ThrowRouteFailure(outcome.Error!);
+            ThrowRouteFailure(originalFailure ?? outcome.Error!);
         }
 
         if (protocol.IsReadOnly || protocol.IsPreparation) return null;
-        if (lastFailure != null) ThrowRouteFailure(lastFailure);
+        if (lastFailure != null) ThrowRouteFailure(originalFailure ?? lastFailure);
         throw new ProtocolProviderUnavailableException(new(ProviderErrorKind.TransientFailure));
 
         async Task<ProtocolProviderStream> OpenedAsync(ProtocolProviderStream stream,
@@ -2045,9 +2071,9 @@ public sealed partial class ProtocolProviderGateway(
 
     private static ProviderError StreamError(HttpStatusCode status) => status switch
     {
-        HttpStatusCode.NotFound or HttpStatusCode.Gone => new(ProviderErrorKind.NotFound),
+        HttpStatusCode.NotFound or HttpStatusCode.Gone => ProviderError.TrackUnavailable(),
         HttpStatusCode.Unauthorized => new(ProviderErrorKind.Unauthorized),
-        HttpStatusCode.Forbidden => new(ProviderErrorKind.Forbidden),
+        HttpStatusCode.Forbidden => ProviderError.TrackUnavailable(ProviderErrorKind.Forbidden),
         HttpStatusCode.TooManyRequests => new(ProviderErrorKind.RateLimited, TimeSpan.FromSeconds(30)),
         HttpStatusCode.RequestTimeout or >= HttpStatusCode.InternalServerError => new(ProviderErrorKind.TransientFailure),
         _ => new(ProviderErrorKind.PermanentFailure)

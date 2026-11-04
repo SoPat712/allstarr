@@ -24,6 +24,10 @@ public sealed partial class TrackIdentityService
         {
             song.Title,
             song.Artist,
+            song.Artists,
+            song.ArtistAliases,
+            song.AlbumArtist,
+            song.AlbumArtists,
             song.Album,
             song.Genre,
             song.Genres,
@@ -63,6 +67,8 @@ public sealed partial class TrackIdentityService
             });
         }
         await db.SaveChangesAsync(cancellationToken);
+        await LinkLibraryRecordingsAsync(execution.Actor, execution.CorrelationId, link.CanonicalRecordingId,
+            cancellationToken: cancellationToken);
     }
 
     public async Task<ProviderRecordingAvailabilityRequest?> GetRecordingAvailabilityAsync(

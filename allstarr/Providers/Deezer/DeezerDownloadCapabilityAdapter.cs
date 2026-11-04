@@ -277,14 +277,16 @@ public sealed class DeezerDownloadCapabilityAdapter : IProviderDownloadCapabilit
     private static string ArtifactId(string trackId, string extension) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(trackId))).ToLowerInvariant() + extension;
 
-    internal static ProviderError HttpError(HttpRequestException exception) => exception.StatusCode switch
-    {
-        HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => new(ProviderErrorKind.Unauthorized),
-        HttpStatusCode.NotFound => new(ProviderErrorKind.NotFound),
-        HttpStatusCode.TooManyRequests => new(ProviderErrorKind.RateLimited, TimeSpan.FromSeconds(30)),
-        >= HttpStatusCode.InternalServerError => new(ProviderErrorKind.TransientFailure),
-        _ => new(ProviderErrorKind.PermanentFailure)
-    };
+    internal static ProviderError HttpError(HttpRequestException exception) => exception is ProviderTrackUnavailableException
+        ? ProviderError.TrackUnavailable(exception.StatusCode == HttpStatusCode.Forbidden ? ProviderErrorKind.Forbidden : ProviderErrorKind.NotFound)
+        : exception.StatusCode switch
+        {
+            HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => new(ProviderErrorKind.Unauthorized),
+            HttpStatusCode.NotFound or HttpStatusCode.Gone => ProviderError.TrackUnavailable(),
+            HttpStatusCode.TooManyRequests => new(ProviderErrorKind.RateLimited, TimeSpan.FromSeconds(30)),
+            >= HttpStatusCode.InternalServerError => new(ProviderErrorKind.TransientFailure),
+            _ => new(ProviderErrorKind.PermanentFailure)
+        };
 
     private sealed record Credential(
         [property: JsonPropertyName("arl")] string? Arl,
