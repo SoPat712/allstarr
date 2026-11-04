@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { comparisonRows, defaultMatchFilter, differenceChips, evidenceSentence, filterCounts, inFilter, keyboardCommand, matchesSearch, summarizeMatches, sortMatches, versionWords } from "./matches-presentation";
+import { comparisonRows, currentSong, defaultMatchFilter, differenceChips, evidenceSentence, filterCounts, formatConfidence, inFilter, keyboardCommand, matchPill, matchesSearch, summarizeMatches, sortMatches, versionWords } from "./matches-presentation";
 import type { MatchReviewItem } from "./api";
 
 const song = { title: "Song", artist: "Singer", album: "Album", durationMilliseconds: 180000, isrc: "AB123", isExplicit: true };
@@ -13,9 +13,27 @@ describe("match differences", () => {
     expect(differenceChips(song, { ...song, title: "Song (Live Remix)", album: "Album Deluxe", durationMilliseconds: 182000, isExplicit: false, isrc: "CD456" }))
       .toEqual(["Live", "Remix", "Deluxe album", "+2 s", "Clean instead of explicit", "Different ISRC"]);
     expect(differenceChips(song, song)).toEqual([]);
-    expect(differenceChips(song, {})).toEqual(["Details unavailable"]);
+    expect(differenceChips(song, {})).toEqual([]);
     expect(differenceChips(song, { ...song, durationMilliseconds: 180999, isrc: null })).toEqual([]);
     expect(differenceChips(song, { ...song, durationMilliseconds: 178500 })).toEqual(["-2 s"]);
+  });
+  it("does not infer differences from missing recording details", () => {
+    expect(differenceChips({ ...song, title: "Song (Live)" }, {})).toEqual([]);
+    expect(differenceChips(song, { album: "Another album" })).toEqual(["Different album"]);
+  });
+  it("compares available fields while leaving missing fields uncomparable", () => {
+    const rows = comparisonRows(song, { title: null, artist: song.artist, album: "Another album" });
+    expect(rows.map(row => [row.label, row.verdict])).toEqual([
+      ["Title", "Can't compare"], ["Artist", "Same"], ["Album", "Different"],
+      ["Length", "Can't compare"], ["ISRC", "Can't compare"], ["Version", "Can't compare"],
+    ]);
+    expect(comparisonRows(song, { title: "  ", artist: "  " }).every(row => row.verdict === "Can't compare")).toBe(true);
+  });
+  it("keeps an identified target with missing metadata available for comparison", () => {
+    const target = currentSong({ ...match("accepted"), target: { providerId: "qobuz", externalId: "saved", title: null } });
+    expect(target).toMatchObject({ providerId: "qobuz", identity: "saved", title: null });
+    expect(differenceChips(song, target)).toEqual([]);
+    expect(comparisonRows(song, target).every(row => row.verdict === "Can't compare")).toBe(true);
   });
   it("recognizes every supported version and notices versions removed from a title", () => {
     expect(versionWords("Live Remix Acoustic Instrumental Sped up Slowed Single Version Radio Edit Remastered Taylor’s Version"))
@@ -25,6 +43,28 @@ describe("match differences", () => {
   it("never calls missing metadata the same and uses a close length verdict", () => {
     expect(comparisonRows(song, null).every(row => row.verdict === "Can't compare")).toBe(true);
     expect(comparisonRows(song, { ...song, durationMilliseconds: 180500 }).find(row => row.label === "Length")?.verdict).toBe("Close");
+  });
+});
+
+describe("match confidence presentation", () => {
+  it.each([[.967, "97%"], [.9545, "95%"], [.992, "99%"], [0, "0%"], [1, "100%"], [null, "—"], [undefined, "—"], [NaN, "—"], [Infinity, "—"]])("formats %s as %s", (value, label) => {
+    expect(formatConfidence(value)).toBe(label);
+  });
+  it.each(["ambiguous", "suggested"])("keeps %s warning above the acceptance threshold", (state) => {
+    expect(matchPill({ ...match(state), confidence: .967, threshold: .9 })).toEqual({ text: "97%", tone: "warn" });
+  });
+  it("uses success only for accepted automatic matches meeting the threshold", () => {
+    expect(matchPill({ ...match("accepted"), confidence: .967, threshold: .9 })).toEqual({ text: "97%", tone: "ok" });
+    expect(matchPill({ ...match("accepted"), confidence: .899, threshold: .9 })).toEqual({ text: "90%", tone: "warn" });
+    expect(matchPill({ ...match("accepted"), confidence: .967, threshold: null }).tone).toBe("warn");
+  });
+  it("keeps hand-picked, rejected and unmatched decisions distinct from confidence", () => {
+    expect(matchPill({ ...match("pinned"), confidence: 1 })).toEqual({ text: "By you", tone: "neutral" });
+    const manual = { effective: true, kind: "provider_match" } as NonNullable<MatchReviewItem["manualAuthorities"]>[number];
+    expect(matchPill({ ...match("accepted"), confidence: 1, threshold: .9, manualAuthorities: [manual] })).toEqual({ text: "By you", tone: "neutral" });
+    expect(matchPill({ ...match("rejected"), confidence: 1 })).toEqual({ text: "Rejected", tone: "stop" });
+    expect(matchPill({ ...match("unresolved"), confidence: .967, threshold: .9 })).toEqual({ text: "No match", tone: "stop" });
+    expect(matchPill({ ...match("accepted"), confidence: null })).toEqual({ text: "No match", tone: "stop" });
   });
 });
 

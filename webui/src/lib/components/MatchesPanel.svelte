@@ -3,8 +3,8 @@
   import { MoreHorizontal } from "@lucide/svelte";
   import { matchReview, type MatchAuthorityScope, type MatchCandidate, type MatchReviewItem, type MatchTarget, type ProviderDefinition } from "$lib/api";
   import { allowedAuthorityScopes, canEditAuthorityScope, expectedAuthorityForScope } from "$lib/matching-api";
-  import { candidateResolution, matchScore, percent, playableProviderIds, providerResultCounts, rankedTargets, reportedAudio, reviewProviderIdentities, routingPreference, scoreComponents, targetRoutingPreference } from "$lib/mappings";
-  import { candidateReason, comparisonRows, currentSong, evidenceSentence, targetSong } from "$lib/matches-presentation";
+  import { candidateResolution, percent, playableProviderIds, providerResultCounts, rankedTargets, reportedAudio, reviewProviderIdentities, routingPreference, scoreComponents, targetRoutingPreference } from "$lib/mappings";
+  import { candidateReason, comparisonRows, currentSong, evidenceSentence, formatConfidence, targetSong } from "$lib/matches-presentation";
   import { findProviderDefinition, providerDisplayName } from "$lib/sources";
   import { formatDuration } from "$lib/playlists";
   import { reportHref } from "$lib/support";
@@ -154,7 +154,7 @@
       <RecordingLyricsPicker recordingId={match.canonicalRecordingId} {providers} allowHousehold={allowedAuthorityScopes(match).includes("household")} />
     {:else}
       <section class="comparison-section" aria-label="Recording comparison">
-        <p class="preview-label">{preview ? `Previewing ${name(preview.externalProvider)} · ${preview.title || "Metadata unavailable"}` : "No current match"}</p>
+        <p class="preview-label">{preview ? `Previewing ${name(preview.externalProvider)}${preview.title?.trim() ? ` · ${preview.title}` : ""}` : "No current match"}</p>
         <table class="comparison"><thead><tr><th>Detail</th><th>Original<br /><small>Your playlist</small></th><th>Current<br /><small>Plays as</small></th><th>Verdict</th></tr></thead>
           <tbody>{#each comparison as row}<tr><th scope="row">{row.label}</th><td>{row.original}</td><td>{row.current}</td><td><span class:equal={row.verdict === "Same"}>{row.verdict}</span></td></tr>{/each}</tbody>
         </table>
@@ -165,7 +165,7 @@
             <ItemRow title={`${target.isBestVersion && target.externalProvider?.toLowerCase() === "artistgrid" ? "⭐ " : ""}${target.title}`} subtitle={`${name(target.externalProvider)} · ${target.album || "Album not provided"} · ${formatDuration(target.durationMilliseconds)}`}
               selected={preview?.id === target.id && preview?.externalProvider === target.externalProvider} onclick={() => preview = target}>
               {#snippet leading()}<ProviderMark id={target.externalProvider || backend.toLowerCase()} definition={provider(target.externalProvider || "local")} />{/snippet}
-              {#snippet pill()}<StatePill tone={(target.confidence ?? 0) >= (match?.threshold ?? 1) ? "ok" : "warn"} text={matchScore(target.confidence)} />{/snippet}
+              {#snippet pill()}<StatePill tone={(target.confidence ?? 0) >= (match?.threshold ?? 1) ? "ok" : "warn"} text={formatConfidence(target.confidence)} />{/snippet}
             </ItemRow>
             <p class="candidate-reasons">{candidateReason(target)}</p>
             {#if target.isBestVersion && target.externalProvider?.toLowerCase() === "artistgrid"}<span class="sr-only" role="img" aria-label="Best version on ArtistGrid" title="Best version on ArtistGrid">⭐</span>{/if}
@@ -188,7 +188,7 @@
               <div class="search-result">
                 <ItemRow title={`${target.isBestVersion && target.externalProvider?.toLowerCase() === "artistgrid" ? "⭐ " : ""}${target.title}`} subtitle={`${name(target.externalProvider)} · ${target.album || "Album not provided"} · ${formatDuration(target.durationMilliseconds)}`} selected={preview?.id === target.id && preview?.externalProvider === target.externalProvider} onclick={() => preview = target}>
                   {#snippet leading()}<ProviderMark id={target.externalProvider || backend.toLowerCase()} definition={provider(target.externalProvider || "local")} />{/snippet}
-                  {#snippet pill()}<StatePill tone="info" text={matchScore(target.confidence)} />{/snippet}
+                  {#snippet pill()}<StatePill tone="info" text={formatConfidence(target.confidence)} />{/snippet}
                 </ItemRow>
                 {#if target.isBestVersion && target.externalProvider?.toLowerCase() === "artistgrid"}<span class="sr-only" role="img" aria-label="Best version on ArtistGrid" title="Best version on ArtistGrid">⭐</span>{/if}
                 <p class="candidate-reasons">{candidateReason(target)}</p>
@@ -212,7 +212,7 @@
         {#each scoreComponents(preview) as [key, value]}<span>{evidenceSentence(key)} {value === 1 ? "matches exactly" : `is ${percent(value)} similar`}</span>{/each}
       </div><details><summary>Full scoring</summary><dl>
         <div><dt>Candidate ID</dt><dd>{preview.externalId || preview.backendItemId || preview.id}</dd></div>
-        <div><dt>Match score</dt><dd>{matchScore(preview.confidence)}</dd></div>
+        <div><dt>Match score</dt><dd>{formatConfidence(preview.confidence)}</dd></div>
         <div><dt>Routing preference</dt><dd>{routingPreference(preview.components) || targetRoutingPreference(preview) || "Not provided"}</dd></div>
         {#if previewCandidate}
           <div><dt>Normalized source title</dt><dd>{previewCandidate.normalizedSourceTitle || "Not provided"}</dd></div>

@@ -11,13 +11,13 @@ const makeSong = (id: string, state: string, confidence: number | null) => ({
   candidates: state === "unresolved" ? [] : [
     { isCurrent: true, isLocal: false, title: `Song ${id} (Live)`, artist: "Example artist", providerTrackIds: { qobuz: `current-${id}` }, confidence: confidence ?? 0 },
     { isLocal: false, title: `Song ${id}`, artist: "Example artist", album: "Original album", durationMilliseconds: 180000,
-      providerTrackIds: { "apple-download": `better-${id}` }, confidence: .97, components: { title: 1, artist: 1, duration: 1 }, reasons: ["title_exact", "duration_close"] },
+      providerTrackIds: { "apple-download": `better-${id}` }, confidence: .967, components: { title: 1, artist: 1, duration: 1 }, reasons: ["title_exact", "duration_close"] },
   ],
 });
 
 async function fixture(page: Page, options: { needs?: boolean; administrator?: boolean } = {}) {
   const needs = options.needs !== false, administrator = options.administrator !== false;
-  const songs = needs ? [makeSong("One", "ambiguous", .7), makeSong("Two", "suggested", .8), makeSong("Three", "unresolved", null)] : [];
+  const songs = needs ? [makeSong("One", "ambiguous", .967), makeSong("Two", "suggested", .967), makeSong("Three", "unresolved", null)] : [];
   songs.push(makeSong("Four", "accepted", .99), makeSong("Five", "accepted", .98));
   const writes: Record<string, unknown>[] = [];
   await page.route("**/api/**", async route => {
@@ -68,6 +68,12 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(status.getByRole("img")).toHaveAttribute("aria-label", "Matched by Allstarr: 2, Chosen by you: 0, Unsure: 2, Without a match: 1");
     await expect(page.getByRole("radio", { name: "Needs a look 3", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(page.locator(".mapping-row")).toHaveCount(3);
+    for (const id of ["One", "Two"]) {
+      const pill = page.locator(`.mapping-row[data-snapshot="${id}"] .state-pill`);
+      await expect(pill).toHaveText("97%");
+      await expect(pill).toHaveAttribute("data-tone", "warn");
+    }
+    await expect(page.locator('.mapping-row[data-snapshot="Three"] .state-pill')).toHaveAttribute("data-tone", "stop");
     await expect(page.getByText("Song One", { exact: true })).toHaveCount(1);
     await expect(page.getByRole("button", { name: "Open match for Song One", exact: true })).toBeVisible();
     if (width >= 900) {
@@ -78,6 +84,10 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.screenshot({ path: `test-results/patterns/${width === 390 ? "phone-list" : "list"}-${theme}.png` });
     const { panel, opener } = await openSong(page);
     await expect(panel).toBeVisible();
+    await expect(panel.locator(".candidate-card .state-pill")).toHaveText("97%");
+    await panel.locator(".evidence details summary").click();
+    await expect(panel.locator(".evidence details dl > div").filter({ has: page.locator("dt", { hasText: /^Match score$/ }) }).locator("dd")).toHaveText("97%");
+    await panel.locator(".evidence details summary").click();
     await expect(panel.getByRole("table")).toContainText("Original");
     await expect(panel).toContainText("Better choices");
     await expect(panel).toContainText("in First playlist, Second playlist");
@@ -150,6 +160,11 @@ test("Matches redesign defaults to All when clear and remembers a chosen filter"
   await page.goto("#/library/matches");
   await expect(page.getByRole("radio", { name: "All 2", exact: true })).toHaveAttribute("aria-checked", "true");
   await expect(page.getByText("Nothing needs you right now", { exact: true })).toBeVisible();
+  for (const [id, label] of [["Four", "99%"], ["Five", "98%"]]) {
+    const pill = page.locator(`.mapping-row[data-snapshot="${id}"] .state-pill`);
+    await expect(pill).toHaveText(label);
+    await expect(pill).toHaveAttribute("data-tone", "ok");
+  }
   await page.getByRole("radio", { name: "Matched by Allstarr 2", exact: true }).click();
   await page.reload();
   await expect(page.getByRole("radio", { name: "Matched by Allstarr 2", exact: true })).toHaveAttribute("aria-checked", "true");
@@ -187,6 +202,7 @@ test("Matches redesign keyboard avoids text fields and confirms scope for accept
 
 test("Matches redesign queues search while loading and releases shortcuts on navigation", async ({ page }) => {
   await fixture(page);
+  await page.route("**/api/admin/playlist-links", route => route.fulfill({ json: { playlistLinks: [] } }));
   let release!: () => void;
   const pending = new Promise<void>(resolve => { release = resolve; });
   await page.route("**/api/admin/track-matches?*", async route => {
@@ -200,6 +216,7 @@ test("Matches redesign queues search while loading and releases shortcuts on nav
   } finally { release(); }
   await expect(page.getByRole("searchbox", { name: "Search", exact: true })).toBeFocused();
   await page.evaluate(() => { window.location.hash = "/library/playlists"; });
+  await expect(page.getByRole("heading", { name: "No playlists yet", exact: true })).toBeVisible();
   await expect(page.locator(".mapping-page")).toHaveCount(0);
   expect(await page.evaluate(() => {
     const event = new KeyboardEvent("keydown", { key: "/", bubbles: true, cancelable: true });

@@ -3414,6 +3414,8 @@ test("Manual and Rejected tabs expose explicit rematch and delete controls", asy
   await page.goto("#/library/mappings");
 
   await page.getByRole("radio", { name: "Chosen by you 1", exact: true }).click();
+  await expect(page.locator(".mapping-row .state-pill")).toHaveText("By you");
+  await expect(page.locator(".mapping-row .state-pill")).toHaveAttribute("data-tone", "neutral");
   await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
   const manualMatch = page.locator(".manual-authority-row");
   await expect(manualMatch).toContainText("Manual Jellyfin match");
@@ -3426,6 +3428,8 @@ test("Manual and Rejected tabs expose explicit rematch and delete controls", asy
   expect((await rematch).postDataJSON()).toEqual({ kind: "local_match", expectedRevision: 3, authorityScope: "personal" });
 
   await page.getByRole("radio", { name: "Rejected 1", exact: true }).click();
+  await expect(page.locator(".mapping-row .state-pill")).toHaveText("Rejected");
+  await expect(page.locator(".mapping-row .state-pill")).toHaveAttribute("data-tone", "stop");
   await page.locator(".mapping-row .open-match:visible, .mapping-row .row-action:visible").first().click();
   const manualRejection = page.locator(".manual-authority-row");
   await expect(manualRejection).toContainText("Manual rejection");
@@ -3446,7 +3450,7 @@ test("Matches deep links preserve full title, provider search and review decisio
   await page.route("**/api/admin/track-matches/targets/provider?*", route => {
     searches.push(Object.fromEntries(new URL(route.request().url()).searchParams));
     return route.fulfill({ json: { tracks: [{ id: "provider-track", externalId: "provider-track", externalProvider: "lumen-audio",
-      title: "Kiss Me More", artist: "Doja Cat", album: "Planet Her", confidence: .94, durationMilliseconds: 208000 }], providers: ["lumen-audio"] } });
+      title: "Kiss Me More", artist: "Doja Cat", album: "Planet Her", confidence: .967, durationMilliseconds: 208000 }], providers: ["lumen-audio"] } });
   });
   await page.goto("#/library/mappings?search=Test%20song&review=snapshot");
   const panel = page.getByRole("dialog", { name: "Test song - Remix", exact: true });
@@ -3460,6 +3464,7 @@ test("Matches deep links preserve full title, provider search and review decisio
   await panel.getByRole("button", { name: "Search", exact: true }).click();
   await expect(panel.locator(".target-results .search-result")).toHaveCount(1);
   expect(searches).toEqual([{ query: "Kiss Me More", externalSnapshotId: "snapshot", limit: "50", includeLocal: "true" }]);
+  await expect(panel.locator(".target-results .state-pill")).toHaveText("97%");
   await panel.locator(".target-results .row-action").click();
   await expect(panel.getByRole("table")).toContainText("Kiss Me More");
   const write = page.waitForRequest(request => request.url().endsWith("/snapshot/resolve") && request.method() === "POST");
@@ -4207,15 +4212,23 @@ test("Compact dialogs share symmetric actions and readable progress", async ({ p
 
   await page.goto("#/integrations/services");
   await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible();
-  const serviceActions = await page.locator(".sources-heading-actions button").evaluateAll((buttons) =>
+  const serviceButtons = page.locator(".sources-heading-actions button");
+  await expect(serviceButtons).toHaveCount(3);
+  await expect(serviceButtons.last()).toBeVisible();
+  const serviceActions = await serviceButtons.evaluateAll((buttons) =>
     buttons.map((button) => {
       const rect = button.getBoundingClientRect();
-      return { contained: button.scrollWidth <= button.clientWidth, right: rect.right };
+      return { contained: button.scrollWidth <= button.clientWidth, right: rect.right, width: rect.width, height: rect.height, y: Math.round(rect.y) };
     }),
   );
   expect(serviceActions.every(({ contained, right }) => contained && right <= 320)).toBe(true);
+  expect(serviceActions.every(({ height }) => height >= 44)).toBe(true);
+  expect(new Set(serviceActions.map(({ y }) => y)).size).toBe(3);
+  expect(Math.max(...serviceActions.map(({ width }) => width)) - Math.min(...serviceActions.map(({ width }) => width))).toBeLessThanOrEqual(1);
   await page.getByRole("button", { name: "Connect account" }).click();
   const sourceDialog = page.getByRole("dialog", { name: "Connect a Source" });
+  await expect(sourceDialog).toBeVisible();
+  await expect(sourceDialog.locator("form > .dialog-actions > *")).toHaveCount(2);
   const sourceActions = await sourceDialog.locator("form > .dialog-actions > *").evaluateAll((actions) =>
     actions.map((action) => {
       const rect = action.getBoundingClientRect();
@@ -8144,27 +8157,26 @@ for (const [width, colorScheme] of [[390, "light"], [390, "dark"], [1280, "light
     const markRequests: string[] = [];
     await page.route(/\/images\/providers\/brands\/artistgrid\/color\.(?:svg|png)$/, route => {
       markRequests.push("color");
-      return width < 600 ? route.fulfill({ status: 404 }) : route.fallback();
+      return route.fallback();
     });
     await page.route("**/images/providers/artistgrid.svg", (route) => {
       markRequests.push("legacy");
-      return route.fulfill({
-        path: new URL("../../allstarr/wwwroot/images/providers/artistgrid.svg", import.meta.url).pathname,
-        contentType: "image/svg+xml",
-      });
+      return route.fulfill({ status: 404 });
     });
     await page.goto("#/integrations/services/artistgrid");
+    await expect(page.getByRole("heading", { name: "ArtistGrid", level: 2 })).toBeVisible();
     const use = page.getByRole("region", { name: "Use this source", exact: true });
     const everyone = use.getByRole("radiogroup", { name: "Use this source for everyone" });
     const mine = use.getByRole("radiogroup", { name: "Use this source for you" });
     await expect(everyone.getByRole("radio", { name: "Manual only", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(mine.getByRole("radio", { name: "On", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(use).toContainText("Your own setting.");
-    const mark = page.locator(".provider-mark img").first();
-    await expect(mark).toHaveAttribute("src", width < 600 ? /\/artistgrid\.svg$/ : /\/brands\/artistgrid\/color\.svg$/);
+    const mark = page.locator(".service-head .provider-mark img");
+    await expect(mark).toHaveAttribute("src", /\/brands\/artistgrid\/color\.svg$/);
     await expect(mark).toBeVisible();
+    await expect.poll(() => mark.evaluate(image => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
     expect(markRequests).toContain("color");
-    expect(markRequests.includes("legacy")).toBe(width < 600);
+    expect(markRequests).not.toContain("legacy");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     await page.screenshot({ path: `test-results/source-use-${width}-${colorScheme}.png`, fullPage: false });
     await use.getByRole("button", { name: "Follow everyone instead" }).click();

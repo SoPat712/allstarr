@@ -4520,7 +4520,6 @@
 
 @media (max-width: 380px) {
   .panel-heading-actions,
-  .sources-heading-actions,
   .dialog-actions,
   .mobile-menu-actions {
     grid-template-columns: 1fr;
@@ -7046,11 +7045,17 @@
 
 @media (max-width: 650px) {
   .sources-heading-actions {
+    display: grid;
     width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .sources-heading-actions > [data-slot="button"] {
-    flex: 1;
+    width: 100%;
+  }
+
+  .sources-heading-actions > :last-child:nth-child(odd) {
+    grid-column: 1 / -1;
   }
 
   .source-row-main,
@@ -7072,6 +7077,12 @@
 
   .source-row-timing {
     display: none;
+  }
+}
+
+@media (max-width: 380px) {
+  .sources-heading-actions {
+    grid-template-columns: 1fr;
   }
 }
 

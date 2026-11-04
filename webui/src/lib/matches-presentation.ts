@@ -6,6 +6,15 @@ export type MatchFilter = "needs" | "automatic" | "manual" | "rejected" | "all";
 export const filterStates: Record<MatchFilter, string[]> = {
   needs: ["attention", "unresolved"], automatic: ["automatic"], manual: ["manual_matches"], rejected: ["manual_rejections"], all: [""],
 };
+export function formatConfidence(value?: number | null) {
+  return value == null || !Number.isFinite(value) ? "—" : `${Math.round(value * 100)}%`;
+}
+export function matchPill(match: MatchReviewItem): { text: string; tone: "ok" | "warn" | "stop" | "neutral" } {
+  if (match.state === "rejected") return { text: "Rejected", tone: "stop" };
+  if (match.manualAuthorities?.some(item => item.effective && item.kind !== "rejection") || match.state === "pinned") return { text: "By you", tone: "neutral" };
+  if (match.state === "unresolved" || match.confidence == null) return { text: "No match", tone: "stop" };
+  return { text: formatConfidence(match.confidence), tone: match.state === "accepted" && match.threshold != null && match.confidence >= match.threshold ? "ok" : "warn" };
+}
 export type SongFacts = {
   title?: string | null; artist?: string | null; album?: string | null;
   durationMilliseconds?: number | null; isrc?: string | null; isExplicit?: boolean | null;
@@ -22,7 +31,8 @@ export const versionWords = (title?: string | null) => versions.filter(([, patte
 export function differenceChips(source: SongFacts, target: SongFacts | null): string[] {
   if (!target) return [];
   const from = versionWords(source.title), to = versionWords(target.title);
-  const chips = [...to.filter(word => !from.includes(word)), ...from.filter(word => !to.includes(word)).map(word => `Not ${word}`)];
+  const chips = source.title?.trim() && target.title?.trim()
+    ? [...to.filter(word => !from.includes(word)), ...from.filter(word => !to.includes(word)).map(word => `Not ${word}`)] : [];
   if (source.album && target.album && normalized(source.album) !== normalized(target.album))
     chips.push(/deluxe/i.test(target.album) ? "Deluxe album" : "Different album");
   if (source.durationMilliseconds != null && target.durationMilliseconds != null) {
@@ -34,7 +44,6 @@ export function differenceChips(source: SongFacts, target: SongFacts | null): st
   if (source.isrc && target.isrc && normalized(source.isrc) !== normalized(target.isrc)) chips.push("Different ISRC");
   if (source.title && target.title && normalized(source.title) !== normalized(target.title) && !chips.length) chips.push("Different title");
   if (source.artist && target.artist && normalized(source.artist) !== normalized(target.artist)) chips.push("Different artist");
-  if (!chips.length && (!target.title || !target.artist)) chips.push("Details unavailable");
   return chips;
 }
 
@@ -43,7 +52,7 @@ export function comparisonRows(source: SongFacts, target: SongFacts | null) {
   const labels = ["Title", "Artist", "Album", "Length", "ISRC", "Version"];
   return fields.map((field, index) => {
     const value = (song: SongFacts | null) => !song ? null : field === "version"
-      ? (song.title ? versionWords(song.title).join(", ") || "Original" : null) : song[field];
+      ? (song.title?.trim() ? versionWords(song.title).join(", ") || "Original" : null) : typeof song[field] === "string" ? song[field]?.trim() : song[field];
     const left = value(source), right = value(target);
     let verdict = "Can't compare";
     if (left != null && left !== "" && right != null && right !== "") {

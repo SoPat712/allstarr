@@ -149,12 +149,43 @@ test("match review hides unlabeled and internal rows while keeping saved manual 
   await expect(page.getByText("Internal recording", { exact: true })).toHaveCount(0);
   await expect(rows.filter({ hasText: "Saved external source" })).toContainText("Saved provider recording");
   await expect(rows.filter({ hasText: "Saved local source" })).toContainText("Saved library recording");
-  await expect(rows.filter({ hasText: "Source with unavailable target details" })).toContainText("Metadata unavailable");
+  const missing = rows.filter({ hasText: "Source with unavailable target details" });
+  await expect(missing.locator(".plays-as")).toContainText("Qobuz");
+  await expect(missing.locator(".plays-as small")).toHaveCount(0);
+  await expect(missing.locator(".difference-chips")).toBeEmpty();
+  await missing.locator(".open-match:visible, .row-action:visible").click();
+  const panel = page.getByRole("dialog", { name: "Source with unavailable target details", exact: true });
+  await expect(panel.locator(".comparison tbody tr")).toHaveCount(6);
+  await expect(panel.locator(".comparison tbody tr td:last-child")).toHaveText(Array(6).fill("Can't compare"));
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
   await expect(rows.filter({ hasText: "Unmatched source song" })).toContainText("No match yet");
   await expect(page.getByRole("navigation", { name: "Match review pages" })).toContainText("4 songs");
   await page.getByRole("button", { name: "Select", exact: true }).click();
   await page.getByRole("checkbox", { name: "Select all songs on this page" }).check();
   await expect(page.getByRole("toolbar", { name: "Actions for selected songs" })).toContainText("4 selected");
+});
+
+for (const width of [390, 1280]) test(`match comparison preserves known fields when target details are missing at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
+  await mockMatching(page, { administrator: false, match: {
+    title: "Layered song (Live)", candidates: [],
+    target: { providerId: "qobuz", externalId: "saved", title: null, artist: "Example artist" },
+  } });
+  await page.goto("#/library/mappings");
+  const row = page.locator(".mapping-row");
+  await expect(row).not.toContainText(/Metadata unavailable|Details unavailable|Same song|Not Live/);
+  if (width < 900) await expect(row.locator(".row-copy p")).toHaveText("Qobuz");
+  else {
+    await expect(row.locator(".plays-as")).toContainText("Qobuz");
+    await expect(row.locator(".plays-as small")).toHaveCount(0);
+    await expect(row.locator(".difference-chips")).toBeEmpty();
+  }
+  await row.locator(".open-match:visible, .row-action:visible").click();
+  const panel = page.getByRole("dialog", { name: "Layered song (Live)", exact: true });
+  await expect(panel.locator(".preview-label")).toHaveText("Previewing Qobuz");
+  await expect(panel.locator(".comparison tbody tr td:last-child")).toHaveText([
+    "Can't compare", "Same", "Can't compare", "Can't compare", "Can't compare", "Can't compare",
+  ]);
 });
 
 for (const theme of ["light", "dark"] as const) {
@@ -242,7 +273,7 @@ for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as 
     await expect(rows.nth(1)).toContainText("Apple Music");
     await expect(rows.nth(1)).not.toContainText("Same album edition");
     await expect(rows.nth(2)).toContainText("Deezer");
-    await expect(rows.nth(3)).toContainText("95.44%");
+    await expect(rows.nth(3)).toContainText("95%");
     await expect(rows.nth(3)).toContainText("Audio format not reported");
     await expect(rows.nth(3)).not.toContainText("Not explicit");
     await expect(rows.nth(4)).toContainText("94%");
@@ -250,8 +281,8 @@ for (const width of [390, 1280]) for (const colorScheme of ["light", "dark"] as 
     await expect(rows.nth(4)).toContainText("Audio format not reported");
     await expect(rows.nth(5)).toContainText("Not explicit");
     await expect(rows.nth(5)).toContainText("0%");
-    for (let index = 0; index < 2; index++) await expect(rows.nth(index)).toContainText("95.45%");
-    await expect(rows.nth(2)).toContainText("99.2%");
+    for (let index = 0; index < 2; index++) await expect(rows.nth(index)).toContainText("95%");
+    await expect(rows.nth(2)).toContainText("99%");
     const evidence = dialog.locator(".target-evidence").first();
     await expect(evidence).toContainText("Source ISRCNot provided");
     await expect(evidence).toContainText("the delivered format can differ");
