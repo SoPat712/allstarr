@@ -1882,7 +1882,7 @@ export type MigrationCollectionStatus = {
     keepInSync: boolean; error: string | null; receiptRunId?: string | null };
 };
 export type MigrationStatus = {
-  id: string; run: { providerAccountId: string; state: string; phase: string; jobId: string | null };
+  id: string; run: { providerId: string; providerAccountId: string; state: string; phase: string; jobId: string | null };
   collections: MigrationCollectionStatus[]; total: MigrationCounts; provisional: boolean;
 };
 export type MigrationResourceCandidate = {

@@ -4,7 +4,7 @@
   import { Check } from "@lucide/svelte";
   import { ApiError, home, matchReview, migrations, sources, type MigrationChoice, type MigrationReviewItem, type MigrationResourceCandidate,
     type MigrationStatus, type MatchReviewItem, type ProviderAccount, type ProviderDefinition } from "$lib/api";
-  import { collectionCountsLine, collectionStateLabel, migrationError, migrationProgress, migrationStep, needsReview, reviewReason, addedCountLine, remainingCountLine, moveCountLine, readyToMove, collectionChoiceOrder, collectionCount, unavailableCollectionsLine, resourceDetails } from "$lib/migration";
+  import { collectionCountsLine, collectionStateLabel, migrationError, migrationProgress, migrationStep, needsReview, reviewReason, addedCountLine, remainingCountLine, moveCountLine, readyToMove, collectionChoiceOrder, collectionCount, collectionName, unavailableCollectionsLine, resourceDetails } from "$lib/migration";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { Dialog } from "$lib/components/ui/dialog";
   import { Button, buttonVariants } from "$lib/components/ui/button";
@@ -12,6 +12,7 @@
   import { Progress } from "$lib/components/ui/progress";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import SelectField from "$lib/components/SelectField.svelte";
+  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
@@ -21,6 +22,7 @@
 
   let { currentUserId, initialAccount = "", initialRun = "" }: { currentUserId: string; initialAccount?: string; initialRun?: string } = $props();
   let accounts = $state<ProviderAccount[]>([]);
+  let providerId = $state("spotify");
   let accountId = $state("");
   let runId = $state("");
   let status = $state<MigrationStatus | null>(null);
@@ -56,6 +58,11 @@
   let reading = $state(false);
   let reviewInitialized = false;
   let pendingCount = $state(0);
+  let selectionVersion = 0;
+  const providerOptions = $derived([{ id: "spotify", label: "Spotify" }, { id: "apple-musickit", label: "Apple Music" }]
+    .filter(provider => accounts.some(account => account.providerId === provider.id)));
+  const providerAccounts = $derived(accounts.filter(account => account.providerId === providerId));
+  const providerName = $derived(providerId === "apple-musickit" ? "Apple Music" : "Spotify");
   const step = $derived(migrationStep(status));
   const runState = $derived(status?.run.state ?? "choosing");
   const interrupted = $derived(runState === "waiting" || runState === "cancelled");
@@ -65,14 +72,18 @@
   const remaining = $derived((status?.total.review ?? 0) + (status?.total.unmatched ?? 0));
   const reviewAvailable = $derived(status && !status.provisional && ["review", "completed"].includes(runState));
   const storageKey = () => `allstarr:migration:${accountId}`;
+  function rememberProvider() {
+    try { localStorage.setItem("allstarr:migration-provider", providerId); } catch { /* Storage is optional. */ }
+  }
 
   function remember() {
     try { if (runId) localStorage.setItem(storageKey(), runId); else localStorage.removeItem(storageKey()); } catch { /* Storage is optional. */ }
   }
   async function discover(loadMore = false) {
     const id = runId;
+    const version = selectionVersion;
     const next = await migrations.discover(id, loadMore ? cursor ?? undefined : undefined);
-    if (disposed || id !== runId) return;
+    if (disposed || id !== runId || version !== selectionVersion) return;
     const previous = loadMore ? choices : [];
     choices = [...previous, ...next.items.filter(item => !previous.some(old => old.sourceId === item.sourceId))]
       .sort((a, b) => collectionChoiceOrder(a.kind) - collectionChoiceOrder(b.kind));
@@ -83,39 +94,43 @@
     if (pageBusy[id]) return;
     pageBusy[id] = true;
     const currentRun = runId;
+    const version = selectionVersion;
     try {
       const previous = pages[id] ?? [];
       const next = await migrations.review(currentRun, id, loadMore ? previous.length : 0);
-      if (disposed || currentRun !== runId) return;
+      if (disposed || currentRun !== runId || version !== selectionVersion) return;
       pages[id] = loadMore ? [...previous, ...next] : next;
       more[id] = next.length === 50;
-    } catch { error = "This music could not be loaded. Try opening this collection again."; }
-    finally { pageBusy[id] = false; }
+    } catch { if (version === selectionVersion) error = "This music could not be loaded. Try opening this collection again."; }
+    finally { if (version === selectionVersion) pageBusy[id] = false; }
   }
   async function loadReceipts(next: MigrationStatus) {
+    const version = selectionVersion;
     let pending = 0;
     const counts: Record<string, number> = {};
     for (const item of next.collections.filter(item => item.collection.state === "applied")) {
       let added = 0;
       for (let offset = 0; offset < item.collection.read; offset += 50) {
         const rows = await migrations.review(next.id, item.id, offset);
-        if (disposed || next.id !== runId) return;
+        if (disposed || next.id !== runId || version !== selectionVersion) return;
         added += rows.filter(row => row.resource ? row.resource.applied : row.receipt?.outcome === 2).length;
         pending += rows.filter(readyToMove).length;
         if (rows.length < 50) break;
       }
       counts[item.id] = added;
     }
-    receiptCounts = counts; pendingCount = pending;
+    if (!disposed && version === selectionVersion) { receiptCounts = counts; pendingCount = pending; }
   }
   async function refresh() {
     if (!runId || reading) return;
     const id = runId;
+    const version = selectionVersion;
     reading = true;
     try {
       const next = await migrations.status(id, ["review", "completed"].includes(runState));
-      if (disposed || runId !== id) return;
-      status = next; accountId = next.run.providerAccountId; remember(); error = "";
+      if (disposed || runId !== id || version !== selectionVersion) return;
+      status = next; accountId = next.run.providerAccountId; providerId = next.run.providerId ?? "spotify";
+      remember(); rememberProvider(); error = "";
       if (next.run.state === "choosing" && !choices.length) await discover();
       if (!reviewInitialized && !next.provisional && ["review", "completed"].includes(next.run.state)) {
         reviewInitialized = true;
@@ -124,34 +139,48 @@
       }
       if (next.run.state === "completed") await loadReceipts(next);
     } catch (cause) {
-      if (disposed || id !== runId) return;
+      if (disposed || id !== runId || version !== selectionVersion) return;
       if (cause instanceof ApiError && cause.status === 404) {
         runId = ""; status = null; remember();
         error = "The saved move is no longer available. You can find your music again.";
       } else error = "Your progress could not be refreshed. Try refreshing again.";
-    } finally { reading = false; }
+    } finally { if (version === selectionVersion) reading = false; }
   }
   async function load() {
     loading = true; error = "";
     try {
       const result = await sources.accounts();
       if (disposed) return;
-      accounts = result.accounts.filter(item => item.providerId === "spotify" && item.scope === "Personal" && item.enabled && item.ownerUserId === currentUserId);
+      accounts = result.accounts.filter(item => ["spotify", "apple-musickit"].includes(item.providerId) && item.scope === "Personal" && item.enabled && item.ownerUserId === currentUserId);
       let preferred = accounts.find(item => item.id === initialAccount);
+      let rememberedProvider = "";
+      try { rememberedProvider = localStorage.getItem("allstarr:migration-provider") ?? ""; } catch { /* Storage is optional. */ }
+      providerId = preferred?.providerId ?? accounts.find(item => item.providerId === rememberedProvider)?.providerId ?? accounts[0]?.providerId ?? "spotify";
+      const candidates = accounts.filter(item => item.providerId === providerId);
       if (!preferred && !initialAccount && !initialRun) {
-        try { preferred = accounts.find(item => localStorage.getItem(`allstarr:migration:${item.id}`)); } catch { /* Storage is optional. */ }
+        try { preferred = candidates.find(item => localStorage.getItem(`allstarr:migration:${item.id}`)); } catch { /* Storage is optional. */ }
       }
-      accountId = preferred?.id ?? accounts[0]?.id ?? "";
+      accountId = preferred?.id ?? candidates[0]?.id ?? "";
+      if (accountId) rememberProvider();
       runId = initialRun;
       if (!runId && accountId) try { runId = localStorage.getItem(storageKey()) ?? ""; } catch { /* Storage is optional. */ }
       if (runId) await refresh();
-    } catch { error = "Your Spotify accounts could not be loaded. Try again."; }
+    } catch { error = "Your accounts could not be loaded. Try again."; }
     finally { loading = false; }
   }
   async function changeAccount(value: string) {
-    accountId = value; requestKey = "";
+    if (busy || value === accountId || !accounts.some(item => item.id === value)) return;
+    reset(); accountId = value;
+    providerId = accounts.find(item => item.id === value)!.providerId; rememberProvider();
     try { runId = localStorage.getItem(storageKey()) ?? ""; } catch { runId = ""; }
     if (runId) await refresh();
+  }
+  async function changeProvider(value: string) {
+    if (busy || value === providerId) return;
+    const candidates = accounts.filter(item => item.providerId === value);
+    let preferred = candidates[0];
+    try { preferred = candidates.find(item => localStorage.getItem(`allstarr:migration:${item.id}`)) ?? preferred; } catch { /* Storage is optional. */ }
+    if (preferred) await changeAccount(preferred.id);
   }
   async function act(action: () => Promise<unknown>, fallback: string) {
     if (busy) return;
@@ -169,7 +198,7 @@
         runId = receipt.id; remember();
       }
       await discover(); await refresh();
-    }, "Your music could not be found. Try again with this Spotify account.");
+    }, "Your music could not be found. Try again with this account.");
   }
   async function command(action: "apply" | "cancel" | "resume") {
     await act(async () => {
@@ -181,6 +210,7 @@
   }
   async function fix(item: MigrationReviewItem, trigger: HTMLElement) {
     if (matchLoading) return;
+    const version = selectionVersion;
     matchTrigger = trigger;
     if (item.resource) {
       selectedResource = item; matchCollection = item.collectionId; resourceError = ""; resourceOpen = true;
@@ -189,35 +219,49 @@
     matchLoading = true; error = "";
     try {
       const match = await matchReview.get(item.externalSnapshotId);
+      if (disposed || version !== selectionVersion) return;
       if (!match || match.externalSnapshotId !== item.externalSnapshotId) throw new Error();
       selectedMatch = match; matchCollection = item.collectionId; matchOpen = true;
-    } catch { error = "This song's match could not be opened. Try again."; }
-    finally { matchLoading = false; }
+    } catch { if (version === selectionVersion) error = "This song's match could not be opened. Try again."; }
+    finally { if (version === selectionVersion) matchLoading = false; }
   }
   async function saveResource(candidate?: MigrationResourceCandidate) {
     if (!selectedResource || resourceSaving) return;
+    const version = selectionVersion;
     resourceSaving = true; resourceError = "";
     try {
       await migrations.chooseResource(runId, selectedResource.collectionId, selectedResource.sourceEntryId,
         candidate ? { providerId: candidate.providerId, resourceId: candidate.resourceId } : { skip: true });
+      if (disposed || version !== selectionVersion) return;
       await matchSaved();
       resourceOpen = false;
-    } catch { resourceError = "Your choice could not be saved. Try again."; }
-    finally { resourceSaving = false; }
+    } catch { if (version === selectionVersion) resourceError = "Your choice could not be saved. Try again."; }
+    finally { if (version === selectionVersion) resourceSaving = false; }
   }
   async function matchSaved() {
+    const version = selectionVersion;
+    const id = runId;
+    const collection = matchCollection;
     await refresh();
-    const loaded = pages[matchCollection]?.length ?? 50;
+    if (disposed || version !== selectionVersion) return;
+    const loaded = pages[collection]?.length ?? 50;
     const rows: MigrationReviewItem[] = [];
     try {
-      for (let offset = 0; offset < loaded; offset += 50) rows.push(...await migrations.review(runId, matchCollection, offset));
-      pages[matchCollection] = rows;
-    } catch { error = "The match was saved. Refresh to see your updated music."; }
+      for (let offset = 0; offset < loaded; offset += 50) rows.push(...await migrations.review(id, collection, offset));
+      if (disposed || version !== selectionVersion) return;
+      pages[collection] = rows;
+    } catch { if (version === selectionVersion) error = "The match was saved. Refresh to see your updated music."; }
     await tick(); (matchTrigger?.isConnected ? matchTrigger : reviewSection)?.focus({ preventScroll: true });
   }
+  function reset() {
+    selectionVersion += 1;
+    runId = ""; status = null; choices = []; selected = {}; sync = {}; pages = {}; more = {}; expanded = {}; pageBusy = {};
+    unsupported = []; receiptCounts = {}; pendingCount = 0; reviewInitialized = false; cursor = null; requestKey = ""; error = ""; reading = false;
+    confirmStop = false; resourceOpen = false; resourceSaving = false; resourceError = ""; selectedResource = null;
+    matchOpen = false; matchLoading = false; selectedMatch = null; matchCollection = ""; matchTrigger = undefined;
+  }
   function fresh() {
-    runId = ""; remember(); status = null; choices = []; selected = {}; sync = {}; pages = {}; more = {}; expanded = {}; pageBusy = {};
-    unsupported = []; receiptCounts = {}; pendingCount = 0; reviewInitialized = false; cursor = null; requestKey = newUuid(); error = "";
+    reset(); remember();
   }
   const scheduler = createRefreshScheduler(refresh);
   onMount(() => {
@@ -230,10 +274,16 @@
   });
 </script>
 
-<section class="settings-content import-page" aria-label="Move your Spotify collection">
-  <header class="panel-heading"><div><h2>Bring your music</h2><p>Move your Spotify collection into Allstarr. Nothing is changed in Spotify.</p></div>
+<section class="settings-content import-page" aria-label="Move your music collection">
+  <header class="panel-heading"><div><h2>Bring your music</h2><p>Move your music collection into Allstarr. Nothing is changed in Spotify or Apple Music.</p></div>
     {#if runId}<RefreshButton variant="secondary" label="Refresh import progress" onrefresh={refresh} />{/if}
   </header>
+  {#if !loading && providerOptions.length > 1}
+    <SegmentedNav items={providerOptions} active={providerId} label="Music service" onchange={changeProvider} />
+  {/if}
+  {#if !loading && providerAccounts.length}
+    <SelectField value={accountId} options={providerAccounts.map(item => ({ value: item.id, label: item.displayName }))} label={`${providerName} account`} disabled={busy} onchange={changeAccount} />
+  {/if}
   <ol class="import-steps" aria-label="Import progress">
     {#each ["Choose", "Match", "Review", "Done"] as label, index}
       <li class:current={step === index} aria-current={step === index ? "step" : undefined}>{#if index < step}<Check size={16} aria-hidden="true" />{/if}{label}</li>
@@ -242,14 +292,13 @@
   {#if loading}<Skeleton class="settings-card skeleton-panel" aria-label="Loading your music" />
   {:else}
     {#if error && !accounts.length && !runId}
-      <RouteError eyebrow="Spotify unavailable" title="Your accounts are unavailable." message={error} onRetry={load} />
+      <RouteError eyebrow="Accounts unavailable" title="Your accounts are unavailable." message={error} onRetry={load} />
     {:else if error}<p class="notice-error" role="alert">{error}</p>{/if}
     {#if (!status || runState === "choosing") && (accounts.length || runId || !error)}
       {#if !accounts.length && !runId && !error}
-        <article class="settings-card"><div class="import-body"><p>Connect your Spotify account first.</p><Button href="#/sources/services">Connect Spotify</Button></div></article>
+        <article class="settings-card"><div class="import-body"><p>Connect Spotify or Apple Music first.</p><Button href="#/integrations/services">Connect an account</Button></div></article>
       {:else if !runId}
         <article class="settings-card"><div class="import-body">
-          <SelectField value={accountId} options={accounts.map(item => ({ value: item.id, label: item.displayName }))} label="Spotify account" disabled={busy} onchange={changeAccount} />
           <Button disabled={busy || !accountId} onclick={findMusic}>Find my music</Button>
         </div></article>
       {/if}
@@ -258,16 +307,16 @@
           <header><h3>Choose your music</h3><div class="import-actions"><Button variant="text" disabled={busy} onclick={() => selected = Object.fromEntries(choices.map(item => [item.sourceId, true]))}>Select all</Button><Button variant="outline" disabled={busy} onclick={() => selected = {}}>Clear</Button></div></header>
           {#each choices as item (item.sourceId)}
             <div class="import-choice">
-              <label class="import-selection"><Checkbox aria-label={`Select ${item.name}`} checked={!!selected[item.sourceId]} disabled={busy} onCheckedChange={value => selected[item.sourceId] = value === true} />
-                <MediaArtwork url={item.artworkUrl} /><span><strong>{item.kind === "liked-songs" ? "Liked Songs" : item.name}</strong><small>{item.count === null ? "Size unknown" : collectionCount(item.count, item.kind)}</small></span></label>
+              <label class="import-selection"><Checkbox aria-label={`Select ${collectionName(item.kind, item.name, providerId)}`} checked={!!selected[item.sourceId]} disabled={busy} onCheckedChange={value => selected[item.sourceId] = value === true} />
+                <MediaArtwork url={item.artworkUrl} /><span><strong>{collectionName(item.kind, item.name, providerId)}</strong><small>{item.count === null ? "Size unknown" : collectionCount(item.count, item.kind)}</small>{#if item.kind === "liked-songs"}<small>Become hearts</small>{/if}</span></label>
               {#if item.kind === "playlist"}<label class="import-sync"><span>Keep in sync</span><span class="settings-toggle"><Checkbox aria-label={`Keep ${item.name} in sync`} checked={!!sync[item.sourceId]} disabled={busy} onCheckedChange={value => sync[item.sourceId] = value === true} /></span></label>{/if}
             </div>
           {/each}
           <div class="import-body">
             {#if cursor}<Button variant="secondary" disabled={busy} onclick={() => act(() => discover(true), "More playlists could not be loaded. Try again.")}>Show more playlists</Button>{/if}
             {#if !choices.length}<Button variant="secondary" disabled={busy} onclick={findMusic}>Find my music</Button>{/if}
-            <small>Keep in sync updates the playlist when it changes in Spotify. Otherwise it's copied once.</small>
-            {#if unavailableCollectionsLine(unsupported)}<small>{unavailableCollectionsLine(unsupported)}</small>{/if}
+            <small>Keep in sync updates the playlist when it changes in your connected service. Otherwise it's copied once.</small>
+            {#if unavailableCollectionsLine(unsupported, providerId)}<small>{unavailableCollectionsLine(unsupported, providerId)}</small>{/if}
             <Button disabled={busy || !selectedCount} onclick={() => act(async () => {
               await migrations.choose(runId, choices.filter(item => selected[item.sourceId]).map(item => ({ SourceId: item.sourceId, KeepInSync: item.kind === "playlist" && !!sync[item.sourceId] })));
               await refresh();
@@ -279,11 +328,12 @@
     {#if status && (step === 1 || interrupted)}
       <article class="settings-card" aria-label="Matching progress"><div class="import-body">
         <h3>{interrupted ? runState === "waiting" ? "Your move needs attention" : "Your move is stopped" : "Matching your music…"}</h3>
+        <p>Moving your {providerName} collection.</p>
         <Progress value={migrationProgress(status)} max={100} aria-label="Music matched" />
         <p>You can leave this page. It keeps going and shows in <a href="#/activity">Activity</a>.</p>
         {#each collections as item}
-          <div><strong>{item.collection.name}</strong><small>{collectionStateLabel(interrupted && item.collection.state !== "applied" ? runState : item.collection.state)} · {item.counts.accepted} of {item.counts.selected} found</small>
-            {#if item.collection.error}<p>{migrationError(item.collection.error)}</p>{/if}</div>
+          <div><strong>{collectionName(item.collection.kind, item.collection.name, providerId)}</strong><small>{collectionStateLabel(interrupted && item.collection.state !== "applied" ? runState : item.collection.state)} · {item.counts.accepted} of {item.counts.selected} found</small>
+            {#if item.collection.error}<p>{migrationError(item.collection.error, status.run.providerId)}</p>{/if}</div>
         {/each}
         <div class="import-actions">
           {#if interrupted}<Button variant="secondary" disabled={busy} onclick={() => command("resume")}>Try again</Button>{/if}
@@ -299,7 +349,7 @@
         <header><h3>Your music is in Allstarr</h3><ActivityOutcome state="succeeded" label="Moved" /></header>
         <div class="import-body">
         {#each collections as item}
-          <p>{item.collection.name} — {receiptCounts[item.id] === undefined ? "Checking music added…" : addedCountLine(receiptCounts[item.id], item.collection.kind)}{item.collection.keepInSync ? " · kept in sync" : ""}</p>
+          <p>{collectionName(item.collection.kind, item.collection.name, providerId)} — {receiptCounts[item.id] === undefined ? "Checking music added…" : addedCountLine(receiptCounts[item.id], item.collection.kind)}{item.collection.keepInSync ? " · kept in sync" : ""}</p>
         {/each}
         {#if remaining}<p>{remainingCountLine(remaining, hasResources)}</p><Button variant="secondary" onclick={() => { reviewSection?.scrollIntoView({ behavior: "smooth", block: "start" }); reviewSection?.focus({ preventScroll: true }); }}>Review them</Button>{/if}
         <small>If you edit an imported playlist in your music app, Allstarr keeps your edits in your own copy.</small>
@@ -318,7 +368,7 @@
             expanded[item.id] = event.currentTarget.open;
             if (event.currentTarget.open && !pages[item.id]) void loadPage(item.id);
           }}>
-            <summary><strong>{item.collection.name}</strong><small>{collectionCountsLine(item.counts)}</small></summary>
+            <summary><strong>{collectionName(item.collection.kind, item.collection.name, providerId)}</strong><small>{collectionCountsLine(item.counts)}</small></summary>
             {#if !pages[item.id]}<div class="import-body"><Skeleton style="height:44px;width:100%" aria-label="Loading music" /></div>{/if}
             {#each (pages[item.id] ?? []).filter(needsReview) as song (song.sourceEntryId)}
               <div class="import-song"><MediaArtwork url={song.metadata.artworkUrl} /><div><strong>{song.metadata.title ?? "Untitled"}</strong>

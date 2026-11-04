@@ -25,6 +25,7 @@ public sealed record MigrationCounts(int Selected, int Local, int Streamed, int 
 }
 public sealed class MigrationRun
 {
+    public string ProviderId { get; set; } = "spotify";
     public Guid ProviderAccountId { get; set; }
     public long AccountRevision { get; set; }
     public string SourceUserId { get; set; } = "";
@@ -114,9 +115,10 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         var account = await AccountAsync(db, user.Id, accountId, token);
         var source = await SourceAsync(execution, account, token);
         var identity = await source.Implementation.GetSourceUserAsync(source.Context);
-        if (!identity.IsSuccess) throw new InvalidOperationException("Restore the Spotify connection before starting.");
+        if (!identity.IsSuccess) throw new InvalidOperationException($"Restore the {source.Name} connection before starting.");
         var run = new MigrationRun
         {
+            ProviderId = account.ProviderId,
             ProviderAccountId = account.Id,
             AccountRevision = account.Revision,
             SourceUserId = identity.RequireValue(),
@@ -146,19 +148,19 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         var source = await SourceAsync(execution, account, token);
         await VerifySourceAsync(source, run, token);
         var page = await source.Implementation.GetUserPlaylistsAsync(source.Context, new(new(100, cursor)));
-        if (!page.IsSuccess) throw new InvalidOperationException("Spotify playlists are temporarily unavailable.");
+        if (!page.IsSuccess) throw new InvalidOperationException($"{source.Name} playlists are temporarily unavailable.");
         var likes = await source.Implementation.GetPlaylistTracksAsync(source.Context,
-            new(new("spotify", ProviderResourceKind.Playlist, "liked-songs"), new(1)));
-        if (!likes.IsSuccess) throw new InvalidOperationException("Liked Songs are temporarily unavailable.");
+            new(new(run.ProviderId, ProviderResourceKind.Playlist, "liked-songs"), new(1)));
+        if (!likes.IsSuccess) throw new InvalidOperationException("Songs are temporarily unavailable.");
         var resourceChoices = new List<object>();
         var unsupported = new List<object>();
-        foreach (var (kind, name) in new[] { ("saved-albums", "Saved albums"), ("followed-artists", "Followed artists") })
+        foreach (var (kind, name) in new[] { ("saved-albums", "Saved albums"), ("followed-artists", source.ArtistsName) })
         {
             var library = await source.Implementation.GetLibraryResourcesAsync(source.Context, kind, new(1));
             if (!library.IsSuccess)
             {
                 if (library.Error!.Kind is not (ProviderErrorKind.CapabilityUnavailable or ProviderErrorKind.NotSupported or ProviderErrorKind.PermanentFailure))
-                    throw new InvalidOperationException("Spotify library is temporarily unavailable.");
+                    throw new InvalidOperationException($"{source.Name} library is temporarily unavailable.");
                 unsupported.Add(new { kind, support = "not-supported-yet", count = (int?)null });
                 continue;
             }
@@ -365,7 +367,7 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         var collection = Read<MigrationCollection>(row.PayloadJson);
         try
         {
-            if (!await context.ReportProgressAsync(new(Type, "Moving your Spotify collection.", collection.Read, collection.Expected, "spotify", collection.Name), token))
+            if (!await context.ReportProgressAsync(new(Type, $"Moving your {CollectionMigrationSource.DisplayName(run.ProviderId)} collection.", collection.Read, collection.Expected, run.ProviderId, collection.Name), token))
                 return DurableJobCompletion.Cancelled();
             if (collection.Resources != null) await ProcessResourcesAsync(db, execution, record, run, row, collection, token);
             else if (collection.State is "collecting" or "verifying")
@@ -376,7 +378,7 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
                 else
                 {
                     var page = await collector.CollectPageAsync(source.Implementation, source.Context,
-                        new(new("spotify", ProviderResourceKind.Playlist, row.SourceId), 100, collection.SourceRevision), collection.VerifyCursor, collection.Verified);
+                        new(new(run.ProviderId, ProviderResourceKind.Playlist, row.SourceId), 100, collection.SourceRevision), collection.VerifyCursor, collection.Verified);
                     var saved = await Entries(db, collection).OrderBy(item => item.SourcePosition).Skip(collection.Verified).Take(page.Snapshot.Entries.Count)
                         .Join(db.ExternalMetadataSnapshots, entry => entry.ExternalMetadataSnapshotId, metadata => metadata.Id,
                             (entry, metadata) => metadata.PayloadSha256).ToArrayAsync(token);
@@ -419,8 +421,8 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
             foreach (var pending in db.ChangeTracker.Entries<PlaylistSourceEntryRecord>().Where(item => item.State == EntityState.Added).ToArray())
                 pending.State = EntityState.Detached;
             collection.Error = error is InvalidDataException
-                ? "Spotify changed during collection. Start another run; completed work is retained."
-                : "Progress saved. Restore the same Spotify connection or destination access, then resume.";
+                ? $"{CollectionMigrationSource.DisplayName(run.ProviderId)} changed during collection. Start another run; completed work is retained."
+                : $"Progress saved. Restore the same {CollectionMigrationSource.DisplayName(run.ProviderId)} connection or destination access, then resume.";
             row.PayloadJson = JsonSerializer.Serialize(collection);
             run.State = "waiting";
             await SaveAsync(db, record, run, token);
@@ -429,11 +431,11 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
     }
 
     private async Task CollectAsync(AllstarrDbContext db, ProtocolExecutionContext execution, MigrationRun run,
-        CollectionMigrationCollectionRecord row, MigrationCollection collection, ProviderRouteCandidate<IProviderPlaylistCapability> source, CancellationToken token)
+        CollectionMigrationCollectionRecord row, MigrationCollection collection, CollectionMigrationSource source, CancellationToken token)
     {
-        if (collection.Pages >= 1000) throw new InvalidDataException();
+        if (collection.Pages >= source.MaximumPages) throw new InvalidDataException();
         var page = await collector.CollectPageAsync(source.Implementation, source.Context,
-            new(new("spotify", ProviderResourceKind.Playlist, row.SourceId), 100, collection.SourceRevision), collection.Cursor, collection.Read);
+            new(new(run.ProviderId, ProviderResourceKind.Playlist, row.SourceId), 100, collection.SourceRevision), collection.Cursor, collection.Read);
         if (collection.SourceRevision != null && (collection.Expected != page.Total || collection.ETag != page.Snapshot.SourceETag || collection.Name != page.Snapshot.Name)) throw new InvalidDataException();
         collection.SourceRevision = page.Snapshot.SourceRevision;
         collection.ETag = page.Snapshot.SourceETag;
@@ -441,7 +443,7 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         if (collection.LinkId == null)
         {
             collection.Name = page.Snapshot.Name;
-            var link = await playlists.CreateLinkAsync(execution, new(run.ProviderAccountId, "spotify", row.SourceId, Hash(row.SourceId),
+            var link = await playlists.CreateLinkAsync(execution, new(run.ProviderAccountId, run.ProviderId, row.SourceId, Hash(row.SourceId),
                 run.Protocol, run.BackendInstanceId, PlaylistLinkMode.Hybrid, PlaylistMaterializationMode.Reconcile,
                 "playlist-rules-v1", "playlist-policy-v1", MirrorStaleEntries: true,
                 ImportMode: collection.KeepInSync ? PlaylistImportMode.Linked : PlaylistImportMode.OneTime), token);
@@ -455,15 +457,15 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         foreach (var entry in page.Snapshot.Entries)
         {
             var trackHash = Hash(entry.TrackId!.Value);
-            await identities.RememberSourceAsync(source.Context, entry.TrackId, $"ext-spotify-song-{entry.TrackId.Value}", ProviderIdentityScope.Account, entry.Isrc, token);
-            var identity = await db.ProviderTrackIdentities.AsNoTracking().FirstAsync(item => item.ProviderId == "spotify" && item.ExternalIdHash == trackHash && item.ProviderAccountId == run.ProviderAccountId, token);
+            await identities.RememberSourceAsync(source.Context, entry.TrackId, $"ext-{run.ProviderId}-song-{entry.TrackId.Value}", ProviderIdentityScope.Account, entry.Isrc, token);
+            var identity = await db.ProviderTrackIdentities.AsNoTracking().FirstAsync(item => item.ProviderId == run.ProviderId && item.ExternalIdHash == trackHash && item.ProviderAccountId == run.ProviderAccountId, token);
             var payload = Payload(entry);
             var prior = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item => item.OwnerUserId == execution.RequireActor().EffectiveUserId &&
-                item.ProviderAccountId == run.ProviderAccountId && item.ProviderId == "spotify" && item.ExternalIdHash == trackHash && item.ResourceKind == "track")
+                item.ProviderAccountId == run.ProviderAccountId && item.ProviderId == run.ProviderId && item.ExternalIdHash == trackHash && item.ResourceKind == "track")
                 .OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(token);
             var external = prior?.PayloadSha256 == Hash(payload) && prior.Protocol == run.Protocol &&
                 prior.BackendInstanceId == run.BackendInstanceId && prior.BackendPrincipalId == run.BackendPrincipalId ? prior : await matches.CaptureSnapshotAsync(execution,
-                new(run.ProviderAccountId, "spotify", "track", trackHash, (prior?.SnapshotVersion ?? 0) + 1,
+                new(run.ProviderAccountId, run.ProviderId, "track", trackHash, (prior?.SnapshotVersion ?? 0) + 1,
                     page.Snapshot.SourceRevision, payload, Hash(payload), identity.Id), token);
             db.PlaylistSourceEntries.Add(new()
             {
@@ -528,7 +530,7 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
                 .SumAsync(item => (long?)item.DecisionVersion, token) ?? 0);
             var sourceHashes = db.ExternalMetadataSnapshots.Where(item => sourceIds.Contains(item.Id)).Select(item => item.ExternalIdHash);
             generation += await db.ManualTrackOverrides.Where(item => (item.OwnerUserId == record.OwnerUserId || item.OwnerUserId == null) &&
-                item.SourceProviderId == "spotify" && sourceHashes.Contains(item.SourceExternalIdHash))
+                item.SourceProviderId == run.ProviderId && sourceHashes.Contains(item.SourceExternalIdHash))
                 .SumAsync(item => (long?)(item.Revision + 1), token) ?? 0;
             var result = await orchestration.RunAsync(execution, new(collection.LinkId.Value, generation, collection.SnapshotId, run.JobId), token);
             if (result.State is PlaylistSyncState.Failed or PlaylistSyncState.Conflicted) throw new InvalidOperationException("The playlist needs destination access.");
@@ -628,21 +630,29 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
             item.BackendType == execution.Protocol.ToString().ToLowerInvariant() && item.BackendInstanceId == execution.BackendInstanceId &&
             item.BackendPrincipalId == execution.VerifiedBackendPrincipalId, token) ?? throw new UnauthorizedAccessException();
     private static async Task<ProviderAccountRecord> AccountAsync(AllstarrDbContext db, Guid owner, Guid id, CancellationToken token) =>
-        await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id && item.Enabled && item.OwnerUserId == owner && item.ProviderId == "spotify", token)
+        await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id && item.Enabled && item.OwnerUserId == owner &&
+            (item.ProviderId == "spotify" || item.ProviderId == "apple-musickit"), token)
             ?? throw new UnauthorizedAccessException();
-    private async Task<ProviderRouteCandidate<IProviderPlaylistCapability>> SourceAsync(ProtocolExecutionContext execution, ProviderAccountRecord account, CancellationToken token)
+    private async Task<CollectionMigrationSource> SourceAsync(ProtocolExecutionContext execution, ProviderAccountRecord account, CancellationToken token)
     {
-        var policy = new ProviderExecutionPolicy(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, false), ProviderExplicitContentPolicy.Allow, false, false, false, ["spotify"]);
-        return (await router.PlanAsync<IProviderPlaylistCapability>(new(ProviderCapabilityKind.Playlist, execution.RequireActor(), policy,
-            Type, execution.CorrelationId, execution.Deadline, ["spotify"], [new("spotify", requestedAccountId: account.Id, expectedAccountRevision: account.Revision)], cancellationToken: token)))
-            .Candidates.FirstOrDefault() ?? throw new InvalidOperationException("Restore the Spotify connection.");
+        var providerId = account.ProviderId;
+        var policy = new ProviderExecutionPolicy(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, false), ProviderExplicitContentPolicy.Allow, false, false, false, [providerId]);
+        var route = (await router.PlanAsync<IProviderPlaylistCapability>(new(ProviderCapabilityKind.Playlist, execution.RequireActor(), policy,
+            Type, execution.CorrelationId, execution.Deadline, [providerId], [new(providerId, requestedAccountId: account.Id, expectedAccountRevision: account.Revision)], cancellationToken: token)))
+            .Candidates.FirstOrDefault() ?? throw new InvalidOperationException($"Restore the {CollectionMigrationSource.DisplayName(providerId)} connection.");
+        if (route.Context.ProviderId != providerId || route.Implementation.ProviderId != providerId ||
+            route.Context.Account is not { Scope: ProviderAccountScope.Personal } selected || selected.AccountId != account.Id ||
+            selected.OwnerUserId != execution.RequireActor().EffectiveUserId || selected.ProviderId != providerId)
+            throw new UnauthorizedAccessException();
+        return CollectionMigrationSource.Create(route);
     }
-    private static async Task VerifySourceAsync(ProviderRouteCandidate<IProviderPlaylistCapability> source, MigrationRun run, CancellationToken token, bool allowRefresh = false)
+    private static async Task VerifySourceAsync(CollectionMigrationSource source, MigrationRun run, CancellationToken token, bool allowRefresh = false)
     {
         token.ThrowIfCancellationRequested();
-        if (!allowRefresh && source.Context.Account!.Revision != run.AccountRevision) throw new InvalidOperationException("Reconnect and resume.");
+        if (source.ProviderId != run.ProviderId || source.Context.Account!.AccountId != run.ProviderAccountId) throw new UnauthorizedAccessException();
+        if (!allowRefresh && source.Context.Account.Revision != run.AccountRevision) throw new InvalidOperationException("Reconnect and resume.");
         var identity = await source.Implementation.GetSourceUserAsync(source.Context);
-        if (!identity.IsSuccess) throw new InvalidOperationException("Restore the Spotify connection.");
+        if (!identity.IsSuccess) throw new InvalidOperationException($"Restore the {source.Name} connection.");
         if (identity.RequireValue() != run.SourceUserId) throw new UnauthorizedAccessException();
     }
     public ProtocolExecutionContext Execution(UserRecord user, string correlation, CancellationToken token) => new(

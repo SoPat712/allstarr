@@ -51,9 +51,9 @@ public sealed partial class CollectionMigrationService
         var entries = collection.Resources!;
         if (collection.State is "collecting" or "verifying")
         {
-            if (collection.Pages >= 1000 && collection.State == "collecting") throw new InvalidDataException();
             var source = await SourceAsync(execution, await AccountAsync(db, record.OwnerUserId, run.ProviderAccountId, token), token);
             await VerifySourceAsync(source, run, token);
+            if (collection.Pages >= source.MaximumPages && collection.State == "collecting") throw new InvalidDataException();
             var verifying = collection.State == "verifying";
             var result = await source.Implementation.GetLibraryResourcesAsync(source.Context, collection.Kind,
                 new(100, verifying ? collection.VerifyCursor : collection.Cursor));

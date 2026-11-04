@@ -95,6 +95,47 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task MigrationLibraryCursorRetainsCountWithoutRecountingEveryRemainingPage()
+    {
+        var requests = 0;
+        using var http = new HttpClient(new AppleProviderTestFactory.Handler(request =>
+        {
+            requests++;
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri!.Query);
+            var offset = int.Parse(query["offset"].ToString());
+            var limit = int.Parse(query["limit"].ToString());
+            var items = Enumerable.Range(offset, Math.Min(limit, 75 - offset)).Select(index => new
+            {
+                id = $"l.album{index}",
+                attributes = new { name = "Album", artistName = "Artist" }
+            }).ToArray();
+            return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { data = items, next = offset + items.Length < 75 ? "/next" : null })) };
+        }));
+        var adapter = AppleProviderTestFactory.Playlist(http, new SecretAccessor(new("user", "us")));
+        var first = (await adapter.GetLibraryResourcesAsync(Context(), "saved-albums", new(25))).RequireValue();
+        Assert.Equal(75, first.Total);
+        Assert.NotNull(first.NextCursor);
+        var before = requests;
+        var second = (await adapter.GetLibraryResourcesAsync(Context(), "saved-albums", new(25, first.NextCursor))).RequireValue();
+        Assert.Equal(1, requests - before);
+        Assert.Equal(75, second.Total);
+        Assert.Equal("l.album25", second.Items[0].SourceId);
+    }
+
+    [Fact]
+    public async Task MissingTrackDataCannotBecomeAnEmptyMigrationPlaylist()
+    {
+        using var http = new HttpClient(new AppleProviderTestFactory.Handler(request => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(request.RequestUri!.AbsolutePath.EndsWith("/tracks", StringComparison.Ordinal)
+                ? "{}" : "{\"data\":[{\"id\":\"p.library\",\"attributes\":{\"name\":\"Playlist\"}}]}")
+        }));
+        var adapter = AppleProviderTestFactory.Playlist(http, new SecretAccessor(new("user", "us")));
+        var result = await adapter.GetPlaylistTracksAsync(Context(), new(new("apple-musickit", ProviderResourceKind.Playlist, "p.library"), new()));
+        Assert.False(result.IsSuccess);
+    }
+
+    [Fact]
     public async Task Missing_malformed_or_non_user_credentials_never_fall_back()
     {
         var handler = new AppleHandler();

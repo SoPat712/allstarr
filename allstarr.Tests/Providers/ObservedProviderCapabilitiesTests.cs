@@ -118,6 +118,27 @@ public sealed class ObservedProviderCapabilitiesTests
     }
 
     [Fact]
+    public async Task PlaylistMigrationReadsPreserveIdentityLibraryPagesAndObservations()
+    {
+        var context = Context();
+        var page = new ProviderPageRequest(25, "25");
+        var identity = ProviderOutcome<string>.Success("listener");
+        var library = ProviderOutcome<ProviderLibraryPage>.Failure(new(ProviderErrorKind.AccountNeedsReauthentication));
+        var capability = Capability<IProviderPlaylistCapability>(ProviderCapabilityKind.Playlist);
+        capability.Setup(item => item.GetSourceUserAsync(context)).ReturnsAsync(identity);
+        capability.Setup(item => item.GetLibraryResourcesAsync(context, "saved-albums", page)).ReturnsAsync(library);
+        var observer = new RecordingObserver();
+        var wrapped = ObservedProviderCapabilities.Wrap(capability.Object, observer);
+
+        Assert.Equal("fixture", wrapped.ProviderId);
+        Assert.Same(identity, await wrapped.GetSourceUserAsync(context));
+        Assert.Same(library, await wrapped.GetLibraryResourcesAsync(context, "saved-albums", page));
+        Assert.Equal(2, observer.Observations.Count);
+        Assert.Same(library.Error, observer.Observations.Last().Error);
+        capability.VerifyAll();
+    }
+
+    [Fact]
     public async Task ParallelCalls_KeepAccountsRevisionsAndOutcomesSeparate()
     {
         var first = Context(Guid.NewGuid(), 4);

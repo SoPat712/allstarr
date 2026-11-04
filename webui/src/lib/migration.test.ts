@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { collectionCountsLine, collectionStateLabel, migrationError, migrationProgress, migrationStep, needsReview, reviewReason, songCount, addedCountLine, remainingCountLine, moveCountLine, readyToMove, collectionChoiceOrder, collectionCount, unavailableCollectionsLine, resourceDetails } from "./migration";
+import { collectionCountsLine, collectionStateLabel, migrationError, migrationProgress, migrationStep, needsReview, reviewReason, songCount, addedCountLine, remainingCountLine, moveCountLine, readyToMove, collectionChoiceOrder, collectionCount, collectionName, unavailableCollectionsLine, resourceDetails } from "./migration";
 import type { MigrationCollectionStatus, MigrationReviewItem, MigrationStatus } from "./api";
 
 const counts = { selected: 12, local: 3, streamed: 5, accepted: 8, review: 2, unmatched: 1, unsupported: 1, skipped: 0 };
 const collection = { id: "one", sourceId: "one", collection: { name: "Evening", kind: "playlist", expected: 24, read: 12, state: "matching", keepInSync: false, error: null }, counts, unread: 12 } satisfies MigrationCollectionStatus;
-const status = { id: "run", run: { providerAccountId: "account", state: "collecting", phase: "collecting", jobId: null }, collections: [collection], total: counts, provisional: true } satisfies MigrationStatus;
+const status = { id: "run", run: { providerId: "spotify", providerAccountId: "account", state: "collecting", phase: "collecting", jobId: null }, collections: [collection], total: counts, provisional: true } satisfies MigrationStatus;
 
 describe("music import copy", () => {
   it("uses plain state names and keeps interrupted work on its saved step", () => {
     expect(["collecting", "verifying", "matching", "review", "waiting", "cancelled"].map(collectionStateLabel))
-      .toEqual(["Reading from Spotify", "Checking music", "Checking music", "Ready to review", "Waiting", "Stopped"]);
+      .toEqual(["Reading your music", "Checking music", "Checking music", "Ready to review", "Waiting", "Stopped"]);
     expect(migrationStep(status)).toBe(1);
     expect(migrationStep({ ...status, run: { ...status.run, state: "review" } })).toBe(1);
     expect(migrationStep({ ...status, run: { ...status.run, state: "waiting", phase: "applying" } })).toBe(3);
@@ -65,6 +65,14 @@ describe("music import copy", () => {
     expect(resourceDetails({ year: 2020, trackCount: 1, albums: ["Evening"] })).toBe("2020 · 1 song · Evening");
     expect(resourceDetails({ year: null, trackCount: null, albums: [] })).toBe("");
   });
+  it("names each provider's saved collection using its familiar terms", () => {
+    expect(collectionName("liked-songs", "Liked Songs", "apple-musickit")).toBe("Library songs");
+    expect(collectionName("followed-artists", "Followed artists", "apple-musickit")).toBe("Artists in your library");
+    expect(collectionName("saved-albums", "Saved albums", "apple-musickit")).toBe("Saved albums");
+    expect(collectionName("liked-songs", "Favorites", "spotify")).toBe("Liked Songs");
+    expect(collectionName("playlist", "Evening mix", "apple-musickit")).toBe("Evening mix");
+    expect(unavailableCollectionsLine([{ kind: "followed-artists" }], "apple-musickit")).toBe("Artists in your library can't be moved yet.");
+  });
   it("reviews collection resources and moves only accepted unapplied resources", () => {
     const row: MigrationReviewItem = { collectionId: "albums", sourceEntryId: "album-1", position: 0, externalSnapshotId: "", preview: null, receipt: null, metadata: { title: "Evening" }, resource: { kind: "saved-albums", state: "review", candidates: [], chosen: null, applied: false } };
     expect(needsReview(row)).toBe(true);
@@ -86,7 +94,9 @@ describe("music import copy", () => {
   it("never shows internal errors or unknown codes", () => {
     expect(migrationError("migration_waiting")).toContain("connection");
     expect(migrationError("Spotify changed during collection. Start another run; completed work is retained.")).toContain("Start another move");
-    expect(migrationError("internal_secret_error")).toBe("Your progress is saved. Check your Spotify connection and playlist access, then try again.");
+    expect(migrationError("Apple Music changed during collection. Start another run; completed work is retained.")).toBe("Your music changed during this move. Start another move to continue. Everything already moved stays.");
+    expect(migrationError("internal_secret_error")).toBe("Your progress is saved. Restore the Spotify connection or check playlist access, then try again.");
+    expect(migrationError("missing_token", "apple-musickit")).toBe("Your progress is saved. Restore the Apple Music connection or check playlist access, then try again.");
   });
   it("uses the effective route and state for review, including unavailable accepted matches", () => {
     const row = { metadata: { title: "Song" }, preview: { state: 2, status: 8, resolvedRoute: null } } as MigrationReviewItem;

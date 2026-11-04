@@ -144,6 +144,13 @@ public static class ObservedProviderCapabilities
     {
         public ProviderPlaylistMutationSupport MutationSupport => Implementation.MutationSupport;
 
+        public Task<ProviderOutcome<string>> GetSourceUserAsync(ProviderExecutionContext context) =>
+            InvokeAsync(context, () => Implementation.GetSourceUserAsync(context));
+
+        public Task<ProviderOutcome<ProviderLibraryPage>> GetLibraryResourcesAsync(ProviderExecutionContext context,
+            string kind, ProviderPageRequest page) =>
+            InvokeAsync(context, () => Implementation.GetLibraryResourcesAsync(context, kind, page));
+
         public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(
             ProviderExecutionContext context, ProviderUserPlaylistsRequest request) =>
             InvokeAsync(context, () => Implementation.GetUserPlaylistsAsync(context, request));

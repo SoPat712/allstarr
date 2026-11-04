@@ -11,7 +11,7 @@ using allstarr.Core.Storage;
 
 namespace allstarr.Core.Providers.AppleMusicKit;
 
-public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCapability
+public sealed partial class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCapability
 {
     public const string StableProviderId = "apple-musickit";
     private static readonly Uri ApiOrigin = AppleMusicClient.ApiOrigin;
@@ -49,10 +49,12 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
     });
 
     public Task<ProviderOutcome<ProviderPlaylistTrackPage>> GetPlaylistTracksAsync(
-        ProviderExecutionContext context, ProviderPlaylistTracksRequest request) => ExecuteAsync(context, async (credential, storefront, ct) =>
+        ProviderExecutionContext context, ProviderPlaylistTracksRequest request) => request.PlaylistId.Value == "liked-songs"
+        ? GetLibrarySongsAsync(context, request)
+        : ExecuteAsync(context, async (credential, storefront, ct) =>
     {
         context.RequireResourceOwner(request.PlaylistId, ProviderResourceKind.Playlist);
-        if (!TryOffset(request.Page.Cursor, out var offset))
+        if (!TryLibraryCursor(request.Page.Cursor, out var offset, out var knownTotal))
             return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(new(ProviderErrorKind.PermanentFailure));
         var id = Uri.EscapeDataString(request.PlaylistId.Value);
         var metadata = await SendAsync(credential, $"{PlaylistRoot(request.PlaylistId.Value, storefront)}/{id}", ct);
@@ -70,6 +72,14 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
                 $"{PlaylistRoot(request.PlaylistId.Value, storefront)}/{id}/tracks?limit={limit}&offset={offset}", ct);
             if (!tracksResult.Outcome.IsSuccess) return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(tracksResult.Outcome.Error!);
             using var tracksDocument = JsonDocument.Parse(tracksResult.Body!);
+            if (!ValidLibraryData(tracksDocument.RootElement)) throw new JsonException();
+            var needsTotal = summary.TrackCount == null;
+            if (needsTotal)
+            {
+                var total = await LibraryTotalAsync(credential, $"{PlaylistRoot(request.PlaylistId.Value, storefront)}/{id}/tracks", tracksDocument.RootElement, offset, ct, knownTotal);
+                if (!total.IsSuccess) return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(total.Error!);
+                summary = new(summary.Id, summary.Name, summary.Owner, summary.SourceRevision, summary.Description, summary.Artwork, total.RequireValue(), summary.SourceETag);
+            }
             var tracks = new List<ProviderPlaylistTrack>();
             var sourcePosition = offset;
             foreach (var item in Data(tracksDocument.RootElement))
@@ -79,7 +89,9 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
             }
             if (HasNext(tracksDocument.RootElement) && sourcePosition == offset)
                 return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(ProviderError.CompatibilityContractChanged());
-            var next = HasNext(tracksDocument.RootElement) ? sourcePosition.ToString(System.Globalization.CultureInfo.InvariantCulture) : null;
+            var next = HasNext(tracksDocument.RootElement)
+                ? needsTotal ? LibraryCursor(sourcePosition, summary.TrackCount!.Value, tracksDocument.RootElement) : sourcePosition.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : null;
             return ProviderOutcome<ProviderPlaylistTrackPage>.Success(new(summary,
                 new ProviderPage<ProviderPlaylistTrack>(StableProviderId, tracks, next, next != null, summary.SourceRevision)));
         }

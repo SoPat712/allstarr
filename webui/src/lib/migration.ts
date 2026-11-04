@@ -1,7 +1,7 @@
 import type { MigrationCounts, MigrationReviewItem, MigrationStatus } from "./api";
 
 export function collectionStateLabel(state: string) {
-  return ({ available: "Waiting", collecting: "Reading from Spotify", verifying: "Checking music", matching: "Checking music",
+  return ({ available: "Waiting", collecting: "Reading your music", verifying: "Checking music", matching: "Checking music",
     review: "Ready to review", applying: "Adding music", applied: "Moved", skipped: "Skipped", waiting: "Waiting", cancelled: "Stopped" } as Record<string, string>)[state] ?? "Waiting";
 }
 
@@ -31,9 +31,15 @@ export function collectionCount(count: number, kind: string) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-export function unavailableCollectionsLine(items: { kind: string }[]) {
+export function collectionName(kind: string, name: string, providerId: string) {
+  if (kind === "liked-songs") return providerId === "apple-musickit" ? "Library songs" : "Liked Songs";
+  if (kind === "followed-artists" && providerId === "apple-musickit") return "Artists in your library";
+  return name;
+}
+
+export function unavailableCollectionsLine(items: { kind: string }[], providerId = "spotify") {
   const kinds = new Set(items.map(item => item.kind));
-  const names = [kinds.has("saved-albums") ? "saved albums" : "", kinds.has("followed-artists") ? "followed artists" : ""].filter(Boolean).join(" and ");
+  const names = [kinds.has("saved-albums") ? "saved albums" : "", kinds.has("followed-artists") ? providerId === "apple-musickit" ? "artists in your library" : "followed artists" : ""].filter(Boolean).join(" and ");
   return names ? `${names[0].toUpperCase()}${names.slice(1)} can't be moved yet.` : "";
 }
 
@@ -69,10 +75,11 @@ export function migrationProgress(status: MigrationStatus) {
   return expected ? Math.min(100, (total.accepted + total.review + total.unmatched + total.unsupported + total.skipped) / expected * 100) : 100;
 }
 
-export function migrationError(error?: string | null) {
-  if (error?.startsWith("Spotify changed during collection."))
-    return "Your music changed in Spotify. Start another move to continue. Everything already moved stays.";
-  return "Your progress is saved. Check your Spotify connection and playlist access, then try again.";
+export function migrationError(error?: string | null, providerId = "spotify") {
+  if (error?.startsWith("Spotify changed during collection.") || error?.startsWith("Apple Music changed during collection."))
+    return "Your music changed during this move. Start another move to continue. Everything already moved stays.";
+  const provider = providerId === "apple-musickit" ? "Apple Music" : "Spotify";
+  return `Your progress is saved. Restore the ${provider} connection or check playlist access, then try again.`;
 }
 
 export function needsReview(item: MigrationReviewItem) {
