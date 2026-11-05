@@ -71,7 +71,7 @@ test("Mix detail can retry after the first load fails", async ({ page }) => {
 });
 test("Not-ready mix artwork keeps its colour and explanation", async ({ page }) => {
   const state = await mockForYou(page, { partial: true }); state.cards.find(card => card.id === "daily-4")!.inApps = false; await page.goto("/#/for-you?mix=daily-4");
-  await expect(page.getByRole("dialog").locator("canvas")).toHaveCSS("opacity", "1");
+  await expect(page.getByRole("dialog").locator(".mix-artwork")).toHaveCSS("opacity", "1");
   await expect(page.getByText("Play about 80 more songs, or import your listening history.", { exact: true })).toBeVisible();
   await expect(page.getByRole("dialog").getByRole("button", { name: "Add to apps", exact: true })).toBeEnabled();
 });

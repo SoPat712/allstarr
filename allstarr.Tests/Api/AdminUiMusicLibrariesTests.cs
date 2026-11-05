@@ -149,7 +149,11 @@ public sealed class AdminUiMusicLibrariesTests
                 JellyfinAccessToken = backendAccess ? "session-token" : string.Empty,
                 SubsonicReadAuthentication = backendAccess ? new Dictionary<string, string>
                 {
-                    ["u"] = "fixture-user", ["t"] = "session-token", ["s"] = "session-salt", ["v"] = "1.16.1", ["c"] = "allstarr"
+                    ["u"] = "fixture-user",
+                    ["t"] = "session-token",
+                    ["s"] = "session-salt",
+                    ["v"] = "1.16.1",
+                    ["c"] = "allstarr"
                 } : null,
                 IsAdministrator = administrator,
                 ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
