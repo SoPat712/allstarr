@@ -9,10 +9,25 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Protocols;
 
-public sealed record BackendLibraryAccess(bool Succeeded, string[] LibraryIds)
+public sealed record BackendLibraryAccess(bool Succeeded, string[] LibraryIds, string? ErrorCode = null)
 {
     public static BackendLibraryAccess Unavailable { get; } = new(false, []);
     public bool Allows(string libraryId) => Succeeded && LibraryIds.Contains(libraryId, StringComparer.Ordinal);
+}
+
+public sealed class BackendLibraryAccessException(BackendLibraryAccess access) : UnauthorizedAccessException(
+    access.ErrorCode switch
+    {
+        "library_index_credential_unavailable" => "Stored backend access is unavailable for background library indexing.",
+        "library_index_identity_unavailable" => "The linked backend identity is unavailable.",
+        "library_index_access_denied" => "The backend library is not available to this user.",
+        _ => access.Succeeded ? "The backend library is not available to this user." : "The backend library permissions are temporarily unavailable."
+    })
+{
+    public string ErrorCode { get; } = access.ErrorCode ?? (access.Succeeded
+        ? "library_index_access_denied" : "library_index_permissions_unavailable");
+    public bool Retryable { get; } = !access.Succeeded && access.ErrorCode is not
+        ("library_index_credential_unavailable" or "library_index_access_denied" or "library_index_identity_unavailable");
 }
 
 public interface IBackendLibraryAccessResolver
@@ -72,7 +87,7 @@ public sealed class BackendLibraryAccessResolver(
         try
         {
             using var request = await source.CreateRequestAsync(context, deadline.Token);
-            if (request == null) return BackendLibraryAccess.Unavailable;
+            if (request == null) return new(false, [], "library_index_credential_unavailable");
             var authentication = JsonSerializer.Serialize(new
             {
                 endpoint = request.RequestUri!.AbsoluteUri,
@@ -89,7 +104,12 @@ public sealed class BackendLibraryAccessResolver(
 
             using var client = clients.CreateClient(HttpClientName);
             using var response = await client.SendAsync(request, deadline.Token);
-            if (!response.IsSuccessStatusCode) return BackendLibraryAccess.Unavailable;
+            if (!response.IsSuccessStatusCode) return new(false, [], response.StatusCode switch
+            {
+                System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden => "library_index_access_denied",
+                System.Net.HttpStatusCode.NotFound => "library_index_identity_unavailable",
+                _ => "library_index_permissions_unavailable"
+            });
             using var document = await JsonDocument.ParseAsync(
                 await response.Content.ReadAsStreamAsync(deadline.Token), cancellationToken: deadline.Token);
             var libraries = BackendMusicLibraries.Select(
@@ -101,7 +121,11 @@ public sealed class BackendLibraryAccessResolver(
         {
             return BackendLibraryAccess.Unavailable;
         }
-        catch (Exception exception) when (exception is HttpRequestException or JsonException or InvalidOperationException or UnauthorizedAccessException)
+        catch (UnauthorizedAccessException)
+        {
+            return new(false, [], "library_index_credential_unavailable");
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException or InvalidOperationException)
         {
             return BackendLibraryAccess.Unavailable;
         }

@@ -43,7 +43,7 @@ public sealed class LibraryIndexController(
         }
         var generation = request.Generation ?? DateTimeOffset.UtcNow.UtcTicks;
         var libraryKey = backendLibraryId == null ? "all" : $"library:{backendLibraryId}";
-        var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<LibraryIndexJobPayload>(
+        var result = await jobs.EnqueueLibraryIndexAsync(new DurableJobEnqueueRequest<LibraryIndexJobPayload>(
             "library.index", $"library-index:{session.AllstarrUserId:N}:{identity.BackendInstanceId}:{libraryKey}:{generation}",
             new(backendLibraryId, identity.BackendInstanceId, identity.BackendPrincipalId, request.CredentialReferenceId, request.PageSize),
             session.AllstarrUserId,

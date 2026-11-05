@@ -155,7 +155,7 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
         _ = await RequireUserAsync(db, principal, cancellationToken);
         var access = await _libraryAccess.ResolveAsync(executionContext, cancellationToken);
         if (!access.Allows(input.BackendLibraryId))
-            throw new UnauthorizedAccessException("The backend library is not available to this user.");
+            throw new BackendLibraryAccessException(access);
         if (input.CanonicalRecordingId.HasValue &&
             !await db.CanonicalRecordings.AsNoTracking().AnyAsync(recording =>
                 recording.Id == input.CanonicalRecordingId,

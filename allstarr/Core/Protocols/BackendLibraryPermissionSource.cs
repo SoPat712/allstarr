@@ -26,7 +26,7 @@ public sealed class BackendLibraryPermissionSource(
     {
         var principal = context.Principal;
         if (principal == null) return null;
-        var http = httpContexts.HttpContext;
+        var http = context.UseStoredBackendCredentials ? null : httpContexts.HttpContext;
         if (http != null)
         {
             var current = http.GetProtocolExecutionContext();
@@ -72,24 +72,33 @@ public sealed class BackendLibraryPermissionSource(
 
         var reference = await db.SecretReferences.AsNoTracking().Where(item =>
                 item.UserId == identity.Id &&
+                (!context.BackendCredentialReferenceId.HasValue || item.Id == context.BackendCredentialReferenceId.Value) &&
                 item.Purpose == BackendCredentialScope.SubsonicPurpose && item.RevokedAt == null)
             .OrderByDescending(item => item.UpdatedAt).ThenBy(item => item.Id)
             .FirstOrDefaultAsync(cancellationToken);
         if (reference == null) return null;
-        using var lease = await secrets.OpenAsync(reference.Id, new(identity.Id, BackendCredentialScope.SubsonicPurpose), cancellationToken);
-        using var credential = JsonDocument.Parse(lease.Value);
-        var root = credential.RootElement;
-        if (!root.TryGetProperty("username", out var username) || username.ValueKind != JsonValueKind.String ||
-            username.GetString() != identity.BackendPrincipalId ||
-            !root.TryGetProperty("password", out var password) || password.ValueKind != JsonValueKind.String ||
-            string.IsNullOrWhiteSpace(password.GetString())) return null;
-        return Subsonic(SubsonicRequestParameters.FromDictionary(new Dictionary<string, string>
+        try
         {
-            ["u"] = username.GetString()!,
-            ["p"] = password.GetString()!,
-            ["v"] = "1.16.1",
-            ["c"] = "allstarr"
-        }));
+            using var lease = await secrets.OpenAsync(reference.Id, new(identity.Id, BackendCredentialScope.SubsonicPurpose), cancellationToken);
+            using var credential = JsonDocument.Parse(lease.Value);
+            var root = credential.RootElement;
+            if (!root.TryGetProperty("username", out var username) || username.ValueKind != JsonValueKind.String ||
+                username.GetString() != identity.BackendPrincipalId ||
+                !root.TryGetProperty("password", out var password) || password.ValueKind != JsonValueKind.String ||
+                string.IsNullOrWhiteSpace(password.GetString())) return null;
+            return Subsonic(SubsonicRequestParameters.FromDictionary(new Dictionary<string, string>
+            {
+                ["u"] = username.GetString()!,
+                ["p"] = password.GetString()!,
+                ["v"] = "1.16.1",
+                ["c"] = "allstarr"
+            }));
+        }
+        catch (Exception error) when (error is System.Security.Cryptography.CryptographicException or
+            JsonException or InvalidOperationException or KeyNotFoundException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
 
     private HttpRequestMessage? Jellyfin(ProtocolExecutionContext context, string token)

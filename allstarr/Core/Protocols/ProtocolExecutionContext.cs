@@ -131,6 +131,10 @@ public sealed record ProtocolExecutionContext
 
     public bool IsReadOnly { get; init; }
 
+    internal bool UseStoredBackendCredentials { get; init; }
+
+    internal Guid? BackendCredentialReferenceId { get; init; }
+
     public allstarr.Core.Music.ProviderAudioDeliveryRequest? AudioDelivery { get; init; }
 
     public ProviderActorContext RequireActor() => Actor ?? throw new UnauthorizedAccessException(

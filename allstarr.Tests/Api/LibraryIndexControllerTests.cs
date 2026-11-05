@@ -86,6 +86,18 @@ public sealed class LibraryIndexControllerTests : IAsyncLifetime
         Assert.EndsWith(":backend:library:music:42", job.IdempotencyKey);
     }
 
+    [Fact]
+    public async Task EnqueueReusesActiveScopeAcrossGenerationsButKeepsExplicitLibrariesSeparate()
+    {
+        var controller = Controller();
+        await controller.Enqueue(new(Generation: 42), CancellationToken.None);
+        await controller.Enqueue(new(Generation: 43), CancellationToken.None);
+        await controller.Enqueue(new("music", Generation: 43), CancellationToken.None);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(2, await db.Jobs.CountAsync());
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(501)]

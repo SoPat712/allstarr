@@ -232,8 +232,10 @@ public sealed record LibraryIndexJobPayload(
     int PageSize = 200);
 
 public sealed class LibraryIndexJobHandler(IDbContextFactory<AllstarrDbContext> factory,
-    BackendLibraryCatalogScannerResolver scanners, IPlatformClock clock) : IDurableJobHandler
+    BackendLibraryCatalogScannerResolver scanners, IPlatformClock clock, LibraryIndexDiagnostics? diagnostics = null) : IDurableJobHandler
 {
+    private readonly LibraryIndexDiagnostics _diagnostics = diagnostics ?? new(factory, clock,
+        Microsoft.Extensions.Logging.Abstractions.NullLogger<LibraryIndexDiagnostics>.Instance);
     public string JobType => "library.index";
     public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext context, CancellationToken cancellationToken)
     {
@@ -247,7 +249,7 @@ public sealed class LibraryIndexJobHandler(IDbContextFactory<AllstarrDbContext> 
         var identity = await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Enabled &&
             item.Id == context.Claim.OwnerUserId && item.BackendInstanceId == payload.BackendInstanceId &&
             item.BackendPrincipalId == payload.BackendPrincipalId, cancellationToken);
-        if (identity == null) return DurableJobCompletion.Failure("library_index_identity_unavailable", "The linked backend identity is unavailable.");
+        if (identity == null) return await FailureAsync("library_index_identity_unavailable", "The linked backend identity is unavailable.");
         var protocol = identity.BackendType.Trim().ToLowerInvariant() switch
         {
             "jellyfin" => ProtocolKind.Jellyfin,
@@ -255,7 +257,7 @@ public sealed class LibraryIndexJobHandler(IDbContextFactory<AllstarrDbContext> 
             _ => ProtocolKind.Unknown
         };
         if (protocol == ProtocolKind.Unknown)
-            return DurableJobCompletion.Failure("library_index_identity_unsupported", "The linked backend type does not support library indexing.");
+            return await FailureAsync("library_index_identity_unsupported", "The linked backend type does not support library indexing.");
         if (protocol == ProtocolKind.Subsonic)
         {
             var credentialAvailable = payload.CredentialReferenceId.HasValue &&
@@ -266,15 +268,13 @@ public sealed class LibraryIndexJobHandler(IDbContextFactory<AllstarrDbContext> 
                     secret.RevokedAt == null,
                     cancellationToken);
             if (!credentialAvailable)
-                return DurableJobCompletion.Failure("library_index_credential_unavailable", "The linked Subsonic credential is unavailable.");
+                return await FailureAsync("library_index_credential_unavailable", "The linked Subsonic credential is unavailable.");
         }
         else if (payload.CredentialReferenceId.HasValue)
         {
             return DurableJobCompletion.Failure("library_index_payload_invalid", "Jellyfin library indexing does not accept a credential reference.");
         }
-        var execution = new ProtocolExecutionContext(protocol, identity.BackendInstanceId, identity.BackendPrincipalId,
-            new AllstarrPrincipal(identity.Id, identity.BackendType, identity.BackendInstanceId, identity.BackendPrincipalId, identity.DisplayName, identity.IsAdmin),
-            context.Claim.CorrelationId, clock.UtcNow.AddMinutes(30), cancellationToken);
+        var execution = LibraryIndexExecution.Create(identity, payload.CredentialReferenceId, context.Claim.CorrelationId, clock, cancellationToken);
         try
         {
             var result = await scanners.Resolve(protocol).ScanAsync(
@@ -305,10 +305,59 @@ public sealed class LibraryIndexJobHandler(IDbContextFactory<AllstarrDbContext> 
             await summaryDb.SaveChangesAsync(cancellationToken);
             return DurableJobCompletion.Success();
         }
-        catch (BackendAccessMissingException) { return DurableJobCompletion.Retry(BackendAccessMissingException.Code, BackendAccessMissingException.MessageText); }
-        catch (HttpRequestException) { return DurableJobCompletion.Retry("library_index_backend_unavailable", "The backend catalog is temporarily unavailable."); }
-        catch (InvalidOperationException) { return DurableJobCompletion.Failure("library_index_not_configured", "The backend catalog scanner is not configured."); }
+        catch (BackendLibraryAccessException error)
+        {
+            return await FailureAsync(error.ErrorCode, error.Message, error.Retryable);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return await FailureAsync("library_index_access_denied", "The backend library is not available to this user.");
+        }
+        catch (BackendAccessMissingException)
+        {
+            return await FailureAsync(BackendAccessMissingException.Code, BackendAccessMissingException.MessageText);
+        }
+        catch (HttpRequestException error) when (error.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.NotFound)
+        {
+            return await FailureAsync("library_index_access_denied", "The backend catalog is not available to this user.");
+        }
+        catch (HttpRequestException)
+        {
+            return await FailureAsync("library_index_backend_unavailable", "The backend catalog is temporarily unavailable.", true);
+        }
+        catch (InvalidOperationException)
+        {
+            return await FailureAsync("library_index_not_configured", "The backend catalog scanner is not configured.");
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return await FailureAsync("library_index_backend_unavailable", "The backend catalog request timed out.", true);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception error)
+        {
+            return await FailureAsync("library_index_handler_exception", $"The library scanner failed ({error.GetType().Name}).", true);
+        }
+
+        async Task<DurableJobCompletion> FailureAsync(string code, string message, bool retryable = false)
+        {
+            await _diagnostics.ReportAsync(context.Claim.OwnerUserId, payload, code, retryable, context.Claim.CorrelationId, cancellationToken);
+            return retryable ? DurableJobCompletion.Retry(code, message) : DurableJobCompletion.Failure(code, message);
+        }
     }
+}
+
+internal static class LibraryIndexExecution
+{
+    internal static ProtocolExecutionContext Create(UserRecord identity, Guid? credentialReferenceId, string correlationId,
+        IPlatformClock clock, CancellationToken cancellationToken) => new(
+            Enum.Parse<ProtocolKind>(identity.BackendType, true), identity.BackendInstanceId, identity.BackendPrincipalId,
+            new AllstarrPrincipal(identity.Id, identity.BackendType, identity.BackendInstanceId, identity.BackendPrincipalId, identity.DisplayName, identity.IsAdmin),
+            correlationId, clock.UtcNow.AddMinutes(30), cancellationToken)
+        {
+            UseStoredBackendCredentials = true,
+            BackendCredentialReferenceId = credentialReferenceId
+        };
 }
 
 /// <summary>Keeps each linked user's durable audio index warm.</summary>
@@ -317,7 +366,8 @@ public sealed class LibraryIndexMaintenanceService(
     DurableJobQueue jobs,
     DurableStorageState storageState,
     IPlatformClock clock,
-    ILogger<LibraryIndexMaintenanceService> logger, BackgroundTaskActivity? taskActivity = null) : BackgroundService
+    ILogger<LibraryIndexMaintenanceService> logger, IBackendLibraryAccessResolver libraryAccess,
+    LibraryIndexDiagnostics diagnostics, BackgroundTaskActivity? taskActivity = null) : BackgroundService
 {
     private static readonly TimeSpan RefreshInterval = LocalLibraryAvailability.RefreshInterval;
 
@@ -351,6 +401,7 @@ public sealed class LibraryIndexMaintenanceService(
 
     internal async Task<int> EnqueueStaleIndexesAsync(CancellationToken cancellationToken)
     {
+        await jobs.ReconcileLibraryIndexesAsync(cancellationToken);
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var identities = await db.Users.AsNoTracking()
             .Where(identity => identity.Enabled && (identity.BackendType == "jellyfin" || identity.BackendType == "subsonic"))
@@ -375,8 +426,21 @@ public sealed class LibraryIndexMaintenanceService(
             Guid? credentialReferenceId = null;
             if (identity.BackendType == "subsonic")
             {
-                if (!credentials.TryGetValue(identity.Id, out var credential)) continue;
-                credentialReferenceId = credential;
+                if (credentials.TryGetValue(identity.Id, out var credential)) credentialReferenceId = credential;
+            }
+            var payload = new LibraryIndexJobPayload(null, identity.BackendInstanceId, identity.BackendPrincipalId, credentialReferenceId, 200);
+            var execution = LibraryIndexExecution.Create(identity, credentialReferenceId, "library-index-maintenance", clock, cancellationToken);
+            var access = identity.BackendType == "subsonic" && !credentialReferenceId.HasValue
+                ? new BackendLibraryAccess(false, [], "library_index_credential_unavailable")
+                : await libraryAccess.ResolveAsync(execution, cancellationToken);
+            if (!access.Succeeded || access.LibraryIds.Length == 0)
+            {
+                var failure = new BackendLibraryAccessException(access);
+                await diagnostics.ReportAsync(identity.Id, payload, failure.ErrorCode, failure.Retryable,
+                    execution.CorrelationId, cancellationToken);
+                if (!failure.Retryable)
+                    await jobs.CloseUnavailableLibraryIndexesAsync(identity.Id, payload, failure.ErrorCode, cancellationToken);
+                continue;
             }
             var lastIndexedAt = await db.LibraryTracks.AsNoTracking()
                 .Where(track => track.OwnerUserId == identity.Id && track.Protocol == identity.BackendType &&
@@ -385,10 +449,10 @@ public sealed class LibraryIndexMaintenanceService(
             if (lastIndexedAt.HasValue && now - lastIndexedAt.Value < RefreshInterval) continue;
 
             var generation = now.UtcTicks / RefreshInterval.Ticks;
-            var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<LibraryIndexJobPayload>(
+            var result = await jobs.EnqueueLibraryIndexAsync(new DurableJobEnqueueRequest<LibraryIndexJobPayload>(
                 "library.index",
                 $"library-index:auto:{identity.Id:N}:{generation}",
-                new(null, identity.BackendInstanceId, identity.BackendPrincipalId, credentialReferenceId, 200),
+                payload,
                 identity.Id,
                 CorrelationId: $"library-index-auto-{identity.Id:N}-{generation}"), cancellationToken);
             if (result.Created) enqueued++;
@@ -408,6 +472,7 @@ public static class BackendLibraryIndexingRegistration
         services.AddSingleton<IBackendLibraryCatalogScanner, JellyfinLibraryCatalogScanner>();
         services.AddSingleton<IBackendLibraryCatalogScanner, SubsonicLibraryCatalogScanner>();
         services.AddSingleton<BackendLibraryCatalogScannerResolver>();
+        services.AddSingleton<LibraryIndexDiagnostics>();
         services.AddSingleton<IDurableJobHandler, LibraryIndexJobHandler>();
         services.AddHostedService<LibraryIndexMaintenanceService>();
         return services;

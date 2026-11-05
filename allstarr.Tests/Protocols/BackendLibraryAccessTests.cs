@@ -185,6 +185,41 @@ public sealed class BackendLibraryAccessTests
         Assert.Equal(2, handler.Calls);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, "library_index_access_denied", false)]
+    [InlineData(HttpStatusCode.Forbidden, "library_index_access_denied", false)]
+    [InlineData(HttpStatusCode.NotFound, "library_index_identity_unavailable", false)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "library_index_permissions_unavailable", true)]
+    public async Task PermissionFailures_DistinguishUnavailableAccessFromTemporaryBackendFailures(
+        HttpStatusCode status, string code, bool retryable)
+    {
+        var clock = new Clock();
+        using var cache = new MemoryApplicationCache(clock);
+        var resolver = Resolver(new Handler(_ => new(status)), cache, clock);
+
+        var access = await resolver.ResolveAsync(Context(clock, ProtocolKind.Jellyfin, "listener"));
+
+        Assert.False(access.Succeeded);
+        Assert.Equal(code, access.ErrorCode);
+        Assert.Equal(retryable, new BackendLibraryAccessException(access).Retryable);
+    }
+
+    [Fact]
+    public async Task MissingPermissionCredentials_AreTerminalAndNeverContactTheBackend()
+    {
+        var clock = new Clock();
+        using var cache = new MemoryApplicationCache(clock);
+        var handler = new Handler(_ => throw new InvalidOperationException("Unexpected backend request"));
+        var resolver = new BackendLibraryAccessResolver(new Source(_ => null), new Clients(handler), cache,
+            clock, new ConfigurationBuilder().Build());
+
+        var access = await resolver.ResolveAsync(Context(clock, ProtocolKind.Jellyfin, "listener"));
+
+        Assert.Equal("library_index_credential_unavailable", access.ErrorCode);
+        Assert.False(new BackendLibraryAccessException(access).Retryable);
+        Assert.Equal(0, handler.Calls);
+    }
+
     private static BackendLibraryAccessResolver Resolver(Handler handler, IApplicationCache cache, Clock clock,
         IConfiguration? configuration = null) => new(
         new Source(_ => new(HttpMethod.Get, "https://backend.test/libraries")), new Clients(handler), cache, clock,
