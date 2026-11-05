@@ -225,7 +225,7 @@ public sealed class ItemDetailsReader(
             var explicitContent = song?.ExplicitContentLyrics switch { 1 => true, 0 => false, _ => (bool?)null };
             explicitContent ??= recordingId.HasValue ? recordings.GetValueOrDefault(recordingId.Value)?.IsExplicit : null;
             items[id] = new(id, song != null, recordingId?.ToString("D"), identity?.Isrc ?? song?.Isrc ?? local?.Isrc ?? identifiers.FirstOrDefault(item => item.RecordingId == recordingId)?.Value,
-                song == null ? libraryProvider : providers.GetValueOrDefault(servingProviders.ContainsKey(id) ? servingProviders[id] ?? "allstarr" : song.ExternalProvider!), audio, explicitContent,
+                song == null ? libraryProvider : providers.GetValueOrDefault(servingProviders.GetValueOrDefault(id) ?? song.ExternalProvider!), audio, explicitContent,
                 song == null ? native[id] : saved.Contains(id), keep, match, lyrics);
         }
         return new(ids.Where(items.ContainsKey).Select(id => items[id]).ToArray(), ids.Where(id => !items.ContainsKey(id)).ToArray());

@@ -102,7 +102,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [Theory]
     [InlineData("qobuz")]
     [InlineData(null)]
-    public async Task ClientApi_CanonicalItemDetailsReportsProjectedStreamingProvider(string? serving)
+    public async Task ClientApi_CanonicalItemDetailsUsesStreamingProviderOrSnapshotProvider(string? serving)
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(service => service.GetStreamingProviderAsync(It.IsAny<ProtocolExecutionContext>(), "allstarr", It.IsAny<string>()))
@@ -113,6 +113,8 @@ public sealed partial class ProtocolRouteFixtureTests
             services.AddSingleton(gateway.Object);
         });
         using var client = CreateClientApiClient(factory);
+        using var fixtures = new ProviderIconFiles();
+        fixtures.Use(factory.Services);
         client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
         var recording = await SeedClientDetailsAsync(factory, "listener", "projected", personal: false);
         using var response = await client.PostAsJsonAsync("/allstarr/v1/items/details", new { ids = new[] { CanonicalRecordingRecord.DefaultPublicId(recording) } });
@@ -120,8 +122,14 @@ public sealed partial class ProtocolRouteFixtureTests
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var item = Assert.Single(json.RootElement.GetProperty("items").EnumerateArray());
         Assert.True(item.GetProperty("isExternal").GetBoolean());
-        if (serving == null) Assert.Equal(JsonValueKind.Null, item.GetProperty("provider").ValueKind);
-        else Assert.Equal(serving, item.GetProperty("provider").GetProperty("id").GetString());
+        var provider = item.GetProperty("provider");
+        Assert.Equal(serving ?? "deezer", provider.GetProperty("id").GetString());
+        Assert.Equal(serving == null ? "Deezer" : "Qobuz", provider.GetProperty("name").GetString());
+        if (serving == null)
+        {
+            Assert.Equal("/allstarr/v1/providers/deezer/icon", provider.GetProperty("iconUrl").GetString());
+            Assert.Equal("/allstarr/v1/providers/deezer/icon?variant=glyph", provider.GetProperty("glyphUrl").GetString());
+        }
         gateway.VerifyAll();
     }
 }
