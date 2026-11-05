@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { toast } from "$lib/toasts";
   import { Activity } from "@lucide/svelte";
@@ -79,7 +80,7 @@
     if (run.steps.some(step => step.status === "failed")) return { label: "Failed", tone: "stop" as const };
     return passing(run) ? { label: "Passing", tone: "ok" as const } : { label: "Not checked", tone: "neutral" as const };
   }
-  const counts = (run: HealthRun) => `${run.steps.filter(step => step.status === "passed").length} checks passed, ${run.steps.filter(step => step.status === "skipped").length} skipped`;
+  const counts = (run: HealthRun) => `${countLabel(run.steps.filter(step => step.status === "passed").length, "check")} passed, ${run.steps.filter(step => step.status === "skipped").length} skipped`;
 
   function applyConfiguration(value: HealthSnapshot) {
     const config = value.configuration;

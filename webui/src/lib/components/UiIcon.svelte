@@ -4,6 +4,7 @@
     BookOpen,
     Check,
     Headphones,
+    Flag,
     House,
     Library,
     LogOut,
@@ -22,6 +23,7 @@
     library: Library,
     logout: LogOut,
     more: MoreHorizontal,
+    report: Flag,
     settings: Settings,
     sources: Waypoints,
   };

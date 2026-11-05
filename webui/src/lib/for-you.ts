@@ -1,3 +1,4 @@
+import { countLabel } from "./count-label";
 import type { TasteNudge } from "./api";
 
 export function greeting(hour: number, name = "") {
@@ -21,9 +22,9 @@ export function reasonLabel(reason: string) {
 export function shortReadiness(message: string) {
   if (/^Refresh this mix/i.test(message)) return "Refresh to look for songs";
   const plays = message.match(/^Play about (\d+) more songs/i);
-  if (plays) return `Play about ${plays[1]} more songs`;
+  if (plays) return `Play about ${countLabel(Number(plays[1]), "more song")}`;
   const songs = message.match(/^Add about (\d+) more qualifying analyzed or tagged songs/i);
-  if (songs) return `Needs about ${songs[1]} more songs`;
+  if (songs) return `Needs about ${countLabel(Number(songs[1]), "more song")}`;
   if (/^No playable songs are available/i.test(message)) return "No songs yet";
   if (/^Fewer than \d+ songs remain/i.test(message)) return "Not enough matching songs yet";
   if (message === "Connect a service with recommendations, or add unheard tagged songs to your library.") return "No new songs to suggest yet";

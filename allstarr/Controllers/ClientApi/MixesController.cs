@@ -11,7 +11,7 @@ public sealed class MixesController(MixReader reader, MixCoverImageService cover
     [EndpointName("listMixes")]
     [ProducesResponseType<ClientMixes>(200)]
     public Task<ActionResult<ClientMixes>> List([FromQuery] string? timeZoneId = null) =>
-        ExecuteAsync(() => reader.ListAsync(Execution, timeZoneId));
+        ExecuteAsync(() => reader.ListAsync(HttpContext, Execution, timeZoneId));
 
     [HttpGet("{mixId}/items")]
     [EndpointName("listMixItems")]

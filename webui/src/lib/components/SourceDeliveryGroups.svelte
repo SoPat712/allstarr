@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { untrack } from "svelte";
   import { scrobbling, type ScrobbleDelivery, type ProviderAccount } from "$lib/api";
   import { groupDeliveries } from "$lib/source-deliveries";
@@ -60,7 +61,7 @@
         completed++;
       }
       confirmation = false;
-      toast.success(chosenAction === "retry" ? `${completed} ${completed === 1 ? "listen" : "listens"} queued for the saved destination.` : "Delivery confirmed without sending again.");
+      toast.success(chosenAction === "retry" ? `${countLabel(completed, "listen")} queued for the saved destination.` : "Delivery confirmed without sending again.");
     } catch (cause) {
       confirmation = false;
       toast.error(`${completed ? `${completed} queued. ` : ""}${cause instanceof Error ? cause.message : "The listens could not be updated."} Refresh before trying again.`);
@@ -81,7 +82,7 @@
       {@const name = targetName(first.targetId)}
       {@const reason = first.providerCode === "destination-unbound" ? "The destination needs confirming" : first.requiresReauthentication ? "Reconnect the saved account" : first.safeMessage || "Waiting to retry"}
       <div class="delivery-group">
-        {#if accountId}<p class="delivery-reason"><strong>{group.items.length} {group.items.length === 1 ? "listen is" : "listens are"} waiting.</strong> {reason}</p>{/if}
+        {#if accountId}<p class="delivery-reason"><strong>{countLabel(group.items.length, "listen is", "listens are")} waiting.</strong> {reason}</p>{/if}
         <GroupedRow count={group.items.length} summary={`${name} · ${reason}`} expanded={Boolean(accountId)}>
           {#snippet action()}
             <div class="delivery-actions">
@@ -122,7 +123,7 @@
 </section>
 
 <ConfirmDialog bind:open={confirmation}
-  title={chosenAction === "confirm-delivered" ? "Confirm delivery from its history?" : chosen.some(item => item.providerCode === "destination-unbound") ? "Confirm destination?" : `Retry ${chosen.length === 1 ? "this saved listen" : `all ${chosen.length} listens`}?`}
+  title={chosenAction === "confirm-delivered" ? "Confirm delivery from its history?" : chosen.some(item => item.providerCode === "destination-unbound") ? "Confirm destination?" : `Retry ${chosen.length === 1 ? "this saved listen" : `all ${countLabel(chosen.length, "listen")}`}?`}
   description={chosenAction === "confirm-delivered" ? "Only confirm listens you found in the destination's history. They will be marked delivered without sending again."
     : chosen.some(uncertain) ? `Confirm the destination: ${[...new Set(chosen.map(item => { const account = destination(item); return account ? `${account.displayName} · ${account.scope === "Shared" ? "shared with everyone" : account.ownerDisplayName || "personal account"}` : "No account selected"; }))].join(", ")}. Check the destination's history first. Only missing listens should be sent again; another send could create duplicates. The saved account's current sign-in is used.`
     : "These listens will be queued for the same saved destination account using its current sign-in."}

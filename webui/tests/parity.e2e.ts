@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
-import { expectContainedMobileGeometry } from "./mobile-geometry";
+import { expectContainedMobileGeometry, widenText } from "./mobile-geometry";
 
 async function nextPlaylistOptions(dialog: Locator) {
   const next = dialog.getByRole("button", { name: "Next", exact: true });
@@ -1051,6 +1051,23 @@ for (const width of [390, 1280]) {
   }
 }
 
+for (const route of ["#/integrations/services", "#/integrations/extensions"]) {
+  test(`${route} filters fit with wider text at 667x375`, async ({ page }) => {
+    await page.setViewportSize({ width: 667, height: 375 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await mockApi(page);
+    await page.goto(route);
+    const search = page.getByRole("searchbox", { name: "Search sources", exact: true });
+    await expect(search).toBeVisible();
+    await widenText(page.locator(".source-toolbar input, .source-toolbar .filter-segments button"));
+    const box = await search.boundingBox();
+    const field = await page.locator(".source-toolbar .search-field").boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(field!.x);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(field!.x + field!.width + 1);
+    await expectContainedMobileGeometry(page);
+  });
+}
+
 for (const viewport of viewports) {
   test.describe(`${viewport.width}x${viewport.height}`, () => {
     test.use({ viewport, colorScheme: process.env.ALLSTARR_SCREENSHOT_THEME === "dark" ? "dark" : "light" });
@@ -1202,7 +1219,7 @@ for (const viewport of viewports) {
       await page.evaluate(() => Promise.all(document.getAnimations()
         .filter((animation) => animation.effect?.getTiming().iterations !== Infinity).map((animation) => animation.finished)));
       await routes.nth(0).dragTo(routes.nth(1));
-      await expect(routes.nth(0)).toContainText("Future Audio");
+      await expect(routes.nth(0)).toContainText("Future audio");
       await expect.poll(() => saved).toEqual({ StreamingOrder: "future-audio,lumen-audio" });
       await expect(page.getByText("Order saved", { exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: "Undo", exact: true })).toBeVisible();
@@ -2191,7 +2208,7 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   await expect(page.getByRole("region", { name: "Your setup", exact: true }).getByRole("heading", { name: "Library", exact: true })).toBeVisible();
   await expect(page.getByText("Legacy .env import")).toHaveCount(0);
   await expect(page.locator(".setup-tile").filter({ hasText: "Sources" })).toBeVisible();
-  await expect(page.getByText("Playlist Check", { exact: true })).toBeVisible();
+  await expect(page.getByText("Playlist check", { exact: true })).toBeVisible();
   await expect(page.locator(".setup-tile")).toHaveCount(6);
   await expect(page.getByRole("region", { name: "Recent activity", exact: true }).locator("svg").first()).toBeVisible();
   const nowPlaying = page.getByRole("region", { name: "Now playing" });
@@ -4868,7 +4885,7 @@ test("Maintenance previews, retries, and applies a legacy import on mobile", asy
   await card.getByLabel("Legacy environment file").setInputFiles(legacyFile);
   await card.getByRole("button", { name: "Preview import" }).click();
   await expect(card.getByText("Imported accounts remain disabled until reviewed.")).toBeVisible();
-  await card.getByText("Review 1 parsed settings").click();
+  await card.getByText("Review 1 parsed setting", { exact: true }).click();
   await expect(card.getByText("CACHE_LYRICS_DAYS", { exact: true }).last()).toBeVisible();
   await expect.poll(() => page.evaluate(() =>
     document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
@@ -5092,7 +5109,7 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
     item.method() === "POST" && item.url().endsWith("/api/admin/playlist-links/playlist-link/refresh"));
   await page.getByRole("button", { name: "Refresh playlists" }).click();
   await refresh;
-  await expect(page.getByText(/1 playlists refreshed in/)).toBeVisible();
+  await expect(page.getByText(/1 playlist refreshed in/)).toBeVisible();
   await expect(page.locator(".playlist-row").getByText("Needs a look", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Playlist status" })).toContainText("1 playlist");
   const rematchPreview = page.waitForRequest((item) =>
@@ -8134,7 +8151,7 @@ test("Source test panel searches one source and sends a result to lyrics, playba
   await dialog.getByRole("button", { name: "Play Get Lucky (Radio Edit)" }).click();
   await expect(dialog.getByRole("tab", { name: "Playback" })).toHaveAttribute("aria-selected", "true");
   await expect(dialog.locator("audio")).toHaveAttribute("src", /try\/media\/stream-ticket$/);
-  await expect(dialog.locator(".try-media-facts")).toContainText("Byte Range");
+  await expect(dialog.locator(".try-media-facts")).toContainText("Byte range");
   expect(requests.at(-1)).toMatchObject({ capability: "streaming", operation: "stream", trackId: "lumen-71231", quality: "lossless" });
 
   await dialog.getByRole("tab", { name: "Download" }).click();
@@ -8691,7 +8708,7 @@ test("URL import keeps destinations when a link is pasted while sources load", a
   await nextPlaylistOptions(dialog);
   await nextPlaylistOptions(dialog);
   await expect(dialog.getByRole("radio", { name: /New playlist/ })).toBeChecked();
-  await expect(dialog.getByRole("button", { name: /^Import (?:\d+ songs|playlist)$/ })).toBeEnabled();
+  await expect(dialog.getByRole("button", { name: "Import 1 song", exact: true })).toBeEnabled();
 });
 
 test("URL import keeps a later browsing choice when its preview arrives", async ({ page }) => {

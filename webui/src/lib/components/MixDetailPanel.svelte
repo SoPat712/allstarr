@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { ApiError, activityWork, mixes, taste, type MixDetail, type MixSong } from "$lib/api";
@@ -133,12 +134,12 @@
 </script>
 <SidePanel open={true} title={mixName(detail?.mix.name ?? "Your mix")} description={detail?.mix.sourceLabel ? `From ${detail.mix.sourceLabel} · kept in sync` : detail ? mixDescription(detail.mix.description, detail.mix.kind) : "Songs picked for you"} onclose={close}>
   {#snippet artwork()}{#if detail}<MixCover mix={detail.mix} songs={detail.songs} />{/if}{/snippet}
-  {#snippet header()}{#if detail}{detail.mix.updatedAt ? `Refreshed ${new Date(detail.mix.updatedAt).toLocaleString(undefined, { weekday: "long", hour: "numeric", minute: "2-digit" })} · ` : ""}{detail.songs.length} songs{/if}{/snippet}
+  {#snippet header()}{#if detail}{detail.mix.updatedAt ? `Refreshed ${new Date(detail.mix.updatedAt).toLocaleString(undefined, { weekday: "long", hour: "numeric", minute: "2-digit" })} · ` : ""}{countLabel(detail.songs.length, "song")}{/if}{/snippet}
   {#snippet menu()}{#if detail?.mix.kind === "custom"}<DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label="Mix actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu mix-menu" align="end"><DropdownMenu.Item class="bits-menu-item destructive" onSelect={() => deleteOpen = true}>Delete mix</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/if}{/snippet}
   {#if error}<ErrorState title="Couldn't load this mix" detail={error} onretry={load} />{/if}
   {#if !detail && !error}<RowsSkeleton />{:else if detail}
     <div class="mix-summary">
-      <PageStatus items={detail.mix.evidence ? [{ label: `${detail.mix.evidence.fromMusic} from your library` }, { label: `${detail.mix.evidence.fromServices} from services when made` }] : [{ label: `${detail.songs.length} songs picked for you` }]} />
+      <PageStatus items={detail.mix.evidence ? [{ label: `${detail.mix.evidence.fromMusic} from your library` }, { label: `${detail.mix.evidence.fromServices} from services when made` }] : [{ label: `${countLabel(detail.songs.length, "song")} picked for you` }]} />
       {#if detail.mix.evidence}<p>{detail.mix.evidence.recipe.sentence}</p>{/if}
       <div class="apps-row"><label for="mix-show-apps"><strong>Show in my apps</strong><small id="mix-apps-description">Appears as a playlist in your music apps</small></label><Switch id="mix-show-apps" aria-label="Show in my apps" aria-describedby="mix-apps-description" bind:checked={appsChecked} disabled={busy || !detail.mix.inApps && !detail.mix.appsAllowed} onchange={event => void showInApps(event.currentTarget.checked)} /></div><div class="added-state">{#if detail.mix.inApps}<span>✓ In your apps</span><a href="#/library/playlists">Manage in Playlists</a>{/if}</div>
       {#if !detail.mix.appsAllowed}<p class="muted">Your admin hasn't allowed adding mixes.</p>{/if}
@@ -150,17 +151,17 @@
             <div class="recipe-copy">
               <p>{evidence.recipe.sentence}</p>
               {#if detail.mix.kind !== "external" && detail.mix.kind !== "custom"}
-                <p>{evidence.livePlays.toLocaleString()} plays in Allstarr · {evidence.importedPlays.toLocaleString()} imported{#if evidence.listeningFrom && evidence.listeningTo}{" · "}{new Date(evidence.listeningFrom).toLocaleDateString()}–{new Date(evidence.listeningTo).toLocaleDateString()}{/if}</p>
+                <p>{countLabel(evidence.livePlays, "play")} in Allstarr · {evidence.importedPlays.toLocaleString()} imported{#if evidence.listeningFrom && evidence.listeningTo}{" · "}{new Date(evidence.listeningFrom).toLocaleDateString()}–{new Date(evidence.listeningTo).toLocaleDateString()}{/if}</p>
               {/if}
-              {#if evidence.historicalWindow}<p>Only {evidence.primaryPlays} plays in Allstarr in the last 30 days, so this also uses {evidence.fallbackPlays} imported plays from {evidence.historicalWindow}.</p>{/if}
-              <p>Looked at {evidence.candidates.toLocaleString()} songs, {evidence.qualified.toLocaleString()} fit, {evidence.shown} in this mix.</p>
+              {#if evidence.historicalWindow}<p>Only {countLabel(evidence.primaryPlays, "play")} in Allstarr in the last 30 days, so this also uses {countLabel(evidence.fallbackPlays, "imported play")} from {evidence.historicalWindow}.</p>{/if}
+              <p>Looked at {countLabel(evidence.candidates, "song")}, {evidence.qualified.toLocaleString()} fit, {evidence.shown} in this mix.</p>
               {#if detail.mix.kind !== "external"}<p>{evidence.fromMusic} from your music, {evidence.fromServices} from your services, at most {evidence.recipe.artistLimit} per artist.</p>{/if}
-              {#if evidence.releaseInboxEntries != null}<p>{evidence.releaseInboxEntries} entries in your release inbox at generation.</p>{/if}
+              {#if evidence.releaseInboxEntries != null}<p>{countLabel(evidence.releaseInboxEntries, "entry", "entries")} in your release inbox at generation.</p>{/if}
               <p>{evidence.recipe.filters}</p><p>{evidence.recipe.order}</p>
               <p>{evidence.recipe.cadence}. {evidence.recipe.shortfall}</p>
               {#if Object.keys(evidence.excluded).length}<p>Left out: {mixExclusions(evidence.excluded)}.</p>{/if}
               {#if evidence.shortfall && (detail.mix.readiness.ready || evidence.shortfall !== detail.mix.readiness.message)}<p>{evidence.shortfall}</p>{/if}
-              {#if evidence.providerFailures}<p>{evidence.providerFailures} service lookups failed.</p>{/if}
+              {#if evidence.providerFailures}<p>{countLabel(evidence.providerFailures, "service lookup")} failed.</p>{/if}
             </div>
           {:else}<p class="recipe-copy">Refresh this mix to see its recipe details.</p>{/if}
         </details>
@@ -192,6 +193,7 @@
   .recipe-copy { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; padding-bottom: var(--space-3); }
   .recipe-copy p { margin-block: var(--space-2); }
   .explanation { display: grid; justify-items: start; gap: var(--space-3); margin-top: var(--space-3); }
+  @media (max-width: 360px) { .mix-footer { gap: var(--space-2); } .mix-footer :global([data-slot="button"]) { padding-inline: var(--space-2); } }
   :global(.mix-menu .bits-menu-item) { min-height: 44px; }
   :global(.mix-menu .destructive) { color: var(--danger); }
 </style>

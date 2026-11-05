@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import { FileUp, Heart, History, LayoutDashboard, ListMusic, SlidersHorizontal, Sparkles, X } from "@lucide/svelte";
@@ -348,10 +349,10 @@
   }
 
   function songDetailsMessage(status: NonNullable<IntelligenceState["songDetails"]>) {
-    if (status.pending) return `Allstarr is checking ${status.pending} saved ${status.pending === 1 ? "listen" : "listens"} for more song details.`;
+    if (status.pending) return `Allstarr is checking ${countLabel(status.pending, "saved listen")} for more song details.`;
     const unmatched = status.unresolved + status.failed;
-    if (unmatched) return `Allstarr could not add more song details to ${unmatched} saved ${unmatched === 1 ? "listen" : "listens"}. Your history is still saved.`;
-    if (status.resolved) return `Allstarr added more song details to ${status.resolved} saved ${status.resolved === 1 ? "listen" : "listens"}.`;
+    if (unmatched) return `Allstarr could not add more song details to ${countLabel(unmatched, "saved listen")}. Your history is still saved.`;
+    if (status.resolved) return `Allstarr added more song details to ${countLabel(status.resolved, "saved listen")}.`;
     return "No saved listens are waiting for more song details.";
   }
 </script>
@@ -533,7 +534,7 @@
           <p class="playlist-explainer">Recommendations stay temporary until you create a playlist. Allstarr then injects it into this user’s {serverLabel(activeScope.protocol)} library and keeps scheduled playlists refreshed.</p>
           <ul class="generated-list" aria-live="polite">
             {#each data.generatedSets as item}
-              <li class="generated-row"><span><strong>{item.name}</strong><small>{item.trackCount} tracks · {generatedStatus(item)}</small></span><Badge state={item.materialized ? "healthy" : "suggested"}>{item.materialized ? "Playable" : item.state}</Badge></li>
+              <li class="generated-row"><span><strong>{item.name}</strong><small>{countLabel(item.trackCount, "track")} · {generatedStatus(item)}</small></span><Badge state={item.materialized ? "healthy" : "suggested"}>{item.materialized ? "Playable" : item.state}</Badge></li>
             {:else}<li class="compact-empty"><strong>No recommendation playlists yet</strong><p>Refresh recommendations, then turn the result into a playlist here.</p></li>{/each}
           </ul>
           {#if data.actions.canGenerate && data.actions.latestRunId}
@@ -552,7 +553,7 @@
       {#if audioMuseReady}<AudioMuseDiscovery scope={activeScope} songs={visibleCandidates} onCreated={refresh} />{/if}
       <div class="intelligence-grid">
         <section class="panel recommendations">
-          <header><div><p class="eyebrow">For you</p><h3>Recommendations</h3></div><span>{visibleCandidates.length} tracks</span></header>
+          <header><div><p class="eyebrow">For you</p><h3>Recommendations</h3></div><span>{countLabel(visibleCandidates.length, "track")}</span></header>
           {#if visibleCandidates.length}
             <ol class="recommendation-list">
               {#each visibleCandidates as item}
@@ -570,7 +571,7 @@
 
         <aside class="side-stack">
           <section class="panel profile-card"><p class="eyebrow">Recent listening</p><h3>Your profile</h3>{#if data.visualization.length}<ul class="profile-list">{#each data.visualization as item}<li><span>{item.label}</span><meter aria-label={item.label} min="0" max="1" value={item.value}>{item.value}</meter></li>{/each}</ul>{:else}<p class="muted">Turn on automatic history in <a class="touch-link" href="#/intelligence?section=automation">Automation</a>, then play music or import a history file.</p>{/if}</section>
-          <section class="panel generated-card"><p class="eyebrow">Playable output</p><h3>Recommendation playlists</h3><p>{data.generatedSets.length ? `${data.generatedSets.length} personal ${data.generatedSets.length === 1 ? "playlist is" : "playlists are"} available.` : "Create a personal or rotating playlist from these recommendations."}</p><Button variant="secondary" href="#/intelligence?section=playlists">Open playlists</Button></section>
+          <section class="panel generated-card"><p class="eyebrow">Playable output</p><h3>Recommendation playlists</h3><p>{data.generatedSets.length ? `${countLabel(data.generatedSets.length, "personal playlist is", "personal playlists are")} available.` : "Create a personal or rotating playlist from these recommendations."}</p><Button variant="secondary" href="#/intelligence?section=playlists">Open playlists</Button></section>
         </aside>
       </div>
     {/if}

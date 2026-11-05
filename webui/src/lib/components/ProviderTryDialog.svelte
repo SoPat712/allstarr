@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { tick, untrack } from "svelte";
   import { Dialog } from "$lib/components/ui/dialog";
   import { Button, buttonVariants } from "$lib/components/ui/button";
@@ -133,7 +134,7 @@
     if (cause instanceof ApiError) {
       const details = cause.details as { reasonCode?: string; retryAfterSeconds?: number } | null;
       if (cause.status === 409 && details?.reasonCode === "sign_in_needed") return `${name} needs a sign-in first. Sign in on this page, then try again.`;
-      if (cause.status === 429) return `Another test on ${name} is still running. Wait ${details?.retryAfterSeconds ?? 5} seconds, then try again.`;
+      if (cause.status === 429) return `Another test on ${name} is still running. Wait ${countLabel(details?.retryAfterSeconds ?? 5, "second")}, then try again.`;
       return cause.message;
     }
     return cause instanceof Error && cause.name !== "AbortError" ? cause.message : fallback;
@@ -354,10 +355,10 @@
     ].filter((item): item is [string, string] => Boolean(item?.[1]));
   }
 
-  const countLabel = (value: ProviderTryResult) => {
+  const resultCountLabel = (value: ProviderTryResult) => {
     const count = value.tracks?.length ?? value.albums?.length ?? value.artists?.length ?? value.playlists?.length ?? 0;
     const noun = value.albums ? "album" : value.artists ? "artist" : value.playlists ? "playlist" : "song";
-    return `${count} ${noun}${count === 1 ? "" : "s"}`;
+    return countLabel(count, noun);
   };
 </script>
 
@@ -469,7 +470,7 @@
                 </div>
               {/if}
             </form>
-            {@render status("metadata", result, result?.succeeded ? `${countLabel(result)} found` : "")}
+            {@render status("metadata", result, result?.succeeded ? `${resultCountLabel(result)} found` : "")}
             {#if result?.succeeded}
               {#if result.tracks?.length}
                 <ul class="try-list" aria-label="Results">
@@ -478,7 +479,7 @@
               {:else if result.albums?.length}
                 <ul class="try-list" aria-label="Results">
                   {#each result.albums as album}
-                    <li class="try-row"><MediaArtwork class="try-art" url={album.artworkUrl} fallback="◎" /><span class="try-row-copy"><strong><span>{album.title}</span></strong><small>{album.artists.join(", ")}{album.year ? ` · ${album.year}` : ""}{album.trackCount ? ` · ${album.trackCount} songs` : ""}</small><small class="try-ids"><span>ID {album.id}</span></small></span></li>
+                    <li class="try-row"><MediaArtwork class="try-art" url={album.artworkUrl} fallback="◎" /><span class="try-row-copy"><strong><span>{album.title}</span></strong><small>{album.artists.join(", ")}{album.year ? ` · ${album.year}` : ""}{album.trackCount ? ` · ${countLabel(album.trackCount, "song")}` : ""}</small><small class="try-ids"><span>ID {album.id}</span></small></span></li>
                   {/each}
                 </ul>
               {:else if result.artists?.length}
@@ -553,7 +554,7 @@
             {#if !lyricNeedsArtist && !result?.succeeded}{@render status("lyrics", result, "")}{/if}
             {#if result?.succeeded && result.lyrics}
               <section class="try-card try-lyrics" aria-label="Lyrics" style="min-height: min-content">
-                <header class="try-summary" role="status"><CircleCheck size={18} aria-hidden="true" /><strong>{result.lyrics.lineCount} lines found</strong> <span>in {elapsed(result.elapsedMs)}</span></header>
+                <header class="try-summary" role="status"><CircleCheck size={18} aria-hidden="true" /><strong>{countLabel(result.lyrics.lineCount, "line")} found</strong> <span>in {elapsed(result.elapsedMs)}</span></header>
                 <div style="display: grid; gap: var(--space-3); min-width: 0">
                   <p class="try-facts">
                     <span class="try-pill">{result.lyrics.format === "word" ? "Word-timed" : result.lyrics.format === "line" ? "Line-timed" : "Plain text"}</span>
@@ -580,18 +581,18 @@
               <Button type="submit" disabled={Boolean(running) || !playlistUrl.trim()}>{running === "playlist" ? "Opening…" : "Open"}</Button>
             </form>
             {#if operation("playlist", "mine")}<div class="try-actions"><Button variant="secondary" disabled={Boolean(running)} onclick={() => void run("playlist", { operation: "mine" })}>Show my playlists</Button></div>{/if}
-            {@render status("playlist", result, result?.playlist ? `${result.tracks?.length ?? 0} songs loaded` : result ? `${countLabel(result)} found` : "")}
+            {@render status("playlist", result, result?.playlist ? `${countLabel(result.tracks?.length ?? 0, "song")} loaded` : result ? `${resultCountLabel(result)} found` : "")}
             {#if result?.succeeded && result.playlist}
               <div class="try-playlist-head">
                 <MediaArtwork class="try-art try-art--large" url={result.playlist.artworkUrl} fallback="♫" />
-                <span><strong>{result.playlist.title}</strong><small>{result.playlist.owner ? `By ${result.playlist.owner} · ` : ""}{result.playlist.trackCount ?? result.tracks?.length ?? 0} songs{(result.playlist.trackCount ?? 0) > (result.tracks?.length ?? 0) ? `, first ${result.tracks?.length ?? 0} shown` : ""}</small></span>
+                <span><strong>{result.playlist.title}</strong><small>{result.playlist.owner ? `By ${result.playlist.owner} · ` : ""}{countLabel(result.playlist.trackCount ?? result.tracks?.length ?? 0, "song")}{(result.playlist.trackCount ?? 0) > (result.tracks?.length ?? 0) ? `, first ${result.tracks?.length ?? 0} shown` : ""}</small></span>
               </div>
               {#if result.tracks?.length}<ul class="try-list" aria-label="Playlist songs">{#each result.tracks as track}{@render trackRow(track, [])}{/each}</ul>{/if}
             {:else if result?.succeeded && result.playlists}
               {#if result.playlists.length}
                 <ul class="try-list" aria-label="Your playlists">
                   {#each result.playlists as playlist}
-                    <li class="try-row"><MediaArtwork class="try-art" url={playlist.artworkUrl} fallback="♫" /><span class="try-row-copy"><strong><span>{playlist.title}</span></strong><small>{playlist.owner ? `${playlist.owner} · ` : ""}{playlist.trackCount ?? "?"} songs</small><small class="try-ids"><span>ID {playlist.id}</span></small></span>
+                    <li class="try-row"><MediaArtwork class="try-art" url={playlist.artworkUrl} fallback="♫" /><span class="try-row-copy"><strong><span>{playlist.title}</span></strong><small>{playlist.owner ? `${playlist.owner} · ` : ""}{playlist.trackCount == null ? "? songs" : countLabel(playlist.trackCount, "song")}</small><small class="try-ids"><span>ID {playlist.id}</span></small></span>
                       <span class="try-row-end"><Button variant="secondary" size="sm" disabled={Boolean(running)} onclick={() => { playlistUrl = playlist.id; void run("playlist", { operation: "playlist", url: playlist.id }); }}>Open</Button></span></li>
                   {/each}
                 </ul>

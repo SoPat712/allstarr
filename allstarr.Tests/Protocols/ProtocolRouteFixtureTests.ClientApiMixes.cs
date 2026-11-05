@@ -411,16 +411,19 @@ public sealed partial class ProtocolRouteFixtureTests
         await AssertClientApiError(response, 404, "not_found");
     }
 
-    private static ProtocolFactory ClientMixFactory(Mock<IProtocolProviderGateway> gateway, bool nativeVisible = true) => ClientDetailsFactory(request =>
+    private static ProtocolFactory ClientMixFactory(Mock<IProtocolProviderGateway> gateway, bool nativeVisible = true,
+        string nativeArtwork = "\"AlbumPrimaryImageTag\":\"native-album-art\"", bool duplicateAlbum = false) => ClientDetailsFactory(request =>
     {
+        var nativeItem = $$"""{"Id":"native-mix-song","Type":"Audio","Name":"Library song","AlbumId":"native-album","ArtistItems":[{"Id":"native-artist","Name":"Library artist"}],{{nativeArtwork}}}""";
+        var nativeItems = nativeItem + (duplicateAlbum ? "," + nativeItem.Replace("native-mix-song", "native-second-song", StringComparison.Ordinal) : "");
         if (request.RequestUri!.AbsolutePath.StartsWith("/Users/", StringComparison.Ordinal))
             Assert.Contains(request.Headers.ToString().Contains("other-token", StringComparison.Ordinal) ? "other-token" : "listener-token", request.Headers.ToString());
         return request.RequestUri!.AbsolutePath switch
         {
             "/Users/Me" => Json(200, request.Headers.ToString().Contains("other-token", StringComparison.Ordinal) ? """{"Id":"other"}""" : """{"Id":"listener"}"""),
-            "/Users/listener/Items/native-mix-song" => nativeVisible ? Json(200, """{"Id":"native-mix-song","Type":"Audio","Name":"Library song","AlbumId":"native-album","ArtistItems":[{"Id":"native-artist","Name":"Library artist"}]}""") : Json(404, "{}"),
-            "/Users/listener/Items" => nativeVisible ? Json(200, """{"Items":[{"Id":"native-mix-song","Type":"Audio","Name":"Library song","AlbumId":"native-album","ArtistItems":[{"Id":"native-artist","Name":"Library artist"}]}]}""") : Json(403, "{}"),
-            "/Items" => Json(200, """{"Items":[{"Id":"native-mix-song","Type":"Audio","Name":"Library song","AlbumId":"native-album","ArtistItems":[{"Id":"native-artist","Name":"Library artist"}]}],"TotalRecordCount":1}"""),
+            "/Users/listener/Items/native-mix-song" => nativeVisible ? Json(200, nativeItem) : Json(404, "{}"),
+            "/Users/listener/Items" => nativeVisible ? Json(200, "{\"Items\":[" + nativeItems + "]}") : Json(403, "{}"),
+            "/Items" => Json(200, "{\"Items\":[" + nativeItem + "],\"TotalRecordCount\":1}"),
             _ => Json(200, """{"Items":[],"TotalRecordCount":0}""")
         };
     }, services =>
@@ -444,7 +447,8 @@ public sealed partial class ProtocolRouteFixtureTests
         ExternalId = "mix-song"
     };
 
-    private static async Task<PersonalMix> SeedClientMixAsync(ProtocolFactory factory, MixReadiness? readiness = null, Song? serviceSong = null)
+    private static async Task<PersonalMix> SeedClientMixAsync(ProtocolFactory factory, MixReadiness? readiness = null,
+        Song? serviceSong = null, bool includeLibrary = false)
     {
         var owner = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!.UserId;
         var id = Guid.NewGuid();
@@ -453,7 +457,7 @@ public sealed partial class ProtocolRouteFixtureTests
             [new(id, 2, ClientMixSong(), "deezer", "Played 12 times lately", 1),
                 new(id, 2, new() { Id = "native-mix-song", Title = "Library song", Artist = "Library artist", Album = "Library album", IsLocal = true, Duration = 180 }, "library", "An old favourite", 1),
                 new(id, 2, new() { Id = "inaccessible-song", Title = "Hidden song", IsLocal = true, Duration = 50 }, "library", "Hidden", 1)]);
-        if (serviceSong != null) mix = mix with { Songs = [new(id, 2, serviceSong, serviceSong.ExternalProvider!, "Picked for you", 1)] };
+        if (serviceSong != null) mix = mix with { Songs = [new(id, 2, serviceSong, serviceSong.ExternalProvider!, "Picked for you", 1), .. includeLibrary ? mix.Songs.Skip(1) : []] };
         var scope = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes($"{owner}:jellyfin:primary:listener")));
         var json = JsonSerializer.Serialize(new { AppsOptInVersion = 3, TimeZoneId = "UTC", Mixes = new Dictionary<string, PersonalMix> { ["custom"] = mix } });
         await using var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync();

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { taste, type SoundProfile, type TasteNudge, type TasteProfile } from "$lib/api";
   import { formatCount } from "$lib/intelligence";
@@ -69,7 +70,7 @@
 {/snippet}
 <div class="your-taste">
   <div class="section-heading"><h2>Your taste</h2><RefreshButton variant="secondary" label="Refresh taste" disabled={action} onrefresh={load} /></div>
-  <PageStatus items={[{ label: profile?.paused ? "Learning paused" : "Your listening shapes your mixes" }, { label: profile ? `${profile.nudges.length} active choices` : "Loading your taste" }]} />
+  <PageStatus items={[{ label: profile?.paused ? "Learning paused" : "Your listening shapes your mixes" }, { label: profile ? countLabel(profile.nudges.length, "active choice") : "Loading your taste" }]} />
   {#if error}<ErrorState title="Couldn't load your taste" detail={error} onretry={load} />{/if}
   {#if loading}<RowsSkeleton label="Loading your taste" />{:else if profile}
     <section class="settings-card summary"><p>{#each summaryParts as part}{#if summaryTags.includes(part)}<strong>{part}</strong>{:else}{part}{/if}{/each}</p><small>{profile.latelyWeight >= .5 ? "Today's listening counts most right now." : "Your usual taste counts most right now."}</small></section>
@@ -84,7 +85,7 @@
             <small aria-hidden="true">{soundDifference(trait.difference)}</small>
           </div>
         {/each}</div>
-        <small>Compared with {formatCount(sound.librarySongs)} other analyzed songs in your library. From AudioMuse's analysis of {formatCount(sound.songs)} songs you've finished{sound.skippedSongs ? ` and ${formatCount(sound.skippedSongs)} you mostly skip` : ""}.</small>
+        <small>Compared with {countLabel(sound.librarySongs, "other analyzed song")} in your library. From AudioMuse's analysis of {countLabel(sound.songs, "song")} you've finished{sound.skippedSongs ? ` and ${formatCount(sound.skippedSongs)} you mostly skip` : ""}.</small>
       </section>
     {/if}
     <section class="panel taste-section"><h2>Steer your mixes</h2><p>Tap a style to hear more or less of it.</p>{@render chips("tag", tags)}<h3>Artists</h3>{@render chips("artist", artists)}</section>

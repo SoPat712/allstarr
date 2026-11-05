@@ -45,14 +45,26 @@ public sealed class MixCoverRendererTests
     public void Genre_matching_uses_ordered_substrings(string tag, string expected) =>
         Assert.Equal(expected, MixCoverRenderer.PaletteName(tag));
 
-    [Fact]
-    public void Similar_track_cover_caption_matches_the_track_source()
+    [Theory]
+    [MemberData(nameof(Covers))]
+    public void Covers_contain_only_a_smooth_diagonal_gradient(string kind, string tag, string source)
     {
-        var (lines, subtitle) = MixCoverRenderer.LastFmCaption("similar");
-        Assert.Equal(new[] { "similar", "tracks" }, lines);
-        Assert.Equal("like your top tracks", subtitle);
-        var input = new MixCoverInput("similar", 1, "external", Source: "lastfm", SourcePlaylistId: "similar");
-        Assert.EndsWith("-tracks-v2", MixCoverImageService.GetTag(input));
+        var input = new MixCoverInput("fixture-" + kind, 1, kind, tag, "Artists", "Seed", source, "similar", "Name", 11);
+        var bytes = MixCoverRenderer.Render(input);
+        Assert.Equal(bytes, MixCoverRenderer.Render(input with { Artists = "Other", Seed = "Other", Name = "Other", Count = 30 }));
+        using var bitmap = SKBitmap.Decode(bytes);
+        for (var sum = 100; sum <= 1000; sum += 100)
+        {
+            var centre = bitmap.GetPixel(sum / 2, sum / 2);
+            for (var x = Math.Max(0, sum - 599); x <= Math.Min(599, sum); x += 23)
+            {
+                var colour = bitmap.GetPixel(x, sum - x);
+                Assert.InRange(Math.Abs(colour.Red - centre.Red), 0, 1);
+                Assert.InRange(Math.Abs(colour.Green - centre.Green), 0, 1);
+                Assert.InRange(Math.Abs(colour.Blue - centre.Blue), 0, 1);
+                Assert.Equal(255, colour.Alpha);
+            }
+        }
     }
 
     [Fact]
@@ -76,8 +88,5 @@ public sealed class MixCoverRendererTests
         Assert.Equal(3826002220u, MixCoverRenderer.Hash("a"));
         Assert.Equal(unchecked((2166136261u ^ 0x1f3b5u) * 16777619u), MixCoverRenderer.Hash("\U0001f3b5"));
         Assert.Equal(unchecked((2166136261u ^ 0xd800u) * 16777619u), MixCoverRenderer.Hash("\ud800"));
-        var random = new MixCoverRenderer.Random(1);
-        Assert.Equal(0.6270739405881613, random.Next());
-        Assert.Equal(0.002735721180215478, random.Next());
     }
 }

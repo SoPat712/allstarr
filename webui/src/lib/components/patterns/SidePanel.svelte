@@ -137,6 +137,8 @@
   @keyframes panel-in { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
   @keyframes panel-out { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(100%); } }
   @media (max-width: 899px) {
+    .panel-footer > :global(*) { min-width: 0; max-width: 100%; }
+    .panel-footer :global([data-slot="button"]) { min-width: 44px; max-width: 100%; height: auto; min-height: 44px; flex-shrink: 1; white-space: normal; overflow-wrap: anywhere; }
     :global(.side-panel-overlay) { z-index: max(var(--layer-overlay), calc(var(--layer-navigation) + 1)); }
     :global(.side-panel) { z-index: max(var(--layer-dialog), calc(var(--layer-navigation) + 2)); inset: 0; height: 100dvh; max-height: 100dvh; border-left: 0; }
     @keyframes panel-in { from { opacity: 0; transform: translateY(100%); } to { opacity: 1; transform: translateY(0); } }

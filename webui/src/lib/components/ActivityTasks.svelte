@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { onMount, tick } from "svelte";
   import { CalendarClock } from "@lucide/svelte";
   import { activityWork, playlistLinks, home, type PlaylistLink, type ProviderDefinition, type ActivityTask } from "$lib/api";
@@ -127,7 +128,7 @@
                   <td>{#if task.runPlaylistLinkId}<Button variant="outline" size="sm" disabled={Boolean(running) || queued.has(task.id)} onclick={() => void run(task)}>{queued.has(task.id) ? "Queued" : running === task.id ? "Queuing…" : "Run now"}</Button>{:else}<Button variant="ghost" size="sm" onclick={() => void open(task)}>Details</Button>{/if}</td>
                 </tr>
               {/each}
-              {#if group.name === "Playlist syncs" && group.tasks.length > 4}<tr><td colspan="5"><Button variant="ghost" onclick={() => showAll = !showAll}>{showAll ? "Show fewer playlist syncs" : "Show " + (group.tasks.length - 4) + " more playlist syncs"}</Button></td></tr>{/if}
+              {#if group.name === "Playlist syncs" && group.tasks.length > 4}<tr><td colspan="5"><Button variant="ghost" onclick={() => showAll = !showAll}>{showAll ? "Show fewer playlist syncs" : "Show " + countLabel(group.tasks.length - 4, "more playlist sync")}</Button></td></tr>{/if}
             {/if}
           {/each}
         </tbody>
@@ -142,7 +143,7 @@
 {/if}
 
 <style>
-  .activity-tasks { container-type: inline-size; display: grid; gap: var(--space-4); min-width: 0; }
+  .activity-tasks { container-type: inline-size; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); min-width: 0; }
   .tasks-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--space-3); }
   .tasks-table { overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: var(--text-sm); }

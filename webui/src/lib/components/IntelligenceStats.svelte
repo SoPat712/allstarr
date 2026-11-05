@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel, countNoun } from "$lib/count-label";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { listeningStats, releaseInbox, type ListeningStats } from "$lib/api";
@@ -59,7 +60,7 @@
   const busiestHour = $derived(clock.length ? clock.reduce((best, point) => point.value > best.value ? point : best) : null);
   const hours = (milliseconds: number) => {
     const total = milliseconds / 3_600_000;
-    return total >= 1 ? `${formatCount(Math.round(total))} ${Math.round(total) === 1 ? "hour" : "hours"}` : listeningTime(milliseconds);
+    return total >= 1 ? countLabel(Math.round(total), "hour") : listeningTime(milliseconds);
   };
 
   let following = $state("");
@@ -107,7 +108,7 @@
 
 <div class="your-stats" aria-busy={refreshing}>
   <h2 class="visually-hidden">Your listening</h2>
-  <PageStatus items={[{ label: stats && loadedSelection === selection ? `${formatCount(stats.playCount)} plays` : "Your listening recap" }, { label: year || periods.find(item => item.id === period)?.label || "All time" }]} />
+  <PageStatus items={[{ label: stats && loadedSelection === selection ? countLabel(stats.playCount, "play") : "Your listening recap" }, { label: year || periods.find(item => item.id === period)?.label || "All time" }]} />
   <div class="stats-toolbar">
     <SegmentedNav label="Stats period" items={periods} active={year ? "" : period} onchange={selectPeriod} />
     <div class="stats-actions"><SelectField bind:value={year} label="Year in review" options={years} onchange={() => void load()} /><RefreshButton variant="secondary" label="Refresh stats" onrefresh={load} /></div>
@@ -120,16 +121,16 @@
       {#if heroArtist}
         <div class="hero-artist">
           <MediaArtwork url={heroArtist.artworkUrl} class="hero-art" />
-          <div><small>{year ? `${year} in music` : "Your top artist"}</small><strong>{heroArtist.artist}</strong><span>{formatCount(heroArtist.playCount)} {heroArtist.playCount === 1 ? "play" : "plays"}</span></div>
+          <div><small>{year ? `${year} in music` : "Your top artist"}</small><strong>{heroArtist.artist}</strong><span>{countLabel(heroArtist.playCount, "play")}</span></div>
         </div>
       {/if}
       <div class="stats-numbers">
-        <article><strong>{formatCount(stats.playCount)}</strong><span>Plays</span></article>
-        <article><strong>{missingTime ? "Unavailable" : hours(stats.estimatedTimeFromSongLengthsMilliseconds)}</strong><span>Listening time</span>{#if missingTime}<small>Song lengths aren't available for these plays.</small>{:else if stats.coverage.unknownDurationCount}<small>{formatCount(stats.coverage.unknownDurationCount)} plays had no song length.</small>{/if}</article>
-        <article><strong>{formatCount(stats.activeDays)}</strong><span>Active days</span></article>
-        {#if stats.uniqueArtists}<article><strong>{formatCount(stats.uniqueArtists)}</strong><span>Artists</span></article>{/if}
-        {#if stats.uniqueSongs}<article><strong>{formatCount(stats.uniqueSongs)}</strong><span>Songs</span></article>{/if}
-        {#if stats.longestStreakDays}<article><strong>{formatCount(stats.longestStreakDays)} {stats.longestStreakDays === 1 ? "day" : "days"}</strong><span>Longest streak</span></article>{/if}
+        <article><strong>{formatCount(stats.playCount)}</strong><span>{countNoun(stats.playCount, "Play")}</span></article>
+        <article><strong>{missingTime ? "Unavailable" : hours(stats.estimatedTimeFromSongLengthsMilliseconds)}</strong><span>Listening time</span>{#if missingTime}<small>Song lengths aren't available for these plays.</small>{:else if stats.coverage.unknownDurationCount}<small>{countLabel(stats.coverage.unknownDurationCount, "play")} had no song length.</small>{/if}</article>
+        <article><strong>{formatCount(stats.activeDays)}</strong><span>{countNoun(stats.activeDays, "Active day")}</span></article>
+        {#if stats.uniqueArtists}<article><strong>{formatCount(stats.uniqueArtists)}</strong><span>{countNoun(stats.uniqueArtists, "Artist")}</span></article>{/if}
+        {#if stats.uniqueSongs}<article><strong>{formatCount(stats.uniqueSongs)}</strong><span>{countNoun(stats.uniqueSongs, "Song")}</span></article>{/if}
+        {#if stats.longestStreakDays}<article><strong>{countLabel(stats.longestStreakDays, "day")}</strong><span>Longest streak</span></article>{/if}
       </div>
     </section>
     {#if comparison}
@@ -145,7 +146,7 @@
     {#if !stats.playCount}<p>No plays in this period.</p>{/if}
     {#if timeline.length > 1}
       <section class="panel chart-card" aria-label="Plays over time">
-        <header><h2>Plays over time</h2>{#if busiest}<small>Busiest {stats.timelineUnit === "day" ? "day" : "month"}: {busiest.label}, {formatCount(busiest.value)} plays</small>{/if}</header>
+        <header><h2>Plays over time</h2>{#if busiest}<small>Busiest {stats.timelineUnit === "day" ? "day" : "month"}: {busiest.label}, {countLabel(busiest.value, "play")}</small>{/if}</header>
         <RecapBars points={timeline} label="Plays over time" />
       </section>
     {/if}
@@ -170,7 +171,7 @@
         {@const open = expanded === list.title}
         <section class="panel" aria-label={list.title}>
           <h2>{list.title}</h2>
-          <ol>{#each open ? list.rows : list.rows.slice(0, 10) as row, index}<li><span class="rank">{index + 1}</span><MediaArtwork url={row.artworkUrl} class={list.round ? "list-art round" : "list-art"} /><div class="stats-name"><strong>{row.name}</strong><small>{#if row.detail}{row.detail}{" · "}{/if}{formatCount(row.count)} {row.count === 1 ? "play" : "plays"}</small></div>
+          <ol>{#each open ? list.rows : list.rows.slice(0, 10) as row, index}<li><span class="rank">{index + 1}</span><MediaArtwork url={row.artworkUrl} class={list.round ? "list-art round" : "list-art"} /><div class="stats-name"><strong>{row.name}</strong><small>{#if row.detail}{row.detail}{" · "}{/if}{countLabel(row.count, "play")}</small></div>
             {#if row.seed || row.artist}
               <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button row-menu" aria-label={`Actions for ${row.name}`}><UiIcon name="more" /></DropdownMenu.Trigger>
                 <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end">
@@ -186,14 +187,14 @@
     </div>
     {#if stats.newArtists?.length}
       <section class="panel new-artists" aria-label="New to you">
-        <header><h2>New to you</h2><small>{formatCount(stats.newArtistCount ?? 0)} {stats.newArtistCount === 1 ? "artist" : "artists"} you hadn't played before this period</small></header>
-        <ul>{#each stats.newArtists as artist}<li><strong>{artist.artist}</strong><small>{formatCount(artist.playCount)} {artist.playCount === 1 ? "play" : "plays"}</small></li>{/each}</ul>
+        <header><h2>New to you</h2><small>{countLabel(stats.newArtistCount ?? 0, "artist")} you hadn't played before this period</small></header>
+        <ul>{#each stats.newArtists as artist}<li><strong>{artist.artist}</strong><small>{countLabel(artist.playCount, "play")}</small></li>{/each}</ul>
       </section>
     {/if}
     <footer>
-      <p>{stats.firstPlayAt ?? stats.observedSince ? `Counting since ${new Date((stats.firstPlayAt ?? stats.observedSince)!).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.` : "Counting starts with your first listen."} {formatCount(stats.coverage.unknownSongIdentityCount)} {stats.coverage.unknownSongIdentityCount === 1 ? "play couldn't" : "plays couldn't"} be identified.</p>
-      <p>Imported from other services: {formatCount(stats.importedCount)} plays</p>
-      {#if stats.shortPlayCount}<p>{formatCount(stats.shortPlayCount)} skips and plays under 30 seconds aren't counted.</p>{/if}
+      <p>{stats.firstPlayAt ?? stats.observedSince ? `Counting since ${new Date((stats.firstPlayAt ?? stats.observedSince)!).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}.` : "Counting starts with your first listen."} {countLabel(stats.coverage.unknownSongIdentityCount, "play couldn't", "plays couldn't")} be identified.</p>
+      <p>Imported from other services: {countLabel(stats.importedCount, "play")}</p>
+      {#if stats.shortPlayCount}<p>{countLabel(stats.shortPlayCount, "skip or play under 30 seconds isn't counted", "skips and plays under 30 seconds aren't counted")}.</p>{/if}
     </footer>
   {/if}
   <section aria-label="Your data"><h2>Bring in your history</h2><IntelligenceHistoryImports onchanged={importsChanged} /></section>

@@ -27,7 +27,7 @@ public sealed class MixCoverImageService
 
     public static string GetTag(MixCoverInput input) =>
         Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(input))) +
-        (input.Source == "lastfm" && input.SourcePlaylistId == "similar" ? "-tracks-v2" : "");
+        "-gradient-v1";
 
     public IActionResult CreateResponse(MixCoverInput input, HttpContext context)
     {

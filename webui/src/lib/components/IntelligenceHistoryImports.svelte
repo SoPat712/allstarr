@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { Trash2 } from "@lucide/svelte";
   import { ApiError, historyImports, type HistoryImport, type HistoryRecheck, type HistoryRecheckSong } from "$lib/api";
@@ -75,7 +76,7 @@
       return `Importing ${progress.percent}% · File ${progress.file} of ${rows.length}`;
     }
     const failed = rows.filter(item => importPhase(item) === "failed").length;
-    return failed ? `${failed} ${failed === 1 ? "file" : "files"} failed` : rows.every(item => importPhase(item) === "completed") ? "Done" : "Waiting";
+    return failed ? `${countLabel(failed, "file")} failed` : rows.every(item => importPhase(item) === "completed") ? "Done" : "Waiting";
   }
 
   async function load(showError = false) {
@@ -209,7 +210,7 @@
         <li>
           <div class="settings-row">
             <div>
-              {#if group.items.length > 1}<strong>{source(group.items)} · {group.items.length} files · {historyDateRange(combined.earliest, combined.latest, true)} · {historyPlays(combined.completed)}</strong>
+              {#if group.items.length > 1}<strong>{source(group.items)} · {countLabel(group.items.length, "file")} · {historyDateRange(combined.earliest, combined.latest, true)} · {historyPlays(combined.completed)}</strong>
               {:else}<strong>{source(group.items)}</strong><small>{historyDateRange(combined.earliest, combined.latest)}</small><small>{historyPlays(combined.completed)} in file</small>{/if}
               <span class="history-state">{groupState(group.items)}</span>
               {#if group.items.some(active)}<Progress value={group.items.length > 1 ? importBatchProgress(group.items).percent : importProgress(group.items[0])} aria-label={`${source(group.items)} import`} />{/if}
@@ -245,7 +246,7 @@
   {:else}
     {#if items.length > 3 && !items.some(active)}
       <details class="imports-details">
-        <summary class="disclosure-summary"><DisclosureLabel title={`Show ${items.length} imports`} description={`${formatCount(items.reduce((sum, item) => sum + item.importedRows, 0))} plays added`} /></summary>
+        <summary class="disclosure-summary"><DisclosureLabel title={`Show ${countLabel(items.length, "import")}`} description={`${countLabel(items.reduce((sum, item) => sum + item.importedRows, 0), "play")} added`} /></summary>
         {@render importRows()}
       </details>
     {:else}
@@ -293,11 +294,11 @@
         {#if previews.length}
           <strong>{source(previews)}</strong>
           <p>{historyDateRange(total.earliest, total.latest)}</p>
-          <ul><li>{historyPlays(total.completed)}</li><li>{formatCount(total.skipped)} {total.skipped === 1 ? "skip" : "skips"}</li><li>{formatCount(total.songs)} {total.songs === 1 ? "song" : "songs"}</li><li>{formatCount(total.malformed)} {total.malformed === 1 ? "row" : "rows"} not recognized</li></ul>
+          <ul><li>{historyPlays(total.completed)}</li><li>{countLabel(total.skipped, "skip")}</li><li>{countLabel(total.songs, "song")}</li><li>{countLabel(total.malformed, "row")} not recognized</li></ul>
           {#if previews.length > 1}<small>The same song can appear in more than one file.</small>{/if}
-          {#if total.unresolvedNewRows}<p>{formatCount(total.unresolvedNewRows)} {total.unresolvedNewRows === 1 ? "listen couldn't" : "listens couldn't"} be matched to known songs.</p>{/if}
+          {#if total.unresolvedNewRows}<p>{countLabel(total.unresolvedNewRows, "listen couldn't", "listens couldn't")} be matched to known songs.</p>{/if}
           {#if total.duplicateInFile || total.duplicateExisting}<p>{formatCount(total.duplicateInFile + total.duplicateExisting)} duplicate {total.duplicateInFile + total.duplicateExisting === 1 ? "listen will" : "listens will"} be left out.</p>{/if}
-          {#if total.outsideRetentionRows}<p>{formatCount(total.outsideRetentionRows)} older listens are outside your history retention and will be left out.</p>{/if}
+          {#if total.outsideRetentionRows}<p>{countLabel(total.outsideRetentionRows, "older listen is", "older listens are")} outside your history retention and will be left out.</p>{/if}
         {/if}
         {#if previewFiles.length > 1}
           <ul class="history-file-list" aria-label="Selected files">

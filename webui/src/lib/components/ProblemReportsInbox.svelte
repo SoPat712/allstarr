@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { onMount, tick } from "svelte";
   import { home, matchReview, type MatchReviewItem, type ProviderDefinition } from "$lib/api";
   import { Button } from "$lib/components/ui/button";
@@ -160,7 +161,7 @@
 
 {#if administrator}
   <section class="settings-content" aria-label="Problem report inbox">
-    <PageStatus label="Reports status" items={[{ label: loading ? "Loading reports…" : count("new") + (count("new") === 1 ? " new report" : " new reports") }, { label: count("seen") + " seen · " + count("fixed") + " fixed · " + known.length + " reports loaded" }]} />
+    <PageStatus label="Reports status" items={[{ label: loading ? "Loading reports…" : countLabel(count("new"), "new report") }, { label: count("seen") + " seen · " + count("fixed") + " fixed · " + countLabel(known.length, "report") + " loaded" }]} />
     <div class="report-toolbar"><FilterSegments label="Report status" value={filter} onchange={(next) => void choose(next)} storageKey="activity.reports" options={[
       { id: "new", label: "New", count: count("new") }, { id: "seen", label: "Seen", count: count("seen") },
       { id: "fixed", label: "Fixed", count: count("fixed") }, { id: "all", label: "All", count: count("all") },

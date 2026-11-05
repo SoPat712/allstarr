@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel, countNoun } from "$lib/count-label";
   import type { CacheDiagnostics, StorageOverview } from "$lib/api";
   import type { HomeSnapshot } from "$lib/home";
   import { summarizeHome } from "$lib/home";
@@ -18,15 +19,15 @@
   }
   const tiles = $derived([
     { title: "Library", state: total ? summary.unresolved ? "Some need matches" : "All playable" : "No playlists yet", warn: summary.unresolved > 0,
-      number: summary.playable.toLocaleString(), label: `songs in ${summary.managed} playlists`, detail: "Your linked playlists and the songs ready to play", href: "#/library/playlists", link: "Open playlists", ratio: total ? summary.playable / total : 0 },
+      number: summary.playable.toLocaleString(), label: `${countNoun(summary.playable, "song")} in ${countLabel(summary.managed, "playlist")}`, detail: "Your linked playlists and the songs ready to play", href: "#/library/playlists", link: "Open playlists", ratio: total ? summary.playable / total : 0 },
     { title: "Matches", state: summary.unresolved ? `${summary.unresolved} to check` : "Up to date", warn: summary.unresolved > 0,
-      number: summary.unresolved.toLocaleString(), label: "songs waiting for a match", detail: "Confirm a match so these songs can play", href: "#/library/matches", link: summary.unresolved ? `Review the ${summary.unresolved}` : "Open matches", ratio: total ? summary.playable / total : 0 },
+      number: summary.unresolved.toLocaleString(), label: `${countNoun(summary.unresolved, "song")} waiting for a match`, detail: "Confirm a match so these songs can play", href: "#/library/matches", link: summary.unresolved ? `Review the ${summary.unresolved}` : "Open matches", ratio: total ? summary.playable / total : 0 },
     { title: "Sources", state: failing.length ? `${failing.length} failing` : checked.length ? "Working" : "Not checked", warn: failing.length > 0,
-      number: (checked.length - failing.length).toLocaleString(), label: `of ${checked.length} checked sources working`, detail: failing.length ? failing.map(item => snapshot.providerCatalog?.find(provider => provider.id === item.providerId)?.name ?? item.providerId).join(", ") : "Sources are checked as you use them", href: "#/sources/services", link: failing.length ? "Review sources" : "Open sources", ratio: checked.length ? (checked.length - failing.length) / checked.length : 0 },
+      number: (checked.length - failing.length).toLocaleString(), label: `of ${countLabel(checked.length, "checked source")} working`, detail: failing.length ? failing.map(item => snapshot.providerCatalog?.find(provider => provider.id === item.providerId)?.name ?? item.providerId).join(", ") : "Sources are checked as you use them", href: "#/sources/services", link: failing.length ? "Review sources" : "Open sources", ratio: checked.length ? (checked.length - failing.length) / checked.length : 0 },
     { title: "Storage", state: cacheShare == null ? "Cache and kept songs" : `${Math.round(cacheShare * 100)}% of cache`, warn: cacheShare != null && cacheShare >= .95,
       number: bytes(cache?.media?.payloadBytes), label: cache?.media?.maximumBytes ? `cached of ${bytes(cache.media.maximumBytes)}` : "cached on this server", detail: `${snapshot.stats?.cacheTracks ?? "—"} cached · ${snapshot.stats?.keptTracks ?? "—"} kept · oldest cached copies leave first`, href: "#/library/cached", link: "Open storage", ratio: cacheShare },
     { title: "Background work", state: summary.activeJobs ? `${summary.activeJobs} active` : "Idle", warn: false,
-      number: summary.activeJobs.toLocaleString(), label: "jobs running or waiting", detail: summary.activeJobs ? "Playlist updates and other work continue here" : "Nothing running or waiting", href: "#/activity?view=jobs", link: "Open jobs", ratio: null },
+      number: summary.activeJobs.toLocaleString(), label: `${countNoun(summary.activeJobs, "job")} running or waiting`, detail: summary.activeJobs ? "Playlist updates and other work continue here" : "Nothing running or waiting", href: "#/activity?view=jobs", link: "Open jobs", ratio: null },
     { title: "Backups", state: backup ? backup.status === "verified" ? "Verified" : "Needs a look" : storage ? "No backup yet" : "Not available", warn: Boolean(backup && backup.status !== "verified"),
       number: backup ? new Date(backup.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—", label: backup ? `${new Date(backup.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} · ${bytes(backup.bytes)}` : "Create a backup to protect your setup", detail: storage?.backupStatus?.nextRunAt ? `Next ${new Date(storage.backupStatus.nextRunAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "Review your backup schedule and saved copies", href: "#/settings/backups", link: "Open backups", ratio: backup ? backup.status === "verified" ? 1 : 0 : null },
   ]);

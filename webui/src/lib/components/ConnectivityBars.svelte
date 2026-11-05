@@ -1,11 +1,12 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   let {
     bars,
     latency,
     label = "API latency",
   }: { bars: number; latency?: number | null; label?: string } = $props();
   const description = $derived(
-    `${bars} of 4 connectivity bars${latency == null ? "" : `, ${Math.round(latency)} milliseconds ${label.toLowerCase()}`}`,
+    `${bars} of 4 connectivity bars${latency == null ? "" : `, ${countLabel(Math.round(latency), "millisecond")} ${label.toLowerCase()}`}`,
   );
 </script>
 

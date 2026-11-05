@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { newUuid } from "$lib/uuid";
   import { onMount, tick } from "svelte";
   import { Check } from "@lucide/svelte";
@@ -341,7 +342,7 @@
             {#if !choices.length}<Button variant="secondary" disabled={busy} onclick={findMusic}>Find my music</Button>{/if}
             <small>Keep in sync updates the playlist when it changes in your connected service. Otherwise it's copied once.</small>
             {#if unavailableCollectionsLine(unsupported, providerId)}<small>{unavailableCollectionsLine(unsupported, providerId)}</small>{/if}
-            <p>{selectedSongs.toLocaleString()} songs selected{cursor ? " · more playlists available" : ""}. Matching runs in the background; you can leave this page.</p>
+            <p>{countLabel(selectedSongs, "song")} selected{cursor ? " · more playlists available" : ""}. Matching runs in the background; you can leave this page.</p>
             <Button disabled={busy || !selectedCount} onclick={() => act(async () => {
               await migrations.choose(runId, choices.filter(item => selected[item.sourceId]).map(item => ({ SourceId: item.sourceId, KeepInSync: item.kind === "playlist" && !!sync[item.sourceId] })));
               await refresh();
@@ -353,7 +354,7 @@
     {#if status && (step === 1 || interrupted)}
       <article class="import-section" aria-label="Matching progress"><div class="import-body">
         <h3>{interrupted ? runState === "waiting" ? "Your move needs attention" : "Your move is stopped" : "Matching your music…"}</h3>
-        <PageStatus label="Matching status" items={[{ label: `${status.total.selected} songs checked`, emphasis: true }, { label: `${status.total.accepted} found · ${status.total.review} unsure · ${status.total.unmatched} missing so far` }]} />
+        <PageStatus label="Matching status" items={[{ label: `${countLabel(status.total.selected, "song")} checked`, emphasis: true }, { label: `${status.total.accepted} found · ${status.total.review} unsure · ${status.total.unmatched} missing so far` }]} />
         <Progress value={migrationProgress(status)} max={100} aria-label="Music matched" />
         <p>You can leave this page. It keeps going and shows in <a href="#/activity">Activity</a>.</p>
         {#each collections as item}

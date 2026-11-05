@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
-import { expectContainedMobileGeometry } from "./mobile-geometry";
+import { expectContainedMobileGeometry, widenText } from "./mobile-geometry";
 
 const userId = "11111111-1111-4111-8111-111111111111";
 const jobId = "22222222-2222-4222-8222-222222222222";
@@ -18,7 +18,7 @@ const trace = (id: string, firstByteMs: number, outcome: string) => ({ id, liste
   request: { presented: { title: "Evening song", artist: "River" } }, resolution: { provider: "library", cached: true },
   timing: { firstByteMs, elapsedMs: 60000, headersMs: 100, omittedPhases: 0, phases: [] } });
 
-async function fixture(page: Page) {
+async function fixture(page: Page, eventState = "succeeded") {
   let schedule = { id: scheduleId, cronExpression: "0 4 * * *", timeZoneId: "UTC", overlapPolicy: "skip",
     misfirePolicy: "runOnce", enabled: true, revision: 1, nextRunAt: task.nextRunAt };
   let link = { id: linkId, name: "Weekly Exploration", sourceProviderId: "listenbrainz", revision: 1, mode: "hybrid", projectionMode: "resolved",
@@ -48,7 +48,7 @@ async function fixture(page: Page) {
     if (path === "/api/admin/onboarding/status") return reply({ completed: true, shouldRedirectToSetup: false, completedSteps: ["backend-identity"], recoveryNotices: [] });
     if (path === "/api/admin/ui/schema") return reply({ providers: [{ id: "listenbrainz", name: "ListenBrainz" }], configSections: [], activeBackend: "Jellyfin" });
     if (path === "/api/admin/ui/activity") return reply({ items: [
-      { id: "event", kind: "playlist", label: "Playlist updated", detail: "Weekly Exploration is ready.", state: "succeeded", occurredAt: timestamp, actorDisplayName: "Listener", source: "Jellyfin" },
+      { id: "event", kind: "playlist", label: "Playlist updated", detail: "Weekly Exploration is ready.", state: eventState, occurredAt: timestamp, actorDisplayName: "Listener", source: "Jellyfin" },
       { id: "problem", kind: "extension", label: "Source unavailable", detail: "Try again later.", state: "failed", severity: "error", occurredAt: timestamp, source: "Music source" },
     ], hasMore: false });
     if (path === "/api/admin/activity/tasks") return reply({ items: [{ ...task, enabled: schedule.enabled }], hasMore: false });
@@ -78,6 +78,22 @@ const pages = [
   { view: "tasks", status: "Tasks status", filters: "Task filters", row: ".task-open", title: "Weekly Exploration" },
   { view: "reports", status: "Reports status", filters: "Report status", row: ".report-list .row-action", title: "Playback" },
 ];
+for (const screen of pages.filter(screen => ["jobs", "tasks", "reports"].includes(screen.view))) {
+  test("Activity " + screen.view + " fits with wider text at 320px", async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 900 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await fixture(page);
+    await page.goto("/#/activity?view=" + screen.view);
+    await expect(page.locator(screen.row).first()).toBeVisible();
+    await widenText(page.locator(".status-items li, .filter-segments button, .row-pill > *"));
+    await expectContainedMobileGeometry(page);
+    await page.locator(screen.row).first().click();
+    const panel = page.getByRole("dialog", { name: screen.title, exact: true });
+    await expect(panel).toBeVisible();
+    await widenText(panel.locator(".panel-footer [data-slot=button]"));
+    await expectContainedMobileGeometry(page);
+  });
+}
 for (const variant of variants) for (const screen of pages) {
   test("Activity redesign " + screen.view + " at " + variant.width + " " + variant.theme, async ({ page }) => {
     await page.setViewportSize({ width: variant.width, height: variant.height });
@@ -239,4 +255,23 @@ test("Activity report list stays available when its count overview fails", async
   await page.goto("/#/activity?view=reports");
   await expect(page.locator(".report-list .row-action")).toHaveCount(1);
   await expect(page.locator(".report-list")).toContainText("Evening song");
+});
+
+test("Activity uses sentence case and waiting labels with a separate report icon", async ({ page }) => {
+  await fixture(page, "reviewRequired");
+  await page.goto("/#/activity");
+  const event = page.locator(".event-log-group .item-row").filter({ hasText: "Playlist updated" });
+  await expect(event.locator(".activity-outcome")).toHaveText("Review required");
+  await page.goto("/#/activity?view=plays");
+  await expect(page.getByRole("region", { name: "Plays status", exact: true })).toContainText("1 slow start");
+  await page.goto("/#/activity?view=jobs");
+  const jobs = page.getByRole("region", { name: "Jobs", exact: true });
+  await expect(jobs).not.toContainText("Deferred");
+  await expect(jobs).toContainText("Waiting");
+  await page.locator(".job-row .row-action").first().click();
+  await expect(page.getByRole("dialog")).toContainText("Waiting");
+  await expect(page.getByRole("dialog")).not.toContainText("Deferred");
+  const activityIcon = await page.locator('a[href="#/activity"] svg').first().innerHTML();
+  const reportIcon = await page.locator('a[href="#/report"] svg').first().innerHTML();
+  expect(reportIcon).not.toBe(activityIcon);
 });

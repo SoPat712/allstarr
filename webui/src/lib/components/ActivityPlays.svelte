@@ -1,5 +1,6 @@
 <script lang="ts">
   import { newUuid } from "$lib/uuid";
+  import { countLabel } from "$lib/count-label";
   import { onMount, tick } from "svelte";
   import { ApiError, home, matchReview, playTraces, type MatchAuthorityScope, type MatchReviewItem, type PlayTrace, type PlayTraceChoice, type ProviderDefinition } from "$lib/api";
   import { expectedAuthorityForScope } from "$lib/matching-api";
@@ -246,8 +247,8 @@
 
 <section class="activity-plays" aria-label="Plays" aria-busy={busy}>
   <PageStatus label="Plays status" items={[
-    { label: loading ? "Loading plays…" : plays.length + (plays.length === 1 ? " play loaded" : " plays loaded") },
-    { label: plays.filter(play => (play.timing.firstByteMs ?? 0) > 4000).length + " slow starts", tone: plays.some(play => (play.timing.firstByteMs ?? 0) > 4000) ? "warn" : "neutral" },
+    { label: loading ? "Loading plays…" : countLabel(plays.length, "play") + " loaded" },
+    { label: countLabel(plays.filter(play => (play.timing.firstByteMs ?? 0) > 4000).length, "slow start"), tone: plays.some(play => (play.timing.firstByteMs ?? 0) > 4000) ? "warn" : "neutral" },
   ]} />
   <div class="plays-toolbar"><FilterSegments label="Play filters" storageKey={"activity.plays." + scope} bind:value={filter} options={[
     { id: "all", label: "All", count: plays.length },

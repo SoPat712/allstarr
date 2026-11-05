@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel, countNoun } from "$lib/count-label";
   import { Dialog } from "$lib/components/ui/dialog";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -91,7 +92,7 @@
   const scopeKey = $derived(`${scope.protocol}\0${scope.backendInstanceId}`);
   const selectedTop = $derived(top[topKind]);
   const topTrack = $derived(top.track[0]);
-  const periodName = $derived(period === "all" ? "All time" : period === "365" ? "Last year" : period === "custom" ? "Selected dates" : `Last ${period} days`);
+  const periodName = $derived(period === "all" ? "All time" : period === "365" ? "Last year" : period === "custom" ? "Selected dates" : `Last ${countLabel(Number(period), "day")}`);
   const exportUrl = $derived(intelligence.historyExportUrl(scope));
   const pendingImportItems = $derived(importItems.filter((item) => item.file && !item.result));
   const completedImportItems = $derived(importItems.filter((item) => item.result));
@@ -553,7 +554,7 @@
     if (days === 0) return "all history";
     if (days === 3650) return "10 years";
     if (days === 365) return "1 year";
-    return `${days} days`;
+    return countLabel(days, "day");
   }
 
   function outsideCurrentRetention(item: ListeningHistoryImport) {
@@ -606,17 +607,17 @@
       <button class="panel now-playing" type="button" onclick={() => void openDetail(overview!.nowPlaying!)}><span aria-hidden="true">▶</span><span><small>Playing now</small><strong>{overview.nowPlaying.title ?? "Unknown song"}</strong><small>{overview.nowPlaying.artist ?? "Unknown artist"}</small></span></button>
     {/if}
     <div class="history-stats">
-      <article class="panel"><strong>{overview.selected.completedListens.toLocaleString()}</strong><span>listens</span></article>
+      <article class="panel"><strong>{overview.selected.completedListens.toLocaleString()}</strong><span>{countNoun(overview.selected.completedListens, "listen")}</span></article>
       <article class="panel"><strong>{listeningTime(overview.selected.listeningTimeMilliseconds)}</strong><span>listening time</span></article>
-      <article class="panel"><strong>{overview.selected.distinctTracks.toLocaleString()}</strong><span>different songs</span></article>
-      <article class="panel"><strong>{overview.selected.distinctArtists.toLocaleString()}</strong><span>artists</span></article>
-      <article class="panel"><strong>{overview.currentStreakDays} days</strong><span>current streak · {overview.longestStreakDays} longest</span></article>
+      <article class="panel"><strong>{overview.selected.distinctTracks.toLocaleString()}</strong><span>{countNoun(overview.selected.distinctTracks, "different song")}</span></article>
+      <article class="panel"><strong>{overview.selected.distinctArtists.toLocaleString()}</strong><span>{countNoun(overview.selected.distinctArtists, "artist")}</span></article>
+      <article class="panel"><strong>{countLabel(overview.currentStreakDays, "day")}</strong><span>current streak · {overview.longestStreakDays} longest</span></article>
     </div>
 
     <section class="panel recap-card">
       <div><p class="eyebrow">Listening recap</p><h3>{periodName}</h3></div>
       {#if overview.selected.completedListens}
-        <p>You listened {overview.selected.completedListens.toLocaleString()} times across {overview.selected.distinctTracks.toLocaleString()} songs and {overview.selected.distinctArtists.toLocaleString()} artists, for {listeningTime(overview.selected.listeningTimeMilliseconds)}.{#if topTrack}{" "}Your most-played song was <strong>{topTrack.title ?? "Unknown song"}</strong>{topTrack.artist ? ` by ${topTrack.artist}` : ""}.{/if}</p>
+        <p>You listened {countLabel(overview.selected.completedListens, "time")} across {countLabel(overview.selected.distinctTracks, "song")} and {countLabel(overview.selected.distinctArtists, "artist")}, for {listeningTime(overview.selected.listeningTimeMilliseconds)}.{#if topTrack}{" "}Your most-played song was <strong>{topTrack.title ?? "Unknown song"}</strong>{topTrack.artist ? ` by ${topTrack.artist}` : ""}.{/if}</p>
       {:else}<p>No completed listens were recorded for this period. Play music or import a history file to build this recap.</p>{/if}
       {#if overview.allTime.firstListen}<p class="muted">Your first recorded listen was <time datetime={overview.allTime.firstListen}>{new Date(overview.allTime.firstListen).toLocaleDateString()}</time>.</p>{/if}
     </section>
@@ -631,7 +632,7 @@
 
       <section class="panel top-card">
         <header><div><p class="eyebrow">Most played</p><h3>Top {topKind === "track" ? "songs" : `${topKind}s`}</h3></div><SegmentedNav items={[{ id: "artist", label: "Artists" }, { id: "album", label: "Albums" }, { id: "track", label: "Songs" }]} active={topKind} label="Top listening category" onchange={(value) => topKind = value as typeof topKind} /></header>
-        <ol>{#each selectedTop.slice(0, 5) as item}<li><span><strong>{topKind === "artist" ? item.artist : topKind === "album" ? item.album : item.title}</strong>{#if topKind !== "artist"}<small>{item.artist}</small>{/if}</span><span>{item.listenCount} listens</span></li>{:else}<li class="muted">Nothing to rank yet. Play music or import a history file to begin.</li>{/each}</ol>
+        <ol>{#each selectedTop.slice(0, 5) as item}<li><span><strong>{topKind === "artist" ? item.artist : topKind === "album" ? item.album : item.title}</strong>{#if topKind !== "artist"}<small>{item.artist}</small>{/if}</span><span>{countLabel(item.listenCount, "listen")}</span></li>{:else}<li class="muted">Nothing to rank yet. Play music or import a history file to begin.</li>{/each}</ol>
       </section>
     </div>
 
@@ -641,7 +642,7 @@
         { label: "Providers", items: overview.breakdowns?.providers ?? [] },
         { label: "Listening apps", items: overview.breakdowns?.clients ?? [] },
       ] as group}
-        <section class="panel breakdown-card"><p class="eyebrow">Listening mix</p><h3>{group.label}</h3><ol>{#each group.items.slice(0, 5) as item}<li><span><strong>{words(item.value)}</strong><small>{listeningTime(item.durationMilliseconds)}</small></span><span>{item.listenCount} listens</span></li>{:else}<li class="muted">No {group.label.toLowerCase()} recorded.</li>{/each}</ol></section>
+        <section class="panel breakdown-card"><p class="eyebrow">Listening mix</p><h3>{group.label}</h3><ol>{#each group.items.slice(0, 5) as item}<li><span><strong>{words(item.value)}</strong><small>{listeningTime(item.durationMilliseconds)}</small></span><span>{countLabel(item.listenCount, "listen")}</span></li>{:else}<li class="muted">No {group.label.toLowerCase()} recorded.</li>{/each}</ol></section>
       {/each}
     </div>
   {/if}
@@ -649,7 +650,7 @@
   {#if (section === "overview" || section === "history") && !loading}
     {@const shownItems = section === "overview" ? items.slice(0, 5) : items}
     <section class="panel history-list-card">
-      <header><div><h3>{section === "overview" ? "Recently played" : "Recent listens"}</h3><p>{section === "overview" ? "Your latest completed listens." : "Open a listen to review or correct its song details."}</p></div><span class="history-count">{shownItems.length} {shownItems.length === 1 ? "listen" : "listens"}</span></header>
+      <header><div><h3>{section === "overview" ? "Recently played" : "Recent listens"}</h3><p>{section === "overview" ? "Your latest completed listens." : "Open a listen to review or correct its song details."}</p></div><span class="history-count">{countLabel(shownItems.length, "listen")}</span></header>
       {#if shownItems.length}<div class="history-column-head" aria-hidden="true"><span></span><span>Track</span><span>Source</span><span>Listened</span></div>{/if}
       <ul class="history-list">
         {#each shownItems as item}
@@ -706,7 +707,7 @@
     {#if completedImportItems.length}
       {#if previewedImportItems.length}
         <dl class="import-batch-summary"><div><dd>{importBatch.newRows.toLocaleString()}</dd><dt>will be kept</dt></div><div><dd>{importBatch.outsideRetention.toLocaleString()}</dd><dt>outside retention</dt></div><div><dd>{importBatch.duplicates.toLocaleString()}</dd><dt>already present</dt></div><div><dd>{importBatch.skipped.toLocaleString()}</dd><dt>skipped</dt></div></dl>
-        <div class="import-batch-actions"><span><strong>{selectedPreviewItems.length} of {previewedImportItems.length} ready files selected</strong><small>Files with new listens are selected automatically. Clear any file you do not want to add.</small></span><Button disabled={Boolean(action) || !selectedPreviewItems.length} onclick={() => void applyAllPreviews()}>{action === "apply-all" ? "Starting imports…" : `Add all ${selectedPreviewItems.length} ready ${selectedPreviewItems.length === 1 ? "file" : "files"}`}</Button></div>
+        <div class="import-batch-actions"><span><strong>{selectedPreviewItems.length} of {countLabel(previewedImportItems.length, "ready file")} selected</strong><small>Files with new listens are selected automatically. Clear any file you do not want to add.</small></span><Button disabled={Boolean(action) || !selectedPreviewItems.length} onclick={() => void applyAllPreviews()}>{action === "apply-all" ? "Starting imports…" : `Add all ${countLabel(selectedPreviewItems.length, "ready file")}`}</Button></div>
       {/if}
       <ul class="import-results" aria-label="History import previews">
         {#each completedImportItems as item}

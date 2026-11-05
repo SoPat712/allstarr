@@ -1994,6 +1994,7 @@ export type StorageOverview = {
 };
 
 export const settings = {
+  musicLibraries: () => json<{ id: string; name: string }[]>("/api/admin/ui/music-libraries"),
   config: () => json<Record<string, unknown>>("/api/admin/config"),
   testChallengeSolver: (url: string) =>
     json<{ ok: boolean; message: string; version?: string }>("/api/admin/challenge-solver/test", {

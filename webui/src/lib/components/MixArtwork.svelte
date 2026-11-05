@@ -1,12 +1,12 @@
 <script lang="ts">
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import { artworkUrl, mosaicArtwork } from "$lib/for-you";
-  let { references = [], dim = false }: { references?: string[]; dim?: boolean } = $props();
+  let { references = [], dim = false, gradient = "" }: { references?: string[]; dim?: boolean; gradient?: string } = $props();
   const covers = $derived(mosaicArtwork(references));
 </script>
-<span class="mix-artwork" class:mosaic={covers.length === 4} class:dim>
+<span class="mix-artwork" class:mosaic={covers.length === 4} class:dim style:background={gradient || undefined}>
   {#if covers.length}{#each covers as id, i (`${i}:${id}`)}<MediaArtwork url={artworkUrl(id)} />{/each}
-  {:else}<MediaArtwork />{/if}
+  {:else if !gradient}<MediaArtwork />{/if}
 </span>
 <style>
   .mix-artwork { display: grid; width: 100%; aspect-ratio: 1; border-radius: var(--radius-md); overflow: hidden; background: var(--color-panel-raised); }

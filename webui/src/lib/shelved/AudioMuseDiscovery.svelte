@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { newUuid } from "$lib/uuid";
   import SelectField from "$lib/components/SelectField.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
@@ -212,7 +213,7 @@
 
   {#if analysis}
     <div class="scan-status" role="status">
-      <span><strong>{analysisLabel(analysis)}</strong>{#if analysis.total}<small>{analysis.completed} of {analysis.total} songs</small>{/if}</span>
+      <span><strong>{analysisLabel(analysis)}</strong>{#if analysis.total}<small>{analysis.completed} of {countLabel(analysis.total, "song")}</small>{/if}</span>
       {#if analysis.total}<Progress aria-label="Library sound scan progress" max={analysis.total} value={analysis.completed} />{/if}
     </div>
   {/if}
@@ -266,7 +267,7 @@
 
   {#if resultTitle}
     <section class="sound-results" aria-live="polite">
-      <header><h4>{resultTitle}</h4><span>{resultCount} {resultCount === 1 ? "song" : "songs"}</span></header>
+      <header><h4>{resultTitle}</h4><span>{countLabel(resultCount, "song")}</span></header>
       {#if clusters.length}
         {#each clusters as group}
           <section class="sound-group"><h5>{group.name}</h5><ol>{#each group.tracks as song, index}<li><span>{index + 1}</span><div><strong>{song.title || "Unknown song"}</strong><small>{song.artist || "Unknown artist"}{song.album ? ` · ${song.album}` : ""}</small></div></li>{/each}</ol></section>
@@ -282,7 +283,7 @@
       {#if resultSongs.length}
         <form class="create-form" onsubmit={(event) => { event.preventDefault(); confirmCreation(); }}>
           <label class="field grow"><span>Playlist name</span><input bind:value={playlistName} maxlength="200" required /></label>
-          <p>Allstarr will create <strong>{playlistName.trim() || "this playlist"}</strong> in {serverName} with {resultCount} {resultCount === 1 ? "song" : "songs"}.</p>
+          <p>Allstarr will create <strong>{playlistName.trim() || "this playlist"}</strong> in {serverName} with {countLabel(resultCount, "song")}.</p>
           <Button type="submit" disabled={Boolean(action)}>{`Create ${serverName} playlist`}</Button>
         </form>
       {/if}
@@ -293,7 +294,7 @@
 
 <ConfirmDialog bind:open={createOpen}
   title={`Create ${playlistName.trim() || "this playlist"} in ${serverName}?`}
-  description={`Allstarr will create ${playlistName.trim() || "this playlist"} in ${serverName} with ${resultCount} ${resultCount === 1 ? "song" : "songs"}.`}
+  description={`Allstarr will create ${playlistName.trim() || "this playlist"} in ${serverName} with ${countLabel(resultCount, "song")}.`}
   confirmLabel={action === "create" ? "Creating…" : `Create ${serverName} playlist`}
   cancelLabel="Do not create playlist" confirmVariant="default" disabled={Boolean(action)}
   onConfirm={createPlaylist} />

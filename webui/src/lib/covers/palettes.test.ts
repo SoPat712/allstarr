@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GENRE_WORDS, LIQUID, PALETTES, paletteFor } from "./palettes";
-import { hash, rng } from "./random";
+import { GENRE_WORDS, hash, LIQUID, PALETTES, paletteFor } from "./palettes";
 
 describe("cover palettes", () => {
   it.each(GENRE_WORDS)("matches %s to %s", (word, name) => {
@@ -18,11 +17,9 @@ describe("cover palettes", () => {
   it("has four liquid inks for every print palette", () => {
     for (const name of Object.keys(PALETTES)) expect(LIQUID[name]).toHaveLength(4);
   });
-  it("keeps layout randomness stable including unicode names", () => {
-    const a = rng(hash("Café 🌊")), b = rng(hash("Café 🌊")), c = rng(hash("Other"));
-    const first = Array.from({ length: 10 }, a);
-    expect(Array.from({ length: 10 }, b)).toEqual(first);
-    expect(Array.from({ length: 10 }, c)).not.toEqual(first);
-    expect(first.every(value => value >= 0 && value < 1)).toBe(true);
+  it("keeps palette hashes stable including unicode names", () => {
+    expect(hash("")).toBe(2166136261);
+    expect(hash("a")).toBe(3826002220);
+    expect(hash("🎵")).toBe(Math.imul(2166136261 ^ 0x1f3b5, 16777619) >>> 0);
   });
 });

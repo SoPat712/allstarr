@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel, countNoun } from "$lib/count-label";
   import { onMount } from "svelte";
   import { CircleAlert, CircleCheck, CircleDashed, Headphones, KeyRound, Music, Pause } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
@@ -186,10 +187,6 @@
     return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
   }
 
-  function plural(count: number, one: string, many = `${one}s`) {
-    return `${count.toLocaleString()} ${count === 1 ? one : many}`;
-  }
-
   function listenTrend(current = 0, previous = 0) {
     const change = current - previous;
     if (!change) return "the same as last week";
@@ -209,7 +206,7 @@
     if (summary.unresolved > 0)
       items.push({
         key: "unresolved",
-        title: `${plural(summary.unresolved, "song")} ${summary.unresolved === 1 ? "is" : "are"} waiting for a match`,
+        title: countLabel(summary.unresolved, "song is waiting for a match", "songs are waiting for a match"),
         detail: "Listeners can see them, but they can't play until a match is confirmed.",
         href: "#/library/matches",
         action: "Review matches",
@@ -237,15 +234,15 @@
     if (failing.length === 1)
       items.push({
         key: `health:${failing[0].providerId}`,
-        title: `${providerName(failing[0].providerId)} is failing ${plural(failing[0].failedCapabilityCount, "check")}`,
-        detail: `${failing[0].healthyCapabilityCount} of ${failing[0].capabilityTotal} checks passed ${relativeTime(failing[0].lastCheckedAt, "")}`.trim(),
+        title: `${providerName(failing[0].providerId)} is failing ${countLabel(failing[0].failedCapabilityCount, "check")}`,
+        detail: `${failing[0].healthyCapabilityCount} of ${countLabel(failing[0].capabilityTotal, "check")} passed ${relativeTime(failing[0].lastCheckedAt, "")}`.trim(),
         href: `#/sources/services/${encodeURIComponent(failing[0].providerId)}`,
         action: "Open service",
       });
     else if (failing.length > 1)
       items.push({
         key: "health:several",
-        title: `${failing.length} sources are failing checks`,
+        title: countLabel(failing.length, "source is failing checks", "sources are failing checks"),
         detail: failing.map((provider) => providerName(provider.providerId)).join(", "),
         href: "#/sources/services",
         action: "Review sources",
@@ -286,7 +283,7 @@
 <div class="home-view">
   <PageStatus items={[
     { label: snapshot.nowPlaying?.length ? `${snapshot.nowPlaying.length} listening` : snapshot.nowPlaying === undefined ? "Playback status unavailable" : "Nothing playing" },
-    ...(administrator ? [{ label: attention.length ? `${attention.length} things need a look` : "Your setup is up to date", tone: attention.length ? "warn" as const : "neutral" as const }, { label: `${summary.activeJobs} jobs running or waiting` }] : []),
+    ...(administrator ? [{ label: attention.length ? countLabel(attention.length, "thing needs a look", "things need a look") : "Your setup is up to date", tone: attention.length ? "warn" as const : "neutral" as const }, { label: `${countLabel(summary.activeJobs, "job")} running or waiting` }] : []),
   ]} />
   {#if snapshot.failures.length}<ErrorState title="Some live data is unavailable" detail={snapshot.failures.join(" · ")} onretry={refresh} />{/if}
 
@@ -375,7 +372,7 @@
     {@const item = attention[0]}
     <section class="attention-banner" aria-label="Needs your attention">
       <CircleAlert size={20} aria-hidden="true" />
-      <div><strong>{item.title}</strong><p>{item.detail}{#if attention.length > 1} · {attention.length - 1} more things to review in your setup.{/if}</p></div>
+      <div><strong>{item.title}</strong><p>{item.detail}{#if attention.length > 1} · {countLabel(attention.length - 1, "more thing")} to review in your setup.{/if}</p></div>
       <Button variant="outline" size="sm" href={item.href}>{item.action}</Button>
     </section>
   {/if}
@@ -385,10 +382,10 @@
     <header><h2>{administrator ? "This week" : "Your week"}</h2><a href="#/for-you?section=recap">Open Recap</a></header>
     {#if snapshot.stats}
       <div class="week-numbers">
-        <div><strong>{snapshot.stats.currentWeekListens.toLocaleString()}</strong><span>songs finished</span><small>{listenTrend(snapshot.stats.currentWeekListens, snapshot.stats.previousWeekListens)}</small></div>
+        <div><strong>{snapshot.stats.currentWeekListens.toLocaleString()}</strong><span>{countNoun(snapshot.stats.currentWeekListens, "song")} finished</span><small>{listenTrend(snapshot.stats.currentWeekListens, snapshot.stats.previousWeekListens)}</small></div>
         <div>{#if !administrator && week?.estimatedTimeFromSongLengthsMilliseconds != null}<strong>{listeningTime(week.estimatedTimeFromSongLengthsMilliseconds)}</strong><span>listening time</span>{:else}<strong>{snapshot.stats.completedListens.toLocaleString()}</strong><span>in the last 24 hours</span>{/if}</div>
-        <div><strong>{snapshot.stats.topArtist?.name ?? "—"}</strong><span>most played this month</span>{#if snapshot.stats.topArtist}<small>{plural(snapshot.stats.topArtist.listens, "play")}</small>{/if}</div>
-        <div>{#if !administrator && week?.newArtistCount != null}<strong>{week.newArtistCount.toLocaleString()}</strong><span>new artists</span>{:else}<strong>{snapshot.stats.scrobbleDeliveries.toLocaleString()}</strong><span>scrobbles sent today</span>{/if}</div>
+        <div><strong>{snapshot.stats.topArtist?.name ?? "—"}</strong><span>most played this month</span>{#if snapshot.stats.topArtist}<small>{countLabel(snapshot.stats.topArtist.listens, "play")}</small>{/if}</div>
+        <div>{#if !administrator && week?.newArtistCount != null}<strong>{week.newArtistCount.toLocaleString()}</strong><span>{countNoun(week.newArtistCount, "new artist")}</span>{:else}<strong>{snapshot.stats.scrobbleDeliveries.toLocaleString()}</strong><span>{countNoun(snapshot.stats.scrobbleDeliveries, "scrobble")} sent today</span>{/if}</div>
       </div>
     {:else}<p class="muted">Listening stats aren't available right now.</p>{/if}
     {#if daily.length}<div class="week-chart"><p>Your listening each day</p><RecapBars points={daily} label="Your listening each day" unit="songs" /></div>{:else}<p class="muted">Your daily listening chart appears when listening stats are available.</p>{/if}

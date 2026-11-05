@@ -1,3 +1,4 @@
+import { countLabel } from "./count-label";
 import type { ActivityItem } from "./api";
 
 export type ActivityFilters = {
@@ -52,13 +53,25 @@ export type ActivityGroup = {
   title: string;
 };
 
+const displayWords = [
+  "ISRC", "LRC", "ID", "API", "URL", "OIDC", "Jellyfin", "Navidrome", "Subsonic", "Apple Music",
+  "Spotify", "Deezer", "Qobuz", "Tidal", "YouTube Music", "YouTube", "SoundCloud", "Last.fm",
+  "ListenBrainz", "AudioMuse", "SpicyLyrics", "MusicBrainz", "LRCLib", "Amazon Music", "Musixmatch",
+  "Genius", "Multi-Scrobbler", "Koito", "Maloja", "Allstarr",
+];
+const wordCode = (value: string) => value.replaceAll(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+  .replaceAll(/([a-z])([A-Z])/g, "$1 $2").replaceAll(/[-_.]+/g, " ").toLowerCase();
+const displayWordPatterns = displayWords.map(word => ({
+  word, pattern: new RegExp(`\\b${wordCode(word).split(" ").join(" ?")}\\b`, "gi"),
+}));
+
 export function humanize(value?: string | null) {
   if (!value) return "Unknown";
-  return value
-    .replace(/reviewrequired/gi, "review required")
-    .replaceAll(/[-_.]+/g, " ")
-    .replaceAll(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  if (value.toLowerCase() === "deferred") return "Waiting";
+  let sentence = wordCode(value.replace(/reviewrequired/gi, "review required")).trim();
+  sentence = sentence.replace(/^./, letter => letter.toUpperCase());
+  for (const { word, pattern } of displayWordPatterns) sentence = sentence.replace(pattern, word);
+  return sentence;
 }
 
 export function relativeTime(value?: string | null, fallback = "Not checked") {
@@ -144,11 +157,11 @@ export function groupActivity(items: ActivityItem[]) {
       previous.entries.sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
       const first = previous.entries[0];
       const count = new Set(previous.entries.map(entry => activityJobKey(entry) || entry.id)).size;
-      const unit = first.kind === "playlist" ? "playlists"
-        : first.kind === "matching" || first.kind === "caching" || first.action?.startsWith("recording.") ? "songs"
-        : first.jobId ? "tasks" : "events";
+      const unit = first.kind === "playlist" ? "playlist"
+        : first.kind === "matching" || first.kind === "caching" || first.action?.startsWith("recording.") ? "song"
+        : first.jobId ? "task" : "event";
       previous.title = first.kind === "matching" ? groupTitle(previous.entries)
-        : `${activityHeadline(first)} · ${count} ${unit}`;
+        : `${activityHeadline(first)} · ${countLabel(count, unit)}`;
     } else consolidated.push(group);
   }
   return consolidated;
@@ -171,11 +184,11 @@ function groupTitle(entries: ActivityItem[]) {
     const accepted = entries.every((item) =>
       ["accepted", "pinned"].includes(item.state.toLowerCase()));
     const playlists = new Set(entries.map((item) => item.playlistName).filter(Boolean));
-    return `${accepted ? "Matched" : "Checked"} ${entries.length} songs` +
-      (playlists.size ? ` in ${playlists.size} playlist${playlists.size === 1 ? "" : "s"}` : "");
+    return `${accepted ? "Matched" : "Checked"} ${countLabel(entries.length, "song")}` +
+      (playlists.size ? ` in ${countLabel(playlists.size, "playlist")}` : "");
   }
-  if (first.kind === "playlist") return `${humanize(first.label)} · ${entries.length} playlists`;
-  return `${humanize(first.label)} · ${entries.length} events`;
+  if (first.kind === "playlist") return `${humanize(first.label)} · ${countLabel(entries.length, "playlist")}`;
+  return `${humanize(first.label)} · ${countLabel(entries.length, "event")}`;
 }
 
 export function groupOutcome(entries: ActivityItem[]) {
@@ -265,9 +278,9 @@ export const jobNames: Record<string, string> = {
 export function jobName(type: string, displayName?: string | null) { return displayName?.trim() || jobNames[type] || "Background task"; }
 export function jobState(state: string) {
   const normalized = state.toLowerCase().replaceAll(/[-_ ]/g, "");
-  return ({ pending: "Waiting", running: "Running", retryscheduled: "Retry scheduled", deferred: "Deferred",
+  return ({ pending: "Waiting", running: "Running", retryscheduled: "Retry scheduled", deferred: "Waiting",
     succeeded: "Completed", partiallysucceeded: "Partly done", failed: "Failed", cancelled: "Cancelled",
-  } as Record<string, string>)[normalized] ?? humanize(state).toLowerCase().replace(/^./, letter => letter.toUpperCase());
+  } as Record<string, string>)[normalized] ?? humanize(state);
 }
 export function progressPercent(completed?: number | null, total?: number | null) {
   return typeof total === "number" && Number.isFinite(total) && total > 0 && typeof completed === "number" && Number.isFinite(completed)
@@ -306,7 +319,7 @@ export function activityHeadline(item: ActivityItem) {
 }
 export function activityDuration(value?: number | null) {
   if (value == null || !Number.isFinite(value) || value < 0) return "";
-  return value < 1000 ? "less than a second" : `${Number((value / 1000).toFixed(1))} seconds`;
+  return value < 1000 ? "less than a second" : countLabel(Number((value / 1000).toFixed(1)), "second");
 }
 
 export function activityRecovery(value?: string | null, now = new Date()) {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Dialog } from "$lib/components/ui/dialog";
   import { Button, buttonVariants } from "$lib/components/ui/button";
@@ -549,7 +550,7 @@
                 <MediaArtwork class="url-import-art" url={linkPreview.artworkUrl} fallback="♫" />
                 <div class="url-import-details">
                   <strong>{linkPreview.title}</strong>
-                  <span>Playlist · {linkPreview.trackCount ?? "?"} songs · from {linkPreview.source.displayName}</span>
+                  <span>Playlist · {linkPreview.trackCount == null ? "? songs" : countLabel(linkPreview.trackCount, "song")} · from {linkPreview.source.displayName}</span>
                   <small>{linkPreview.owner}</small>
                 </div>
                 <ProviderMark id={linkPreview.source.id} definition={definition(linkPreview.source.id)} label={linkPreview.source.displayName} />
@@ -652,7 +653,7 @@
                     <label class="pl-option pl-option-media" class:active={sourcePlaylistId === playlist.id}>
                       <input bind:group={sourcePlaylistId} type="radio" name="playlist-source" value={playlist.id} disabled={alreadyAdded} />
                       <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
-                      <span class="pl-option-text"><strong>{playlist.name}</strong><small>{playlist.owner || "Unknown owner"} · {playlist.trackCount ?? "?"} songs{alreadyAdded ? " · Already in your apps" : ""}</small></span>
+                      <span class="pl-option-text"><strong>{playlist.name}</strong><small>{playlist.owner || "Unknown owner"} · {playlist.trackCount == null ? "? songs" : countLabel(playlist.trackCount, "song")}{alreadyAdded ? " · Already in your apps" : ""}</small></span>
                     </label>
                   {:else}{#if !loading}<p class="pl-help">No playlists found.</p>{/if}{/each}
                 </div>
@@ -726,7 +727,7 @@
                   <label class="pl-option pl-option-media" class:active={targetPlaylistId === playlist.id}>
                     <input bind:group={targetPlaylistId} type="radio" name="playlist-target-playlist" value={playlist.id} />
                     <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
-                    <span class="pl-option-text"><strong>{playlist.name}</strong><small>{playlist.trackCount ?? "?"} songs{playlist.description ? ` · ${playlist.description}` : ""}</small></span>
+                    <span class="pl-option-text"><strong>{playlist.name}</strong><small>{playlist.trackCount == null ? "? songs" : countLabel(playlist.trackCount, "song")}{playlist.description ? ` · ${playlist.description}` : ""}</small></span>
                   </label>
                 {:else}{#if !loading}<p class="pl-help">No playlists you can change were found.</p>{/if}{/each}
               </div>
@@ -734,7 +735,7 @@
           {/if}
         {/if}
         {#if step === 2}
-          <section class="pl-section import-preview"><h3>What comes over</h3><strong>{sourceCount == null ? "Song count is checked during import" : `${sourceCount} songs from ${sourceName}`}</strong><p class="pl-help">Allstarr checks songs against your library and connected services after you start. Unsure songs go to Matches for you to review.</p></section>
+          <section class="pl-section import-preview"><h3>What comes over</h3><strong>{sourceCount == null ? "Song count is checked during import" : `${countLabel(sourceCount, "song")} from ${sourceName}`}</strong><p class="pl-help">Allstarr checks songs against your library and connected services after you start. Unsure songs go to Matches for you to review.</p></section>
           <div class="pl-summary" role="status">
             <Info size={20} aria-hidden="true" />
             <p><strong>What will happen</strong>{behaviorSummary}</p>
@@ -767,7 +768,7 @@
         {#if step < 2}
           <Button disabled={!stepReady || loading} onclick={() => void next()}>Next</Button>
         {:else}
-          <Button disabled={!sourcePlaylistId || !targetId || (targetMode === "existing" && !targetPlaylistId) || saving} onclick={() => void save()}>{saving ? "Starting import…" : sourceCount == null ? "Import playlist" : `Import ${sourceCount} songs`}</Button>
+          <Button disabled={!sourcePlaylistId || !targetId || (targetMode === "existing" && !targetPlaylistId) || saving} onclick={() => void save()}>{saving ? "Starting import…" : sourceCount == null ? "Import playlist" : `Import ${countLabel(sourceCount, "song")}`}</Button>
         {/if}
       </footer>
     </Dialog.Content>

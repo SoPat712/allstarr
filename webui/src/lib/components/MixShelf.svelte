@@ -2,7 +2,6 @@
   import type { MixCard } from "$lib/api";
   import { mixDescription, mixName, shortReadiness } from "$lib/for-you";
   import { Button } from "$lib/components/ui/button";
-  import MixArtwork from "$lib/components/MixArtwork.svelte";
   import MixCover from "$lib/components/MixCover.svelte";
   let { title, cards, onopen, seeAll = "", seeAllLabel = "See all", additions = [], albumArt = false, busy = "", onadd, onaddall, columns = 8 }: {
     title: string; cards: MixCard[]; onopen: (card: MixCard) => void; seeAll?: string; seeAllLabel?: string; additions?: string[]; albumArt?: boolean; busy?: string;
@@ -20,7 +19,7 @@
       <div class="mix-card" role="group" aria-label={mixName(card.name)}>
         <div class="cover">
           <button type="button" class="mix-open" aria-label={`${additions.includes(card.id) ? "Add" : "Open"} ${mixName(card.name)}`} disabled={additions.includes(card.id) && (Boolean(busy) || !card.appsAllowed)} onclick={() => onopen(card)}>
-            <span class="artwork" class:unready={!card.readiness.ready}>{#if albumArt}<MixArtwork references={card.coverArtwork} />{:else}<MixCover mix={card} />{/if}</span>
+            <span class="artwork" class:unready={!card.readiness.ready}><MixCover mix={card} /></span>
             <strong>{mixName(card.name)}</strong><span class="description">{card.readiness.ready ? mixDescription(card.description, card.kind) : shortReadiness(card.readiness.message)}</span>
           </button>
           {#if onadd && !card.inApps && card.appsAllowed && card.readiness.ready}

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-async function fixture(page: Page) {
+async function fixture(page: Page, libraryFailure = false) {
   const writes: Record<string, unknown>[] = [];
   let config = { clientApi: { enabled: false }, backendType: "Jellyfin", operatorSettings: { "Backend:MusicLibraryIds": "music", "Cors:AllowedOrigins": "https://app.invalid" }, audio: { quality: "CdLossless" }, jellyfin: { url: "http://media.invalid:8096" }, matching: { localPreferencePercent: 7 } };
   await page.route("**/api/admin/**", async route => {
@@ -21,10 +21,14 @@ async function fixture(page: Page) {
         { key: "CORS_ALLOWED_ORIGINS", label: "Browser origins", type: "text", valuePath: "operatorSettings.Cors:AllowedOrigins", requiresRestart: true },
       ] },
     ] });
+    if (path.endsWith("/ui/music-libraries")) return libraryFailure
+      ? route.fulfill({ status: 502, json: { error: "Music libraries could not be loaded. Check the media server connection." } })
+      : reply([{ id: "music", name: "Music" }, { id: "books", name: "Concert recordings" }]);
     if (path.endsWith("/config")) {
       if (route.request().method() === "POST") {
         const body = route.request().postDataJSON(); writes.push(body);
         if (body.updates.CLIENT_API_ENABLED !== undefined) config = { ...config, clientApi: { enabled: body.updates.CLIENT_API_ENABLED === "true" } };
+        if (body.updates.BACKEND_MUSIC_LIBRARY_IDS !== undefined) config.operatorSettings["Backend:MusicLibraryIds"] = body.updates.BACKEND_MUSIC_LIBRARY_IDS;
         if (body.updates.AUDIO_QUALITY) config.audio.quality = body.updates.AUDIO_QUALITY;
         if (body.updates.MATCHING_LOCAL_PREFERENCE_PERCENT !== undefined) config.matching.localPreferencePercent = Number(body.updates.MATCHING_LOCAL_PREFERENCE_PERCENT);
         return reply({ updatedKeys: Object.keys(body.updates), requiresRestart: false });
@@ -75,7 +79,7 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"]] a
       }
       const capture = async (name: string) => page.screenshot({ path: `test-results/ui-settings/${name}-${width}-${theme}.png`, fullPage: true });
       if (section === "general") {
-        await page.getByLabel("Libraries to use", { exact: true }).fill("music,books"); await page.getByLabel("Libraries to use", { exact: true }).blur();
+        await page.getByRole("checkbox", { name: "Concert recordings", exact: true }).check();
         await expect(page.getByRole("alertdialog")).toBeVisible(); await capture("restart-dialog");
         await page.getByRole("alertdialog").getByRole("button", { name: "Cancel", exact: true }).click();
       } else if (section === "alerts") {
@@ -117,13 +121,13 @@ test("Settings changes save with Undo and restart changes wait for confirmation"
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect.poll(() => writes.length).toBe(2);
   expect(writes[1]).toEqual({ updates: { CLIENT_API_ENABLED: "false" } });
-  await page.getByLabel("Libraries to use", { exact: true }).fill("music,books");
-  await page.getByLabel("Libraries to use", { exact: true }).blur();
+  await page.getByRole("checkbox", { name: "Concert recordings", exact: true }).check();
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toContainText("Restart Allstarr to apply?");
   expect(writes.length).toBe(2);
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(page.getByLabel("Libraries to use", { exact: true })).toHaveValue("music");
+  await expect(page.getByRole("checkbox", { name: "Music", exact: true })).toBeChecked();
+  await expect(page.getByRole("checkbox", { name: "Concert recordings", exact: true })).not.toBeChecked();
   await expect(page.getByText("Set in your deployment")).toBeVisible();
 });
 
@@ -142,6 +146,7 @@ test("Health skips are neutral and repeated open problems are grouped", async ({
   await fixture(page);
   await page.goto("/#/settings/health");
   await expect(page.getByLabel("Page status").first()).toContainText("Passing");
+  await expect(page.getByLabel("Page status").first()).toContainText("1 check passed");
   await expect(page.getByText("Partly checked", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("group", { name: "Last 30 checks", exact: true })).toBeVisible();
   await page.goto("/#/settings/alerts");
@@ -210,4 +215,31 @@ test("A failed safety backup prevents restore staging", async ({ page }) => {
   await dialog.getByRole("button", { name: "Restore on restart", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("The backup folder is unavailable.");
   expect(staged).toBe(0);
+});
+
+test("Libraries save named selections and an empty value for all libraries", async ({ page }) => {
+  const writes = await fixture(page);
+  await page.goto("/#/settings/general");
+  await expect(page.getByRole("group", { name: "Libraries to use", exact: true })).toBeVisible();
+  await page.getByRole("checkbox", { name: "Concert recordings", exact: true }).check();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Restart and apply", exact: true }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).toEqual({ updates: { BACKEND_MUSIC_LIBRARY_IDS: "music,books" } });
+  await page.getByRole("checkbox", { name: "All libraries", exact: true }).check();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Restart and apply", exact: true }).click();
+  await expect.poll(() => writes.length).toBe(2);
+  expect(writes[1]).toEqual({ updates: { BACKEND_MUSIC_LIBRARY_IDS: "" } });
+  await expect(page.getByRole("checkbox", { name: "All libraries", exact: true })).toBeChecked();
+});
+
+test("Libraries retain manual ID entry when discovery fails", async ({ page }) => {
+  const writes = await fixture(page, true);
+  await page.goto("/#/settings/general");
+  await expect(page.getByText("Music libraries could not be loaded. Check the media server connection.", { exact: true })).toBeVisible();
+  const input = page.getByRole("textbox", { name: "Libraries to use", exact: true });
+  await expect(input).toHaveValue("music");
+  await input.fill("music,books"); await input.blur();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Restart and apply", exact: true }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).toEqual({ updates: { BACKEND_MUSIC_LIBRARY_IDS: "music,books" } });
 });

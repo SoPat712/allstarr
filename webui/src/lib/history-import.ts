@@ -1,13 +1,13 @@
 import { ApiError, type HistoryImport } from "./api";
-import { formatCount } from "./intelligence";
+import { countLabel } from "./count-label";
 
 export function historyBytes(bytes: number) {
-  if (bytes < 1024) return `${formatCount(bytes)} ${bytes === 1 ? "byte" : "bytes"}`;
+  if (bytes < 1024) return countLabel(bytes, "byte");
   const unit = bytes < 1024 ** 2 ? 1 : 2;
   return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(bytes / 1024 ** unit)} ${unit === 1 ? "KB" : "MB"}`;
 }
 
-export function historyPlays(count: number) { return `${formatCount(count)} ${count === 1 ? "play" : "plays"}`; }
+export function historyPlays(count: number) { return countLabel(count, "play"); }
 
 export function historyDateRange(first?: string | null, last?: string | null, years = false) {
   if (!first || !last || !Number.isFinite(Date.parse(first)) || !Number.isFinite(Date.parse(last))) return "Date range unavailable";

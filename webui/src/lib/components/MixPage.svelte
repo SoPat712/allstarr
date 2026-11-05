@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { ApiError, activityWork, mixes, taste, type MixDetail, type MixSong } from "$lib/api";
@@ -127,7 +128,7 @@
     <div class="mix-body">
       {#if error}<p role="alert">{error}</p><Button variant="secondary" onclick={load}>Try again</Button>{/if}
       {#if !detail && !error}<Skeleton class="skeleton-panel" aria-label="Loading mix" />{:else if detail}
-        <div class="mix-heading"><div class="mix-cover"><MixCover mix={detail.mix} songs={detail.songs} /></div><p>{detail.mix.updatedAt ? `Updated ${new Date(detail.mix.updatedAt).toLocaleString(undefined, { weekday: "long", hour: "numeric", minute: "2-digit" })} · ` : ""}{detail.songs.length} songs</p></div>
+        <div class="mix-heading"><div class="mix-cover"><MixCover mix={detail.mix} songs={detail.songs} /></div><p>{detail.mix.updatedAt ? `Updated ${new Date(detail.mix.updatedAt).toLocaleString(undefined, { weekday: "long", hour: "numeric", minute: "2-digit" })} · ` : ""}{countLabel(detail.songs.length, "song")}</p></div>
         <div class="mix-actions">
           <MixAppState added={detail.mix.inApps} allowed={detail.mix.appsAllowed} {busy} onadd={() => void perform(target => mixes.add(target))} />
           {#if detail.mix.kind !== "custom" && detail.mix.kind !== "external"}<span title={throttled ? "Wait 15 minutes before refreshing again" : "Refresh this mix"}><RefreshButton label="Refresh mix" variant="secondary" disabled={busy || throttled || Boolean(refreshJob)} onrefresh={refresh} /></span>{/if}
@@ -141,17 +142,17 @@
             <div class="recipe-copy">
               <p>{evidence.recipe.sentence}</p>
               {#if detail.mix.kind !== "external" && detail.mix.kind !== "custom"}
-                <p>{evidence.livePlays.toLocaleString()} plays in Allstarr · {evidence.importedPlays.toLocaleString()} imported{#if evidence.listeningFrom && evidence.listeningTo}{" · "}{new Date(evidence.listeningFrom).toLocaleDateString()}–{new Date(evidence.listeningTo).toLocaleDateString()}{/if}</p>
+                <p>{countLabel(evidence.livePlays, "play")} in Allstarr · {evidence.importedPlays.toLocaleString()} imported{#if evidence.listeningFrom && evidence.listeningTo}{" · "}{new Date(evidence.listeningFrom).toLocaleDateString()}–{new Date(evidence.listeningTo).toLocaleDateString()}{/if}</p>
               {/if}
-              {#if evidence.historicalWindow}<p>Only {evidence.primaryPlays} plays in Allstarr in the last 30 days, so this also uses {evidence.fallbackPlays} imported plays from {evidence.historicalWindow}.</p>{/if}
-              <p>Looked at {evidence.candidates.toLocaleString()} songs, {evidence.qualified.toLocaleString()} fit, {evidence.shown} in this mix.</p>
+              {#if evidence.historicalWindow}<p>Only {countLabel(evidence.primaryPlays, "play")} in Allstarr in the last 30 days, so this also uses {countLabel(evidence.fallbackPlays, "imported play")} from {evidence.historicalWindow}.</p>{/if}
+              <p>Looked at {countLabel(evidence.candidates, "song")}, {evidence.qualified.toLocaleString()} fit, {evidence.shown} in this mix.</p>
               {#if detail.mix.kind !== "external"}<p>{evidence.fromMusic} from your music, {evidence.fromServices} from your services, at most {evidence.recipe.artistLimit} per artist.</p>{/if}
-              {#if evidence.releaseInboxEntries != null}<p>{evidence.releaseInboxEntries} entries in your release inbox at generation.</p>{/if}
+              {#if evidence.releaseInboxEntries != null}<p>{countLabel(evidence.releaseInboxEntries, "entry", "entries")} in your release inbox at generation.</p>{/if}
               <p>{evidence.recipe.filters}</p><p>{evidence.recipe.order}</p>
               <p>{evidence.recipe.cadence}. {evidence.recipe.shortfall}</p>
               {#if Object.keys(evidence.excluded).length}<p>Left out: {mixExclusions(evidence.excluded)}.</p>{/if}
               {#if evidence.shortfall && (detail.mix.readiness.ready || evidence.shortfall !== detail.mix.readiness.message)}<p>{evidence.shortfall}</p>{/if}
-              {#if evidence.providerFailures}<p>{evidence.providerFailures} service lookups failed.</p>{/if}
+              {#if evidence.providerFailures}<p>{countLabel(evidence.providerFailures, "service lookup")} failed.</p>{/if}
             </div>
           {:else}<p class="recipe-copy">Refresh this mix to see its recipe details.</p>{/if}
         </details>

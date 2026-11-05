@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { ApiError, providerFavoriteLinks, type FavoriteLinkPair, type FavoriteLinkPreview,
@@ -59,8 +60,6 @@
   const participation = (member: ProviderFavoriteMember) => member.participation === "disabled" ? "Disabled profile"
     : member.participation === "synthetic" ? "Test listener"
     : member.participation === "identity_changed" ? "Profile identity changed" : "";
-  const count = (value: number | null | undefined) => typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? value.toLocaleString() : "Not available";
   function failure(cause: unknown, fallback: string) {
     if (cause instanceof ApiError) {
       const details = cause.details as { message?: string; error?: string } | null;
@@ -210,7 +209,7 @@
         {#each [link.jellyfin, link.subsonic] as member}
           {#if participation(member)}<p class="notice-info">{member.displayName || "Unnamed profile"}: {participation(member)}. Available linked profiles keep their shared hearts.</p>{/if}
         {/each}
-        <div class="settings-row"><div><strong>Saved hearts</strong><small>{count(link.union.processedRows)} rows processed · {count(link.union.seededItems)} hearts added</small></div>
+        <div class="settings-row"><div><strong>Saved hearts</strong><small>{link.union.processedRows == null ? "Processed row count unavailable" : `${countLabel(link.union.processedRows, "row")} processed`} · {link.union.seededItems == null ? "Added heart count unavailable" : `${countLabel(link.union.seededItems, "heart")} added`}</small></div>
           <span>{link.union.completedAt ? supportDate(link.union.completedAt) : link.union.state === "failed" || link.union.state === "cancelled"
             ? "Stopped" : link.union.state === "succeeded" ? "Completed; time not available" : "Combining existing hearts"}</span></div>
         {#if link.union.state === "failed" || link.union.state === "cancelled"}<p class="notice-info">Combining saved hearts stopped. A retry continues from the saved progress.</p>{/if}

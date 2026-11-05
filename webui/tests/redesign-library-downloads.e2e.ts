@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Route } from "@playwright/test";
-import { expectContainedMobileGeometry } from "./mobile-geometry";
+import { expectContainedMobileGeometry, widenText } from "./mobile-geometry";
 import { expectPageSurface, expectSingleRowFooter, expectSubtleSelection, expectToolbarLayout } from "./library-layout";
 
 async function json(route: Route, body: unknown, status = 200) {
@@ -45,6 +45,28 @@ async function mockLibrary(page: Page, options: { cacheOff?: boolean; error?: bo
     return json(route, { success: true, deletedCount: 4 });
   });
   return mutations;
+}
+
+for (const width of [320, 390]) for (const storage of ["cached", "kept"]) {
+  test(`${storage} actions fit with wider text at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await mockLibrary(page);
+    await page.goto(`/#/library/${storage}`);
+    await expect(page.getByRole("button", { name: "Open song details for Take On Me", exact: true })).toBeVisible();
+    await widenText(page.locator(".track-cache-link [data-slot=button]"));
+    await expectContainedMobileGeometry(page);
+    const opener = page.getByRole("button", { name: "Open song details for Take On Me", exact: true });
+    await opener.focus();
+    await opener.press("Enter");
+    const panel = page.getByRole("dialog", { name: "Take On Me", exact: true });
+    await expect(panel).toBeVisible();
+    await widenText(panel.locator(".panel-footer [data-slot=button]"));
+    await expectSingleRowFooter(panel);
+    expect(await panel.locator(".panel-footer [data-slot=button]").evaluateAll(elements =>
+      elements.every(element => element.scrollWidth <= element.clientWidth + 1))).toBe(true);
+    await expectContainedMobileGeometry(page);
+  });
 }
 
 for (const viewport of [{ width: 1280, theme: "light" }, { width: 1280, theme: "dark" }, { width: 390, theme: "light" }] as const) {

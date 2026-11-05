@@ -48,7 +48,7 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
     {
         var item = await ResolveNativeItemAsync(itemId, context, cancellationToken);
         if (!item.HasValue) return null;
-        var artworkItemId = ResolveArtworkItemId(item.Value, itemId);
+        var artworkItemId = JellyfinItemArtwork.PrimaryImageItemId(item.Value, itemId);
         if (artworkItemId == null) return null;
         try
         {
@@ -130,7 +130,7 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
                      "Jellyfin";
         var albumArtist = TryGetString(root, "AlbumArtist");
         var album = TryGetString(root, "Album");
-        var artworkItemId = ResolveArtworkItemId(root, itemId);
+        var artworkItemId = JellyfinItemArtwork.PrimaryImageItemId(root, itemId);
         var durationSeconds = root.TryGetProperty("RunTimeTicks", out var runTimeTicks) &&
                               runTimeTicks.TryGetInt64(out var ticks) && ticks > 0
             ? (int)Math.Ceiling(ticks / (double)TimeSpan.TicksPerSecond)
@@ -155,19 +155,6 @@ public sealed class JellyfinPlaybackMetadataResolver : IPlaybackMetadataResolver
             albumArtist,
             recordingMbid,
             trackNumber);
-    }
-
-    private static string? ResolveArtworkItemId(JsonElement root, string itemId)
-    {
-        var hasPrimaryImage = root.TryGetProperty("ImageTags", out var imageTags) &&
-                              imageTags.ValueKind == JsonValueKind.Object &&
-                              imageTags.TryGetProperty("Primary", out var primaryTag) &&
-                              primaryTag.ValueKind == JsonValueKind.String &&
-                              !string.IsNullOrWhiteSpace(primaryTag.GetString());
-        var albumId = TryGetString(root, "AlbumId");
-        var hasAlbumImage = !string.IsNullOrWhiteSpace(albumId) &&
-                            TryGetString(root, "AlbumPrimaryImageTag") is { Length: > 0 };
-        return hasPrimaryImage ? itemId : hasAlbumImage ? albumId : null;
     }
 
     private Uri BuildBackendUri(string relative) =>

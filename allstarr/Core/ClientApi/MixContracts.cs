@@ -25,7 +25,8 @@ public sealed record ClientMix(
     [property: JsonPropertyName("updatedAt")] DateTimeOffset? UpdatedAt,
     [property: JsonPropertyName("coverUrl")] string CoverUrl,
     [property: JsonPropertyName("inApps")] bool InApps,
-    [property: JsonPropertyName("playlistId")] string? PlaylistId);
+    [property: JsonPropertyName("playlistId")] string? PlaylistId,
+    [property: JsonPropertyName("artworkUrls")] IReadOnlyList<string>? ArtworkUrls = null);
 
 public sealed record ClientMixItems(
     [property: JsonPropertyName("mixId")] Guid MixId,
@@ -38,6 +39,7 @@ public sealed record ClientMixItem(
     [property: JsonPropertyName("artist")] string Artist,
     [property: JsonPropertyName("album")] string Album,
     [property: JsonPropertyName("albumId")] string? AlbumId,
+    [property: JsonPropertyName("artworkUrl")] string? ArtworkUrl,
     [property: JsonPropertyName("artistId")] string? ArtistId,
     [property: JsonPropertyName("durationMs")] long? DurationMs,
     [property: JsonPropertyName("isExternal")] bool IsExternal,

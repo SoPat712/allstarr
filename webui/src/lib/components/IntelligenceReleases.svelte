@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { onMount, type Component } from "svelte";
   import { goto } from "$app/navigation";
   import { X } from "@lucide/svelte";
@@ -74,7 +75,7 @@
       const result = await releaseInbox.followFromHearts();
       if (disposed) return;
       followOpen = false;
-      toast.success(`Following ${result.followed} new artists`);
+      toast.success(`Following ${countLabel(result.followed, "new artist")}`);
       await load();
     } catch { if (!disposed) followError = "Artists could not be followed. Try again."; }
     finally { if (!disposed) pendingAction = ""; }
@@ -153,7 +154,7 @@
 </script>
 
 <div class="releases-inbox">
-  <PageStatus items={[{ label: `${inbox?.entries.length ?? 0} ${(inbox?.entries.length ?? 0) === 1 ? "release" : "releases"} from ${artists.length} artists you follow` }, { label: "Just Dropped collects these every Friday." }]} />
+  <PageStatus items={[{ label: `${inbox?.entries.length ?? 0} ${(inbox?.entries.length ?? 0) === 1 ? "release" : "releases"} from ${countLabel(artists.length, "artist")} you follow` }, { label: "Just Dropped collects these every Friday." }]} />
   {#if radar}<a class="radar-link" href={`#/for-you?mix=${encodeURIComponent(radar)}`}>Open Just Dropped</a>{/if}
   <section class="following-row" aria-label="Following artists">
     <Button variant="text" size="sm" onclick={() => artistsOpen = true}>Following ({artists.length})</Button>
@@ -183,8 +184,8 @@
         <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button release-card-menu" aria-label={`Actions for ${entry.title}`}><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu release-menu" align="end"><DropdownMenu.Item class="bits-menu-item destructive" disabled={Boolean(pendingAction)} onSelect={() => askDismiss(entry)}>Dismiss {entry.title}</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
       </article>
     {/each}</div>{/if}
-    {#if unchecked.length}<div class="checking-note"><details><summary>Couldn't check {unchecked.length} {unchecked.length === 1 ? "artist" : "artists"}.</summary><p>Some releases may be missing.</p><ul>{#each unchecked as item}<li>{item.artist.displayName}</li>{/each}</ul></details><Button variant="text" size="sm" disabled={Boolean(pendingAction)} onclick={() => void load()}>Check again</Button></div>{/if}
-    {#if hidden.length}<details class="release-disclosure"><summary class="disclosure-summary"><DisclosureLabel title={`Hidden: ${hidden.length} ${hidden.length === 1 ? "release" : "releases"}`} /></summary><ul>{#each hidden as entry}<li><strong>{entry.title}</strong> · {entry.artist} · {hiddenReason(entry.exclusionReason)}</li>{/each}</ul></details>{/if}
+    {#if unchecked.length}<div class="checking-note"><details><summary>Couldn't check {countLabel(unchecked.length, "artist")}.</summary><p>Some releases may be missing.</p><ul>{#each unchecked as item}<li>{item.artist.displayName}</li>{/each}</ul></details><Button variant="text" size="sm" disabled={Boolean(pendingAction)} onclick={() => void load()}>Check again</Button></div>{/if}
+    {#if hidden.length}<details class="release-disclosure"><summary class="disclosure-summary"><DisclosureLabel title={`Hidden: ${countLabel(hidden.length, "release")}`} /></summary><ul>{#each hidden as entry}<li><strong>{entry.title}</strong> · {entry.artist} · {hiddenReason(entry.exclusionReason)}</li>{/each}</ul></details>{/if}
   {/if}
 </div>
 {#if initialRelease && !loading && ReleasePanel}<ReleasePanel entry={selected} {artists} busy={Boolean(pendingAction)} onclose={closeRelease} onunfollow={askUnfollow} ondismiss={askDismiss} onfind={() => artistsOpen = true} />{/if}

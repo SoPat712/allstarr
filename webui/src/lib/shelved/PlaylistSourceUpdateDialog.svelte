@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { Dialog } from "$lib/components/ui/dialog";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { X } from "@lucide/svelte";
@@ -163,7 +164,7 @@
                 {/each}
               </ol>
               {#if preview.unshownChangeCount}
-                <p>{preview.unshownChangeCount} more changes are included in the checked totals.</p>
+                <p>{countLabel(preview.unshownChangeCount, "more change is included", "more changes are included")} in the checked totals.</p>
               {/if}
             </section>
           {/if}

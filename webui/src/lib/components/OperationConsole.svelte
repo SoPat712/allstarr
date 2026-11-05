@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { home, type JobResponse } from "$lib/api";
+  import { jobState, humanize } from "$lib/activity";
   import { compactProgress, progressDetails } from "$lib/jobs";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
@@ -92,15 +93,15 @@
 
 {#if job}
   <Popover.Root bind:open>
-    <Popover.Trigger class="operation-trigger" aria-label={`Operation details: ${latest.stage?.replaceAll(".", " ") || job.type.replaceAll(".", " ")}, ${job.state}`}>
-      <span aria-live="polite">{latest.stage?.replaceAll(".", " ") || job.type.replaceAll(".", " ")}</span>
-      <Badge state={job.state}>{job.state}</Badge>
+    <Popover.Trigger class="operation-trigger" aria-label={`Operation details: ${humanize(latest.stage || job.type)}, ${jobState(job.state)}`}>
+      <span aria-live="polite">{humanize(latest.stage || job.type)}</span>
+      <Badge state={job.state}>{jobState(job.state)}</Badge>
     </Popover.Trigger>
     <Popover.Portal>
       <Popover.Content class="bits-menu operation-popover" sideOffset={6} align="end">
         <header>
-          <span><strong>{latest.stage?.replaceAll(".", " ") || job.type.replaceAll(".", " ")}</strong><small>{latest.message || job.state}</small></span>
-          <Badge state={job.state}>{job.state}</Badge>
+          <span><strong>{humanize(latest.stage || job.type)}</strong><small>{latest.message || jobState(job.state)}</small></span>
+          <Badge state={job.state}>{jobState(job.state)}</Badge>
         </header>
         <div class="operation-console-body">
           {#if percent !== null}
@@ -121,7 +122,7 @@
           <ol>
             {#each entries as entry}
               {@const details = progressDetails(entry)}
-              <li><span>{details.message || entry.action.replaceAll(".", " ")}</span><small>{details.track || details.deferralReason || entry.outcome}</small></li>
+              <li><span>{details.message || entry.action.replaceAll(".", " ")}</span><small>{details.track || details.deferralReason || jobState(entry.outcome)}</small></li>
             {/each}
           </ol>
           {#if active && !job.cancellationRequestedAt}

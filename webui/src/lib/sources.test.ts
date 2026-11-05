@@ -169,8 +169,8 @@ describe("source presentation", () => {
   });
 
   it("humanizes camel-case lifecycle labels", () => {
-    expect(humanize("reviewRequired")).toBe("Review Required");
-    expect(humanize("reviewrequired")).toBe("Review Required");
+    expect(humanize("reviewRequired")).toBe("Review required");
+    expect(humanize("reviewrequired")).toBe("Review required");
   });
 
   it("uses manifest defaults without exposing sensitive values", () => {
@@ -331,7 +331,7 @@ describe("source presentation", () => {
 it("explains a missing Apple download session", () => {
   expect(providerReadinessLabel("apple-download-sign-in-required")).toBe("Apple download needs sign-in");
   expect(providerReadinessLabel("apple-download-gateway-update-required")).toBe("Apple download gateway needs an update");
-  expect(providerReadinessLabel("endpoint_unreachable")).toBe("Endpoint Unreachable");
+  expect(providerReadinessLabel("endpoint_unreachable")).toBe("Endpoint unreachable");
 });
 
 it("labels unchecked capabilities plainly and merges checks that share a cause", () => {

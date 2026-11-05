@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { ApiError, listeningPreferences, playlistLinks, sources, type ListenerPlaylistCopy, type PersonalListeningPreferences, type PlaylistLink, type ProviderAccount } from "$lib/api";
   import { originalCopyName } from "$lib/listeners";
@@ -67,7 +68,7 @@
 </script>
 
 <div class="settings-stack">
-  <PageStatus items={[{ label: `${listeners.length} listeners` }, { label: `${lockedCount} locked to clean` }]} />
+  <PageStatus items={[{ label: countLabel(listeners.length, "listener") }, { label: `${lockedCount} locked to clean` }]} />
   {#if loading}<RowsSkeleton />
   {:else if error && !listeners.length}<ErrorState title="Listeners could not be loaded" detail={error} onretry={load} />
   {:else}

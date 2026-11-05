@@ -1,4 +1,11 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
+
+export async function widenText(elements: Locator) {
+  await elements.evaluateAll(elements => {
+    const sizes = elements.map(element => Number.parseFloat(getComputedStyle(element).fontSize));
+    elements.forEach((element, index) => { (element as HTMLElement).style.fontSize = `${sizes[index] * 1.2}px`; });
+  });
+}
 
 export async function expectContainedMobileGeometry(page: Page) {
   const audit = await page.evaluate(() => {

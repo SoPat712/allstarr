@@ -175,6 +175,55 @@ public class AdminUiController : ControllerBase
         return Ok(schema);
     }
 
+    [HttpGet("music-libraries")]
+    public async Task<IActionResult> GetMusicLibraries(CancellationToken cancellationToken = default)
+    {
+        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
+            value is not AdminAuthSession { IsAdministrator: true } session)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "Administrator permissions required" });
+        }
+
+        IActionResult Unavailable() => StatusCode(StatusCodes.Status502BadGateway, new
+        {
+            error = "Could not load music libraries from the media server. Check media-server access and try again."
+        });
+
+        if (session.AllstarrUserId is not { } userId ||
+            string.IsNullOrWhiteSpace(session.BackendInstanceId) ||
+            !Enum.TryParse<ProtocolKind>(session.BackendType, true, out var protocol) ||
+            protocol is not (ProtocolKind.Jellyfin or ProtocolKind.Subsonic))
+            return Unavailable();
+
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(BackendLibraryAccessResolver.Lifetime);
+        try
+        {
+            var context = new ProtocolExecutionContext(protocol, session.BackendInstanceId, session.UserId,
+                new AllstarrPrincipal(userId, protocol.ToString().ToLowerInvariant(), session.BackendInstanceId,
+                    session.UserId, session.UserName, true),
+                "music-libraries", DateTimeOffset.UtcNow.Add(BackendLibraryAccessResolver.Lifetime), deadline.Token);
+            var services = HttpContext.RequestServices;
+            var source = services.GetRequiredService<IBackendLibraryPermissionSource>();
+            using var request = await source.CreateRequestAsync(context, deadline.Token);
+            if (request == null) return Unavailable();
+            using var client = services.GetRequiredService<IHttpClientFactory>().CreateClient(BackendLibraryAccessResolver.HttpClientName);
+            using var response = await client.SendAsync(request, deadline.Token);
+            if (!response.IsSuccessStatusCode) return Unavailable();
+            using var document = await JsonDocument.ParseAsync(
+                await response.Content.ReadAsStreamAsync(deadline.Token), cancellationToken: deadline.Token);
+            return Ok(BackendMusicLibraries.ReadNamed(protocol, document.RootElement));
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return Unavailable();
+        }
+        catch (Exception exception) when (exception is HttpRequestException or JsonException or InvalidOperationException or UnauthorizedAccessException or ArgumentException)
+        {
+            return Unavailable();
+        }
+    }
+
     private async Task<EffectiveProviderPolicySnapshot?> TryEffectivePolicyAsync(
         CancellationToken cancellationToken)
     {

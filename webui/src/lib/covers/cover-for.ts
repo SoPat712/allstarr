@@ -1,35 +1,17 @@
 import type { MixCard, MixSong } from "../api";
-import { mixName } from "../for-you";
-import { PALETTES } from "./palettes";
-import { hash } from "./random";
+import { hash, INK, LIQUID, PAPER, PALETTES, paletteFor } from "./palettes";
 
-export type CoverStyle = "liquid" | "stars" | "radar" | "stamped" | "sun" | "waves" | "ruled" | "zigzag" | "punched" | "moon" | "letter" | "lastfm" | "listenbrainz";
-export type CoverDescription = {
-  id: string;
-  style: CoverStyle;
-  number: string;
-  tag: string;
-  artists: string;
-  seed: string;
-  lines: string[];
-  sub: string;
-  count: number;
-  layoutSeed: number;
-  wobbleSeed: number;
+const colours: Record<string, string[]> = {
+  "discover-weekly": [PAPER.blue, "#e9e2d0", INK.yellow],
+  "release-radar": [PAPER.cream, INK.green, INK.pink, INK.red],
+  "on-repeat": [PAPER.white, INK.navy, INK.red],
+  rewind: [PAPER.cream, INK.orange, INK.pink],
+  chill: [PAPER.white, INK.blue],
+  focus: [PAPER.white, "#7fb3d8", INK.red, INK.black],
+  workout: [PAPER.cream, INK.red, INK.black],
+  party: [PAPER.white, INK.pink, INK.yellow, INK.blue],
+  sleep: [PAPER.blue, "#f4dc8a", "#e9e2d0"],
 };
-
-const kinds: Record<string, [CoverStyle, string[]]> = {
-  "discover-weekly": ["stars", ["Uncharted"]],
-  "release-radar": ["radar", ["Just", "Dropped"]],
-  "on-repeat": ["stamped", ["Heavy", "Rotation"]],
-  rewind: ["sun", ["Long Lost"]],
-  chill: ["waves", ["Chill"]],
-  focus: ["ruled", ["Focus"]],
-  workout: ["zigzag", ["Workout"]],
-  party: ["punched", ["Party"]],
-  sleep: ["moon", ["Sleep"]],
-};
-const paletteNames = Object.keys(PALETTES);
 const compact = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 function songGenre(songs: MixSong[] = []) {
@@ -44,55 +26,21 @@ function songGenre(songs: MixSong[] = []) {
   return [...counts].sort(([a, x], [b, y]) => y.count - x.count || a.localeCompare(b))[0]?.[1].name;
 }
 
-export function coverFor(mix: MixCard, songs?: MixSong[]): CoverDescription {
-  const name = mix.kind === "external"
-    ? mixName(mix.name.replace(/\s*·\s*/g, " · ").replace(/\b(7day|1month|3month|12month|overall)\b/gi, value => value.toLowerCase())).trim()
-    : mix.name.trim();
-  const seed = name.replace(/\s+mix$/i, "").trim() || "Mix";
-  const cover: CoverDescription = {
-    id: mix.id, style: "letter", number: "", tag: paletteNames[hash(mix.id) % paletteNames.length], artists: "", seed,
-    lines: [seed], sub: "", count: songs ? Math.min(14, songs.length) : 9, layoutSeed: 0, wobbleSeed: 0,
-  };
-  if (mix.kind === "custom") cover.tag = songGenre(songs) || cover.tag;
-  const daily = /^daily-([1-4])$/.exec(mix.kind);
-  const preset = Object.prototype.hasOwnProperty.call(kinds, mix.kind) ? kinds[mix.kind] : undefined;
-  if (daily) {
-    const label = /^(.+?)\s+Blend$/i.exec(name);
-    const metadata = /^Made for you\s*·\s*([^·]*)(?:·\s*(.*))?$/i.exec(mix.description.trim());
-    cover.style = "liquid";
-    cover.number = daily[1];
-    const tag = metadata?.[1]?.trim();
-    cover.tag = (tag && !/^Blend [1-4]$/i.test(tag) ? tag : "") || label?.[1]?.trim() || cover.tag;
-    cover.artists = metadata?.[2]?.trim() || "";
-    cover.lines = [label ? name : `Blend ${daily[1]}`];
-  } else if (preset) {
-    cover.style = preset[0];
-    cover.lines = [...preset[1]];
+export function coverFor(mix: MixCard, songs?: MixSong[]) {
+  let tag = Object.keys(PALETTES)[hash(mix.id) % Object.keys(PALETTES).length];
+  let stops = colours[mix.kind];
+  if (/^daily-[1-4]$/.test(mix.kind)) {
+    const metadata = /^Made for you\s*·\s*([^·]*)/.exec(mix.description.trim())?.[1]?.trim();
+    tag = (metadata && !/^Blend [1-4]$/i.test(metadata) ? metadata : "") || /^(.+?)\s+Blend$/i.exec(mix.name.trim())?.[1]?.trim() || tag;
+    stops = LIQUID[paletteFor(tag).name];
   } else if (mix.kind === "external") {
     const provider = compact(mix.sourceLabel?.trim() || mix.name);
-    if (provider.includes("lastfm")) {
-      cover.style = "lastfm";
-      if (/loved/i.test(name)) {
-        cover.lines = ["Loved", "Tracks"];
-        cover.sub = "Your hearts on Last.fm";
-      } else if (/similar/i.test(name)) {
-        cover.lines = ["Similar", "Artists"];
-        cover.sub = "Like your top artists";
-      } else if (/top tracks/i.test(name)) {
-        cover.lines = ["Top Tracks"];
-        cover.sub = name.split("·").slice(1).join(" · ").trim() || "Your listening on Last.fm";
-      } else {
-        cover.lines = name.replace(/last[\s._-]*fm/gi, "").split("·").map(value => value.trim()).filter(Boolean);
-      }
-    } else if (provider.includes("listenbrainz")) {
-      cover.style = "listenbrainz";
-      cover.lines = /weekly exploration/i.test(name) ? ["Weekly", "Exploration"] : /weekly jams/i.test(name) ? ["Weekly Jams"]
-        : name.replace(/listen[\s._-]*brainz/gi, "").replace(/created for you/gi, "").split("·").map(value => value.trim()).filter(Boolean);
-    }
-    if (!cover.lines.length) cover.lines = ["Your", "Mix"];
+    if (provider.includes("lastfm")) stops = ["#d51007", "#f6efe6"];
+    else if (provider.includes("listenbrainz")) stops = ["#353070", "#eb743b", "#9a93e6"];
   }
-  if (cover.style !== "letter" && cover.style !== "liquid") cover.tag = "";
-  cover.layoutSeed = hash((cover.style === "letter" ? cover.seed : mix.id) + cover.tag);
-  cover.wobbleSeed = hash(cover.style === "letter" ? cover.seed : mix.id);
-  return cover;
+  if (!stops) {
+    const palette = paletteFor(mix.kind === "custom" ? songGenre(songs) || tag : tag);
+    stops = [palette.paper, ...palette.inks];
+  }
+  return `linear-gradient(135deg, ${stops.join(", ")})`;
 }

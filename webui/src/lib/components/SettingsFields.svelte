@@ -1,12 +1,13 @@
 <script lang="ts">
   import { Lock } from "@lucide/svelte";
   import { settings, type ConfigField, type ConfigSection, type PlaybackStart } from "$lib/api";
-  import { settingValue } from "$lib/settings-fields";
+  import { settingValue, splitLibraryIds, joinLibraryIds } from "$lib/settings-fields";
   import { fieldValue, playbackStartOptions } from "$lib/settings";
   import { rememberRestartUndo } from "$lib/settings-restart";
   import { toast } from "$lib/toasts";
   import { waitForRestart, savedBeforeRestart } from "$lib/restart";
-  import { onDestroy, tick } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
+  import { Checkbox } from "$lib/components/ui/checkbox";
   import { Switch } from "$lib/components/ui/switch";
   import { Button } from "$lib/components/ui/button";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
@@ -18,6 +19,9 @@
   let { section, config, onChanged = () => {} }: { section: ConfigSection; config: Record<string, unknown>; onChanged?: () => void | Promise<void> } = $props();
   let edits = $state<Record<string, { value: string; base: string }>>({});
   let solverTesting = $state(false);
+  let libraries = $state<{ id: string; name: string }[] | null>(null);
+  let libraryError = $state("");
+  let librariesLoading = $state(false);
   let drafts = $state<Record<string, string>>({}), saved = $state<Record<string, boolean>>({});
   let busy = $state(false), error = $state(""), restartOpen = $state(false);
   let pending = $state<{ field: ConfigField; value: string; previous: string; removing?: boolean } | null>(null);
@@ -48,7 +52,7 @@
   const original = (field: ConfigField) => settingValue(config, field);
   const value = (field: ConfigField) => drafts[field.key] ?? original(field);
   const help: Record<string, string> = {
-    BACKEND_MUSIC_LIBRARY_IDS: "Library IDs, separated by commas. Leave empty to use every library your server allows.",
+    BACKEND_MUSIC_LIBRARY_IDS: "Choose libraries, or use every library your server allows.",
     ODESLI_ENABLED: "Uses Deezer, Apple Music and enabled sources. Song.link Web, UniTune, MusicBrainz and Squigly provide fallback links without a key.",
     ODESLI_API_KEY: "Optional. With a key, the official API is tried first. Leave unchanged to keep it.",
     STORAGE_MODE: "Songs saved after streaming start faster next time. Hearts, Keep and retained playlists protect their copies in either mode.",
@@ -118,6 +122,17 @@
     catch (cause) { toast.error(cause instanceof Error ? cause.message : "The solver could not be reached."); }
     finally { solverTesting = false; }
   }
+  onMount(() => {
+    if (!section.fields.some(field => field.key === "BACKEND_MUSIC_LIBRARY_IDS" && !locked(field))) return;
+    librariesLoading = true;
+    void settings.musicLibraries().then(items => { libraries = items; })
+      .catch(cause => { libraryError = cause instanceof Error ? cause.message : "Music libraries could not be loaded."; })
+      .finally(() => { librariesLoading = false; });
+  });
+  function selectLibrary(field: ConfigField, libraryId: string, checked: boolean) {
+    const selected = splitLibraryIds(value(field));
+    change(field, joinLibraryIds(checked ? [...selected, libraryId] : selected.filter(item => item !== libraryId)));
+  }
   onDestroy(() => { abort.abort(); clearTimeout(qualityTimer); });
 </script>
 
@@ -135,6 +150,19 @@
         </div>
         {#if locked(field)}
           <div class="locked-setting"><output>{toggle(field) ? value(field) === "true" ? "On" : "Off" : field.sensitive ? fieldValue(config, field) ? "Key saved" : "Not set" : optionLabel(field, value(field)) || "Not set"}</output><small><Lock size={12} aria-hidden="true" />Set in your deployment</small></div>
+        {:else if field.key === "BACKEND_MUSIC_LIBRARY_IDS" && libraries !== null}
+          <fieldset id={`${id}-${field.key}`} class="library-choices quality-control" aria-label={label(field)} disabled={busy}>
+            <label><Checkbox aria-label="All libraries" checked={!splitLibraryIds(value(field)).length} onCheckedChange={checked => change(field, checked ? "" : joinLibraryIds(libraries?.map(item => item.id) ?? []))} /><span>All libraries</span></label>
+            {#each libraries as library (library.id)}
+              <label><Checkbox aria-label={library.name} checked={splitLibraryIds(value(field)).includes(library.id)} onCheckedChange={checked => selectLibrary(field, library.id, checked)} /><span>{library.name}</span></label>
+            {/each}
+            {#each splitLibraryIds(value(field)).filter(selected => !libraries?.some(item => item.id === selected)) as missingId (missingId)}
+              <label><Checkbox aria-label={`Unavailable library (${missingId})`} checked onCheckedChange={checked => selectLibrary(field, missingId, checked)} /><span>Unavailable library ({missingId})</span></label>
+            {/each}
+            {#if !libraries.length}<small>No music libraries are available to this account.</small>{/if}
+          </fieldset>
+        {:else if field.key === "BACKEND_MUSIC_LIBRARY_IDS" && librariesLoading}
+          <p role="status">Loading music libraries…</p>
         {:else if field.type === "audio-quality"}
           <fieldset disabled={busy} id={`${id}-${field.key}-quality`} class="quality-control">
             <AudioQualityField name={field.key} value={value(field)} onchange={() => void qualityChanged(field)} />
@@ -152,10 +180,13 @@
         {:else if field.type === "select"}
           <SelectField name={field.key} label={label(field)} value={value(field)} options={(field.options ?? []).map(next => ({ value: next, label: optionLabel(field, next) }))} disabled={busy} onchange={next => change(field, next)} />
         {:else}
-          <div class="setting-input">
-            <input id={`${id}-${field.key}`} name={field.key} aria-label={label(field)} type={field.sensitive ? "password" : field.type === "number" ? "number" : "text"} value={displayValue(field)} min={field.min ?? undefined} max={field.max ?? undefined} required={field.required} placeholder={field.sensitive ? "Leave unchanged to keep the saved key" : field.placeholder ?? undefined} autocomplete={field.sensitive ? "new-password" : undefined} disabled={busy} oninput={event => edit(field, event.currentTarget.value)} onchange={event => { if (event.currentTarget.reportValidity()) change(field, event.currentTarget.value); }} />
-            {#if field.sensitive && fieldValue(config, field)}<Button variant="text" class="settings-danger" type="button" disabled={busy} onclick={() => change(field, "", true)}>Remove key…</Button>{/if}
-            {#if field.key === "CHALLENGE_SOLVER_URL"}<Button variant="outline" type="button" disabled={solverTesting} onclick={testSolver}>{solverTesting ? "Testing…" : "Test"}</Button>{/if}
+          <div class:library-fallback={field.key === "BACKEND_MUSIC_LIBRARY_IDS"}>
+            {#if field.key === "BACKEND_MUSIC_LIBRARY_IDS" && libraryError}<small role="status">{libraryError}</small><small>Enter library IDs separated by commas. Leave empty for all libraries.</small>{/if}
+            <div class="setting-input">
+              <input id={`${id}-${field.key}`} name={field.key} aria-label={label(field)} type={field.sensitive ? "password" : field.type === "number" ? "number" : "text"} value={displayValue(field)} min={field.min ?? undefined} max={field.max ?? undefined} required={field.required} placeholder={field.sensitive ? "Leave unchanged to keep the saved key" : field.placeholder ?? undefined} autocomplete={field.sensitive ? "new-password" : undefined} disabled={busy} oninput={event => edit(field, event.currentTarget.value)} onchange={event => { if (event.currentTarget.reportValidity()) change(field, event.currentTarget.value); }} />
+              {#if field.sensitive && fieldValue(config, field)}<Button variant="text" class="settings-danger" type="button" disabled={busy} onclick={() => change(field, "", true)}>Remove key…</Button>{/if}
+              {#if field.key === "CHALLENGE_SOLVER_URL"}<Button variant="outline" type="button" disabled={solverTesting} onclick={testSolver}>{solverTesting ? "Testing…" : "Test"}</Button>{/if}
+            </div>
           </div>
         {/if}
       </div>
@@ -167,6 +198,9 @@
 <ConfirmDialog bind:open={restartOpen} title={pending?.removing ? pending.field.requiresRestart ? "Remove the key and restart Allstarr?" : "Remove the saved key?" : "Restart Allstarr to apply?"} description={pending?.removing && !pending.field.requiresRestart ? "The saved key is removed. You will need to enter it again to use it." : `Changing ${pending ? label(pending.field).toLowerCase() : "this setting"} needs a restart. Music that is playing will pause briefly. This page reconnects when Allstarr is ready.`} confirmLabel={busy ? "Applying…" : pending?.removing ? pending.field.requiresRestart ? "Remove key and restart" : "Remove key" : "Restart and apply"} confirmVariant={pending?.removing ? "destructive" : "default"} disabled={busy} closeOnConfirm={false} {error} onConfirm={() => pending ? persist(pending.field, pending.value, pending.previous) : undefined} />
 
 <style>
+  .library-choices, .library-fallback { display: grid; gap: var(--space-2); min-width: 0; }
+  .library-choices label { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; }
+  .library-choices span { overflow-wrap: anywhere; }
   .matching-preference { min-width: 0; }
   .matching-preference summary { min-height: 44px; padding-block: var(--space-3); cursor: pointer; font-size: var(--text-xs); color: var(--color-ink-muted); }
   .quality-control { min-width: 0; margin: 0; padding: 0; border: 0; }

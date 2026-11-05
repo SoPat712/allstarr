@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import ServiceAccessRestore from "$lib/components/ServiceAccessRestore.svelte";
   import { waitForRestart } from "$lib/restart";
   import { humanize } from "$lib/sources";
@@ -55,7 +56,7 @@
       checks = result.accountChecks ?? [];
       mediaQueued = Boolean(result.mediaFilesQueued);
       toast.success(result.alreadyApplied ? "This migration was already applied." : "Legacy settings imported.");
-      feedback = `${result.mediaFilesQueued ?? 0} original files queued for verification. Accounts that passed their connection check are ready; review unavailable accounts in Sources.`;
+      feedback = `${countLabel(result.mediaFilesQueued ?? 0, "original file")} queued for verification. Accounts that passed their connection check are ready; review unavailable accounts in Sources.`;
       preview = null;
       file = null;
       if (result.requiresRestart) {
@@ -127,7 +128,7 @@
       {#each preview.conflicts as item}<p class="notice-error">{item}</p>{/each}
       {#each preview.warnings as item}<p class="credential-safety">{item}</p>{/each}
       <details class="migration-details">
-        <summary>Review {preview.items.length} parsed settings</summary>
+        <summary>Review {countLabel(preview.items.length, "parsed setting")}</summary>
         <ul class="migration-items">
           {#each preview.items as item}
             <li><strong>{item.key}</strong><small>Line {item.sourceLine} · {item.action}</small><span>{item.reason}</span></li>

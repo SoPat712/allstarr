@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { ChevronDown } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
   import type { ManagedDownload, ProviderDefinition } from "$lib/api";
@@ -46,8 +47,8 @@
         <small>{file.artist || "Unknown artist"}{file.album ? ` · ${file.album}` : ""}</small>
         <small class="phone-facts">{storage === "cache" ? `Leaves ${lifecycle}` : lifecycle} · {quality}</small>
         {#if copies.length > 1 && ontoggle}
-          <button type="button" class="copies-toggle" aria-label={`${expanded ? "Hide" : "Show"} ${copies.length} copies of ${file.title || file.fileName}`} aria-expanded={expanded} aria-controls={copiesId} onclick={ontoggle}>
-            {copies.length} copies<ChevronDown size={14} aria-hidden="true" class={expanded ? "expanded" : ""} />
+          <button type="button" class="copies-toggle" aria-label={`${expanded ? "Hide" : "Show"} ${countLabel(copies.length, "copy", "copies")} of ${file.title || file.fileName}`} aria-expanded={expanded} aria-controls={copiesId} onclick={ontoggle}>
+            {countLabel(copies.length, "copy", "copies")}<ChevronDown size={14} aria-hidden="true" class={expanded ? "expanded" : ""} />
           </button>
         {/if}
       </div>

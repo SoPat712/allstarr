@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { X, Bell, CircleCheck, MoreHorizontal } from "@lucide/svelte";
   import { Switch } from "$lib/components/ui/switch";
@@ -157,7 +158,7 @@
 </script>
 
 <div class="alerts-settings">
-  <PageStatus items={[{ label: `${openIncidents.length} open problems`, tone: openIncidents.length ? "warn" : "good" }, { label: data?.channels.length ? `${data.channels.length} alert channels` : "No alert channels yet" }]} />
+  <PageStatus items={[{ label: countLabel(openIncidents.length, "open problem"), tone: openIncidents.length ? "warn" : "good" }, { label: data?.channels.length ? countLabel(data.channels.length, "alert channel") : "No alert channels yet" }]} />
   {#if error}<ErrorState title="Alerts could not be loaded" detail={error} onretry={() => load()} />{/if}
   {#if !data && !error}<RowsSkeleton count={3} />{/if}
   <section class="settings-stack" aria-label="Open problems">

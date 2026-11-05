@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { untrack } from "svelte";
   import { sources, type ProviderCheckHistory, type ProviderHealth } from "$lib/api";
   import { checkGuide, humanize } from "$lib/sources";
@@ -34,7 +35,7 @@
 
   const recentChecks = $derived(history?.checks.slice(0, 30) ?? []);
   const stripSlots = $derived([...Array<null>(30 - recentChecks.length).fill(null), ...recentChecks.toReversed()]);
-  const stripSummary = $derived(`${recentChecks.length} recorded ${recentChecks.length === 1 ? "check" : "checks"}, oldest to newest; ${recentChecks.filter(check => stripOutcome(check) === "failed").length} failed, ${recentChecks.filter(check => stripOutcome(check) === "slow").length} slow, ${recentChecks.filter(check => stripOutcome(check) === "ok").length} ok, ${recentChecks.filter(check => stripOutcome(check) === "neutral").length} not checked; ${30 - recentChecks.length} empty slots. Slow means 1 second or more.`);
+  const stripSummary = $derived(`${countLabel(recentChecks.length, "recorded check")}, oldest to newest; ${recentChecks.filter(check => stripOutcome(check) === "failed").length} failed, ${recentChecks.filter(check => stripOutcome(check) === "slow").length} slow, ${recentChecks.filter(check => stripOutcome(check) === "ok").length} ok, ${recentChecks.filter(check => stripOutcome(check) === "neutral").length} not checked; ${countLabel(30 - recentChecks.length, "empty slot")}. Slow means 1 second or more.`);
 
   function dateValue(value?: string | null) {
     return value ? Date.parse(value) : Number.NaN;
@@ -115,7 +116,7 @@
         <div style="overflow-wrap: anywhere;">
           <strong>Paused from automatic use{pause.failureCount && pause.failureCount > 1 ? " after repeated failures" : ""}</strong>
           <small>{pause.providerAccountName || "Public access"} · {humanize(pause.capability)}</small>
-          <small>{checkGuide(pause.automaticPauseReasonCode)?.label ?? "Recent requests failed"}{#if pause.failureCount && pause.failureCount > 0} · {pause.failureCount} recent failures{/if}</small>
+          <small>{checkGuide(pause.automaticPauseReasonCode)?.label ?? "Recent requests failed"}{#if pause.failureCount && pause.failureCount > 0} · {countLabel(pause.failureCount, "recent failure")}{/if}</small>
           <small>{#if pause.automaticPausedAt}Started {timeLabel(pause.automaticPausedAt)} · {/if}Retry after {timeLabel(pause.automaticRetryAt!)}</small>
         </div>
         <div class="panel-heading-actions"><Badge tone="warning">Paused</Badge>

@@ -66,6 +66,6 @@
   .primary-actions { margin-left: auto; }
   .song-panel-actions :global([data-slot="button"]) { padding-inline: var(--space-2); font-size: .75rem; }
   :global(.song-panel-actions .danger-text) { color: var(--danger); }
-  @media (max-width: 899px) { :global(.library-download-menu) { width: 44px; min-width: 44px; height: 44px; min-height: 44px; } .song-panel-actions :global([data-slot="button"]) { min-height: 44px; } }
+  @media (max-width: 899px) { :global(.library-download-menu) { width: 44px; min-width: 44px; height: 44px; min-height: 44px; } .destructive-actions, .primary-actions { min-width: 0; } .song-panel-actions :global([data-slot="button"]) { min-height: 44px; } }
   @media (max-width: 380px) { .destructive-actions { gap: var(--space-1); }.song-panel-actions :global([data-slot="button"]) { padding-inline: var(--space-1); font-size: .6875rem; }.primary-actions :global(svg) { display: none; } }
 </style>

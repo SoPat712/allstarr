@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel, countNoun } from "$lib/count-label";
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import { Dialog } from "$lib/components/ui/dialog";
@@ -478,8 +479,8 @@
     const failed = results.filter((result) => result.status === "rejected").length;
     const elapsed = ((performance.now() - started) / 1_000).toFixed(1);
     toast.show(failed
-      ? `${ids.length - failed} playlists refreshed; ${failed} failed in ${elapsed}s.`
-      : `${ids.length} playlists refreshed in ${elapsed}s.`, failed ? "error" : "success");
+      ? `${countLabel(ids.length - failed, "playlist")} refreshed; ${failed} failed in ${elapsed}s.`
+      : `${countLabel(ids.length, "playlist")} refreshed in ${elapsed}s.`, failed ? "error" : "success");
     bulkProgress = "";
     action = "";
     await refresh();
@@ -579,9 +580,9 @@
         <Button onclick={() => addOpen = true}>Import playlist</Button>
       </div></header>
       <PageStatus label="Playlist status" items={[
-        { label: `${playlistCount} ${playlistCount === 1 ? "playlist" : "playlists"}`, emphasis: true },
-        { label: `${totalSongs.toLocaleString()} songs${playlists.every(item => item.playableCount === item.trackCount) ? ", all playable" : ""}` },
-        ...(orderCount ? [{ label: `${orderCount} ${orderCount === 1 ? "order differs" : "orders differ"} from the source`, tone: "warn" as const }] : []),
+        { label: countLabel(playlistCount, "playlist"), emphasis: true },
+        { label: `${countLabel(totalSongs, "song")}${playlists.every(item => item.playableCount === item.trackCount) ? ", all playable" : ""}` },
+        ...(orderCount ? [{ label: `${countLabel(orderCount, "order differs", "orders differ")} from the source`, tone: "warn" as const }] : []),
       ]} />
       {#if error || degraded || copiesError}<div class="degraded-banner" role="status"><p>{error || degraded || copiesError}</p><Button variant="text" onclick={() => void refresh()}>Try again</Button></div>{/if}
       <div class="library-filters">
@@ -603,7 +604,7 @@
               {#snippet menu()}<DropdownMenu.Root><DropdownMenu.Trigger class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end"><DropdownMenu.Item class="bits-menu-item library-danger" onSelect={() => { removeError = ""; removingMix = playlist; }}>Remove from my apps</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/snippet}
             </ItemRow>
           {:else}
-            <ItemRow title={playlist.name} subtitle={`${providerName(playlist.sourceProviderId)} → ${providerName(playlist.targetProtocol)} · ${playlist.trackCount} songs${playlist.routeCoverage.some(route => ["local", playlist.targetProtocol].includes(route.providerId)) ? ` · ${playlist.routeCoverage.filter(route => ["local", playlist.targetProtocol].includes(route.providerId)).reduce((sum, route) => sum + route.count, 0)} from your library` : ""}${hasCopy(playlist) ? " · Your copy" : ""}`} actionLabel={`Open ${playlist.name} playlist details`} selected={playlist.id === selectedId} attention={needsLook(playlist)} onclick={event => void loadDetails(playlist.id, event.currentTarget as HTMLElement)}>
+            <ItemRow title={playlist.name} subtitle={`${providerName(playlist.sourceProviderId)} → ${providerName(playlist.targetProtocol)} · ${countLabel(playlist.trackCount, "song")}${playlist.routeCoverage.some(route => ["local", playlist.targetProtocol].includes(route.providerId)) ? ` · ${playlist.routeCoverage.filter(route => ["local", playlist.targetProtocol].includes(route.providerId)).reduce((sum, route) => sum + route.count, 0)} from your library` : ""}${hasCopy(playlist) ? " · Your copy" : ""}`} actionLabel={`Open ${playlist.name} playlist details`} selected={playlist.id === selectedId} attention={needsLook(playlist)} onclick={event => void loadDetails(playlist.id, event.currentTarget as HTMLElement)}>
               {#snippet leading()}<MediaArtwork class="playlist-art" url={playlist.artworkUrl} />{/snippet}
               {#snippet pill()}<StatePill tone={needsLook(playlist) ? "warn" : "ok"} text={rowState(playlist)} />{/snippet}
             </ItemRow>
@@ -661,11 +662,11 @@
         {/if}
         {@const editingWarning = jellyfinPlaylistWarning(selected, providerName(selected.sourceProviderId))}
         {#if editingWarning}<div class="playlist-warning" role="status"><strong>{consent?.needsSignIn ? "Saved Jellyfin sign-in expired" : editingWarning}.</strong> {#if consent?.granted && !consent.needsSignIn && selected.lastRunCode?.split(",").some(code => code.trim() === "order")}Fixing order on the next sync{#if details.schedule?.nextRunAt} · {relativeTime(details.schedule.nextRunAt)}{/if}.{:else}<Button variant="text" href="#/sources/services?section=playlist-editing">Allow editing</Button>{/if}</div>{/if}
-        <div class="playlist-kpis"><div><strong>{details.trackCount}</strong><small>songs</small></div><div><strong>{details.playableCount}</strong><small>playable</small></div><div><strong>{details.localCount ?? "—"}</strong><small>from your library</small></div></div>
-        <div class="playlist-match-summary"><strong>{details.reviewCount + details.unresolvedCount ? `${details.reviewCount + details.unresolvedCount} songs need a look` : `All ${details.trackCount} matches are settled`}</strong><Button variant="text" href="#/library/matches">Open in Matches</Button></div>
+        <div class="playlist-kpis"><div><strong>{details.trackCount}</strong><small>{countNoun(details.trackCount, "song")}</small></div><div><strong>{details.playableCount}</strong><small>playable</small></div><div><strong>{details.localCount ?? "—"}</strong><small>from your library</small></div></div>
+        <div class="playlist-match-summary"><strong>{details.reviewCount + details.unresolvedCount ? countLabel(details.reviewCount + details.unresolvedCount, "song needs a look", "songs need a look") : countLabel(details.trackCount, "match is settled", "matches are settled")}</strong><Button variant="text" href="#/library/matches">Open in Matches</Button></div>
         {#key selected.id}<PlaylistSyncSettings playlist={selected} schedule={details.schedule ?? null} sourceName={providerName(selected.sourceProviderId)} {targetName} onPlaylist={value => playlists = playlists.map(item => item.id === value.id ? value : item)} onSchedule={(value, id) => { if (details?.id === id) details = { ...details, schedule: value }; }} />{/key}
         <dl class="playlist-panel-facts"><dt>Last synced</dt><dd>{relativeTime(selected.lastRunAt, "Not yet")}</dd><dt>Source</dt><dd>{providerName(selected.sourceProviderId)}</dd></dl>
-        <details class="playlist-more" bind:open={songsOpen}><summary>Songs and activity · {details.trackCount} songs</summary>
+        <details class="playlist-more" bind:open={songsOpen}><summary>Songs and activity · {countLabel(details.trackCount, "song")}</summary>
         {#if exportError}<p class="field-error" role="alert">{exportError}</p>{/if}
 
         <section class="playlist-overview" aria-label="Playlist summary">
@@ -675,7 +676,7 @@
                 type="button"
                 class="review-filter-button"
                 class:active={routeFilter === "review"}
-                aria-label={`Show ${details.reviewCount} ${details.reviewCount === 1 ? "track" : "tracks"} needing review`}
+                aria-label={`Show ${countLabel(details.reviewCount, "track")} needing review`}
                 onclick={() => routeFilter = "review"}
               >{details.reviewCount} to review</button>
             </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import { Download } from "@lucide/svelte";
@@ -90,7 +91,7 @@
     ? data?.totalSizeFormatted ?? "0 B" : formatSize(removableFiles.reduce((sum, file) => sum + file.size, 0)));
   const bulkDescription = $derived.by(() => {
     const actions: string[] = [];
-    if (explicitKeepCount) actions.push(`release ${explicitKeepCount} explicit Keep${explicitKeepCount === 1 ? "" : "s"}`);
+    if (explicitKeepCount) actions.push(`release ${countLabel(explicitKeepCount, "explicit Keep")}`);
     if (legacyRemovalCount) actions.push(`remove ${legacyRemovalCount} ${cached ? "cached" : "unreferenced kept"} ${legacyRemovalCount === 1 ? "copy" : "copies"}`);
     const diagnostics = data?.diagnosticCount ?? 0;
     return `This will ${actions.join(" and ") || "make no changes"} (${bulkSize} in the affected copies). ${cached ? "The songs can stream or download again next time they play online. Kept songs and original library files stay. " : ""}Other household interests remain protected.${explicitKeepCount ? " If none remain after releasing a Keep, the file enters a 24-hour grace period before cleanup." : " Removed audio and lyrics cannot be restored from this copy."}${diagnostics ? ` ${diagnostics} diagnostic file${diagnostics === 1 ? " stays" : "s stay"} untouched.` : ""}`;
@@ -143,7 +144,7 @@
     }
     const references = Math.max(...files.map(file => file.referenceCount ?? 0));
     if (!files.some(file => file.explicitlyKept) && !references) return files[0].publicationState === "Imported" ? "Imported original" : "No active references";
-    return `${files.some(file => file.explicitlyKept) ? "Your Keep" : "Household"}${references ? ` · ${references} reference${references === 1 ? "" : "s"}` : ""}`;
+    return `${files.some(file => file.explicitlyKept) ? "Your Keep" : "Household"}${references ? ` · ${countLabel(references, "reference")}` : ""}`;
   }
   function formatSize(bytes: number) {
     if (bytes < 1024) return `${bytes} B`;
@@ -229,7 +230,7 @@
         toast.success("Kept copy deletion queued.");
       } else if (removal.kind === "all") {
         const result = await downloads.removeAll(storage);
-        toast.success(result.message || `${result.deletedCount} indexed ${label.toLowerCase()} track${result.deletedCount === 1 ? "" : "s"} removed${result.skippedUnknown ? `; ${result.skippedUnknown} diagnostic file${result.skippedUnknown === 1 ? "" : "s"} skipped` : ""}${result.skippedReferenced ? `; ${result.skippedReferenced} referenced file${result.skippedReferenced === 1 ? "" : "s"} protected` : ""}.`);
+        toast.success(result.message || `${result.deletedCount} indexed ${label.toLowerCase()} track${result.deletedCount === 1 ? "" : "s"} removed${result.skippedUnknown ? `; ${countLabel(result.skippedUnknown, "diagnostic file")} skipped` : ""}${result.skippedReferenced ? `; ${countLabel(result.skippedReferenced, "referenced file")} protected` : ""}.`);
       } else {
         const result = await downloads.remove(removal.file.path, storage);
         toast.success(result.message || (removal.kind === "release" ? "Keep released. Other interests remain protected." : `${removal.file.title || removal.file.fileName} removed.`));
@@ -283,9 +284,9 @@
   {:else if data}
     <div class="downloads-status">
       <PageStatus label={`${label} totals`} items={[
-        { label: `${allGroups.length.toLocaleString()} song${allGroups.length === 1 ? "" : "s"}${allGroups.length !== data.managedCount ? ` · ${data.managedCount} copies` : ""} · ${data.totalSizeFormatted}`, emphasis: true },
-        { label: cached ? storageMode !== "Cache" ? "Playback caching is off" : cacheDurationHours ? `Cached for ${cacheDurationHours % 24 === 0 ? `${cacheDurationHours / 24} days` : `${cacheDurationHours} hours`} after the last access` : "Temporary copies saved after streaming" : "Never removed by cache cleanup" },
-        ...(cached && leavingSoonCount ? [{ label: `${leavingSoonCount} ${leavingSoonCount === 1 ? "copy leaves" : "copies leave"} in the next day`, tone: "warn" as const }] : []),
+        { label: `${countLabel(allGroups.length, "song")}${allGroups.length !== data.managedCount ? ` · ${countLabel(data.managedCount, "copy", "copies")}` : ""} · ${data.totalSizeFormatted}`, emphasis: true },
+        { label: cached ? storageMode !== "Cache" ? "Playback caching is off" : cacheDurationHours ? `Cached for ${cacheDurationHours % 24 === 0 ? countLabel(cacheDurationHours / 24, "day") : countLabel(cacheDurationHours, "hour")} after the last access` : "Temporary copies saved after streaming" : "Never removed by cache cleanup" },
+        ...(cached && leavingSoonCount ? [{ label: `${countLabel(leavingSoonCount, "copy leaves", "copies leave")} in the next day`, tone: "warn" as const }] : []),
         ...(data.diagnosticCount ? [{ label: `${data.diagnosticCount} need review`, tone: "warn" as const }] : []),
       ]} />
     </div>
@@ -359,11 +360,11 @@
 <ConfirmDialog bind:open={confirmOpen}
   title={removal?.kind === "delete-kept" ? `Delete the kept copy of ${removal.preview.title}?` : removal?.kind === "all" ? `Remove all ${label.toLowerCase()} songs?` : removal?.kind === "release" ? "Stop keeping this song?" : "Remove this song?"}
   description={removal?.kind === "delete-kept"
-    ? `This removes the audio and lyrics for everyone in this household. ${removal.preview.favoriteReferences} favorite${removal.preview.favoriteReferences === 1 ? "" : "s"}, ${removal.preview.playlistReferences} playlist reference${removal.preview.playlistReferences === 1 ? "" : "s"}, and ${removal.preview.keepReferences} explicit Keep${removal.preview.keepReferences === 1 ? "" : "s"}${removal.preview.otherReferences ? `, and ${removal.preview.otherReferences} other reference${removal.preview.otherReferences === 1 ? "" : "s"}` : ""} currently protect it. Hearts and playlist entries stay. This ends offline playback from this copy; the song will stream or download again when played online. A new Keep can save it again.`
+    ? `This removes the audio and lyrics for everyone in this household. ${countLabel(removal.preview.favoriteReferences, "favorite")}, ${countLabel(removal.preview.playlistReferences, "playlist reference")}, and ${countLabel(removal.preview.keepReferences, "explicit Keep")}${removal.preview.otherReferences ? `, and ${countLabel(removal.preview.otherReferences, "other reference")}` : ""} currently protect it. Hearts and playlist entries stay. This ends offline playback from this copy; the song will stream or download again when played online. A new Keep can save it again.`
     : removal?.kind === "all" ? bulkDescription
     : removal?.kind === "release" ? `This releases your Keep on ${removal.file.title || removal.file.fileName}. Other household interests stay protected. If none remain, the file enters a 24-hour grace period before cleanup.`
     : `This deletes the indexed audio file and its lyrics sidecar for ${removal?.file.title || removal?.file.fileName || "this song"} (${removal?.file.sizeFormatted || ""}). This cannot be undone.`}
-  confirmLabel={removal?.kind === "delete-kept" ? "Delete kept copy" : removal?.kind === "all" ? `Remove ${bulkActionCount} ${bulkActionCount === 1 ? "copy" : "copies"}` : removal?.kind === "release" ? "Stop keeping" : "Remove song"}
+  confirmLabel={removal?.kind === "delete-kept" ? "Delete kept copy" : removal?.kind === "all" ? `Remove ${countLabel(bulkActionCount, "copy", "copies")}` : removal?.kind === "release" ? "Stop keeping" : "Remove song"}
   disabled={Boolean(action)} closeOnConfirm={false} error={removalError} onConfirm={remove} />
 
 <style>
@@ -428,5 +429,6 @@
     .copies-row, .copies-row > td { display: block; }
     .copies-row > td { padding: var(--space-2); }
     .track-cache-link :global([data-slot="button"]) { min-height: 44px; }
+    .track-cache-link { flex-wrap: wrap; }
   }
 </style>

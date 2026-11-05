@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { writeFilter } from "$lib/components/patterns/helpers";
   import type { Snippet } from "svelte";
   import { onMount, tick, untrack } from "svelte";
@@ -143,7 +144,7 @@
           items = mergeActivity(items, response.items);
           if (added.length) {
             streamedIds = new Set(added.map((item) => item.id));
-            const announcement = `${added.length} new ${added.length === 1 ? "event" : "events"} streamed in.`;
+            const announcement = `${countLabel(added.length, "new event")} streamed in.`;
             if (streamAnnouncement === announcement) {
               streamAnnouncement = "";
               await tick();
@@ -248,7 +249,7 @@
 
   function groupBadge(entries: ActivityItem[], state: string) {
     if (state !== "mixed") return jobState(state);
-    if (entries.every(item => item.kind !== "matching" && !item.jobId)) return `${humanize(groupSeverity(entries))} · ${entries.length} events`;
+    if (entries.every(item => item.kind !== "matching" && !item.jobId)) return `${humanize(groupSeverity(entries))} · ${countLabel(entries.length, "event")}`;
     const succeeded = entries.filter((item) => outcomeClass(item.state) === "accepted").length;
     return `${succeeded} of ${entries.length} done`;
   }
@@ -311,7 +312,7 @@
 </script>
 
 <PageStatus label="History status" items={[
-  { label: loading ? "Loading history…" : items.length + (items.length === 1 ? " event loaded" : " events loaded") },
+  { label: loading ? "Loading history…" : countLabel(items.length, "event") + " loaded" },
   { label: countFor("problems") ? countFor("problems") + " need attention" : "Nothing failed", tone: countFor("problems") ? "warn" : "neutral" },
 ]} />
 

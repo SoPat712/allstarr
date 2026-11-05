@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { onMount, tick, untrack } from "svelte";
   import { activityWork, home, type Job, type JobDetail, type JobProgress } from "$lib/api";
   import { dayLabel, jobName, jobNames, jobState, progressPercent, activityTone, activityText, validJobId } from "$lib/activity";
@@ -223,7 +224,7 @@
       {@const outcome = attempt.outcome || (attempt.completedAt ? "Unknown" : "In progress")}
       <article><strong>Attempt {attempt.attemptNumber}</strong> <ActivityOutcome state={outcome} label={jobState(outcome)} /><p>{time(attempt.startedAt)} → {time(attempt.completedAt)}</p>{#if attempt.errorMessage}<p>{attempt.errorMessage}</p>{/if}</article>
     {:else}
-      {#if detail}<p>No retained attempts. {job.attemptCount ?? 0} attempts are recorded on this job. {#if job.lastAttemptOutcome}Latest outcome: <ActivityOutcome state={job.lastAttemptOutcome} label={jobState(job.lastAttemptOutcome)} />{/if}</p>{/if}
+      {#if detail}<p>No retained attempts. {countLabel(job.attemptCount ?? 0, "attempt is", "attempts are")} recorded on this job. {#if job.lastAttemptOutcome}Latest outcome: <ActivityOutcome state={job.lastAttemptOutcome} label={jobState(job.lastAttemptOutcome)} />{/if}</p>{/if}
     {/each}
     {#if detail?.hasMore}<Button variant="secondary" disabled={detailBusy} onclick={() => void attempts(job, true)}>Load earlier attempts</Button>{/if}
   </section>
@@ -251,7 +252,7 @@
 <section class="activity-work" aria-label="Jobs" aria-busy={busy}>
   <PageStatus label="Jobs status" items={[
     { label: loading ? "Loading jobs…" : queue.length + " running or waiting" },
-    { label: finished.length + " finished jobs loaded" },
+    { label: countLabel(finished.length, "finished job") + " loaded" },
     { label: finished.some(job => job.state === "Failed") ? finished.filter(job => job.state === "Failed").length + " failed" : "Nothing failed", tone: finished.some(job => job.state === "Failed") ? "warn" : "neutral" },
   ]} />
   <div class="job-toolbar">
@@ -278,7 +279,7 @@
     <ErrorState title={error} label="Jobs unavailable" onretry={() => load("replace")} />
   {:else}
     {#if error}<p class="notice-error" role="alert">{error} <Button variant="secondary" onclick={() => void load()}>Retry jobs</Button></p>{/if}
-    <p class="sr-only" role="status" aria-live="polite">{queue.length} queued and {finished.length} finished jobs loaded.</p>
+    <p class="sr-only" role="status" aria-live="polite">{queue.length} queued and {countLabel(finished.length, "finished job")} loaded.</p>
     {#if visibleQueue.length}
       <section class="event-log-day" aria-label="Running and waiting">
         <h2>Running and waiting</h2>

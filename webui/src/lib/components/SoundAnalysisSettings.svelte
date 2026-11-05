@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { audioMuse, mixes, ApiError, type AudioMuseConnection, type AudioMuseStatus } from "$lib/api";
   import { toast } from "$lib/toasts";
@@ -18,7 +19,7 @@
   let address = $state(""), key = $state(""), connectionError = $state(""), error = $state(""), action = $state("");
   let refreshRequest = 0, connectionRequest = 0, disposed = false;
   const statusLabel = $derived(!status ? "Checking connection…" : status.reason === null
-    ? `Connected · ${status.coverageComplete ? "" : "At least "}${status.analyzedSongs.toLocaleString()} songs analyzed`
+    ? `Connected · ${status.coverageComplete ? "" : "At least "}${countLabel(status.analyzedSongs, "song")} analyzed`
     : ["not_enabled", "not_set_up"].includes(status.reason) ? "Not set up" : "Can't reach AudioMuse");
 
   async function refresh() {
@@ -91,7 +92,7 @@
   {#if error}<ErrorState title="Some sound analysis settings are unavailable" detail={error} onretry={refresh} />{/if}
   {#if !status && refreshing}<RowsSkeleton count={2} />{:else}
     <section class="settings-card" aria-label="AudioMuse connection"><header><h3>AudioMuse</h3></header>
-      <div class="settings-row"><div><strong>Connection</strong><small>{status?.analyzedSongs?.toLocaleString() ?? 0} songs analyzed{connection?.keyConfigured ? " · key saved" : ""}</small></div><div class="connection-actions"><StatePill tone={status?.reason === null ? "ok" : "neutral"} text={status?.reason === null ? "Connected" : "Not connected"} /><Button type="button" variant="outline" disabled={Boolean(action)} onclick={editConnection}>Edit connection</Button></div></div>
+      <div class="settings-row"><div><strong>Connection</strong><small>{countLabel(status?.analyzedSongs ?? 0, "song")} analyzed{connection?.keyConfigured ? " · key saved" : ""}</small></div><div class="connection-actions"><StatePill tone={status?.reason === null ? "ok" : "neutral"} text={status?.reason === null ? "Connected" : "Not connected"} /><Button type="button" variant="outline" disabled={Boolean(action)} onclick={editConnection}>Edit connection</Button></div></div>
       <label class="settings-row"><div><strong>Let listeners add mixes to their apps</strong><small>Each listener picks which mixes show as playlists.</small></div><span class="settings-toggle"><Switch checked={publishEnabled === true} disabled={publishEnabled === null || Boolean(action)} aria-label="Let listeners add mixes to their apps" onchange={event => void setPublishing(event.currentTarget.checked)} /></span></label>
       {#if publishError}<p class="notice-error settings-impact" role="alert">{publishError}</p>{/if}
     </section>

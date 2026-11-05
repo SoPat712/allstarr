@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { X } from "@lucide/svelte";
   import { onMount, type Component } from "svelte";
   import { goto } from "$app/navigation";
@@ -90,13 +91,13 @@
         if (status.job.state === "Succeeded") {
           const detail = await playlistLinks.details(card.id, undefined, controller.signal);
           if (controller.signal.aborted) return;
-          toast.update(notification, { message: `${card.name} is ready · ${detail.matchedCount} of ${detail.trackCount} songs matched`, busy: false, kind: "success", action: { label: "Open", run: () => openMix(card) } });
+          toast.update(notification, { message: `${card.name} is ready · ${detail.matchedCount} of ${countLabel(detail.trackCount, "song")} matched`, busy: false, kind: "success", action: { label: "Open", run: () => openMix(card) } });
           stop();
           void load();
           return;
         }
         const progress = (status.progress ?? []).map(progressDetails).find(item => item.stage === "playlist.match" && item.total != null);
-        if (progress) toast.update(notification, { message: `Matching ${card.name} · ${progress.completed ?? 0} of ${progress.total} songs` });
+        if (progress) toast.update(notification, { message: `Matching ${card.name} · ${progress.completed ?? 0} of ${countLabel(progress.total ?? 0, "song")}` });
         timer = setTimeout(() => void poll(), 2000);
       } catch (cause) {
         if (controller.signal.aborted) return;
@@ -144,12 +145,12 @@
 </script>
 <div class="for-you">
   <div class="section-heading"><h2>{greeting(new Date().getHours(), listenerName)}</h2><div class="page-actions"><RefreshButton variant="secondary" label="Refresh page" onrefresh={async () => { await pending; await load(); }} /><Button onclick={() => void startMix()}>Start a mix</Button></div></div>
-  <PageStatus items={[{ label: `${cards.filter(card => card.readiness.ready).length} mixes ready` }, { label: "Mixes refresh every morning" }]} />
+  <PageStatus items={[{ label: `${countLabel(cards.filter(card => card.readiness.ready).length, "mix", "mixes")} ready` }, { label: "Mixes refresh every morning" }]} />
   {#if loading}{#each ["Made for you", "Moods"] as title}<section aria-label={`Loading ${title}`}><h2>{title}</h2><RowsSkeleton count={3} /></section>{/each}
   {:else}
     {#if checklist}<section class="settings-card checklist" aria-label="Get more from your mixes">
       <header><h2>Get more from your mixes</h2><button type="button" class="icon-button" aria-label="Hide tips" onclick={hide}><X size={18} aria-hidden="true" /></button></header>
-      {#if !dailyReady}<div class="check-row"><span>Listen to {remaining ? `about ${remaining} more` : "more"} songs — or import your history</span><Button variant="secondary" size="sm" onclick={() => importOpen = true}>Import history</Button></div>{/if}
+      {#if !dailyReady}<div class="check-row"><span>Listen to {remaining ? `about ${countLabel(Number(remaining), "more song")}` : "more songs"} — or import your history</span><Button variant="secondary" size="sm" onclick={() => importOpen = true}>Import history</Button></div>{/if}
       {#if !connected}<div class="check-row"><span>Connect Last.fm or ListenBrainz for more discoveries</span><Button variant="secondary" size="sm" href="#/sources">Connect</Button></div>{/if}
       {#if administrator && !soundReady}<div class="check-row"><span>Turn on sound analysis for mood mixes</span><Button variant="secondary" size="sm" href="#/settings/sound-analysis">Set up</Button></div>{/if}
     </section>{/if}
@@ -171,7 +172,7 @@
 <style>
   .for-you { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--section-gap); min-width: 0; }
   .for-you > :global(section) { min-width: 0; }
-  .page-actions { display: flex; align-items: center; gap: var(--space-2); }
+  .page-actions { display: flex; min-width: 0; max-width: 100%; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
   .section-heading, header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
   h2 { font-size: 1.125rem; font-weight: 600; }
   .muted { color: var(--color-ink-muted); }
@@ -182,5 +183,6 @@
   .check-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); min-height: 48px; padding-block: var(--space-2); }
   .check-row :global([data-slot="button"]) { min-height: var(--control-md); }
   .check-row + .check-row { border-top: 1px solid var(--color-edge); }
+  @media (max-width: 899px) { .page-actions { width: 100%; } .page-actions :global([data-slot="button"]) { max-width: 100%; height: auto; min-height: var(--control-md); white-space: normal; overflow-wrap: anywhere; } }
   @media (max-width: 600px) { .check-row { grid-template-columns: minmax(0, 1fr); } .check-row :global([data-slot="button"]) { grid-column: 1; justify-self: start; } }
 </style>

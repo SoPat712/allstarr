@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import PageStatus from "$lib/components/patterns/PageStatus.svelte";
   import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
   import ItemRow from "$lib/components/patterns/ItemRow.svelte";
@@ -307,7 +308,7 @@
     const state = sourceStatus(item, accounts, health);
     const timing = sourceTimingLabel(item, summary(item.id));
     const fact = item.useMode === "off" || state === "disabled" ? "Not used" : problem
-      ? `${problem}${metrics.total ? ` · ${metrics.passing} of ${metrics.total} ${metrics.total === 1 ? "check" : "checks"} passed` : ""}`
+      ? `${problem}${metrics.total ? ` · ${metrics.passing} of ${countLabel(metrics.total, "check")} passed` : ""}`
       : state === "needs_verification" ? "Sign in again" : state === "needs_config" ? "Connect an account to use this source"
       : [qualityOf(item.id), timing === "Not applicable" ? "" : timing].filter(Boolean).join(" · ") || (sourceNeedsAccount(item) ? "Account connected" : "No account needed");
     return `${sourceOriginLabel(item)} · ${fact}`;
@@ -551,7 +552,7 @@
       const result = await sources.test(account, capability).finally(() => toast.dismiss(pending));
       testResults = { ...testResults, [key]: result };
       let message = `${provider(account.providerId)?.name ?? account.providerId} ${capability ? humanize(capability) : "connection"} ${result.healthy ?? result.success ? "passed" : "needs attention"}.`;
-      if (result.seekRung) message += ` Playback: ${humanize(result.seekRung)}${result.sampleBytes ? ` (${result.sampleBytes.toLocaleString()} bytes sampled)` : ""}.`;
+      if (result.seekRung) message += ` Playback: ${humanize(result.seekRung)}${result.sampleBytes ? ` (${countLabel(result.sampleBytes, "byte")} sampled)` : ""}.`;
       if (result.reasonCode) message += ` ${diagnosticFailureMessage({ ...result, capability })}`;
       if (diagnosticIsNeutral(result)) checkNotification(key, diagnosticFailureMessage({ ...result, capability }), "info");
       else checkNotification(key, message, result.healthy ?? result.success ? "success" : "error");
@@ -892,8 +893,8 @@
     <header class="sources-heading">
       <h2 class="sr-only">{accountsPage ? "Accounts" : "Services"}</h2>
       <PageStatus label={accountsPage ? "Accounts status" : "Services status"} items={accountsPage
-        ? [{ label: `${accounts.length} ${accounts.length === 1 ? "account" : "accounts"}` }, { label: `${deliveries.length} ${deliveries.length === 1 ? "listen" : "listens"} waiting to send`, tone: deliveries.length ? "warn" : "neutral" }]
-        : [{ label: `${mySources.length - needsSetup.length} working` }, { label: `${needsSetup.length} ${needsSetup.length === 1 ? "needs" : "need"} attention`, tone: needsSetup.length ? "stop" : "neutral" }, { label: `${mySources.length} in use of ${providers.length}` }]} />
+        ? [{ label: countLabel(accounts.length, "account") }, { label: `${countLabel(deliveries.length, "listen")} waiting to send`, tone: deliveries.length ? "warn" : "neutral" }]
+        : [{ label: `${mySources.length - needsSetup.length} working` }, { label: `${countLabel(needsSetup.length, "needs", "need")} attention`, tone: needsSetup.length ? "stop" : "neutral" }, { label: `${mySources.length} in use of ${providers.length}` }]} />
       <div class="sources-heading-actions"><RefreshButton variant="ghost" onrefresh={refresh} />
         {#if accountsPage}{#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}><Plus size={16} aria-hidden="true" />Connect account</Button>{/if}
         {:else if administrator}<Button onclick={() => addSourceOpen = true}><PackagePlus size={16} aria-hidden="true" />Add extension</Button>{/if}
@@ -1048,6 +1049,10 @@
   .source-panel-footer :global(.extension-remove-link) { margin-right: auto; }
   .source-panel-content :global(output) { display: flex; align-items: center; gap: var(--space-2); overflow-wrap: anywhere; }
   @media (min-width: 900px) { .panel-open { margin-right: min(480px, 40vw); } }
+  @media (max-width: 899px) {
+    .source-toolbar :global(.search-field) { flex: 1 1 10rem; min-width: min(10rem, 100%); }
+    .source-toolbar :global(.search-field input) { width: 100%; min-width: 0; }
+  }
   @media (max-width: 650px) {
     .sources-heading-actions { display: grid; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .sources-heading-actions :global([data-slot="button"]) { width: 100%; white-space: normal; }

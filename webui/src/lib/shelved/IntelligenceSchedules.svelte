@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import { Checkbox } from "$lib/components/ui/checkbox";
@@ -124,7 +125,7 @@
     <ul class="schedule-list">
       {#each schedules as item}
         <li><article>
-          <div><strong>{item.name}</strong><small>{item.limit} tracks · {cadence(item.cronExpression)} · {item.timeZoneId}</small><small>{item.enabled ? item.nextRunAt ? `Next run ${new Date(item.nextRunAt).toLocaleString()}` : "Waiting for its next run" : "Paused"}</small></div>
+          <div><strong>{item.name}</strong><small>{countLabel(item.limit, "track")} · {cadence(item.cronExpression)} · {item.timeZoneId}</small><small>{item.enabled ? item.nextRunAt ? `Next run ${new Date(item.nextRunAt).toLocaleString()}` : "Waiting for its next run" : "Paused"}</small></div>
           <Badge state={item.enabled ? "healthy" : "suggested"}>{item.enabled ? "On" : "Paused"}</Badge>
           <div class="row-actions"><Button variant="secondary" size="sm" onclick={() => begin(item)}>Edit</Button><Button variant="destructive" size="sm" onclick={() => { error = ""; deleteTarget = item; deleteOpen = true; }}>Remove</Button></div>
         </article></li>

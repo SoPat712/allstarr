@@ -6,8 +6,10 @@ using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
+using allstarr.Services.Local;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.ClientApi;
@@ -16,11 +18,13 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
     IBackendLibraryAccessResolver libraryAccess, IDurableRuntimeSettings settings, IProviderRegistry registry,
     IProtocolProviderGateway providers, JellyfinProxyService jellyfin, LibraryProviderResolver libraryProvider)
 {
-    public async Task<ClientMixes> ListAsync(ProtocolExecutionContext execution, string? timeZoneId)
+    public async Task<ClientMixes> ListAsync(HttpContext http, ProtocolExecutionContext execution, string? timeZoneId)
     {
         var token = execution.CancellationToken;
         var stored = await mixes.ListAsync(execution, timeZoneId);
         var allowed = await AllowedLocalIdsAsync(execution, stored);
+        var native = await ReadNativeAsync(http, execution, stored.SelectMany(mix => Playable(mix, allowed))
+            .Where(item => item.Song.IsLocal).Select(item => item.Song.Id).Distinct().ToArray());
         var publish = (bool)(await settings.GetAsync(PersonalMixService.PublishKey, token)).Value;
         return new(stored.Select(mix =>
         {
@@ -29,7 +33,8 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
             return new ClientMix(mix.Id, mix.Kind, mix.Name, mix.Description, State(mix), songs.Count,
                 songs.Sum(item => item.Song.Duration * 1000L ?? 0), mix.UpdatedAt,
                 $"/allstarr/v1/mixes/{mix.Id}/cover", inApps,
-                inApps ? PlaylistVirtualizationService.CreateProtocolId(mix.Id) : null);
+                inApps ? PlaylistVirtualizationService.CreateProtocolId(mix.Id) : null,
+                songs.Select(item => ArtworkUrl(item.Song, native)).OfType<string>().Distinct(StringComparer.Ordinal).Take(4).ToArray());
         }).ToArray());
     }
 
@@ -50,6 +55,7 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
             var itemId = song.Id;
             var albumId = song.AlbumId;
             var artistId = song.ArtistId ?? song.ArtistIds.FirstOrDefault();
+            string? artworkUrl = null;
             ItemDetailsProvider? provider = null;
             if (song.IsLocal)
             {
@@ -57,16 +63,21 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
                 provider = library;
                 itemId = root.GetProperty("Id").GetString()!;
                 albumId = root.TryGetProperty("AlbumId", out var album) ? album.GetString() : null;
+                artworkUrl = JellyfinItemArtwork.PrimaryImageUrl(root, itemId);
                 artistId = root.TryGetProperty("ArtistItems", out var artists) && artists.ValueKind == JsonValueKind.Array &&
                     artists.GetArrayLength() > 0 && artists[0].TryGetProperty("Id", out var artist) ? artist.GetString() : null;
             }
             else if (song.ExternalProvider is { } source)
             {
-                if (song.ExternalId is { } externalId &&
-                    await providers.GetStoredSongAsync(execution, source, externalId) is { } metadata)
+                var parsed = LocalLibraryService.ParseExternalResource(song.Id);
+                var recording = parsed is { isExternal: true, provider: "allstarr", type: "song" };
+                var metadataProvider = recording ? parsed.provider! : source;
+                var metadataId = recording ? parsed.externalId : song.ExternalId;
+                if (metadataId is { } externalId &&
+                    await providers.GetStoredSongAsync(execution, metadataProvider, externalId) is { } metadata)
                 {
                     itemId = string.IsNullOrWhiteSpace(metadata.Id) ? song.Id : metadata.Id;
-                    albumId = metadata.AlbumId ?? albumId;
+                    albumId = ClientCatalogIds.Normalize(metadata.AlbumId) ?? albumId;
                     artistId = metadata.ArtistId ?? metadata.ArtistIds.FirstOrDefault() ?? artistId;
                     source = metadata.ExternalProvider ?? source;
                 }
@@ -82,7 +93,9 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
                 albumId = ClientCatalogIds.Normalize(albumId);
                 artistId = ClientCatalogIds.Normalize(artistId);
             }
-            result.Add(new(itemId, song.Title, song.Artist, song.Album, albumId, artistId,
+            if (!song.IsLocal)
+                artworkUrl = JellyfinItemArtwork.PrimaryImageUrl(itemId, JellyfinItemArtwork.PrimaryImageTag(itemId, false));
+            result.Add(new(itemId, song.Title, song.Artist, song.Album, albumId, artworkUrl, artistId,
                 song.Duration * 1000L, !song.IsLocal, provider, item.Reason));
         }
         return new(mix.Id, mix.UpdatedAt, result);
@@ -122,7 +135,13 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
         foreach (var batch in ids.Chunk(100))
         {
             var (body, status) = await jellyfin.GetJsonAsync($"Users/{Uri.EscapeDataString(execution.VerifiedBackendPrincipalId)}/Items",
-                new() { ["ids"] = string.Join(',', batch), ["limit"] = "100" },
+                new()
+                {
+                    ["ids"] = string.Join(',', batch),
+                    ["limit"] = "100",
+                    ["enableImages"] = "true",
+                    ["fields"] = "AlbumId,AlbumPrimaryImageTag,ImageTags"
+                },
                 http.Request.Headers, execution.CancellationToken);
             using var response = body;
             if (status is 400 or 401 or 403 or 404) continue;
@@ -136,6 +155,15 @@ public sealed class MixReader(PersonalMixService mixes, IDbContextFactory<Allsta
             }
         }
         return result;
+    }
+
+    private static string? ArtworkUrl(Song song, Dictionary<string, JsonElement> native)
+    {
+        if (song.IsLocal)
+            return native.TryGetValue(song.Id, out var item)
+                ? JellyfinItemArtwork.PrimaryImageUrl(item, item.GetProperty("Id").GetString()!) : null;
+        var itemId = ClientCatalogIds.Normalize(song.Id)!;
+        return JellyfinItemArtwork.PrimaryImageUrl(itemId, JellyfinItemArtwork.PrimaryImageTag(itemId, false));
     }
 
     private static bool SameNativeId(string? first, string second) => first == second ||

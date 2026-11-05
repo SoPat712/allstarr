@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { FollowedReleaseArtist, ReleaseInbox, ReleaseInboxEntry } from "../src/lib/api";
 import { appearance, capture, mockIntelligence } from "./intelligence-fixtures";
+import { expectContainedMobileGeometry, widenText } from "./mobile-geometry";
 
 const followedArtists: FollowedReleaseArtist[] = [
   { providerId: "qobuz", artistId: "north", displayName: "North" },
@@ -82,6 +83,16 @@ async function openFollowConfirmation(page: Page) {
   await page.getByRole("button", { name: "Release actions", exact: true }).click();
   await page.getByRole("menuitem", { name: "Follow artists from my hearts", exact: true }).click();
 }
+
+test("Empty release actions fit with wider text at 390px", async ({ page }) => {
+  await appearance(page, 390, "light");
+  await mockReleases(page, { entries: [], excluded: [], coverage: [] }, []);
+  await openReleases(page);
+  const actions = page.locator(".empty-action");
+  await expect(actions.getByRole("button", { name: "Follow my top artists", exact: true })).toBeVisible();
+  await widenText(actions.locator("[data-slot=button]"));
+  await expectContainedMobileGeometry(page);
+});
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
   test(`New releases and followed artists at ${width}px ${theme}`, async ({ page }) => {

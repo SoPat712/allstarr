@@ -45,8 +45,8 @@
 
 <style>
   .page-status { display: grid; min-width: 0; gap: var(--space-3); }
-  .status-items, .status-legend { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-4); margin: 0; padding: 0; list-style: none; }
-  li { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--color-ink-muted); font-size: var(--text-sm); }
+  .status-items, .status-legend { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; gap: var(--space-2) var(--space-4); margin: 0; padding: 0; list-style: none; }
+  li { display: inline-flex; min-width: 0; max-width: 100%; align-items: center; gap: var(--space-2); color: var(--color-ink-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
   strong { color: var(--color-ink); font-weight: 600; }
   .status-items [data-tone="warn"], .status-items [data-tone="warn"] strong { color: var(--warning); }
   .legend-swatch { width: 10px; height: 10px; flex: 0 0 auto; border-radius: calc(var(--radius-sm) / 4); background: var(--tone); }

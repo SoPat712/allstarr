@@ -64,7 +64,7 @@
 </div>
 
 <style>
-  .filter-segments { display: flex; width: fit-content; max-width: 100%; gap: var(--space-1); overflow-x: auto; padding: var(--space-1); border: 1px solid var(--color-edge); border-radius: var(--radius-lg); background: var(--color-panel); scrollbar-width: thin; }
+  .filter-segments { display: flex; width: fit-content; min-width: 0; max-width: 100%; gap: var(--space-1); overflow-x: auto; padding: var(--space-1); border: 1px solid var(--color-edge); border-radius: var(--radius-lg); background: var(--color-panel); scrollbar-width: thin; }
   button { display: inline-flex; min-height: var(--control-md); min-width: var(--control-md); flex: 0 0 auto; align-items: center; justify-content: center; gap: var(--space-2); border: 0; border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); background: transparent; color: var(--color-ink-muted); cursor: pointer; font-size: var(--text-sm); font-weight: 500; white-space: nowrap; transition: background var(--motion-standard), color var(--motion-standard); }
   button:hover { background: var(--color-panel-raised); color: var(--color-ink); }
   button[aria-checked="true"] { background: var(--color-signal-muted); color: var(--color-signal-text); font-weight: 700; }

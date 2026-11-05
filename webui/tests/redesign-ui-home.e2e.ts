@@ -1,9 +1,25 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { appearance, mockForYou, openHome } from "./for-you-fixtures";
-import { expectContainedMobileGeometry } from "./mobile-geometry";
+import { expectContainedMobileGeometry, widenText } from "./mobile-geometry";
 
 const modes = [{ width: 1280, theme: "light" }, { width: 1280, theme: "dark" }, { width: 390, theme: "light" }, { width: 320, theme: "light" }] as const;
+test("For you actions fit with wider text at 320px", async ({ page }) => {
+  await appearance(page, 320, "light");
+  const state = await mockForYou(page);
+  state.cards[0].inApps = false;
+  await openHome(page);
+  await widenText(page.locator(".page-actions [data-slot=button]"));
+  const title = await page.locator(".section-heading h2").first().boundingBox();
+  const actions = await page.locator(".page-actions").boundingBox();
+  expect(actions!.y).toBeGreaterThanOrEqual(title!.y + title!.height);
+  await expectContainedMobileGeometry(page);
+  await page.getByRole("button", { name: "Open Blend 1", exact: true }).click();
+  const panel = page.getByRole("dialog");
+  await expect(panel.getByRole("button", { name: "Add to apps", exact: true })).toBeVisible();
+  await widenText(panel.locator(".panel-footer [data-slot=button]"));
+  await expectContainedMobileGeometry(page);
+});
 async function shot(page: Page, name: string, width: number, theme: string) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   if (width <= 390) await expectContainedMobileGeometry(page);

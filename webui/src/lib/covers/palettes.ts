@@ -1,4 +1,4 @@
-import { hash } from "./random";
+export function hash(text: string) { let h = 2166136261; for (const ch of text) { h ^= ch.codePointAt(0)!; h = Math.imul(h, 16777619); } return h >>> 0; }
 export type Palette = { paper: string; inks: string[]; type: string; dark?: boolean };
 export const INK = { pink: "#ff48b0", yellow: "#ffd400", blue: "#0078bf", teal: "#00838a", orange: "#ff6c2f", red: "#e8443a", green: "#00a95c",
   purple: "#765ba7", burgundy: "#914e72", navy: "#2e3b55", rust: "#b8602d", olive: "#6f7a3a", black: "#2a2826", grey: "#8d8a85", white: "#f7f2e8" };

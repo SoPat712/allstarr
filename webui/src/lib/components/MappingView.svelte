@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { toast } from "$lib/toasts";
   import { onMount, tick } from "svelte";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
@@ -450,7 +451,7 @@
     chosen = next;
   }
 
-  function songs(count: number) { return `${count} ${count === 1 ? "song" : "songs"}`; }
+  function songs(count: number) { return countLabel(count, "song"); }
 
   async function runBulk(verbs: [string, string], items: MatchReviewItem[], run: (match: MatchReviewItem) => Promise<unknown>) {
     if (!items.length || action) return;
@@ -665,7 +666,7 @@
       <header class="mapping-heading">
         <h2>Matches</h2>
         <PageStatus items={[
-          { label: `${data.stats.total.toLocaleString()} songs${playlistCount == null ? "" : ` from ${playlistCount.toLocaleString()} playlists`}`, emphasis: true },
+          { label: `${countLabel(data.stats.total, "song")}${playlistCount == null ? "" : ` from ${countLabel(playlistCount, "playlist")}`}`, emphasis: true },
           ...(threshold == null ? [] : [{ label: `Matches above ${percent(threshold)} are accepted on their own` }]),
         ]} segments={[
           { label: "Matched by Allstarr", value: counts.automatic, tone: "info" },
@@ -730,7 +731,7 @@
           </table>
         {:else}<EmptyState title="No songs in this filter" description="Try another filter or search." />{/if}
       </div>
-      <nav class="playlist-pagination mapping-pagination" aria-label="Match review pages"><span>{data.pagination.total} {data.pagination.total === 1 ? "song" : "songs"}</span><div>
+      <nav class="playlist-pagination mapping-pagination" aria-label="Match review pages"><span>{countLabel(data.pagination.total, "song")}</span><div>
         <Button variant="text" disabled={page <= 1} onclick={() => goToPage(page - 1)}>Previous</Button><span>Page {page} of {data.pagination.totalPages}</span><Button variant="text" disabled={page >= data.pagination.totalPages} onclick={() => goToPage(page + 1)}>Next</Button>
       </div></nav>
       {#if chosen.size}<div class="mapping-bulk" role="toolbar" aria-label="Actions for selected songs"><strong>{chosen.size} selected</strong><div>

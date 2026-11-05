@@ -9,37 +9,30 @@ export async function mockCovers(page: Page) {
   const tags = ["R&B", "Indie Rock", "Electronic", "Hip-Hop"];
   state.cards.slice(0, 4).forEach((card, i) => { card.name = `${tags[i]} Blend`; card.description = `Made for you · ${tags[i].toLowerCase()} · North, Cedar, Willow`; });
   state.cards.find(card => card.kind === "custom")!.name = "Evening Mix";
-  await page.route("**/fonts/*.woff2", route => route.continue());
   await page.route("**/api/admin/playlist-sources", route => route.fulfill({ json: { accounts: [
     { id: "last", providerId: "lastfm", displayName: "Last.fm", scope: "personal" },
     { id: "listen", providerId: "listenbrainz", displayName: "ListenBrainz", scope: "personal" },
   ], blockedAccounts: [], providers: [] } }));
   return state;
 }
-export async function expectPainted(covers: Locator) {
-  await expect.poll(() => covers.evaluateAll(canvases => canvases.every(element => {
-    const canvas = element as HTMLCanvasElement;
-    if (!canvas.width || canvas.width !== canvas.height) return false;
-    const pixels = canvas.getContext("2d")!.getImageData(0, 0, canvas.width, canvas.height).data;
-    const colours = new Set<number>();
-    for (let i = 0; i < pixels.length; i += 4 * 37) {
-      if (pixels[i + 3]) colours.add((pixels[i] << 16) | (pixels[i + 1] << 8) | pixels[i + 2]);
-    }
-    return colours.size > 20;
-  }))).toBe(true);
+export async function expectCovered(covers: Locator) {
+  await expect(covers).not.toHaveCount(0);
+  await expect.poll(() => covers.evaluateAll(elements => elements.flatMap(element => {
+    const box = element.getBoundingClientRect();
+    const shelf = element.closest(".mix-shelf")?.getBoundingClientRect();
+    const images = [...element.querySelectorAll("img")];
+    const loaded = images.every(image => {
+      const rect = image.getBoundingClientRect();
+      const visible = rect.bottom > 0 && rect.top < innerHeight && rect.right > 0 && rect.left < innerWidth &&
+        (!shelf || rect.left < shelf.right && rect.right > shelf.left && rect.top < shelf.bottom && rect.bottom > shelf.top);
+      return !!image.getAttribute("src") && (!visible || image.complete && image.naturalWidth > 0);
+    });
+    const valid = box.width > 0 && Math.abs(box.width - box.height) <= 1 && element.scrollWidth <= box.width + 1 &&
+      (images.length ? loaded : getComputedStyle(element).backgroundImage.startsWith("linear-gradient("));
+    return valid ? [] : [{ width: box.width, height: box.height, scrollWidth: element.scrollWidth, loaded }];
+  }))).toEqual([]);
 }
-export async function pixels(cover: Locator) {
-  return cover.evaluate(element => (element as HTMLCanvasElement).toDataURL());
+export async function coverState(cover: Locator) {
+  return cover.evaluate(element => ({ background: getComputedStyle(element).backgroundImage,
+    images: [...element.querySelectorAll("img")].map(image => image.getAttribute("src")) }));
 }
-export async function trackDrawing(page: Page) {
-  await page.addInitScript(() => {
-    const draws = new WeakMap<HTMLCanvasElement, number>();
-    const original = CanvasRenderingContext2D.prototype.clearRect;
-    CanvasRenderingContext2D.prototype.clearRect = function(...args) {
-      draws.set(this.canvas, (draws.get(this.canvas) ?? 0) + 1);
-      return original.apply(this, args);
-    };
-    Object.assign(window, { coverDraws: (canvas: HTMLCanvasElement) => draws.get(canvas) ?? 0 });
-  });
-}
-export const drawCount = (cover: Locator) => cover.evaluate(element => (window as unknown as { coverDraws: (canvas: HTMLCanvasElement) => number }).coverDraws(element as HTMLCanvasElement));

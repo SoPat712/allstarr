@@ -96,8 +96,8 @@ describe("event log presentation", () => {
     expect(dayLabel("2026-10-11T10:00:00", new Date("2026-10-12T20:00:00"))).toBe("Yesterday");
     expect(activityAction({ ...item("5", "Song A"), sourceTitle: "Song A" }, () => "Lumen")?.label)
       .toBe("Review match");
-    expect(humanize("provider_health.failed")).toBe("Provider Health Failed");
-    expect(humanize("reviewrequired")).toBe("Review Required");
+    expect(humanize("provider_health.failed")).toBe("Provider health failed");
+    expect(humanize("reviewrequired")).toBe("Review required");
     expect(relativeTime(null, "Never")).toBe("Never");
     expect(activityLink({ ...item("1", "Song A"), sourceTitle: "Song A" }))
       .toBe("#/library/matches?search=Song%20A");
@@ -114,7 +114,7 @@ describe("event log presentation", () => {
       providerId: "library",
     })).toBeNull();
     expect(groupActivity([{ ...item("3", "Failed"), label: "scrobbling check" }])[0].title)
-      .toBe("Scrobbling Check");
+      .toBe("Scrobbling check");
   });
 });
 
@@ -140,7 +140,7 @@ describe("background work presentation", () => {
     const { jobName, jobState, progressPercent } = await import("./activity");
     expect(jobName("playlist.materialize")).toBe("Update playlist");
     expect(jobState("RetryScheduled")).toBe("Retry scheduled");
-    expect(jobState("Deferred")).toBe("Deferred");
+    expect(jobState("Deferred")).toBe("Waiting");
     expect(progressPercent(5, 10)).toBe(50);
     expect(progressPercent(20, 10)).toBe(100);
     expect(progressPercent(-1, 10)).toBe(0);
@@ -244,6 +244,8 @@ it("uses meaningful outcome tones without marking cancelled or unknown work as f
   expect(activityHeadline({ ...item("song", "Song"), label: "Tate McRae song cached" })).toBe("Tate McRae song cached");
   expect(activityDuration(null)).toBe(""); expect(activityDuration(NaN)).toBe(""); expect(activityDuration(-1)).toBe("");
   expect(activityDuration(10)).toBe("less than a second");
+  expect(activityDuration(1000)).toBe("1 second");
+  expect(activityDuration(2000)).toBe("2 seconds");
 });
 
 describe("Activity outcome tones", () => {
@@ -299,4 +301,24 @@ describe("activity labels and retry times", () => {
     expect(activityRecovery("Review your source connection.")).toBe("Review your source connection.");
     expect(activityRecovery("Retry scheduled for an unknown time.")).toBe("Retry scheduled for an unknown time.");
   });
+});
+
+it("uses sentence case while preserving acronyms and service names", () => {
+  expect(humanize("reviewRequired")).toBe("Review required");
+  expect(humanize("API_URL_check")).toBe("API URL check");
+  expect(humanize("ISRCCheck")).toBe("ISRC check");
+  expect(humanize("APIUrlCheck")).toBe("API URL check");
+  expect(humanize("OIDCSignIn")).toBe("OIDC sign in");
+  expect(humanize("Deferred")).toBe("Waiting");
+  expect(humanize("isrc_lrc_id_oidc")).toBe("ISRC LRC ID OIDC");
+  for (const name of ["Jellyfin", "Navidrome", "Subsonic", "Apple Music", "Spotify", "Deezer", "Qobuz", "Tidal", "YouTube", "SoundCloud", "Last.fm", "ListenBrainz", "AudioMuse", "SpicyLyrics", "MusicBrainz", "LRCLib"])
+    expect(humanize(`${name} connection_check`)).toBe(`${name} connection check`);
+  expect(humanize("apple_music_api_check")).toBe("Apple Music API check");
+  expect(humanize("youtube_playback_failed")).toBe("YouTube playback failed");
+  expect(humanize(null)).toBe("Unknown");
+});
+
+it("labels waiting job states consistently in stored and enum spellings", () => {
+  for (const state of ["Deferred", "deferred", "DEFERRED", "Pending"])
+    expect(jobState(state)).toBe("Waiting");
 });

@@ -74,7 +74,7 @@
 </div>
 
 <style>
-  .item-row { position: relative; display: flex; min-height: 56px; align-items: center; gap: var(--space-3); isolation: isolate; border-bottom: 1px solid var(--color-edge); padding: var(--space-2) var(--space-4); background: var(--color-panel); }
+  .item-row { position: relative; display: flex; min-width: 0; min-height: 56px; align-items: center; gap: var(--space-3); isolation: isolate; border-bottom: 1px solid var(--color-edge); padding: var(--space-2) var(--space-4); background: var(--color-panel); }
   .item-row:last-child { border-bottom: 0; }
   .item-row.selected { background: color-mix(in srgb, var(--color-signal) 9%, var(--color-panel)); }
   .item-row.needs-review { box-shadow: inset 3px 0 var(--warning); }
@@ -95,5 +95,12 @@
   .row-controls { display: flex; flex: 0 0 auto; align-items: center; gap: var(--space-1); }
   .row-pill { flex: 0 0 auto; }
   .item-row :global(.row-chevron) { flex: 0 0 auto; color: var(--color-ink-muted); }
-  @media (max-width: 899px) { .item-row { min-height: 64px; gap: var(--space-2); padding-inline: var(--space-3); } .row-leading { width: 40px; height: 40px; } .row-pill { max-width: 35%; } }
+  @media (max-width: 899px) {
+    .item-row { min-height: 64px; flex-wrap: wrap; gap: var(--space-2); padding-inline: var(--space-3); }
+    .row-leading { width: 40px; height: 40px; }
+    .row-pill { min-width: 0; max-width: 35%; }
+    .row-pill :global(.badge), .row-pill :global(.state-pill) { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+    .row-controls { min-width: 0; max-width: 100%; flex-shrink: 1; flex-wrap: wrap; }
+    .row-controls :global([data-slot="button"]) { max-width: 100%; height: auto; flex-shrink: 1; white-space: normal; overflow-wrap: anywhere; }
+  }
 </style>

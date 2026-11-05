@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { ChevronDown } from "@lucide/svelte";
   import { Popover } from "$lib/components/ui/popover";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
@@ -36,7 +37,7 @@
     <small>{local
       ? track.targetStatus === "duplicate" ? "Duplicate · not added twice" : "Local library"
       : track.targetStatus === "streamed" ? "Streams through Allstarr"
-      : `${routes.length} mapped ${routes.length === 1 ? "provider" : "providers"}`}</small>
+      : countLabel(routes.length, "mapped provider")}</small>
   </span>
 {/snippet}
 
@@ -63,7 +64,7 @@
           {#each services as service (service.name)}
             <li>
               <span class="route-tile"><ProviderMark id={service.id} definition={findProviderDefinition(providers, service.id)} /></span>
-              <span>{service.name}<small>{service.pinned ? "Manually chosen" : review ? "Suggested source — check recording" : track.matchState === "accepted" ? "Automatically matched" : "Playback source"}{service.count > 1 ? ` · ${service.count} sources` : ""}</small></span>
+              <span>{service.name}<small>{service.pinned ? "Manually chosen" : review ? "Suggested source — check recording" : track.matchState === "accepted" ? "Automatically matched" : "Playback source"}{service.count > 1 ? ` · ${countLabel(service.count, "source")}` : ""}</small></span>
             </li>
           {/each}
         </ul>

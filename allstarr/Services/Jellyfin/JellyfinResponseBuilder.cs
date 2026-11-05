@@ -339,7 +339,7 @@ public partial class JellyfinResponseBuilder
             albumArtistName = ExternalTrackPresentation.Name(albumArtistName, preferences);
         }
 
-        var primaryImageTag = song.IsLocal ? song.Id : $"{song.Id}-art-v3";
+        var primaryImageTag = JellyfinItemArtwork.PrimaryImageTag(song.Id, song.IsLocal);
         Dictionary<string, object?>[] artistItems =
             artistNames.Count > 0 && song.ArtistIds.Count == artistNames.Count
             ? artistNames
@@ -429,7 +429,7 @@ public partial class JellyfinResponseBuilder
             ["ArtistItems"] = artistItems,
             ["Album"] = albumName,
             ["AlbumId"] = song.AlbumId,
-            ["AlbumPrimaryImageTag"] = song.IsLocal ? song.AlbumId : song.AlbumId == null ? null : $"{song.AlbumId}-art-v3",
+            ["AlbumPrimaryImageTag"] = song.AlbumId == null ? null : JellyfinItemArtwork.PrimaryImageTag(song.AlbumId, song.IsLocal),
             ["PrimaryImageAspectRatio"] = 1.0,
             ["AlbumArtist"] = albumArtistName,
             ["AlbumArtists"] = albumArtists,

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { adminUrl } from "$lib/admin-url";
   import type { ManagedDownload, ProviderDefinition } from "$lib/api";
   import { relativeTime } from "$lib/activity";
@@ -69,7 +70,7 @@
     <section aria-label="File metadata">
       <h3>File</h3>
       <dl>
-        <dt>Size</dt><dd>{file.sizeFormatted} <small>{file.size.toLocaleString()} bytes</small></dd>
+        <dt>Size</dt><dd>{file.sizeFormatted} <small>{countLabel(file.size, "byte")}</small></dd>
         <dt>Updated</dt><dd><time datetime={file.lastModified} title={file.lastModified}>{relativeTime(file.lastModified)}</time></dd>
         <dt>Filename</dt><dd class="file-value">{file.fileName}</dd>
         <dt>Path</dt><dd class="file-value">{file.path}</dd>

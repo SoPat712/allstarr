@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { toast } from "$lib/toasts";
   import { home, settings, downloads, type DownloadsResponse, type ConfigSection, type UiSchema, type OnboardingState } from "$lib/api";
@@ -125,7 +126,7 @@
     {:else if !schema || error}<ErrorState title="Some settings could not be loaded" detail={error} onretry={refresh} />{/if}
     {#if !loading && schema}
       {#if ["general", "access", "storage", "setup"].includes(active)}
-        <PageStatus segments={active === "storage" ? storageSegments : []} items={active === "storage" ? storageItems : active === "setup" ? [{ label: `${onboardingState?.steps?.filter(step => step.state !== "pending").length ?? 0} steps reviewed or skipped` }, { label: "Progress saved for your account" }] : [{ label: "Changes save as you make them" }, { label: "Restart changes ask first" }]} />
+        <PageStatus segments={active === "storage" ? storageSegments : []} items={active === "storage" ? storageItems : active === "setup" ? [{ label: `${countLabel(onboardingState?.steps?.filter(step => step.state !== "pending").length ?? 0, "step")} reviewed or skipped` }, { label: "Progress saved for your account" }] : [{ label: "Changes save as you make them" }, { label: "Restart changes ask first" }]} />
       {/if}
       {#if active === "appearance"}
         {#await import("./SettingsAppearance.svelte")}<RowsSkeleton count={1} />{:then { default: Appearance }}<Appearance />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}

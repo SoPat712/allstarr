@@ -2725,6 +2725,15 @@
               "null",
               "string"
             ]
+          },
+          "artworkUrls": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -2749,6 +2758,7 @@
           "artist",
           "album",
           "albumId",
+          "artworkUrl",
           "artistId",
           "durationMs",
           "isExternal",
@@ -2770,6 +2780,12 @@
             "type": "string"
           },
           "albumId": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "artworkUrl": {
             "type": [
               "null",
               "string"

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { tick } from "svelte";
   import { toast } from "$lib/toasts";
   import { onboarding, type OnboardingState } from "$lib/api";
@@ -37,7 +38,7 @@
   }
 </script>
 <section class="setup-guide" aria-labelledby="setup-title" class:embedded>
-  {#if !embedded}<header><h2 id="setup-title">Set up Allstarr</h2><p class="settings-muted">Your progress is saved. You can leave and come back.</p>{#await import("./patterns/PageStatus.svelte") then { default: PageStatus }}<PageStatus items={[{ label: `${steps.filter(step => step.state !== "pending").length} of ${steps.length} steps reviewed or skipped` }]} />{/await}</header>{:else}<h3 id="setup-title" class="sr-only">Set up Allstarr</h3>{/if}
+  {#if !embedded}<header><h2 id="setup-title">Set up Allstarr</h2><p class="settings-muted">Your progress is saved. You can leave and come back.</p>{#await import("./patterns/PageStatus.svelte") then { default: PageStatus }}<PageStatus items={[{ label: `${steps.filter(step => step.state !== "pending").length} of ${countLabel(steps.length, "step")} reviewed or skipped` }]} />{/await}</header>{:else}<h3 id="setup-title" class="sr-only">Set up Allstarr</h3>{/if}
   {#if embedded && !selected}
     <ol class="setup-overview settings-card" aria-label="Setup steps">
       {#each (showAll ? steps : steps.slice(0, 7)) as step, index (step.id)}
@@ -45,7 +46,7 @@
           {#if current?.id === step.id}<Button size="sm" onclick={() => selected = step.id}>Open</Button>{:else if step.state !== "pending"}<Badge tone={step.state === "reviewed" ? "success" : "neutral"}>{step.state === "reviewed" ? "Reviewed" : "Skipped"}</Badge>{:else}<small>{step.required ? "Required" : "Optional"}</small>{/if}
         </li>
       {/each}
-      {#if steps.length > 7}<li class="more-steps"><Button variant="text" onclick={() => showAll = !showAll}>{showAll ? "Show fewer steps" : `Show ${steps.length - 7} more steps`}</Button></li>{/if}
+      {#if steps.length > 7}<li class="more-steps"><Button variant="text" onclick={() => showAll = !showAll}>{showAll ? "Show fewer steps" : `Show ${countLabel(steps.length - 7, "more step")}`}</Button></li>{/if}
     </ol>
   {:else}
     {#if embedded}<Button variant="text" onclick={() => selected = ""}>Back to all steps</Button>{/if}

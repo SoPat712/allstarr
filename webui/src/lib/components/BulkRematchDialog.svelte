@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { type PlaylistRematchPreview, type TrackRematchAllPreview, playlistLinks } from "$lib/api";
   import { bulkTrackRematch } from "$lib/matching-api";
   import { Badge } from "$lib/components/ui/badge";
@@ -45,7 +46,7 @@
   });
 
   function tracks(count: number) {
-    return `${count.toLocaleString()} ${count === 1 ? "track" : "tracks"}`;
+    return countLabel(count, "track");
   }
 
   function presentation(value: Preview | null) {
@@ -64,7 +65,7 @@
           : "No rematch needed",
         badge: canApply ? "Ready to queue" : "Current",
         consequence: item
-          ? `Allstarr checked ${item.playlistCount.toLocaleString()} linked playlists across ${item.libraryCount.toLocaleString()} ${item.libraryCount === 1 ? "library" : "libraries"}. Only missing or stale decisions are eligible.`
+          ? `Allstarr checked ${countLabel(item.playlistCount, "linked playlist")} across ${countLabel(item.libraryCount, "library", "libraries")}. Only missing or stale decisions are eligible.`
           : "",
         counts: item ? [
           { label: "Local", value: item.localRows },

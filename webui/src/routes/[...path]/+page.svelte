@@ -25,7 +25,7 @@
     { href: "#/activity", label: "Activity", mobileLabel: "Activity", icon: "activity", mobile: true },
     { href: "#/connect", prefix: "/getting-started", label: "Connect apps", mobileLabel: "Connect apps", icon: "guide", mobile: false },
     { href: "#/settings", label: "Settings", mobileLabel: "Settings", icon: "settings", mobile: false },
-    { href: "#/report", label: "Report a problem", mobileLabel: "Report", icon: "activity", mobile: false },
+    { href: "#/report", label: "Report a problem", mobileLabel: "Report", icon: "report", mobile: false },
   ];
   const preferencesDestination: (typeof destinations)[number] = {
     href: "#/preferences",
@@ -137,7 +137,7 @@
   const routeQuery = $derived(new URLSearchParams(page.url.hash.split("?", 2)[1] ?? ""));
   const activeDestination = $derived(
     route === "/settings/alerts" && !administrator ? { ...preferencesDestination, label: "Alerts" } :
-    route === "/report" ? { href: "#/report", label: "Report a problem", mobileLabel: "Report", icon: "activity", mobile: false } : [...navigationDestinations, ...destinations, preferencesDestination].find((item) =>
+    route === "/report" ? { href: "#/report", label: "Report a problem", mobileLabel: "Report", icon: "report", mobile: false } : [...navigationDestinations, ...destinations, preferencesDestination].find((item) =>
       item.href === "#/" ? route === "/" : route.startsWith(item.prefix ?? item.href.slice(1)),
     ) ?? destinations[0],
   );

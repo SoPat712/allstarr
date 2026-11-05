@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { ChevronUp } from "@lucide/svelte";
   import { cubicOut } from "svelte/easing";
   import { slide } from "svelte/transition";
@@ -26,11 +27,11 @@
   const songsApply = $derived(capability === "streaming" || capability === "download" || capability === "lyrics");
   const songs = $derived(parts?.songsTried != null ? parts : score.parts);
   const songsDetail = $derived(songs?.songsTried == null ? "Checked every 6 hours" : capability === "lyrics"
-    ? `Found lyrics for ${songs.songsFound} of ${songs.songsTried} most-played songs`
+    ? `Found lyrics for ${songs.songsFound} of ${countLabel(songs.songsTried, "most-played song")}`
     : `Found ${songs.songsFound} of ${songs.songsTried} of your most-played songs`);
-  const realPlays = $derived(parts?.realPlays ? `, and ${parts.realPlays - (parts.realPlayFailures ?? 0)} of ${parts.realPlays} real plays` : "");
+  const realPlays = $derived(parts?.realPlays ? `, and ${parts.realPlays - (parts.realPlayFailures ?? 0)} of ${countLabel(parts.realPlays, "real play")}` : "");
   const shares = $derived(parts ? [
-    { label: "Reliability", counted: true, note: "", points: parts.reliability, outOf: parts.reliabilityOutOf, detail: `Passed ${feature?.uptimePercent}% of ${feature?.checks.toLocaleString()} checks${realPlays}` },
+    { label: "Reliability", counted: true, note: "", points: parts.reliability, outOf: parts.reliabilityOutOf, detail: `Passed ${feature?.uptimePercent}% of ${countLabel(feature?.checks ?? 0, "check")}${realPlays}` },
     ...(songsApply || songs?.songsTried != null ? [{ label: capability === "lyrics" ? "Has the lyrics" : "Has the song", counted: songsCount, note: songsApply ? "Still measuring" : "Doesn't count here", points: parts.coverage ?? 0, outOf: parts.coverageOutOf ?? 0, detail: songsDetail }] : []),
     ...(score.quality || qualityCounts ? [{ label: "Quality", counted: qualityCounts, note: "Doesn't count here", points: parts.quality, outOf: parts.qualityOutOf,
       detail: qualityCounts ? `${parts.quality === parts.qualityOutOf ? "Meets" : "Below"} your ${targetLabel} setting` : score.quality?.lossless ? "Lossless" : score.quality ? "Lossy" : "Not measured yet" }] : []),
@@ -42,7 +43,7 @@
 
 <div class="score-details" transition:slide={{ duration: 240, easing: cubicOut }}>
   <p class="score-summary">
-    {#if !ranked}You choose this source yourself and Allstarr never picks it automatically, so it isn't scored or ranked. It passed {score.uptimePercent}% of {score.checks.toLocaleString()} checks in the last 30 days.
+    {#if !ranked}You choose this source yourself and Allstarr never picks it automatically, so it isn't scored or ranked. It passed {score.uptimePercent}% of {countLabel(score.checks, "check")} in the last 30 days.
     {:else if capabilityScore(score, capability) == null}Not rated for {featureName} yet. A score needs at least 20 {featureName} checks; this source has {feature?.checks ?? 0}.
     {:else if capability === "streaming"}Only streaming checks count here, {window} Speed is how fast songs start: full points at 0.5 s, none at 8 s. {ceiling}
     {:else if capability === "download"}Only download checks count here, {window} How long a download takes doesn't count. {ceiling}
@@ -67,8 +68,8 @@
   {/if}
   {#if days.length}
     <div class="score-history" class:dimmed={ranked}>
-      <span class="score-rows-title">All checks, last {days.length} days</span>
-      <div class="score-days" role="img" aria-label={`Daily check results for the last ${days.length} days`}>
+      <span class="score-rows-title">All checks, last {countLabel(days.length, "day")}</span>
+      <div class="score-days" role="img" aria-label={`Daily check results for the last ${countLabel(days.length, "day")}`}>
         {#each days as day (day.day)}
           <span title={`${day.day}: ${day.passed} passed, ${day.failed} failed`} style={`--passed:${day.passed + day.failed ? day.passed / (day.passed + day.failed) * 100 : 0}%`}></span>
         {/each}

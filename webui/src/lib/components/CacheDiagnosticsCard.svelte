@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import type { CacheDiagnostics, CacheMaintenancePreview, CacheTierUsage } from "$lib/api";
   import { humanize } from "$lib/sources";
   import { Badge } from "$lib/components/ui/badge";
@@ -91,7 +92,7 @@
   </dl>
 
   <details class="cache-details">
-    <summary><span><strong>Category budgets</strong><small>{snapshot?.categories.length ?? 0} categories with their own limits</small></span><ChevronDown size={18} aria-hidden="true" /></summary>
+    <summary><span><strong>Category budgets</strong><small>{countLabel(snapshot?.categories.length ?? 0, "category", "categories")} with their own limits</small></span><ChevronDown size={18} aria-hidden="true" /></summary>
     <div class="cache-category-list">
       {#each snapshot?.categories ?? [] as category}
         <article>
@@ -101,7 +102,7 @@
           </span>
           <span>
             <strong>{bytes(category.payloadBytes)} of {bytes(category.maximumBytes)}</strong>
-            <small>{category.entryCount} of {category.maximumEntries} entries · fresh for {duration(category.freshSeconds)}</small>
+            <small>{category.entryCount} of {countLabel(category.maximumEntries, "entry", "entries")} · fresh for {duration(category.freshSeconds)}</small>
           </span>
           <Button variant="secondary" size="sm" disabled={busy || category.entryCount === 0} onclick={() => onPurge(category.category)}>
             Purge
@@ -115,7 +116,7 @@
     <summary><span><strong>Limits and cleanup preview</strong><small>What a cleanup would remove, before anything is deleted</small></span><ChevronDown size={18} aria-hidden="true" /></summary>
     <dl class="cache-preview-grid">
       <div><dt>Artwork entry limit</dt><dd>{bytes(snapshot?.artworkLimits.maximumEntryBytes)}</dd></div>
-      <div><dt>Decoded artwork limit</dt><dd>{(snapshot?.artworkLimits.maximumDecodedPixels ?? 0).toLocaleString()} pixels</dd></div>
+      <div><dt>Decoded artwork limit</dt><dd>{countLabel(snapshot?.artworkLimits.maximumDecodedPixels ?? 0, "pixel")}</dd></div>
       <div><dt>Cleanup runs every</dt><dd>{duration(preview?.media.cleanupIntervalSeconds ?? 0)}</dd></div>
       <div><dt>Expired</dt><dd>{(preview?.metadata.expiredEntries ?? 0) + (preview?.media.expiredEntries ?? 0)}</dd></div>
       <div><dt>No expiry</dt><dd>{(preview?.metadata.noExpiryEntries ?? 0) + (preview?.media.noExpiryEntries ?? 0)}</dd></div>

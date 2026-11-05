@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { countLabel } from "$lib/count-label";
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import { KeyRound, X } from "@lucide/svelte";
@@ -61,7 +62,7 @@
       dialogOpen = false;
       toast.success(jellyfin
         ? (status.queuedSyncs ?? 0) > 0
-          ? `Playlist editing allowed. Fixing the order of ${status.queuedSyncs} playlists now.`
+          ? `Playlist editing allowed. Fixing the order of ${countLabel(status.queuedSyncs ?? 0, "playlist")} now.`
           : "Playlist editing allowed."
         : "Playlist management allowed for your listener account.");
     } catch (cause) {

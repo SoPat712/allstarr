@@ -2,11 +2,16 @@ using System.Text.Json;
 
 namespace allstarr.Core.Protocols;
 
+public sealed record BackendMusicLibrary(string Id, string Name);
+
 public static class BackendMusicLibraries
 {
     public const string SelectionKey = "Backend:MusicLibraryIds";
 
-    public static string[] Read(ProtocolKind protocol, JsonElement root)
+    public static string[] Read(ProtocolKind protocol, JsonElement root) =>
+        ReadNamed(protocol, root).Select(item => item.Id).ToArray();
+
+    public static BackendMusicLibrary[] ReadNamed(ProtocolKind protocol, JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object)
             throw new InvalidOperationException("The backend library response is invalid.");
@@ -20,8 +25,8 @@ public static class BackendMusicLibraries
                     item.TryGetProperty("CollectionType", out var type) &&
                     type.ValueKind == JsonValueKind.String &&
                     string.Equals(type.GetString(), "music", StringComparison.OrdinalIgnoreCase))
-                .Select(item => ReadId(item, "Id"))
-                .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+                .Select(item => ReadLibrary(item, "Id", "Name"))
+                .DistinctBy(item => item.Id, StringComparer.Ordinal).OrderBy(item => item.Id, StringComparer.Ordinal).ToArray();
         }
 
         if (protocol != ProtocolKind.Subsonic ||
@@ -33,8 +38,8 @@ public static class BackendMusicLibraries
         if (!folders.TryGetProperty("musicFolder", out libraries)) return [];
         if (libraries.ValueKind != JsonValueKind.Array)
             throw new InvalidOperationException("The Subsonic library response is invalid.");
-        return libraries.EnumerateArray().Select(item => ReadId(item, "id"))
-            .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        return libraries.EnumerateArray().Select(item => ReadLibrary(item, "id", "name"))
+            .DistinctBy(item => item.Id, StringComparer.Ordinal).OrderBy(item => item.Id, StringComparer.Ordinal).ToArray();
     }
 
     public static string[] Select(IEnumerable<string> available, IConfiguration? configuration, ProtocolKind protocol)
@@ -49,7 +54,7 @@ public static class BackendMusicLibraries
             .Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
     }
 
-    private static string ReadId(JsonElement item, string property)
+    private static BackendMusicLibrary ReadLibrary(JsonElement item, string property, string nameProperty)
     {
         if (item.ValueKind != JsonValueKind.Object || !item.TryGetProperty(property, out var id) ||
             id.ValueKind is not (JsonValueKind.String or JsonValueKind.Number))
@@ -57,6 +62,8 @@ public static class BackendMusicLibraries
         var value = id.ValueKind == JsonValueKind.String ? id.GetString() : id.GetRawText();
         if (string.IsNullOrWhiteSpace(value) || value.Length > 300)
             throw new InvalidOperationException("The backend library identifier is invalid.");
-        return value;
+        var name = item.TryGetProperty(nameProperty, out var label) && label.ValueKind == JsonValueKind.String
+            ? label.GetString() : null;
+        return new(value, string.IsNullOrWhiteSpace(name) ? value : name);
     }
 }

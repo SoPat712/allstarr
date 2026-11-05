@@ -1,3 +1,4 @@
+import { countLabel } from "./count-label";
 import type { MixCard, PlaylistLink, PlaylistSourceAccount, PlaylistTrack } from "./api";
 
 export function canRebuildInJellyfin(link: Pick<PlaylistLink, "importMode" | "targetProtocol">) {
@@ -186,9 +187,9 @@ export function scheduleCadence(cronExpression: string) {
   const minute = cronNumber(minuteText, 59);
   if (minute === null || dayOfMonth !== "*" || month !== "*") return custom;
   if (hourText === "*" && dayOfWeek === "*")
-    return minute === 0 ? "Every hour" : `Every hour at ${String(minute).padStart(2, "0")} minutes past`;
+    return minute === 0 ? "Every hour" : `Every hour at ${countLabel(minute, "minute")} past`;
   const interval = /^\*\/(\d+)$/.exec(hourText);
-  if (interval && dayOfWeek === "*" && minute === 0) return `Every ${interval[1]} hours`;
+  if (interval && dayOfWeek === "*" && minute === 0) return `Every ${countLabel(Number(interval[1]), "hour")}`;
   const hour = cronNumber(hourText, 23);
   if (hour === null) return custom;
   const at = timeOfDay(hour, minute);
