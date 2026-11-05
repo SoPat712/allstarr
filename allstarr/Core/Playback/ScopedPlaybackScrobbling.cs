@@ -72,7 +72,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
             .Select(x => x.SubmissionJson).FirstOrDefaultAsync(cancellationToken);
         var saved = savedJson == null ? null : JsonSerializer.Deserialize<PlaybackScrobbleSubmission>(savedJson);
         var item = saved != null ? null : occurrence == null || string.IsNullOrWhiteSpace(occurrence.Title) || string.IsNullOrWhiteSpace(occurrence.Artist)
-            ? await trackResolver.ResolveAsync(payload, cancellationToken)
+            ? payload.SubmittedTrack ?? await trackResolver.ResolveAsync(payload, cancellationToken)
             : null;
         var title = saved?.Track.Title ?? occurrence?.Title ?? item?.Title;
         var artist = saved?.Track.Artist ?? occurrence?.Artist ?? item?.Artist;
@@ -112,7 +112,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
                     if (payload.DestinationTargets != null && !payload.DestinationTargets.Contains(target.ProviderId)) continue;
                     if (await db.PlaybackDeliveryCheckpoints.AnyAsync(x => x.OwnerUserId == payload.Scope.OwnerUserId &&
                             x.SignalKey == checkpointKey && x.TargetId == target.ProviderId && x.State == ScopedPlaybackScrobbleOutcome.Ignored &&
-                            (x.ProviderCode == "listen-incomplete" || x.ProviderCode == "listen-not-completed"), cancellationToken)) continue;
+                            (x.ProviderCode == "listen-incomplete" || x.ProviderCode == "listen-not-completed" || x.ProviderCode == "dismissed"), cancellationToken)) continue;
                     if (await checkpoints.IsCompletedAsync(payload.Scope.OwnerUserId, checkpointKey, target.ProviderId, cancellationToken))
                     {
                         providerIds.Add(target.ProviderId);
@@ -138,6 +138,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
                     }
                     result = await target.DeliverAsync(payload.Scope, payload.Transition, track, payload.PositionTicks,
                         occurredAt, checkpointKey, cancellationToken);
+                    result = EfPlaybackDeliveryCheckpointStore.ExpireNotice(kind, result);
                     await checkpoints.RecordAsync(payload.Scope.OwnerUserId,
                         occurrenceKey, checkpointKey, kind, target.ProviderId, result, cancellationToken);
                 }
@@ -169,6 +170,14 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 throw;
+            }
+            catch (Exception) when (!completion)
+            {
+                providerIds.Add(target.ProviderId);
+                ignoredCount++;
+                await checkpoints.RecordAsync(payload.Scope.OwnerUserId, occurrenceKey, checkpointKey, kind, target.ProviderId,
+                    EfPlaybackDeliveryCheckpointStore.ExpireNotice(kind,
+                        ScopedPlaybackScrobbleResult.Permanent("notice-failed", "The now-playing notice could not be sent.")), cancellationToken);
             }
             catch (UnauthorizedAccessException) when (target is not IBoundPlaybackScrobbleTarget)
             {

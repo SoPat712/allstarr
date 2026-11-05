@@ -2,7 +2,7 @@
   import { countLabel } from "$lib/count-label";
   import { untrack } from "svelte";
   import { scrobbling, type ScrobbleDelivery, type ProviderAccount } from "$lib/api";
-  import { groupDeliveries } from "$lib/source-deliveries";
+  import { canResend, groupDeliveries, visibleDeliveries } from "$lib/source-deliveries";
   import GroupedRow from "$lib/components/patterns/GroupedRow.svelte";
   import EmptyState from "$lib/components/patterns/EmptyState.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
@@ -27,10 +27,10 @@
   let chosenAction = $state<"retry" | "confirm-delivered">("retry");
   const destination = (item: ScrobbleDelivery) => accounts.find(account => account.id === (item.destinationAccountId ?? selectedDestinations[item.id] ?? item.suggestedDestinationAccountId));
   const uncertain = (item: ScrobbleDelivery) => ["ambiguous", "destination-unbound"].includes(item.providerCode ?? "") || Boolean(item.attemptStartedAt);
-  const visible = $derived(items.filter(item => (!targetId || item.targetId === targetId) && (!accountId || destination(item)?.id === accountId)));
+  const visible = $derived(visibleDeliveries(items).filter(item => (!targetId || item.targetId === targetId) && (!accountId || destination(item)?.id === accountId)));
   const groups = $derived(groupDeliveries(visible));
   const targetName = (id: string) => ({ lastfm: "Last.fm", listenbrainz: "ListenBrainz", "multi-scrobbler": "multi-scrobbler", koito: "Koito" })[id] ?? id;
-  const canRetry = (item: ScrobbleDelivery) => Boolean(destination(item)?.enabled && destination(item)?.secret.configured && !destination(item)?.secret.revoked);
+  const canRetry = (item: ScrobbleDelivery) => canResend(item) && Boolean(destination(item)?.enabled && destination(item)?.secret.configured && !destination(item)?.secret.revoked);
   const needsAction = (item: ScrobbleDelivery) => item.state === "permanentfailure" || uncertain(item);
 
   async function load(more = false) {
@@ -69,6 +69,17 @@
     await load();
     onchanged?.();
   }
+  async function dismiss(item: ScrobbleDelivery) {
+    if (busy) return;
+    busy = true;
+    try {
+      await scrobbling.resolve(item, "dismiss");
+      toast.success("Delivery dismissed.");
+    } catch (cause) { toast.error(cause instanceof Error ? cause.message : "The delivery could not be dismissed."); }
+    finally { busy = false; }
+    await load();
+    onchanged?.();
+  }
 </script>
 
 <section class="delivery-groups" aria-label="Scrobble delivery" aria-busy={busy}>
@@ -80,15 +91,17 @@
     {#each groups as group (group.key)}
       {@const first = group.items[0]}
       {@const name = targetName(first.targetId)}
-      {@const reason = first.providerCode === "destination-unbound" ? "The destination needs confirming" : first.requiresReauthentication ? "Reconnect the saved account" : first.safeMessage || "Waiting to retry"}
+      {@const reason = first.unavailableReason || (first.providerCode === "destination-unbound" ? "The destination needs confirming" : first.requiresReauthentication ? "Reconnect the saved account" : first.safeMessage || "Waiting to retry")}
       <div class="delivery-group">
         {#if accountId}<p class="delivery-reason"><strong>{countLabel(group.items.length, "listen is", "listens are")} waiting.</strong> {reason}</p>{/if}
         <GroupedRow count={group.items.length} summary={`${name} · ${reason}`} expanded={Boolean(accountId)}>
           {#snippet action()}
             <div class="delivery-actions">
-              {#if first.requiresReauthentication && destination(first)?.canManage}<Button variant="outline" size="sm" disabled={busy} onclick={() => onConfigure(destination(first)!)}>Reconnect saved account</Button>
-              {:else if needsAction(first)}<Button variant={accountId && group === groups[0] ? "default" : "outline"} size="sm" disabled={busy || !group.items.every(canRetry)} onclick={() => choose(group.items, "retry")}>{first.providerCode === "destination-unbound" ? "Confirm destination" : "Retry all"}</Button>{/if}
-              {#if first.providerCode === "destination-unbound"}<Button variant="text" size="sm" disabled={busy || !group.items.every(canRetry)} onclick={() => choose(group.items, "retry")}>Retry all</Button>{/if}
+              {#if canResend(first)}
+                {#if first.requiresReauthentication && destination(first)?.canManage}<Button variant="outline" size="sm" disabled={busy} onclick={() => onConfigure(destination(first)!)}>Reconnect saved account</Button>
+                {:else if needsAction(first)}<Button variant={accountId && group === groups[0] ? "default" : "outline"} size="sm" disabled={busy || !group.items.every(canRetry)} onclick={() => choose(group.items, "retry")}>{first.providerCode === "destination-unbound" ? "Confirm destination" : "Retry all"}</Button>{/if}
+                {#if first.providerCode === "destination-unbound"}<Button variant="text" size="sm" disabled={busy || !group.items.every(canRetry)} onclick={() => choose(group.items, "retry")}>Retry all</Button>{/if}
+              {/if}
             </div>
           {/snippet}
           {#snippet members()}
@@ -99,17 +112,18 @@
                 <div class="listen-copy"><strong>{item.submission?.title ?? "Saved listen"}</strong>
                   <small>{item.submission?.artist ?? name} · {new Date(item.submission?.occurredAt ?? item.updatedAt).toLocaleString()}</small>
                   <small>{item.destinationAccountId ? "Saved account" : "Destination to confirm"}: {account?.displayName ?? "Connect the intended account"}</small>
-                  {#if !item.destinationAccountId && item.availableDestinationAccountIds?.length}
+                  {#if canResend(item) && !item.destinationAccountId && item.availableDestinationAccountIds?.length}
                     <SelectField label="Destination account for older listen" value={account?.id ?? ""} options={accounts.filter(a => item.availableDestinationAccountIds?.includes(a.id)).map(a => ({ value: a.id, label: `${a.displayName} (${a.scope})` }))} disabled={busy} onchange={value => selectedDestinations[item.id] = value} />
                   {/if}
                   {#if item.retryAfter}<small>Next attempt {new Date(item.retryAfter).toLocaleString()}</small>{/if}
                 </div>
                 <div class="listen-actions">
-                  {#if needsAction(item)}
-                    {#if uncertain(item)}<Button variant="text" size="sm" disabled={busy} onclick={() => choose([item], "confirm-delivered")}>Already in history</Button>{/if}
+                  {#if item.canDismiss}<Button variant="text" size="sm" disabled={busy} onclick={() => void dismiss(item)}>Dismiss</Button>
+                  {:else if needsAction(item) && canResend(item)}
+                    {#if item.canConfirm}<Button variant="text" size="sm" disabled={busy} onclick={() => choose([item], "confirm-delivered")}>Already in history</Button>{/if}
                     <Button variant="text" size="sm" disabled={busy || !canRetry(item)} onclick={() => choose([item], "retry")}>Retry</Button>
                     {#if !account}<a href={`#/sources/accounts?source=${item.targetId}&connect=1`}>Connect this service</a>{/if}
-                  {:else}<StatePill text="Waiting to retry" />{/if}
+                  {:else}<StatePill text={item.state === "retrying" ? "Waiting to retry" : "Cannot resend"} />{/if}
                 </div>
               </div>
             {/each}

@@ -38,6 +38,11 @@ public interface IPlaybackDeliveryCheckpointStore
 }
 public sealed class EfPlaybackDeliveryCheckpointStore(IDbContextFactory<AllstarrDbContext> factory) : IPlaybackDeliveryCheckpointStore
 {
+    internal static ScopedPlaybackScrobbleResult ExpireNotice(PlaybackScrobbleDeliveryKind kind, ScopedPlaybackScrobbleResult result) =>
+        kind == PlaybackScrobbleDeliveryKind.NowPlaying && result.Outcome is ScopedPlaybackScrobbleOutcome.Retrying or ScopedPlaybackScrobbleOutcome.PermanentFailure
+            ? ScopedPlaybackScrobbleResult.Ignored("now-playing-expired", "The now-playing notice expired. Completed listens are sent separately.", result.DetailsJson)
+            : result;
+
     public async Task<bool> IsCompletedAsync(Guid ownerUserId, string signalKey, string targetId, CancellationToken token)
     {
         await using var db = await factory.CreateDbContextAsync(token);
@@ -50,6 +55,7 @@ public sealed class EfPlaybackDeliveryCheckpointStore(IDbContextFactory<Allstarr
         PlaybackScrobbleDeliveryKind kind, string targetId, ScopedPlaybackScrobbleResult result,
         CancellationToken token)
     {
+        result = ExpireNotice(kind, result);
         for (var attempt = 0; ; attempt++)
         {
             await using var db = await factory.CreateDbContextAsync(token);

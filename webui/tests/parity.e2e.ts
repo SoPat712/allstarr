@@ -7141,10 +7141,12 @@ for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"]) {
       }
       return route.fulfill({ json: { items: [
         ...(!confirmed ? [{ id: "delivery-uncertain", revision: 2, targetId: "lastfm", state: "permanentfailure", providerCode: "ambiguous",
+          kind: "completed", canResend: true, canConfirm: true, canDismiss: false,
           safeMessage: "The destination may already have accepted this listen.", requiresReauthentication: false,
           destinationAccountId: accountId, destinationAccountRevision: 3, sendCount: 1, updatedAt: "2026-10-15T12:00:00Z",
           submission: { title: "Uncertain song", artist: "Artist", occurredAt: "2026-10-15T11:56:00Z" } }] : []),
         ...(!retried ? [{ id: "delivery-reconnect", revision: deliveryRevision, targetId: "koito", state: "permanentfailure", providerCode: "destination-changed",
+          kind: "completed", canResend: true, canConfirm: false, canDismiss: false,
           safeMessage: "Reconnect the saved destination account.", requiresReauthentication: true,
           destinationAccountId: secondAccountId, destinationAccountRevision: 2, sendCount: 1, updatedAt: "2026-10-15T12:00:00Z",
           submission: { title: "Reconnect song", artist: "Artist", occurredAt: "2026-10-15T11:52:00Z" } }] : []),
@@ -7178,6 +7180,48 @@ for (const width of [320, 390, 1280]) for (const theme of ["light", "dark"]) {
   });
 }
 
+
+for (const width of [390, 1280]) {
+  test(`Scrobble records without saved listens can only be dismissed at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await mockApi(page);
+    let dismissed = false;
+    const writes: Record<string, unknown>[] = [];
+    await page.route("**/api/admin/scrobbling/deliveries**", route => {
+      if (route.request().method() === "POST") {
+        writes.push(route.request().postDataJSON());
+        dismissed = true;
+        return route.fulfill({ json: { resolved: true } });
+      }
+      return route.fulfill({ json: { items: [
+        { id: "expired-notice", revision: 1, targetId: "listenbrainz", kind: "nowplaying", state: "permanentfailure",
+          providerCode: "400", safeMessage: "Old now-playing notice", canResend: false, canConfirm: false, canDismiss: false,
+          requiresReauthentication: false, sendCount: 1, updatedAt: "2026-10-20T12:00:00Z" },
+        ...(!dismissed ? [{ id: "missing-listen", revision: 3, targetId: "lastfm", kind: "completed", state: "permanentfailure",
+          providerCode: "payload-unavailable", canResend: false, canConfirm: false, canDismiss: true,
+          unavailableReason: "This delivery has no saved completed listen, so it cannot be resent or confirmed. You can dismiss it.",
+          requiresReauthentication: false, sendCount: 0, updatedAt: "2026-10-20T12:00:00Z" }] : []),
+        { id: "unknown-song", revision: 2, targetId: "listenbrainz", kind: "completed", state: "permanentfailure",
+          providerCode: "song-unidentified", canResend: false, canConfirm: false, canDismiss: true,
+          unavailableReason: "We couldn't identify this song after seven days. This listen cannot be sent. You can dismiss it.",
+          requiresReauthentication: false, sendCount: 0, updatedAt: "2026-10-20T12:00:00Z" },
+      ] } });
+    });
+    await page.goto("#/integrations/accounts");
+    const panel = page.getByRole("region", { name: "Scrobble delivery" });
+    await expect(panel).not.toContainText("Old now-playing notice");
+    await expect(panel).toContainText("no saved completed listen");
+    await expect(panel).toContainText("couldn't identify this song after seven days");
+    await expect(panel.getByRole("button", { name: /Retry|Already in history|Confirm destination/ })).toHaveCount(0);
+    for (const group of await panel.locator(".group-toggle").all()) await group.click();
+    await expect(panel.getByRole("button", { name: "Dismiss", exact: true })).toHaveCount(2);
+    await panel.getByRole("button", { name: "Dismiss", exact: true }).first().click();
+    await expect.poll(() => writes.length).toBe(1);
+    expect(writes[0]).toEqual({ revision: 3, action: "dismiss" });
+    await expect(panel).not.toContainText("no saved completed listen");
+    await expectContainedMobileGeometry(page);
+  });
+}
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
   test(`Compatible scrobble targets keep encrypted tokens at ${width}px ${theme}`, async ({ page }) => {
@@ -7260,6 +7304,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
         return route.fulfill({ json: { resolved: true } });
       }
       return route.fulfill({ json: { items: sent ? [] : [{ id: "old-listen", revision: 2, targetId: "lastfm", state: "permanentfailure",
+        kind: "completed", canResend: true, canConfirm: true, canDismiss: false,
         providerCode: "destination-unbound", safeMessage: "This older listen has no saved destination or confirmed outcome.",
         requiresReauthentication: false, destinationAccountId: null, suggestedDestinationAccountId: "first",
         availableDestinationAccountIds: ["first", "second"], sendCount: 0, updatedAt: "2026-10-15T12:00:00Z",

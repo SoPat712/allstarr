@@ -258,7 +258,13 @@ public sealed partial class PlaybackSignalPipelineTests
         SignIn(user);
         var own = Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(await controller.List());
         var json = JsonSerializer.Serialize(own.Value);
-        using (var result = JsonDocument.Parse(json)) Assert.Single(result.RootElement.GetProperty("items").EnumerateArray());
+        using (var result = JsonDocument.Parse(json))
+        {
+            var item = Assert.Single(result.RootElement.GetProperty("items").EnumerateArray());
+            Assert.True(item.GetProperty("canResend").GetBoolean());
+            Assert.False(item.GetProperty("canConfirm").GetBoolean());
+            Assert.False(item.GetProperty("canDismiss").GetBoolean());
+        }
         Assert.DoesNotContain("DestinationJson", json);
         Assert.DoesNotContain("SignalPayloadJson", json);
         Assert.DoesNotContain("fixture-secret", json);

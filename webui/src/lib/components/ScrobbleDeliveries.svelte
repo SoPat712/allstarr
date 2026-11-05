@@ -5,6 +5,7 @@
   import SelectField from "$lib/components/SelectField.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { scrobbling, type ScrobbleDelivery, type ProviderAccount } from "$lib/api";
+  import { canResend, visibleDeliveries } from "$lib/source-deliveries";
   import { toast } from "$lib/toasts";
 
   let { accounts, targetId = "", onConfigure }: {
@@ -22,7 +23,7 @@
   let selectedDestinations = $state<Record<string, string>>({});
   let chosen = $state<ScrobbleDelivery | null>(null);
   let chosenAction = $state<"retry" | "confirm-delivered">("retry");
-  const visible = $derived(items.filter(item => !targetId || item.targetId === targetId));
+  const visible = $derived(visibleDeliveries(items).filter(item => !targetId || item.targetId === targetId));
   const destination = (item: ScrobbleDelivery) => accounts.find(account => account.id === (item.destinationAccountId ?? selectedDestinations[item.id] ?? item.suggestedDestinationAccountId));
   const targetName = (id: string) => ({ lastfm: "Last.fm", listenbrainz: "ListenBrainz", "multi-scrobbler": "multi-scrobbler", koito: "Koito" })[id] ?? id;
   const uncertain = (item: ScrobbleDelivery) => (item.providerCode === "ambiguous" || item.providerCode === "destination-unbound") || Boolean(item.attemptStartedAt);
@@ -61,6 +62,13 @@
     } finally { busy = false; }
     if (!confirmation) await load();
   }
+  async function dismiss(item: ScrobbleDelivery) {
+    busy = true;
+    try { await scrobbling.resolve(item, "dismiss"); toast.success("Delivery dismissed."); }
+    catch (failure) { error = failure instanceof Error ? failure.message : "The delivery could not be dismissed."; }
+    finally { busy = false; }
+    await load();
+  }
 </script>
 
 <section class="settings-card scrobble-deliveries" aria-labelledby="scrobble-delivery-title">
@@ -83,19 +91,21 @@
             <Badge state={item.state === "retrying" && !uncertain(item) ? "suggested" : "degraded"}>
               {uncertain(item) ? "Check destination history" : item.requiresReauthentication ? "Reconnect account" : item.state === "retrying" ? "Waiting to retry" : "Needs attention"}
             </Badge>
-            <p>{item.safeMessage}</p>
-            {#if !item.destinationAccountId && item.availableDestinationAccountIds?.length}
+            <p>{item.unavailableReason || item.safeMessage}</p>
+            {#if canResend(item) && !item.destinationAccountId && item.availableDestinationAccountIds?.length}
               <SelectField label="Destination account for older listen" value={destination(item)?.id ?? ""}
                 options={accounts.filter(a => item.availableDestinationAccountIds?.includes(a.id)).map(a => ({ value: a.id, label: `${a.displayName} (${a.scope})` }))}
                 disabled={busy} onchange={value => selectedDestinations[item.id] = value} />
             {/if}
             {#if item.retryAfter}<small>Next attempt {new Date(item.retryAfter).toLocaleString()}</small>{/if}
           </div>
-          {#if item.state === "permanentfailure" || uncertain(item)}
+          {#if item.canDismiss}
+            <div class="scrobble-delivery-actions"><Button variant="secondary" disabled={busy} onclick={() => void dismiss(item)}>Dismiss</Button></div>
+          {:else if canResend(item) && (item.state === "permanentfailure" || uncertain(item))}
             <div class="scrobble-delivery-actions">
               {#if !account}<a href={`#/sources/services/${item.targetId}`}>Connect this service</a>{/if}
               {#if item.requiresReauthentication && account?.canManage}<Button variant="secondary" disabled={busy} onclick={() => onConfigure(account)}>Reconnect saved account</Button>{/if}
-              {#if uncertain(item)}<Button variant="secondary" disabled={busy} onclick={() => choose(item, "confirm-delivered")}>Already in history</Button>{/if}
+              {#if item.canConfirm}<Button variant="secondary" disabled={busy} onclick={() => choose(item, "confirm-delivered")}>Already in history</Button>{/if}
               <Button disabled={busy || !account?.enabled || !account.secret.configured || account.secret.revoked} onclick={() => choose(item, "retry")}>Retry saved listen</Button>
             </div>
           {/if}

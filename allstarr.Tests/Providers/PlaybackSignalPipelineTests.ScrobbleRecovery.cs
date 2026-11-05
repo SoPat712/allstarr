@@ -458,7 +458,7 @@ public sealed partial class PlaybackSignalPipelineTests
     {
         await using (var db = await factory.CreateDbContextAsync())
         {
-            foreach (var code in new[] { "listen-incomplete", "listen-not-completed", "provider-ignored", "accepted" })
+            foreach (var code in new[] { "listen-incomplete", "listen-not-completed", "dismissed", "provider-ignored", "accepted" })
                 db.PlaybackDeliveryCheckpoints.Add(new()
                 {
                     Id = Guid.CreateVersion7(),

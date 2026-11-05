@@ -54,6 +54,9 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
                     ? ScopedPlaybackScrobbleResult.Permanent("ambiguous",
                         "Delivery could not be confirmed after its attempt began. Check the destination history before retrying.")
                     : ScopedPlaybackScrobbleResult.Retrying("transport-failure", "The saved destination could not be processed yet.");
+                result = EfPlaybackDeliveryCheckpointStore.ExpireNotice(
+                    payload.Transition is PlaybackTransition.Start or PlaybackTransition.InferredStart
+                        ? PlaybackScrobbleDeliveryKind.NowPlaying : PlaybackScrobbleDeliveryKind.Completed, result);
                 await checkpoints.RecordAsync(payload.Scope.OwnerUserId, payload.OccurrenceKey ?? payload.SignalKey,
                     ScopedPlaybackScrobbleDelivery.CheckpointKey(payload),
                     payload.Transition is PlaybackTransition.Start or PlaybackTransition.InferredStart
@@ -148,6 +151,7 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
         {
             var unavailable = ScopedPlaybackScrobbleResult.Permanent("destination-changed",
                 "Reconnect the saved destination account, then explicitly retry this listen with its current revision.", true);
+            unavailable = EfPlaybackDeliveryCheckpointStore.ExpireNotice(kind, unavailable);
             await db.SaveChangesAsync(token);
             await checkpoints.RecordAsync(payload.Scope.OwnerUserId, occurrence, key, kind, target.ProviderId, unavailable, token);
             return unavailable;
@@ -177,6 +181,7 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
                 ? ScopedPlaybackScrobbleResult.Retrying("transport-failure", "Delivery could not be confirmed and will retry with the original listen.")
                 : ScopedPlaybackScrobbleResult.Permanent("ambiguous", "The destination may already have accepted this listen. Check its history before explicitly retrying.");
         }
+        result = EfPlaybackDeliveryCheckpointStore.ExpireNotice(kind, result);
         if (result.Outcome == ScopedPlaybackScrobbleOutcome.Retrying)
         {
             if (!replay && result.ProviderCode is not ("29" or "429" or "http-429" or "8" or "11" or "16"))

@@ -1781,6 +1781,11 @@ export type ScrobbleDelivery = {
   id: string;
   revision: number;
   targetId: string;
+  kind?: "completed" | "nowplaying";
+  canResend?: boolean;
+  canConfirm?: boolean;
+  canDismiss?: boolean;
+  unavailableReason?: string | null;
   state: "delivered" | "ignored" | "retrying" | "permanentfailure";
   providerCode?: string | null;
   safeMessage?: string | null;
@@ -1799,7 +1804,7 @@ export type ScrobbleDelivery = {
 export const scrobbling = {
   deliveries: (before?: string, targetId?: string) => json<{ items: ScrobbleDelivery[] }>(
     `/api/admin/scrobbling/deliveries?attentionOnly=true${targetId ? `&targetId=${encodeURIComponent(targetId)}` : ""}${before ? `&before=${encodeURIComponent(before)}` : ""}`),
-  resolve: (delivery: ScrobbleDelivery, action: "retry" | "confirm-delivered", accountRevision?: number, destinationAccountId?: string) =>
+  resolve: (delivery: ScrobbleDelivery, action: "retry" | "confirm-delivered" | "dismiss", accountRevision?: number, destinationAccountId?: string) =>
     json(`/api/admin/scrobbling/deliveries/${delivery.id}/resolve`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ revision: delivery.revision, action, accountRevision, destinationAccountId }),
     }),

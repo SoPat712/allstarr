@@ -113,14 +113,14 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         if (recoveryJobs != null)
             await new PlaybackScrobbleRepair(factory, recoveryJobs, tracks).ReconcileStartupAsync(cancellationToken);
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        await db.PlaybackDeliveryCheckpoints.Where(x => x.AttemptStartedAt != null && !x.ReplaySafe &&
+        await db.PlaybackDeliveryCheckpoints.Where(x => x.Kind == PlaybackScrobbleDeliveryKind.Completed && x.AttemptStartedAt != null && !x.ReplaySafe &&
                 x.State == ScopedPlaybackScrobbleOutcome.Retrying && x.TargetId != "lastfm")
             .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.State, ScopedPlaybackScrobbleOutcome.PermanentFailure)
                 .SetProperty(x => x.ProviderCode, "ambiguous")
                 .SetProperty(x => x.SafeMessage, "Delivery was interrupted after its send attempt began. Check the destination history before resolving it.")
                 .SetProperty(x => x.UpdatedAt, DateTimeOffset.UtcNow)
                 .SetProperty(x => x.Revision, x => x.Revision + 1), cancellationToken);
-        var pending = await db.PlaybackDeliveryCheckpoints.AsNoTracking().Where(x => x.TargetId == "lastfm" &&
+        var pending = await db.PlaybackDeliveryCheckpoints.AsNoTracking().Where(x => x.Kind == PlaybackScrobbleDeliveryKind.Completed && x.TargetId == "lastfm" &&
                 x.ProviderCode == "ambiguous" && x.SignalPayloadJson != null && x.DestinationJson != null)
             .OrderBy(x => x.UpdatedAt).Take(100).ToListAsync(cancellationToken);
         foreach (var receipt in pending)
@@ -194,7 +194,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
             {
                 var key = ScopedPlaybackScrobbleDelivery.CheckpointKey(payload);
                 await ownerDb.PlaybackDeliveryCheckpoints.Where(x => x.OwnerUserId == payload.Scope.OwnerUserId &&
-                        x.SignalKey == key && x.State == ScopedPlaybackScrobbleOutcome.Retrying && x.AttemptStartedAt == null && x.SendCount > 0)
+                        x.SignalKey == key && x.Kind == PlaybackScrobbleDeliveryKind.Completed && x.State == ScopedPlaybackScrobbleOutcome.Retrying && x.AttemptStartedAt == null && x.SendCount > 0)
                     .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.State, ScopedPlaybackScrobbleOutcome.PermanentFailure)
                         .SetProperty(x => x.ProviderCode, "retry-exhausted")
                         .SetProperty(x => x.SafeMessage, "Automatic retries are exhausted. Check the destination and explicitly retry this saved listen.")
@@ -204,7 +204,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
             {
                 var key = ScopedPlaybackScrobbleDelivery.CheckpointKey(payload);
                 await ownerDb.PlaybackDeliveryCheckpoints.Where(x => x.OwnerUserId == payload.Scope.OwnerUserId &&
-                        x.SignalKey == key && x.ProviderCode == "verification-pending")
+                        x.SignalKey == key && x.Kind == PlaybackScrobbleDeliveryKind.Completed && x.ProviderCode == "verification-pending")
                     .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.State, ScopedPlaybackScrobbleOutcome.PermanentFailure)
                         .SetProperty(x => x.ProviderCode, "ambiguous")
                         .SetProperty(x => x.SafeMessage, "History verification did not finish within the retry budget. Check the destination history.")
