@@ -4,6 +4,7 @@ using allstarr.Core.Enrichment;
 using allstarr.Core.Favorites;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Matching;
+using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
@@ -459,7 +460,18 @@ public sealed partial class PersonalMixService
                     var track = own.Where(row => string.Equals(row.Song.Artist, seed.Key, StringComparison.OrdinalIgnoreCase))
                         .OrderByDescending(row => row.Plays).ThenBy(row => row.Song.Id, StringComparer.Ordinal).FirstOrDefault();
                     if (!reached && NeedsSongs() && track != null && similarTracks != null)
-                        foreach (var suggestion in await inputs.ReadAsync(context, c => similarTracks.FindAsync(c, seed.Key, track.Song.Title, 10, c.CancellationToken), token, "lastfm") ?? [])
+                    {
+                        var failures = inputs.Failures;
+                        var suggestions = await inputs.ReadAsync(context,
+                            c => similarTracks.FindWithOutcomeAsync(c, seed.Key, track.Song.Title, 10, c.CancellationToken), token, "lastfm");
+                        if (suggestions?.Error is { } error)
+                        {
+                            inputs.Failure("lastfm", error.Kind.ToString());
+                            throw new PlaylistSourceUnavailableException("source_unavailable", error, "lastfm");
+                        }
+                        if (inputs.Failures > failures)
+                            throw new PlaylistSourceUnavailableException("source_unavailable", new(ProviderErrorKind.TransientFailure), "lastfm");
+                        foreach (var suggestion in suggestions?.Suggestions ?? [])
                             foreach (var provider in inputs.Playable)
                             {
                                 if (!NeedsSongs()) break;
@@ -467,6 +479,7 @@ public sealed partial class PersonalMixService
                                     .FirstOrDefault(song => MusicSearchService.MetadataRecordingsMatch(new Song { Title = suggestion.Title, Artist = suggestion.Artist }, song, allowSparse: true));
                                 if (song != null) { relatedNames.Add(song.Artist); await Add([song], "Last.fm", seed.Key); break; }
                             }
+                    }
                 }
             }
             if (kind == "discover-weekly") await FindRelated();

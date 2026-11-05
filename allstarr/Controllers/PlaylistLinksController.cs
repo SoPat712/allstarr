@@ -1102,6 +1102,8 @@ public sealed partial class PlaylistLinksController(
         catch (KeyNotFoundException) { return NotFound(); }
         catch (UnauthorizedAccessException) { return StatusCode(403, new { error = "The resource is outside the authenticated scope" }); }
         catch (DbUpdateConcurrencyException) { return Conflict(new { error = "The resource changed before this update" }); }
+        catch (PlaylistSourceEmptyException exception)
+        { return Conflict(new { error = exception.Message, code = PlaylistSourceEmptyException.Code }); }
         catch (PlaylistSourceUnavailableException exception) when (exception.Error != null)
         { return DiscoveryFailure(exception.Error, exception.ProviderId ?? "unknown", null); }
         catch (ProviderPlaylistUpdateException exception)

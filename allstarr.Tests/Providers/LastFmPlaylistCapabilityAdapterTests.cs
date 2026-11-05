@@ -256,6 +256,145 @@ public sealed class LastFmPlaylistCapabilityAdapterTests
         Assert.Equal("provider-contract-changed", result.Error!.Code);
     }
 
+    [Theory]
+    [InlineData("loved", false)]
+    [InlineData("loved", true)]
+    [InlineData("top:1month", false)]
+    [InlineData("top:1month", true)]
+    [InlineData("similar", false)]
+    [InlineData("similar", true)]
+    public async Task MissingOrNullTrackListsReturnAContractFailure(string selection, bool nullList)
+    {
+        var container = selection == "loved" ? "lovedtracks" : "toptracks";
+        var body = nullList
+            ? $"{{\"{container}\":{{\"track\":null,\"@attr\":{{\"page\":\"1\",\"totalPages\":\"0\"}}}}}}"
+            : $"{{\"{container}\":{{\"@attr\":{{\"page\":\"1\",\"totalPages\":\"0\"}}}}}}";
+
+        var result = await Adapter(new Handler(_ => body)).GetPlaylistTracksAsync(Context(), new(Id(selection), new()));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("provider-contract-changed", result.Error!.Code);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("null")]
+    [InlineData("empty")]
+    public async Task EmptyLaterLovedPagesCannotEndAnAdvertisedMultiPageRead(string mode)
+    {
+        var handler = new Handler(query => query["page"] == "1"
+            ? Page("lovedtracks", Track("First", "Artist"), "1", "2")
+            : "{\"lovedtracks\":{" + (mode == "missing" ? "" : mode == "null" ? "\"track\":null," : "\"track\":[],") +
+                "\"@attr\":{\"page\":\"2\",\"totalPages\":\"2\"}}}");
+
+        var result = await Adapter(handler).GetPlaylistTracksAsync(Context(), new(Id("loved"), new()));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("provider-contract-changed", result.Error!.Code);
+        Assert.Equal(2, handler.Queries.Count);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("null")]
+    [InlineData("rate")]
+    [InlineData("http")]
+    [InlineData("timeout")]
+    public async Task LaterSimilarReadErrorsDiscardEarlierSuggestions(string mode)
+    {
+        var handler = new Handler(query => query["method"] == "user.gettoptracks"
+            ? Page("toptracks", new[] { Track("First seed", "Seed artist"), Track("Second seed", "Seed artist") })
+            : query["track"] == "First seed" ? Page("similartracks", Track("Suggestion", "Suggested artist"))
+            : mode switch
+            {
+                "missing" => "{\"similartracks\":{}}",
+                "null" => "{\"similartracks\":{\"track\":null}}",
+                "rate" => "{\"error\":29}",
+                "http" => throw new HttpRequestException(),
+                _ => throw new OperationCanceledException()
+            });
+
+        var result = await Adapter(handler).GetPlaylistTracksAsync(Context(), new(Id("similar"), new()));
+
+        Assert.False(result.IsSuccess);
+        Assert.Null(result.Value);
+        Assert.Equal(mode == "rate" ? ProviderErrorKind.RateLimited : mode is "http" or "timeout"
+            ? ProviderErrorKind.TransientFailure : ProviderErrorKind.CapabilityUnavailable, result.Error!.Kind);
+        if (mode == "rate") Assert.Equal(TimeSpan.FromSeconds(17), result.Error.RetryAfter);
+        Assert.Equal(3, handler.Queries.Count);
+    }
+
+    [Theory]
+    [InlineData("rate")]
+    [InlineData("http")]
+    [InlineData("timeout")]
+    [InlineData("json")]
+    [InlineData("io")]
+    public async Task LaterLovedReadErrorsDiscardEarlierTracks(string mode)
+    {
+        var handler = new Handler(query => query["page"] == "1"
+            ? Page("lovedtracks", Track("First", "Artist"), "1", "2")
+            : mode switch
+            {
+                "rate" => "{\"error\":29}",
+                "http" => throw new HttpRequestException(),
+                "timeout" => throw new OperationCanceledException(),
+                "io" => throw new IOException(),
+                _ => "not json"
+            });
+
+        var result = await Adapter(handler).GetPlaylistTracksAsync(Context(), new(Id("loved"), new()));
+
+        Assert.False(result.IsSuccess);
+        Assert.Null(result.Value);
+        Assert.Equal(2, handler.Queries.Count);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("missing")]
+    [InlineData("invalid")]
+    public async Task ReachingTheSelectionLimitStillValidatesPaging(string pages)
+    {
+        var body = Page("toptracks", Enumerable.Range(0, 50).Select(index => Track($"Song {index}", "Artist")).ToArray(), "1", pages);
+        if (pages == "missing") body = body.Replace(",\"totalPages\":\"missing\"", "", StringComparison.Ordinal);
+
+        var result = await Adapter(new Handler(_ => body)).GetPlaylistTracksAsync(Context(), new(Id("top:1month"), new()));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("provider-contract-changed", result.Error!.Code);
+    }
+
+    [Theory]
+    [InlineData("2", "1")]
+    [InlineData("2", "3")]
+    public async Task ChangingTotalPagesCannotPublishAShorterRead(string firstPages, string secondPages)
+    {
+        var handler = new Handler(query => Page("lovedtracks", Track($"Song {query["page"]}", "Artist"),
+            query["page"], query["page"] == "1" ? firstPages : secondPages));
+
+        var result = await Adapter(handler).GetPlaylistTracksAsync(Context(), new(Id("loved"), new()));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("provider-contract-changed", result.Error!.Code);
+        Assert.Equal(2, handler.Queries.Count);
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("3")]
+    [InlineData("invalid")]
+    public async Task AdvertisedTotalsMustMatchTheCompletedRead(string total)
+    {
+        var body = Page("lovedtracks", Track("Only", "Artist")).Replace(
+            "\"totalPages\":\"1\"", $"\"totalPages\":\"1\",\"total\":\"{total}\"", StringComparison.Ordinal);
+
+        var result = await Adapter(new Handler(_ => body)).GetPlaylistTracksAsync(Context(), new(Id("loved"), new()));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal("provider-contract-changed", result.Error!.Code);
+    }
+
     [Fact]
     public async Task SharedAccountsPublicReadsAndExplicitUserLookupsCannotSupplyPersonalTracks()
     {

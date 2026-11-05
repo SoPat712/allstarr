@@ -137,6 +137,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
             _source.Snapshot = Snapshot("original-owned", Entry(0, "one", "source-1", "One"));
             await _service.RunAsync(Context(), new(_link, 1097));
             _source.Snapshot = Snapshot("original-removed");
+            await ConfirmEmptySourceAsync();
             await _service.RunAsync(Context(), new(_link, 1098));
             await using var verify = await _factory.CreateDbContextAsync();
             var removed = await verify.PlaylistTargetMemberships.SingleAsync();
@@ -165,6 +166,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         Assert.Equal(targetId, _target.LastWrite!.BackendPlaylistId);
         Assert.Equal(existing ? 0 : 1, _target.CreateCalls);
         _source.Snapshot = Snapshot("remove-only-confirmed-owned");
+        await ConfirmEmptySourceAsync();
         await _service.RunAsync(Context(), new(_link, 1102));
         var after = await _target.ReadAsync(new("backend", "principal"), targetId, default);
         Assert.Equal(existing ? ["local-1", "manual"] : new[] { "manual" },
@@ -1547,6 +1549,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
             null, "chosen-existing", true, true, true, true, true));
         _target.Seed("chosen-existing", ["local-1"]);
         _source.Snapshot = Snapshot("empty-source-new-target");
+        await ConfirmEmptySourceAsync();
 
         await _service.RunAsync(Context(), new(_link, 1042));
 
@@ -1641,6 +1644,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         _source.Snapshot = Snapshot("before-upgrade-owned", Entry(0, "one", "source-1", "One"));
         await _service.RunAsync(Context(), new(_link, 1061));
         _source.Snapshot = Snapshot("before-upgrade-removed");
+        await ConfirmEmptySourceAsync();
         await _service.RunAsync(Context(), new(_link, 1062));
         await using (var upgrade = await _factory.CreateDbContextAsync())
         {
@@ -1665,6 +1669,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         Assert.Equal(["local-1"], after.Value!.Members.Select(item => item.BackendItemId));
 
         _source.Snapshot = Snapshot("after-upgrade-source-removed");
+        if (sourceStillContainsSong) await ConfirmEmptySourceAsync();
         await _service.RunAsync(Context(), new(_link, 1064));
         Assert.Empty(_target.LastWrite!.SyncOwnedBackendItemIds);
         var final = await _target.ReadAsync(new BackendPlaylistTargetContext("backend", "principal"), "target-created", default);
@@ -1691,6 +1696,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         }
         _target.IgnoreRemovals = true;
         _source.Snapshot = Snapshot("removal-failed");
+        await ConfirmEmptySourceAsync();
         await _service.RunAsync(Context(), new(_link, 1052));
         Assert.Equal(["local-1"], _target.LastWrite!.SyncOwnedBackendItemIds);
         await using (var verify = await _factory.CreateDbContextAsync())
@@ -1718,6 +1724,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         _source.Snapshot = Snapshot("first-owned", Entry(0, "one", "source-1", "One"));
         await _service.RunAsync(Context(), new(_link, 1011));
         _source.Snapshot = Snapshot("remove-owned");
+        await ConfirmEmptySourceAsync();
         await _service.RunAsync(Context(), new(_link, 1012));
         _target.Seed("target-created", ["local-1"]);
         _source.Snapshot = Snapshot("manual-reappears", Entry(0, "one-again", "source-1", "One"));
@@ -1725,6 +1732,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         await using (var verify = await _factory.CreateDbContextAsync())
             Assert.Empty(await verify.PlaylistTargetMemberships.Where(item => item.Active).ToListAsync());
         _source.Snapshot = Snapshot("remove-source-again");
+        await ConfirmEmptySourceAsync();
         await _service.RunAsync(Context(), new(_link, 1014));
         var after = await _target.ReadAsync(new BackendPlaylistTargetContext("backend", "principal"), "target-created", default);
         Assert.Equal(["local-1"], after.Value!.Members.Select(item => item.BackendItemId));
@@ -1779,6 +1787,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         }
 
         _source.Snapshot = Snapshot("removed-both");
+        await ConfirmEmptySourceAsync();
         await _service.RunAsync(Context(), new(_link, 1002));
 
         Assert.Equal(["local-2"], _target.LastWrite!.SyncOwnedBackendItemIds);
@@ -2830,6 +2839,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
     {
         public CollectedPlaylistSourceSnapshot Snapshot { get; set; } = null!;
         public string? FailureCode { get; set; }
+        public ProviderError? FailureError { get; set; }
         public int CollectCalls { get; private set; }
         public int SummaryCalls { get; private set; }
         public Task<CollectedPlaylistSourceSnapshot> CollectArtworkSummaryAsync(ProtocolExecutionContext context,
@@ -2847,7 +2857,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
             return FailureCode == null
                 ? Task.FromResult(Snapshot)
                 : Task.FromException<CollectedPlaylistSourceSnapshot>(
-                    new PlaylistSourceUnavailableException(FailureCode));
+                    new PlaylistSourceUnavailableException(FailureCode, FailureError, link.SourceProviderId));
         }
         public Task<ProviderOutcome<ProviderPlaylistArtwork>> ResolveArtworkAsync(
             ProtocolExecutionContext context, PlaylistLinkRecord link, ProviderPlaylistArtworkRequest request,

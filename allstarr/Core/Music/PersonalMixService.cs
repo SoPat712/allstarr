@@ -398,7 +398,6 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 if (saved.Release != null) inputs.ReleaseDates[saved.Song.Id] = saved.Release.Value;
                 if (saved.ChartTags.Length > 0) inputs.ChartTags[saved.Song.Id] = saved.ChartTags.ToHashSet();
             }
-            if (readKinds.Count > 0) await SaveFillAsync(user, null, readKinds, token);
             IReadOnlyList<MixCandidate> fetched;
             using (diagnostics.Phase("candidates")) (fetched, _) = await CandidatesAsync(db, user, events, token, inputs: inputs, saved: captured.FillSongs);
             IReadOnlyDictionary<string, AudioMuseScores> features;
@@ -416,7 +415,7 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
                 var selected = kinds.SelectMany(kind => PersonalMixRules.Select(kind,
                     RecipePool(kind, captured.Mixes[kind].CoverTag, fetched, features, fetched), clock.UtcNow, []))
                     .Select(row => row.Song.Id).ToHashSet();
-                await SaveFillAsync(user, fetched.OrderByDescending(row => selected.Contains(row.Song.Id)).ToArray(), [], token, inputs.FreshSongs);
+                await SaveFillAsync(user, fetched.OrderByDescending(row => selected.Contains(row.Song.Id)).ToArray(), readKinds, token, inputs.FreshSongs);
             }
             var exclusions = new Dictionary<string, int>(inputs.Excluded);
             for (var attempt = 0; attempt < 3; attempt++)
@@ -484,13 +483,15 @@ public sealed partial class PersonalMixService(IDbContextFactory<AllstarrDbConte
     internal async Task GenerateJobAsync(DurableJobClaim claim, MixRefreshRequest request, CancellationToken token)
     {
         await using var db = await factory.CreateDbContextAsync(token);
-        var key = await db.Jobs.Where(job => job.Id == claim.JobId).Select(job => job.IdempotencyKey).SingleAsync(token);
+        var job = await db.Jobs.AsNoTracking().SingleAsync(item => item.Id == claim.JobId, token);
+        var key = job.IdempotencyKey;
         var scheduled = key.StartsWith("schedule:", StringComparison.Ordinal);
         var manual = key.StartsWith("mix-refresh:", StringComparison.Ordinal);
         var afterNewHistory = key.StartsWith("history-resolution:", StringComparison.Ordinal);
         await GenerateAsync(claim.OwnerUserId!.Value, request.MixId == Guid.Empty ? null : request.MixId,
             request.DryRun, request.TimeZoneId, token, scheduled: scheduled,
-            allowProviderReads: claim.AttemptNumber == 1 && (scheduled || manual || afterNewHistory), afterNewHistory: afterNewHistory);
+            allowProviderReads: (claim.AttemptNumber == 1 || job.LastErrorCode?.StartsWith("mix-source-read-", StringComparison.Ordinal) == true) &&
+                (scheduled || manual || afterNewHistory), afterNewHistory: afterNewHistory);
     }
 
     private static string[] TopStyles(IReadOnlyList<MixCandidate> rows) => rows.Where(row => row.Plays > 0)
@@ -764,7 +765,14 @@ public sealed class PersonalMixJobHandler(PersonalMixService mixes) : IDurableJo
         if (context.Claim.OwnerUserId == null) return DurableJobCompletion.Failure("mix-owner-missing", "A linked listener is required.");
         var request = context.Claim.Payload.ValueKind == JsonValueKind.Object
             ? context.Claim.Payload.Deserialize<MixRefreshRequest>()! : new MixRefreshRequest(context.Claim.Payload.GetGuid());
-        await mixes.GenerateJobAsync(context.Claim, request, cancellationToken);
-        return DurableJobCompletion.Success();
+        try
+        {
+            await mixes.GenerateJobAsync(context.Claim, request, cancellationToken);
+            return DurableJobCompletion.Success();
+        }
+        catch (PlaylistSourceUnavailableException error)
+        {
+            return DurableJobCompletion.Retry("mix-source-read-" + error.Code, error.Message, error.Error?.RetryAfter);
+        }
     }
 }

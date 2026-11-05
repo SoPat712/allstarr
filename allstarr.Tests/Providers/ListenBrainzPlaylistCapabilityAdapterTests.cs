@@ -148,17 +148,147 @@ public sealed class ListenBrainzPlaylistCapabilityAdapterTests
         Assert.Contains(published ? "empty" : "not generated", result.Snapshot.Description, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Fact]
-    public async Task GeneratedPlaylistDisappearingAfterListingReturnsAnEmptySnapshot()
+    [Theory]
+    [InlineData("weekly-jams")]
+    [InlineData("weekly-exploration")]
+    public async Task GeneratedPlaylistDisappearingAfterListingReturnsNotFound(string kind)
     {
         var handler = new Handler(request => request.RequestUri!.AbsolutePath.EndsWith("validate-token")
             ? Json("{\"valid\":true,\"user_name\":\"listener\"}")
-            : request.RequestUri.AbsolutePath.EndsWith("createdfor") ? Json(Listing(Fixture())) : new(HttpStatusCode.NotFound));
+            : request.RequestUri.AbsolutePath.EndsWith("createdfor") ? Json(Listing(Newer(kind, PlaylistId))) : new(HttpStatusCode.NotFound));
         var adapter = new ListenBrainzPlaylistCapabilityAdapter(new HttpClient(handler), new Secrets());
-        var result = await new ProviderPlaylistSnapshotCollector().CollectAsync(adapter, Context(personal: true), new(Resource("createdfor:weekly-jams")));
-        Assert.True(result.IsSuccess);
-        Assert.Empty(result.Snapshot!.Entries);
-        Assert.Contains("unavailable", result.Snapshot.Description);
+        var result = await new ProviderPlaylistSnapshotCollector().CollectAsync(adapter, Context(personal: true), new(Resource("createdfor:" + kind)));
+        Assert.False(result.IsSuccess);
+        Assert.Null(result.Snapshot);
+        Assert.Equal(ProviderErrorKind.NotFound, result.Error!.Kind);
+    }
+
+    [Theory]
+    [InlineData("weekly-jams", HttpStatusCode.TooManyRequests, ProviderErrorKind.RateLimited)]
+    [InlineData("weekly-jams", HttpStatusCode.ServiceUnavailable, ProviderErrorKind.TransientFailure)]
+    [InlineData("weekly-exploration", HttpStatusCode.TooManyRequests, ProviderErrorKind.RateLimited)]
+    [InlineData("weekly-exploration", HttpStatusCode.ServiceUnavailable, ProviderErrorKind.TransientFailure)]
+    public async Task GeneratedPlaylistHttpErrorsKeepTheirClassification(string kind, HttpStatusCode status, ProviderErrorKind expected)
+    {
+        var handler = new Handler(request =>
+        {
+            if (request.RequestUri!.AbsolutePath.EndsWith("validate-token"))
+                return Json("{\"valid\":true,\"user_name\":\"listener\"}");
+            if (request.RequestUri.AbsolutePath.EndsWith("createdfor")) return Json(Listing(Newer(kind, PlaylistId)));
+            var response = new HttpResponseMessage(status);
+            response.Headers.RetryAfter = new(TimeSpan.FromSeconds(45));
+            return response;
+        });
+        var adapter = new ListenBrainzPlaylistCapabilityAdapter(new HttpClient(handler), new Secrets());
+
+        var result = await adapter.GetPlaylistTracksAsync(Context(personal: true), new(Resource("createdfor:" + kind), new()));
+
+        Assert.False(result.IsSuccess);
+        Assert.Null(result.Value);
+        Assert.Equal(expected, result.Error!.Kind);
+        if (status == HttpStatusCode.TooManyRequests) Assert.Equal(TimeSpan.FromSeconds(45), result.Error.RetryAfter);
+    }
+
+    [Theory]
+    [InlineData("weekly-jams", false)]
+    [InlineData("weekly-jams", true)]
+    [InlineData("weekly-exploration", false)]
+    [InlineData("weekly-exploration", true)]
+    public async Task ShortGeneratedListingsCannotPublishAnIncompleteSelection(string kind, bool intermediate)
+    {
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath.EndsWith("validate-token")
+            ? Json("{\"valid\":true,\"user_name\":\"listener\"}")
+            : request.RequestUri.AbsolutePath.EndsWith("createdfor")
+                ? Json(request.RequestUri.Query.Contains("offset=100", StringComparison.Ordinal)
+                    ? ListingPage(100, 101, Newer(kind, NewPlaylistId))
+                    : ListingPage(0, intermediate ? 101 : 2, Newer(kind, PlaylistId)))
+                : Json(Newer(kind, PlaylistId)));
+        var adapter = new ListenBrainzPlaylistCapabilityAdapter(new HttpClient(handler), new Secrets());
+
+        var result = await adapter.GetPlaylistTracksAsync(Context(personal: true), new(Resource("createdfor:" + kind), new()));
+
+        Assert.False(result.IsSuccess);
+        Assert.Null(result.Value);
+        Assert.Equal(ProviderErrorKind.PermanentFailure, result.Error!.Kind);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData(100)]
+    [InlineData(102)]
+    public async Task ChangingGeneratedListingTotalsCannotPublishASelection(int nextTotal)
+    {
+        var first = Enumerable.Range(1, 100).Select(index => Newer("weekly-jams", $"{index:x8}-1111-4111-8111-111111111111")).ToArray();
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath.EndsWith("validate-token")
+            ? Json("{\"valid\":true,\"user_name\":\"listener\"}")
+            : request.RequestUri.AbsolutePath.EndsWith("createdfor")
+                ? Json(request.RequestUri.Query.Contains("offset=100", StringComparison.Ordinal)
+                    ? ListingPage(100, nextTotal, nextTotal == 100 ? [] : [Newer("weekly-jams", PlaylistId), Newer("weekly-jams", NewPlaylistId)])
+                    : ListingPage(0, 101, first))
+                : Json(Newer("weekly-jams", request.RequestUri.AbsolutePath.Split('/')[^1])));
+        var adapter = new ListenBrainzPlaylistCapabilityAdapter(new HttpClient(handler), new Secrets());
+
+        var result = await adapter.GetPlaylistTracksAsync(Context(personal: true), new(Resource("createdfor:weekly-jams"), new()));
+
+        Assert.False(result.IsSuccess);
+        Assert.Null(result.Value);
+        Assert.Equal(ProviderErrorKind.PermanentFailure, result.Error!.Kind);
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData("weekly-jams")]
+    [InlineData("weekly-exploration")]
+    public async Task CompleteGeneratedListingPagesSelectTheNewestPlaylist(string kind)
+    {
+        var first = Enumerable.Range(1, 100).Select(index => Newer(kind, $"{index:x8}-1111-4111-8111-111111111111")).ToArray();
+        var newest = JsonNode.Parse(Newer(kind, NewPlaylistId))!;
+        newest["playlist"]!["date"] = "2026-11-02T00:00:00+00:00";
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath.EndsWith("validate-token")
+            ? Json("{\"valid\":true,\"user_name\":\"listener\"}")
+            : request.RequestUri.AbsolutePath.EndsWith("createdfor")
+                ? Json(request.RequestUri.Query.Contains("offset=100", StringComparison.Ordinal)
+                    ? ListingPage(100, 101, newest.ToJsonString()) : ListingPage(0, 101, first))
+                : Json(newest.ToJsonString()));
+        var adapter = new ListenBrainzPlaylistCapabilityAdapter(new HttpClient(handler), new Secrets());
+
+        var result = await adapter.GetPlaylistTracksAsync(Context(personal: true), new(Resource("createdfor:" + kind), new()));
+
+        Assert.True(result.IsSuccess, result.Error?.ToString());
+        Assert.Equal(NewPlaylistId, result.RequireValue().Playlist.SourceETag);
+        Assert.Equal(5, result.RequireValue().Tracks.Items.Count);
+        Assert.Equal(4, handler.Requests.Count);
+    }
+
+    [Theory]
+    [InlineData(false, ProviderErrorKind.TransientFailure)]
+    [InlineData(true, ProviderErrorKind.Canceled)]
+    public async Task OwnDeadlineAndCallerCancellationHaveDistinctOutcomes(bool callerCanceled, ProviderErrorKind expected)
+    {
+        using var cancellation = new CancellationTokenSource();
+        if (callerCanceled) cancellation.Cancel();
+        var adapter = new ListenBrainzPlaylistCapabilityAdapter(new HttpClient(new WaitingHandler()), new Secrets());
+
+        var result = await adapter.GetPlaylistTracksAsync(Context(deadline: DateTimeOffset.UtcNow.AddMilliseconds(50),
+            cancellationToken: cancellation.Token), new(Resource(PlaylistId), new()));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(expected, result.Error!.Kind);
+    }
+
+    [Fact]
+    public async Task GeneratedPlaylistStreamErrorsReturnTransientFailure()
+    {
+        var handler = new Handler(request => request.RequestUri!.AbsolutePath.EndsWith("validate-token")
+            ? Json("{\"valid\":true,\"user_name\":\"listener\"}")
+            : request.RequestUri.AbsolutePath.EndsWith("createdfor") ? Json(Listing(Fixture())) : throw new IOException());
+        var adapter = new ListenBrainzPlaylistCapabilityAdapter(new HttpClient(handler), new Secrets());
+
+        var result = await adapter.GetPlaylistTracksAsync(Context(personal: true), new(Resource("createdfor:weekly-jams"), new()));
+
+        Assert.False(result.IsSuccess);
+        Assert.Null(result.Value);
+        Assert.Equal(ProviderErrorKind.TransientFailure, result.Error!.Kind);
     }
 
     [Fact]
@@ -368,12 +498,13 @@ public sealed class ListenBrainzPlaylistCapabilityAdapterTests
     private static ProviderExternalResourceId Resource(string id) => new("listenbrainz", ProviderResourceKind.Playlist, id);
     private static string Fixture() => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "ListenBrainz", "playlist.json"));
     private static HttpResponseMessage Json(string value) => new(HttpStatusCode.OK) { Content = new StringContent(value, Encoding.UTF8, "application/json") };
-    private static string Listing(params string[] playlists) => new JsonObject
+    private static string Listing(params string[] playlists) => ListingPage(0, playlists.Length, playlists);
+    private static string ListingPage(int offset, int total, params string[] playlists) => new JsonObject
     {
         ["playlists"] = new JsonArray(playlists.Select(item => JsonNode.Parse(item)).ToArray()),
-        ["playlist_count"] = playlists.Length,
+        ["playlist_count"] = total,
         ["count"] = 100,
-        ["offset"] = 0
+        ["offset"] = offset
     }.ToJsonString();
     private static string Newer(string kind, string id)
     {
@@ -418,14 +549,15 @@ public sealed class ListenBrainzPlaylistCapabilityAdapterTests
         ["artists"] = new JsonArray(new JsonObject { ["artist_credit_name"] = "Singer", ["join_phrase"] = " & " },
             new JsonObject { ["artist_credit_name"] = "Guest", ["join_phrase"] = "" })
     };
-    private static ProviderExecutionContext Context(bool personal = false, bool shared = false)
+    private static ProviderExecutionContext Context(bool personal = false, bool shared = false,
+        DateTimeOffset? deadline = null, CancellationToken cancellationToken = default)
     {
         var actor = personal || shared ? new ProviderActorContext(ProviderActorKind.User, Listener, new("jellyfin", "backend", "principal"))
             : new ProviderActorContext(ProviderActorKind.PublicRead, null);
         return new(actor, "listenbrainz", personal || shared ? new(Guid.NewGuid(), "listenbrainz",
             shared ? ProviderAccountScope.Shared : ProviderAccountScope.Personal, 1, ownerUserId: shared ? null : Listener) : null,
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, false), ProviderExplicitContentPolicy.Allow, false, shared, false),
-            "playlist", "fixture", DateTimeOffset.UtcNow.AddMinutes(5), default);
+            "playlist", "fixture", deadline ?? DateTimeOffset.UtcNow.AddMinutes(5), cancellationToken);
     }
     private sealed class Secrets : IProviderAccountSecretAccessor
     {
@@ -447,6 +579,15 @@ public sealed class ListenBrainzPlaylistCapabilityAdapterTests
         {
             Requests.Add((request.RequestUri!.PathAndQuery, request.Headers.Authorization?.ToString()));
             return Task.FromResult(respond(request));
+        }
+    }
+
+    private sealed class WaitingHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return Json(Fixture());
         }
     }
 }

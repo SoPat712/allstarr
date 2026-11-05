@@ -23,6 +23,37 @@ namespace allstarr.Tests;
 
 public sealed class AdminUiActivityTests
 {
+    [Fact]
+    public async Task Empty_playlist_source_attention_shows_kept_songs_message_in_activity()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var owner = Guid.CreateVersion7();
+        var linkId = Guid.CreateVersion7();
+        const string message = "Last.fm returned an empty list, so the previous songs were kept. The next scheduled refresh will check again.";
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new() { Id = owner, DisplayName = "Listener", Enabled = true, BackendType = "jellyfin", BackendInstanceId = "fixture", BackendPrincipalId = owner.ToString("N") });
+            db.AuditEvents.Add(new()
+            {
+                Id = Guid.CreateVersion7(), ActorUserId = owner, Category = "playlist", Action = "source-empty-kept",
+                Outcome = "conflicted", SubjectType = "playlist-link", SubjectId = linkId.ToString("N"),
+                CreatedAt = DateTimeOffset.UtcNow,
+                DetailsJson = JsonSerializer.Serialize(new { message, providerId = "lastfm", playlistLinkId = linkId.ToString("N"), playlistName = "Similar to your top tracks" })
+            });
+            await db.SaveChangesAsync();
+        }
+        var matches = new TrackMatchCommandService(factory, new TrackMatchDecisionEngine(), new ProviderAccountResolver(factory), new SystemPlatformClock(), Mock.Of<IBackendLibraryAccessResolver>());
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await Controller(factory, matches, owner).GetDashboardActivity()).Value));
+
+        var attention = Assert.Single(json.RootElement.GetProperty("items").EnumerateArray(), row => Text(row, "Action") == "source-empty-kept");
+        Assert.Equal(message, Text(attention, "Detail"));
+        Assert.Equal("warning", Text(attention, "Severity"));
+        Assert.Equal("conflicted", Text(attention, "State"));
+        Assert.Equal("Similar to your top tracks", Text(attention, "PlaylistName"));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -22,6 +22,10 @@ public sealed class LastFmSimilarTracksTests
     [InlineData("json", "lastfm: unavailable", 0)]
     [InlineData("odd", "lastfm: unavailable", 0)]
     [InlineData("exception", "lastfm: unavailable", 0)]
+    [InlineData("missing-container", "lastfm: unavailable", 0)]
+    [InlineData("missing-list", "lastfm: unavailable", 0)]
+    [InlineData("null-list", "lastfm: unavailable", 0)]
+    [InlineData("partial", "lastfm: unavailable", 0)]
     public async Task SimilarOutcomeUsesOnlyFixedTokensAndNumericCodes(string mode, string expectedOutcome, int expectedCount)
     {
         using var handler = new FixtureHandler(mode);
@@ -239,6 +243,10 @@ public sealed class LastFmSimilarTracksTests
                     "api-error" => """{"error":6,"message":"fixture-key https://fixture.invalid/private"}""",
                     "api-error-text" => """{"error":"fixture-key https://fixture.invalid/private","message":"private"}""",
                     "odd" => """{"similartracks":{"track":"unexpected"}}""",
+                    "missing-container" => "{}",
+                    "missing-list" => """{"similartracks":{}}""",
+                    "null-list" => """{"similartracks":{"track":null}}""",
+                    "partial" => """{"similartracks":{"track":[{"name":"Valid","artist":{"name":"Artist"}},{"name":"Incomplete"}]}}""",
                     _ => """
                     {"similartracks":{"track":[
                       {"name":"First song","artist":{"name":"First artist"}},

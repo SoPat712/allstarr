@@ -106,6 +106,7 @@ public sealed class LastFmPlaylistCapabilityAdapter(
                 ? ProviderErrorKind.Canceled : ProviderErrorKind.TransientFailure));
         }
         catch (HttpRequestException) { return ProviderOutcome<T>.Failure(new(ProviderErrorKind.TransientFailure)); }
+        catch (IOException) { return ProviderOutcome<T>.Failure(new(ProviderErrorKind.TransientFailure)); }
         catch (KeyNotFoundException) { return ProviderOutcome<T>.Failure(ProviderError.LastFmNotConnected()); }
         catch (UnauthorizedAccessException) { return ProviderOutcome<T>.Failure(ProviderError.LastFmNotConnected()); }
         catch (JsonException) { return ProviderOutcome<T>.Failure(ProviderError.CompatibilityContractChanged()); }
@@ -117,6 +118,9 @@ public sealed class LastFmPlaylistCapabilityAdapter(
     {
         var result = new List<Track>();
         var pageSize = Math.Min(maximum, 200);
+        int? expectedPages = null;
+        long? expectedTotal = null;
+        bool? hasTotal = null;
         for (var page = 1; page <= maximum; page++)
         {
             using var document = await GetAsync(apiKey, method,
@@ -126,15 +130,32 @@ public sealed class LastFmPlaylistCapabilityAdapter(
             var attributes = container.TryGetProperty("@attr", out var attr) ? attr : default;
             if (Text(attributes, "page") != Number(page))
                 throw new JsonException("Last.fm paging did not advance.");
-            var tracks = ParseTracks(container).Take(pageSize).ToArray();
-            result.AddRange(tracks.Take(maximum - result.Count));
-            if (result.Count == maximum) break;
-            if (!int.TryParse(Text(attributes, "totalPages"), out var pages) || pages < 0)
-                throw new JsonException("Last.fm paging is missing.");
-            if (page >= pages) break;
-            if (tracks.Length == 0)
+            if (!int.TryParse(Text(attributes, "totalPages"), NumberStyles.None, CultureInfo.InvariantCulture, out var pages) || pages < 0 ||
+                expectedPages is { } previousPages && previousPages != pages)
+                throw new JsonException("Last.fm paging is missing or changed.");
+            expectedPages = pages;
+            var includesTotal = attributes.TryGetProperty("total", out _);
+            if (hasTotal is { } previousTotal && includesTotal != previousTotal)
+                throw new JsonException("Last.fm track count changed.");
+            hasTotal = includesTotal;
+            if (includesTotal)
+            {
+                if (!long.TryParse(Text(attributes, "total"), NumberStyles.None, CultureInfo.InvariantCulture, out var total) || total < 0 ||
+                    expectedTotal is { } previousCount && previousCount != total)
+                    throw new JsonException("Last.fm track count is missing or changed.");
+                expectedTotal = total;
+            }
+            var tracks = ParseTracks(container).ToArray().Take(pageSize).ToArray();
+            if (tracks.Length == 0 && (page > 1 || pages > 1) || tracks.Length > 0 && page > pages)
                 throw new JsonException("Last.fm paging did not advance.");
+            result.AddRange(tracks.Take(maximum - result.Count));
+            if (expectedTotal is { } count && result.Count > count)
+                throw new JsonException("Last.fm track count does not match its tracks.");
+            if (result.Count == maximum) break;
+            if (page >= pages) break;
         }
+        if (expectedTotal is { } finalCount && result.Count != Math.Min(maximum, finalCount))
+            throw new JsonException("Last.fm track count does not match its tracks.");
         return result.ToArray();
     }
 
@@ -148,7 +169,7 @@ public sealed class LastFmPlaylistCapabilityAdapter(
         {
             using var document = await GetAsync(apiKey, "track.getsimilar",
                 $"&autocorrect=1&limit=50&artist={Uri.EscapeDataString(seed.Artist)}&track={Uri.EscapeDataString(seed.Title)}", ct);
-            lists.Add(ParseTracks(Container(document.RootElement, "similartracks")).Take(50).ToArray());
+            lists.Add(ParseTracks(Container(document.RootElement, "similartracks")).ToArray().Take(50).ToArray());
         }
         var result = new List<Track>();
         var artists = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);

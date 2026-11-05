@@ -610,6 +610,7 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
         Guid? jobId,
         CancellationToken cancellationToken)
     {
+        await using var readLock = await _locks.AcquireAsync($"playlist-source-read:{link.Id:N}", cancellationToken);
         try
         {
             return await CollectAndPersistAsync(
@@ -617,6 +618,7 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
         }
         catch (PlaylistSourceUnavailableException exception)
         {
+            await ResetEmptySourceReadAsync(execution, link, cancellationToken);
             await using var db = await _factory.CreateDbContextAsync(cancellationToken);
             var retained = await db.PlaylistSourceSnapshots.AsNoTracking()
                 .Where(item => item.OwnerUserId == link.OwnerUserId &&
@@ -712,6 +714,7 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
         var collected = await _source.CollectAsync(execution, link, cancellationToken);
         if (collected.ProviderId != link.SourceProviderId || collected.ProviderAccountId != link.ProviderAccountId)
             throw new UnauthorizedAccessException("The collected playlist is outside the selected source scope.");
+        await GuardEmptySourceAsync(execution, link, collected.Entries.Count, cancellationToken);
         await using var accountLock = await _locks.AcquireAsync(
             link.ProviderAccountId.HasValue ? $"playlist-account:{link.ProviderAccountId:N}" : $"playlist-public:{link.OwnerUserId:N}:{link.SourceProviderId}", cancellationToken);
         await CheckSpotifyArtworkSyncAsync(execution, link, collected, cancellationToken);
@@ -761,7 +764,8 @@ public sealed partial class PlaylistOrchestrationService : IPlaylistOrchestratio
         var playlistPayloadHash = Hash(playlistPayload);
         var existing = await db.PlaylistSourceSnapshots.AsNoTracking().Where(item =>
                 item.OwnerUserId == link.OwnerUserId && item.PlaylistLinkId == link.Id &&
-                item.PayloadSha256 == playlistPayloadHash)
+                item.PayloadSha256 == playlistPayloadHash &&
+                !db.PlaylistSourceSnapshots.Any(newer => newer.PlaylistLinkId == link.Id && newer.SnapshotVersion > item.SnapshotVersion))
             .OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(cancellationToken);
         if (existing != null && await db.PlaylistSourceEntries.AsNoTracking()
                 .Where(item => item.PlaylistSourceSnapshotId == existing.Id)
@@ -1774,6 +1778,10 @@ public sealed class PlaylistMaterializationJobHandler(
             return retry
                 ? DurableJobCompletion.Retry(result.ErrorCode ?? "playlist_materialization_failed", result.ErrorCode == allstarr.Core.Configuration.BackendAccessMissingException.Code ? allstarr.Core.Configuration.BackendAccessMissingException.MessageText : "Playlist materialization did not complete.")
                 : DurableJobCompletion.Success();
+        }
+        catch (PlaylistSourceEmptyException exception)
+        {
+            return DurableJobCompletion.Failure(PlaylistSourceEmptyException.Code, exception.Message);
         }
         catch (PlaylistSourceUnavailableException exception)
         {

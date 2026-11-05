@@ -94,9 +94,7 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
                     return TrackPage(new(request.PlaylistId, "ListenBrainz " + kind, new(username),
                         Hash(id + ":not-generated"), "This playlist is not generated yet.", trackCount: 0), [], request, offset);
                 id = PlaylistId(selected);
-                try { playlist = Playlist(await GetAsync(baseUri, "playlist/" + id, token, ct)); }
-                catch (ProviderFailure failure) when (failure.Error.Kind == ProviderErrorKind.NotFound)
-                { return TrackPage(Summary(selected, request.PlaylistId, "The generated playlist is unavailable.", 0), [], request, offset); }
+                playlist = Playlist(await GetAsync(baseUri, "playlist/" + id, token, ct));
                 if (SourcePatch(playlist) != kind || Text(Extension(playlist), "created_for") != username)
                     throw new InvalidOperationException();
             }
@@ -250,6 +248,7 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
     {
         var result = new List<JsonElement>();
         var offset = 0;
+        int? expectedTotal = null;
         for (var page = 0; page < 10; page++)
         {
             var root = await GetAsync(baseUri, $"user/{Uri.EscapeDataString(username)}/playlists{(createdFor ? "/createdfor" : "")}?offset={offset}&count={ListCount}", token, ct);
@@ -257,16 +256,18 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
                 Integer(root, "offset") != offset || Integer(root, "count") != ListCount || items.GetArrayLength() > ListCount)
                 throw new InvalidOperationException();
             var total = Integer(root, "playlist_count");
-            if ((long)offset + items.GetArrayLength() > total) throw new InvalidOperationException();
+            if (expectedTotal is { } previousTotal && previousTotal != total || offset > total ||
+                items.GetArrayLength() != Math.Min(ListCount, total - offset))
+                throw new InvalidOperationException();
+            expectedTotal = total;
             foreach (var item in items.EnumerateArray())
             {
                 var playlist = Playlist(item);
                 _ = PlaylistId(playlist);
                 result.Add(playlist);
             }
-            if ((long)offset + ListCount >= total) return result;
-            if (items.GetArrayLength() == 0) throw new InvalidOperationException();
-            offset += ListCount;
+            if (result.Count == total) return result;
+            offset += items.GetArrayLength();
         }
         throw new InvalidOperationException();
     }
@@ -351,8 +352,13 @@ public sealed class ListenBrainzPlaylistCapabilityAdapter(HttpClient http, IProv
             return ProviderOutcome<T>.Success(value);
         }
         catch (ProviderFailure failure) { return ProviderOutcome<T>.Failure(failure.Error); }
-        catch (OperationCanceledException) { return ProviderOutcome<T>.Failure(new(ProviderErrorKind.Canceled)); }
+        catch (OperationCanceledException)
+        {
+            return ProviderOutcome<T>.Failure(new(context.CancellationToken.IsCancellationRequested
+                ? ProviderErrorKind.Canceled : ProviderErrorKind.TransientFailure));
+        }
         catch (HttpRequestException) { return ProviderOutcome<T>.Failure(new(ProviderErrorKind.TransientFailure)); }
+        catch (IOException) { return ProviderOutcome<T>.Failure(new(ProviderErrorKind.TransientFailure)); }
         catch (KeyNotFoundException) { return ProviderOutcome<T>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration)); }
         catch (UnauthorizedAccessException) { return ProviderOutcome<T>.Failure(new(ProviderErrorKind.Forbidden)); }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException or ArgumentException or FormatException)

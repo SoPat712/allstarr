@@ -148,7 +148,7 @@ public sealed partial class PersonalMixServiceTests
         var result = (await service.GenerateAsync(owner, repeat.Id, timeZoneId: "UTC").WaitAsync(CompletionDeadline)).Single(item => item.Id == repeat.Id);
         Assert.Equal(2, polls);
         Assert.Equal(repeat.Generation + 1, result.Generation);
-        Assert.Equal(before + 3, await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "personal-mixes").MaxAsync(item => item.SnapshotVersion));
+        Assert.Equal(before + 2, await db.ExternalMetadataSnapshots.Where(item => item.ResourceKind == "personal-mixes").MaxAsync(item => item.SnapshotVersion));
     }
 
     [Theory]
