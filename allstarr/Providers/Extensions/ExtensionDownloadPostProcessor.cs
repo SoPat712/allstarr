@@ -94,9 +94,20 @@ internal sealed class ExtensionDownloadPostProcessor
     }
 
     private static ExtensionMediaProcessingDiagnostic Diagnostic(ProcessingState state, Exception exception, string failure) =>
-        new(state.Operation, state.Step, failure, exception.Data["MediaExitCode"] as int?, exception.Data["MediaStderr"] as string ?? "",
+        new(state.Operation, state.Step,
+            exception.Data["MediaValidationCheck"] is ValidationCheck check ? $"{failure} ({check.Name})" : failure,
+            exception.Data["MediaExitCode"] as int?, exception.Data["MediaStderr"] as string ?? "",
             state.InputBytes, state.OutputBytes, state.DeclaredDuration, state.InputDuration, state.OutputDuration,
             (long)Stopwatch.GetElapsedTime(state.Started).TotalMilliseconds);
+
+    private sealed record ValidationCheck(string Name);
+
+    private static InvalidDataException ValidationFailure(string check)
+    {
+        var error = new InvalidDataException();
+        error.Data["MediaValidationCheck"] = new ValidationCheck(check);
+        return error;
+    }
 
     private async Task<ExtensionDecryptedMedia> ConvertContainerAsync(string input, JsonElement value, long maximumBytes,
         CancellationToken cancellationToken, ProcessingState state)
@@ -111,8 +122,8 @@ internal sealed class ExtensionDownloadPostProcessor
             token.ThrowIfCancellationRequested();
             state.Step = "descriptor";
             var codec = Text(value, "audio_codec");
-            if (codec is not (null or "" or "flac" or "alac") ||
-                Path.GetExtension(input).ToLowerInvariant() is not (".mp4" or ".m4a")) throw new InvalidDataException();
+            if (codec is not (null or "" or "aac" or "flac" or "alac")) throw ValidationFailure("unsupported-codec");
+            if (Path.GetExtension(input).ToLowerInvariant() is not (".mp4" or ".m4a")) throw ValidationFailure("input-extension");
             state.Step = "input-size";
             state.InputBytes = new FileInfo(input).Length;
             ValidateSize(input, maximumBytes);
@@ -122,17 +133,20 @@ internal sealed class ExtensionDownloadPostProcessor
             var before = await ProbeAsync(input, null, token);
             token.ThrowIfCancellationRequested();
             state.Step = "input-validation";
-            if (string.IsNullOrEmpty(codec)) codec = Text(before.GetProperty("streams")[0], "codec_name");
-            if (codec is not ("flac" or "alac")) throw new InvalidDataException();
-            state.InputDuration = ProbeDuration(before);
-            Validate(before, codec, state.DeclaredDuration);
+            var inputAudio = ProbeAudioStream(before);
+            if (string.IsNullOrEmpty(codec)) codec = Text(inputAudio, "codec_name");
+            if (codec is not ("aac" or "flac" or "alac")) throw ValidationFailure("unsupported-codec");
+            state.InputDuration = TryProbeDuration(before);
+            Validate(before, codec, state.DeclaredDuration, allowMissingDuration: true);
             var expectedDuration = state.DeclaredDuration ?? state.InputDuration;
             state.Step = "input-audio-properties";
-            var audio = ProbeAudioProperties(before);
+            var audio = ProbeAudioProperties(before, aac: codec == "aac");
             state.Step = "input-hash";
-            var beforeHash = await AudioHashAsync(input, "mov", audio.Bits, token, expectedDuration);
+            var beforeAudio = await AudioHashAsync(input, "mov", audio.Bits, token, expectedDuration, measureDuration: true);
+            state.InputDuration ??= beforeAudio.Duration;
+            expectedDuration = state.DeclaredDuration ?? state.InputDuration;
             token.ThrowIfCancellationRequested();
-            if (codec == "alac") return new("m4a", "alac");
+            if (codec is "aac" or "alac") return new("m4a", codec);
             state.Step = "encode";
             await run("ffmpeg", ["-v", "error", "-nostdin", "-y", "-threads", "1", "-protocol_whitelist", "file",
                 "-f", "mov", "-i", input, "-map", "0:a:0", "-map_metadata", "-1", "-map_chapters", "-1",
@@ -164,7 +178,7 @@ internal sealed class ExtensionDownloadPostProcessor
             state.Step = "output-hash";
             var afterHash = await AudioHashAsync(output, "flac", audio.Bits, token);
             state.Step = "hash-comparison";
-            if (!string.Equals(beforeHash, afterHash, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException();
+            if (!string.Equals(beforeAudio.Hash, afterHash.Hash, StringComparison.OrdinalIgnoreCase)) throw ValidationFailure("audio-hash");
             token.ThrowIfCancellationRequested();
             state.Step = "replace-input";
             File.Move(output, input, overwrite: true);
@@ -294,66 +308,84 @@ internal sealed class ExtensionDownloadPostProcessor
         return document.RootElement.Clone();
     }
 
-    private static (int SampleRate, int Channels, int Bits) ProbeAudioProperties(JsonElement probe)
+    private static (int SampleRate, int Channels, int Bits) ProbeAudioProperties(JsonElement probe, bool aac = false)
     {
         var stream = probe.GetProperty("streams")[0];
         if (!int.TryParse(Text(stream, "sample_rate"), NumberStyles.None, CultureInfo.InvariantCulture, out var sampleRate) ||
-            sampleRate <= 0 || !stream.GetProperty("channels").TryGetInt32(out var channels) || channels <= 0 ||
-            !int.TryParse(Text(stream, "bits_per_raw_sample"), NumberStyles.None, CultureInfo.InvariantCulture, out var bits) ||
-            bits is not (16 or 24)) throw new InvalidDataException();
+            sampleRate <= 0 || !stream.TryGetProperty("channels", out var channelValue) ||
+            !channelValue.TryGetInt32(out var channels) || channels <= 0) throw ValidationFailure("audio-properties");
+        // AAC has no source bit depth; 24-bit PCM is used only for the validation decode.
+        var bits = 24;
+        if (!aac && (!int.TryParse(Text(stream, "bits_per_raw_sample"), NumberStyles.None, CultureInfo.InvariantCulture, out bits) ||
+            bits is not (16 or 24))) throw ValidationFailure("audio-bit-depth");
         return (sampleRate, channels, bits);
     }
 
-    private async Task<string> AudioHashAsync(string path, string container, int bits, CancellationToken token,
-        double? expectedDuration = null)
+    private async Task<(string Hash, double? Duration)> AudioHashAsync(string path, string container, int bits, CancellationToken token,
+        double? expectedDuration = null, bool measureDuration = false)
     {
         // Hash full-precision PCM so 24-bit differences cannot disappear through a 16-bit decode.
+        var timing = expectedDuration.HasValue || measureDuration;
         List<string> arguments = ["-v", "error", "-nostdin", "-xerror", "-err_detect", "explode", "-threads", "1"];
-        if (expectedDuration.HasValue)
+        if (timing)
             arguments.AddRange(["-nostats", "-stats_period", "3600", "-progress", "pipe:1"]);
         arguments.AddRange(["-protocol_whitelist", "file", "-f", container, "-i", path, "-map", "0:a:0", "-threads", "1"]);
-        if (expectedDuration.HasValue) arguments.AddRange(["-af", "asetpts=N/SR/TB"]);
+        if (timing) arguments.AddRange(["-af", "asetpts=N/SR/TB"]);
         arguments.AddRange(["-c:a", bits == 16 ? "pcm_s16le" : "pcm_s24le", "-f", "md5", "-"]);
         var result = (await run("ffmpeg", arguments, null, 0, token)).Trim();
         token.ThrowIfCancellationRequested();
         var hash = result;
-        if (expectedDuration.HasValue)
+        double? duration = null;
+        if (timing)
         {
             var lines = result.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
             hash = lines.SingleOrDefault(line => line.StartsWith("MD5=", StringComparison.Ordinal)) ?? "";
             var elapsed = lines.LastOrDefault(line => line.StartsWith("out_time_us=", StringComparison.Ordinal));
             if (!lines.Contains("progress=end") || elapsed == null ||
                 !long.TryParse(elapsed[12..], NumberStyles.None, CultureInfo.InvariantCulture, out var microseconds) || microseconds <= 0)
-                throw new InvalidDataException();
+                throw ValidationFailure("decoded-duration");
+            duration = microseconds / 1_000_000d;
             // Container metadata can describe missing fragments; compare the audio actually decoded.
-            ValidateDuration(microseconds / 1_000_000d, expectedDuration.Value);
+            if (expectedDuration.HasValue) ValidateDuration(duration.Value, expectedDuration.Value);
         }
         if (hash.Length != 36 || !hash.StartsWith("MD5=", StringComparison.Ordinal) || !hash[4..].All(char.IsAsciiHexDigit))
-            throw new InvalidDataException();
-        return hash;
+            throw ValidationFailure("audio-hash");
+        return (hash, duration);
     }
 
-    private static double ProbeDuration(JsonElement probe)
+    private static double? TryProbeDuration(JsonElement probe)
     {
-        var format = probe.GetProperty("format");
-        if (!double.TryParse(Text(format, "duration"), NumberStyles.Float, CultureInfo.InvariantCulture, out var duration) ||
-            !double.IsFinite(duration) || duration <= 0) throw new InvalidDataException();
+        if (!probe.TryGetProperty("format", out var format) || !format.TryGetProperty("duration", out var item) ||
+            item.ValueKind != JsonValueKind.String ||
+            !double.TryParse(item.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var duration) ||
+            !double.IsFinite(duration) || duration <= 0) return null;
         return duration;
     }
 
-    private static void Validate(JsonElement probe, string? codec, double? expectedDuration, string container = "mp4")
+    private static double ProbeDuration(JsonElement probe) => TryProbeDuration(probe) ?? throw ValidationFailure("container-duration");
+
+    private static JsonElement ProbeAudioStream(JsonElement probe)
     {
-        var streams = probe.GetProperty("streams").EnumerateArray().ToArray();
-        if (streams.Length != 1 || Text(streams[0], "codec_type") != "audio" || Text(streams[0], "codec_name") != codec ||
-            !(Text(probe.GetProperty("format"), "format_name") ?? "").Split(',').Contains(container))
-            throw new InvalidDataException();
-        var duration = ProbeDuration(probe);
-        if (expectedDuration.HasValue) ValidateDuration(duration, expectedDuration.Value);
+        if (!probe.TryGetProperty("streams", out var streams) || streams.ValueKind != JsonValueKind.Array || streams.GetArrayLength() != 1 ||
+            Text(streams[0], "codec_type") != "audio") throw ValidationFailure("audio-streams");
+        return streams[0];
+    }
+
+    private static void Validate(JsonElement probe, string? codec, double? expectedDuration, string container = "mp4",
+        bool allowMissingDuration = false)
+    {
+        var stream = ProbeAudioStream(probe);
+        if (Text(stream, "codec_name") != codec) throw ValidationFailure("codec-mismatch");
+        if (!probe.TryGetProperty("format", out var format) ||
+            !(Text(format, "format_name") ?? "").Split(',').Contains(container)) throw ValidationFailure("container-mismatch");
+        var duration = TryProbeDuration(probe);
+        if (!duration.HasValue && !allowMissingDuration) throw ValidationFailure("container-duration");
+        if (expectedDuration.HasValue && duration.HasValue) ValidateDuration(duration.Value, expectedDuration.Value);
     }
 
     private static void ValidateDuration(double actual, double expected)
     {
-        if (Math.Abs(actual - expected) > Math.Max(0.25, expected * 0.02)) throw new InvalidDataException();
+        if (Math.Abs(actual - expected) > Math.Max(0.25, expected * 0.02)) throw ValidationFailure("duration-mismatch");
     }
 
     internal static async Task<string> RunAsync(string executable, IEnumerable<string> arguments, string? output,

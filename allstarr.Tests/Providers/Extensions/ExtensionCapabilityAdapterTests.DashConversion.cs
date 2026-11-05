@@ -123,8 +123,10 @@ public sealed partial class ExtensionCapabilityAdapterTests
         finally { Directory.Delete(root, true); }
     }
 
-    [Fact]
-    public async Task Download_ConversionFailureLogsInternalStepWithoutExposingProviderText()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Download_ConversionFailureLogsInternalStepWithoutExposingProviderText(bool invalidStreams)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr processing log", Guid.NewGuid().ToString("N"));
         try
@@ -141,8 +143,9 @@ public sealed partial class ExtensionCapabilityAdapterTests
             var logger = new ProcessingLogger();
             var sandbox = new ExtensionSandbox(root, normalized, script, new HttpClientFactory(), logger,
                 runtimeStateDirectory: Path.Combine(root, "runtime"));
-            sandbox.DownloadPostProcessor = new(TimeSpan.FromSeconds(5), (_, _, _, _, _) =>
-                throw new InvalidDataException("https://media.example.test/?token=private-value key=00112233445566778899aabbccddeeff"));
+            sandbox.DownloadPostProcessor = new(TimeSpan.FromSeconds(5), (_, _, _, _, _) => invalidStreams
+                ? Task.FromResult("""{"streams":[],"format":{"format_name":"mov,mp4,m4a","duration":"1"}}""")
+                : throw new InvalidDataException("https://media.example.test/?token=private-value key=00112233445566778899aabbccddeeff"));
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces") };
             var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options, audioVerifier: FixtureAudioVerifier.Instance);
             var context = Context(manifest.Id);
@@ -152,7 +155,10 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 .DownloadAsync(context, new(new(manifest.Id, ProviderResourceKind.Track, "track"), job, workspace.Reference, ProviderAudioQuality.Any));
             Assert.Equal("container-conversion-failed", outcome.Error?.Code);
             var logs = string.Join("\n", logger.Messages);
-            Assert.Contains("input-probe", logs);
+            Assert.Contains(invalidStreams ? "input-validation" : "input-probe", logs);
+            if (invalidStreams) Assert.Contains("audio-streams", logs);
+            Assert.DoesNotContain(root, logs);
+            Assert.DoesNotContain("https://", logs);
             Assert.DoesNotContain("private-value", logs);
             Assert.DoesNotContain("00112233445566778899aabbccddeeff", logs);
             Assert.Empty(Directory.GetFiles(options.RootPath, "*", SearchOption.AllDirectories));

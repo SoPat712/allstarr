@@ -84,6 +84,8 @@ public sealed partial class ExtensionCapabilityAdapterTests
     [InlineData(true, "alac", true)]
     [InlineData(false, "aac", false)]
     [InlineData(true, "aac", false)]
+    [InlineData(false, "aac", true)]
+    [InlineData(true, "aac", true)]
     public async Task Download_ReportsProcessedContainerAndServesVerifiedBytes(bool streaming, string codec, bool conversion)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-container", Guid.NewGuid().ToString("N"));
@@ -103,9 +105,14 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 runtimeStateDirectory: Path.Combine(root, "runtime"));
             Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token)
             {
-                Assert.True(conversion, "Lossy audio must not enter post-processing.");
-                return codec == "alac" && executable == "ffprobe"
-                    ? Task.FromResult(ExtensionDownloadConversionTests.Probe("alac", "mov,mp4,m4a"))
+                Assert.True(conversion, "Post-processing requires a conversion request.");
+                if (codec == "aac" && executable == "ffmpeg")
+                {
+                    Assert.Null(output);
+                    return Task.FromResult(ExtensionDownloadConversionTests.HashResult(arguments));
+                }
+                return codec is "alac" or "aac" && executable == "ffprobe"
+                    ? Task.FromResult(ExtensionDownloadConversionTests.Probe(codec, "mov,mp4,m4a"))
                     : ExtensionDownloadConversionTests.FixtureRunner(executable, arguments, output, limit, token);
             }
             sandbox.DownloadPostProcessor = new(TimeSpan.FromSeconds(5), Run);

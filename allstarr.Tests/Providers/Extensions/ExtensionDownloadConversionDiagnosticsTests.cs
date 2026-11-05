@@ -37,7 +37,6 @@ public sealed class ExtensionDownloadConversionDiagnosticsTests : IDisposable
     }
 
     [Theory]
-    [InlineData("aac")]
     [InlineData("opus")]
     [InlineData("unknown")]
     public async Task Conversion_RefusesUnsupportedProbedCodecsWithoutEncoding(string codec)
@@ -54,6 +53,8 @@ public sealed class ExtensionDownloadConversionDiagnosticsTests : IDisposable
         var error = await Assert.ThrowsAsync<InvalidDataException>(() => new ExtensionDownloadPostProcessor(TimeSpan.FromSeconds(5), Run)
             .ProcessAsync(input, descriptor.ToJsonString(), 100_000, default));
         Assert.Equal("Download container conversion failed.", error.Message);
+        var diagnostic = Assert.IsType<ExtensionMediaProcessingDiagnostic>(error.Data[ExtensionDownloadPostProcessor.DiagnosticKey]);
+        Assert.Contains("unsupported-codec", diagnostic.Failure);
         Assert.Equal(1, calls);
         Assert.Single(Directory.GetFiles(root));
     }

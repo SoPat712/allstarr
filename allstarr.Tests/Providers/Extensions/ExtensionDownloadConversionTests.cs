@@ -296,7 +296,6 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData("aac")]
     [InlineData("opus")]
     [InlineData("unknown")]
     public async Task Conversion_RejectsOtherCodecsWithoutTranscoding(string codec)
