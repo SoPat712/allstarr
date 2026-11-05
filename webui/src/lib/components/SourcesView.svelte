@@ -1048,7 +1048,6 @@
   .source-panel-content :global(.extension-row) { display: flex; flex-wrap: wrap; }
   .source-panel-footer :global(.extension-remove-link) { margin-right: auto; }
   .source-panel-content :global(output) { display: flex; align-items: center; gap: var(--space-2); overflow-wrap: anywhere; }
-  @media (min-width: 900px) { .panel-open { margin-right: min(480px, 40vw); } }
   @media (max-width: 899px) {
     .source-toolbar :global(.search-field) { flex: 1 1 10rem; min-width: min(10rem, 100%); }
     .source-toolbar :global(.search-field input) { width: 100%; min-width: 0; }

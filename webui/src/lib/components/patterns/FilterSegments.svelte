@@ -64,12 +64,12 @@
 </div>
 
 <style>
-  .filter-segments { display: flex; width: fit-content; min-width: 0; max-width: 100%; gap: var(--space-1); overflow-x: auto; padding: var(--space-1); border: 1px solid var(--color-edge); border-radius: var(--radius-lg); background: var(--color-panel); scrollbar-width: thin; }
-  button { display: inline-flex; min-height: var(--control-md); min-width: var(--control-md); flex: 0 0 auto; align-items: center; justify-content: center; gap: var(--space-2); border: 0; border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); background: transparent; color: var(--color-ink-muted); cursor: pointer; font-size: var(--text-sm); font-weight: 500; white-space: nowrap; transition: background var(--motion-standard), color var(--motion-standard); }
+  .filter-segments { display: flex; width: fit-content; min-width: 0; max-width: 100%; flex-wrap: wrap; gap: var(--space-1); padding: var(--space-1); border: 1px solid var(--color-edge); border-radius: var(--radius-lg); background: var(--color-panel); }
+  button { display: inline-flex; min-height: var(--control-md); min-width: var(--control-md); max-width: 100%; flex: 0 0 auto; align-items: center; justify-content: center; gap: var(--space-2); border: 0; border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); background: transparent; color: var(--color-ink-muted); cursor: pointer; font-size: var(--text-sm); font-weight: 500; white-space: normal; transition: background var(--motion-standard), color var(--motion-standard); }
+  button > span { min-width: 0; overflow-wrap: anywhere; }
   button:hover { background: var(--color-panel-raised); color: var(--color-ink); }
   button[aria-checked="true"] { background: var(--color-signal-muted); color: var(--color-signal-text); font-weight: 700; }
   .segment-count { font-variant-numeric: tabular-nums; }
   button.zero { opacity: 0.55; }
-  @media (max-width: 899px) { .filter-segments { scrollbar-width: none; } .filter-segments::-webkit-scrollbar { display: none; } }
   @media (prefers-reduced-motion: reduce) { button { transition: none; } }
 </style>

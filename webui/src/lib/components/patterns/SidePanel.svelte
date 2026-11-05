@@ -1,10 +1,11 @@
 <script lang="ts">
-  import type { Snippet } from "svelte";
+  import { onMount, type Snippet } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
   import { ArrowUp, ArrowDown, X } from "@lucide/svelte";
   import { Dialog } from "$lib/components/ui/dialog";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { isTypingTarget } from "./helpers";
+  import { sidePanelLayout } from "./side-panel-layout";
 
   let {
     open = $bindable(false),
@@ -46,6 +47,31 @@
     navigation = null;
   }
   const sheet = new MediaQuery("(max-width: 899px)");
+  let docked = $state(false);
+  let panelWidth = $state(480);
+  onMount(() => {
+    const workspace = document.querySelector<HTMLElement>(".workspace");
+    function measure() {
+      const style = workspace && getComputedStyle(workspace);
+      const available = workspace && style
+        ? workspace.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+        : window.innerWidth;
+      const layout = sidePanelLayout(window.innerWidth, available);
+      docked = layout.docked;
+      panelWidth = layout.width;
+    }
+    const observer = new ResizeObserver(measure);
+    if (workspace) observer.observe(workspace);
+    window.addEventListener("resize", measure);
+    measure();
+    return () => { observer.disconnect(); window.removeEventListener("resize", measure); };
+  });
+  $effect(() => {
+    if (!open) return;
+    const root = document.documentElement;
+    root.style.setProperty("--side-panel-offset", docked ? `${panelWidth}px` : "0px");
+    return () => root.style.removeProperty("--side-panel-offset");
+  });
   $effect(() => {
     if (!open || !sheet.current) return;
     navigation = document.querySelector<HTMLElement>(".mobile-navigation");
@@ -78,35 +104,41 @@
 
 <Dialog.Root bind:open onOpenChange={(next) => { if (!next) onclose?.(); }}>
   <Dialog.Portal>
-    <Dialog.Overlay class="side-panel-overlay" />
+    <Dialog.Overlay class={`side-panel-overlay${docked ? " side-panel-overlay--docked" : ""}`} />
     <Dialog.Content
       data-side-panel
+      data-mode={docked ? "docked" : "modal"}
       class="side-panel"
       preventScroll={false}
-      trapFocus={true}
+      trapFocus={!docked}
+      onInteractOutside={(event) => { if (docked) event.preventDefault(); }}
       onCloseAutoFocus={restoreNavigation}
     >
-      <div class="panel-layout">
-        <div class="panel-grip" aria-hidden="true"><span></span></div>
-        <header class="panel-header" class:with-artwork={Boolean(artwork)}>
-          {#if artwork}<div class="panel-artwork">{@render artwork()}</div>{/if}
-          <div class="panel-title">
-            <Dialog.Title>{title}</Dialog.Title>
-            {#if description}<Dialog.Description>{description}</Dialog.Description>{/if}
+      {#snippet child({ props })}
+        <div {...props} aria-modal={docked ? undefined : "true"}>
+          <div class="panel-layout">
+            <div class="panel-grip" aria-hidden="true"><span></span></div>
+            <header class="panel-header" class:with-artwork={Boolean(artwork)}>
+              {#if artwork}<div class="panel-artwork">{@render artwork()}</div>{/if}
+              <div class="panel-title">
+                <Dialog.Title>{title}</Dialog.Title>
+                {#if description}<Dialog.Description>{description}</Dialog.Description>{/if}
+              </div>
+              <div class="panel-controls touch-targets">
+                <nav class="panel-navigation" aria-label="Browse items">
+                  <Button variant="ghost" size="icon" aria-label={previousLabel ?? `Previous ${navigationLabel}`} disabled={!onPrevious} onclick={onPrevious}><ArrowUp size={16} aria-hidden="true" /></Button>
+                  <Button variant="ghost" size="icon" aria-label={nextLabel ?? `Next ${navigationLabel}`} disabled={!onNext} onclick={onNext}><ArrowDown size={16} aria-hidden="true" /></Button>
+                </nav>
+                {@render menu?.()}
+                <Dialog.Close class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label="Close"><X size={18} aria-hidden="true" /></Dialog.Close>
+              </div>
+              {#if header}<div class="panel-header-extra">{@render header()}</div>{/if}
+            </header>
+            <div class="panel-body">{@render children?.()}</div>
+            {#if footer}<footer class="panel-footer" bind:offsetHeight={footerHeight}>{@render footer()}</footer>{/if}
           </div>
-          <div class="panel-controls touch-targets">
-            <nav class="panel-navigation" aria-label="Browse items">
-              <Button variant="ghost" size="icon" aria-label={previousLabel ?? `Previous ${navigationLabel}`} disabled={!onPrevious} onclick={onPrevious}><ArrowUp size={16} aria-hidden="true" /></Button>
-              <Button variant="ghost" size="icon" aria-label={nextLabel ?? `Next ${navigationLabel}`} disabled={!onNext} onclick={onNext}><ArrowDown size={16} aria-hidden="true" /></Button>
-            </nav>
-            {@render menu?.()}
-            <Dialog.Close class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label="Close"><X size={18} aria-hidden="true" /></Dialog.Close>
-          </div>
-          {#if header}<div class="panel-header-extra">{@render header()}</div>{/if}
-        </header>
-        <div class="panel-body">{@render children?.()}</div>
-        {#if footer}<footer class="panel-footer" bind:offsetHeight={footerHeight}>{@render footer()}</footer>{/if}
-      </div>
+        </div>
+      {/snippet}
     </Dialog.Content>
   </Dialog.Portal>
 </Dialog.Root>
@@ -133,7 +165,8 @@
   :global(body:has(.toaster .toast)) .panel-body { margin-bottom: max(0px, calc(var(--toast-height, 0px) + var(--toast-bottom, 24px) - var(--side-panel-footer-height, 0px) + var(--space-3))); }
   .panel-body :global(.sec-label) { margin: 0 0 var(--space-3); color: var(--color-ink-muted); font-size: .7rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
   .panel-footer { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; border-top: 1px solid var(--color-edge); padding: var(--space-3) var(--space-4) max(var(--space-3), env(safe-area-inset-bottom)); background: var(--color-panel); }
-  @media (min-width: 900px) { :global(.side-panel-overlay) { display: none; } :global(.side-panel) { width: min(480px, 40vw); } .panel-grip { display: none; } }
+  :global(.side-panel-overlay--docked) { display: none; }
+  @media (min-width: 900px) { :global(.side-panel) { width: min(480px, 40vw); } .panel-grip { display: none; } }
   @keyframes panel-in { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
   @keyframes panel-out { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(100%); } }
   @media (max-width: 899px) {

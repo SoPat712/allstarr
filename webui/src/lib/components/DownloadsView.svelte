@@ -396,21 +396,20 @@
   .copies-table { min-width: 0; border: 1px solid var(--color-edge); }
   .track-cache-link { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); border-top: 1px solid var(--color-edge); padding-block: var(--space-3); }
   @media (min-width: 900px) {
-    .library-downloads.panel-open { margin-right: min(480px, 40vw); }
-    .panel-open .library-downloads-table { min-width: 0; }
-    .panel-open .song-heading { width: auto; padding-left: var(--space-2); }
-    .panel-open .source-heading { width: 100px; }
-    .panel-open .quality-heading { width: 90px; }
-    .panel-open .actions-heading { width: 128px; }
-    .panel-open .lifecycle-heading, .panel-open .size-heading, .panel-open :global(.lifecycle-cell), .panel-open :global(.size-cell) { display: none; }
-    .panel-open th, .panel-open :global(.library-download-row > td) { padding-inline: var(--space-2); }
-    .panel-open :global(.library-download-row > td), .panel-open :global(.song-description > strong) { font-size: var(--text-xs); }
-    .panel-open :global(.song-copy) { gap: var(--space-2); }
-    .panel-open :global(.library-download-art) { width: 36px; height: 36px; }
-    .panel-open :global(.source-name) { flex-wrap: wrap; gap: var(--space-1); overflow-wrap: normal; }
-    .panel-open :global(.library-download-actions [data-slot="button"]) { padding-inline: var(--space-2); font-size: var(--text-xs); }
-    .panel-open :global(.library-download-actions [data-slot="button"] svg) { display: none; }
-    .panel-open :global(.library-download-menu) { width: 32px; min-width: 32px; height: 32px; min-height: 32px; }
+    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .library-downloads-table { min-width: 0; }
+    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .song-heading { width: auto; padding-left: var(--space-2); }
+    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .source-heading { width: 100px; }
+    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .quality-heading { width: 90px; }
+    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .actions-heading { width: 128px; }
+    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .lifecycle-heading, :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .size-heading, :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.lifecycle-cell), :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.size-cell) { display: none; }
+    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open th, :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.library-download-row > td) { padding-inline: var(--space-2); }
+    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.library-download-row > td), :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.song-description > strong) { font-size: var(--text-xs); }
+    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.song-copy) { gap: var(--space-2); }
+    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.library-download-art) { width: 36px; height: 36px; }
+    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.source-name) { flex-wrap: wrap; gap: var(--space-1); overflow-wrap: normal; }
+    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.library-download-actions [data-slot="button"]) { padding-inline: var(--space-2); font-size: var(--text-xs); }
+    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.library-download-actions [data-slot="button"] svg) { display: none; }
+    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.library-download-menu) { width: 32px; min-width: 32px; height: 32px; min-height: 32px; }
   }
   @media (max-width: 899px) {
     .library-downloads { padding: var(--space-3); }

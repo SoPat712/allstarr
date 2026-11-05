@@ -702,6 +702,8 @@
     color: var(--color-ink);
   }
 
+  .panel-open { margin-right: var(--side-panel-offset, 0px); }
+
   .workspace {
     min-width: 0;
     overflow-x: clip;

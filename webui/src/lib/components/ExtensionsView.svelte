@@ -552,39 +552,43 @@
 {#snippet packageRow(item: ExtensionPackage, showOpen: boolean)}
   {@const update = updateFor(item)}
   <li class="extension-row" data-state={item.state.toLowerCase()}>
-    <ProviderArtwork id={item.extensionId} definition={definition(item)} />
-    <div class="extension-copy">
-      <span class="extension-title"><strong>{item.displayName}</strong><small>Version {item.version}{item.author ? ` · ${item.author}` : ""}</small></span>
-      <p>{item.description ? sourceDescription(item.description) : "No description from the publisher."}</p>
-      {#if item.state.toLowerCase() === "failed"}<p class="extension-failure" role="status"><CircleAlert size={14} aria-hidden="true" />{extensionFailureReason(item.failureCode)}</p>{/if}
-      <div class="source-row-capabilities">{#each item.capabilities ?? [] as capability}<span>{humanize(capability)}</span>{/each}</div>
+    <div class="extension-layout">
+      <ProviderArtwork id={item.extensionId} definition={definition(item)} />
+      <div class="extension-copy">
+        <span class="extension-title"><strong>{item.displayName}</strong><small>Version {item.version}{item.author ? ` · ${item.author}` : ""}</small></span>
+        <p>{item.description ? sourceDescription(item.description) : "No description from the publisher."}</p>
+        {#if item.state.toLowerCase() === "failed"}<p class="extension-failure" role="status"><CircleAlert size={14} aria-hidden="true" />{extensionFailureReason(item.failureCode)}</p>{/if}
+        <div class="source-row-capabilities">{#each item.capabilities ?? [] as capability}<span>{humanize(capability)}</span>{/each}</div>
+      </div>
+      <div class="extension-controls">
+        <Badge state={item.active ? "healthy" : item.state.toLowerCase() === "failed" ? "degraded" : "suggested"}>{stateLabel(item)}</Badge>
+        <div class="extension-actions">
+          {#if update}<Button variant="outline" disabled={Boolean(action)} onclick={() => void stage(update)}>{action === `install:${update.id}` ? "Verifying…" : `Update ${item.version} → ${update.version}`}</Button>
+          {:else if item.permissionReviewRequired}<Button variant="outline" disabled={Boolean(action)} onclick={() => void openReview(item)}>{action === `review-load:${item.id}` ? "Loading review…" : "Review permissions"}</Button>
+          {:else if item.state.toLowerCase() === "failed"}<Button variant="outline" disabled={Boolean(action)} onclick={() => void retryPackage(item)}>{action === `retry:${item.id}` ? "Retrying…" : "Retry"}</Button>
+          {:else if item.state.toLowerCase() === "staged"}<Button variant="outline" disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</Button>
+          {:else if item.state.toLowerCase() === "disabled" && item.hasPermissions}<Button variant="outline" disabled={Boolean(action)} onclick={() => confirmPermissionReview(item)}>Review and enable</Button>
+          {:else if item.state.toLowerCase() === "disabled"}<Button variant="outline" disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</Button>
+          {:else if item.active && showOpen}<Button variant="secondary" href={`#/sources/services/${encodeURIComponent(item.extensionId)}`}>Open source</Button>
+          {/if}
+          <DropdownMenu.Root>
+            <DropdownMenu.Trigger class="icon-button" aria-label="Manage extension" title={`More actions for ${item.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+                {#if item.permissionReviewRequired && update}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void openReview(item)}>Review permissions</DropdownMenu.Item>{/if}
+                {#if item.active}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run(item.id, () => extensions.disable(item), "Extension disabled.")}>Disable</DropdownMenu.Item>{/if}
+                {#if item.hasPermissions && item.state.toLowerCase() === "active"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmPermissionReview(item)}>Review access</DropdownMenu.Item>{/if}
+                {#if item.hasPermissions && item.state.toLowerCase() === "disabled"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmPermissionReview(item)}>Review and enable</DropdownMenu.Item>{/if}
+                {#if item.state.toLowerCase() === "failed"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void retryPackage(item)}>Retry</DropdownMenu.Item>{/if}
+                <DropdownMenu.Separator />
+                <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => confirmRemoval(item)}>Uninstall</DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
+        </div>
+      </div>
+      {#if item.active && item.usesSignedSession}<ExtensionSessionPanel {item} onchanged={changed} />{/if}
     </div>
-    <Badge state={item.active ? "healthy" : item.state.toLowerCase() === "failed" ? "degraded" : "suggested"}>{stateLabel(item)}</Badge>
-    <div class="extension-actions">
-      {#if update}<Button variant="outline" disabled={Boolean(action)} onclick={() => void stage(update)}>{action === `install:${update.id}` ? "Verifying…" : `Update ${item.version} → ${update.version}`}</Button>
-      {:else if item.permissionReviewRequired}<Button variant="outline" disabled={Boolean(action)} onclick={() => void openReview(item)}>{action === `review-load:${item.id}` ? "Loading review…" : "Review permissions"}</Button>
-      {:else if item.state.toLowerCase() === "failed"}<Button variant="outline" disabled={Boolean(action)} onclick={() => void retryPackage(item)}>{action === `retry:${item.id}` ? "Retrying…" : "Retry"}</Button>
-      {:else if item.state.toLowerCase() === "staged"}<Button variant="outline" disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</Button>
-      {:else if item.state.toLowerCase() === "disabled" && item.hasPermissions}<Button variant="outline" disabled={Boolean(action)} onclick={() => confirmPermissionReview(item)}>Review and enable</Button>
-      {:else if item.state.toLowerCase() === "disabled"}<Button variant="outline" disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</Button>
-      {:else if item.active && showOpen}<Button variant="secondary" href={`#/sources/services/${encodeURIComponent(item.extensionId)}`}>Open source</Button>
-      {/if}
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger class="icon-button" aria-label="Manage extension" title={`More actions for ${item.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
-        <DropdownMenu.Portal>
-          <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
-            {#if item.permissionReviewRequired && update}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void openReview(item)}>Review permissions</DropdownMenu.Item>{/if}
-            {#if item.active}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run(item.id, () => extensions.disable(item), "Extension disabled.")}>Disable</DropdownMenu.Item>{/if}
-            {#if item.hasPermissions && item.state.toLowerCase() === "active"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmPermissionReview(item)}>Review access</DropdownMenu.Item>{/if}
-            {#if item.hasPermissions && item.state.toLowerCase() === "disabled"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmPermissionReview(item)}>Review and enable</DropdownMenu.Item>{/if}
-            {#if item.state.toLowerCase() === "failed"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void retryPackage(item)}>Retry</DropdownMenu.Item>{/if}
-            <DropdownMenu.Separator />
-            <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => confirmRemoval(item)}>Uninstall</DropdownMenu.Item>
-          </DropdownMenu.Content>
-        </DropdownMenu.Portal>
-      </DropdownMenu.Root>
-    </div>
-    {#if item.active && item.usesSignedSession}<ExtensionSessionPanel {item} onchanged={changed} />{/if}
   </li>
 {/snippet}
 
@@ -818,6 +822,23 @@
   </AlertDialog.Root>
 
 <style>
+  .extension-row { display: block; container-type: inline-size; }
+  .extension-layout { display: grid; grid-template-columns: 2.5rem minmax(16ch, 1fr) auto; align-items: center; gap: var(--space-2) var(--space-4); }
+  .extension-layout > :global(.provider-art) { display: grid; width: 2.5rem; height: 2.5rem; align-self: start; place-items: center; border-radius: var(--radius-md); background: var(--color-surface-raised); color: var(--color-ink-muted); }
+  .extension-controls { display: flex; align-items: center; gap: var(--space-4); }
+  .extension-controls :global(.badge) { text-transform: none; }
+  .extension-layout > :global(.extension-session) { grid-column: 2 / -1; }
+  @container (max-width: 560px) {
+    .extension-layout { grid-template-columns: 2.5rem minmax(0, 1fr); }
+    .extension-copy { display: contents; }
+    .extension-layout > :global(.extension-session) { grid-column: 1 / -1; }
+    .extension-title { grid-column: 2; min-width: min(16ch, 100%); }
+    .extension-copy > p, .extension-copy > .source-row-capabilities { grid-column: 1 / -1; min-width: min(16ch, 100%); }
+    .source-row-capabilities { flex-wrap: wrap; }
+    .extension-controls { grid-column: 1 / -1; flex-wrap: wrap; justify-content: flex-start; gap: var(--space-2); }
+    .extension-actions { display: flex; flex-wrap: wrap; justify-content: flex-start; min-width: 0; max-width: 100%; }
+    .extension-actions :global([data-slot="button"]) { max-width: 100%; white-space: normal; }
+  }
   :global(.extension-remove-link) { color: var(--danger); }
   .extension-setup-steps {
     display: flex;

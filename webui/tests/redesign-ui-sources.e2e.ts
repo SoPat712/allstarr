@@ -11,7 +11,7 @@ async function fixture(page: Page) {
   let granted = true, revision = 1;
   const useModes = new Map(providers.map(provider => [provider.id, "automatic"]));
   let accounts = ["apple-musickit", "listenbrainz"].map((providerId, i) => ({ id: `account-${i}`, providerId, displayName: "Listener", ownerDisplayName: "Listener", ownerUserId: "listener", scope: i ? "Personal" : "Shared", canManage: true, canChangeAudience: true, revision: 1, enabled: true, secret: { configured: true, revoked: false }, createdAt: "2026-10-28T12:00:00Z", configuredFields: ["token"] }));
-  let listens = ["First song", "Second song"].map((title, index) => ({ id: `listen-${index}`, revision: 1, targetId: "listenbrainz", state: "permanentfailure", providerCode: "destination-unbound", suggestedDestinationAccountId: "account-1", availableDestinationAccountIds: ["account-1"], requiresReauthentication: false, sendCount: 0, safeMessage: "The destination needs confirming", updatedAt: "2026-11-03T12:00:00Z", submission: { title, artist: "An artist", occurredAt: "2026-11-03T12:00:00Z" } }));
+  let listens = ["First song", "Second song"].map((title, index) => ({ id: `listen-${index}`, revision: 1, targetId: "listenbrainz", state: "permanentfailure", kind: "completed", canResend: true, canConfirm: true, canDismiss: false, providerCode: "destination-unbound", suggestedDestinationAccountId: "account-1", availableDestinationAccountIds: ["account-1"], requiresReauthentication: false, sendCount: 0, safeMessage: "The destination needs confirming", updatedAt: "2026-11-03T12:00:00Z", submission: { title, artist: "An artist", occurredAt: "2026-11-03T12:00:00Z" } }));
   const writes: { path: string; body: Record<string, unknown> }[] = [];
   await page.route("**/*", async route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname;
@@ -273,5 +273,32 @@ for (const width of [320, 390, 430, 650]) for (const section of ["services", "ac
       });
     })).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}
+
+for (const section of ["services", "accounts"]) {
+  test(`Sources ${section} keep brand images after equal definitions refresh`, async ({ page }) => {
+    await fixture(page);
+    await page.goto(`#/sources/${section}`);
+    if (section === "services") await page.getByRole("radio", { name: "All 3", exact: true }).click();
+    const marks = page.locator(section === "services" ? ".service-rows .provider-mark" : ".accounts-table .provider-mark");
+    await expect(marks).toHaveCount(section === "services" ? 3 : 2);
+    await expect.poll(() => marks.evaluateAll(elements => elements.every(element => {
+      const image = element.querySelector("img");
+      return image && image.complete && image.naturalWidth > 0 && !image.hidden && !element.querySelector(".provider-monogram");
+    }))).toBe(true);
+    const original = await marks.first().locator("img").elementHandle();
+    for (let refresh = 0; refresh < 2; refresh++) {
+      const responses = ["/ui/schema", "/provider-accounts", "/ui/provider-summaries", "/providers/status", "/deep-stream/latest", "/config"]
+        .map(path => page.waitForResponse(response => new URL(response.url()).pathname.endsWith(path)));
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await Promise.all((await Promise.all(responses)).map(response => response.finished()));
+      await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+      expect(await marks.first().locator("img").evaluate((element, previous) => element === previous, original)).toBe(true);
+      await expect.poll(() => marks.evaluateAll(elements => elements.every(element => {
+        const image = element.querySelector("img");
+        return image && image.complete && image.naturalWidth > 0 && !image.hidden && !element.querySelector(".provider-monogram");
+      }))).toBe(true);
+    }
   });
 }

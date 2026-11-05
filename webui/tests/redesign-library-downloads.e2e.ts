@@ -105,8 +105,9 @@ for (const viewport of [{ width: 1280, theme: "light" }, { width: 1280, theme: "
       await expectSingleRowFooter(panel);
       if (viewport.width === 1280) {
         await expectToolbarLayout(page.locator(".downloads-search-sort"), page.getByRole("radiogroup", { includeHidden: true, name: `${storage === "cached" ? "Cached" : "Kept"} song filters` }));
-        await expect(table.locator(".lifecycle-heading")).toBeHidden();
-        await expect(table.locator(".size-heading")).toBeHidden();
+        const docked = await panel.getAttribute("data-mode") === "docked";
+        await expect(table.locator(".lifecycle-heading")).toBeVisible({ visible: !docked });
+        await expect(table.locator(".size-heading")).toBeVisible({ visible: !docked });
         for (const heading of ["song", "source", "quality", "actions"]) await expect(table.locator(`.${heading}-heading`)).toBeVisible();
         expect(await table.evaluate(element => element.getBoundingClientRect().width <= element.parentElement!.clientWidth + 1)).toBe(true);
         const visibleCells = selected.locator(".source-cell, .quality-cell, .download-actions");

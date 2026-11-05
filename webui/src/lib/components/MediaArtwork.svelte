@@ -1,5 +1,7 @@
 <script lang="ts">
   import { adminUrl } from "$lib/admin-url";
+  import { untrack } from "svelte";
+  import { imageHasLoaded, reconcileImageSources, type ImageLoadState } from "$lib/image-loading";
 
   let {
     url,
@@ -13,23 +15,24 @@
     class?: string;
   } = $props();
 
-  let failed = $state(false);
-  let loaded = $state(false);
+  let image = $state<HTMLImageElement>();
+  let loadState = $state<ImageLoadState>(reconcileImageSources(undefined, []));
   const source = $derived(url ? adminUrl(url) : "");
 
   $effect(() => {
-    url;
-    source;
-    failed = false;
-    loaded = false;
+    const next = reconcileImageSources(untrack(() => loadState), source ? [source] : [], untrack(() => image));
+    if (next !== untrack(() => loadState)) loadState = next;
+  });
+  $effect(() => {
+    if (imageHasLoaded(image, source)) loadState.loaded = true;
   });
 </script>
 
 <span class={`media-art ${className}`}>
-  {#if url && !failed}
-    <img src={source} alt="" {loading} onload={() => { loaded = true; }} onerror={() => { failed = true; }} />
+  {#if url && !loadState.failed}
+    <img bind:this={image} src={source} alt="" {loading} onload={() => { loadState.loaded = true; }} onerror={() => { loadState.failed = true; }} />
   {/if}
-  {#if !url || failed || !loaded}
+  {#if !url || loadState.failed || !loadState.loaded}
     <span aria-hidden="true">{fallback}</span>
   {/if}
 </span>

@@ -105,7 +105,7 @@
   .activity-content :global(:is([data-tone="warning"], .badge-warning)) { --activity-ink: var(--on-warning-container); --activity-container: var(--warning-container); }
   .activity-content :global(:is([data-tone="danger"], .badge-danger)) { --activity-ink: var(--md-sys-color-on-error-container); --activity-container: var(--md-sys-color-error-container); }
 
-  @media (min-width: 900px) { :global(body:has([data-side-panel])) .activity-content { margin-right: min(480px, 40vw); } }
+  :global(body:has([data-side-panel])) .activity-content { margin-right: var(--side-panel-offset, 0px); }
   .activity-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1rem; margin-block: var(--space-5) var(--section-gap); }
   .activity-content :global(.activity-audience) { display: flex; gap: .5rem; }
   .activity-content :global(.activity-audience button) { min-height: var(--control-md); }
