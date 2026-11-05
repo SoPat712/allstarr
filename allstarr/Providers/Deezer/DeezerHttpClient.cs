@@ -99,7 +99,7 @@ public sealed class DeezerHttpClient
             cancellationToken.ThrowIfCancellationRequested();
             request = requestFactory();
             _lastRequestAt = _utcNow();
-            pendingResponse = _http.SendAsync(request, cancellationToken);
+            pendingResponse = _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }
         catch
         {

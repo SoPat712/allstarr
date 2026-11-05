@@ -391,6 +391,18 @@ public class ProviderStatusManager
         return new(key, revision, result, measurement.SeekRung);
     }
 
+    internal ProviderHealthState GetLatestCapabilityHealth(ProviderExecutionContext context, ProviderCapabilityKind capability)
+    {
+        var key = context.Account is { } account
+            ? ProviderRuntimeStatusKey.CreateManaged(context.ProviderId, capability.ToString(), account.AccountId)
+            : ProviderRuntimeStatusKey.CreateAccountFree(context.ProviderId, capability.ToString());
+        return GetStatusCore(key, new()
+        {
+            Provider = key.Provider, Capability = key.Capability, IsSupported = true, IsEnabled = true,
+            Configuration = ProviderConfigurationState.Configured, Health = ProviderHealthState.Unknown
+        }, context.Account?.Revision).Health;
+    }
+
     private ProviderRuntimeStatus GetStatusCore(
         ProviderRuntimeStatusKey key,
         ProviderRuntimeStatus baseline,

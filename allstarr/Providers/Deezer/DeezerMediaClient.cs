@@ -33,6 +33,7 @@ public sealed class DeezerMediaClient(DeezerHttpClient http, ILogger<DeezerMedia
             return await ResolveWithCredentialAsync(requestedId, arl, quality, cancellationToken);
         }
         catch (HttpRequestException exception) when (
+            exception is not ProviderTrackUnavailableException &&
             exception.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden &&
             !string.IsNullOrWhiteSpace(arlFallback) && !string.Equals(arl, arlFallback, StringComparison.Ordinal))
         {
@@ -86,7 +87,7 @@ public sealed class DeezerMediaClient(DeezerHttpClient http, ILogger<DeezerMedia
                 media = new[] { new { type = "FULL", formats = formats.Select(format => new { cipher = "BF_CBC_STRIPE", format }).ToArray() } },
                 track_tokens = new[] { selected.Token }
             }), cancellationToken);
-        if (response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.NotFound or HttpStatusCode.Gone)
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.NotFound or HttpStatusCode.Gone)
             throw new ProviderTrackUnavailableException(response.StatusCode);
         using var document = await ReadJsonAsync(response, cancellationToken);
         var root = document.RootElement;

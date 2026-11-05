@@ -9,6 +9,48 @@ namespace allstarr.Tests;
 public sealed class DeezerMediaClientTests
 {
     [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public async Task MediaClientRefusal_CompletesBeforeTheErrorBodyArrives(HttpStatusCode status)
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var body = new DelayedErrorContent(clock);
+        using var fixture = new Fixture(request => IsAuth(request) ? Auth() :
+            request.RequestUri!.AbsolutePath == "/track/42" ? Track("42", "token", true) : new(status) { Content = body });
+        var resolving = fixture.Client.ResolveDownloadAsync("42", "account-a", null, "FLAC", CancellationToken.None);
+        var completedAtHeaders = resolving.IsCompleted;
+        clock.Advance(TimeSpan.FromSeconds(5));
+        var error = await Assert.ThrowsAnyAsync<HttpRequestException>(() => resolving);
+
+        Assert.True(completedAtHeaders, "A definitive media refusal must not wait for its response body.");
+        Assert.False(body.ReadStarted);
+        Assert.True(body.Disposed);
+        Assert.Equal(status, error.StatusCode);
+        Assert.True(DeezerDownloadCapabilityAdapter.HttpError(error).IsTrackScoped);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public async Task MediaClientRefusal_DoesNotRefreshTheSessionWithAnotherCredential(HttpStatusCode status)
+    {
+        var authenticationCalls = 0;
+        using var fixture = new Fixture(request =>
+        {
+            if (IsAuth(request)) { authenticationCalls++; return Auth(); }
+            return request.RequestUri!.AbsolutePath == "/track/42" ? Track("42", "token", true) : new(status);
+        });
+
+        var error = await Assert.ThrowsAnyAsync<HttpRequestException>(() =>
+            fixture.Client.ResolveDownloadAsync("42", "account-a", "account-b", "FLAC", CancellationToken.None));
+
+        Assert.Equal(status, error.StatusCode);
+        Assert.Equal(1, authenticationCalls);
+    }
+
+    [Theory]
     [InlineData(HttpStatusCode.Forbidden)]
     [InlineData(HttpStatusCode.NotFound)]
     [InlineData(HttpStatusCode.Gone)]
@@ -463,6 +505,19 @@ public sealed class DeezerMediaClientTests
         data = new[] { new { media = (formats.Length == 0 ? ["FLAC"] : formats).Select(format =>
             new { format, sources = new[] { new { url = "https://media.example.test/audio" } } }).ToArray() } }
     }));
+
+    private sealed class DelayedErrorContent(TimeProvider clock) : HttpContent
+    {
+        public bool ReadStarted { get; private set; }
+        public bool Disposed { get; private set; }
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            ReadStarted = true;
+            await Task.Delay(TimeSpan.FromSeconds(5), clock);
+        }
+        protected override bool TryComputeLength(out long length) { length = 0; return false; }
+        protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
+    }
 
     private sealed class Fixture : IDisposable
     {

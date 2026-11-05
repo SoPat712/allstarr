@@ -239,7 +239,8 @@ public sealed partial class ProtocolProviderGateway(
     IOptions<CacheSettings>? searchSettings = null,
     IProviderAudioVerifier? audioVerifier = null,
     Enrichment.SharedTagQueue? sharedTags = null, LyricsSearchChanges? lyricsChanges = null,
-    TrackMatchDecisionEngine? playbackMatcher = null) : IProtocolProviderGateway
+    TrackMatchDecisionEngine? playbackMatcher = null,
+    ProviderStatusManager? providerStatuses = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
     private readonly IProviderAudioVerifier streamVerifier = audioVerifier ?? new ProviderAudioVerifier();
@@ -1347,6 +1348,16 @@ public sealed partial class ProtocolProviderGateway(
                 providerOrder, trackId, quality, allowFallback: true, allowManagedDownloads: true);
             plan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
         }
+        if (!hasPlaybackIdentity && !resuming && !headOnly && !protocol.IsReadOnly && !protocol.IsPreparation &&
+            !protocol.IsOriginalDownload && IsAutomaticProvider(providerId, effectivePolicy) &&
+            plan.Candidates.Any(candidate => HasFailingPlaybackHealth(protocol, candidate)))
+        {
+            providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming, effectivePolicy)
+                .Append(providerId).Distinct(StringComparer.Ordinal).ToArray();
+            streamRequest = Request(protocol, actor, ProviderCapabilityKind.Streaming, "protocol-stream-open",
+                providerOrder, trackId, quality, allowFallback: true, allowManagedDownloads: true);
+            plan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
+        }
         if (cacheReplay)
         {
             var checkedCacheRoutes = new HashSet<(string Provider, Guid? Account, long? Revision, string Track)>();
@@ -1495,6 +1506,8 @@ public sealed partial class ProtocolProviderGateway(
                     ? await router.PlanAsync<IProviderStreamingCapability>(streamRequest) : null);
         }
 
+        if (!resuming && !headOnly && !protocol.IsReadOnly && !protocol.IsPreparation)
+            plan = plan with { Candidates = plan.Candidates.OrderBy(candidate => HasFailingPlaybackHealth(protocol, candidate)).ToArray() };
         string? fallbackReason = null;
         ProviderError? lastFailure = null;
         ProviderError? originalFailure = null;
@@ -1958,6 +1971,35 @@ public sealed partial class ProtocolProviderGateway(
     }
 
     private async Task<ProviderOutcome<(HttpResponseMessage Response, ProviderStreamLease Lease)>> OpenCandidateAsync(
+        Func<Task<ProviderOutcome<ProviderStreamLease>>> resolve,
+        Func<ProviderStreamLease, Task<HttpResponseMessage>> open,
+        bool headOnly,
+        RangeHeaderValue? requestedRange,
+        CancellationToken cancellationToken,
+        double? expectedDuration = null,
+        ProviderAudioDeliveryRequest? delivery = null,
+        Func<ProviderStreamLease, long, long?, CancellationToken, Task<HttpResponseMessage>>? openVerificationRange = null,
+        string? timingProvider = null)
+    {
+        var clock = timeProvider ?? TimeProvider.System;
+        var started = clock.GetTimestamp();
+        var outcome = "failed";
+        try
+        {
+            var result = await OpenCandidateCoreAsync(resolve, open, headOnly, requestedRange, cancellationToken,
+                expectedDuration, delivery, openVerificationRange, timingProvider);
+            outcome = result.Error?.Code ?? "ready";
+            return result;
+        }
+        catch (OperationCanceledException) { outcome = "canceled"; throw; }
+        finally
+        {
+            if (!headOnly) logger?.LogInformation("Playback start attempt {Provider}: {Outcome} in {ElapsedMs} ms",
+                timingProvider ?? "unknown", outcome, Math.Round(clock.GetElapsedTime(started).TotalMilliseconds));
+        }
+    }
+
+    private async Task<ProviderOutcome<(HttpResponseMessage Response, ProviderStreamLease Lease)>> OpenCandidateCoreAsync(
         Func<Task<ProviderOutcome<ProviderStreamLease>>> resolve,
         Func<ProviderStreamLease, Task<HttpResponseMessage>> open,
         bool headOnly,

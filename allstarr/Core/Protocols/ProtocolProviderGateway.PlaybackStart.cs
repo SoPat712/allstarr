@@ -12,6 +12,11 @@ namespace allstarr.Core.Protocols;
 
 public sealed partial class ProtocolProviderGateway
 {
+    private bool HasFailingPlaybackHealth(ProtocolExecutionContext protocol,
+        ProviderRouteCandidate<IProviderStreamingCapability> candidate) =>
+        providerStatuses?.GetLatestCapabilityHealth(candidate.Context,
+            protocol.IsOriginalDownload ? ProviderCapabilityKind.Download : ProviderCapabilityKind.Streaming) == ProviderHealthState.Degraded;
+
     private async Task<PlaybackStartCandidate?> ReadPlaybackStartCandidateAsync(ProtocolExecutionContext protocol,
         ProviderRouteCandidate<IProviderStreamingCapability> candidate, ProviderExternalResourceId requestedTrack,
         ProviderAudioQuality quality, int index)
@@ -70,7 +75,9 @@ public sealed partial class ProtocolProviderGateway
         var facts = gathered.OfType<PlaybackStartCandidate>().ToList();
         Task<PlaybackStartCandidate?> StartFactsAsync(ProviderRouteCandidate<IProviderStreamingCapability> candidate, int index) =>
             ReadPlaybackStartCandidateAsync(protocol, candidate, requestedTrack, quality, index);
-        var order = PlaybackStartPolicy.Order(mode, facts);
+        var failing = eligible.Select(candidate => HasFailingPlaybackHealth(protocol, candidate)).ToArray();
+        var order = PlaybackStartPolicy.Order(mode, facts.Where(fact => fact.IsCached || !failing[fact.Index]).ToArray())
+            .Concat(PlaybackStartPolicy.Order(mode, facts.Where(fact => !fact.IsCached && failing[fact.Index]).ToArray())).ToArray();
         var startReason = mode switch
         {
             "FastStart" => "playback-start-fast",

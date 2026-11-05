@@ -639,7 +639,9 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         ManagedTrackCacheService? managedTrackCache = null,
         IProviderOutcomeObserver? outcomes = null, TimeProvider? clock = null,
         allstarr.Core.Matching.ITrackIdentityService? identities = null,
-        allstarr.Core.Music.IProviderAudioVerifier? audioVerifier = null)
+        allstarr.Core.Music.IProviderAudioVerifier? audioVerifier = null,
+        ProviderStatusManager? providerStatuses = null,
+        Microsoft.Extensions.Logging.ILogger<ProtocolProviderGateway>? logger = null)
     {
         var registry = Registry(first.Object, second.Object);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
@@ -679,7 +681,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         }
         return (new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration,
             managedTrackCache: managedTrackCache, playbackActivity: activity, effectivePolicies: policies,
-            outcomes: outcomes, timeProvider: clock, identities: identities, audioVerifier: audioVerifier ?? FixtureAudioVerifier.Instance), router);
+            outcomes: outcomes, timeProvider: clock, identities: identities, audioVerifier: audioVerifier ?? FixtureAudioVerifier.Instance,
+            providerStatuses: providerStatuses, logger: logger), router);
     }
 
     private static ProtocolExecutionContext ClientContext(CancellationToken cancellationToken = default)

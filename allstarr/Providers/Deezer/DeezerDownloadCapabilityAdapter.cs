@@ -278,7 +278,12 @@ public sealed class DeezerDownloadCapabilityAdapter : IProviderDownloadCapabilit
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(trackId))).ToLowerInvariant() + extension;
 
     internal static ProviderError HttpError(HttpRequestException exception) => exception is ProviderTrackUnavailableException
-        ? ProviderError.TrackUnavailable(exception.StatusCode == HttpStatusCode.Forbidden ? ProviderErrorKind.Forbidden : ProviderErrorKind.NotFound)
+        ? ProviderError.TrackUnavailable(exception.StatusCode switch
+        {
+            HttpStatusCode.Unauthorized => ProviderErrorKind.Unauthorized,
+            HttpStatusCode.Forbidden => ProviderErrorKind.Forbidden,
+            _ => ProviderErrorKind.NotFound
+        })
         : exception.StatusCode switch
         {
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => new(ProviderErrorKind.Unauthorized),
