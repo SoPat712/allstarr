@@ -398,8 +398,12 @@ public class ProviderStatusManager
             : ProviderRuntimeStatusKey.CreateAccountFree(context.ProviderId, capability.ToString());
         return GetStatusCore(key, new()
         {
-            Provider = key.Provider, Capability = key.Capability, IsSupported = true, IsEnabled = true,
-            Configuration = ProviderConfigurationState.Configured, Health = ProviderHealthState.Unknown
+            Provider = key.Provider,
+            Capability = key.Capability,
+            IsSupported = true,
+            IsEnabled = true,
+            Configuration = ProviderConfigurationState.Configured,
+            Health = ProviderHealthState.Unknown
         }, context.Account?.Revision).Health;
     }
 

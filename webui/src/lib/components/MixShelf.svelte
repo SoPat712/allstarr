@@ -36,8 +36,8 @@
   header { margin-bottom: var(--space-3); }
   h2 { font-size: 1.125rem; font-weight: 600; }
   a { display: inline-flex; min-height: 44px; align-items: center; font-size: var(--text-sm); white-space: nowrap; }
-  .mix-shelf { display: grid; grid-template-columns: repeat(auto-fit, minmax(max(132px, calc((100% - (var(--shelf-columns) - 1) * var(--space-3)) / var(--shelf-columns))), 1fr)); align-items: stretch; gap: var(--space-3); padding-block: var(--space-1) var(--space-2); }
-  .mix-card { min-width: 0; text-align: left; color: var(--color-ink); }
+  .mix-shelf { display: grid; grid-auto-flow: column; grid-auto-columns: max(132px, calc((100% - (var(--shelf-columns) - 1) * var(--space-3)) / var(--shelf-columns))); overflow-x: auto; scroll-snap-type: x mandatory; align-items: stretch; gap: var(--space-3); padding-block: var(--space-1) var(--space-2); }
+  .mix-card { min-width: 0; scroll-snap-align: start; text-align: left; color: var(--color-ink); }
   .cover, .mix-open { display: flex; flex-direction: column; width: 100%; min-width: 0; gap: var(--space-2); }
   .cover { height: 100%; }
   .mix-open { flex: 1; text-align: left; color: inherit; border: 0; border-radius: var(--radius-md); background: transparent; cursor: pointer; }
@@ -49,6 +49,6 @@
   .cover :global(.add-chip) { align-self: start; min-height: 44px; max-width: 100%; margin-top: auto; padding-inline: var(--space-2); font-size: var(--text-xs); }
   strong { display: -webkit-box; width: 100%; overflow: hidden; white-space: normal; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; font-size: var(--text-sm); font-weight: 600; }
   .description { display: -webkit-box; min-height: 2.8em; overflow: hidden; color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.4; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
-  @media (max-width: 899px) { .mix-shelf { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 148px; overflow-x: auto; scroll-snap-type: x mandatory; } .mix-card { scroll-snap-align: start; } }
+  @media (max-width: 899px) { .mix-shelf { grid-auto-columns: 148px; } }
   @media (pointer: coarse) { .mix-shelf { scrollbar-width: none; } }
 </style>

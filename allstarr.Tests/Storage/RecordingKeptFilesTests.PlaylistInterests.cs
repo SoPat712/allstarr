@@ -131,6 +131,16 @@ public sealed partial class RecordingKeptFilesTests
         var matches = new TrackMatchCommandService(factory, new TrackMatchDecisionEngine(), new ProviderAccountResolver(factory), clock, access);
         var orchestration = new PlaylistOrchestrationService(factory, source.Object, null!, new PlaylistMaterializationPlanner(),
             new TrackMatchDecisionEngine(), matches, clock, new KeyedAsyncLock(), access, kept: kept);
+        await Assert.ThrowsAsync<PlaylistSourceEmptyException>(() => orchestration.RefreshAsync(PlaylistContext(), payload.PlaylistLinkId));
+        await using (var unchanged = new AllstarrDbContext(database.Options))
+        {
+            Assert.Equal(payload.SourceSnapshotId, (await unchanged.PlaylistSourceSnapshots.SingleAsync(item => item.PublishedAt != null)).Id);
+            Assert.Equal(original.ManagedFileId, Assert.Single(await unchanged.ManagedFileReferences.Where(item => item.ReleasedAt == null)
+                .ToArrayAsync()).ManagedFileId);
+            Assert.Null((await unchanged.Jobs.SingleAsync(item => item.Id == jobId)).CancellationRequestedAt);
+            Assert.Empty(await unchanged.Jobs.Where(item => item.Type == RecordingKeptFiles.KeptCleanupJobType).ToArrayAsync());
+        }
+        clock.UtcNow = clock.UtcNow.AddDays(1);
         var result = await orchestration.RefreshAsync(PlaylistContext(), payload.PlaylistLinkId);
         Assert.NotEqual(payload.SourceSnapshotId, result.SnapshotId);
         await using var db = new AllstarrDbContext(database.Options);

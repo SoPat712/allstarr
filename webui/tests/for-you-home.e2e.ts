@@ -15,6 +15,27 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await capture(page, "home-new", width, theme);
   });
 }
+for (const width of [390, 899, 900, 1280]) test(`Mix shelves keep one row and every card reachable by keyboard at ${width}px`, async ({ page }) => {
+  await appearance(page, width, "light"); await mockForYou(page); await openHome(page);
+  for (const shelf of await page.locator(".mix-shelf").all()) {
+    const cards = shelf.locator(".mix-card");
+    const geometry = await cards.evaluateAll(elements => elements.map(element => {
+      const box = element.getBoundingClientRect(); return { top: Math.round(box.top), width: box.width };
+    }));
+    expect(new Set(geometry.map(card => card.top)).size).toBe(1);
+    expect(geometry.every(card => card.width >= 132)).toBe(true);
+    const needsScroll = await shelf.evaluate(element => element.scrollWidth > element.clientWidth);
+    if (await cards.count() === 8) expect(needsScroll).toBe(true);
+    const controls = shelf.locator("button:not([disabled])");
+    await controls.first().focus();
+    for (let index = 0; index < await controls.count(); index++) {
+      await expect(controls.nth(index)).toBeFocused();
+      await expect(controls.nth(index)).toBeInViewport();
+      if (index + 1 < await controls.count()) await page.keyboard.press("Tab");
+    }
+  }
+});
+
 test("Checklist keeps history and dismissal without an admin publishing action", async ({ page }) => {
   const state = await mockForYou(page, { admin: true, publish: false, brandNew: true }); await openHome(page);
   await expect(page.getByText("Mixes are only visible here for now")).toHaveCount(0);

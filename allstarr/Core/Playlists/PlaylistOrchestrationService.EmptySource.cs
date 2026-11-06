@@ -63,13 +63,22 @@ public sealed partial class PlaylistOrchestrationService
         var message = $"{sourceName} returned an empty list, so the previous songs were kept. The next scheduled refresh will check again.";
         db.AuditEvents.Add(new AuditEventRecord
         {
-            Id = Guid.CreateVersion7(), ActorUserId = link.OwnerUserId, Category = "playlist",
-            Action = "source-empty-kept", Outcome = "conflicted", CorrelationId = execution.CorrelationId,
-            SubjectType = "playlist-link", SubjectId = link.Id.ToString("N"), CreatedAt = now,
+            Id = Guid.CreateVersion7(),
+            ActorUserId = link.OwnerUserId,
+            Category = "playlist",
+            Action = "source-empty-kept",
+            Outcome = "conflicted",
+            CorrelationId = execution.CorrelationId,
+            SubjectType = "playlist-link",
+            SubjectId = link.Id.ToString("N"),
+            CreatedAt = now,
             DetailsJson = JsonSerializer.Serialize(new
             {
-                message, providerId = link.SourceProviderId, playlistLinkId = link.Id.ToString("N"),
-                playlistName = current.Name, emptyRead = pending
+                message,
+                providerId = link.SourceProviderId,
+                playlistLinkId = link.Id.ToString("N"),
+                playlistName = current.Name,
+                emptyRead = pending
             })
         });
         await db.SaveChangesAsync(cancellationToken);
@@ -97,13 +106,20 @@ public sealed partial class PlaylistOrchestrationService
         if (last?.Action != "source-empty-kept") return;
         db.AuditEvents.Add(new AuditEventRecord
         {
-            Id = Guid.CreateVersion7(), ActorUserId = link.OwnerUserId, Category = "playlist",
-            Action = "source-empty-reset", Outcome = "success", CorrelationId = execution.CorrelationId,
-            SubjectType = "playlist-link", SubjectId = link.Id.ToString("N"), CreatedAt = _clock.UtcNow,
+            Id = Guid.CreateVersion7(),
+            ActorUserId = link.OwnerUserId,
+            Category = "playlist",
+            Action = "source-empty-reset",
+            Outcome = "success",
+            CorrelationId = execution.CorrelationId,
+            SubjectType = "playlist-link",
+            SubjectId = link.Id.ToString("N"),
+            CreatedAt = _clock.UtcNow,
             DetailsJson = JsonSerializer.Serialize(new
             {
                 message = "Empty playlist confirmation was reset by a nonempty or unsuccessful source read.",
-                providerId = link.SourceProviderId, playlistLinkId = link.Id.ToString("N")
+                providerId = link.SourceProviderId,
+                playlistLinkId = link.Id.ToString("N")
             })
         });
         await db.SaveChangesAsync(cancellationToken);
