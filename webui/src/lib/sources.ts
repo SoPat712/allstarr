@@ -175,6 +175,31 @@ export const providerDisplayName = (
   fallback = "Unknown source",
 ) => providerId ? findProviderDefinition(providers, providerId)?.name ?? fallback : fallback;
 
+export function formatPlaybackSource(
+  providers: Pick<ProviderDefinition, "id" | "name">[],
+  providerId?: string | null,
+  { cached = false, confirmed = true, libraryName }: {
+    cached?: boolean | null;
+    confirmed?: boolean;
+    libraryName?: string | null;
+  } = {},
+) {
+  if (cached && confirmed) return { label: "Saved copy", text: "from a saved copy" };
+  const key = canonicalProviderId(providerId?.trim() ?? "");
+  const readableName = (value?: string | null) => value?.trim() && !/^unknown source$/i.test(value.trim()) ? value.trim() : "";
+  const catalogName = readableName(providers.find(provider => canonicalProviderId(provider.id) === key)?.name);
+  const local = ["library", "local", "jellyfin", "subsonic", "jellyfin-local", "subsonic-local"].includes(key);
+  const serviceNames: Record<string, string> = {
+    "apple-musickit": "Apple Music", spotify: "Spotify", tidal: "Tidal", qobuz: "Qobuz",
+    deezer: "Deezer", youtube: "YouTube",
+  };
+  const name = local ? readableName(libraryName) || catalogName : catalogName || serviceNames[key] || "";
+  const label = local && (!name || /^(?:your library|local library|library|jellyfin|subsonic)$/i.test(name))
+    ? "Your library" : name;
+  const sentenceName = label === "Your library" ? "your library" : label;
+  return { label, text: !label ? "" : confirmed ? `from ${sentenceName}` : `catalog: ${sentenceName} (playback unconfirmed)` };
+}
+
 export const lyricsSourceDisplayName = (providers: ProviderDefinition[], id: string) =>
   id === "backend" ? "Media server lyrics" : id === "kept" ? "Kept LRC" : providerDisplayName(providers, id, humanize(id));
 

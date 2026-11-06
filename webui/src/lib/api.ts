@@ -156,7 +156,7 @@ export type JobProgress = {
 export type JobResponse = { jobs: Job[]; progress: JobProgress[]; hasMore?: boolean; nextCursor?: string | null; nextCursorId?: string | null };
 export type JobAttempt = { attemptNumber: number; startedAt: string; completedAt?: string | null; outcome?: string | null; errorCode?: string | null; errorMessage?: string | null };
 export type JobDetail = { job: Job; progress: JobProgress[]; attempts: JobAttempt[]; hasMore: boolean; nextCursor?: string | null; nextCursorId?: string | null };
-export type ActivityTask = { id: string; name: string; kind: string; state: string; enabled: boolean; ownerName?: string | null; cadence: string; detail?: string; lastRunAt?: string | null; nextRunAt?: string | null; runPlaylistLinkId?: string | null; actionHref?: string | null; actionLabel?: string | null };
+export type ActivityTask = { id: string; name: string; kind: string; state: string; enabled: boolean; ownerName?: string | null; cadence: string; detail?: string; lastRunAt?: string | null; nextRunAt?: string | null; runPlaylistLinkId?: string | null; runEndpoint?: string | null; actionHref?: string | null; actionLabel?: string | null };
 
 export type PlayTrace = {
   id: string;
@@ -2784,6 +2784,7 @@ export const activityWork = {
     return json<JobDetail>(`/api/admin/jobs/${encodeURIComponent(id)}?${query}`, { signal });
   },
   tasks: (scope: "mine" | "everyone" = "mine") => json<{ items: ActivityTask[]; hasMore?: boolean }>(scope === "mine" ? "/api/admin/activity/tasks" : `/api/admin/activity/tasks?scope=${scope}`),
+  run: (endpoint: string) => json<{ jobId: string; created: boolean }>(endpoint, { method: "POST" }),
 };
 
 export type OidcAccess = { enabled: boolean; authority: string; clientId: string; publicUrl: string; displayName: string; hasClientSecret: boolean; needsReview: boolean; revision: string };

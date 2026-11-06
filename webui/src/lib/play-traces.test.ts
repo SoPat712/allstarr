@@ -28,6 +28,13 @@ describe("play history wording", () => {
     expect(playSource("applemusic", false, [])).toBe("Apple Music");
     expect(playSource("private-key", false, [])).toBe("Music source");
     expect(playSource("library", false, [])).toBe("Your library");
+    expect(playSource("local", false, [])).toBe("Your library");
+    expect(playSource("jellyfin", false, [])).toBe("Your library");
+    expect(playSource("jellyfin-local", false, [])).toBe("Your library");
+    expect(playSource("subsonic-local", false, [])).toBe("Your library");
+    expect(playSource("jellyfin", false, [{ id: "jellyfin", name: "Family music" }])).toBe("Family music");
+    expect(playSource("unrecognized-source", false, [{ id: "unrecognized-source", name: "Unknown source" }]))
+      .toBe("Music source");
     expect(playOutcome("started")).toEqual({ state: "success", label: "Started" });
     expect(playOutcome("failed")).toEqual({ state: "failed", label: "Could not play" });
     expect(playOutcome("future_result")).toEqual({ state: "unknown", label: "Not recorded" });

@@ -9,10 +9,29 @@ describe("Home wording", () => {
   });
 
   it("keeps the playback route honest when its source is unconfirmed", () => {
-    const item = { userName: "Listener", client: "Aloud", device: "iPhone", providerId: "apple", sourceConfirmed: true };
-    expect(playbackMeta(item, "Apple Music")).toBe("Listener on Aloud, iPhone · from Apple Music");
-    expect(playbackMeta({ ...item, sourceConfirmed: false }, "Apple Music")).toBe("Listener on Aloud, iPhone · catalog: Apple Music (playback unconfirmed)");
-    expect(playbackMeta({ ...item, device: null }, "Apple Music")).toBe("Listener on Aloud · from Apple Music");
+    const item = { userName: "Listener", client: "Aloud", device: "iPhone", providerId: "applemusic", sourceConfirmed: true };
+    const providers = [{ id: "apple-musickit", name: "Apple Music" }];
+    expect(playbackMeta(item, providers)).toBe("Listener on Aloud, iPhone · from Apple Music");
+    expect(playbackMeta({ ...item, cached: true }, providers)).toBe("Listener on Aloud, iPhone · from Apple Music");
+    expect(playbackMeta({ ...item, sourceConfirmed: false }, providers)).toBe("Listener on Aloud, iPhone · catalog: Apple Music (playback unconfirmed)");
+    expect(playbackMeta({ ...item, device: null }, providers)).toBe("Listener on Aloud · from Apple Music");
+    expect(playbackMeta({ ...item, sourceConfirmed: false, catalogProviderId: "deezer" }, providers))
+      .toBe("Listener on Aloud, iPhone · catalog: Apple Music (playback unconfirmed)");
+    expect(playbackMeta({ ...item, sourceConfirmed: false, providerId: "unrecognized-source", catalogProviderId: "applemusic" }, providers))
+      .toBe("Listener on Aloud, iPhone");
+  });
+
+  it("names local playback and omits unavailable sources without a trailing separator", () => {
+    const item = { userName: "Listener", client: "Music app", providerId: "library", sourceConfirmed: true };
+    expect(playbackMeta(item, [])).toBe("Listener on Music app · from your library");
+    for (const providerId of ["jellyfin-local", "subsonic-local"])
+      expect(playbackMeta({ ...item, providerId }, [])).toBe("Listener on Music app · from your library");
+    expect(playbackMeta({ ...item, providerId: "jellyfin" }, [{ id: "jellyfin", name: "Family music" }]))
+      .toBe("Listener on Music app · from Family music");
+    expect(playbackMeta({ ...item, providerId: "unrecognized-source" }, [])).toBe("Listener on Music app");
+    expect(playbackMeta({ ...item, providerId: "unrecognized-source", sourceConfirmed: false }, []))
+      .toBe("Listener on Music app");
+    expect(playbackMeta({ ...item, cached: true }, [])).toBe("Listener on Music app · from your library");
   });
 
   it("groups the next scheduled playlist syncs and ignores paused tasks", () => {

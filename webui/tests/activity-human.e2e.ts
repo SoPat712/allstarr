@@ -353,3 +353,94 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
   }
   await capture(page, "activity-filters", width, theme);
 });
+
+
+test("Lyrics upkeep runs from its row and details, refreshes times and recovers from failure", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  const task = {
+    id: "lyrics-refresh", name: "Look for better lyrics", kind: "lyrics", state: "Scheduled", enabled: true,
+    cadence: "Daily · UTC", detail: "Looks for better lyrics and keeps pinned choices.",
+    lastRunAt: "2026-11-05T08:00:00Z", nextRunAt: "2026-11-06T08:00:00Z",
+    runEndpoint: "/api/admin/activity/tasks/lyrics/run", actionHref: "#/activity?view=history", actionLabel: "View history",
+  };
+  await mockActivity(page, [], { tasks: [task] });
+  let runs = 0, release = () => {};
+  const response = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/admin/activity/tasks/lyrics/run", async route => {
+    expect(route.request().method()).toBe("POST");
+    runs++;
+    if (runs === 1) {
+      await response;
+      return route.fulfill({ status: 503, json: { error: "Refresh is unavailable." } });
+    }
+    task.lastRunAt = "2026-11-06T08:00:00Z";
+    task.nextRunAt = "2026-11-07T08:00:00Z";
+    return route.fulfill({ status: 202, json: { jobId, created: runs === 2 } });
+  });
+  await page.goto("#/activity?view=tasks");
+  const row = page.locator(".activity-task");
+  const before = await row.innerText();
+  await row.getByRole("button", { name: "Run now", exact: true }).click();
+  await expect(row.getByRole("button", { name: "Queuing…", exact: true })).toBeDisabled();
+  release();
+  await expect(page.getByRole("alert").filter({ hasText: "Task could not be queued." })).toBeVisible();
+  await expect(row.getByRole("button", { name: "Run now", exact: true })).toBeEnabled();
+  await row.getByRole("button", { name: "Run now", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Task queued." })).toBeVisible();
+  await expect.poll(() => row.innerText()).not.toBe(before);
+  await row.locator(".task-open").click();
+  const details = page.getByRole("dialog", { name: "Look for better lyrics", exact: true });
+  await expect(details.getByRole("button", { name: "Run now", exact: true })).toBeEnabled();
+  await details.getByRole("button", { name: "Run now", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Task is already queued." })).toBeVisible();
+  expect(runs).toBe(3);
+  await testInfo.attach("lyrics-task-desktop", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
+});
+
+test("Activity history keeps the status gap while loading or unavailable at 1280px dark", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  await page.addInitScript(() => localStorage.setItem("allstarr.theme", "dark"));
+  await mockActivity(page);
+  let release = () => {}, requests = 0;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/admin/ui/activity**", async route => {
+    requests++;
+    if (requests === 1) {
+      await held;
+      return route.fulfill({ status: 503, json: { error: "History is unavailable." } });
+    }
+    return route.fulfill({ json: { items: rows, hasMore: false } });
+  });
+  const status = page.getByRole("region", { name: "History status", exact: true });
+  const gapAfterStatus = async (next: Locator) => {
+    const [statusBox, nextBox] = await Promise.all([status.boundingBox(), next.boundingBox()]);
+    expect(statusBox).not.toBeNull();
+    expect(nextBox).not.toBeNull();
+    return nextBox!.y - statusBox!.y - statusBox!.height;
+  };
+  try {
+    await page.goto("/#/activity?view=history");
+    const skeleton = page.getByRole("status", { name: "Loading Event log", exact: true });
+    await expect(skeleton).toBeVisible();
+    const loadingGap = await gapAfterStatus(skeleton);
+    await testInfo.attach("activity-history-loading-spacing", { body: await page.screenshot(), contentType: "image/png" });
+    release();
+    const error = page.getByRole("alert", { name: "Event log unavailable", exact: true });
+    await expect(error).toBeVisible();
+    const errorGap = await gapAfterStatus(error);
+    await testInfo.attach("activity-history-error-spacing", { body: await page.screenshot(), contentType: "image/png" });
+    await error.getByRole("button", { name: "Try again", exact: true }).click();
+    const toolbar = page.locator(".event-log-toolbar");
+    await expect(toolbar).toBeVisible();
+    const toolbarGap = await gapAfterStatus(toolbar);
+    const toolbarMargin = await toolbar.evaluate(element => parseFloat(getComputedStyle(element).marginBlockStart));
+    expect(toolbarGap).toBeGreaterThan(0);
+    expect(toolbarGap).toBeCloseTo(toolbarMargin, 1);
+    expect(loadingGap).toBeCloseTo(toolbarGap, 1);
+    expect(errorGap).toBeCloseTo(toolbarGap, 1);
+  } finally {
+    release();
+  }
+});

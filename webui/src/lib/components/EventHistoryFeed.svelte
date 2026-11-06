@@ -315,9 +315,9 @@
 ]} />
 
 {#if loading}
-  <RowsSkeleton label={administrator ? "Loading Event log" : "Loading Your activity"} />
+  <div class="event-log-state"><RowsSkeleton label={administrator ? "Loading Event log" : "Loading Your activity"} /></div>
 {:else if error && !items.length}
-  <ErrorState title={error} label={administrator ? "Event log unavailable" : "Your activity unavailable"} onretry={() => load("initial")} />
+  <div class="event-log-state"><ErrorState title={error} label={administrator ? "Event log unavailable" : "Your activity unavailable"} onretry={() => load("initial")} /></div>
 {:else}
   {#if error}
     <div class="degraded-banner" role="status">
@@ -452,6 +452,7 @@
 
 
 <style>
+  .event-log-state { margin-block-start: var(--space-4); }
   .event-log-panel { min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 0; container-type: inline-size; }
   .event-log-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 220px) auto; align-items: center; gap: var(--space-2); margin-block: var(--space-4) var(--space-1); }
   .event-log-search { min-width: 0; order: 2; }

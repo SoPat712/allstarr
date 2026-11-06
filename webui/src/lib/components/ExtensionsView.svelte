@@ -23,7 +23,7 @@
   import SearchField from "$lib/components/SearchField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import { availablePackages, currentPackages, extensionFailureReason, valueChanges } from "$lib/extensions";
+  import { availablePackages, currentPackages, extensionFailureReason, extensionReviewAction, valueChanges } from "$lib/extensions";
   import { humanize, sourceDescription } from "$lib/sources";
 
   let {
@@ -64,6 +64,9 @@
   let previousPermissions = $state<ExtensionPermission[]>([]);
   let decisions = $state<Record<string, boolean>>({});
   let permissionConfirmed = $state(false);
+  let reviewNeedsReset = $state(false);
+  let reviewTurnOnRequested = $state(false);
+  let activationRetry = $state(false);
   let activatePackage = $state<ExtensionPackage | null>(null);
   let activationPermissions = $state<ExtensionPermission[]>([]);
   let activationAccessLoading = $state(false);
@@ -110,8 +113,9 @@
     reviewPackage?.capabilities ?? [],
     previousPackage?.capabilities ?? [],
   ));
-  const reviewNeedsPermissions = $derived(Boolean(reviewPackage?.permissionReviewRequired ||
+  const reviewNeedsPermissions = $derived(Boolean(reviewNeedsReset || reviewPackage?.permissionReviewRequired ||
     reviewPackage?.state.toLowerCase() === "reviewrequired"));
+  const reviewKeepOff = $derived(Boolean(previousPackage && !previousPackage.active && !reviewTurnOnRequested));
 
   function definition(item: ExtensionPackage | ExtensionStoreItem) {
     return {
@@ -215,7 +219,7 @@
     }
   }
 
-  async function openReview(item: ExtensionPackage, origin = "") {
+  async function openReview(item: ExtensionPackage, origin = "", turnOn = false) {
     if (action) return;
     action = `review-load:${item.id}`;
     try {
@@ -225,6 +229,9 @@
         previousPackage ? extensions.permissions(previousPackage.id) : Promise.resolve([]),
       ]);
       reviewPackage = item;
+      reviewNeedsReset = item.state.toLowerCase() === "disabled" && !item.permissionReviewRequired;
+      reviewTurnOnRequested = turnOn;
+      activationRetry = false;
       reviewOrigin = origin || registryOrigin(item);
       decisions = item.permissionReviewRequired || item.state.toLowerCase() === "reviewrequired"
         ? {}
@@ -291,26 +298,39 @@
   }
 
   async function approve() {
-    if (!reviewPackage || permissions.some((item) => decisions[item.id] === undefined)) return;
+    if (action || !reviewPackage || !permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined)) return;
     action = `review:${reviewPackage.id}`;
+    reviewError = "";
     try {
-      const reviewed = reviewNeedsPermissions ? await extensions.review(reviewPackage, permissions.map((item) => ({
+      if (reviewNeedsReset) {
+        reviewPackage = await extensions.revokePermissions(reviewPackage);
+        reviewNeedsReset = false;
+      }
+      if (reviewNeedsPermissions) reviewPackage = await extensions.review(reviewPackage, permissions.map((item) => ({
         kind: item.permissionKind,
         value: item.permissionValue,
         approved: decisions[item.id],
-      }))) : reviewPackage;
-      const reviewedPermissions = permissions.map((item) => ({
+      })));
+      permissions = permissions.map((item) => ({
         ...item, decision: decisions[item.id] ? "approved" : "denied",
       }));
+      const reviewed = reviewPackage;
+      packages = packages.map((item) => item.id === reviewed.id ? reviewed : item);
+      if (reviewed.state.toLowerCase() === "staged" && !reviewKeepOff) {
+        activationRetry = true;
+        await extensions.activate(reviewed);
+      }
+      const enabled = reviewed.state.toLowerCase() === "staged" && !reviewKeepOff;
+      toast.success(enabled
+        ? `${reviewed.displayName} ${reviewed.previousPackageId ? "updated and enabled" : reviewed.installed ? "enabled" : "installed and enabled"}.`
+        : reviewKeepOff ? `${reviewed.displayName} updated. It stays off.` : "Extension permissions saved.", enabled ? {
+          label: "Open source",
+          run: () => goto(`#/sources/services/${encodeURIComponent(reviewed.extensionId)}`, { keepFocus: true, noScroll: true }),
+        } : undefined);
       reviewPackage = null;
       reviewOpen = false;
-      if (reviewed.state.toLowerCase() === "staged") {
-        await confirmActivation(reviewed, reviewedPermissions);
-      } else {
-        toast.success("Extension permissions saved.");
-        await changed();
-        if (view === "catalog") open = false;
-      }
+      void changed();
+      if (view === "catalog") open = false;
     } catch (cause) {
       reportActionError(cause instanceof Error ? cause.message : "Permission review failed.");
     } finally {
@@ -409,12 +429,12 @@
     confirmOpen = true;
   }
 
-  async function confirmActivation(item: ExtensionPackage, rows?: ExtensionPermission[]) {
+  async function confirmActivation(item: ExtensionPackage) {
     const request = ++activationAccessRequest;
     dialogError = "";
     activatePackage = item;
-    activationPermissions = rows ?? [];
-    activationAccessReady = Boolean(rows || !item.hasPermissions);
+    activationPermissions = [];
+    activationAccessReady = !item.hasPermissions;
     activationAccessLoading = !activationAccessReady;
     removePackage = null;
     removeRegistry = null;
@@ -435,6 +455,7 @@
   }
 
   function confirmPermissionReview(item: ExtensionPackage) {
+    if (!item.active) { void openReview(item, "", true); return; }
     dialogError = "";
     activatePackage = null;
     removePackage = null;
@@ -497,7 +518,7 @@
     } finally {
       action = "";
     }
-    if (succeeded && resetPackage) await openReview(resetPackage);
+    if (succeeded && resetPackage) await openReview(resetPackage, "", true);
   }
 
   async function addRegistry(event: SubmitEvent) {
@@ -518,7 +539,7 @@
 
 {#snippet installSteps(current: number)}
   <ol class="extension-setup-steps" aria-label="Extension setup">
-    {#each ["Where from", "Review access", "Enable"] as label, index}
+    {#each ["Where from", "Review and turn on"] as label, index}
       <li aria-current={current === index ? "step" : undefined} class:complete={index < current}>
         <span class="extension-step-number" aria-hidden="true">{#if index < current}<Check size={14} />{:else}{index + 1}{/if}</span>
         <span>{label}</span>
@@ -761,8 +782,8 @@
       {#if reviewError}<p class="notice-error" role="alert">{reviewError}</p>{/if}
       <div class="extension-review-footer">
         <label class="permission-confirm"><Checkbox bind:checked={permissionConfirmed} /><span>I understand what this extension can access.</span></label>
-        <p class="extension-review-hint">{reviewNeedsPermissions ? "Saving access does not start the extension. You will enable it in the next step." : "Its saved access is unchanged. Continue to choose when it starts."}</p>
-        <footer class="dialog-actions"><Button variant="secondary" disabled={Boolean(action)} onclick={closeReview}>Close review</Button><Button disabled={!permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined) || Boolean(action)} onclick={() => void approve()}>{action.startsWith("review:") ? "Approving…" : reviewNeedsPermissions ? "Approve" : "Continue to enable"}</Button></footer>
+        <p class="extension-review-hint">{activationRetry ? "Access is saved. Try again to turn on the extension." : reviewKeepOff ? "Save this access and keep the extension off." : reviewNeedsPermissions ? "Save this access and turn on the extension." : "Turn on the extension with its saved access."}</p>
+        <footer class="dialog-actions"><Button variant="secondary" disabled={Boolean(action)} onclick={closeReview}>Close review</Button><Button disabled={!permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined) || Boolean(action)} onclick={() => void approve()}>{extensionReviewAction({ needsPermissions: reviewNeedsPermissions, update: Boolean(reviewPackage?.previousPackageId), keepOff: reviewKeepOff, busy: action.startsWith("review:"), retry: activationRetry })}</Button></footer>
       </div>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>
@@ -806,10 +827,10 @@
 
   <AlertDialog.Root bind:open={() => confirmOpen, (value) => { if (!action) { confirmOpen = value; if (!value && view === "catalog" && !catalogDialogOpen) open = false; } }}>
     <AlertDialog.Portal><AlertDialog.Overlay class="dialog-overlay" /><AlertDialog.Content class={`confirm-dialog${activatePackage ? " extension-activation-dialog" : ""}`}>
-      <AlertDialog.Title>{reviewAccessPackage ? reviewAccessPackage.state.toLowerCase() === "disabled" ? `Review and enable ${reviewAccessPackage.displayName}?` : `Review access for ${reviewAccessPackage.displayName}?` : activatePackage ? `Activate ${activatePackage.displayName}?` : removePackage ? `Uninstall ${removePackage.displayName}?` : `Remove ${removeRegistry?.name ?? "this registry"}?`}</AlertDialog.Title>
-      <AlertDialog.Description>{reviewAccessPackage ? reviewAccessPackage.active ? "The extension runtime will stop now and remain disabled until you save a fresh permission review and reactivate it." : "The extension will remain disabled until you save a fresh permission review and reactivate it." : activatePackage ? "This starts the extension with the access you approved. You can turn it off or remove it from its source page." : removePackage ? "The package and runtime are removed. Encrypted Source accounts remain available for a later reinstall." : "You can add this registry URL again later."}</AlertDialog.Description>
+      <AlertDialog.Title>{reviewAccessPackage ? `Review access for ${reviewAccessPackage.displayName}?` : activatePackage ? `Turn on ${activatePackage.displayName}?` : removePackage ? `Uninstall ${removePackage.displayName}?` : `Remove ${removeRegistry?.name ?? "this registry"}?`}</AlertDialog.Title>
+      <AlertDialog.Description>{reviewAccessPackage ? "The extension runtime will stop now and remain disabled until you save a fresh permission review and reactivate it." : activatePackage ? "This starts the extension with the access you approved. You can turn it off or remove it from its source page." : removePackage ? "The package and runtime are removed. Encrypted Source accounts remain available for a later reinstall." : "You can add this registry URL again later."}</AlertDialog.Description>
       {#if activatePackage}
-        {@render installSteps(2)}
+        {@render installSteps(1)}
         <div class="extension-activation-body">
           {#if activationAccessLoading}<p class="extension-flow-note" role="status">Loading approved access…</p>
           {:else if activationAccessReady}{@render accessSummary(activatePackage, activationPermissions, true)}{/if}
@@ -817,7 +838,7 @@
         </div>
       {/if}
       {#if dialogError}<p class="notice-error" role="alert">{dialogError}</p>{/if}
-      <footer class="dialog-actions"><AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</AlertDialog.Cancel><Button variant={activatePackage || reviewAccessPackage ? "default" : "destructive"} disabled={Boolean(action) || Boolean(activatePackage && !activationAccessReady)} onclick={() => void confirm()}>{action ? reviewAccessPackage ? "Stopping…" : activatePackage ? "Activating…" : "Removing…" : reviewAccessPackage ? "Stop and review" : activatePackage ? "Activate extension" : removePackage ? "Uninstall" : "Remove registry"}</Button></footer>
+      <footer class="dialog-actions"><AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</AlertDialog.Cancel><Button variant={activatePackage || reviewAccessPackage ? "default" : "destructive"} disabled={Boolean(action) || Boolean(activatePackage && !activationAccessReady)} onclick={() => void confirm()}>{action ? reviewAccessPackage ? "Stopping…" : activatePackage ? "Turning on…" : "Removing…" : reviewAccessPackage ? "Stop and review" : activatePackage ? "Turn on" : removePackage ? "Uninstall" : "Remove registry"}</Button></footer>
     </AlertDialog.Content></AlertDialog.Portal>
   </AlertDialog.Root>
 

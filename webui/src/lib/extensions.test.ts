@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  availablePackages, compareVersions, currentPackages, extensionFailureReason, renewalFailureText, sessionReasonText, sessionSummary, valueChanges,
+  extensionReviewAction, availablePackages, compareVersions, currentPackages, extensionFailureReason, renewalFailureText, sessionReasonText, sessionSummary, valueChanges,
   verificationHost,
 } from "./extensions";
 import type { ExtensionPackage, ExtensionStoreItem } from "./api";
@@ -103,5 +103,23 @@ describe("extension package failures", () => {
     expect(extensionFailureReason("required_permission_denied")).toContain("permission was denied");
     expect(extensionFailureReason("staged_contents_invalid")).toContain("package changed");
     expect(extensionFailureReason("unknown_internal_code")).toContain("Retry the package");
+  });
+});
+
+
+describe("extension review actions", () => {
+  it.each([
+    [{ needsPermissions: true, update: true }, "Approve and update"],
+    [{ needsPermissions: true, update: false }, "Approve and turn on"],
+    [{ needsPermissions: false, update: true }, "Update"],
+    [{ needsPermissions: false, update: false }, "Turn on"],
+    [{ needsPermissions: true, update: true, keepOff: true }, "Approve, keep off"],
+    [{ needsPermissions: false, update: true, keepOff: true }, "Update"],
+    [{ needsPermissions: true, update: true, busy: true }, "Updating…"],
+    [{ needsPermissions: true, update: false, busy: true }, "Turning on…"],
+    [{ needsPermissions: false, update: true, retry: true }, "Try again"],
+    [{ needsPermissions: false, update: true, retry: true, busy: true }, "Updating…"],
+  ])("describes the reviewed action for %j", (input, label) => {
+    expect(extensionReviewAction(input)).toBe(label);
   });
 });

@@ -2146,19 +2146,23 @@ test("Intelligence partial and section error states stay announced", async ({ pa
 });
 
 for (const theme of ["light", "dark"] as const) {
-  for (const state of ["streaming", "cached", "unknown"] as const) {
+  for (const state of ["streaming", "cached", "unknown", "library", "unavailable"] as const) {
     test(`Home playback source labels remain honest and contained — ${theme} ${state}`, async ({ page }) => {
       await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
       await page.setViewportSize({ width: 390, height: 844 });
       await mockApi(page);
       const fixture = structuredClone(responses["/api/admin/ui/now-playing"]) as { items: Record<string, unknown>[] };
       fixture.items[0].sourceConfirmed = state !== "unknown";
+      if (state === "library") fixture.items[0].providerId = "jellyfin";
+      if (state === "unavailable") fixture.items[0].providerId = "unknown";
       fixture.items[0].cached = state === "cached";
       fixture.items[0].seekRung = state === "cached" ? "progressive-cache" : "sequential";
       await page.route("**/api/admin/ui/now-playing", (route) => route.fulfill({ json: fixture }));
       await page.goto("#/");
       const playing = page.getByRole("region", { name: "Now playing" });
-      await expect(playing.locator(".playback-meta")).toContainText(state === "unknown" ? "catalog: Lumen Audio (playback unconfirmed)" : "from Lumen Audio");
+      if (state === "unavailable") await expect(playing.locator(".playback-meta")).toHaveText("Tester on Feishin, Desktop");
+      else await expect(playing.locator(".playback-meta")).toContainText(state === "unknown" ? "catalog: Lumen Audio (playback unconfirmed)" : state === "library" ? "from your library" : "from Lumen Audio");
+      await expect(playing.locator(".playback-meta")).not.toContainText("Unknown source");
       await expect(playing.locator(".listener-profile, .playback-route")).toHaveCount(0);
       await expectContainedMobileGeometry(page);
       await page.screenshot({ path: `test-results/playback-source-${theme}-${state}.png`, fullPage: true });
@@ -2686,7 +2690,7 @@ test("extension review scrolls long permission lists", async ({ page }) => {
   }
   await review.getByRole("button", { name: "Allow all" }).click();
   await review.getByRole("checkbox").click();
-  await expect(review.getByRole("button", { name: "Approve" })).toBeEnabled();
+  await expect(review.getByRole("button", { name: "Approve and turn on" })).toBeEnabled();
 });
 
 test("extension updates can be reviewed together", async ({ page }) => {
@@ -2772,7 +2776,7 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
   await page.route("**/api/admin/extensions/packages", (route) => route.fulfill({
     contentType: "application/json",
     body: JSON.stringify([
-      { ...basePackage, id: "old", version: "1.0.0", state: "uninstalled", installed: false, stagedAt: "2026-01-01" },
+      { ...basePackage, id: "old", version: "1.0.0", state: "active", active: true, stagedAt: "2026-01-01" },
       {
         ...basePackage, id: "new", version: "2.0.0", state: "reviewRequired",
         previousPackageId: "old", permissionReviewRequired: true,
@@ -2791,13 +2795,17 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
     contentType: "application/json",
     body: JSON.stringify([permission("new-network", "network", "https://api.example.test/"), permission("new-secret", "secret", "accountToken")]),
   }));
-  await page.route("**/packages/new/review", (route) => route.fulfill({
-    contentType: "application/json",
-    body: JSON.stringify({
-      ...basePackage, id: "new", version: "2.0.0", state: "staged",
-      previousPackageId: "old", revision: 2,
-    }),
-  }));
+  let reviewRequests = 0;
+  await page.route("**/packages/new/review", (route) => {
+    reviewRequests++;
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...basePackage, id: "new", version: "2.0.0", state: "staged",
+        previousPackageId: "old", active: false, revision: 2,
+      }),
+    });
+  });
   let cancellationRequests = 0;
   await page.route("**/packages/new/staging/cancel", (route) => {
     cancellationRequests++;
@@ -2843,21 +2851,19 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
   await expect(review.getByText("Update from 1.0.0 to 2.0.0")).toBeVisible();
   await expect(review.getByText("New access", { exact: false })).toBeVisible();
   await expect(review.getByText("Removed access", { exact: false })).toBeVisible();
-  await expect(review.getByRole("button", { name: "Approve" })).toBeInViewport();
+  await expect(review.getByRole("button", { name: "Approve and update" })).toBeInViewport();
   await review.getByRole("button", { name: "Allow all" }).click();
   await review.getByRole("checkbox").check();
-  await review.getByRole("button", { name: "Approve" }).click();
-  const activation = page.getByRole("alertdialog", { name: "Activate Lumen Audio?" });
-  await expect(activation).toBeVisible();
-  expect(activationRequests).toBe(0);
-  await activation.getByRole("button", { name: "Activate extension" }).click();
-  await expect(activation.getByRole("button", { name: "Activating…" })).toBeDisabled();
+  await review.getByRole("button", { name: "Approve and update" }).click();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  await expect(review.getByRole("button", { name: "Updating…" })).toBeDisabled();
   await expect.poll(() => activationRequests).toBe(1);
   releaseActivation();
-  await expect(activation.getByRole("alert")).toHaveText("Runtime failed to start.");
-  await activation.getByRole("button", { name: "Activate extension" }).click();
-  await expect(activation).toBeHidden();
+  await expect(review.getByRole("alert")).toHaveText("Runtime failed to start.");
+  await review.getByRole("button", { name: "Try again" }).click();
+  await expect(review).toBeHidden();
   expect(activationRequests).toBe(2);
+  expect(reviewRequests).toBe(1);
 });
 
 test("failed extension packages can be retried without automatic activation", async ({ page }) => {
@@ -2912,12 +2918,13 @@ test("disabled extensions with permissions require a fresh review before enablin
     permissionReviewRequired: false, hasPermissions: true, capabilities: ["streaming"],
     stagedAt: "2026-01-01", revision: 3,
   };
-  let revokeRequests = 0;
+  const writes: string[] = [];
   await page.route("**/api/admin/extensions/packages", (route) => route.fulfill({
     contentType: "application/json", body: JSON.stringify([packageResponse]),
   }));
   await page.route("**/api/admin/extensions/packages/disabled/permissions/revoke", async (route) => {
-    revokeRequests++;
+    writes.push("revoke");
+    expect(route.request().postDataJSON()).toEqual({ expectedRevision: 3 });
     packageResponse = {
       ...packageResponse,
       lifecycle: "reviewrequired", state: "reviewrequired", permissionReviewRequired: true,
@@ -2927,18 +2934,35 @@ test("disabled extensions with permissions require a fresh review before enablin
   });
   await page.route("**/api/admin/extensions/packages/disabled/permissions", (route) => route.fulfill({
     contentType: "application/json",
-    body: JSON.stringify([{ id: "permission", permissionKind: "network", permissionValue: "https://example.test/", required: true, decision: "pending" }]),
+    body: JSON.stringify([{ id: "permission", permissionKind: "network", permissionValue: "https://example.test/", required: true, decision: "approved" }]),
   }));
+
+  await page.route("**/packages/disabled/review", route => {
+    writes.push("review");
+    expect(route.request().postDataJSON()).toEqual({ expectedRevision: 4, decisions: [{ kind: "network", value: "https://example.test/", approved: true }] });
+    packageResponse = { ...packageResponse, state: "staged", permissionReviewRequired: false, revision: 5 };
+    return route.fulfill({ json: packageResponse });
+  });
+  await page.route("**/packages/disabled/activate", route => {
+    writes.push("activate");
+    expect(route.request().postDataJSON()).toEqual({ expectedRevision: 5 });
+    packageResponse = { ...packageResponse, state: "active", active: true, installed: true, revision: 6 };
+    return route.fulfill({ json: packageResponse });
+  });
 
   await page.goto("#/integrations/extensions");
   const row = page.locator(".extension-row");
   await expect(row.getByRole("button", { name: "Review and enable" })).toBeVisible();
   await row.getByRole("button", { name: "Review and enable" }).click();
-  const access = page.getByRole("alertdialog", { name: "Review and enable Lumen Audio?" });
-  await expect(access).toBeVisible();
-  await access.getByRole("button", { name: "Stop and review" }).click();
-  await expect.poll(() => revokeRequests).toBe(1);
-  await expect(page.getByRole("dialog", { name: "Review permissions" })).toBeVisible();
+  const review = page.getByRole("dialog", { name: "Review permissions", exact: true });
+  await expect(review).toBeVisible();
+  await expect(page.getByRole("alertdialog")).toHaveCount(0);
+  expect(writes).toEqual([]);
+  await expect(review.getByRole("button", { name: "Allow", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await review.getByRole("checkbox").check();
+  await review.getByRole("button", { name: "Approve and turn on", exact: true }).click();
+  await expect(review).toBeHidden();
+  expect(writes).toEqual(["revoke", "review", "activate"]);
 });
 
 test("activation closes its confirmation before a delayed extension refresh", async ({ page }) => {
@@ -2968,8 +2992,8 @@ test("activation closes its confirmation before a delayed extension refresh", as
   await page.goto("#/integrations/extensions");
   const row = page.locator(".extension-row");
   await row.getByRole("button", { name: "Enable" }).click();
-  const activation = page.getByRole("alertdialog", { name: "Activate Lumen Audio?" });
-  await activation.getByRole("button", { name: "Activate extension" }).click();
+  const activation = page.getByRole("alertdialog", { name: "Turn on Lumen Audio?" });
+  await activation.getByRole("button", { name: "Turn on" }).click();
   await expect.poll(() => activationRequests).toBe(1);
   await expect(activation).toBeHidden();
   await expect(page.getByText("Lumen Audio installed and enabled.", { exact: true })).toBeVisible();
@@ -3749,15 +3773,15 @@ test("Mappings keep phone filters, differences and menus readable", async ({ pag
   await page.goto("#/library/mappings");
   const filters = page.getByRole("radiogroup", { name: "Match filters" });
   await expect(filters).toBeVisible();
-  expect(await filters.getByRole("radio").evaluateAll(items => new Set(items.map(item => item.getBoundingClientRect().top)).size)).toBeGreaterThan(1);
-  expect(await filters.evaluate(rail => {
+  await expect.poll(() => filters.getByRole("radio").evaluateAll(items => new Set(items.map(item => item.getBoundingClientRect().top)).size)).toBeGreaterThan(1);
+  await expect.poll(() => filters.evaluate(rail => {
     const bounds = rail.getBoundingClientRect();
     return [...rail.querySelectorAll("button")].every(button => {
       const box = button.getBoundingClientRect();
       return box.left >= bounds.left && box.right <= bounds.right;
     });
   })).toBe(true);
-  expect(await filters.getByRole("radio").evaluateAll(items => items.every(item => item.getBoundingClientRect().height >= 44))).toBe(true);
+  await expect.poll(() => filters.getByRole("radio").evaluateAll(items => items.every(item => item.getBoundingClientRect().height >= 44))).toBe(true);
   const row = page.locator(".mapping-row").first();
   await expect(row.locator(".item-row")).toContainText("Not Remix");
   const more = row.getByRole("button", { name: "More actions for Test song - Remix" });
@@ -9618,3 +9642,47 @@ for (const target of [
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
+
+
+test("Desktop playback, task and review previews", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  await page.addInitScript(() => localStorage.setItem("allstarr.theme", "dark"));
+  await mockApi(page);
+  const playback = structuredClone(responses["/api/admin/ui/now-playing"]) as { items: Record<string, unknown>[] };
+  Object.assign(playback.items[0], { itemId: "library-song", providerId: "library", catalogProviderId: null });
+  await page.route("**/api/admin/ui/now-playing", route => route.fulfill({ json: playback }));
+  await page.goto("#/");
+  await expect(page.getByRole("region", { name: "Now playing" })).toContainText("Rocket");
+  await expect(page.locator(".playback-meta")).toContainText("from your library");
+  await testInfo.attach("desktop-library", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
+
+  await page.route("**/api/admin/activity/tasks*", route => route.fulfill({ json: { items: [{
+    id: "lyrics-refresh", name: "Look for better lyrics", kind: "lyrics", state: "Scheduled", enabled: true,
+    cadence: "Daily · UTC", detail: "Looks for better lyrics and keeps pinned choices.",
+    lastRunAt: "2026-11-05T08:00:00Z", nextRunAt: "2026-11-06T08:00:00Z",
+    runEndpoint: "/api/admin/activity/tasks/lyrics/run", actionHref: "#/activity?view=history", actionLabel: "View history",
+  }] } }));
+  await page.goto("#/activity?view=tasks");
+  await page.getByRole("button", { name: /Look for better lyrics/ }).click();
+  await expect(page.getByRole("dialog", { name: "Look for better lyrics", exact: true }).getByRole("button", { name: "Run now", exact: true })).toBeVisible();
+  await testInfo.attach("desktop-task", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
+  await page.keyboard.press("Escape");
+
+  await page.route("**/api/admin/extensions/packages", route => route.fulfill({ json: [{
+    id: "review", extensionId: "lumen-audio", displayName: "Lumen Audio", version: "2.0.7", revision: 1,
+    lifecycle: "reviewrequired", state: "reviewrequired", active: false, installed: false,
+    permissionReviewRequired: true, hasPermissions: true, capabilities: ["metadata", "streaming"],
+  }] }));
+  await page.route("**/packages/review/permissions", route => route.fulfill({ json: [{
+    id: "network", permissionKind: "network", permissionValue: "https://music.example.test/", required: true, decision: "pending",
+  }] }));
+  await page.goto("#/settings/extensions");
+  await page.getByRole("button", { name: "Review permissions", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Review permissions", exact: true })).toBeVisible();
+  await testInfo.attach("desktop-review", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
+  await page.keyboard.press("Escape");
+  await page.goto("#/library/mappings");
+  await expect(page.getByRole("radiogroup", { name: "Match filters" })).toBeVisible();
+  await testInfo.attach("desktop-mappings", { body: await page.screenshot({ fullPage: true }), contentType: "image/png" });
+});

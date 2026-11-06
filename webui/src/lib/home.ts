@@ -6,6 +6,7 @@ import type {
   HomeOverview,
   ActivityTask,
 } from "./api";
+import { formatPlaybackSource } from "./sources";
 
 export type HomeSnapshot = {
   providerCatalog?: ProviderDefinition[];
@@ -22,8 +23,13 @@ export function listenTrend(current: number, previous: number) {
   return change ? `${change > 0 ? "+" : "−"}${Math.abs(change).toLocaleString()} on last week` : "same as last week";
 }
 
-export function playbackMeta(item: Pick<NowPlayingItem, "userName" | "client" | "device" | "sourceConfirmed">, source: string) {
-  return `${item.userName} on ${item.client}${item.device ? `, ${item.device}` : ""} · ${item.sourceConfirmed ? `from ${source}` : `catalog: ${source} (playback unconfirmed)`}`;
+export function playbackMeta(
+  item: Pick<NowPlayingItem, "userName" | "client" | "device" | "sourceConfirmed" | "providerId" | "catalogProviderId" | "cached">,
+  providers: Pick<ProviderDefinition, "id" | "name">[],
+) {
+  const source = formatPlaybackSource(providers, item.providerId,
+    { confirmed: item.sourceConfirmed === true }).text;
+  return [`${item.userName} on ${item.client}${item.device ? `, ${item.device}` : ""}`, source].filter(Boolean).join(" · ");
 }
 
 export function nextScheduledWork(tasks: ActivityTask[]) {

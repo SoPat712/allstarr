@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, auth, intelligence, normalizeResponse, playlistLinks, playTraces, settings, sources } from "./api";
+import { ApiError, activityWork, auth, intelligence, normalizeResponse, playlistLinks, playTraces, settings, sources } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -123,4 +123,12 @@ describe("challenge solver test contract", () => {
       body: JSON.stringify({ url: "http://solver:8191", timeoutSeconds: 60 }),
     }));
   });
+});
+
+
+it("runs an upkeep task through its supplied endpoint", async () => {
+  const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ JobId: "refresh-job", Created: true }), { status: 202 }));
+  vi.stubGlobal("fetch", fetch);
+  expect(await activityWork.run("/api/admin/activity/tasks/lyrics/run")).toEqual({ jobId: "refresh-job", created: true });
+  expect(fetch).toHaveBeenCalledWith("/api/admin/activity/tasks/lyrics/run", expect.objectContaining({ method: "POST" }));
 });

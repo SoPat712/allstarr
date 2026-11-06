@@ -132,7 +132,7 @@
   {#snippet footer()}
     <div class="task-footer">
       {#if schedule?.enabled}<Button variant="text" size="sm" class="stop-sync" disabled={saving} onclick={() => stopOpen = true}>Pause schedule…</Button>{/if}
-      {#if task.runPlaylistLinkId}<Button disabled={running || saving || loading} onclick={() => void onrun()}>{running ? "Queued" : "Run now"}</Button>{:else if internalActivityLink(task.actionHref)}<Button href={task.actionHref!}>{task.actionLabel || "Open settings"}</Button>{/if}
+      {#if task.runPlaylistLinkId || task.runEndpoint}<Button disabled={running || saving || loading} onclick={() => void onrun()}>{running ? "Queued" : "Run now"}</Button>{:else if internalActivityLink(task.actionHref)}<Button href={task.actionHref!}>{task.actionLabel || "Open settings"}</Button>{/if}
     </div>
   {/snippet}
 </SidePanel>

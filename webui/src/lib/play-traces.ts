@@ -1,5 +1,6 @@
 import { ApiError, type PlayTrace } from "./api";
 import { formatDuration } from "./playlists";
+import { formatPlaybackSource } from "./sources";
 
 export function playDuration(milliseconds?: number | null): string {
   if (milliseconds == null || !Number.isFinite(milliseconds) || milliseconds < 0) return "Time not recorded";
@@ -24,10 +25,7 @@ export function playPhase(phase: string): string {
 }
 
 export function playSource(provider: string | null | undefined, cached: boolean | null | undefined, providers: { id: string; name: string }[]): string {
-  if (cached) return "Saved copy";
-  const key = provider?.toLowerCase() ?? "";
-  return providers.find(item => item.id.toLowerCase() === key)?.name ??
-    ({ library: "Your library", jellyfin: "Jellyfin", subsonic: "Subsonic", applemusic: "Apple Music", "apple-musickit": "Apple Music", spotify: "Spotify", tidal: "Tidal", qobuz: "Qobuz", deezer: "Deezer", youtube: "YouTube" } as Record<string, string>)[key] ?? "Music source";
+  return formatPlaybackSource(providers, provider, { cached }).label || "Music source";
 }
 
 export function playOutcome(outcome: string): { state: string; label: string } {

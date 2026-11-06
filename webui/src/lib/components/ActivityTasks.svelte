@@ -73,14 +73,14 @@
     catch { toast.error("Task details could not be opened. Try again."); }
   }
   async function run(task: ActivityTask) {
-    if (!task.runPlaylistLinkId || running || queued.has(task.id)) return;
+    if ((!task.runPlaylistLinkId && !task.runEndpoint) || running || queued.has(task.id)) return;
     running = task.id;
     try {
-      const result = await playlistLinks.run(task.runPlaylistLinkId);
+      const result = task.runPlaylistLinkId ? await playlistLinks.run(task.runPlaylistLinkId) : await activityWork.run(task.runEndpoint!);
       if (disposed) return;
       queuedJobs.set(task.id, result.jobId);
       queued = new Set([...queued, task.id]);
-      toast.success("Task queued. Follow its progress in Jobs.");
+      toast.success(result.created === false ? "Task is already queued. Follow its progress in Jobs." : "Task queued. Follow its progress in Jobs.");
       await load();
     } catch { if (!disposed) toast.error("Task could not be queued. Refresh Tasks and try again."); }
     finally { if (!disposed) running = ""; }
@@ -127,7 +127,7 @@
                   <td class="cadence">{taskCadence(task.cadence)}</td>
                   <td>{#if task.lastRunAt}<span class="last-run">{time(task.lastRunAt)}</span>{/if}<span class="last-result">{taskLastResult(task.state, task.lastRunAt)}</span></td>
                   <td>{task.enabled ? task.nextRunAt ? time(task.nextRunAt) : task.state === "Running" ? "After this run" : "When needed" : "Paused"}</td>
-                  <td>{#if task.runPlaylistLinkId}<Button variant="text" size="sm" disabled={Boolean(running) || queued.has(task.id)} onclick={() => void run(task)}>{queued.has(task.id) ? "Queued" : running === task.id ? "Queuing…" : "Run now"}</Button>{:else}<Button variant="text" size="sm" onclick={() => void open(task)}>Details</Button>{/if}</td>
+                  <td>{#if task.runPlaylistLinkId || task.runEndpoint}<Button variant="text" size="sm" disabled={Boolean(running) || queued.has(task.id)} onclick={() => void run(task)}>{queued.has(task.id) ? "Queued" : running === task.id ? "Queuing…" : "Run now"}</Button>{:else}<Button variant="text" size="sm" onclick={() => void open(task)}>Details</Button>{/if}</td>
                 </tr>
               {/each}
               {#if group.name === "Playlist syncs" && group.tasks.length > 4}<tr><td colspan="5"><Button variant="text" size="sm" onclick={() => showAll = !showAll}>{showAll ? "Show fewer playlist syncs" : "Show " + countLabel(group.tasks.length - 4, "more playlist sync")}</Button></td></tr>{/if}

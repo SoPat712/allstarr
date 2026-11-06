@@ -145,3 +145,12 @@ export function valueChanges(current: string[], previous: string[]) {
       .map((value) => ({ value, change: "removed" })),
   ] as const;
 }
+
+export function extensionReviewAction({ needsPermissions, update, keepOff = false, busy = false, retry = false }: {
+  needsPermissions: boolean; update: boolean; keepOff?: boolean; busy?: boolean; retry?: boolean;
+}) {
+  if (busy) return update ? "Updating…" : "Turning on…";
+  if (retry) return "Try again";
+  if (needsPermissions) return keepOff ? "Approve, keep off" : update ? "Approve and update" : "Approve and turn on";
+  return update ? "Update" : "Turn on";
+}

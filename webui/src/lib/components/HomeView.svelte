@@ -20,7 +20,7 @@
   import { Button } from "$lib/components/ui/button";
   import { homeSourceHealth, listenTrend, playbackMeta, playbackProgress, playbackSourceIssues, summarizeHome, type HomeSnapshot } from "$lib/home";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
-  import { findProviderDefinition, providerDisplayName } from "$lib/sources";
+  import { findProviderDefinition, formatPlaybackSource, providerDisplayName } from "$lib/sources";
   import { reportHref } from "$lib/support";
 
   let { administrator }: { administrator: boolean } = $props();
@@ -202,8 +202,8 @@
   }
 
   const activitySource = (source: string | null | undefined) => {
-    const name = source ? providerName(source) : "";
-    return name && name !== "Unknown source" ? `${name} · ` : "";
+    const name = formatPlaybackSource(snapshot?.providerCatalog ?? [], source).label;
+    return name ? `${name} · ` : "";
   };
 
   const visibleActivity = $derived((snapshot?.activity ?? []).filter((item) => !isRoutineActivity(item) && (isProblem(item) || !/record[\s_-]+(?:a[\s_-]+)?listen/i.test(item.label))).slice(0, 4));
@@ -295,7 +295,7 @@
               <p>{item.artist}{item.album ? ` · ${item.album}` : ""}</p>
             </div>
 
-            <p class="playback-meta" title={item.routeReason ?? undefined}>{playbackMeta(item, providerName(item.providerId))}</p>
+            <p class="playback-meta" title={item.routeReason ?? undefined}>{playbackMeta(item, snapshot.providerCatalog ?? [])}</p>
             <div class="playback-progress">
               <span class="playback-progress-track" style={`--scrobble-at: ${Math.min(100, ((item.scrobbleThresholdSeconds ?? 0) / (item.durationSeconds || 1)) * 100)}%`}>
                 <span class="playback-bar" role="progressbar" aria-label={`Playback progress for ${item.title}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={display.progress === null ? undefined : Math.round(display.progress * 100)} aria-valuetext={display.state === "stale" ? `Estimated ${clockTime(display.seconds)}; awaiting an app update` : undefined}>
