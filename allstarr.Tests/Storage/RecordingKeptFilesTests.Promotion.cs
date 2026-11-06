@@ -20,6 +20,24 @@ namespace allstarr.Tests;
 public sealed partial class RecordingKeptFilesTests
 {
     [Fact]
+    public async Task PromotionNamingPreview_UsesKeptMetadataOnlyForThePublisher()
+    {
+        await Service().PublishAsync(Request());
+        var preview = new PromotionNamingPreviewService(factory, new(factory), new TestBackendLibraryAccess(factory, "music"));
+        ProtocolExecutionContext Context(Guid user) => new(ProtocolKind.Jellyfin, "fixture", user.ToString("N"),
+            new allstarr.Core.Identity.AllstarrPrincipal(user, "jellyfin", "fixture", user.ToString("N"), "Listener", false),
+            "promotion-preview", DateTimeOffset.UtcNow.AddMinutes(5), default);
+        var result = await preview.PreviewAsync(Context(owner), new("%title%.%_extension%"));
+        var example = Assert.Single(result.Examples);
+        Assert.Equal(recordingId, example.RecordingId);
+        Assert.Null(example.LibraryTrackId);
+        Assert.EndsWith(".flac", example.RelativePath);
+        Assert.Empty(example.Errors);
+        Assert.Empty((await preview.PreviewAsync(Context(other), new())).Examples);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => preview.PreviewAsync(Context(other), new(RecordingIds: [recordingId])));
+    }
+
+    [Fact]
     public async Task UnheartAndDueCleanupPreservePromotedLibraryCopy()
     {
         var original = await PublishInitialFavoriteAsync();

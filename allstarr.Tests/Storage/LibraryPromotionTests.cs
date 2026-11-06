@@ -130,6 +130,35 @@ public sealed class LibraryPromotionTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ProfileNaming_IsUsedForPreviewAndFrozenForPlacement()
+    {
+        var profiles = new PromotionProfiles(factory);
+        await profiles.SaveMineAsync(Context, new() { NamingScript = "Custom/\u2460-%title%.%_extension%" });
+        var preview = await service.PreviewAsync(Context, Request());
+        Assert.EndsWith("Custom/\u2460-Song.flac", preview.DestinationPath.Replace('\\', '/'));
+        var run = await service.StartAsync(Context, Request());
+        await profiles.SaveMineAsync(Context, new() { NamingScript = "Changed/%title%.%_extension%" });
+        await ExecuteAsync();
+        var placed = await service.GetAsync(Context, run.Id);
+        Assert.Equal("Placed", placed.Outcome);
+        await using var db = factory.CreateDbContext();
+        Assert.Equal(preview.DestinationPath, (await db.ManagedFiles.SingleAsync(item => item.Id == placed.ManagedFileId)).CanonicalPath);
+    }
+
+    [Fact]
+    public async Task HouseholdNaming_IsUsedWhenTheCallerHasNoProfile()
+    {
+        await using (var db = factory.CreateDbContext())
+        {
+            (await db.Users.SingleAsync()).IsAdmin = true;
+            await db.SaveChangesAsync();
+        }
+        await new PromotionProfiles(factory).SaveHouseholdAsync(Context,
+            new(new() { NamingScript = "Household/%title%.%_extension%" }));
+        Assert.EndsWith("Household/Song.flac", (await service.PreviewAsync(Context, Request())).DestinationPath.Replace('\\', '/'));
+    }
+
+    [Fact]
     public async Task Request_IsIdempotentAndRejectsDifferentInputForSameKey()
     {
         var first = await service.StartAsync(Context, Request());

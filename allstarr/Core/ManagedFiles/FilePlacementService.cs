@@ -9,8 +9,9 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
     public Task<ManagedFilePlacementResult> PlaceAsync(ManagedFilePlacementRequest request, CancellationToken cancellationToken = default) =>
         PlaceAsync(request, reuseExisting: true, cancellationToken);
 
-    internal Task<ManagedFilePlacementResult> PlacePromotionAsync(ManagedFilePlacementRequest request, CancellationToken cancellationToken) =>
-        PlaceAsync(request, reuseExisting: true, cancellationToken, exactDestination: true);
+    internal Task<ManagedFilePlacementResult> PlacePromotionAsync(ManagedFilePlacementRequest request, CancellationToken cancellationToken,
+        string? relativePath = null) =>
+        PlaceAsync(request, reuseExisting: true, cancellationToken, exactDestination: true, relativePath);
 
     internal Task<ManagedFilePlacementResult> PlaceFreshHouseholdAsync(
         ManagedFilePlacementRequest request, CancellationToken cancellationToken)
@@ -21,7 +22,8 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
     }
 
     private async Task<ManagedFilePlacementResult> PlaceAsync(
-        ManagedFilePlacementRequest request, bool reuseExisting, CancellationToken cancellationToken, bool exactDestination = false)
+        ManagedFilePlacementRequest request, bool reuseExisting, CancellationToken cancellationToken, bool exactDestination = false,
+        string? relativePath = null)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!StringComparer.Ordinal.Equals(
@@ -34,7 +36,7 @@ public sealed partial class FilePlacementService(IManagedFileOwnershipStore owne
             throw new FileNotFoundException("The placement source does not exist.", source);
         RejectSymlinkLeaf(source);
 
-        var relative = ManagedPathTemplate.Render(request.PathTemplate, request.Track);
+        var relative = relativePath ?? ManagedPathTemplate.Render(request.PathTemplate, request.Track);
         var requestedTarget = ContainedPath(root, relative);
         var fingerprint = await FingerprintAsync(source, cancellationToken);
         var length = new FileInfo(source).Length;

@@ -8,6 +8,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
@@ -17,16 +18,19 @@ public sealed record PromoteSongRequest(Guid RecordingId, Guid ArtifactId, Guid 
     string RequestKey, Guid? CredentialReferenceId = null);
 public sealed record PromotionPreview(string DestinationPath, string[] Steps, long Size);
 internal sealed record PromotionPlan(MetadataEnrichmentPlan Metadata, ManagedTrackPathValues Track,
-    string Provider, string? ExternalId, string? QualityJson);
+    string Provider, string? ExternalId, string? QualityJson)
+{
+    public string NamingScript { get; init; } = PromotionProfile.DefaultNamingScript;
+    public Dictionary<string, string?>? NamingFields { get; init; }
+}
 
 public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext> factory, DurableJobQueue jobs,
     PromotionRoots roots, ProviderDownloadArtifactResolver artifacts, ProviderDownloadWorkspaceOptions workspaces,
     IServiceScopeFactory scopes, IManagedMetadataWriter writer, AudioQualityAnalyzer analyzer,
     IBackendLibraryAccessResolver libraryAccess, ITrackIdentityService? identities = null,
-    IPlaybackMetadataResolver? artwork = null) : IDurableJobHandler
+    IPlaybackMetadataResolver? artwork = null, PromotionProfiles? profiles = null) : IDurableJobHandler
 {
     public const string JobType = "library.promote";
-    private const string Template = "{albumArtist}/{album} ({year})/{track:00} - {title}{extension}";
     private static readonly string[] Steps = ["Copy complete original", "MusicBrainz tags and cover", "Quality screen", "Place in library", "Request library refresh"];
     private readonly SemaphoreSlim gate = new(1, 1);
     string IDurableJobHandler.JobType => JobType;
@@ -41,7 +45,7 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
             throw new UnauthorizedAccessException("This backend library is unavailable to you.");
         var source = await SourceAsync(db, context.Principal!.UserId, request, token);
         var plan = await PlanAsync(db, context, request, source, token);
-        var destination = Destination(root.Path, plan.Track);
+        var destination = Destination(root.Path, plan);
         return new(destination, Steps, source.Length);
     }
 
@@ -70,7 +74,7 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
             var source = await SourceAsync(db, owner, request, token);
             var root = await roots.RequireAsync(request.RootId, token);
             var plan = await PlanAsync(db, context, request, source, token);
-            Destination(root.Path, plan.Track);
+            Destination(root.Path, plan);
             await using var transaction = await db.Database.BeginTransactionAsync(token);
             var id = Guid.CreateVersion7();
             var queued = await jobs.EnqueueInExistingTransactionAsync(db, new DurableJobEnqueueRequest<Guid>(
@@ -288,12 +292,12 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
                 await Begin("Placement");
                 var current = await libraryAccess.ResolveUserAsync(run.OwnerUserId, token);
                 if (!current.Access.Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException("Library access changed before placement.");
-                Destination(root.Path, plan.Track);
+                Destination(root.Path, plan);
                 using var scope = scopes.CreateScope();
                 var placed = await scope.ServiceProvider.GetRequiredService<FilePlacementService>().PlacePromotionAsync(new(
-                    new(root.Id, root.Path, run.OwnerUserId), path, Template, plan.Track, execution.Claim.JobId,
+                    new(root.Id, root.Path, run.OwnerUserId), path, plan.NamingScript, plan.Track, execution.Claim.JobId,
                     ManagedFileScopeKey.Create(run.OwnerUserId, root.Id), true, false, tagged.ContentSha256, tagged.Length)
-                { ReferenceKey = $"promotion:{id:N}" }, token);
+                { ReferenceKey = $"promotion:{id:N}" }, token, RelativePath(plan));
                 run.ManagedFileId = placed.File.Id;
                 await Save("Placement", tagged.ContentSha256, tagged.Length, "Placed with a durable library reference independent of hearts.");
             }
@@ -377,6 +381,7 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
         var song = songs.FirstOrDefault(item => item.ExternalProvider == source.ProviderId && item.ExternalId == source.SourceExternalTrackId);
         var track = new ManagedTrackPathValues(song?.Title ?? recording.Title, song?.Artist ?? "Unknown", song?.Album ?? "Unknown",
             song?.AlbumArtist, Year: song?.Year, Track: song?.Track ?? 0, Extension: Path.GetExtension(source.SourcePath));
+        var fields = PromotionSongFields.FromSong(song ?? new Song(), track.Extension);
         try
         {
             using var file = TagLib.File.Create(source.SourcePath);
@@ -389,6 +394,10 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
                 Year = song?.Year ?? (file.Tag.Year > 0 ? (int)file.Tag.Year : null),
                 Track = song?.Track ?? (int)file.Tag.Track
             };
+            fields["discnumber"] = (song?.DiscNumber ?? (file.Tag.Disc > 0 ? (int)file.Tag.Disc : 1)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            fields["totaldiscs"] = (song?.TotalDiscs ?? (file.Tag.DiscCount > 0 ? (int)file.Tag.DiscCount : 1)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            fields["totaltracks"] = (song?.TotalTracks ?? (int)file.Tag.TrackCount).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            fields["genre"] ??= file.Tag.FirstGenre;
         }
         catch (Exception error) when (error is TagLib.UnsupportedFormatException or TagLib.CorruptFileException) { }
         var mbids = recording.Identifiers.Where(item => item.Kind == RecordingIdentifierKinds.MusicBrainz)
@@ -404,13 +413,38 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
         var metadata = new MetadataEnrichmentPlanner().CreatePlan(new(new(track.Title), new(track.Artist), new(track.Album),
             new(track.AlbumArtist), Year: new(track.Year?.ToString()), Track: new(track.Track?.ToString())),
             new(recordingMbid, release, null, null, null, null, null, null, null, null, null));
-        var quality = await db.Set<ProviderDownloadArtifactEntity>().Where(item => item.Id == source.Id).Select(item => item.QualityCheckJson).SingleAsync(token);
-        return new(metadata, track, source.ProviderId, source.SourceExternalTrackId, quality);
+        var artifact = await db.Set<ProviderDownloadArtifactEntity>().AsNoTracking().SingleAsync(item => item.Id == source.Id, token);
+        fields["title"] = track.Title;
+        fields["artist"] = track.Artist;
+        fields["album"] = track.Album;
+        fields["albumartist"] = track.AlbumArtist ?? track.Artist;
+        fields["year"] = track.Year?.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        fields["date"] ??= fields["year"];
+        fields["tracknumber"] = track.Track?.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        foreach (var tag in metadata.Tags.Where(item => item.Key.StartsWith("musicbrainz_", StringComparison.Ordinal))) fields[tag.Key] = tag.Value;
+        fields["musicbrainz_albumid"] = release;
+        if (string.IsNullOrWhiteSpace(fields.GetValueOrDefault("_quality")))
+            fields["_quality"] = PromotionSongFields.FromSong(new Song
+            { Codec = artifact.Codec, BitDepth = artifact.BitDepth, SampleRate = artifact.SampleRate })["_quality"];
+        var profile = await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token);
+        return new(metadata, track, source.ProviderId, source.SourceExternalTrackId, artifact.QualityCheckJson)
+        { NamingScript = profile.Values.NamingScript, NamingFields = fields };
     }
 
-    private static string Destination(string root, ManagedTrackPathValues track)
+    private static string RelativePath(PromotionPlan plan)
     {
-        var path = PromotionRoots.Contained(root, Path.Combine(root, ManagedPathTemplate.Render(Template, track)));
+        var fields = plan.NamingFields ?? PromotionSongFields.FromSong(new Song
+        {
+            Title = plan.Track.Title, Artist = plan.Track.Artist, Album = plan.Track.Album ?? "Unknown",
+            AlbumArtist = plan.Track.AlbumArtist, Year = plan.Track.Year, Track = plan.Track.Track
+        }, plan.Track.Extension);
+        var result = PromotionNaming.Render(plan.NamingScript, fields);
+        return result.RelativePath ?? throw new ArgumentException("The promotion naming script does not produce a safe relative path.");
+    }
+
+    private static string Destination(string root, PromotionPlan plan)
+    {
+        var path = PromotionNaming.ContainedPath(root, RelativePath(plan));
         PromotionRoots.RejectLinks(path);
         return path;
     }

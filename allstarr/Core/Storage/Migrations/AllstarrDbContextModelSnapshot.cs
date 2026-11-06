@@ -5497,6 +5497,7 @@ namespace allstarr.Core.Storage.Migrations
                     b.ToTable("taste_profiles");
                 });
             CollectionMigrationModel.ConfigureSnapshot(modelBuilder);
+            PromotionProfileModel.ConfigureSnapshot(modelBuilder);
 #pragma warning restore 612, 618
         }
     }

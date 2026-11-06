@@ -89,6 +89,7 @@ public sealed class ProviderHealthMigrationTests
         Assert.Empty(await db.SubsonicPlayQueues.AsNoTracking().ToArrayAsync());
         Assert.Empty(await db.ProviderUserData.AsNoTracking().ToArrayAsync());
         Assert.Empty(await db.ProblemReports.AsNoTracking().ToArrayAsync());
+        Assert.Empty(await db.PromotionProfiles.AsNoTracking().ToArrayAsync());
         AssertSchemaPreserved(beforeSchema, await Schema(db));
         Assert.All(await db.DownloadedSongMappings.AsNoTracking().ToArrayAsync(), mapping => Assert.Null(mapping.CacheIdentityJson));
         Assert.All(await db.Users.AsNoTracking().ToArrayAsync(), listener => Assert.False(listener.IsSynthetic));
@@ -118,6 +119,7 @@ public sealed class ProviderHealthMigrationTests
         Assert.Empty(await restored.SubsonicPlayQueues.AsNoTracking().ToArrayAsync());
         Assert.Empty(await restored.ProviderUserData.AsNoTracking().ToArrayAsync());
         Assert.Empty(await restored.ProblemReports.AsNoTracking().ToArrayAsync());
+        Assert.Empty(await restored.PromotionProfiles.AsNoTracking().ToArrayAsync());
         AssertSchemaPreserved(beforeSchema, await Schema(restored));
         Assert.All(await restored.DownloadedSongMappings.AsNoTracking().ToArrayAsync(), mapping => Assert.Null(mapping.CacheIdentityJson));
         Assert.All(await restored.Users.AsNoTracking().ToArrayAsync(), listener => Assert.False(listener.IsSynthetic));
@@ -302,7 +304,7 @@ public sealed class ProviderHealthMigrationTests
         Assert.Equal(migrationObjects.Order(StringComparer.Ordinal), after.Where(row => migrationObjects.Contains(row.Name))
             .Select(row => row.Name).Order(StringComparer.Ordinal));
 
-        string[] profileObjects = ["shared_tag_profiles", "taste_profiles"];
+        string[] profileObjects = ["shared_tag_profiles", "taste_profiles", "promotion_profiles", "IX_promotion_profiles_OwnerUserId"];
         Assert.DoesNotContain(before, row => profileObjects.Contains(row.Name));
         Assert.Equal(profileObjects.Order(StringComparer.Ordinal), after.Where(row => profileObjects.Contains(row.Name))
             .Select(row => row.Name).Order(StringComparer.Ordinal));
@@ -322,6 +324,17 @@ public sealed class ProviderHealthMigrationTests
                 CONSTRAINT "FK_taste_profiles_users_OwnerUserId" FOREIGN KEY ("OwnerUserId") REFERENCES "users" ("Id") ON DELETE CASCADE
             )
             """)), NormalizeSchemaObject(Assert.Single(after, row => row.Type == "table" && row.Name == "taste_profiles")));
+        Assert.Equal(NormalizeSchemaObject(new("table", "promotion_profiles", """
+            CREATE TABLE "promotion_profiles" (
+                "Key" TEXT NOT NULL CONSTRAINT "PK_promotion_profiles" PRIMARY KEY,
+                "OwnerUserId" TEXT NULL,
+                "PayloadJson" TEXT NOT NULL,
+                "Revision" INTEGER NOT NULL,
+                CONSTRAINT "FK_promotion_profiles_users_OwnerUserId" FOREIGN KEY ("OwnerUserId") REFERENCES "users" ("Id") ON DELETE CASCADE
+            )
+            """)), NormalizeSchemaObject(Assert.Single(after, row => row.Type == "table" && row.Name == "promotion_profiles")));
+        Assert.Equal("CREATE UNIQUE INDEX \"IX_promotion_profiles_OwnerUserId\" ON \"promotion_profiles\" (\"OwnerUserId\")",
+            CollapseSql(Assert.Single(after, row => row.Type == "index" && row.Name == "IX_promotion_profiles_OwnerUserId").Sql));
 
         var oldSchema = before
             .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
