@@ -24,6 +24,7 @@ public sealed record ProtocolLyricsSources(
     public string? OnlySourceId { get; init; }
     public bool ForPermanentSidecar { get; init; }
     public bool ReadOnly { get; init; }
+    internal bool CacheOnly { get; init; }
 }
 
 public sealed record ProtocolLyricsCandidate(string SourceId, LyricsInfo? Lyrics)
@@ -66,7 +67,7 @@ public sealed partial class ProtocolLyricsResolver(
     TimeProvider? timeProvider = null, IHostApplicationLifetime? lifetime = null,
     allstarr.Core.ClientEvents.ClientLyricsUpdates? clientUpdates = null,
     LyricsSearchIndex? searchIndex = null, LyricsSearchChanges? searchChanges = null,
-    LyricsLookupOptions? lookupOptions = null) : IProtocolLyricsResolver, IHostedService
+    LyricsLookupOptions? lookupOptions = null, LyricsRefreshStore? refreshStore = null) : IProtocolLyricsResolver, IHostedService
 {
     public async Task<RichLyrics?> GetRichLyricsAsync(ProtocolExecutionContext context, Song song, string resourceKey,
         ProtocolLyricsSources? sources = null) => RichLyricsMapper.Map(await FindAsync(
@@ -87,7 +88,23 @@ public sealed partial class ProtocolLyricsResolver(
             results.Add(candidate);
             if (results.Count == 20) break;
         }
-        return Assess(results, song, preference.DurationMs);
+        var assessed = Assess(results, song, preference.DurationMs);
+        if (refreshStore != null && preference.SourceId == null && preference.RecordingId is { } recording &&
+            sources?.HouseholdOnly != true && sources?.ForPermanentSidecar != true && !protocol.IsReadOnly)
+        {
+            var best = assessed.Where(candidate => candidate.Assessment != null)
+                .OrderByDescending(candidate => candidate.Assessment!.Score).FirstOrDefault();
+            if (best?.Lyrics != null)
+            {
+                best.Lyrics.Source = best.SourceId;
+                var observedSong = MusicLyrics.ForLookup(song);
+                observedSong.CanonicalRecordingId = recording;
+                await refreshStore.ObserveAsync(protocol, observedSong, best.Lyrics, preference.DurationMs);
+                if (providers is not IProtocolLyricsExecutionGateway && await refreshStore.RetainedAsync(protocol, recording) is { } retained)
+                    await IndexAsync(protocol, observedSong, retained, recording);
+            }
+        }
+        return assessed;
     }
 
     internal static IReadOnlyList<ProtocolLyricsCandidate> Assess(IEnumerable<ProtocolLyricsCandidate> candidates, Song song,
@@ -131,13 +148,26 @@ public sealed partial class ProtocolLyricsResolver(
         {
             var lyrics = candidate.Lyrics;
             if (lyrics == null) continue;
+            lyrics = await RetainAsync(lyrics);
             if (sources?.HouseholdOnly != true && providers is not IProtocolLyricsExecutionGateway)
                 await IndexAsync(protocol, song, lyrics, preference.RecordingId);
             Observe(lyrics);
             return lyrics;
         }
-        Observe(null);
-        return null;
+        var retained = await RetainAsync(null);
+        Observe(retained);
+        return retained;
+
+        async Task<LyricsInfo?> RetainAsync(LyricsInfo? incoming)
+        {
+            if (refreshStore == null || preference.SourceId != null || preference.RecordingId is not { } recording ||
+                sources?.HouseholdOnly == true || sources?.ForPermanentSidecar == true || protocol.IsReadOnly) return incoming;
+            var observedSong = MusicLyrics.ForLookup(song);
+            observedSong.CanonicalRecordingId = recording;
+            await refreshStore.ObserveAsync(protocol, observedSong, incoming, preference.DurationMs);
+            var saved = await refreshStore.RetainedAsync(protocol, recording);
+            return saved ?? incoming;
+        }
 
         void Observe(LyricsInfo? value)
         {
@@ -359,6 +389,7 @@ public sealed partial class ProtocolLyricsResolver(
                 protocol.IsPreparation,
                 protocol.RequestedItemId,
                 Permanent = sources?.ForPermanentSidecar == true,
+                CacheOnly = sources?.CacheOnly == true,
                 Local = localSources.Keys.ToArray()
             }))));
             var lookup = EnterAutomatic(key, protocol, song, householdOnly, preferredSourceId, recordingDurationMs, (owned, deadline) =>
@@ -372,10 +403,11 @@ public sealed partial class ProtocolLyricsResolver(
                         var spec = await PrepareSpecAsync(id, deadline, false, token);
                         var read = spec == null ? null : await executionGateway.PrepareAsync(spec, token);
                         if (read != null) return read;
+                        if (sources?.CacheOnly == true) return null;
                         spec = await PrepareSpecAsync(id, deadline, true, token);
                         return spec == null ? null : await executionGateway.PrepareAsync(spec, token);
                     }, null, automaticOrder.Contains(id, StringComparer.Ordinal))).ToArray();
-            });
+            }, sources?.CacheOnly == true);
             if (lookup != null)
                 foreach (var candidate in await WaitAutomaticAsync(lookup, !automaticLookup, callerToken,
                     responseDeadline ?? LyricsClock.GetUtcNow().Add(LookupOptions.ResponseBudget)))
@@ -515,6 +547,7 @@ public sealed partial class ProtocolLyricsResolver(
                 }
                 else
                 {
+                    if (sources?.CacheOnly == true) return null;
                     if (providerId is "backend" or "kept") return null;
                     var externalId = providerId == "spicylyrics" ? await ResolveSpicySelectorAsync(true, protocol.CancellationToken) : ResolveExternalId(
                         providerId, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId);

@@ -35,6 +35,7 @@ public sealed record ProtocolClientDescriptor
 
 public sealed record ProtocolExecutionContext
 {
+    internal bool RefreshLyrics { get; init; }
     public ProtocolExecutionContext(
         ProtocolKind protocol,
         string backendInstanceId,

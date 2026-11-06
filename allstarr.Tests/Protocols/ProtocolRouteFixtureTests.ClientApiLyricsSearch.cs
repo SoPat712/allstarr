@@ -128,7 +128,7 @@ public sealed partial class ProtocolRouteFixtureTests
         const string item = "/allstarr/v1/items/ext-deezer-song-lyrics/lyrics";
         await ReadClientLyricsJsonAsync(client, item);
         Assert.Single((await ReadClientLyricsJsonAsync(client, "/allstarr/v1/search/lyrics?q=quiet"))["results"]!.AsArray());
-        sources["lrclib"] = new(ProviderLyricsAvailabilityState.Available, "lrclib", ProviderLyricsFormat.LineTimed, "[00:01.00]A brighter morning");
+        sources["lrclib"] = new(ProviderLyricsAvailabilityState.Available, "lrclib", ProviderLyricsFormat.LineTimed, "[00:01.00]A brighter morning\n[00:09.00]Last line");
         await ReadClientLyricsJsonAsync(client, item + "/sources");
         Assert.Empty((await ReadClientLyricsJsonAsync(client, "/allstarr/v1/search/lyrics?q=quiet"))["results"]!.AsArray());
         var found = Assert.Single((await ReadClientLyricsJsonAsync(client, "/allstarr/v1/search/lyrics?q=%20brighter%20morning%20"))["results"]!.AsArray())!;
@@ -339,7 +339,8 @@ public sealed partial class ProtocolRouteFixtureTests
             DurationSeconds = (int?)10
         }));
         var storedLyrics = new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrcred",
-            ProviderLyricsFormat.LineTimed, "[00:01.00]Cached sunrise");
+            ProviderLyricsFormat.LineTimed, "[00:01.00]Cached sunrise", timedLines:
+            [new("Cached sunrise", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(9))]);
         await cache.SetAsync(key, storedLyrics);
         sources["lrcred"] = storedLyrics;
         await worker.SweepAsync(default);

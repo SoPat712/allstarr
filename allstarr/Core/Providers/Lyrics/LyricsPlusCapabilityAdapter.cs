@@ -95,7 +95,7 @@ public sealed class LyricsPlusCapabilityAdapter(
             var key = CacheKey(bases, request);
             try
             {
-                var cached = cache == null ? null : await LyricsAwait.CompleteAsync(cache.GetAsync<ProviderLyricsResult>(key), completion, token);
+                var cached = cache == null || request.Refresh ? null : await LyricsAwait.CompleteAsync(cache.GetAsync<ProviderLyricsResult>(key), completion, token);
                 token.ThrowIfCancellationRequested();
                 if (cached?.Content != null) return Project(cached, request);
             }

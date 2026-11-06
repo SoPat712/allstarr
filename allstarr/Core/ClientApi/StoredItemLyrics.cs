@@ -20,12 +20,23 @@ internal static class StoredItemLyrics
     public static async Task<ItemDetailsLyrics> ReadAsync(IApplicationCache cache, Song? song, Guid? recordingId,
         string? chosenSource, string? audioPath, EffectiveProviderPolicySnapshot policy, string lyricsEndpoint,
         ProtocolExecutionContext execution, IReadOnlyList<ProviderAccountRecord> accounts,
-        IReadOnlyList<ProviderTrackIdentityRecord> identities, CancellationToken token, Action<RichLyrics>? observe = null, long? recordingDurationMs = null)
+        IReadOnlyList<ProviderTrackIdentityRecord> identities, CancellationToken token, Action<RichLyrics>? observe = null, long? recordingDurationMs = null,
+        LyricsInfo? automaticLyrics = null, Action<LyricsInfo>? observeInfo = null)
     {
         if (song == null || policy.Preferences.ExplicitFilter == "CleanOnly" && !CleanRecordingPolicy.IsVerifiedClean(song))
             return new(false, null, null);
         var best = new ItemDetailsLyrics(false, null, chosenSource);
         var bestScore = -1.0;
+        ItemDetailsLyrics? retainedChoice = null;
+        if (chosenSource == null && LyricsQuality.Evaluate(automaticLyrics, song, recordingDurationMs) is { } retainedScore &&
+            RichLyricsMapper.Map(automaticLyrics) is { } retained && policy.IsAutomatic(LyricsVersions.ProviderId(retained.Source.Id)))
+        {
+            best = new(true, retained.Format, retained.Source.Id);
+            retainedChoice = best;
+            bestScore = retainedScore.Score;
+            observe?.Invoke(retained);
+            observeInfo?.Invoke(automaticLyrics!);
+        }
         bool ConsiderProvider(LyricsInfo? info, string provider)
         {
             if (info == null) return false;
@@ -36,6 +47,7 @@ internal static class StoredItemLyrics
                 if (info.Versions != null) version.Source = LyricsVersions.SourceId(provider, version.Metadata);
                 if (version.Metadata?.DurationMs is { } milliseconds) version.Duration = (int)((milliseconds + 999) / 1000);
                 if (RichLyricsMapper.Map(version) is { } rich) observe?.Invoke(rich);
+                observeInfo?.Invoke(version);
             }
             if (chosenSource != null && LyricsVersions.ProviderId(chosenSource) == provider)
             {
@@ -49,6 +61,7 @@ internal static class StoredItemLyrics
             foreach (var version in versions)
             {
                 if (LyricsQuality.Evaluate(version, song, recordingDurationMs) is not { } score || score.Score <= bestScore) continue;
+                if (retainedChoice != null && !score.Reasons.Contains("duration_fits")) continue;
                 bestScore = score.Score;
                 best = new(true, RichLyricsMapper.Map(version)!.Format, version.Source);
             }
@@ -57,7 +70,7 @@ internal static class StoredItemLyrics
         var lookup = MusicLyrics.ForLookup(song);
         var automatic = ProviderOrderPolicyCatalog.NormalizeOrder(ProviderCapabilityKind.Lyrics, policy.GetProviderOrder(ProviderCapabilityKind.Lyrics));
         var providers = chosenSource == null ? automatic : [LyricsVersions.ProviderId(chosenSource)];
-        foreach (var provider in providers.Where(policy.IsEnabled)
+        foreach (var provider in providers.Where(provider => chosenSource == null ? policy.IsAutomatic(provider) : policy.IsEnabled(provider))
             .Where(provider => policy.Preferences.ExplicitFilter != "CleanOnly" || provider is "backend" or "kept"))
         {
             token.ThrowIfCancellationRequested();

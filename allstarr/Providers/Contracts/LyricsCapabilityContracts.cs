@@ -75,6 +75,7 @@ public sealed record ProviderLyricsRequest
     public int? DurationSeconds { get; }
 
     public string? Isrc { get; }
+    internal bool Refresh { get; init; }
 }
 
 public sealed record ProviderLyricsTimedSegment

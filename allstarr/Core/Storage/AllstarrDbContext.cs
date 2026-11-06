@@ -104,6 +104,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         ConfigureProviderUserData(modelBuilder);
         modelBuilder.ConfigureManualLyricsMappings();
         ConfigureLyricsChoices(modelBuilder);
+        ConfigureLyricsRefresh(modelBuilder);
         ConfigureHealth(modelBuilder);
         ConfigureProblemAlerts(modelBuilder);
         ConfigureBackups(modelBuilder);

@@ -160,6 +160,7 @@ public sealed partial class JobsControllerTests
     [InlineData("favorite.link-union", "Merge linked favorites")]
     [InlineData("health.cleanup", "Health cleanup")]
     [InlineData("recording.kept-cleanup", "Remove unused kept copy")]
+    [InlineData("lyrics.refresh", "Look for better lyrics")]
     [InlineData("listening-history.import", "History import")]
     [InlineData("downloads.quality-check", "Audio quality check")]
     [InlineData("extension.session.verify", "Verify source sign-in")]

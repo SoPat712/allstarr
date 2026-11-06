@@ -1,6 +1,7 @@
 using System.Text.Json;
 using allstarr.Core.Health;
 using allstarr.Core.Jobs;
+using allstarr.Core.Music;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using allstarr.Filters;
@@ -14,7 +15,8 @@ namespace allstarr.Controllers;
 [Route("api/admin/activity/tasks")]
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class ActivityTasksController(IDbContextFactory<AllstarrDbContext> factory,
-    BackgroundTaskActivity? backgroundTasks = null) : ControllerBase
+    BackgroundTaskActivity? backgroundTasks = null,
+    LyricsRefreshSchedule? lyricsRefresh = null) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> List(CancellationToken cancellationToken = default, [FromQuery] string scope = "mine")
@@ -87,7 +89,8 @@ public sealed class ActivityTasksController(IDbContextFactory<AllstarrDbContext>
         {
             var serviceSchedules = await db.JobSchedules.AsNoTracking()
                 .Where(item => item.JobType == HealthSmokeService.JobType && (everyone || item.OwnerUserId == session.AllstarrUserId) ||
-                    everyone && item.JobType == DurableBackupService.JobType && item.Id == DurableBackupService.ScheduleId && item.OwnerUserId == null)
+                    everyone && item.JobType == DurableBackupService.JobType && item.Id == DurableBackupService.ScheduleId && item.OwnerUserId == null ||
+                    everyone && item.JobType == LyricsRefreshService.Type && item.Id == LyricsRefreshSchedule.ScheduleId && item.OwnerUserId == null)
                 .OrderBy(item => item.NextRunAt).ThenBy(item => item.Id).Take(10).ToArrayAsync(cancellationToken);
             var serviceTypes = serviceSchedules.Select(item => item.JobType).Distinct().ToArray();
             var serviceOwners = serviceSchedules.Select(item => item.OwnerUserId).Distinct().ToArray();
@@ -100,7 +103,7 @@ public sealed class ActivityTasksController(IDbContextFactory<AllstarrDbContext>
             {
                 Schedule = schedule,
                 Job = recent.FirstOrDefault(job => job.OwnerUserId == schedule.OwnerUserId && job.Type == schedule.JobType &&
-                    (schedule.JobType == DurableBackupService.JobType || BelongsToSchedule(job.PayloadJson, schedule.Id)))
+                    (schedule.JobType is DurableBackupService.JobType or LyricsRefreshService.Type || BelongsToSchedule(job.PayloadJson, schedule.Id)))
             }).ToArray();
             var displays = await ActivityJobPresentation.ResolveAsync(db,
                 latest.Where(item => item.Job != null).Select(item => item.Job!).ToArray(), cancellationToken, administrator: true);
@@ -108,6 +111,7 @@ public sealed class ActivityTasksController(IDbContextFactory<AllstarrDbContext>
             {
                 var schedule = entry.Schedule;
                 var health = schedule.JobType == HealthSmokeService.JobType;
+                var lyrics = schedule.JobType == LyricsRefreshService.Type;
                 var configuration = health ? HealthSmokeService.Parse<HealthSmokeSchedule>(schedule.PayloadTemplateJson) : null;
                 var display = entry.Job == null ? null : displays.GetValueOrDefault(entry.Job.Id);
                 var state = !schedule.Enabled ? "Paused" : entry.Job?.State switch
@@ -121,8 +125,8 @@ public sealed class ActivityTasksController(IDbContextFactory<AllstarrDbContext>
                 items.Add(new
                 {
                     id = schedule.Id.ToString("D"),
-                    kind = health ? "health" : "backup",
-                    name = health ? "Health checks" : "Database and keyring backups",
+                    kind = health ? "health" : lyrics ? "lyrics" : "backup",
+                    name = health ? "Health checks" : lyrics ? "Look for better lyrics" : "Database and keyring backups",
                     ownerName = schedule.OwnerUserId.HasValue ? ActivityPresentation.UserName(serviceNames.GetValueOrDefault(schedule.OwnerUserId.Value)) : "Household",
                     enabled = schedule.Enabled,
                     state,
@@ -130,9 +134,10 @@ public sealed class ActivityTasksController(IDbContextFactory<AllstarrDbContext>
                         ? Interval(configuration.IntervalMinutes) : CronCadence(schedule.CronExpression, schedule.TimeZoneId),
                     lastRunAt = entry.Job?.CompletedAt ?? entry.Job?.StartedAt,
                     nextRunAt = schedule.Enabled ? schedule.NextRunAt : null,
-                    detail = display?.Summary ?? "No recorded runs yet.",
-                    actionHref = health ? "#/settings/health" : "#/settings/backups",
-                    actionLabel = health ? "Open Health" : "Open Backups"
+                    detail = display?.Summary ?? (lyrics ? "Looks for better lyrics and keeps pinned choices." : "No recorded runs yet."),
+                    actionHref = health ? "#/settings/health" : lyrics ? "#/activity?view=history" : "#/settings/backups",
+                    actionLabel = health ? "Open Health" : lyrics ? "View history" : "Open Backups",
+                    runEndpoint = lyrics ? "/api/admin/activity/tasks/lyrics/run" : null
                 });
             }
         }
@@ -169,6 +174,18 @@ public sealed class ActivityTasksController(IDbContextFactory<AllstarrDbContext>
                 });
         }
         return Ok(new { items, hasMore });
+    }
+
+    [HttpPost("lyrics/run")]
+    public async Task<IActionResult> RunLyrics(CancellationToken cancellationToken = default)
+    {
+        if (HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] is not AdminAuthSession session)
+            return Unauthorized(new { error = "Authentication required" });
+        if (!session.IsAdministrator || session.AllstarrUserId == null) return Forbid();
+        if (lyricsRefresh == null) return StatusCode(StatusCodes.Status503ServiceUnavailable,
+            new { error = "Lyrics refresh is unavailable." });
+        var result = await lyricsRefresh.RunAsync(cancellationToken);
+        return Accepted(new { jobId = result.JobId, created = result.Created });
     }
     private static bool BelongsToSchedule(string json, Guid scheduleId)
     {

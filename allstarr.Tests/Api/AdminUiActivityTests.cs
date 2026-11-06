@@ -833,6 +833,7 @@ public sealed class AdminUiActivityTests
     [InlineData("favorite.display-backfill")]
     [InlineData("health.cleanup")]
     [InlineData("recording.kept-cleanup")]
+    [InlineData("lyrics.refresh")]
     public async Task Activity_HidesRoutineWorkAndItsNonfailureAuditsWithoutRemovingRecords(string type)
     {
         await using var database = await SqliteTestDatabase.CreateAsync();

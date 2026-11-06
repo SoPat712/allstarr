@@ -64,6 +64,7 @@ public sealed record ProviderHealthObservation(
 /// <summary>Volatile observations only. Reading status never contacts a provider or writes storage.</summary>
 public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOutcomeObserver
 {
+    public event Action<string, Guid?>? LyricsRecovered;
     private const int MaximumObservations = 4096;
     private readonly object _sync = new();
     private readonly Dictionary<ProviderRuntimeStatusKey, ProviderHealthObservation> _observations = [];
@@ -276,6 +277,9 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
                 FailureWindowStartedAt = success ? null : withinWindow ? previous!.FailureWindowStartedAt : now,
                 PausedAt = opens ? comparable && IsCircuitOpen(previous!) ? previous!.PausedAt ?? now : now : null
             };
+            if (key.Capability == ProviderCapabilities.Lyrics && success && previous != null &&
+                (previous.ConsecutiveFailures > 0 || previous.HealthBeforeProbe == ProviderHealthState.Degraded || previous.Health == ProviderHealthState.Degraded))
+                LyricsRecovered?.Invoke(key.Provider, key.ProviderAccountId);
             if (!_alertSamples.TryGetValue(key, out var alertSamples)) _alertSamples[key] = alertSamples = [];
             if (alertSamples.Count >= 20) alertSamples.RemoveAt(0);
             alertSamples.Add(!success && health != ProviderHealthState.Degraded

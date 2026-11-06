@@ -84,6 +84,13 @@ public sealed class DurableJobContextAuthorizer
                 throw new ArgumentException("Storage verification cannot carry user or provider authority.");
             return new(null, null, null, RedactCorrelationId(correlationId), JsonSerializer.Serialize(StorageSnapshot()));
         }
+        if (jobType == allstarr.Core.Music.LyricsRefreshService.Type)
+        {
+            if (ownerUserId != null || providerAccountId != null || capability != null)
+                throw new ArgumentException("Lyrics refresh cannot carry user or provider authority.");
+            return new(null, null, null, RedactCorrelationId(correlationId),
+                JsonSerializer.Serialize(LyricsRefreshSnapshot()));
+        }
         if (!ownerUserId.HasValue || ownerUserId == Guid.Empty)
         {
             throw new ArgumentException(
@@ -143,7 +150,7 @@ public sealed class DurableJobContextAuthorizer
         CancellationToken cancellationToken = default)
     {
         if ((!claim.OwnerUserId.HasValue || claim.OwnerUserId == Guid.Empty) &&
-            claim.Type is not (ManagedStorageRecovery.JobType or ExtensionSessionVerificationJobHandler.Type or DurableBackupService.JobType))
+            claim.Type is not (ManagedStorageRecovery.JobType or ExtensionSessionVerificationJobHandler.Type or DurableBackupService.JobType or allstarr.Core.Music.LyricsRefreshService.Type))
         {
             return DurableJobContextAuthorization.Deny(
                 "job_context_missing",
@@ -188,6 +195,12 @@ public sealed class DurableJobContextAuthorizer
                 claim.OwnerUserId == null && claim.ProviderAccountId == null && claim.ProviderCapability == null
                 ? DurableJobContextAuthorization.Allow()
                 : DurableJobContextAuthorization.Deny("job_policy_snapshot_mismatch", "The storage maintenance policy does not match this exact job.");
+
+        if (claim.Type == allstarr.Core.Music.LyricsRefreshService.Type || savedSnapshot.AuthorizationRule == "household_lyrics_refresh")
+            return claim.Type == allstarr.Core.Music.LyricsRefreshService.Type && savedSnapshot == LyricsRefreshSnapshot() &&
+                claim.OwnerUserId == null && claim.ProviderAccountId == null && claim.ProviderCapability == null
+                ? DurableJobContextAuthorization.Allow()
+                : DurableJobContextAuthorization.Deny("job_policy_snapshot_mismatch", "The lyrics refresh policy does not match this exact job.");
 
         if (claim.OwnerUserId is not { } recordedOwner || recordedOwner == Guid.Empty)
             return DurableJobContextAuthorization.Deny("job_context_missing", "The durable job does not contain an initiating user.");
@@ -269,6 +282,9 @@ public sealed class DurableJobContextAuthorizer
 
     private static DurableJobPolicySnapshot StorageSnapshot() =>
         new(SnapshotVersion, "managed_storage_verification", null, null, null);
+
+    private static DurableJobPolicySnapshot LyricsRefreshSnapshot() =>
+        new(SnapshotVersion, "household_lyrics_refresh", null, null, null);
 
     private static DurableJobPolicySnapshot SessionVerificationSnapshot(ProviderAccountRecord account) =>
         new(SnapshotVersion, "extension_session_verification", account.ProviderId, null,

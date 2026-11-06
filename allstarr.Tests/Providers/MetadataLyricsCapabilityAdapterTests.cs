@@ -11,6 +11,23 @@ namespace allstarr.Tests;
 public sealed class MetadataLyricsCapabilityAdapterTests
 {
     [Fact]
+    public async Task RefreshReadsPastStoredResultsAndRetainsTheFailureCooldown()
+    {
+        var cache = new Mock<IApplicationCache>();
+        cache.Setup(item => item.GetAsync<ProviderLyricsResult>(It.IsAny<string>())).ReturnsAsync(
+            new ProviderLyricsResult(ProviderLyricsAvailabilityState.Unavailable, "genius"));
+        var handler = new Handler((_, _) => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+        var adapter = Adapter("genius", handler, cache: cache.Object);
+        Assert.Equal(ProviderLyricsAvailabilityState.Unavailable,
+            (await adapter.FetchLyricsAsync(Context("genius"), Request("genius"))).RequireValue().Availability);
+        Assert.Empty(handler.Requests);
+        var refresh = Request("genius") with { Refresh = true };
+        Assert.False((await adapter.FetchLyricsAsync(Context("genius"), refresh)).IsSuccess);
+        Assert.False((await adapter.FetchLyricsAsync(Context("genius"), refresh)).IsSuccess);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
     public async Task GeniusContractKeepsSectionsAndRemovesPageFootersWithoutClaimingTiming()
     {
         var handler = new Handler((_, _) => Response(JsonSerializer.Serialize(new { lyrics = "  [Chorus]\nSynthetic words\n\nLast line\n12Embed\n3 Contributors" })));

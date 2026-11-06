@@ -405,8 +405,11 @@ public sealed partial class ProviderAccountsController : ControllerBase
     }
 
     // Account changes are checked straight away instead of waiting for the next scheduled sweep.
-    private void RequestCheck(string providerId) =>
+    private void RequestCheck(string providerId)
+    {
         HttpContext?.RequestServices?.GetService<allstarr.Services.Common.IProviderCheckRequests>()?.Request(providerId);
+        HttpContext?.RequestServices?.GetService<allstarr.Core.Settings.RuntimeSettingsChangeSignal>()?.Publish();
+    }
 
     // History, matches and scrobble deliveries keep pointing at a removed account, so only an unused one is deleted;
     // the rest stay archived and hidden.

@@ -59,7 +59,7 @@ public abstract class PublicLyricsCapabilityAdapter(
             }));
             try
             {
-                var cached = cache == null ? null : await LyricsAwait.CompleteAsync(cache.GetAsync<ProviderLyricsResult>(key), completion, token);
+                var cached = cache == null || request.Refresh ? null : await LyricsAwait.CompleteAsync(cache.GetAsync<ProviderLyricsResult>(key), completion, token);
                 token.ThrowIfCancellationRequested();
                 if (cached != null) return Project(cached, request);
             }

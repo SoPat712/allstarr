@@ -481,6 +481,9 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         Assert.Equal("[00:01.00]Fixture lyrics\n", replay.RequireValue().Content);
         Assert.Equal(calls, handler.Requests.Count);
         Assert.Single(entries);
+        Assert.True((await restarted.FetchLyricsAsync(context, request with { Refresh = true })).IsSuccess);
+        Assert.True(handler.Requests.Count > calls);
+        Assert.Single(entries);
     }
 
     private static ProviderExecutionContext Context(Guid user) => new(

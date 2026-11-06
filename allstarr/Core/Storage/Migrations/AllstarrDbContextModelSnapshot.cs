@@ -4542,6 +4542,81 @@ namespace allstarr.Core.Storage.Migrations
                     b.ToTable("recording_identifiers", (string)null);
                 });
 
+            modelBuilder.Entity("allstarr.Core.Storage.LyricsRefreshAvailabilityRecord", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Key");
+
+                    b.ToTable("lyrics_refresh_availability");
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.RecordingLyricsRefreshRecord", b =>
+                {
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("CanonicalRecordingId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SourceId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PreviousJson")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("TargetDurationMilliseconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double>("Score")
+                        .HasColumnType("REAL");
+
+                    b.Property<bool>("WordSynced")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("Misses")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("CheckedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("NextCheckAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("OwnerUserId", "CanonicalRecordingId");
+
+                    b.HasIndex("CanonicalRecordingId");
+
+                    b.HasIndex("NextCheckAt");
+
+                    b.ToTable("recording_lyrics_refreshes", (string)null);
+                });
+
             modelBuilder.Entity("allstarr.Core.Storage.RecordingLyricsChoiceRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -5907,6 +5982,21 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
                         .WithMany("Identifiers")
                         .HasForeignKey("RecordingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.RecordingLyricsRefreshRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
+                        .WithMany()
+                        .HasForeignKey("CanonicalRecordingId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

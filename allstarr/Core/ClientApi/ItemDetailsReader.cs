@@ -3,6 +3,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Favorites;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Matching;
+using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
@@ -24,7 +25,7 @@ public sealed class ItemDetailsReader(
     IApplicationCache cache,
     IDurableRuntimeSettings settings,
     ItemMatchReader matches,
-    IProtocolProviderGateway? gateway = null, ILibraryIndexService? libraryIndex = null)
+    IProtocolProviderGateway? gateway = null, ILibraryIndexService? libraryIndex = null, LyricsRefreshStore? refreshStore = null)
 {
     public async Task<ItemDetailsResponse> ReadAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids)
     {
@@ -227,7 +228,9 @@ public sealed class ItemDetailsReader(
             });
             var lyrics = await StoredItemLyrics.ReadAsync(cache, lyricsSong, recordingId, choice?.SourceId, storedFile?.File.CanonicalPath,
                 policy, lyricsEndpoint, execution, accounts, links, token,
-                recordingDurationMs: recordingId.HasValue ? recordings.GetValueOrDefault(recordingId.Value)?.DurationMilliseconds : null);
+                recordingDurationMs: recordingId.HasValue ? recordings.GetValueOrDefault(recordingId.Value)?.DurationMilliseconds : null,
+                automaticLyrics: choice == null && recordingId.HasValue && refreshStore != null
+                    ? await refreshStore.RetainedAsync(execution, recordingId.Value) : null);
             var audio = song == null || song.Codec == null && song.BitDepth == null && song.SampleRate == null && song.Bitrate == null ? null :
                 new ItemDetailsAudio(song.Codec, song.BitDepth, song.SampleRate, song.Bitrate);
             if (audio == null && kept?.Artifact is { } artifact &&

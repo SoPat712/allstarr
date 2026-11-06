@@ -43,6 +43,7 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Core/ManagedFiles/FilePlacementService.Recovery.cs"] = "owned data-folder identity marker",
             ["Core/ManagedFiles/RecordingKeptFiles.CacheMove.cs"] = "managed audio and lyrics sidecars",
             ["Core/ManagedFiles/PhysicalManagedFileOperations.cs"] = "managed audio and artwork",
+            ["Core/Music/LyricsRefreshSidecars.cs"] = "lyrics sidecars beside kept and library files, previous version kept",
             ["Core/Music/ProviderAudioTimeSeek.cs"] = "request-scoped temporary audio",
             ["Core/Music/ProviderAudioTranscoder.cs"] = "request-scoped temporary conversion input",
             ["Core/Music/ProviderAudioVerifier.cs"] = "bounded temporary audio verification",

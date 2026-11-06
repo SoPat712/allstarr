@@ -23,7 +23,7 @@ internal static class ActivityJobPresentation
     [
         "recording.tags.refresh", "recording.musicbrainz.enrich", "recording.odesli.enrich",
         "listening.musicbrainz.enrich", "favorite.display-backfill", "health.cleanup", "recording.kept-cleanup",
-        Core.Music.PersonalMixService.JobType
+        Core.Music.PersonalMixService.JobType, Core.Music.LyricsRefreshService.Type
     ];
     private static readonly string[] FailureOutcomes = ["failed", "failure", "error", "retry_scheduled", "interrupted"];
     private static readonly HashSet<string> KnownHealthSteps = HealthSmokeServerProbe.StepNames.Concat(HealthSmokeProtocolProbe.StepNames).ToHashSet(StringComparer.Ordinal);
@@ -203,6 +203,15 @@ internal static class ActivityJobPresentation
             DurableJobState.Pending => "Health check is queued.",
             _ => "Health check result unavailable; detailed results were not retained."
         };
+        if (job.Type.Equals(Core.Music.LyricsRefreshService.Type, StringComparison.Ordinal)) return job.State switch
+        {
+            DurableJobState.Failed => Safe(job.LastErrorMessage) ?? "Lyrics refresh failed.",
+            DurableJobState.Cancelled => "Lyrics refresh was cancelled.",
+            DurableJobState.RetryScheduled => "Lyrics refresh is waiting for its next retry.",
+            DurableJobState.Running => "Lyrics refresh is running.",
+            DurableJobState.Pending => "Lyrics refresh is queued.",
+            _ => "Lyrics refresh completed; detailed changes were not retained."
+        };
         if (favorite is { Title: { } favoriteTitle })
             return MutationSummary(job.State, $"Favorite {favorite.Operation?.ToLowerInvariant() ?? "update"}", favoriteTitle,
                 favorite.Artist);
@@ -360,6 +369,7 @@ internal static class ActivityJobPresentation
         "track-match.rematch" => "Refresh matches",
         "library.index" => "Refresh library index",
         Core.Music.PersonalMixService.JobType => "Refresh your mixes",
+        Core.Music.LyricsRefreshService.Type => "Look for better lyrics",
         _ => "Background task"
     };
 

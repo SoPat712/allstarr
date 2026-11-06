@@ -6,6 +6,7 @@ using allstarr.Core.Health;
 using allstarr.Core.Operations;
 using allstarr.Core.Releases;
 using allstarr.Core.Storage;
+using allstarr.Core.Music;
 using Cronos;
 using Microsoft.EntityFrameworkCore;
 
@@ -42,6 +43,7 @@ public sealed class DurableScheduleEngine
     private readonly DurableBackupService? _backups;
     private readonly allstarr.Core.Music.PersonalMixService? _mixes;
     private readonly allstarr.Core.Playlists.PlaylistOrchestrationService? _playlists;
+    private readonly LyricsRefreshSchedule? _lyrics;
 
     public DurableScheduleEngine(
         IDbContextFactory<AllstarrDbContext> contextFactory,
@@ -50,7 +52,8 @@ public sealed class DurableScheduleEngine
         ReleaseComposition releaseComposition,
         DurableBackupService? backups = null,
         allstarr.Core.Music.PersonalMixService? mixes = null,
-        allstarr.Core.Playlists.PlaylistOrchestrationService? playlists = null)
+        allstarr.Core.Playlists.PlaylistOrchestrationService? playlists = null,
+        LyricsRefreshSchedule? lyrics = null)
     {
         _contextFactory = contextFactory;
         _queue = queue;
@@ -59,6 +62,7 @@ public sealed class DurableScheduleEngine
         _backups = backups;
         _mixes = mixes;
         _playlists = playlists;
+        _lyrics = lyrics;
     }
 
     public DurableScheduleEngine(
@@ -88,6 +92,7 @@ public sealed class DurableScheduleEngine
         if (_backups != null) await _backups.ReconcileScheduleAsync(cancellationToken);
         if (_mixes != null) await _mixes.EnsureSchedulesAsync(cancellationToken);
         if (_playlists != null) await _playlists.EnsureSpotifyArtworkRepairsAsync(cancellationToken);
+        if (_lyrics != null) await _lyrics.EnsureAsync(cancellationToken);
         await using var scan = await _contextFactory.CreateDbContextAsync(cancellationToken);
         var dueSchedules = scan.JobSchedules.AsNoTracking()
             .Where(item => item.Enabled && item.NextRunAt != null && item.NextRunAt <= now)
@@ -176,6 +181,11 @@ public sealed class DurableScheduleEngine
                     return default;
                 }
             }
+            else if (jobType == LyricsRefreshService.Type)
+            {
+                if (_lyrics == null || schedule.Id != LyricsRefreshSchedule.ScheduleId || schedule.OwnerUserId != null)
+                    throw new InvalidOperationException("The lyrics refresh schedule is invalid.");
+            }
             else if (jobType != HealthSmokeService.JobType)
                 throw new InvalidOperationException("The enabled schedule job type is unsupported.");
 
@@ -229,6 +239,11 @@ public sealed class DurableScheduleEngine
                     await _queue.EnqueueInExistingTransactionAsync(context,
                         new DurableJobEnqueueRequest<Guid>(jobType, $"{idempotencyPrefix}{dueAt.UtcTicks}",
                             JsonSerializer.Deserialize<Guid>(schedule.PayloadTemplateJson), schedule.OwnerUserId), cancellationToken);
+                else if (jobType == LyricsRefreshService.Type)
+                    await _queue.EnqueueInExistingTransactionAsync(context,
+                        new DurableJobEnqueueRequest<LyricsRefreshRequest>(jobType, $"{idempotencyPrefix}{dueAt.UtcTicks}",
+                            new LyricsRefreshRequest(), OwnerUserId: null, MaxDeferrals: 10000,
+                            CorrelationId: $"schedule-{schedule.Id:N}-{dueAt.UtcTicks}"), cancellationToken);
                 else if (health != null)
                     await _queue.EnqueueInExistingTransactionAsync(context,
                         new DurableJobEnqueueRequest<HealthSmokeJobPayload>(HealthSmokeService.JobType,

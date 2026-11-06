@@ -105,6 +105,24 @@ public sealed class LyricsSearchIndex(StorageOptions options, IProviderRouter? r
         finally { _transaction = null; _gate.Release(); }
     }
 
+    internal async Task<RichLyrics?> ReadBackendAsync(ProtocolExecutionContext context, Song song)
+    {
+        await _gate.WaitAsync(context.CancellationToken);
+        try
+        {
+            Open();
+            var document = _documents.Values.Where(item => item.Backend == context.BackendInstanceId && item.ItemId == ItemKey(song) &&
+                item.Source == "backend" && (item.Owner == Guid.Empty || item.Owner == context.Principal?.UserId))
+                .OrderByDescending(item => item.UpdatedAt).FirstOrDefault();
+            if (document == null) return null;
+            using var read = Command("SELECT lyrics FROM documents WHERE id=$id", ("$id", document.Id));
+            using var payload = new MemoryStream((byte[])read.ExecuteScalar()!);
+            using var decompressed = new BrotliStream(payload, CompressionMode.Decompress);
+            return JsonSerializer.Deserialize<RichLyrics>(decompressed, ClientApiContract.JsonOptions);
+        }
+        finally { _gate.Release(); }
+    }
+
     public async Task<LyricsSearchResponse> SearchAsync(ProtocolExecutionContext context, string query, int limit,
         IReadOnlyList<IndexedLyricsDocument> visible, EffectiveProviderPolicySnapshot policy,
         IReadOnlyDictionary<Guid, string> choices)

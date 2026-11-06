@@ -521,6 +521,13 @@ builder.Services.AddSingleton(builder.Configuration.GetSection("LyricsLookup").G
 builder.Services.AddSingleton<ProtocolLyricsResolver>();
 builder.Services.AddSingleton<IProtocolLyricsResolver>(provider => provider.GetRequiredService<ProtocolLyricsResolver>());
 builder.Services.AddSingleton<IHostedService>(provider => provider.GetRequiredService<ProtocolLyricsResolver>());
+builder.Services.AddSingleton<LyricsRefreshStore>();
+builder.Services.AddSingleton(builder.Configuration.GetSection("LyricsRefresh").Get<LyricsRefreshOptions>() ?? new LyricsRefreshOptions());
+builder.Services.AddSingleton<LyricsRefreshSidecars>();
+builder.Services.AddSingleton<LyricsRefreshService>();
+builder.Services.AddSingleton<IDurableJobHandler>(provider => provider.GetRequiredService<LyricsRefreshService>());
+builder.Services.AddSingleton<LyricsRefreshSchedule>();
+builder.Services.AddHostedService<LyricsRefreshTriggers>();
 builder.Services.AddSingleton<IRecordingLyricsChoices, RecordingLyricsChoices>();
 builder.Services.AddSingleton<IRecordingLyricsReview, RecordingLyricsReview>();
 builder.Services.AddSingleton<IKeptLyricsReader, KeptLyricsReader>();

@@ -2249,7 +2249,8 @@ public sealed partial class ProtocolProviderGateway(
                 artistNames: artistNames,
                 albumTitle: albumTitle,
                 durationSeconds: durationSeconds,
-                isrc: isrc));
+                isrc: isrc)
+            { Refresh = protocol.RefreshLyrics });
         if (outcome.IsSuccess)
         {
             var result = outcome.RequireValue() with { CacheProvenance = LyricsSearchIndex.AccountProvenance(routed.Candidate.Context.Account) };
@@ -2287,7 +2288,8 @@ public sealed partial class ProtocolProviderGateway(
             [providerId],
             sourceTrackId,
             quality, allowedAccountScopes: allowedAccountScopes,
-            purpose: ProviderRoutePurpose.ManualSelection));
+            purpose: protocol.RefreshLyrics && capability == ProviderCapabilityKind.Lyrics
+                ? ProviderRoutePurpose.Automatic : ProviderRoutePurpose.ManualSelection));
         var candidate = plan.Candidates.SingleOrDefault();
         if (candidate == null && plan.Decision.Candidates.Any(item =>
                 item.ProviderId.Equals(providerId, StringComparison.Ordinal) &&

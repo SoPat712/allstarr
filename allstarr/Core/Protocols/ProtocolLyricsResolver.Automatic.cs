@@ -62,17 +62,19 @@ public sealed partial class ProtocolLyricsResolver
             Policy = context.Policy,
             RequestedItemId = context.RequestedItemId,
             IsPreparation = context.IsPreparation,
+            RefreshLyrics = context.RefreshLyrics,
             IsReadOnly = context.IsReadOnly
         };
 
     private AutomaticLookup? EnterAutomatic(string key, ProtocolExecutionContext protocol, Song song, bool householdOnly,
-        string? preferred, long? recordingDurationMs, Func<ProtocolExecutionContext, DateTimeOffset, IReadOnlyList<AutomaticSource>> build)
+        string? preferred, long? recordingDurationMs, Func<ProtocolExecutionContext, DateTimeOffset, IReadOnlyList<AutomaticSource>> build,
+        bool cacheOnlyRequested = false)
     {
         lock (_automaticGate)
         {
             if (_automatic.TryGetValue(key, out var existing)) return existing;
             if (_automaticShutdown.IsCancellationRequested) return null;
-            var cacheOnly = _automatic.Count >= 4;
+            var cacheOnly = cacheOnlyRequested || _automatic.Count >= 4;
             var now = LyricsClock.GetUtcNow();
             var deadline = now.Add(cacheOnly ? LookupOptions.ResponseBudget : LookupOptions.BackgroundTimeout);
             if (protocol.Deadline < deadline) deadline = protocol.Deadline;

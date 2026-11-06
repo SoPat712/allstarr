@@ -1076,6 +1076,7 @@ public class AdminUiController : ControllerBase
         var category = item.Category.Trim().ToLowerInvariant();
         var kind = category switch
         {
+            "lyrics" when item.Action == "automatic.upgraded" => "job",
             "health-check" => "health",
             "background-task" => "job",
             "scrobble" => "scrobble",
@@ -1085,7 +1086,7 @@ public class AdminUiController : ControllerBase
             _ => "administration"
         };
         var providerId = ActivityPresentation.SafeText(AuditDetail(item.DetailsJson, "providerId") ?? AuditDetail(item.DetailsJson, "selectedProviderId"), 200);
-        var source = providerId ?? (category == "health-check" ? "Health" : category == "background-task" ? "Maintenance" : item.Category);
+        var source = providerId ?? (category == "health-check" ? "Health" : category == "background-task" ? "Maintenance" : category == "lyrics" ? "Lyrics" : item.Category);
         var detail = category switch
         {
             "background-task" => item.Outcome is "success" or "succeeded" ? "Completed as scheduled."
@@ -1100,6 +1101,7 @@ public class AdminUiController : ControllerBase
         detail = ActivityPresentation.SafeText(detail) ?? HumanizeAuditCategory(item.Action);
         var label = category switch
         {
+            "lyrics" when item.Action == "automatic.upgraded" => LyricsUpgradeLabel(item.DetailsJson),
             "background-task" => ActivityPresentation.SafeText(AuditDetail(item.DetailsJson, "name"), 200) ?? "Background maintenance",
             "health-check" when item.Action == "configured" => "Health monitoring updated",
             "health-check" => "Health check",
@@ -1139,6 +1141,15 @@ public class AdminUiController : ControllerBase
             JobId: activityJobId,
             ActionHref: category == "background-task" ? "#/activity?view=tasks" : null,
             ActionLabel: category == "background-task" ? "Open Tasks" : null);
+    }
+
+    private static string LyricsUpgradeLabel(string json)
+    {
+        var wordSynced = AuditDetail(json, "wordSynced");
+        var changed = AuditDetail(json, "changed");
+        return int.TryParse(wordSynced, out var words) && words > 0
+            ? $"Found word-synced lyrics for {words} {(words == 1 ? "song" : "songs")}"
+            : $"Found better lyrics for {changed ?? "0"} {(changed == "1" ? "song" : "songs")}";
     }
 
     private static long? AuditDurationMilliseconds(string json)

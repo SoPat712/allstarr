@@ -11,6 +11,38 @@ namespace allstarr.Tests;
 
 public sealed partial class JobsControllerTests
 {
+    [Fact]
+    public async Task ActivityTasks_LyricsRefreshShowsTheHouseholdScheduleAndRunEndpoint()
+    {
+        var next = DateTimeOffset.UtcNow.AddDays(1);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.JobSchedules.Add(new()
+            {
+                Id = allstarr.Core.Music.LyricsRefreshSchedule.ScheduleId,
+                JobType = allstarr.Core.Music.LyricsRefreshService.Type,
+                Enabled = true,
+                CronExpression = "0 8 * * *",
+                TimeZoneId = "UTC",
+                NextRunAt = next
+            });
+            await db.SaveChangesAsync();
+        }
+        var controller = new ActivityTasksController(_factory) { ControllerContext = new() { HttpContext = new DefaultHttpContext() } };
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = Session(_userId, true);
+        using var mine = Json(await controller.List());
+        Assert.Empty(mine.RootElement.GetProperty("items").EnumerateArray());
+        using var household = Json(await controller.List(scope: "everyone"));
+        var task = Assert.Single(household.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal("Look for better lyrics", task.GetProperty("name").GetString());
+        Assert.Equal("lyrics", task.GetProperty("kind").GetString());
+        Assert.Equal("Household", task.GetProperty("ownerName").GetString());
+        Assert.Equal("/api/admin/activity/tasks/lyrics/run", task.GetProperty("runEndpoint").GetString());
+        Assert.Equal(next, task.GetProperty("nextRunAt").GetDateTimeOffset());
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = Session(_userId);
+        Assert.IsType<ForbidResult>(await controller.RunLyrics());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -78,7 +78,7 @@ public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapabi
                 JsonSerializer.SerializeToUtf8Bytes(new { context.Actor, context.Account, request, configuredUrl })));
             try
             {
-                var stored = cache == null ? null : await LyricsAwait.CompleteAsync(cache.GetAsync<ProviderLyricsResult>(cacheKey), completion, context.CancellationToken);
+                var stored = cache == null || request.Refresh ? null : await LyricsAwait.CompleteAsync(cache.GetAsync<ProviderLyricsResult>(cacheKey), completion, context.CancellationToken);
                 if (stored is { Availability: ProviderLyricsAvailabilityState.Available, Content: not null })
                     return ProviderOutcome<ProviderLyricsResult>.Success(stored);
             }

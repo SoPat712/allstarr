@@ -137,7 +137,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
 
             using var operation = StartOperation(context);
             var cacheKey = BuildCacheKey(context.Account, request);
-            var cached = await ReadCacheAsync(cacheKey, operation.Token, completion);
+            var cached = request.Refresh ? null : await ReadCacheAsync(cacheKey, operation.Token, completion);
             operation.Token.ThrowIfCancellationRequested();
             if (cached?.Availability == ProviderLyricsAvailabilityState.Available &&
                 cached.Content != null)

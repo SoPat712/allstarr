@@ -99,7 +99,8 @@ public sealed class LyricsSearchChanges(TimeProvider? timeProvider = null) : IAp
 public sealed class LibraryLyricsIndexer(IDbContextFactory<AllstarrDbContext> factory, LyricsSearchIndex index,
     LyricsSearchChanges changes, IHttpClientFactory clients, IOptions<JellyfinSettings> settings,
     IEffectiveProviderPolicyResolver policies, IApplicationCache cache, IDurableRuntimeSettings runtime,
-    ITrackIdentityService identities, IKeptLyricsReader kept, IProviderRouter router, ILibraryIndexService library, IProtocolProviderGateway gateway, IConfiguration configuration, DurableStorageState storage, ILogger<LibraryLyricsIndexer> logger) : BackgroundService
+    ITrackIdentityService identities, IKeptLyricsReader kept, IProviderRouter router, ILibraryIndexService library, IProtocolProviderGateway gateway, IConfiguration configuration, DurableStorageState storage, ILogger<LibraryLyricsIndexer> logger,
+    LyricsRefreshStore? refreshStore = null) : BackgroundService
 {
     public static readonly TimeSpan Pace = TimeSpan.FromMilliseconds(250);
 
@@ -335,13 +336,29 @@ public sealed class LibraryLyricsIndexer(IDbContextFactory<AllstarrDbContext> fa
         });
         var recordingDuration = await db.CanonicalRecordings.AsNoTracking().Where(item => item.Id == recording)
             .Select(item => item.DurationMilliseconds).SingleOrDefaultAsync(token);
-        await StoredItemLyrics.ReadAsync(observedCache, song, recording, null, null, policy, endpoint, context, selectedAccounts, links, token, stored.Add, recordingDuration);
+        var automatic = recording.HasValue && refreshStore != null ? await refreshStore.RetainedAsync(context, recording.Value) : null;
+        var storedInfo = new List<allstarr.Models.Lyrics.LyricsInfo>();
+        await StoredItemLyrics.ReadAsync(observedCache, song, recording, null, null, policy, endpoint, context, selectedAccounts, links, token,
+            stored.Add, recordingDuration, automatic, storedInfo.Add);
+        var originalTimingRequired = false;
+        if (song.IsLocal && policy.IsAutomatic("backend") && await index.ReadBackendAsync(context, song) is { } backend)
+        {
+            if (LyricsRefreshStore.FromIndexedLines(backend, song) is { } baseline) storedInfo.Add(baseline);
+            else originalTimingRequired = true;
+        }
         if (policy.IsEnabled("kept"))
         {
             var keptIdentities = song.IsLocal ? song.ProviderIds.Select(pair => new KeptLyricsIdentity(pair.Key, pair.Value)).ToArray() :
                 song.ExternalProvider is { } provider && song.ExternalId is { } external ? new[] { new KeptLyricsIdentity(provider, external) } : [];
-            if ((keptIdentities.Length > 0 || song.CanonicalRecordingId.HasValue) && RichLyricsMapper.Map(await kept.ReadAsync(context, song, keptIdentities)) is { } retained)
-                stored.Add(retained);
+            if (keptIdentities.Length > 0 || song.CanonicalRecordingId.HasValue)
+            {
+                var keptInfo = await kept.ReadAsync(context, song, keptIdentities);
+                if (RichLyricsMapper.Map(keptInfo) is { } retained)
+                {
+                    stored.Add(retained);
+                    storedInfo.Add(keptInfo!);
+                }
+            }
         }
         foreach (var rich in stored)
         {
@@ -349,6 +366,22 @@ public sealed class LibraryLyricsIndexer(IDbContextFactory<AllstarrDbContext> fa
             await index.StoreAsync(context, song, recording, rich,
                 expectedProvenance: LyricsSearchIndex.AccountProvenance(account?.Id, account?.Revision));
         }
+        if (recording.HasValue && refreshStore != null && !originalTimingRequired)
+        {
+            var observedSong = MusicLyrics.ForLookup(song);
+            observedSong.CanonicalRecordingId = recording;
+            var info = storedInfo.Where(info => info.Source != null && policy.IsAutomatic(LyricsVersions.ProviderId(info.Source)))
+                .OrderByDescending(info => LyricsQuality.Evaluate(info, song, recordingDuration)?.Score ?? -1).FirstOrDefault();
+            if (info != null)
+            {
+                var account = selectedAccounts.FirstOrDefault(account => account.ProviderId == LyricsVersions.ProviderId(info.Source!));
+                info.CacheProvenance = LyricsSearchIndex.AccountProvenance(account?.Id, account?.Revision);
+            }
+            await refreshStore.ObserveAsync(context, observedSong, info, recordingDuration);
+        }
+        automatic = recording.HasValue && refreshStore != null ? await refreshStore.RetainedAsync(context, recording.Value) : null;
+        if (RichLyricsMapper.Map(automatic) is { } selectedAutomatic)
+            await index.StoreAsync(context, song, recording, selectedAutomatic, expectedProvenance: automatic?.CacheProvenance);
         await index.ReconcileStoredAsync(context, song, stored.Select(rich => rich.Source.Id).ToHashSet(StringComparer.Ordinal), observedCache.UnavailableSources);
     }
 

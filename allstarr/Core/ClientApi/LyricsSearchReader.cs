@@ -58,6 +58,10 @@ public sealed class LyricsSearchReader(LyricsSearchIndex index, IDbContextFactor
             (choice.OwnerUserId == owner || choice.OwnerUserId == null)).ToArrayAsync(token);
         var choices = rows.GroupBy(choice => choice.CanonicalRecordingId).ToDictionary(group => group.Key,
             group => group.OrderByDescending(choice => choice.OwnerUserId == owner).First().SourceId);
+        var automatic = await db.RecordingLyricsRefreshes.AsNoTracking().Where(item => item.OwnerUserId == owner && item.SourceId != "")
+            .Select(item => new { item.CanonicalRecordingId, item.SourceId }).ToArrayAsync(token);
+        foreach (var choice in automatic)
+            if (policy.IsAutomatic(LyricsVersions.ProviderId(choice.SourceId))) choices.TryAdd(choice.CanonicalRecordingId, choice.SourceId);
         var take = Math.Max(limit + 1, 32);
         while (true)
         {

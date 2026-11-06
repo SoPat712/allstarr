@@ -213,7 +213,10 @@ public sealed partial class ProtocolRouteFixtureTests
         const string path = "/allstarr/v1/items/ext-deezer-song-lyrics/lyrics";
         await ReadClientLyricsJsonAsync(client, path);
         using var stream = await OpenClientEventsAsync(client);
-        results["lyricsplus"] = ClientLyricsResult("word");
+        results["lyricsplus"] = new(ProviderLyricsAvailabilityState.Available, "fixture", ProviderLyricsFormat.WordTimed,
+            "[00:01.00]New words", timedLines:
+            [new("New words", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(8),
+                [new("New ", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(3)), new("words", TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(5))])]);
         var principal = (await factory.Services.GetRequiredService<BackendIdentityResolver>().ResolveAsync(new("Jellyfin", "listener")))!;
         var execution = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "primary", "listener", principal,
             "fixture", DateTimeOffset.UtcNow.AddMinutes(1), default)
