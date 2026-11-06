@@ -53,8 +53,11 @@ public sealed partial class ProtocolLyricsAutomaticTests
     [Fact]
     public async Task UnreadablePinnedBodyFallsBackToTheBestReadyCandidate()
     {
-        var unreadable = new Source("lrclib") { Cached = ProviderOutcome<ProviderLyricsResult>.Success(new(
-            ProviderLyricsAvailabilityState.Available, "lrclib", ProviderLyricsFormat.LineTimed, "Missing timestamps")) };
+        var unreadable = new Source("lrclib")
+        {
+            Cached = ProviderOutcome<ProviderLyricsResult>.Success(new(
+            ProviderLyricsAvailabilityState.Available, "lrclib", ProviderLyricsFormat.LineTimed, "Missing timestamps"))
+        };
         var ready = new Source("lyricsplus") { Cached = Result("lyricsplus", false) };
         await using var fixture = new Fixture(unreadable, ready) { Recording = Guid.NewGuid(), Preferred = "lrclib" };
         Assert.Equal("lyricsplus", (await fixture.FindAsync())?.Source);
