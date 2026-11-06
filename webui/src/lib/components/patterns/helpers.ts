@@ -1,4 +1,4 @@
-export type StatusTone = "neutral" | "good" | "warn" | "stop" | "info";
+export type StatusTone = "neutral" | "good" | "warn" | "stop" | "info" | "accent" | "empty";
 export type StatusSegment = { label: string; value: number; tone: StatusTone };
 export type FilterOption = { id: string; label: string; count?: number };
 type FilterStorage = Pick<Storage, "getItem" | "setItem">;

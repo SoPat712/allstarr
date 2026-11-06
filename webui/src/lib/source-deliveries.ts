@@ -6,6 +6,12 @@ export const canResend = (item: ScrobbleDelivery) => item.kind !== "nowplaying" 
 export const visibleDeliveries = (items: ScrobbleDelivery[]) => items.filter(item => item.kind !== "nowplaying" &&
   (item.state === "permanentfailure" || item.state === "retrying"));
 
+export function deliveryCounts(items: ScrobbleDelivery[]) {
+  const visible = visibleDeliveries(items);
+  const waiting = visible.filter(canResend).length;
+  return { waiting, unsendable: visible.length - waiting };
+}
+
 export function groupDeliveries(items: ScrobbleDelivery[]) {
   const groups = new Map<string, { key: string; items: ScrobbleDelivery[] }>();
   for (const item of items) {

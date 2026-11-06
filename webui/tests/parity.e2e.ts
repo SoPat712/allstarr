@@ -1288,6 +1288,7 @@ for (const viewport of viewports) {
     test("Intelligence results remain usable", async ({ page, context }) => {
       const delayed = routeRelease();
       await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.addInitScript(() => localStorage.setItem("allstarr.theme", "system"));
       await mockApi(page, { releasePath: "/api/admin/intelligence", release: delayed.promise });
       const initialHistoryOverview = page.waitForRequest((request) =>
         new URL(request.url()).pathname === "/api/admin/intelligence/history/overview");
@@ -1304,12 +1305,29 @@ for (const viewport of viewports) {
       await expect(page.getByRole("tab", { name: "All time" })).toHaveAttribute("aria-selected", "true");
       await expect(page.locator(".scope-value")).toContainText("Music");
       await expect(page.locator(".scope-value")).toContainText("Jellyfin · Jellyfin Music");
-      const themeButton = page.getByRole("button", { name: /Theme:/ });
-      await themeButton.click();
-      await expect(page.locator("html")).not.toHaveClass(/dark/);
-      await themeButton.click();
-      await expect(page.locator("html")).toHaveClass(/dark/);
-      await themeButton.click();
+      if (viewport.width <= 760) {
+        await page.getByRole("button", { name: "More destinations", exact: true }).click();
+        const more = page.getByRole("dialog", { name: "More", exact: true });
+        const themeButton = more.getByRole("button", { name: /Appearance/ });
+        await themeButton.click();
+        await expect(page.locator("html")).not.toHaveClass(/dark/);
+        await themeButton.click();
+        await expect(page.locator("html")).toHaveClass(/dark/);
+        await themeButton.click();
+        await expect(page.locator("html")).toHaveAttribute("data-theme", "system");
+        await page.keyboard.press("Escape");
+        await expect(more).toBeHidden();
+      } else {
+        await page.goto("#/settings/appearance");
+        const theme = page.getByRole("radiogroup", { name: "Color theme", exact: true });
+        await theme.getByRole("radio", { name: "Light", exact: true }).click();
+        await expect(page.locator("html")).not.toHaveClass(/dark/);
+        await theme.getByRole("radio", { name: "Dark", exact: true }).click();
+        await expect(page.locator("html")).toHaveClass(/dark/);
+        await theme.getByRole("radio", { name: "Device", exact: true }).click();
+        await expect(page.locator("html")).toHaveAttribute("data-theme", "system");
+        await page.goto("#/intelligence");
+      }
       await expect(page.getByLabel("Server connection")).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Open library" })).toHaveCount(0);
       if (viewport.width <= 650) {
@@ -2133,10 +2151,8 @@ for (const theme of ["light", "dark"] as const) {
       await page.route("**/api/admin/ui/now-playing", (route) => route.fulfill({ json: fixture }));
       await page.goto("#/");
       const playing = page.getByRole("region", { name: "Now playing" });
-      await expect(playing).toContainText(state === "unknown" ? "Catalog source · playback unconfirmed" :
-        state === "cached" ? "Cached from" : "Playing from");
-      await expect(playing).toContainText(state === "unknown" ? "Seeking unconfirmed" :
-        state === "cached" ? "Seeking available as audio downloads" : "Full stream · client buffering");
+      await expect(playing.locator(".playback-meta")).toContainText(state === "unknown" ? "catalog: Lumen Audio (playback unconfirmed)" : "from Lumen Audio");
+      await expect(playing.locator(".listener-profile, .playback-route")).toHaveCount(0);
       await expectContainedMobileGeometry(page);
       await page.screenshot({ path: `test-results/playback-source-${theme}-${state}.png`, fullPage: true });
       await page.setViewportSize({ width: 1280, height: 900 });
@@ -2164,12 +2180,12 @@ test("provider readiness separates provider names from account labels", async ({
   } }));
   await page.goto("#/sources/accounts");
   const rows = page.getByRole("table", { name: "Accounts", exact: true }).locator("tbody tr");
-  await expect(rows.locator("td:first-child strong")).toHaveText(definitions.map(provider => provider.name));
+  await expect(rows.locator('td[data-label="Service"] strong')).toHaveText(definitions.map(provider => provider.name));
   const deezer = rows.filter({ hasText: "Deezer" });
-  await expect(deezer.locator('td[data-label="Account"] small')).toHaveText("Road trip");
+  await expect(deezer.locator('td[data-label="Account"]')).toHaveText("Road trip");
   await expect(deezer.locator('td[data-label="Shared with"]')).toHaveText("Everyone");
   await expect(rows.filter({ hasText: "Last.fm" }).locator('td[data-label="Shared with"]')).toHaveText("Just Tester");
-  await expect(rows.locator('td[data-label="State"]')).toHaveText(Array(5).fill("Connected"));
+  await expect(rows.locator('td[data-label="State"]')).toHaveText(Array(5).fill("Working"));
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
     await page.getByRole("table", { name: "Accounts", exact: true }).screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/provider-readiness.png` });
 });
@@ -2193,7 +2209,7 @@ test("Home shows no account count for sources that need no account", async ({ pa
   const sources = setup.locator(".setup-tile").filter({ has: page.getByRole("heading", { name: "Sources", exact: true }) });
   await expect(sources).toContainText("Not checked");
   await expect(sources.locator(".tile-number")).toHaveText("0");
-  await expect(sources.locator(".tile-label")).toHaveText("of 0 checked sources working");
+  await expect(sources.locator(".tile-label")).toHaveText("of 0 working");
   await expect(setup).not.toContainText(/connected accounts/);
 });
 
@@ -2207,8 +2223,8 @@ test("account titles use provider definitions and keep custom labels in subtitle
   } }));
   await page.goto("#/integrations/accounts");
   const row = page.getByRole("table", { name: "Accounts", exact: true }).locator("tbody tr").first();
-  await expect(row.locator("td:first-child strong")).toHaveText("Lumen Audio");
-  await expect(row.locator('td[data-label="Account"] small')).toHaveText("Road trip");
+  await expect(row.locator('td[data-label="Service"] strong')).toHaveText("Lumen Audio");
+  await expect(row.locator('td[data-label="Account"]')).toHaveText("Road trip");
   await expect(row.locator('td[data-label="Shared with"]')).toHaveText("Everyone");
   await row.getByRole("link", { name: "Open Lumen Audio account", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Lumen Audio", level: 2 })).toBeVisible();
@@ -2244,8 +2260,7 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   await expect(page.getByRole("region", { name: "Recent activity", exact: true }).locator("svg").first()).toBeVisible();
   const nowPlaying = page.getByRole("region", { name: "Now playing" });
   await expect(nowPlaying).toContainText("Rocket");
-  await expect(nowPlaying.getByText("Tester", { exact: true })).toBeVisible();
-  await expect(nowPlaying.getByText("Feishin · Desktop", { exact: true })).toBeVisible();
+  await expect(nowPlaying.locator(".playback-meta")).toContainText("Tester on Feishin, Desktop");
   await expect(nowPlaying.locator(".scrobble-state")).toContainText("Listening");
 
   const apiRequests = requests.filter((path) => path.startsWith("/api/admin/"));
@@ -2332,7 +2347,7 @@ test("Shared visual tokens meet typography, geometry, and contrast floors", asyn
     return result;
   });
   expect(contract.spacing).toEqual([4, 8, 12, 16]);
-  expect(contract.controls).toEqual([36, 44, 48]);
+  expect(contract.controls).toEqual([32, 36, 40]);
   expect(contract.icons).toEqual([16, 18, 20, 24]);
   expect(contract.radii).toEqual([8, 12, 16]);
   expect(contract.dataGeometry).toEqual([70.4, 44]);
@@ -3076,7 +3091,7 @@ test("extension sign-in shows automatic renewal without starting verification", 
   });
   await page.goto("#/integrations/services/signed-audio");
   const panel = page.getByRole("region", { name: "Sign-in" });
-  await expect(panel.getByText(/Renews automatically.*2099/)).toBeVisible();
+  await expect(panel.getByText(`Renews automatically. Session valid until ${new Date("2099-06-15T12:00:00Z").toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}.`, { exact: true })).toBeVisible();
   await expect(panel.getByRole("status")).toContainText("Last automatic renewal failed");
   await expect(panel.getByRole("status")).toContainText("Your sign-in was kept");
   await expect(panel.getByRole("button", { name: "Start verification" })).toHaveCount(0);
@@ -3122,7 +3137,7 @@ test("extension sign-in explains each verification step and failure", async ({ p
   await panel.getByRole("button", { name: "Complete sign-in" }).click();
   await expect(panel.getByRole("status")).toHaveText("Signed in.");
   await expect(panel.getByText("Signed in", { exact: true })).toBeVisible();
-  await expect(panel.getByText(/Session valid until .*2099/)).toBeVisible();
+  await expect(panel.getByText(`Session valid until ${new Date("2099-06-15T12:00:00Z").toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}.`, { exact: true })).toBeVisible();
   await expect(panel.getByLabel("Sign-in link or code")).toHaveCount(0);
   expect(mock.writes.at(-1)).toEqual({ action: "grant", body: { grant: "signed-audio://auth?grant=fresh", expectedRevision: 1 } });
 
@@ -3726,7 +3741,8 @@ test("Mappings keep phone filters, differences and menus readable", async ({ pag
   await page.goto("#/library/mappings");
   const filters = page.getByRole("radiogroup", { name: "Match filters" });
   await expect(filters).toBeVisible();
-  expect(await filters.evaluate(rail => rail.scrollWidth > rail.clientWidth)).toBe(true);
+  await expect(filters).toHaveClass(/wrapped/);
+  for (const option of await filters.getByRole("radio").all()) await expect(option).toBeInViewport();
   expect(await filters.getByRole("radio").evaluateAll(items => items.every(item => item.getBoundingClientRect().height >= 44))).toBe(true);
   const row = page.locator(".mapping-row").first();
   await expect(row.locator(".item-row")).toContainText("Not Remix");
@@ -4791,7 +4807,7 @@ test("Maintenance creates verified backups, lists downloads, and reports failure
   await page.getByRole("button", { name: "Back up now" }).click();
   const row = card.locator(`tr[title="${backup.fileName}"]`);
   await expect(row).toBeVisible();
-  await expect(row).toContainText(/Sep 30, 2026/);
+  await expect(row).toContainText(new Date(backup.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }));
   await expect(row).toContainText("Verified");
   await expect(card.getByRole("link", { name: "Download" })).toHaveAttribute(
     "href", "/api/admin/storage/backups/11111111-1111-4111-8111-111111111111/download",
@@ -4884,14 +4900,14 @@ test("Score details open from the whole row, close again, and dim what does not 
   const row = page.locator(".routing-group li.has-score").first();
   const chip = row.locator(".score-toggle");
   await expect(row.locator(".score-chip")).toHaveText("82");
-  await expect(row.locator(".score-toggle-label")).toHaveText("Details");
+  await expect(chip).toHaveAccessibleName(/Show details\.$/);
   await expect(chip).toHaveAttribute("aria-expanded", "false");
 
   await row.locator(".routing-copy").click();
   const panel = page.getByRole("dialog", { name: "Lumen Audio", exact: true });
   const details = panel.locator(".score-details");
   await expect(details).toBeVisible();
-  await expect(row.locator(".score-toggle-label")).toHaveText("Hide");
+  await expect(chip).toHaveAccessibleName(/Hide details\.$/);
   await expect(details.locator(".score-part").filter({ hasText: "Quality" })).toContainText("Meets your CD lossless setting");
   await expect(details.locator(".score-part").filter({ hasText: "Has the song" })).toContainText("Still measuring");
   await expect(details.locator(".score-row.current")).toContainText("Streaming");
@@ -4950,7 +4966,7 @@ test("Audio quality supports keyboard changes, provider outcomes, save, and relo
   await expect(slider).toHaveAttribute("aria-valuetext", /High lossy/);
   await expect(page.getByText(/Smaller files and streams with high sound quality/)).toBeVisible();
 
-  await page.getByText("Music source quality details", { exact: true }).click();
+  await page.getByText("Exact quality asked from each service", { exact: true }).click();
   await expect(page.getByText("Apple Music: AAC 320 kbps")).toBeVisible();
   await expect(page.getByText("Deezer: MP3 320 kbps")).toBeVisible();
   await page.getByText("Preference window", { exact: true }).click();
@@ -5335,7 +5351,7 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await expect(page.getByRole("menuitem", { name: "Refresh source" })).toBeVisible();
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1280, height: 800 });
-  await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBe(480);
+  await expect.poll(async () => (await dialog.boundingBox())?.width ?? 0).toBe(420);
   await expect(dialog.getByText(/Snapshot v/)).toHaveCount(0);
   await expect(dialog.getByText("Last target sync")).toHaveCount(0);
   await expect(dialog.getByText("Current published snapshot")).toHaveCount(0);
@@ -5681,7 +5697,7 @@ test("Profile artwork is stable in full, slim, and mobile navigation", async ({ 
       await expect(page.locator(".app-shell")).toHaveClass(/slim/);
       await expect.poll(async () =>
         (await page.locator(".desktop-navigation").getByRole("link", { name: "Library" }).boundingBox())?.width ?? 0
-      ).toBe(48);
+      ).toBe(40);
       await page.getByRole("button", { name: "Expand sidebar" }).click();
       await expect(page.locator(".app-shell")).not.toHaveClass(/slim/);
     }
@@ -5926,7 +5942,7 @@ test("Home keeps unknown and stale progress honest across clock skew", async ({ 
   } }));
   await page.goto("#/");
   const cards = page.getByRole("region", { name: "Now playing" }).locator(".now-playing-card");
-  await expect(cards.first().locator(".playback-time")).toHaveText("— / —");
+  await expect(cards.first().locator(".playback-time")).toHaveCount(0);
   await expect(cards.first().getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
   await expect(cards.last().locator(".playback-time")).toHaveText("~0:45 / 2:00");
   await expect(cards.last().locator(".scrobble-state")).toHaveText("Awaiting update");
@@ -8113,8 +8129,11 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     });
     await page.goto("#/integrations/routing");
     const group = page.locator(".routing-group");
-    await expect(group).toContainText(description);
+    await expect(group.getByRole("heading", { name: "Source order", exact: true })).toBeVisible();
+    await expect(group.getByRole("heading", { name: "Search order", exact: true })).toHaveText("Search order");
+    await expect(group.getByText("Drag to reorder. Saves as you drop.", { exact: true })).toBeVisible();
     await expect(group.getByRole("listitem").first()).toContainText("Deezer");
+    await group.locator('summary[aria-label="Reorder SoundCloud"]').click();
     await group.getByRole("button", { name: "Move SoundCloud up", exact: true }).click();
     await expect.poll(() => writes.at(-1)?.MULTI_PROVIDER_METADATA_ORDER).toBe("soundcloud,deezer");
     await expect(group.getByRole("listitem").first()).toContainText("SoundCloud");
@@ -8195,18 +8214,22 @@ test("Cross-service links explain built-in lookups and preserve the optional mas
   });
   await page.goto("#/settings/general");
   const card = page.getByRole("form", { name: "Song links and extensions settings" });
-  await expect(card).toContainText("Deezer, Apple Music and enabled sources");
-  await expect(card).toContainText("Song.link Web, UniTune, MusicBrainz and Squigly");
-  await expect(card).toContainText("With a key, the official API is tried first");
-  const key = card.getByLabel(/^song\.link API key/);
+  await expect(card.getByText("Find links to the same song across your enabled services.", { exact: true })).toBeVisible();
+  await expect(card.getByText("Optional. With a key, the official API is tried first. Leave unchanged to keep it.", { exact: true })).toBeVisible();
+  const key = card.getByLabel("song.link API key", { exact: true });
+  await expect(key).toHaveCount(0);
+  await card.getByRole("button", { name: "Change key…", exact: true }).click();
   await expect(key).toHaveAttribute("type", "password");
   await expect(key).toHaveValue("");
+  await expect(key).toHaveAttribute("placeholder", "Leave unchanged to keep the saved key");
   expect(writes).toEqual([]);
   await key.fill("replacement-fixture-key"); await key.blur();
   await expect(page.getByRole("alertdialog")).toBeVisible();
   expect(writes).toEqual([]);
   await page.getByRole("alertdialog").getByRole("button", { name: "Restart and apply", exact: true }).click();
   await expect.poll(() => writes[0]?.ODESLI_API_KEY).toBe("replacement-fixture-key");
+  await expect(page.getByRole("alertdialog")).toBeHidden();
+  await expect(key).toHaveValue("");
   await card.getByRole("button", { name: "Remove key…", exact: true }).click();
   await expect(page.getByRole("alertdialog")).toContainText("Remove the key and restart Allstarr?");
   expect(writes).toHaveLength(1);

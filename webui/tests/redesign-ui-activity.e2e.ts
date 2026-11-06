@@ -358,3 +358,34 @@ test("Activity jobs keeps passing health checks and a compact attempt timeline",
   await expect(panel.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "60");
   await expect(panel.getByRole("link", { name: "Open in History" })).toHaveClass(/bg-transparent/);
 });
+
+for (const { width, theme } of variants.filter(variant => variant.width === 1280 || variant.width === 390)) {
+  test(`Activity history day headings stay compact at ${width} ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await fixture(page);
+    const today = new Date(), yesterday = new Date(), earlier = new Date();
+    yesterday.setDate(today.getDate() - 1); earlier.setDate(today.getDate() - 3);
+    await page.route("**/api/admin/ui/activity?**", route => route.fulfill({ json: { items: [today, yesterday, earlier].map((date, index) => ({ id: `day-${index}`, kind: "playlist", label: "Playlist updated", detail: `Playlist ${index}`, state: "succeeded", occurredAt: date.toISOString() })), hasMore: false } }));
+    await page.goto("/#/activity");
+    const headings = page.locator(".history-days .event-log-day > h2");
+    await expect(headings).toHaveCount(3);
+    await expect(headings.nth(0)).toHaveText("Today");
+    await expect(headings.nth(1)).toHaveText("Yesterday");
+    await expect(headings.nth(2)).toHaveText(earlier.toLocaleDateString("en-US", { month: "long", day: "numeric" }));
+    const day = page.locator(".history-days .event-log-day").first();
+    const title = (await day.locator("h2").boundingBox())!, rows = (await day.locator(".event-log-list").boundingBox())!;
+    expect(rows.y - title.y - title.height).toBeLessThanOrEqual(1);
+    for (const heading of await headings.all()) {
+      await expect(heading).toHaveCSS("text-transform", "uppercase");
+      expect(parseFloat(await heading.evaluate(element => getComputedStyle(element).fontSize))).toBeLessThan(13);
+    }
+    const more = (await page.locator(".event-more-filters").boundingBox())!;
+    const list = (await page.locator(".history-days").boundingBox())!;
+    expect(list.y - more.y - more.height).toBeLessThanOrEqual(8);
+    await expectContainedMobileGeometry(page);
+    await mkdir("test-results/ui-activity", { recursive: true });
+    await page.screenshot({ path: `test-results/ui-activity/history-days-${width}-${theme}.png`, fullPage: true });
+  });
+}

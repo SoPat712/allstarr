@@ -102,6 +102,7 @@ describe("event log presentation", () => {
     })).toHaveLength(1);
     expect(dayLabel("2026-10-12T10:00:00", new Date("2026-10-12T20:00:00"))).toBe("Today");
     expect(dayLabel("2026-10-11T10:00:00", new Date("2026-10-12T20:00:00"))).toBe("Yesterday");
+    expect(dayLabel("2026-10-09T10:00:00", new Date("2026-10-12T20:00:00"), { weekday: false })).toBe("October 9");
     expect(activityAction({ ...item("5", "Song A"), sourceTitle: "Song A" }, () => "Lumen")?.label)
       .toBe("Review match");
     expect(humanize("provider_health.failed")).toBe("Provider health failed");

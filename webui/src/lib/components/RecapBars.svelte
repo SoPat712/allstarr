@@ -2,25 +2,26 @@
   import { formatCount } from "$lib/intelligence";
 
   type Point = { key: string; label: string; axis?: string; value: number };
-  let { points, label, unit = "plays" }: { points: Point[]; label: string; unit?: string } = $props();
+  let { points, label, unit = "plays", compact = false }: { points: Point[]; label: string; unit?: string; compact?: boolean } = $props();
 
   let active = $state<number | null>(null);
   const peak = $derived(Math.max(1, ...points.map(point => point.value)));
   // Round the top of the scale so the two labelled lines land on clean numbers.
   const top = $derived.by(() => {
+    if (compact) return peak;
     const step = 10 ** Math.floor(Math.log10(peak));
     return Math.ceil(peak / (step / 2)) * (step / 2);
   });
-  const compact = (value: number) => value >= 1000 ? `${Number((value / 1000).toFixed(2))}K` : String(value);
+  const scaleLabel = (value: number) => value >= 1000 ? `${Number((value / 1000).toFixed(2))}K` : String(value);
   const sparse = $derived(points.length > 40);
   const shown = $derived(active === null ? null : points[active]);
   const tipOffset = $derived(active === null ? 50 : (active + .5) / points.length * 100);
 </script>
 
-<div class="recap-bars" class:sparse role="group" aria-label={label}>
+<div class="recap-bars" class:sparse class:compact role="group" aria-label={label}>
   <div class="plot" role="presentation" onmouseleave={() => active = null}>
-    {#each [1, .5] as line}
-      <div class="grid-line" style:bottom={`${line * 100}%`}><span>{compact(top * line)}</span></div>
+    {#each compact ? [] : [1, .5] as line}
+      <div class="grid-line" style:bottom={`${line * 100}%`}><span>{scaleLabel(top * line)}</span></div>
     {/each}
     <div class="baseline"></div>
     <div class="columns">
@@ -44,6 +45,11 @@
 
 <style>
   .recap-bars { display: grid; gap: var(--space-2); padding-left: 2.5rem; min-width: 0; }
+  .compact { padding-left: 0; }
+  .compact .plot { height: 64px; }
+  .compact .columns { gap: 10px; }
+  .compact .column { padding: 0; }
+  .compact .bar { max-width: none; }
   .plot { position: relative; height: 180px; }
   .grid-line { position: absolute; left: 0; right: 0; border-top: 1px solid var(--color-edge); }
   .grid-line span { position: absolute; right: 100%; top: 0; transform: translateY(-50%); padding-right: var(--space-2); color: var(--color-ink-muted); font-size: .75rem; font-variant-numeric: tabular-nums; white-space: nowrap; }

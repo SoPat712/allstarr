@@ -1,9 +1,9 @@
 <script lang="ts">
   import { countLabel, countNoun } from "$lib/count-label";
   import { onMount } from "svelte";
-  import { CircleAlert, CircleCheck, CircleDashed, Headphones, KeyRound, Music, Pause } from "@lucide/svelte";
+  import { CircleCheck, CircleDashed, Headphones, KeyRound, Music, Pause } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
-  import { home, listeningStats, mixes, releaseInbox, settings, downloads, matchReview, type MatchReviewResponse, type ListeningStats, type MixCard, type ReleaseInboxEntry, type StorageOverview } from "$lib/api";
+  import { home, listeningStats, mixes, releaseInbox, settings, downloads, matchReview, playlistLinks, sources, activityWork, type ActivityTask, type MatchReviewResponse, type ListeningStats, type MixCard, type ReleaseInboxEntry, type StorageOverview } from "$lib/api";
   import { humanize, relativeTime, isRoutineActivity, isProblem, activityHeadline } from "$lib/activity";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import ActivityStatusIcon from "$lib/components/ActivityStatusIcon.svelte";
@@ -14,10 +14,11 @@
   import EmptyState from "$lib/components/patterns/EmptyState.svelte";
   import HomeSetup from "$lib/components/HomeSetup.svelte";
   import MixShelf from "$lib/components/MixShelf.svelte";
+  import StatePill from "$lib/components/patterns/StatePill.svelte";
   import RecapBars from "$lib/components/RecapBars.svelte";
   import { listeningTime, recapTimeline } from "$lib/intelligence";
   import { Button } from "$lib/components/ui/button";
-  import { playbackProgress, playbackSeekLabel, playbackSourceIssues, summarizeHome, type HomeSnapshot } from "$lib/home";
+  import { homeSourceHealth, listenTrend, playbackMeta, playbackProgress, playbackSourceIssues, summarizeHome, type HomeSnapshot } from "$lib/home";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { findProviderDefinition, providerDisplayName } from "$lib/sources";
   import { reportHref } from "$lib/support";
@@ -27,26 +28,33 @@
   let week = $state<ListeningStats | null>(null);
   let shelf = $state<MixCard[]>([]);
   let releases = $state<ReleaseInboxEntry[]>([]);
-  let audio = $state<{ bytes: number; maximum: number; keptBytes: number | null } | null>(null);
+  let audio = $state<{ bytes: number; maximum: number | null; keptBytes: number | null } | null>(null);
   let matchStats = $state<MatchReviewResponse["stats"] | null>(null);
   let storage = $state<StorageOverview | null>(null);
+  let indexedSongs = $state<number | null>(null);
+  let listeners = $state<number | null>(null);
+  let tasks = $state<ActivityTask[]>([]);
   let extrasPending = false, extrasAt = 0, disposed = false;
   const daily = $derived(recapTimeline(week?.timeline ?? [], week?.timelineUnit ?? "day"));
   async function loadExtras() {
     if (extrasPending || Date.now() - extrasAt < 30_000) return;
     extrasPending = true;
-    const results = await Promise.allSettled([listeningStats.get("7d"), mixes.list(), releaseInbox.get(), administrator ? downloads.list("cache") : Promise.resolve(null), administrator ? settings.storage() : Promise.resolve(null), administrator ? settings.config() : Promise.resolve(null), administrator ? downloads.list("kept") : Promise.resolve(null), administrator ? matchReview.list({ pageSize: 1 }) : Promise.resolve(null)] as const);
+    const results = await Promise.allSettled([listeningStats.get("7d"), mixes.list(), administrator ? Promise.resolve(null) : releaseInbox.get(), administrator ? downloads.list("cache") : Promise.resolve(null), administrator ? settings.storage() : Promise.resolve(null), administrator ? settings.config() : Promise.resolve(null), administrator ? downloads.list("kept") : Promise.resolve(null), administrator ? matchReview.list({ pageSize: 1 }) : Promise.resolve(null), administrator ? playlistLinks.libraryIndexCounts() : Promise.resolve(null), administrator ? sources.accounts() : Promise.resolve(null), administrator ? activityWork.tasks("everyone") : Promise.resolve(null)] as const);
     if (!disposed) {
       if (results[0].status === "fulfilled") week = results[0].value;
       if (results[1].status === "fulfilled" && Array.isArray(results[1].value)) shelf = results[1].value.filter(card => card.readiness.ready).sort((a, b) => Number(b.inApps) - Number(a.inApps)).slice(0, 6);
-      if (results[2].status === "fulfilled") releases = results[2].value.entries ?? [];
-      if (results[3].status === "fulfilled" && typeof results[3].value?.totalSize === "number" && results[5].status === "fulfilled" && results[5].value) {
-        const config = results[5].value;
-        const maximum = Number((config.cache as Record<string, unknown> | undefined)?.audioMaximumGiB ?? 2) * 1024 ** 3;
+      if (results[2].status === "fulfilled" && results[2].value) releases = results[2].value.entries ?? [];
+      if (results[3].status === "fulfilled" && typeof results[3].value?.totalSize === "number") {
+        const config = results[5].status === "fulfilled" ? results[5].value : null;
+        const configured = Number((config?.cache as Record<string, unknown> | undefined)?.audioMaximumGiB);
+        const maximum = Number.isFinite(configured) && configured > 0 ? configured * 1024 ** 3 : null;
         audio = { bytes: results[3].value.totalSize, maximum, keptBytes: results[6].status === "fulfilled" ? results[6].value?.totalSize ?? null : null };
       }
       if (results[7].status === "fulfilled") matchStats = results[7].value?.stats ?? null;
       if (results[4].status === "fulfilled") storage = results[4].value;
+      if (results[8].status === "fulfilled" && typeof results[8].value?.trackCount === "number") indexedSongs = results[8].value.trackCount;
+      if (results[9].status === "fulfilled" && Array.isArray(results[9].value?.audienceUsers)) listeners = results[9].value.audienceUsers.length;
+      if (results[10].status === "fulfilled" && Array.isArray(results[10].value?.items)) tasks = results[10].value.hasMore ? [] : results[10].value.items;
       extrasAt = Date.now();
     }
     extrasPending = false;
@@ -77,7 +85,11 @@
     const timer = setInterval(() => { playbackNow = performance.now(); }, reducedMotion ? 1_000 : 200);
     return () => clearInterval(timer);
   });
+  const sourceHealth = $derived(snapshot ? homeSourceHealth(snapshot) : { checked: [], failing: [], slow: [], down: [] });
   const sourceIssues = $derived(playbackSourceIssues(snapshot?.providerCatalog ?? [], snapshot?.providers ?? []));
+  const failingNames = $derived(sourceHealth.failing.map(provider => providerDisplayName(snapshot?.providerCatalog ?? [], provider.providerId)));
+  const sourcesNeedingLook = $derived(new Set([...sourceHealth.failing.map(source => source.providerId), ...sourceIssues.map(source => source.providerId)]).size);
+  const phoneSourceNames = $derived(failingNames.slice(0, 3).join(", ") + (failingNames.length > 3 ? ` and ${failingNames.length - 3} more` : ""));
   const completelyUnavailable = $derived(
     snapshot !== null &&
       !snapshot.status &&
@@ -184,19 +196,9 @@
   }
 
   function clockTime(seconds?: number | null) {
-    if (seconds === undefined || seconds === null || !Number.isFinite(seconds)) return "—";
+    if (seconds === undefined || seconds === null || !Number.isFinite(seconds)) return "";
     const whole = Math.max(0, Math.floor(seconds));
     return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
-  }
-
-  function initials(name: string) {
-    return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
-  }
-
-  function listenTrend(current = 0, previous = 0) {
-    const change = current - previous;
-    if (!change) return "the same as last week";
-    return `${Math.abs(change).toLocaleString()} ${change > 0 ? "more" : "fewer"} than last week`;
   }
 
   const activitySource = (source: string | null | undefined) => {
@@ -204,7 +206,7 @@
     return name && name !== "Unknown source" ? `${name} · ` : "";
   };
 
-  const visibleActivity = $derived((snapshot?.activity ?? []).filter((item) => !isRoutineActivity(item) && (isProblem(item) || !/record[\s_-]+(?:a[\s_-]+)?listen/i.test(item.label))).slice(0, 5));
+  const visibleActivity = $derived((snapshot?.activity ?? []).filter((item) => !isRoutineActivity(item) && (isProblem(item) || !/record[\s_-]+(?:a[\s_-]+)?listen/i.test(item.label))).slice(0, 4));
 
   const attention = $derived.by(() => {
     if (!snapshot || !summary) return [];
@@ -217,15 +219,6 @@
         href: "#/library/matches",
         action: "Review matches",
       });
-    if (administrator)
-      for (const issue of sourceIssues)
-        items.push({
-          key: `source:${issue.providerId}`,
-          title: `${issue.providerName} can't play songs`,
-          detail: humanize(issue.reason),
-          href: `#/sources/services/${encodeURIComponent(issue.providerId)}`,
-          action: `Open ${issue.providerName}`,
-        });
     const storageReadiness = snapshot.status?.durableStorage?.readiness;
     if (administrator && snapshot.status && storageReadiness !== "Ready")
       items.push({
@@ -235,24 +228,16 @@
         href: "#/settings/backups",
         action: "Open backups",
       });
-    const failing = (snapshot.providers ?? []).filter((provider) =>
-      provider.failedCapabilityCount > 0 && !sourceIssues.some((issue) => issue.providerId === provider.providerId));
-    if (failing.length === 1)
+    if (failingNames.length)
       items.push({
-        key: `health:${failing[0].providerId}`,
-        title: `${providerName(failing[0].providerId)} is failing ${countLabel(failing[0].failedCapabilityCount, "check")}`,
-        detail: "Playback falls back to the others.",
-        href: `#/sources/services/${encodeURIComponent(failing[0].providerId)}`,
-        action: "Open service",
-      });
-    else if (failing.length > 1)
-      items.push({
-        key: "health:several",
-        title: countLabel(failing.length, "source is failing checks", "sources are failing checks"),
-        detail: failing.map((provider) => providerName(provider.providerId)).join(", ") + ". Playback falls back to the others.",
+        key: "health:sources",
+        title: countLabel(failingNames.length, "source is failing checks", "sources are failing checks"),
+        detail: failingNames.join(", ") + ". Playback falls back to the others.",
         href: "#/sources/services",
         action: "Review sources",
       });
+    else if (sourceIssues.length)
+      items.push({ key: "source:unavailable", title: `${sourceIssues[0].providerName} can't play songs`, detail: humanize(sourceIssues[0].reason), href: "#/sources/services", action: "Review sources" });
     return administrator ? items.toSorted((a, b) => Number(b.key.startsWith("health:") || b.key.startsWith("source:")) - Number(a.key.startsWith("health:") || a.key.startsWith("source:"))) : [];
   });
 
@@ -287,24 +272,21 @@
   <ErrorState title="Home could not be loaded" detail={snapshot?.failures[0] ?? "The server did not answer."} onretry={refresh} />
 {:else if snapshot && summary}
 <div class="home-view">
-  <PageStatus items={[
-    { label: snapshot.nowPlaying?.length ? `${snapshot.nowPlaying.length} listening` : snapshot.nowPlaying === undefined ? "Playback status unavailable" : "Nothing playing" },
-    ...(administrator ? [{ label: attention.length ? countLabel(attention.length, "thing needs a look", "things need a look") : "Your setup is up to date", tone: attention.length ? "warn" as const : "neutral" as const }, { label: `${countLabel(summary.activeJobs, "job")} running or waiting` }] : []),
+  <PageStatus separated items={[
+    { label: playing.length ? playing.every(row => row.item.isPaused === true) ? "Playback paused" : "Playing normally" : snapshot.nowPlaying === undefined ? "Playback status unavailable" : "Nothing playing" },
+    ...(administrator ? [...(sourcesNeedingLook ? [{ label: countLabel(sourcesNeedingLook, "source needs a look", "sources need a look"), tone: "stop" as const }] : []), ...(snapshot.stats?.waitingJobs ? [{ label: `${countLabel(snapshot.stats.waitingJobs, "job")} waiting`, hideOnPhone: true }] : [])] : []),
   ]} />
   {#if snapshot.failures.length}<ErrorState title="Some live data is unavailable" detail={snapshot.failures.join(" · ")} onretry={refresh} />{/if}
 
   <section class="home-now" aria-label="Now playing" aria-live="off">
     {#if snapshot.nowPlaying?.length}
       {#each playing as { item, display }, index (`${item.userId ?? "unknown"}:${item.deviceId}`)}
-        <article class="now-playing-card" class:hero={index === 0}>
-          {#if index === 0 && item.artworkUrl}
-            <div class="now-playing-backdrop" aria-hidden="true" style={`--artwork: url("${adminUrl(item.artworkUrl)}")`}></div>
-          {/if}
+        <article class="now-playing-card compact-playing">
           <span class="now-playing-artwork">
             {#if item.artworkUrl}
               <img src={adminUrl(item.artworkUrl)} alt="" />
             {:else}
-              <Music size={index === 0 ? 40 : 24} aria-hidden="true" />
+              <Music size={32} aria-hidden="true" />
             {/if}
           </span>
           <div class="now-playing-body">
@@ -313,47 +295,30 @@
               <p>{item.artist}{item.album ? ` · ${item.album}` : ""}</p>
             </div>
 
+            <p class="playback-meta" title={item.routeReason ?? undefined}>{playbackMeta(item, providerName(item.providerId))}</p>
             <div class="playback-progress">
               <span class="playback-progress-track" style={`--scrobble-at: ${Math.min(100, ((item.scrobbleThresholdSeconds ?? 0) / (item.durationSeconds || 1)) * 100)}%`}>
                 <span class="playback-bar" role="progressbar" aria-label={`Playback progress for ${item.title}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={display.progress === null ? undefined : Math.round(display.progress * 100)} aria-valuetext={display.state === "stale" ? `Estimated ${clockTime(display.seconds)}; awaiting an app update` : undefined}>
                   <span class="transition-[width] duration-200 motion-reduce:transition-none" style={`width: ${(display.progress ?? 0) * 100}%`}></span>
                 </span>
-                {#if item.scrobbleThresholdSeconds}
-                  <i title={`Scrobble at ${clockTime(item.scrobbleThresholdSeconds)}`} aria-label={`Scrobble threshold at ${clockTime(item.scrobbleThresholdSeconds)}`}></i>
-                {/if}
+                {#if item.scrobbleThresholdSeconds}<i title={`Scrobble at ${clockTime(item.scrobbleThresholdSeconds)}`} aria-label={`Scrobble threshold at ${clockTime(item.scrobbleThresholdSeconds)}`}></i>{/if}
               </span>
-              <span class="playback-time" title={display.state === "stale" ? "Estimated position; waiting for an update from your music app." : display.state === "estimated" ? "Progress estimated between updates from your music app." : "Position reported by your music app."}>{display.state === "stale" ? "~" : ""}{clockTime(display.seconds)} / {clockTime(item.durationSeconds && item.durationSeconds > 0 ? item.durationSeconds : null)}</span>
+              {#if display.seconds !== null || (item.durationSeconds ?? 0) > 0}
+                <span class="playback-time" title={display.state === "stale" ? "Estimated position; waiting for an update from your music app." : display.state === "estimated" ? "Progress estimated between updates from your music app." : "Position reported by your music app."}>
+                  {#if display.seconds !== null}<span>{display.state === "stale" ? "~" : ""}{clockTime(display.seconds)}</span>{/if}
+                  {#if display.seconds !== null && (item.durationSeconds ?? 0) > 0}<span class="sr-only">{" / "}</span>{/if}
+                  {#if (item.durationSeconds ?? 0) > 0}<span class:only-total={display.seconds === null}>{clockTime(item.durationSeconds)}</span>{/if}
+                </span>
+              {/if}
             </div>
-
-            <div class="now-playing-meta">
-              <span class="listener-profile">
-                <span class="listener-avatar" aria-label={`${item.userName} profile`}>
-                  <span aria-hidden="true">{initials(item.userName)}</span>
-                  {#if item.avatarUrl}
-                    <img src={adminUrl(item.avatarUrl)} alt="" onerror={(event) => event.currentTarget.remove()} />
-                  {/if}
-                </span>
-                <span>
-                  <strong>{item.userName}</strong>
-                  <small>{item.client}{item.device ? ` · ${item.device}` : ""}</small>
-                </span>
-              </span>
-              <span class="playback-route">
-                <ProviderMark id={item.providerId} definition={providerDefinition(item.providerId)} />
-                <span>
-                  <small title={item.routeReason ?? undefined}>{item.sourceConfirmed ? (item.cached ? "Cached from" : "Playing from") : "Catalog source · playback unconfirmed"}</small>
-                  <strong>{providerName(item.providerId)}{item.sourceConfirmed && item.providerAccountName ? ` · ${item.providerAccountName}` : ""}</strong>
-                  <small>{playbackSeekLabel(item)}</small>
-                </span>
-              </span>
-              <span class="scrobble-state" class:complete={item.scrobbled && display.state !== "paused" && display.state !== "stale"}>
-                {#if display.state === "paused"}<Pause size={16} aria-hidden="true" />{:else if item.scrobbled && display.state !== "stale"}<CircleCheck size={16} aria-hidden="true" />{:else}<CircleDashed size={16} aria-hidden="true" />{/if}
+            <div class="playback-controls">
+              <span class="scrobble-state playback-state" class:complete={item.scrobbled && display.state !== "paused" && display.state !== "stale"}>
+                {#if display.state === "paused"}<Pause size={13} aria-hidden="true" />{:else if item.scrobbled && display.state !== "stale"}<CircleCheck size={13} aria-hidden="true" />{:else}<CircleDashed size={13} aria-hidden="true" />{/if}
                 {display.state === "paused" ? "Paused" : display.state === "stale" ? "Awaiting update" : item.scrobbled ? "Scrobbled" : item.scrobbleEligible ? "Scrobbling" : item.isPaused === false ? "Listening" : "Playback reported"}
               </span>
+              <Button variant="text" size="sm" href={reportHref({ itemId: item.itemId,
+                ...(item.userId ? { playback: { subjectUserId: item.userId, deviceId: item.deviceId } } : {}) })}>Report a problem</Button>
             </div>
-
-            <div class="panel-heading-actions"><Button variant="secondary" size="sm" href={reportHref({ itemId: item.itemId,
-              ...(item.userId ? { playback: { subjectUserId: item.userId, deviceId: item.deviceId } } : {}) })}>Report a problem</Button></div>
             {#if item.scrobbleDeliveries?.length}
               <div class="scrobble-targets" aria-label="Scrobble delivery targets">
                 {#each item.scrobbleDeliveries as delivery (delivery.targetId)}
@@ -367,6 +332,7 @@
               </div>
             {/if}
           </div>
+          {#if index === 0}<StatePill tone="info" text={`${snapshot.nowPlaying.length} listening`} filled compact />{/if}
         </article>
       {/each}
     {:else if snapshot.nowPlaying === undefined || snapshot.failures.some(failure => failure.startsWith("Now playing:"))}
@@ -377,25 +343,25 @@
   {#if attention.length}
     {@const item = attention[0]}
     <section class="attention-banner" aria-label="Needs your attention">
-      <CircleAlert size={20} aria-hidden="true" />
-      <div><strong>{item.title}</strong> · <span>{item.detail}</span></div>
+      <div title={`${item.title} · ${item.detail}`}><strong>{item.title}</strong><span class="desktop-attention">{" · "}{item.detail}</span><span class="phone-attention">{item.key === "health:sources" ? phoneSourceNames : item.detail}</span></div>
       <Button variant="outline" size="sm" href={item.href}>{item.action}</Button>
     </section>
   {/if}
-  {#if administrator}<HomeSetup {snapshot} {audio} {matchStats} {storage} />{/if}
+  {#if administrator}<HomeSetup {snapshot} {audio} {matchStats} {storage} {indexedSongs} {listeners} {tasks} />{/if}
 
   <div class="home-summary" class:administrator>
   <section class="week-panel panel" aria-label={administrator ? "This week" : "Your week"} aria-busy={refreshing}>
     <header><h2>{administrator ? "This week" : "Your week"}</h2><Button variant="text" size="sm" href="#/for-you?section=recap">Open Recap</Button></header>
     {#if snapshot.stats}
       <div class="week-numbers">
-        <div><strong>{snapshot.stats.currentWeekListens.toLocaleString()}</strong><span>{countNoun(snapshot.stats.currentWeekListens, "song")} finished</span><small>{listenTrend(snapshot.stats.currentWeekListens, snapshot.stats.previousWeekListens)}</small></div>
-        <div>{#if !administrator && week?.estimatedTimeFromSongLengthsMilliseconds != null}<strong>{listeningTime(week.estimatedTimeFromSongLengthsMilliseconds)}</strong><span>listening time</span>{:else}<strong>{snapshot.stats.completedListens.toLocaleString()}</strong><span>in the last 24 hours</span>{/if}</div>
-        <div><strong>{snapshot.stats.topArtist?.name ?? "—"}</strong><span>most played this month</span>{#if snapshot.stats.topArtist}<small>{countLabel(snapshot.stats.topArtist.listens, "play")}</small>{/if}</div>
-        <div>{#if !administrator && week?.newArtistCount != null}<strong>{week.newArtistCount.toLocaleString()}</strong><span>{countNoun(week.newArtistCount, "new artist")}</span>{:else}<strong>{snapshot.stats.scrobbleDeliveries.toLocaleString()}</strong><span>{countNoun(snapshot.stats.scrobbleDeliveries, "scrobble")} sent today</span>{/if}</div>
+        <div><strong>{snapshot.stats.currentWeekListens.toLocaleString()}</strong><span>{countNoun(snapshot.stats.currentWeekListens, "song")} finished<span class="desktop-kpi">{" · "}{listenTrend(snapshot.stats.currentWeekListens, snapshot.stats.previousWeekListens)}</span></span></div>
+        <div class="phone-trend"><strong>{snapshot.stats.currentWeekListens - snapshot.stats.previousWeekListens >= 0 ? "+" : "−"}{Math.abs(snapshot.stats.currentWeekListens - snapshot.stats.previousWeekListens).toLocaleString()}</strong><span>on last week</span></div>
+        <div class="day-kpi">{#if !administrator && week?.estimatedTimeFromSongLengthsMilliseconds != null}<strong>{listeningTime(week.estimatedTimeFromSongLengthsMilliseconds)}</strong><span>listening time</span>{:else}<strong>{snapshot.stats.completedListens.toLocaleString()}</strong><span>in the last 24 hours</span>{/if}</div>
+        {#if snapshot.stats.topArtist?.name}<div><strong>{snapshot.stats.topArtist.name}</strong><span><span class="desktop-kpi">most played this month{" · "}{countLabel(snapshot.stats.topArtist.listens, "play")}</span><span class="phone-kpi">most played</span></span></div>{/if}
+        {#if !administrator && week?.newArtistCount != null || snapshot.stats.scrobblesToday != null}<div class="scrobble-kpi">{#if !administrator && week?.newArtistCount != null}<strong>{week.newArtistCount.toLocaleString()}</strong><span>{countNoun(week.newArtistCount, "new artist")}</span>{:else if snapshot.stats.scrobblesToday != null}<strong>{snapshot.stats.scrobblesToday.toLocaleString()}</strong><span>{countNoun(snapshot.stats.scrobblesToday, "scrobble")}<span class="desktop-kpi">{" sent"}</span>{" today"}</span>{/if}</div>{/if}
       </div>
     {:else}<p class="muted">Listening stats aren't available right now.</p>{/if}
-    {#if daily.length}<div class="week-chart"><p>Your listening each day</p><RecapBars points={daily} label="Your listening each day" unit="songs" /></div>{:else}<p class="muted">Your daily listening chart appears when listening stats are available.</p>{/if}
+    {#if daily.length}<div class="week-chart"><p>Songs finished each day</p><RecapBars points={daily} label="Songs finished each day" unit="songs" compact /></div>{:else}<p class="muted">Your daily listening chart appears when listening stats are available.</p>{/if}
   </section>
 
   {#if administrator || visibleActivity.length}
@@ -424,32 +390,64 @@
   .home-summary.administrator { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .home-mixes, .release-note { order: 3; }
   .home-now:empty { display: none; }
-  .now-playing-card.hero { grid-template-columns: 88px minmax(0, 1fr); gap: var(--space-4); padding: var(--space-4); border: 1px solid var(--color-edge); }
-  .now-playing-card.hero .now-playing-artwork { width: 88px; }
-  .now-playing-card.hero .now-playing-title h2 { font-size: 1.25rem; line-height: 1.4; }
-  .now-playing-backdrop { display: none; }
-  .now-playing-meta { gap: var(--space-4); }
-  .attention-banner { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 0; border-radius: var(--radius-lg); background: var(--warning-container); color: var(--on-warning-container); }
-  .attention-banner > :global(svg) { color: var(--on-warning-container); flex: 0 0 auto; }
-  .attention-banner > div { min-width: 0; flex: 1; font-size: var(--text-sm); }
+  .now-playing-card.compact-playing { grid-template-columns: 72px minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 14px; border: 1px solid var(--color-edge); }
+  .compact-playing .now-playing-artwork { width: 72px; }
+  .compact-playing .now-playing-title h2 { font-size: 1.15rem; line-height: 1.2; }
+  .compact-playing .now-playing-title p { font-size: .78rem; line-height: 1.2; }
+  .compact-playing .now-playing-body { gap: 3px; }
+  .playback-meta { color: var(--color-ink-muted); font-size: .7rem; line-height: 1.25; overflow-wrap: anywhere; }
+  .compact-playing .playback-progress { display: grid; gap: 3px; margin-top: 4px; }
+  .playback-time { display: flex; justify-content: space-between; font-size: .7rem; line-height: 1.2; }
+  .only-total { margin-left: auto; }
+  .playback-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+  .playback-state { margin-left: 0; display: inline-flex; align-items: center; gap: 4px; font-size: .74rem; color: var(--color-ink-muted); }
+  .playback-state.complete { color: var(--success); }
+  .playback-controls :global([data-slot="button"]) { padding: 0; height: 24px; font-size: .74rem; }
+  .attention-banner { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: var(--radius-lg); background: var(--warning-container); color: var(--on-warning-container); }
+  .attention-banner > div { display: flex; align-items: baseline; gap: 3px; min-width: 0; flex: 1; font-size: .78rem; white-space: nowrap; overflow: hidden; }
+  .attention-banner strong { flex: none; }
+  .desktop-attention { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .attention-banner > :global(a) { flex: none; }
+  .phone-attention, .phone-kpi, .week-numbers > .phone-trend { display: none; }
   .muted { color: var(--color-ink-muted); font-size: var(--text-sm); }
-  .week-panel { padding: var(--space-4); }
+  .week-panel { padding: 14px 16px; }
   .week-panel, .recent-panel { border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
   header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
-  h2 { font-size: 1.125rem; font-weight: 600; }
+  h2 { font-size: .98rem; font-weight: 600; }
   header :global([data-slot="button"]) { flex: none; }
   .week-numbers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); margin-block: var(--space-3) var(--space-4); }
-  .week-numbers > div { display: grid; align-content: start; gap: var(--space-1); min-width: 0; padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-panel-raised); }
-  .week-numbers strong { font: 600 1.25rem/1.2 var(--font-display); overflow-wrap: anywhere; }
-  .week-numbers span, .week-numbers small, .week-chart > p { color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .week-numbers > div { display: grid; align-content: start; gap: var(--space-1); min-width: 0; padding: 10px 12px; border-radius: var(--radius-md); background: var(--color-panel-raised); }
+  .week-numbers strong { font: 700 1.3rem/1.1 var(--font-display); overflow-wrap: anywhere; }
+  .week-numbers span, .week-chart > p { color: var(--color-ink-muted); font-size: .7rem; }
   .week-chart { overflow-x: auto; }
-  .week-chart :global(.recap-bars) { min-width: 348px; }
-  .week-chart > p { margin-bottom: var(--space-4); }
-  .week-chart :global(.plot) { height: 90px; }
-  .week-chart :global(.bar) { max-width: 48px; }
+  .week-chart :global(.recap-bars) { min-width: 0; }
+  .week-chart > p { margin-bottom: 10px; font-size: .7rem; letter-spacing: .06em; text-transform: uppercase; }
   .recent-panel { overflow: hidden; }
   .recent-panel header { padding: var(--space-2) var(--space-4); }
   .release-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); font-size: var(--text-sm); }
   @media (max-width: 850px) { .home-summary.administrator { grid-template-columns: minmax(0, 1fr); } }
-  @media (max-width: 650px) { .home-view :global(.home-setup) { order: 2; } .week-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); } .attention-banner { flex-wrap: wrap; } .attention-banner > div { flex-basis: calc(100% - 40px); } .attention-banner > :global(a) { margin-left: 32px; } .now-playing-card.hero { grid-template-columns: 56px minmax(0, 1fr); } .now-playing-card.hero .now-playing-artwork { width: 56px; } .now-playing-card.hero .now-playing-title h2 { font-size: 1.125rem; } .now-playing-meta { flex-wrap: wrap; } }
+  @media (max-width: 650px) {
+    .home-view { gap: 12px; }
+    h2 { font-size: 1.125rem; }
+    .home-view :global(.home-setup) { order: 2; }
+    .home-summary { gap: 12px; }
+    .week-panel, .recent-panel { padding: 0; border: 0; background: transparent; box-shadow: none; }
+    .week-panel header :global(a), .week-chart, .desktop-kpi, .week-numbers > .day-kpi { display: none; }
+    .phone-kpi, .week-numbers > .phone-trend { display: grid; }
+    .week-numbers { margin-block: 12px 0; }
+    .recent-panel header { padding: 0 0 12px; }
+    .recent-panel { border-radius: 0; }
+    .recent-panel :global(.item-row) { background: transparent; padding-inline: 0; }
+    .recent-panel :global(.item-row:nth-of-type(n + 3)) { display: none; }
+    .attention-banner { display: grid; gap: 8px; }
+    .attention-banner > div { display: block; white-space: normal; }
+    .attention-banner > :global(a) { justify-self: start; }
+    .phone-attention { display: block; }
+    .desktop-attention { display: none; }
+    .now-playing-card.compact-playing { grid-template-columns: 56px minmax(0, 1fr); gap: 12px; }
+    .compact-playing .now-playing-artwork { width: 56px; align-self: start; }
+    .compact-playing .now-playing-title { padding-right: 80px; }
+    .compact-playing > :global(.state-pill) { position: absolute; top: 14px; right: 14px; }
+    .playback-controls { gap: 8px; }
+  }
 </style>

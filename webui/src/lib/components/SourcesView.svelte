@@ -11,7 +11,7 @@
   import { Switch } from "$lib/components/ui/switch";
   import { diagnosticFailureMessage, diagnosticIsNeutral, type DiagnosticFailure } from "$lib/diagnostics";
   import { toast } from "$lib/toasts";
-  import { onMount } from "svelte";
+  import { onMount, tick } from "svelte";
   import { goto } from "$app/navigation";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import { ChevronRight, LockKeyhole, MoreHorizontal, PackagePlus, Plus, Radio } from "@lucide/svelte";
@@ -46,6 +46,7 @@
   import SelectField from "$lib/components/SelectField.svelte";
   import { fieldValue } from "$lib/settings";
   import { relativeTime } from "$lib/activity";
+  import { deliveryCounts } from "$lib/source-deliveries";
   import {
     accountSettings,
     accountSubtitle,
@@ -195,6 +196,15 @@
   let kind = $state("all");
   let filterInitialized = false;
   let deliveries = $state<ScrobbleDelivery[]>([]);
+  let deliveryCountComplete = $state(false);
+  const deliverySummary = $derived(deliveryCountComplete ? deliveryCounts(deliveries) : { waiting: 0, unsendable: 0 });
+  let deliverySection = $state<HTMLDivElement | null>(null);
+  $effect(() => {
+    if (initialSection === "scrobble-problems" && deliverySection) {
+      const section = deliverySection;
+      void tick().then(() => { section.focus({ preventScroll: true }); section.scrollIntoView({ block: "start" }); });
+    }
+  });
   let deliveryRefresh = $state(0);
   const accountsPage = $derived(mode === "accounts" || from === "accounts" || initialSection === "playlist-editing");
   const panelAccount = $derived(focusAccount ? accounts.find(account => account.id === focusAccount) : undefined);
@@ -685,7 +695,7 @@
       {#each groups as group (group[0].providerId)}
         {@const account = group[0]}
         <tr class:account-selected={group.some(item => focusAccount === item.id)} id={`connection-${account.id}`}>
-          <td><a class="account-opener" href={servicePath(account.providerId, account.id)} data-sveltekit-keepfocus data-sveltekit-noscroll aria-label={`Open ${providerDisplayName(providers, account.providerId)} account`}><ProviderArtwork id={account.providerId} definition={provider(account.providerId)} decorative /><strong>{providerDisplayName(providers, account.providerId)}{group.length > 1 ? ` · ${countLabel(group.length, "account")}` : ""}</strong></a></td>
+          <td data-label="Service"><a class="account-opener" href={servicePath(account.providerId, account.id)} data-sveltekit-keepfocus data-sveltekit-noscroll aria-label={`Open ${providerDisplayName(providers, account.providerId)} account`}><ProviderArtwork id={account.providerId} definition={provider(account.providerId)} decorative /><strong>{providerDisplayName(providers, account.providerId)}{group.length > 1 ? ` · ${countLabel(group.length, "account")}` : ""}</strong></a></td>
           <td data-label="Account">{group.map(item => item.customLabel || String(item.configuration?.username || item.configuration?.userName || (item.displayName !== providerDisplayName(providers, item.providerId) ? item.displayName : "Not provided"))).join(", ")}</td>
           <td data-label="Owner">{[...new Set(group.map(item => item.ownerDisplayName || item.creatorDisplayName || "Unknown"))].join(", ")}</td>
           <td data-label="Shared with">{[...new Set(group.map(item => item.scope === "Shared" ? "Everyone" : `Just ${item.ownerDisplayName || "you"}`))].join(", ")}</td>
@@ -904,8 +914,8 @@
   <section class="sources-redesign" class:panel-open={Boolean(pageId)} aria-busy={refreshing}>
     <header class="sources-heading">
       <h2 class="sr-only">{accountsPage ? "Accounts" : "Services"}</h2>
-      <PageStatus label={accountsPage ? "Accounts status" : "Services status"} items={accountsPage
-        ? [{ label: countLabel(accounts.length, "account") }, { label: `${countLabel(deliveries.length, "listen")} waiting to send`, tone: deliveries.length ? "warn" : "neutral" }]
+      <PageStatus separated={accountsPage} label={accountsPage ? "Accounts status" : "Services status"} items={accountsPage
+        ? [{ label: countLabel(accounts.length, "account") }, ...(deliverySummary.waiting ? [{ label: `${deliverySummary.waiting.toLocaleString()} waiting`, tone: "warn" as const }] : []), ...(deliverySummary.unsendable ? [{ label: `${deliverySummary.unsendable.toLocaleString()} can't be sent`, tone: "stop" as const, href: "#/sources/accounts?section=scrobble-problems" }] : [])]
         : [{ label: `${mySources.length - needsSetup.length} working` }, { label: `${countLabel(needsSetup.length, "needs", "need")} attention`, tone: needsSetup.length ? "stop" : "neutral" }, { label: `${mySources.length} in use of ${providers.length}` }]} />
       <div class="sources-heading-actions"><RefreshButton onrefresh={refresh} />
         {#if accountsPage}{#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}><Plus size={16} aria-hidden="true" />Connect account</Button>{/if}
@@ -914,7 +924,7 @@
     </header>
     {#if error}<ErrorState title="Source readiness may be stale." detail={error} onretry={refresh} />{/if}
     {#if accountsPage}
-      {#await import("$lib/components/SourceDeliveryGroups.svelte") then { default: SourceDeliveryGroups }}<SourceDeliveryGroups {accounts} onConfigure={configure} refreshKey={String(deliveryRefresh)} onloaded={items => deliveries = items} onchanged={() => deliveryRefresh++} />{/await}
+      <div id="scrobble-problems" bind:this={deliverySection} tabindex="-1">{#await import("$lib/components/SourceDeliveryGroups.svelte") then { default: SourceDeliveryGroups }}<SourceDeliveryGroups {accounts} onConfigure={configure} refreshKey={String(deliveryRefresh)} onloaded={(items, complete) => { deliveries = items; deliveryCountComplete = complete; }} onchanged={() => deliveryRefresh++} />{/await}</div>
       <PlaylistConsent {backend} focus={initialSection === "playlist-editing"} />
       <SearchField hiddenLabel bind:value={search} label="Search accounts" placeholder="Search accounts" />
       {@render accountList()}
@@ -1023,6 +1033,7 @@
   .account-menus { display: flex; flex-wrap: wrap; position: relative; z-index: 1; }
   .accounts-table th:last-child { width: calc(44px + var(--space-3) * 2); }
   .accounts-table td { overflow-wrap: anywhere; }
+  .accounts-table td[data-label="State"] :global(.state-pill) { max-width: 100%; white-space: normal; }
   .account-opener strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .accounts-table th { color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 500; text-align: left; }
   .accounts-table th, .accounts-table td { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--color-edge); }

@@ -101,7 +101,7 @@
   const days = $derived.by(() => {
     const result: Array<{ label: string; groups: typeof groups }> = [];
     for (const group of groups) {
-      const label = dayLabel(group.entries[0].occurredAt);
+      const label = dayLabel(group.entries[0].occurredAt, new Date(), { weekday: false });
       const current = result.at(-1);
       if (current?.label === label) current.groups.push(group);
       else result.push({ label, groups: [group] });
@@ -452,13 +452,13 @@
 
 
 <style>
-  .event-log-panel { min-width: 0; grid-template-columns: minmax(0, 1fr); container-type: inline-size; }
+  .event-log-panel { min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 0; container-type: inline-size; }
   .event-log-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 220px) auto; align-items: center; gap: var(--space-2); margin-block: var(--space-4) var(--space-1); }
   .event-log-search { min-width: 0; order: 2; }
   .event-log-chip-row { min-width: 0; overflow-x: auto; order: 1; }
   .event-log-chip-row :global(.filter-segments) { width: max-content; min-width: 100%; max-width: none; flex-wrap: nowrap; }
   .event-log-toolbar :global(.event-log-refresh) { order: 3; }
-  .event-more-filters { margin-bottom: var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .event-more-filters { margin-bottom: var(--space-2); color: var(--color-ink-muted); font-size: var(--text-xs); }
   .event-more-filters summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: var(--space-1); }
   .event-more-filters summary::after { content: "⌄"; }
   .more-filter-fields { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); padding-block: var(--space-2); }
@@ -466,9 +466,11 @@
   .history-days { overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
   .history-days:has(> :global(.empty-state)) { border-style: dashed; }
   .event-log-day + .event-log-day { border-top: 1px solid var(--color-edge); }
-  .event-log-day h2 { padding: var(--space-2) var(--space-4); margin: 0; background: var(--color-panel-raised); color: var(--color-ink-muted); font-size: var(--text-xs); }
-  .event-log-list { overflow: hidden; }
+  .event-log-day { display: block; }
+  .event-log-day h2 { padding: var(--space-3) var(--space-4) var(--space-2); margin: 0; background: var(--color-panel-raised); color: var(--color-ink-muted); font-size: .7rem; font-weight: 400; letter-spacing: .06em; text-transform: uppercase; border-bottom: 1px solid var(--color-edge); }
+  .event-log-list { overflow: hidden; border-radius: 0; }
   .event-log-group { border: 0; border-bottom: 1px solid var(--color-edge); }
+  .event-log-group + .event-log-group { border-top: 0; }
   .event-log-group:last-child { border-bottom: 0; }
   .event-log-group.streaming :global(.item-row) { animation: event-stream-arrive 600ms ease-out; }
   @media (prefers-reduced-motion: reduce) { .event-log-group.streaming :global(.item-row) { animation: none; } }

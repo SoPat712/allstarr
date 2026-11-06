@@ -1,5 +1,36 @@
 import { describe, expect, it } from "vitest";
-import { playbackProgress, playbackSourceIssues, summarizeHome, type HomeSnapshot } from "./home";
+import { homeSourceHealth, listenTrend, nextScheduledWork, playbackMeta, playbackProgress, playbackSourceIssues, summarizeHome, type HomeSnapshot } from "./home";
+
+describe("Home wording", () => {
+  it("shows the signed change from last week", () => {
+    expect(listenTrend(36, 0)).toBe("+36 on last week");
+    expect(listenTrend(10, 14)).toBe("−4 on last week");
+    expect(listenTrend(10, 10)).toBe("same as last week");
+  });
+
+  it("keeps the playback route honest when its source is unconfirmed", () => {
+    const item = { userName: "Listener", client: "Aloud", device: "iPhone", providerId: "apple", sourceConfirmed: true };
+    expect(playbackMeta(item, "Apple Music")).toBe("Listener on Aloud, iPhone · from Apple Music");
+    expect(playbackMeta({ ...item, sourceConfirmed: false }, "Apple Music")).toBe("Listener on Aloud, iPhone · catalog: Apple Music (playback unconfirmed)");
+    expect(playbackMeta({ ...item, device: null }, "Apple Music")).toBe("Listener on Aloud · from Apple Music");
+  });
+
+  it("groups the next scheduled playlist syncs and ignores paused tasks", () => {
+    const task = { id: "one", name: "Refresh mixes", kind: "upkeep", state: "Scheduled", enabled: true, cadence: "Daily", nextRunAt: "2026-11-07T04:00:00Z" };
+    expect(nextScheduledWork([{ ...task, enabled: false }])).toBeNull();
+    expect(nextScheduledWork([task])?.name).toBe("Refresh mixes");
+    expect(nextScheduledWork([{ ...task, runPlaylistLinkId: "one" }, { ...task, id: "two", runPlaylistLinkId: "two" }])?.name).toBe("2 playlist syncs");
+    expect(nextScheduledWork([{ ...task, nextRunAt: "invalid" }])).toBeNull();
+  });
+
+  it("uses explicit check failures for down and slow source labels", () => {
+    const source = { providerId: "one", capabilityTotal: 1, enabledAccountCount: 0, healthyCapabilityCount: 0, failedCapabilityCount: 1 };
+    const health = homeSourceHealth({ failures: [], providers: [source, { ...source, providerId: "slow", lastFailureCode: "stream_slow" }, { ...source, providerId: "working", failedCapabilityCount: 0, p95LatencyMilliseconds: 10000 }, { ...source, providerId: "unchecked", capabilityTotal: 0 }] });
+    expect(health.down.map(item => item.providerId)).toEqual(["one"]);
+    expect(health.slow.map(item => item.providerId)).toEqual(["slow"]);
+    expect(health.checked).toHaveLength(3);
+  });
+});
 
 describe("reported playback progress", () => {
   const item = { positionSeconds: 30.25, durationSeconds: 120, isPaused: false, positionUpdatedAt: "2026-01-01T00:00:00Z" };

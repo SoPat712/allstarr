@@ -284,10 +284,14 @@ export type HomeOverview = {
     playableTracks: number;
     unresolvedTracks: number;
     activeJobs: number;
+    waitingJobs?: number;
+    completedJobsToday?: number;
+    failedJobsToday?: number;
     completedListens: number;
     currentWeekListens: number;
     previousWeekListens: number;
     scrobbleDeliveries: number;
+    scrobblesToday?: number;
     cacheTracks?: number | null;
     keptTracks?: number | null;
     topArtist?: { name?: string | null; listens: number } | null;

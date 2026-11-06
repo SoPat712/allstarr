@@ -19,7 +19,7 @@
   let { accounts, accountId = "", targetId = "", refreshKey = "", onConfigure, onloaded, onchanged }: {
     accounts: ProviderAccount[]; accountId?: string; targetId?: string; refreshKey?: string;
     onConfigure: (account: ProviderAccount) => void;
-    onloaded?: (items: ScrobbleDelivery[]) => void;
+    onloaded?: (items: ScrobbleDelivery[], complete: boolean) => void;
     onchanged?: () => void;
   } = $props();
   let items = $state<ScrobbleDelivery[]>([]), loading = $state(true), busy = $state(false), error = $state("");
@@ -44,7 +44,7 @@
       items = more ? [...items, ...result.items] : result.items;
       before = result.items.at(-1)?.id;
       hasMore = result.items.length === 100;
-      onloaded?.(items);
+      onloaded?.(items, !hasMore);
     } catch (cause) { error = cause instanceof Error ? cause.message : "Listen status could not be loaded."; }
     finally { loading = false; busy = false; }
   }

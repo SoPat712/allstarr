@@ -164,7 +164,7 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [
     const writes = await fixture(page);
     await page.goto("#/sources/accounts");
     await expect(page.getByRole("region", { name: "Accounts status" })).toContainText("2 accounts");
-    await expect(page.getByRole("region", { name: "Accounts status" })).toContainText("2 listens waiting to send");
+    await expect(page.getByRole("region", { name: "Accounts status" })).toContainText("2 waiting");
     await expect(page.locator(".grouped-row")).toHaveCount(1);
     const hearts = page.getByRole("region", { name: "Shared provider hearts", exact: true });
     await expect(hearts.getByRole("button", { name: "Review profiles", exact: true })).toBeDisabled();
@@ -390,17 +390,17 @@ for (const width of [320, 1280]) {
   });
 }
 
-test("Sources accounts status uses singular account and listen counts", async ({ page }) => {
+test("Sources accounts status uses singular account and waiting counts", async ({ page }) => {
   await fixture(page);
   await page.route("**/api/admin/provider-accounts", route => route.fulfill({ json: {
     accounts: [{ id: "account-1", providerId: "listenbrainz", displayName: "Listener", scope: "Personal", enabled: true, secret: { configured: true } }], audienceUsers: [],
   } }));
-  await page.route("**/api/admin/scrobbling/deliveries?*", route => route.fulfill({ json: { items: [{ id: "listen-1", targetId: "listenbrainz", state: "queued", submission: { title: "First song", artist: "An artist" } }] } }));
+  await page.route("**/api/admin/scrobbling/deliveries?*", route => route.fulfill({ json: { items: [{ id: "listen-1", targetId: "listenbrainz", state: "retrying", kind: "completed", canResend: true, submission: { title: "First song", artist: "An artist" } }] } }));
   await page.goto("#/sources/accounts");
   const status = page.getByRole("region", { name: "Accounts status" });
   await expect(status).toContainText("1 account");
   await expect(status).not.toContainText("1 accounts");
-  await expect(status).toContainText("1 listen waiting to send");
+  await expect(status).toContainText("1 waiting");
 });
 
 test("Sources redesign keeps a removal error in its confirmation", async ({ page }) => {
@@ -529,4 +529,47 @@ for (const width of [390, 1280]) test(`Connection tile keyboard follows the grid
   await page.keyboard.press("ArrowDown");
   await expect(tiles.nth(width === 390 ? 2 : 4)).toBeFocused();
   await expect(dialog.locator(".dialog-actions")).toHaveCSS("position", "sticky");
+});
+
+for (const counts of [{ waiting: 1, blocked: 2 }, { waiting: 0, blocked: 1 }, { waiting: 0, blocked: 0 }]) {
+  test(`Sources accounts header separates ${counts.waiting} waiting and ${counts.blocked} unavailable listens`, async ({ page }) => {
+    await fixture(page);
+    await page.route("**/api/admin/scrobbling/deliveries?*", route => route.fulfill({ json: { items: [
+      ...Array.from({ length: counts.waiting }, (_, index) => ({ id: `waiting-${index}`, kind: "completed", state: "retrying", canResend: true, targetId: "listenbrainz", submission: { title: "Song", artist: "Artist" } })),
+      ...Array.from({ length: counts.blocked }, (_, index) => ({ id: `blocked-${index}`, kind: "completed", state: "permanentfailure", canResend: false, canDismiss: true, unavailableReason: "The saved listen is unavailable", targetId: "listenbrainz", submission: null })),
+      { id: "notice", kind: "nowplaying", state: "permanentfailure", canResend: false, targetId: "listenbrainz" },
+    ] } }));
+    await page.goto("#/sources/accounts");
+    await expect(page.getByRole("button", { name: "Refresh delivery", exact: true })).toBeVisible();
+    const status = page.getByRole("region", { name: "Accounts status" });
+    if (counts.waiting) await expect(status).toContainText(`${counts.waiting} waiting`);
+    else await expect(status).not.toContainText("waiting");
+    if (counts.blocked) {
+      const link = status.getByRole("link", { name: `${counts.blocked} can't be sent`, exact: true });
+      await expect(link).toHaveAttribute("href", "#/sources/accounts?section=scrobble-problems");
+      await link.click();
+      await expect(page.locator("#scrobble-problems")).toBeFocused();
+      await expect(page.locator("#scrobble-problems .grouped-row")).toHaveCount(counts.waiting ? 2 : 1);
+    } else await expect(status).not.toContainText("can't be sent");
+  });
+}
+
+test("Sources accounts header omits incomplete delivery totals until earlier listens load", async ({ page }) => {
+  await fixture(page);
+  await page.route("**/api/admin/scrobbling/deliveries?*", route => {
+    const earlier = new URL(route.request().url()).searchParams.has("before");
+    return route.fulfill({ json: { items: Array.from({ length: earlier ? 1 : 100 }, (_, index) => ({
+      id: `${earlier ? "earlier" : "recent"}-${index}`, kind: "completed", state: "permanentfailure", targetId: "listenbrainz",
+      canResend: false, canDismiss: true, submission: null, unavailableReason: "The saved listen is unavailable",
+    })) } });
+  });
+  await page.goto("#/sources/accounts");
+  const earlier = page.getByRole("button", { name: "Load earlier deliveries", exact: true });
+  await expect(earlier).toBeVisible();
+  const status = page.getByRole("region", { name: "Accounts status" });
+  await expect(status).not.toContainText("waiting");
+  await expect(status).not.toContainText("can't be sent");
+  await earlier.click();
+  await expect(status).toContainText("101 can't be sent");
+  await expect(status).not.toContainText("waiting");
 });

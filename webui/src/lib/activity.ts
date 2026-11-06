@@ -33,7 +33,7 @@ export function isRoutineActivity(item: ActivityItem) {
   return routine && (waiting || !isProblem(item));
 }
 
-export function dayLabel(value: string, now = new Date()) {
+export function dayLabel(value: string, now = new Date(), options: { weekday?: boolean } = {}) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Earlier";
   const startOfDay = (input: Date) => new Date(input.getFullYear(), input.getMonth(), input.getDate()).getTime();
@@ -41,7 +41,7 @@ export function dayLabel(value: string, now = new Date()) {
   if (days === 0) return "Today";
   if (days === 1) return "Yesterday";
   return new Intl.DateTimeFormat(undefined, {
-    weekday: days < 7 ? "long" : undefined,
+    weekday: days < 7 && options.weekday !== false ? "long" : undefined,
     month: "long",
     day: "numeric",
     year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",

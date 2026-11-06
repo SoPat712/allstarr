@@ -4,6 +4,7 @@ import type {
   ProviderSummary,
   RuntimeStatus,
   HomeOverview,
+  ActivityTask,
 } from "./api";
 
 export type HomeSnapshot = {
@@ -15,6 +16,31 @@ export type HomeSnapshot = {
   stats?: HomeOverview["stats"];
   failures: string[];
 };
+
+export function listenTrend(current: number, previous: number) {
+  const change = current - previous;
+  return change ? `${change > 0 ? "+" : "−"}${Math.abs(change).toLocaleString()} on last week` : "same as last week";
+}
+
+export function playbackMeta(item: Pick<NowPlayingItem, "userName" | "client" | "device" | "sourceConfirmed">, source: string) {
+  return `${item.userName} on ${item.client}${item.device ? `, ${item.device}` : ""} · ${item.sourceConfirmed ? `from ${source}` : `catalog: ${source} (playback unconfirmed)`}`;
+}
+
+export function nextScheduledWork(tasks: ActivityTask[]) {
+  const next = tasks.filter(task => task.enabled && task.nextRunAt && Number.isFinite(Date.parse(task.nextRunAt)))
+    .toSorted((a, b) => Date.parse(a.nextRunAt!) - Date.parse(b.nextRunAt!))[0];
+  if (!next) return null;
+  const syncs = tasks.filter(task => task.enabled && task.runPlaylistLinkId && task.nextRunAt === next.nextRunAt);
+  return { name: next.runPlaylistLinkId ? `${syncs.length} playlist sync${syncs.length === 1 ? "" : "s"}` : next.name, at: next.nextRunAt! };
+}
+
+export function homeSourceHealth(snapshot: HomeSnapshot) {
+  const checked = (snapshot.providers ?? []).filter(source => source.capabilityTotal > 0);
+  const failing = checked.filter(source => source.failedCapabilityCount > 0);
+  const slow = failing.filter(source => /(?:^|[_-])slow(?:$|[_-])/.test(source.lastFailureCode ?? ""));
+  const down = failing.filter(source => !slow.includes(source));
+  return { checked, failing, slow, down };
+}
 
 export function playbackProgress(
   item: Pick<NowPlayingItem, "positionSeconds" | "durationSeconds" | "isPaused" | "positionUpdatedAt">,

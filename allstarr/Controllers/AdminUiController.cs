@@ -349,6 +349,7 @@ public class AdminUiController : ControllerBase
         var activeJobs = await jobsQuery.CountAsync(item =>
             item.State != DurableJobState.Succeeded && item.State != DurableJobState.Failed &&
             item.State != DurableJobState.Cancelled, cancellationToken);
+        var jobCounts = await ReadHomeJobCountsAsync(jobsQuery, DateTimeOffset.UtcNow, cancellationToken);
         var lastDay = DateTimeOffset.UtcNow.AddHours(-24);
         var currentWeekStart = DateTimeOffset.UtcNow.AddDays(-7);
         var previousWeekStart = DateTimeOffset.UtcNow.AddDays(-14);
@@ -362,14 +363,8 @@ public class AdminUiController : ControllerBase
             .OrderByDescending(item => item.listens)
             .ThenBy(item => item.name)
             .FirstOrDefaultAsync(cancellationToken);
-        var scrobbleDeliveries = await context.PlaybackDeliveryCheckpoints.AsNoTracking().CountAsync(item =>
-                (session.IsAdministrator || item.OwnerUserId == session.AllstarrUserId) &&
-                item.Kind == PlaybackScrobbleDeliveryKind.Completed &&
-                item.UpdatedAt >= lastDay &&
-                (item.State == ScopedPlaybackScrobbleOutcome.Delivered ||
-                 item.State == ScopedPlaybackScrobbleOutcome.Ignored &&
-                 item.ProviderCode != "listen-incomplete" && item.ProviderCode != "listen-not-completed" &&
-                 item.ProviderCode != "dismissed"), cancellationToken);
+        var scrobbleCounts = await ReadHomeScrobbleCountsAsync(context.PlaybackDeliveryCheckpoints.AsNoTracking()
+            .Where(item => session.IsAdministrator || item.OwnerUserId == session.AllstarrUserId), DateTimeOffset.UtcNow, cancellationToken);
         var currentWeekListens = await listensQuery.CountAsync(item =>
             item.State == ListeningEventState.Completed && item.ListenedAt >= currentWeekStart,
             cancellationToken);
@@ -419,10 +414,14 @@ public class AdminUiController : ControllerBase
                 playableTracks = playlistCounts.PlayableTracks,
                 unresolvedTracks = playlistCounts.UnresolvedTracks,
                 activeJobs,
+                waitingJobs = jobCounts.WaitingJobs,
+                completedJobsToday = jobCounts.CompletedJobsToday,
+                failedJobsToday = jobCounts.FailedJobsToday,
                 completedListens,
                 currentWeekListens,
                 previousWeekListens,
-                scrobbleDeliveries,
+                scrobbleDeliveries = scrobbleCounts.LastDay,
+                scrobblesToday = scrobbleCounts.Today,
                 cacheTracks,
                 keptTracks,
                 topArtist
@@ -430,6 +429,37 @@ public class AdminUiController : ControllerBase
             providerHealth,
             activity
         });
+    }
+
+    internal static async Task<(int LastDay, int Today)> ReadHomeScrobbleCountsAsync(
+        IQueryable<PlaybackDeliveryCheckpointEntity> deliveries, DateTimeOffset now, CancellationToken cancellationToken = default)
+    {
+        var lastDay = now.AddHours(-24);
+        var dayStart = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
+        var dayEnd = dayStart.AddDays(1);
+        var counts = await deliveries.Where(item => item.Kind == PlaybackScrobbleDeliveryKind.Completed &&
+            item.UpdatedAt >= lastDay && item.UpdatedAt < dayEnd &&
+            (item.State == ScopedPlaybackScrobbleOutcome.Delivered ||
+             item.State == ScopedPlaybackScrobbleOutcome.Ignored &&
+             item.ProviderCode != "listen-incomplete" && item.ProviderCode != "listen-not-completed" && item.ProviderCode != "dismissed"))
+            .GroupBy(item => 1)
+            .Select(group => new { LastDay = group.Count(), Today = group.Count(item => item.UpdatedAt >= dayStart) })
+            .FirstOrDefaultAsync(cancellationToken);
+        return (counts?.LastDay ?? 0, counts?.Today ?? 0);
+    }
+
+    internal static async Task<(int WaitingJobs, int CompletedJobsToday, int FailedJobsToday)> ReadHomeJobCountsAsync(
+        IQueryable<DurableJobRecord> jobs, DateTimeOffset now, CancellationToken cancellationToken = default)
+    {
+        var dayStart = new DateTimeOffset(now.UtcDateTime.Date, TimeSpan.Zero);
+        var dayEnd = dayStart.AddDays(1);
+        var waiting = await jobs.CountAsync(item => item.State == DurableJobState.Pending ||
+            item.State == DurableJobState.RetryScheduled, cancellationToken);
+        var completed = await jobs.CountAsync(item => item.State == DurableJobState.Succeeded &&
+            item.CompletedAt >= dayStart && item.CompletedAt < dayEnd, cancellationToken);
+        var failed = await jobs.CountAsync(item => item.State == DurableJobState.Failed &&
+            item.CompletedAt >= dayStart && item.CompletedAt < dayEnd, cancellationToken);
+        return (waiting, completed, failed);
     }
 
     internal static async Task<(int CacheTracks, int KeptTracks)> ReadExistingStorageCountsAsync(
