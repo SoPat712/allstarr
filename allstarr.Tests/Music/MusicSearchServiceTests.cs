@@ -29,14 +29,17 @@ public sealed class MusicSearchServiceTests
         var song = new Song { Id = "external", Title = "Track", Artist = "Artist", ExplicitContentLyrics = 0 };
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.SearchAsync(context, It.IsAny<string>(), 20, 20, 20, null))
-            .ReturnsAsync(new SearchResult { Songs = [song] });
+            .ReturnsAsync(new SearchResult { Songs = [song], Albums = [new Album { Id = "clean-album", Title = "Track", Artist = "Artist", IsExplicit = false }] });
         var index = new Mock<ILibraryIndexService>();
         index.Setup(item => item.FindKnownRecordingTracksAsync(context, It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Dictionary<string, string> { ["external"] = "unknown-native" });
-        var native = new FakeNative([new(MusicItemKind.Song, "unknown-native", "Track", "Artist", "native")],
+        var native = new FakeNative([new(MusicItemKind.Song, "unknown-native", "Track", "Artist", "native"),
+                new(MusicItemKind.Album, "unknown-album", "Track", "Artist", "native-album")],
             new NativeMusicItem<string>(MusicItemKind.Song, "unknown-native", "Track", "Artist", "native"));
         var service = new MusicSearchService(gateway.Object, index.Object);
-        Assert.Equal("external", Assert.Single((await service.SearchAsync(context, Request("Track"), native)).Songs).Song!.Id);
+        var results = await service.SearchAsync(context, Request("Track"), native);
+        Assert.Equal("external", Assert.Single(results.Songs).Song!.Id);
+        Assert.Equal("clean-album", Assert.Single(results.Albums).Album!.Id);
         Assert.Equal("external", Assert.Single(await service.ProjectSongsAsync(context, [song], native)).Song!.Id);
     }
 

@@ -226,7 +226,8 @@ public sealed partial class MusicSearchService(
         var nativeRows = await nativeTask;
         var nativeSongs = nativeRows.Where(item => item.Kind == MusicItemKind.Song &&
             context.Policy?.Includes(item.ExplicitContentLyrics) != false).ToList();
-        var nativeAlbums = nativeRows.Where(item => item.Kind == MusicItemKind.Album).ToList();
+        var nativeAlbums = nativeRows.Where(item => item.Kind == MusicItemKind.Album &&
+            (context.Policy?.Preferences.ExplicitFilter != "CleanOnly" || context.Policy.Includes(item.ExplicitContentLyrics))).ToList();
         var nativeArtists = nativeRows.Where(item => item.Kind == MusicItemKind.Artist).ToList();
         var provided = await providerTask;
         var songs = request.Songs.Apply(provided.Songs).ToList();

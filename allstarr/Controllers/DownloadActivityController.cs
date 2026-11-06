@@ -27,6 +27,7 @@ public partial class DownloadActivityController : ControllerBase
     private readonly IHttpClientFactory? _httpClients;
     private readonly Core.ManagedFiles.RecordingKeptFiles? _keptFiles;
     private readonly AdminProtocolExecutionContextFactory? _protocolContexts;
+    private readonly Core.Settings.IEffectiveProviderPolicyResolver? _policies;
 
     public DownloadActivityController(
         IEnumerable<IPlaybackActivitySource> playbackSources,
@@ -40,7 +41,8 @@ public partial class DownloadActivityController : ControllerBase
         IProtocolProviderGateway? providerGateway = null,
         IHttpClientFactory? httpClients = null,
         Core.ManagedFiles.RecordingKeptFiles? keptFiles = null,
-        AdminProtocolExecutionContextFactory? protocolContexts = null)
+        AdminProtocolExecutionContextFactory? protocolContexts = null,
+        Core.Settings.IEffectiveProviderPolicyResolver? policies = null)
     {
         _playbackSources = playbackSources.ToList();
         _metadataResolvers = metadataResolvers.ToList();
@@ -54,6 +56,7 @@ public partial class DownloadActivityController : ControllerBase
         _httpClients = httpClients;
         _keptFiles = keptFiles;
         _protocolContexts = protocolContexts;
+        _policies = policies;
     }
 
     [HttpGet("/api/admin/ui/now-playing")]
@@ -81,6 +84,7 @@ public partial class DownloadActivityController : ControllerBase
         foreach (var state in states)
         {
             var itemId = NormalizeExternalItemId(state.ItemId);
+            if (!await AllowsDisplayAsync(session, itemId, viewer, cancellationToken)) continue;
             var metadata = await TryResolvePlaybackMetadataAsync(itemId, viewer, cancellationToken);
             var duration = metadata?.DurationSeconds is > 0 ? metadata.DurationSeconds : null;
             var position = state.PositionTicks is >= 0
@@ -207,6 +211,11 @@ public partial class DownloadActivityController : ControllerBase
             ? value as AdminAuthSession
             : null;
         if (session is not { AllstarrUserId: { } }) return NotFound();
+        if (!await AllowsDisplayAsync(session, normalizedItemId, null, cancellationToken))
+        {
+            var viewer = (await _libraryAccess.ResolveUserAsync(session.AllstarrUserId.Value, cancellationToken)).Context;
+            if (!await AllowsDisplayAsync(session, normalizedItemId, viewer, cancellationToken)) return NotFound();
+        }
         if (ExternalPlaybackMetadataResolver.ParseTrackIdentity(normalizedItemId) == null)
         {
             if (session?.AllstarrUserId is not { } viewerId) return NotFound();
@@ -254,6 +263,21 @@ public partial class DownloadActivityController : ControllerBase
         }
 
         return null;
+    }
+
+    private async Task<bool> AllowsDisplayAsync(AdminAuthSession session, string itemId, ProtocolExecutionContext? viewer, CancellationToken token)
+    {
+        var policy = _policies != null && session.AllstarrUserId is { } owner
+            ? await _policies.ResolveForUserAsync(owner, token) : viewer?.Policy;
+        if (policy?.Preferences.ExplicitFilter != "CleanOnly") return true;
+        if (viewer == null) return false;
+        if (ExternalPlaybackMetadataResolver.ParseTrackIdentity(itemId) is { } external)
+            return _providerGateway != null && await _providerGateway.GetStoredSongAsync(viewer, external.Provider, external.ExternalId) is { } song && policy.Includes(song);
+        if (_contextFactory == null) return false;
+        await using var db = await _contextFactory.CreateDbContextAsync(token);
+        var access = await _libraryAccess.ResolveAsync(viewer, token);
+        return await Core.Matching.LibraryTrackAccess.Query(db, viewer, access).AnyAsync(item => item.BackendItemId == itemId &&
+            db.CanonicalRecordings.Any(recording => recording.Id == item.CanonicalRecordingId && recording.IsExplicit == false), token);
     }
 
     private static string NormalizeExternalItemId(string itemId)

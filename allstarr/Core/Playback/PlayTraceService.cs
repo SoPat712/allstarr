@@ -3,6 +3,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
@@ -10,7 +11,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Playback;
 
-public sealed class PlayTraceService(IDbContextFactory<AllstarrDbContext> factory, TimeProvider clock, ProblemReportService reports)
+public sealed class PlayTraceService(IDbContextFactory<AllstarrDbContext> factory, TimeProvider clock, ProblemReportService reports,
+    IEffectiveProviderPolicyResolver? policies = null)
 {
     public static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -26,7 +28,8 @@ public sealed class PlayTraceService(IDbContextFactory<AllstarrDbContext> factor
         }
         var rows = await query.OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
             .Take(Math.Clamp(limit, 1, 100)).ToArrayAsync(token);
-        return rows.Select(Read).OfType<PlayTraceDetail>().ToArray();
+        var traces = rows.Select(Read).OfType<PlayTraceDetail>().ToArray();
+        return await CleanOnlyAsync(session, token) ? traces.Where(IsClean).ToArray() : traces;
     }
 
     public async Task<PlayTraceDetail> DetailAsync(AdminAuthSession session, Guid id, CancellationToken token)
@@ -34,8 +37,16 @@ public sealed class PlayTraceService(IDbContextFactory<AllstarrDbContext> factor
         await reports.RequireSessionAsync(session, token);
         await using var db = await factory.CreateDbContextAsync(token);
         var row = await Visible(db, session).SingleOrDefaultAsync(item => item.Id == id, token);
-        return row == null ? throw ProblemReportException.Missing() : Read(row) ?? throw ProblemReportException.Missing();
+        var trace = row == null ? null : Read(row);
+        return trace == null || await CleanOnlyAsync(session, token) && !IsClean(trace)
+            ? throw ProblemReportException.Missing() : trace;
     }
+
+    private async Task<bool> CleanOnlyAsync(AdminAuthSession session, CancellationToken token) =>
+        policies != null && session.AllstarrUserId is { } owner &&
+        (await policies.ResolveForUserAsync(owner, token)).Preferences.ExplicitFilter == "CleanOnly";
+
+    private static bool IsClean(PlayTraceDetail trace) => trace.Request.Presented.IsExplicit == false && trace.Received?.Tags?.IsExplicit != true;
 
     public async Task<object> DiagnosticsAsync(AdminAuthSession session, Guid id, CancellationToken token)
     {

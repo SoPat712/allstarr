@@ -198,7 +198,14 @@ public sealed partial class TrackMatchCommandService
                 ExactProviderAliases = FilterAutomaticCrossLinks(aliases, ownerPolicy)
             };
         }
-        var localCandidates = decisionEngine.PrepareCandidates(automaticSource ? candidates.Select(ToLocalCandidate) : []);
+        var recordingIds = candidates.Where(item => item.CanonicalRecordingId.HasValue)
+            .Select(item => item.CanonicalRecordingId!.Value).Distinct().ToArray();
+        var explicitness = await db.CanonicalRecordings.AsNoTracking().Where(item => recordingIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, item => item.IsExplicit, cancellationToken);
+        var localCandidates = decisionEngine.PrepareCandidates(automaticSource ? candidates.Select(item => ToLocalCandidate(item) with
+        {
+            IsExplicit = item.CanonicalRecordingId is { } recordingId ? explicitness.GetValueOrDefault(recordingId) : null
+        }) : []);
         var libraryIndexRevision = localCandidates.Revision;
         var scope = new TrackMatchScope(
 

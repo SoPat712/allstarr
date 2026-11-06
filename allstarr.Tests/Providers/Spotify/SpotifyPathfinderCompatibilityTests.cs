@@ -10,6 +10,36 @@ namespace allstarr.Tests;
 
 public sealed class SpotifyPathfinderCompatibilityTests
 {
+    [Theory]
+    [InlineData("EXPLICIT", true)]
+    [InlineData("NONE", false)]
+    [InlineData("UNRECOGNIZED", null)]
+    [InlineData(null, null)]
+    public async Task ExplicitRatingRequiresARecognizedProviderValue(string? label, bool? expected)
+    {
+        var track = new
+        {
+            itemV2 = new
+            {
+                data = new
+                {
+                    uri = "spotify:track:fixture",
+                    name = "Track",
+                    artists = new { items = new[] { new { uri = "spotify:artist:artist", profile = new { name = "Artist" } } } },
+                    contentRating = new { label }
+                }
+            }
+        };
+        using var http = new HttpClient(new JsonHandler(JsonSerializer.Serialize(new
+        {
+            data = new { playlistV2 = new { name = "Playlist", content = new { totalCount = 1, items = new[] { track } } } }
+        })));
+        var outcome = await new SpotifyPathfinderPlaylistClient(http).GetPlaylistTracksAsync("fixture",
+            new(new("spotify", ProviderResourceKind.Playlist, "playlist"), new ProviderPageRequest()), default);
+        Assert.True(outcome.IsSuccess);
+        Assert.Equal(expected, Assert.Single(outcome.RequireValue().Tracks.Items).Metadata!.IsExplicit);
+    }
+
     [Fact]
     public async Task StalePersistedQuery_ReturnsActionableHostError()
     {

@@ -3,6 +3,9 @@ using Moq;
 using allstarr.Controllers;
 using allstarr.Core.Downloads;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
+using allstarr.Core.Capabilities;
+using System.Collections.Immutable;
 using allstarr.Models.Domain;
 using allstarr.Services.Lyrics;
 using Microsoft.AspNetCore.Http;
@@ -15,6 +18,45 @@ namespace allstarr.Tests;
 
 public class DownloadsControllerLyricsArchiveTests
 {
+    [Theory]
+    [InlineData("kept", false)]
+    [InlineData("cache", false)]
+    [InlineData("kept", true)]
+    [InlineData("cache", true)]
+    public async Task CleanOnlyWithholdsUnverifiedStoredFilesFromListingAndExports(string storage, bool household)
+    {
+        var root = CreateTestRoot();
+        var downloads = Path.Combine(root, "downloads");
+        var directory = Path.Combine(downloads, storage);
+        Directory.CreateDirectory(directory);
+        await File.WriteAllTextAsync(Path.Combine(directory, "explicit.mp3"), "stored audio");
+        try
+        {
+            var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+            policies.Setup(item => item.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(
+                new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                    ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, .07)
+                { Preferences = new("CleanOnly") });
+            var controller = CreateController(downloads, policies: household ? policies.Object : null);
+            controller.HttpContext.Items[allstarr.Core.Protocols.ProtocolExecutionContextFactory.HttpContextItemKey] = new allstarr.Core.Protocols.ProtocolExecutionContext(
+                allstarr.Core.Protocols.ProtocolKind.Jellyfin, "backend", "listener", null,
+                "clean-export", DateTimeOffset.UtcNow.AddMinutes(1), default)
+            {
+                Policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(
+                    System.Collections.Immutable.ImmutableDictionary<allstarr.Core.Capabilities.ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>.Empty,
+                    System.Collections.Immutable.ImmutableHashSet<string>.Empty, "Lossless", .07)
+                { Preferences = new(household ? "All" : "CleanOnly") }
+            };
+            var listing = Assert.IsType<OkObjectResult>(await controller.GetDownloads(storage));
+            using var body = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(listing.Value));
+            Assert.Equal(0, body.RootElement.GetProperty("count").GetInt32());
+            Assert.IsType<NotFoundObjectResult>(await controller.DownloadFile("explicit.mp3", storage));
+            Assert.IsType<NotFoundObjectResult>(await controller.DownloadAllFiles(storage));
+            Assert.True(File.Exists(Path.Combine(directory, "explicit.mp3")));
+        }
+        finally { DeleteTestRoot(root); }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -179,7 +221,7 @@ public class DownloadsControllerLyricsArchiveTests
     private static DownloadsController CreateController(
         string downloadsRoot,
         IKeptLyricsSidecarService? keptLyricsSidecarService = null,
-        IDbContextFactory<AllstarrDbContext>? contextFactory = null)
+        IDbContextFactory<AllstarrDbContext>? contextFactory = null, IEffectiveProviderPolicyResolver? policies = null)
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -192,7 +234,7 @@ public class DownloadsControllerLyricsArchiveTests
             NullLogger<DownloadsController>.Instance,
             config,
             keptLyricsSidecarService,
-            contextFactory: contextFactory)
+            contextFactory: contextFactory, policies: policies)
         {
             ControllerContext = new ControllerContext
             {

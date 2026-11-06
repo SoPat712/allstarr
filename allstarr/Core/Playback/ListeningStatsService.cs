@@ -3,6 +3,7 @@ using allstarr.Core.Enrichment;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Services.Admin;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -44,7 +45,8 @@ public sealed record ListeningStats(ListeningStatsPeriod Period, long PlayCount,
     public IReadOnlyList<ListeningStatsArtist> NewArtists { get; init; } = [];
 }
 
-public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, SharedTagStore? tags = null) : IDisposable
+public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock, SharedTagStore? tags = null,
+    IEffectiveProviderPolicyResolver? policies = null) : IDisposable
 {
     private const int TopLimit = 50;
     public static readonly TimeSpan WarmEvery = TimeSpan.FromMinutes(1);
@@ -109,12 +111,14 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
     {
         // Reading a long history takes a moment, so an answer is kept until the listener's plays change.
         var owner = scope.OwnerUserId;
+        var policy = policies == null ? null : await policies.ResolveForUserAsync(owner, token);
+        var cleanOnly = policy?.Preferences.ExplicitFilter == "CleanOnly";
         var plays = await db.ListeningEvents.AsNoTracking().LongCountAsync(item => item.OwnerUserId == owner, token);
         var finished = await db.ListeningEvents.AsNoTracking().LongCountAsync(item => item.OwnerUserId == owner && item.State == ListeningEventState.Completed, token);
-        var key = (scope, interval, synthetic, plays, finished);
-        if (cache.TryGetValue(key, out (ListeningStats Stats, DateTimeOffset ExpiresAt) cached) && cached.ExpiresAt > clock.UtcNow + ahead)
+        var key = (scope, interval, synthetic, plays, finished, cleanOnly, policy?.PreferenceRevision);
+        if (!cleanOnly && cache.TryGetValue(key, out (ListeningStats Stats, DateTimeOffset ExpiresAt) cached) && cached.ExpiresAt > clock.UtcNow + ahead)
             return cached.Stats;
-        var result = await ReadAsync(db, scope, interval, zone, token, clock.UtcNow, tags);
+        var result = await ReadAsync(db, scope, interval, zone, token, clock.UtcNow, tags, cleanOnly);
         cache.Set(key, (result, clock.UtcNow + KeptFor), new MemoryCacheEntryOptions
         {
             Size = 1,
@@ -163,13 +167,16 @@ public sealed class ListeningStatsService(IDbContextFactory<AllstarrDbContext> f
     private const long CountedPlayTicks = 30 * TimeSpan.TicksPerSecond;
 
     internal static async Task<ListeningStats> ReadAsync(AllstarrDbContext db, IntelligenceScope scope,
-        ListeningStatsPeriod period, TimeZoneInfo zone, CancellationToken token, DateTimeOffset? now = null, SharedTagStore? tags = null)
+        ListeningStatsPeriod period, TimeZoneInfo zone, CancellationToken token, DateTimeOffset? now = null, SharedTagStore? tags = null,
+        bool cleanOnly = false)
     {
         var listened = db.ListeningEvents.AsNoTracking().Where(item => item.OwnerUserId == scope.OwnerUserId &&
             item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
             (item.State == ListeningEventState.Completed ? item.ListenedAt != null :
                 (item.State == ListeningEventState.Abandoned || item.State == ListeningEventState.Skipped) && item.StartedAt != null) &&
             db.Users.Any(user => user.Id == scope.OwnerUserId && !user.IsSynthetic));
+        if (cleanOnly) listened = listened.Where(item => db.CanonicalRecordings.Any(recording =>
+            recording.Id == item.CanonicalRecordingId && recording.IsExplicit == false));
         // A play counts once it finished or reached 30 seconds, the rule streaming services use.
         // Only finished plays carry a listen date, so the rest are dated from when they started.
         var qualified = listened.Where(item => item.State == ListeningEventState.Completed || item.PositionTicks >= CountedPlayTicks);

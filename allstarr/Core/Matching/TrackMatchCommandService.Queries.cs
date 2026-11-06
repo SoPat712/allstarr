@@ -305,6 +305,11 @@ public sealed partial class TrackMatchCommandService
         if (!string.IsNullOrWhiteSpace(backendLibraryId))
             tracks = tracks.Where(item => item.BackendLibraryId == backendLibraryId.Trim());
         var indexed = await tracks.ToListAsync(cancellationToken);
+        var recordingIds = indexed.Where(item => item.CanonicalRecordingId.HasValue)
+            .Select(item => item.CanonicalRecordingId!.Value).Distinct().ToArray();
+        var explicitness = await db.CanonicalRecordings.AsNoTracking().Where(item => recordingIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, item => item.IsExplicit, cancellationToken);
+        var engine = await DecisionEngineAsync(cancellationToken, actor.UserId);
         var title = MatchLibrarySearch.QueryTitle(query, source);
         var searchSource = source == null
             ? new ExternalTrackMatchSnapshot("search", "local", "search", title, "Unknown", null, null, null, null, null, null)
@@ -326,9 +331,8 @@ public sealed partial class TrackMatchCommandService
                     access.Context.BackendInstanceId, item.BackendLibraryId, item.BackendItemId, null,
                     item.Title, item.Artist, item.Album, item.AlbumArtist, item.DurationMilliseconds, item.Isrc, item.MusicBrainzRecordingId, null)))
                 .ToArray();
-            var effectiveEngine = await DecisionEngineAsync(cancellationToken);
             var byId = inputs.ToDictionary(item => item.Candidate.LibraryTrackId, item => item.Input);
-            var ranked = effectiveEngine.ScoreCandidates(searchSource, inputs.Select(item => item.Candidate));
+            var ranked = engine.ScoreCandidates(searchSource, inputs.Select(item => item.Candidate));
             foreach (var score in ranked.Take(limit))
             {
                 var input = byId[score.LibraryTrackId];
@@ -344,8 +348,11 @@ public sealed partial class TrackMatchCommandService
             }
         }
         var selected = found.DistinctBy(item => item.BackendItemId, StringComparer.Ordinal).ToDictionary(item => item.Id);
-        var engine = await DecisionEngineAsync(cancellationToken);
-        return engine.ScoreCandidates(searchSource, selected.Values.Select(ToLocalCandidate))
+        return engine.ScoreCandidates(searchSource, selected.Values.Select(item => ToLocalCandidate(item) with
+        {
+            IsExplicit = item.CanonicalRecordingId is { } recordingId
+                    ? explicitness.GetValueOrDefault(recordingId) : null
+        }))
             .Take(limit).Select(item => selected[item.LibraryTrackId]).ToArray();
     }
 

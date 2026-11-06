@@ -59,7 +59,7 @@ internal static class CleanOnlyPlaylistProjection
             {
                 try
                 {
-                    var candidates = await providers.SearchAsync(context, $"{source.Title} {source.Artist}", 20, 0, 0);
+                    var candidates = await providers.SearchAsync(context, CleanRecordingPolicy.CounterpartQuery(source), 20, 0, 0);
                     replacement = candidates.Songs.FirstOrDefault(candidate => CleanRecordingPolicy.IsCounterpart(source, candidate));
                 }
                 catch (Exception) when (!context.CancellationToken.IsCancellationRequested) { replacement = null; }

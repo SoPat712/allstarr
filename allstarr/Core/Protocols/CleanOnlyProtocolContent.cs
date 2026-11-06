@@ -18,7 +18,7 @@ public sealed class CleanOnlyProtocolContent(IEffectiveProviderPolicyResolver po
             ? await policies.ResolveForUserAsync(user, context.CancellationToken)
             : context.Policy ?? await policies.ResolveAsync(context.CancellationToken)).Preferences.ExplicitFilter == "CleanOnly";
 
-    public async Task<bool> AllowsAsync(HttpContext http, string id)
+    public async Task<bool> AllowsAsync(HttpContext http, string id, bool artwork = false)
     {
         var context = http.GetProtocolExecutionContext();
         if (context == null) return (await policies.ResolveAsync(http.RequestAborted)).Preferences.ExplicitFilter != "CleanOnly";
@@ -26,6 +26,10 @@ public sealed class CleanOnlyProtocolContent(IEffectiveProviderPolicyResolver po
         var parsed = LocalLibraryService.ParseExternalResource(id);
         if (parsed.isExternal)
         {
+            if (artwork && parsed.type == "album")
+                return (await providers.GetAlbumAsync(context, parsed.provider!, parsed.externalId!))?.IsExplicit == false;
+            if (artwork && parsed.type == "artist")
+                return await providers.GetArtistAsync(context, parsed.provider!, parsed.externalId!) != null;
             if (parsed.type != "song") return false;
             var song = await providers.GetSongAsync(context, parsed.provider!, parsed.externalId!);
             return song != null && CleanRecordingPolicy.IsVerifiedClean(song);
@@ -51,7 +55,7 @@ public sealed class CleanOnlyProtocolContent(IEffectiveProviderPolicyResolver po
                 item = envelope != null && Text(envelope, "status") == "ok" ? envelope["song"] : null;
             }
             return item is JsonObject row && Text(row, context.Protocol == ProtocolKind.Jellyfin ? "Id" : "id") == id &&
-                (context.Protocol != ProtocolKind.Jellyfin || Text(row, "Type") == "Audio") && Rating(row, context.Protocol) is 0 or 3;
+                (context.Protocol != ProtocolKind.Jellyfin || Text(row, "Type") == "Audio" || artwork && Text(row, "Type") == "MusicAlbum") && Rating(row, context.Protocol) is 0 or 3;
         }
         catch (Exception error) when (error is System.Text.Json.JsonException or HttpRequestException) { return false; }
     }
@@ -79,11 +83,11 @@ public sealed class CleanOnlyProtocolContent(IEffectiveProviderPolicyResolver po
             pair.Key.Equals("ApiKey", StringComparison.OrdinalIgnoreCase) || pair.Key.Equals("access_token", StringComparison.OrdinalIgnoreCase))
         .ToDictionary(pair => pair.Key, pair => pair.Value.ToString(), StringComparer.OrdinalIgnoreCase);
 
-    internal static int? Rating(JsonObject row, ProtocolKind protocol)
-    {
-        var value = Text(row, protocol == ProtocolKind.Jellyfin ? "OfficialRating" : "explicitStatus").ToLowerInvariant();
-        return value switch { "clean" or "notexplicit" or "not explicit" => 0, "edited" => 3, "explicit" => 1, _ => null };
-    }
+    internal static int? Rating(JsonObject row, ProtocolKind protocol) =>
+        Rating(Text(row, protocol == ProtocolKind.Jellyfin ? "OfficialRating" : "explicitStatus"));
+
+    internal static int? Rating(string? value) => value?.Trim().ToLowerInvariant() switch
+    { "clean" or "notexplicit" or "not explicit" => 0, "edited" => 3, "explicit" => 1, _ => null };
 
     internal static string Text(JsonObject row, string key) => row[key] is JsonValue value && value.TryGetValue<string>(out var text) ? text : "";
 

@@ -131,7 +131,7 @@ public class SubsonicModelMapper
         kind == MusicItemKind.Artist ? null : GetSearchField(item, "artist"),
         item)
     {
-        ExplicitContentLyrics = GetSearchField(item, "explicitStatus") switch { "clean" => 0, "explicit" => 1, _ => (int?)null },
+        ExplicitContentLyrics = allstarr.Core.Protocols.CleanOnlyProtocolContent.Rating(GetSearchField(item, "explicitStatus")),
         AlbumText = GetSearchField(item, "album"),
         AlbumArtistText = GetSearchField(item, "albumArtist"),
         DurationSeconds = int.TryParse(GetSearchField(item, "duration"), out var seconds) ? seconds : null,

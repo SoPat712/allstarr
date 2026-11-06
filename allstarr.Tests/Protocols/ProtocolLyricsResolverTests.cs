@@ -15,6 +15,51 @@ namespace allstarr.Tests;
 public sealed class ProtocolLyricsResolverTests
 {
     [Theory]
+    [InlineData("All", "All", false, true)]
+    [InlineData("All", "All", true, true)]
+    [InlineData("All", "CleanOnly", false, false)]
+    [InlineData("All", "CleanOnly", true, false)]
+    [InlineData("CleanOnly", "All", false, false)]
+    [InlineData("CleanOnly", "All", true, false)]
+    [InlineData("CleanOnly", "CleanOnly", false, false)]
+    [InlineData("CleanOnly", "CleanOnly", true, false)]
+    public async Task HouseholdLyricsPreserveCleanOnlyRestrictionsAndHouseholdSourcePolicy(
+        string householdFilter, string listenerFilter, bool review, bool available)
+    {
+        var household = new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+            ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, .07)
+        { Preferences = new(householdFilter) };
+        var context = LyricsContext() with { Policy = household with { Preferences = new(listenerFilter) } };
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        policies.Setup(item => item.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(household);
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrclib"]);
+        providers.Setup(item => item.GetHouseholdLyricsAsync(context, "lrclib", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+                "Track", It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null))
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib", ProviderLyricsFormat.PlainText, "Shared words"));
+        var song = new Song { Id = "clean", Title = "Track", Artist = "Artist", ExplicitContentLyrics = 3 };
+        var resolver = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance, effectivePolicies: policies.Object);
+        var sources = new ProtocolLyricsSources(HouseholdOnly: true);
+        if (review)
+        {
+            var results = await resolver.FindAllAsync(context, song, "clean", sources);
+            if (available) Assert.Equal("Shared words", Assert.Single(results).Lyrics?.PlainLyrics);
+            else Assert.Empty(results);
+        }
+        else
+        {
+            var result = await resolver.FindAsync(context, song, "clean", sources);
+            Assert.Equal(available ? "Shared words" : null, result?.PlainLyrics);
+        }
+        policies.Verify(item => item.ResolveAsync(context.CancellationToken), Times.Once);
+        policies.VerifyNoOtherCalls();
+        providers.Verify(item => item.GetHouseholdLyricsAsync(context, "lrclib", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+            "Track", It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null), available ? Times.Once() : Times.Never());
+        providers.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics), Times.Once);
+        providers.VerifyNoOtherCalls();
+    }
+
+    [Theory]
     [InlineData(ProtocolKind.Jellyfin)]
     [InlineData(ProtocolKind.Subsonic)]
     public async Task CleanOnlyLyricsNeverUseUnratedTextSearchSources(ProtocolKind protocol)

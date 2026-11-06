@@ -15,12 +15,14 @@ public partial class DownloadsController
         var normalized = NormalizeStorage(storage);
         if (_contextFactory == null || normalized == "cache") return [];
         if (normalized is not ("kept" or "permanent" or "legacy")) throw new ArgumentException("Unsupported storage root");
+        var cleanOnly = await RequiresCleanAsync(token);
         await using var db = await _contextFactory.CreateDbContextAsync(token);
-        return await (from adoption in db.Set<LegacyMediaAdoptionRecord>().AsNoTracking()
-                      join file in db.ManagedFiles.AsNoTracking() on adoption.ManagedFileId equals file.Id
-                      where file.RemovedAt == null && (fileId == null || file.Id == fileId) && (normalized != "permanent" || !adoption.Kept) &&
-                            (normalized != "legacy" || adoption.Kept)
-                      select new ImportedDownload(file, adoption)).ToArrayAsync(token);
+        var records = await (from adoption in db.Set<LegacyMediaAdoptionRecord>().AsNoTracking()
+                             join file in db.ManagedFiles.AsNoTracking() on adoption.ManagedFileId equals file.Id
+                             where file.RemovedAt == null && (fileId == null || file.Id == fileId) && (normalized != "permanent" || !adoption.Kept) &&
+                                   (normalized != "legacy" || adoption.Kept)
+                             select new ImportedDownload(file, adoption)).ToArrayAsync(token);
+        return cleanOnly ? records.Where(item => ReadKeptMetadata(item.Adoption.MetadataJson)?.ExplicitContentLyrics is 0 or 3).ToArray() : records;
     }
 
     private async Task<ManagedDownloadFile[]> LoadImportedDownloadsAsync(string storage, CancellationToken token)

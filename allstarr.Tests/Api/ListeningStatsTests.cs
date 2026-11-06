@@ -3,11 +3,15 @@ using allstarr.Core.Intelligence;
 using allstarr.Core.Operations;
 using allstarr.Core.Playback;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
+using allstarr.Core.Capabilities;
+using System.Collections.Immutable;
 using allstarr.Filters;
 using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -38,6 +42,48 @@ public sealed class ListeningStatsTests : IAsyncLifetime
             LastSeenAt = clock.UtcNow
         });
         await db.SaveChangesAsync();
+    }
+
+    [Fact]
+    public async Task CleanOnlyRecapRechecksPolicyBeforeReturningCachedHistory()
+    {
+        var filter = "All";
+        var policies = new Mock<IEffectiveProviderPolicyResolver>();
+        policies.Setup(item => item.ResolveForUserAsync(owner, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, "lossless", .07)
+            { Preferences = new(filter), PreferenceRevision = filter });
+        stats.Dispose();
+        stats = new(factory, clock, policies: policies.Object);
+        foreach (var rating in new bool?[] { false, true, null })
+        {
+            var play = Play("2026-10-01T12:00:00Z");
+            play.CanonicalRecordingId = Guid.NewGuid();
+            play.Title = rating == false ? "Clean" : rating == true ? "Explicit" : "Unknown";
+            play.Artist = play.Title + " artist";
+            play.Album = play.Title + " album";
+            await using var db = factory.CreateDbContext();
+            db.CanonicalRecordings.Add(new() { Id = play.CanonicalRecordingId.Value, CreatedByUserId = owner, Title = play.Title, IsExplicit = rating, Revision = 1 });
+            db.ListeningEvents.Add(play);
+            await db.SaveChangesAsync();
+        }
+        Assert.Equal(3, (await stats.GetAsync(Session(), "all", null, default)).PlayCount);
+        filter = "CleanOnly";
+        var clean = await stats.GetAsync(Session(), "all", null, default);
+        Assert.Equal(1, clean.PlayCount);
+        Assert.Equal("Clean", Assert.Single(clean.TopSongs).Title);
+        Assert.Equal("Clean artist", Assert.Single(clean.TopArtists).Artist);
+        Assert.Equal("Clean album", Assert.Single(clean.TopAlbums).Album);
+        await stats.WarmAsync(default);
+        Assert.Equal(1, (await stats.GetAsync(Session(), "all", null, default)).PlayCount);
+        await using (var db = factory.CreateDbContext())
+        {
+            (await db.CanonicalRecordings.SingleAsync(item => item.Title == "Clean")).IsExplicit = true;
+            await db.SaveChangesAsync();
+        }
+        Assert.Empty((await stats.GetAsync(Session(), "all", null, default)).TopSongs);
+        filter = "All";
+        Assert.Equal(3, (await stats.GetAsync(Session(), "all", null, default)).PlayCount);
     }
 
     [Fact]

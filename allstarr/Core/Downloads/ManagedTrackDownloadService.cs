@@ -52,7 +52,8 @@ public sealed class ManagedTrackDownloadService(
     IPlatformClock clock,
     ILogger<ManagedTrackDownloadService> logger,
     IEffectiveProviderPolicyResolver? effectivePolicies = null,
-    allstarr.Core.Jobs.DurableJobQueue? jobs = null)
+    allstarr.Core.Jobs.DurableJobQueue? jobs = null,
+    allstarr.Core.Matching.ITrackIdentityService? identities = null)
 {
     public async Task<ManagedTrackDownloadResult> ExecuteAsync(
         ManagedTrackDownloadCommand command,
@@ -73,14 +74,25 @@ public sealed class ManagedTrackDownloadService(
             command.ProviderId,
             ProviderResourceKind.Track,
             command.ExternalTrackId);
+        var effectivePolicy = effectivePolicies == null
+            ? null
+            : await effectivePolicies.ResolveForUserAsync(command.OwnerUserId, cancellationToken);
+        var cleanOnly = effectivePolicy?.Preferences.ExplicitFilter == "CleanOnly";
+        var actor = new ProviderActorContext(ProviderActorKind.SystemJob, null,
+            durableJobId: command.DurableJobId, actingForUserId: command.OwnerUserId);
+        if (cleanOnly)
+        {
+            var stored = identities == null ? [] : await identities.GetStoredSongsAsync(actor,
+                $"ext-{command.ProviderId}-song-{command.ExternalTrackId}", cancellationToken);
+            var evidence = stored.Where(song => song.ExternalProvider == command.ProviderId && song.ExternalId == command.ExternalTrackId).ToArray();
+            if (evidence.Length == 0 || evidence.Any(song => !Core.Music.CleanRecordingPolicy.IsVerifiedClean(song)))
+                return ManagedTrackDownloadResult.Failure("managed_download_clean_required", "Only verified clean recordings can be downloaded for this listener.");
+        }
         var availableProviders = providers.FindByCapability(
                 ProviderCapabilityKind.Download,
                 includeNonOperational: true)
             .Select(item => item.Id)
             .ToArray();
-        var effectivePolicy = effectivePolicies == null
-            ? null
-            : await effectivePolicies.ResolveForUserAsync(command.OwnerUserId, cancellationToken);
         var priority = effectivePolicy?.ApplyProviderAvailability(
                            ProviderCapabilityKind.Download,
                            availableProviders)
@@ -93,11 +105,6 @@ public sealed class ManagedTrackDownloadService(
                 "No managed download provider is available.");
         }
 
-        var actor = new ProviderActorContext(
-            ProviderActorKind.SystemJob,
-            null,
-            durableJobId: command.DurableJobId,
-            actingForUserId: command.OwnerUserId);
         var quality = Enum.GetValues<ProviderAudioQuality>();
         var requestedQuality = command.RequestedQuality ?? (effectivePolicy == null
             ? ProviderAudioQuality.Any
@@ -115,7 +122,7 @@ public sealed class ManagedTrackDownloadService(
                             ? ProviderAudioQuality.HighResolution
                             : requestedQuality,
                         allowTranscode: false),
-                    ProviderExplicitContentPolicy.Allow,
+                    cleanOnly ? ProviderExplicitContentPolicy.CleanOnly : ProviderExplicitContentPolicy.Allow,
                     allowFallback: true,
                     allowSharedAccount: true,
                     allowManagedDownloads: true),
@@ -123,7 +130,8 @@ public sealed class ManagedTrackDownloadService(
                 command.CorrelationId,
                 clock.UtcNow.AddMinutes(30),
                 priority,
-                priority.Select(id => new ProviderRouteProviderState(id, availableQualities: quality)),
+                priority.Select(id => new ProviderRouteProviderState(id, availableQualities: quality,
+                    isExplicit: cleanOnly && id == command.ProviderId ? false : null)),
                 track,
                 command.IdempotencyKey,
                 cancellationToken));

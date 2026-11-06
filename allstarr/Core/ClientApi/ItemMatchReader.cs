@@ -116,6 +116,8 @@ public sealed class ItemMatchReader(
             review.ProviderIdentities.FirstOrDefault(identity => identity.ProviderId == snapshot.ProviderId && identity.ExternalIdHash == snapshot.ExternalIdHash);
         var order = await providers.GetPlayableProviderOrderAsync(execution.RequireActor(), token);
         var policy = await policies.ResolveForUserAsync(actor.UserId, token);
+        var sourceSong = TrackIdentityService.ReadDisplaySong(snapshot.PayloadJson, snapshot.ProviderId, externalId ?? "stored");
+        if (policy.Preferences.ExplicitFilter == "CleanOnly" && (sourceSong == null || !policy.Includes(sourceSong))) return null;
         var projection = TrackRouteProjector.Project(snapshot, decision, layers.Effective, sourceIdentity,
             review.LibraryTracks, review.ProviderIdentities, order, policy);
         var playableProviders = order.Select(ExternalTrackPlaybackPolicy.Normalize).ToHashSet(StringComparer.Ordinal);
@@ -136,6 +138,15 @@ public sealed class ItemMatchReader(
             var providerId = local ? library!.Id : route.Name;
             var targetId = local ? null : route.Value.GetString();
             if (string.IsNullOrEmpty(providerId) || !local && string.IsNullOrWhiteSpace(targetId)) continue;
+            if (policy.Preferences.ExplicitFilter == "CleanOnly")
+            {
+                if (local)
+                {
+                    var localRecording = review.LibraryTracks.FirstOrDefault(item => item.Id == libraryId)?.CanonicalRecordingId;
+                    if (!await db.CanonicalRecordings.AnyAsync(item => item.Id == localRecording && item.IsExplicit == false, token)) continue;
+                }
+                else if (await providers.GetStoredSongAsync(execution, providerId, targetId!) is not { } song || !policy.Includes(song)) continue;
+            }
             var key = local ? $"local:{libraryId}" : $"{providerId}:{targetId}";
             registry.TryGet(providerId, out var descriptor);
             var icon = (await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, [providerId], token)).GetValueOrDefault(providerId);
@@ -159,7 +170,7 @@ public sealed class ItemMatchReader(
             playableProviders.Contains(ExternalTrackPlaybackPolicy.Normalize(provider)) && policy.IsAutomatic(provider!))
         {
             var metadata = TrackIdentityService.ReadDisplaySong(snapshot.PayloadJson, provider!, externalId!);
-            if (metadata != null)
+            if (metadata != null && policy.Includes(metadata))
             {
                 registry.TryGet(provider!, out var descriptor);
                 var icon = (await ProviderArtworkResolver.ResolveIconsAsync(http.RequestServices, [provider!], token)).GetValueOrDefault(provider!);

@@ -392,8 +392,15 @@ public sealed partial class PersonalMixServiceTests
         Assert.Equal(4, (await service.ListAsync(owner)).Single(item => item.Id == link.Id).Songs.Count);
         await taste.PutNudgeAsync(owner, new("artist", "Artist 2", "never"));
         filter = "CleanOnly";
-        Assert.Equal("Song 0", Assert.Single((await virtualization.ReadAsync(Context(owner), id))!.Tracks).Title);
-        Assert.Equal("Song 0", Assert.Single((await service.ListAsync(owner)).Single(item => item.Id == link.Id).Songs).Song.Title);
+        songs["0"] = new() { Id = "ext-deezer-song-0", Title = "Song 0 (Clean)", ExternalProvider = "deezer", ExternalId = "0", ExplicitContentLyrics = 0 };
+        Assert.Equal("Song 0 (Clean)", Assert.Single((await virtualization.ReadAsync(Context(owner), id))!.Tracks).Title);
+        Assert.Equal("Song 0 (Clean)", Assert.Single((await service.ListAsync(owner)).Single(item => item.Id == link.Id).Songs).Song.Title);
+        songs["0"].ExplicitContentLyrics = 1;
+        Assert.Empty((await virtualization.ReadAsync(Context(owner), id))!.Tracks);
+        Assert.Empty((await service.ListAsync(owner)).Single(item => item.Id == link.Id).Songs);
+        songs["0"].ExplicitContentLyrics = null;
+        Assert.Empty((await virtualization.ReadAsync(Context(owner), id))!.Tracks);
+        Assert.Empty((await service.ListAsync(owner)).Single(item => item.Id == link.Id).Songs);
     }
 
     [Theory]

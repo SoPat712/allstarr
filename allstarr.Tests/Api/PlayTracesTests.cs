@@ -9,6 +9,8 @@ using allstarr.Core.Operations;
 using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
+using System.Collections.Immutable;
 using allstarr.Middleware;
 using allstarr.Filters;
 using allstarr.Models.Domain;
@@ -23,6 +25,37 @@ namespace allstarr.Tests;
 
 public sealed class PlayTracesTests
 {
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task CleanOnlyHistoryWithholdsExplicitAndUnknownStoredPlays(ProtocolKind protocol)
+    {
+        await using var fixture = await Fixture.CreateAsync(protocol);
+        var blocked = new List<Guid>();
+        Guid clean = default;
+        foreach (var rating in new int?[] { 0, 1, null })
+        {
+            using var timing = fixture.Timing(fixture.Listener);
+            timing.Present(new Song { Title = "Track", Artist = "Artist", ExplicitContentLyrics = rating });
+            await fixture.Store.RecordAsync(timing.Snapshot("completed"));
+            if (rating == 0) clean = timing.Id;
+            else blocked.Add(timing.Id);
+        }
+        var policies = new Mock<IEffectiveProviderPolicyResolver>();
+        policies.Setup(item => item.ResolveForUserAsync(fixture.Listener.AllstarrUserId!.Value, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, "Lossless", .07)
+            { Preferences = new("CleanOnly") });
+        var service = new PlayTraceService(fixture.Factory, fixture.Clock, fixture.Reports, policies.Object);
+        Assert.Equal(clean, Assert.Single(await service.ListAsync(fixture.Listener, 100, default)).Id);
+        Assert.Equal(clean, (await service.DetailAsync(fixture.Listener, clean, default)).Id);
+        foreach (var id in blocked)
+        {
+            Assert.Equal(404, (await Assert.ThrowsAsync<ProblemReportException>(() => service.DetailAsync(fixture.Listener, id, default))).StatusCode);
+            Assert.Equal(404, (await Assert.ThrowsAsync<ProblemReportException>(() => service.DiagnosticsAsync(fixture.Listener, id, default))).StatusCode);
+        }
+    }
+
     [Theory]
     [InlineData(ProtocolKind.Jellyfin)]
     [InlineData(ProtocolKind.Subsonic)]

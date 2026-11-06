@@ -6,6 +6,14 @@ namespace allstarr.Tests;
 public sealed class CleanRecordingPolicyTests
 {
     [Theory]
+    [InlineData("Track (Explicit) [A]/[E]", "Artist [A]", "Track Artist")]
+    [InlineData("Track (Live) (Explicit)", "Artist", "Track (Live) Artist")]
+    public void CounterpartSearchRemovesRatingLabelsAndKeepsTheRequestedPerformance(string title, string artist, string expected)
+    {
+        Assert.Equal(expected, CleanRecordingPolicy.CounterpartQuery(new Song { Title = title, Artist = artist }));
+    }
+
+    [Theory]
     [InlineData("Track (Clean)", "Album (Clean)", "Artist", 180, 3, true)]
     [InlineData("Track", "Album", "Artist", 180, 0, true)]
     [InlineData("Track (Clean)", "Album", "Artist", 180, null, false)]

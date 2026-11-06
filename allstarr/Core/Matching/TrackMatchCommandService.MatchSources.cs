@@ -112,6 +112,12 @@ public sealed partial class TrackMatchCommandService
                             item.Verification == ProviderIdentityVerification.Pinned))
             .ToArrayAsync(cancellationToken);
         var providerOrder = providerIdentities.Select(item => item.ProviderId).Distinct().ToArray();
+        var localRecordingIds = ownerLibraries.Values.SelectMany(item => item)
+            .Where(item => item.CanonicalRecordingId.HasValue).Select(item => item.CanonicalRecordingId!.Value)
+            .Distinct().ToArray();
+        var localExplicitness = await db.CanonicalRecordings.AsNoTracking()
+            .Where(item => localRecordingIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, item => item.IsExplicit, cancellationToken);
         var scopedLibraries = snapshots.Select(item => new { item.OwnerUserId, item.BackendInstanceId })
             .Distinct()
             .ToDictionary(item => (item.OwnerUserId, item.BackendInstanceId), item =>
@@ -123,7 +129,11 @@ public sealed partial class TrackMatchCommandService
                     ById: local.ToDictionary(track => track.Id),
                     PlayableIds: local.Select(track => track.Id).ToHashSet(),
                     Libraries: local.Select(track => track.BackendLibraryId).ToHashSet(StringComparer.Ordinal),
-                    Candidates: decisionEngine.PrepareCandidates(local.Select(ToLocalCandidate)));
+                    Candidates: decisionEngine.PrepareCandidates(local.Select(track => ToLocalCandidate(track) with
+                    {
+                        IsExplicit = track.CanonicalRecordingId is { } recordingId
+                            ? localExplicitness.GetValueOrDefault(recordingId) : null
+                    })));
             });
 
         var results = new List<AutomatedSourceMatchResult>(snapshots.Length);
@@ -131,7 +141,6 @@ public sealed partial class TrackMatchCommandService
         var musicBrainzIsrcs = await LoadMusicBrainzIsrcsAsync(db,
             snapshots.Select(item => ReadMetadata(item.PayloadJson).MusicBrainzRecordingId), cancellationToken);
         var now = DateTimeOffset.UtcNow;
-        var effectiveEngine = await DecisionEngineAsync(cancellationToken);
         foreach (var snapshot in snapshots)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -140,9 +149,24 @@ public sealed partial class TrackMatchCommandService
             latestDecisions.TryGetValue(snapshot.Id, out var latest);
             activeOverrides.TryGetValue(snapshot.Id, out var manual);
             var library = scopedLibraries[(snapshot.OwnerUserId, snapshot.BackendInstanceId)];
+            var cleanOnly = ownerPolicies[snapshot.OwnerUserId]?.Preferences.ExplicitFilter == "CleanOnly";
+            var metadata = ReadMetadata(snapshot.PayloadJson);
             if (manual?.Decision == ManualOverrideDecision.Pin ||
                 manual?.Decision == ManualOverrideDecision.Reject && !manual.LibraryTrackId.HasValue)
             {
+                if (manual.Decision == ManualOverrideDecision.Pin && (cleanOnly || metadata.IsExplicit == false))
+                {
+                    var explicitness = manual.LibraryTrackId is { } pinnedLocalId
+                        ? await StoredLocalExplicitnessAsync(db, pinnedLocalId, cancellationToken)
+                        : !string.IsNullOrWhiteSpace(manual.TargetProviderId) && !string.IsNullOrWhiteSpace(manual.TargetExternalId)
+                            ? await StoredProviderExplicitnessAsync(db, snapshot, manual.TargetProviderId, manual.TargetExternalId, cancellationToken)
+                            : null;
+                    if (cleanOnly && explicitness != false || metadata.IsExplicit == false && explicitness == true)
+                    {
+                        results.Add(ToAutomatedResult(seed, TrackMatchReviewState.Unresolved, null, 0));
+                        continue;
+                    }
+                }
                 var classification = TrackClassifier.Classify(
                     manual,
                     latest,
@@ -177,7 +201,6 @@ public sealed partial class TrackMatchCommandService
                 2,
                 snapshot.SnapshotVersion,
                 library.Libraries);
-            var metadata = ReadMetadata(snapshot.PayloadJson);
             var source = new ExternalTrackMatchSnapshot(
                 snapshot.Id.ToString("N"),
                 identity.ProviderId,
@@ -210,6 +233,7 @@ public sealed partial class TrackMatchCommandService
                         null,
                         new HashSet<Guid> { manual.LibraryTrackId.Value })
                     : null;
+            var effectiveEngine = await DecisionEngineAsync(cancellationToken, snapshot.OwnerUserId);
             var decision = effectiveEngine.Decide(
                 scope, source, candidates, rejectedOverride);
             var selected = decision.SelectedLibraryTrackId is { } selectedId
@@ -232,11 +256,16 @@ public sealed partial class TrackMatchCommandService
             if (latest != null)
             {
                 var providerEvidence = StoredProviderEvidence(latest.CandidateResultsJson);
+                var providerRoutes = DurableProviderRouteSelector.Select(identity, providerIdentities, providerOrder,
+                    canonicalRecordingId: latest.CanonicalRecordingId, providerPolicy: ownerPolicies[snapshot.OwnerUserId]);
                 var keepProviderDecision = decision.State != TrackMatchReviewState.Accepted &&
                     latest.State == TrackMatchState.Accepted && !latest.LibraryTrackId.HasValue &&
                     latest.Confidence >= latest.Threshold &&
-                    DurableProviderRouteSelector.Select(identity, providerIdentities, providerOrder,
-                        canonicalRecordingId: latest.CanonicalRecordingId, providerPolicy: ownerPolicies[snapshot.OwnerUserId]).Count > 0;
+                    providerRoutes.Count > 0 &&
+                    (!cleanOnly || providerRoutes.All(route =>
+                        StoredProviderExplicitness(providerEvidence, route.ProviderId, route.ExternalId) == false)) &&
+                    (source.IsExplicit != false || providerRoutes.All(route =>
+                        StoredProviderExplicitness(providerEvidence, route.ProviderId, route.ExternalId) != true));
                 if (keepProviderDecision)
                 {
                     selected = null;

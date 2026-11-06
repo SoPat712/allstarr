@@ -35,6 +35,7 @@ public partial class DownloadsController : ControllerBase
     private readonly Core.ManagedFiles.RecordingKeptFiles? _kept;
     private readonly Core.Downloads.ManagedTrackPlacementOptions? _placement;
     private readonly IOptions<SubsonicSettings>? _playbackSettings;
+    private readonly Core.Settings.IEffectiveProviderPolicyResolver? _policies;
 
     public DownloadsController(
         ILogger<DownloadsController> logger,
@@ -45,7 +46,8 @@ public partial class DownloadsController : ControllerBase
         AdminProtocolExecutionContextFactory? protocolContexts = null,
         Core.ManagedFiles.RecordingKeptFiles? kept = null,
         Core.Downloads.ManagedTrackPlacementOptions? placement = null,
-        IOptions<SubsonicSettings>? playbackSettings = null)
+        IOptions<SubsonicSettings>? playbackSettings = null,
+        Core.Settings.IEffectiveProviderPolicyResolver? policies = null)
     {
         _logger = logger;
         _configuration = configuration;
@@ -56,6 +58,7 @@ public partial class DownloadsController : ControllerBase
         _kept = kept;
         _placement = placement;
         _playbackSettings = playbackSettings;
+        _policies = policies;
     }
 
     [HttpPost("downloads/{artifactId:guid}/quality-check")]
@@ -87,7 +90,9 @@ public partial class DownloadsController : ControllerBase
             var qualifyPath = NormalizeStorage(storage) == "cache";
             var paths = roots.SelectMany(root => EnumerateFiles(root.Path).Select(path => (root, path))).ToArray();
             var ownership = await LoadOwnershipAsync(paths.Select(item => item.path), cancellationToken);
-            var files = paths.Select(item => Describe(
+            var cleanOnly = await RequiresCleanAsync(cancellationToken);
+            var files = paths.Where(item => !cleanOnly || VerifiedClean(ownership.GetValueOrDefault(Path.GetFullPath(item.path))))
+                .Select(item => Describe(
                     item.path,
                     item.root,
                     qualifyPath,
@@ -379,6 +384,9 @@ public partial class DownloadsController : ControllerBase
                 return BadRequest(new { error = string.IsNullOrWhiteSpace(path) ? "Path is required" : "Invalid path" });
             if (!TryResolveExistingFile(storage, path, out _, out var fullPath))
                 return NotFound(new { error = "File not found" });
+            if (await RequiresCleanAsync(HttpContext.RequestAborted) &&
+                !VerifiedClean(await FindOwnershipAsync(fullPath, HttpContext.RequestAborted)))
+                return NotFound(new { error = CleanOnlyProtocolContent.UnavailableMessage });
 
             var fileName = Path.GetFileName(fullPath);
             if (IsSupportedAudioFile(fullPath))
@@ -407,6 +415,11 @@ public partial class DownloadsController : ControllerBase
         {
             var roots = ResolveListRoots(storage);
             var allFiles = roots.SelectMany(root => EnumerateFiles(root.Path).Select(path => (root, path))).ToArray();
+            if (await RequiresCleanAsync(HttpContext.RequestAborted))
+            {
+                var ownership = await LoadOwnershipAsync(allFiles.Select(item => item.path), HttpContext.RequestAborted);
+                allFiles = allFiles.Where(item => VerifiedClean(ownership.GetValueOrDefault(Path.GetFullPath(item.path)))).ToArray();
+            }
             var imported = await LoadImportedRecordsAsync(storage, HttpContext.RequestAborted);
             if (allFiles.Length == 0 && imported.Length == 0) return NotFound(new { error = "No audio files found" });
 
@@ -675,6 +688,16 @@ public partial class DownloadsController : ControllerBase
         try { return System.Text.Json.JsonSerializer.Deserialize<Core.ManagedFiles.KeptRecordingMetadata>(json); }
         catch (System.Text.Json.JsonException) { return null; }
     }
+
+    private async Task<bool> RequiresCleanAsync(CancellationToken token)
+    {
+        if (_policies != null)
+            return (HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] is AdminAuthSession { AllstarrUserId: { } owner }
+                ? await _policies.ResolveForUserAsync(owner, token) : await _policies.ResolveAsync(token)).Preferences.ExplicitFilter == "CleanOnly";
+        return HttpContext.GetProtocolExecutionContext()?.Policy?.Preferences.ExplicitFilter == "CleanOnly";
+    }
+
+    private static bool VerifiedClean(DownloadOwnership? ownership) => ownership?.Kept?.Metadata?.ExplicitContentLyrics is 0 or 3;
 
     private static string DisplayValue(string? preferred, string fallback) =>
         string.IsNullOrWhiteSpace(preferred) ? fallback : preferred;

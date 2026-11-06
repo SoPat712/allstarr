@@ -45,7 +45,8 @@ public sealed class ItemDetailsReader(
         }
         var nativeIds = requested.Where(id => !id.StartsWith("ext-", StringComparison.Ordinal) &&
             id.Length is > 0 and <= 500 && !id.Contains(',')).Concat(localIds.Values).Distinct(StringComparer.Ordinal).ToArray();
-        var native = await ReadNativeAsync(http, execution, nativeIds);
+        var policy = execution.Policy ?? await policies.ResolveForUserAsync(owner, token);
+        var native = await ReadNativeAsync(http, execution, nativeIds, policy);
         foreach (var pair in localIds)
             if (native.TryGetValue(pair.Value, out var nativeSaved)) native[pair.Key] = nativeSaved;
         var nativeLookupIds = nativeIds.SelectMany(id => Guid.TryParse(id, out var parsed)
@@ -86,7 +87,6 @@ public sealed class ItemDetailsReader(
         var recordings = await db.CanonicalRecordings.AsNoTracking().Where(item => recordingIds.Contains(item.Id)).ToDictionaryAsync(item => item.Id, token);
         var identifiers = await db.RecordingIdentifiers.AsNoTracking().Where(item => recordingIds.Contains(item.RecordingId) && item.Kind == RecordingIdentifierKinds.Isrc)
             .ToArrayAsync(token);
-        var policy = execution.Policy ?? await policies.ResolveForUserAsync(owner, token);
         var view = await favorites.ReadForRequestAsync(http);
         var saved = view.Select(item => item.ItemId).ToHashSet(FavoriteViewReader.ItemComparer(view));
         var states = await (from state in db.FavoriteStates.AsNoTracking()
@@ -222,7 +222,8 @@ public sealed class ItemDetailsReader(
                 Isrc = local.Isrc,
                 PreciseDuration = local.DurationMilliseconds is > 0 ? TimeSpan.FromMilliseconds(local.DurationMilliseconds.Value) : null,
                 Duration = local.DurationMilliseconds is > 0 ? (int)(local.DurationMilliseconds.Value / 1000) : null,
-                IsLocal = true
+                IsLocal = true,
+                ExplicitContentLyrics = native[id].Rating
             });
             var lyrics = await StoredItemLyrics.ReadAsync(cache, lyricsSong, recordingId, choice?.SourceId, storedFile?.File.CanonicalPath,
                 policy, lyricsEndpoint, execution, accounts, links, token,
@@ -232,18 +233,19 @@ public sealed class ItemDetailsReader(
             if (audio == null && kept?.Artifact is { } artifact &&
                 (artifact.Codec != null || artifact.BitDepth != null || artifact.SampleRate != null || artifact.Bitrate != null))
                 audio = new(artifact.Codec, artifact.BitDepth, artifact.SampleRate, artifact.Bitrate);
-            var explicitContent = song?.ExplicitContentLyrics switch { 1 => true, 0 => false, _ => (bool?)null };
+            var explicitContent = (song?.ExplicitContentLyrics ?? native.GetValueOrDefault(id)?.Rating) switch { 1 => true, 0 or 3 => false, _ => (bool?)null };
             explicitContent ??= recordingId.HasValue ? recordings.GetValueOrDefault(recordingId.Value)?.IsExplicit : null;
             items[id] = new(id, song != null, recordingId?.ToString("D"), identity?.Isrc ?? song?.Isrc ?? local?.Isrc ?? identifiers.FirstOrDefault(item => item.RecordingId == recordingId)?.Value,
                 song == null ? libraryProvider : providers.GetValueOrDefault(servingProviders.GetValueOrDefault(id) ?? song.ExternalProvider!), audio, explicitContent,
-                song == null ? native[id] : saved.Contains(id), keep, match, lyrics);
+                song == null ? native[id].Saved : saved.Contains(id), keep, match, lyrics);
         }
         return new(ids.Where(items.ContainsKey).Select(id => items[id]).ToArray(), ids.Where(id => !items.ContainsKey(id)).ToArray());
     }
 
-    private async Task<Dictionary<string, bool>> ReadNativeAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids)
+    private async Task<Dictionary<string, NativeDetails>> ReadNativeAsync(HttpContext http, ProtocolExecutionContext execution, string[] ids,
+        EffectiveProviderPolicySnapshot policy)
     {
-        var result = new Dictionary<string, bool>(StringComparer.Ordinal);
+        var result = new Dictionary<string, NativeDetails>(StringComparer.Ordinal);
         if (ids.Length == 0) return result;
         foreach (var batch in ids.GroupBy(id => Guid.TryParse(id, out _)))
         {
@@ -256,14 +258,18 @@ public sealed class ItemDetailsReader(
             foreach (var item in items.EnumerateArray())
             {
                 if (!item.TryGetProperty("Id", out var value) || value.GetString() is not { } id) continue;
+                var rating = item.TryGetProperty("OfficialRating", out var field) && field.ValueKind == JsonValueKind.String
+                    ? CleanOnlyProtocolContent.Rating(field.GetString()) : null;
+                if (policy.Preferences.ExplicitFilter == "CleanOnly" && rating is not (0 or 3)) continue;
                 foreach (var requestedId in batch.Where(requestedId => SameNativeId(id, requestedId)))
-                    result[requestedId] = item.TryGetProperty("UserData", out var data) && data.TryGetProperty("IsFavorite", out var favorite) && favorite.ValueKind == JsonValueKind.True;
+                    result[requestedId] = new(item.TryGetProperty("UserData", out var data) && data.TryGetProperty("IsFavorite", out var favorite) && favorite.ValueKind == JsonValueKind.True, rating);
             }
         }
         return result;
     }
 
     private sealed record Source(string Id, string Provider, string ExternalId);
+    private sealed record NativeDetails(bool Saved, int? Rating);
 
     private static bool SameNativeId(string first, string second) => first == second ||
         Guid.TryParse(first, out var firstId) && Guid.TryParse(second, out var secondId) && firstId == secondId;

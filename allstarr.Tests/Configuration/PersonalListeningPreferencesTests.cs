@@ -36,6 +36,32 @@ public sealed class PersonalListeningPreferencesTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task HouseholdCleanOnlyCannotBeLoosenedByPersonalOverridesOrReset()
+    {
+        var service = CreateService();
+        var initial = await service.GetPreferencesAsync(_userA);
+        var personal = await service.UpdatePreferencesAsync(_userA, new("All"), initial.Revision);
+        await service.ApplyBatchAsync([new(ListeningPreferenceKeys.ExplicitFilter, "CleanOnly")], "fixture", _userB);
+
+        var restricted = await service.GetPreferencesAsync(_userA);
+        Assert.Equal("CleanOnly", restricted.Values.ExplicitFilter);
+        Assert.NotEqual(personal.Revision, restricted.Revision);
+        var updated = await service.UpdatePreferencesAsync(_userA, new("ExplicitOnly"), restricted.Revision);
+        Assert.Equal("CleanOnly", updated.Values.ExplicitFilter);
+        Assert.Equal("CleanOnly", (await new EffectiveProviderPolicyResolver(service).ResolveForUserAsync(_userA)).Preferences.ExplicitFilter);
+        var reset = await service.UpdatePreferencesAsync(_userA, null, updated.Revision);
+        Assert.Equal("CleanOnly", reset.Values.ExplicitFilter);
+        Assert.Equal("CleanOnly", (await service.GetPreferencesAsync(_userB)).Values.ExplicitFilter);
+
+        await service.ApplyBatchAsync([new(ListeningPreferenceKeys.ExplicitFilter, "All",
+            (await service.GetAsync(ListeningPreferenceKeys.ExplicitFilter)).Revision)], "fixture", _userB);
+        var unrestricted = await service.GetPreferencesAsync(_userA);
+        var stricter = await service.UpdatePreferencesAsync(_userA, new("CleanOnly"), unrestricted.Revision);
+        Assert.Equal("CleanOnly", stricter.Values.ExplicitFilter);
+        Assert.Equal("All", (await service.GetPreferencesAsync(_userB)).Values.ExplicitFilter);
+    }
+
+    [Fact]
     public async Task AdministratorLockPersistsAndOnlyRestrictsTheSelectedListener()
     {
         var service = CreateService();
@@ -269,7 +295,7 @@ public sealed class PersonalListeningPreferencesTests : IAsyncLifetime
         var recreated = CreateService();
         var restoredA = await recreated.GetPreferencesAsync(_userA);
         var inheritedB = await recreated.GetPreferencesAsync(_userB);
-        Assert.Equal(personal.Values with { LyricsOrder = "lrclib,spotify" }, restoredA.Values);
+        Assert.Equal(personal.Values with { ExplicitFilter = "CleanOnly", LyricsOrder = "lrclib,spotify" }, restoredA.Values);
         Assert.Equal(new ListeningPreferences("CleanOnly", false, false, "lrclib,spotify"), restoredA.HouseholdDefaults);
         Assert.NotEqual(personal.Revision, restoredA.Revision);
         Assert.Equal(restoredA.HouseholdDefaults, inheritedB.Values);

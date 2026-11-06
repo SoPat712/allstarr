@@ -35,6 +35,22 @@ public class DeezerProviderTests
         return new DeezerProvider(new DeezerHttpClient(_httpClientFactoryMock.Object.CreateClient(), 0, delay: (_, _) => Task.CompletedTask));
     }
 
+    [Theory]
+    [InlineData("\"explicit_lyrics\":true,", 1)]
+    [InlineData("\"explicit_lyrics\":false,", 0)]
+    [InlineData("\"explicit_content_lyrics\":3,\"explicit_lyrics\":false,", 3)]
+    [InlineData("\"explicit_content_lyrics\":2,\"explicit_lyrics\":false,", 2)]
+    [InlineData("\"explicit_content_lyrics\":null,", null)]
+    [InlineData("", null)]
+    public async Task ExplicitFlagsRemainConsistentAcrossSearchAndItemResponses(string flags, int? expected)
+    {
+        var payload = """{"id":123456,"title":"Track","artist":{"id":1,"name":"Artist"},FLAGS"duration":180}""".Replace("FLAGS", flags);
+        SetupHttpResponse(payload);
+        Assert.Equal(expected, (await _service.GetSongAsync("deezer", "123456"))!.ExplicitContentLyrics);
+        SetupHttpResponse("{\"data\":[" + payload + "]}");
+        Assert.Equal(expected, Assert.Single(await _service.SearchSongsAsync("Track", 10)).ExplicitContentLyrics);
+    }
+
     [Fact]
     public async Task SearchSongsAsync_ReturnsListOfSongs()
     {

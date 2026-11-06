@@ -217,8 +217,8 @@ public sealed class TrackMatchDecisionEngine
         ValidateSource(source);
         var singleAlbum = TrackMatchSignals.SourceAlbumIsSingle(source);
         var scored = candidates
+            .Where(candidate => _policy.ExplicitContent != ProviderExplicitContentPolicy.CleanOnly || candidate.IsExplicit == false)
             .Select(candidate => candidate with { IsExplicit = TrackMatchSignals.Explicitness(candidate) })
-            .Where(candidate => candidate.IsLocal || _policy.ExplicitContent != ProviderExplicitContentPolicy.CleanOnly || candidate.IsExplicit == false)
             .Select(candidate => new RankedCandidate(
                 candidate,
                 ScoreCandidate(source, candidate, singleAlbum),
@@ -477,7 +477,11 @@ public sealed class TrackMatchDecisionEngine
 
         var scopedCandidates = candidates
             .Where(candidate => IsVisible(scope, candidate))
-            .Select(candidate => candidate with { IsExplicit = TrackMatchSignals.Explicitness(candidate) })
+            .Select(candidate => candidate with
+            {
+                IsExplicit = _policy.ExplicitContent == ProviderExplicitContentPolicy.CleanOnly
+                    ? candidate.IsExplicit : TrackMatchSignals.Explicitness(candidate)
+            })
             .ToList();
         if (scopedCandidates.Select(candidate => candidate.LibraryTrackId).Distinct().Count() != scopedCandidates.Count)
         {
@@ -490,6 +494,11 @@ public sealed class TrackMatchDecisionEngine
         if (manualOverride?.PinnedLibraryTrackId is { } pinnedId)
         {
             var pinned = visible.SingleOrDefault(candidate => candidate.LibraryTrackId == pinnedId);
+            if (pinned != null &&
+                (_policy.ExplicitContent == ProviderExplicitContentPolicy.CleanOnly && pinned.IsExplicit != false ||
+                 (source.IsExplicit == false || allstarr.Core.Music.CleanRecordingPolicy.RequiresCleanVersion(source.Title)) && pinned.IsExplicit == true))
+                return Result(TrackMatchReviewState.Unresolved, null, 0, [], [],
+                    ["manual_override_target_not_allowed"], scope);
             return pinned == null
                 ? Result(
                     TrackMatchReviewState.Unresolved,
@@ -709,7 +718,28 @@ public sealed class TrackMatchDecisionEngine
         bool singleAlbumAgreement = false,
         bool allowVocalSourceAlbumMarkers = false)
     {
-        var outcome = TrackMatchRuleSet.Evaluate(source, candidate, _policy, singleAlbumAgreement, allowVocalSourceAlbumMarkers);
+        var counterpart = _policy.ExplicitContent == ProviderExplicitContentPolicy.CleanOnly && source.IsExplicit != false && candidate.IsExplicit == false &&
+            allstarr.Core.Music.CleanRecordingPolicy.IsCounterpart(
+                new allstarr.Models.Domain.Song
+                {
+                    Id = $"ext-{source.ProviderId}-song-{source.ExternalId}",
+                    Title = source.Title,
+                    Artist = source.Artist,
+                    Album = source.Album ?? "",
+                    Duration = source.DurationMilliseconds is > 0 ? (int)(source.DurationMilliseconds.Value / 1000) : null
+                },
+                new allstarr.Models.Domain.Song
+                {
+                    Id = candidate.BackendItemId,
+                    Title = candidate.Title,
+                    Artist = candidate.Artist,
+                    Album = candidate.Album ?? "",
+                    Duration = candidate.DurationMilliseconds is > 0 ? (int)(candidate.DurationMilliseconds.Value / 1000) : null,
+                    ExplicitContentLyrics = 0
+                });
+        var outcome = counterpart
+            ? TrackMatchRuleSet.Accept("clean_counterpart", "Verified clean version with matching title, artist, album and duration.", "cleanCounterpart")
+            : TrackMatchRuleSet.Evaluate(source, candidate, _policy, singleAlbumAgreement, allowVocalSourceAlbumMarkers);
         var score = Score(source, candidate, outcome.Confidence, outcome.Reasons, outcome.Warnings, outcome.Components);
         return score.IsBestVersion ? score with
         {

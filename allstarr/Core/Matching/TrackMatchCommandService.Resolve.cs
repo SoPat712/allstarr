@@ -121,6 +121,9 @@ public sealed partial class TrackMatchCommandService
         if (snapshot.ResourceKind != "track" || snapshot.ProviderId == "allstarr")
             return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.Invalid, "A track snapshot is required");
 
+        var cleanOnly = effectivePolicies != null &&
+            (await effectivePolicies.ResolveForUserAsync(actor.UserId, cancellationToken)).Preferences.ExplicitFilter == "CleanOnly";
+        var cleanSource = ReadMetadata(snapshot.PayloadJson).IsExplicit == false;
         Guid? libraryTrackId = null;
         string? providerId = null, externalId = null;
         if (targetType == "local")
@@ -137,6 +140,12 @@ public sealed partial class TrackMatchCommandService
                 return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.Invalid, "LibraryTrackId or BackendItemId is required for a local match");
             if (localTrack == null)
                 return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.NotFound, "Local track was not found");
+            if (cleanOnly || cleanSource)
+            {
+                var explicitness = await StoredLocalExplicitnessAsync(db, localTrack.Id, cancellationToken);
+                if (cleanOnly && explicitness != false || cleanSource && explicitness == true)
+                    return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.Invalid, "That recording does not satisfy the listener's clean content choice");
+            }
             libraryTrackId = localTrack.Id;
         }
         else if (targetType == "provider")
@@ -154,6 +163,12 @@ public sealed partial class TrackMatchCommandService
                 playableSearch != null && (access?.Context?.Actor is not { } viewer ||
                     !await playableSearch.CanUseProviderAsync(viewer, providerId, cancellationToken)))
                 return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.Invalid, "That provider cannot supply playback audio");
+            if (cleanOnly || cleanSource)
+            {
+                var explicitness = await StoredProviderExplicitnessAsync(db, snapshot, providerId, externalId, cancellationToken);
+                if (cleanOnly && explicitness != false || cleanSource && explicitness == true)
+                    return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.Invalid, "That recording does not satisfy the listener's clean content choice");
+            }
         }
         else
         {
@@ -187,5 +202,54 @@ public sealed partial class TrackMatchCommandService
             return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.Conflict, "The selected authority changed; refresh and try again");
         }
         return TrackMatchCommandResult.Success(snapshot.Id);
+    }
+
+    private static Task<bool?> StoredLocalExplicitnessAsync(
+        AllstarrDbContext db, Guid libraryTrackId, CancellationToken cancellationToken) =>
+        (from local in db.LibraryTracks.AsNoTracking()
+         join recording in db.CanonicalRecordings.AsNoTracking() on local.CanonicalRecordingId equals (Guid?)recording.Id
+         where local.Id == libraryTrackId
+         select recording.IsExplicit).FirstOrDefaultAsync(cancellationToken);
+
+    private static async Task<bool?> StoredProviderExplicitnessAsync(
+        AllstarrDbContext db, ExternalMetadataSnapshotRecord source, string providerId, string externalId,
+        CancellationToken cancellationToken)
+    {
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(externalId))).ToLowerInvariant();
+        var target = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item =>
+                item.OwnerUserId == source.OwnerUserId && item.Protocol == source.Protocol &&
+                item.BackendInstanceId == source.BackendInstanceId && item.BackendPrincipalId == source.BackendPrincipalId &&
+                item.ResourceKind == "track" && item.ProviderId == providerId && item.ExternalIdHash == hash)
+            .Where(item => item.ProviderAccountId == null || db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId &&
+                account.Enabled && (account.OwnerUserId == null || account.OwnerUserId == source.OwnerUserId)))
+            .OrderByDescending(item => item.RetrievedAt).ThenByDescending(item => item.SnapshotVersion).Select(item => item.PayloadJson)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (target != null) return ReadMetadata(target).IsExplicit;
+        var latest = await db.TrackMatches.AsNoTracking().Where(item =>
+                item.ExternalSnapshotId == source.Id && item.SourceSnapshotVersion == source.SnapshotVersion)
+            .OrderByDescending(item => item.DecisionVersion).Select(item => item.CandidateResultsJson)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (latest == null) return null;
+        try
+        {
+            return StoredProviderExplicitness(StoredProviderEvidence(latest), providerId, externalId);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool? StoredProviderExplicitness(
+        IEnumerable<JsonElement> candidates, string providerId, string externalId)
+    {
+        var matches = candidates.Where(candidate =>
+            candidate.TryGetProperty("ProviderTrackIds", out var ids) && ids.ValueKind == JsonValueKind.Object &&
+            ids.EnumerateObject().Any(item =>
+                TrackMatchDecisionEngine.NormalizeProvider(item.Name) == TrackMatchDecisionEngine.NormalizeProvider(providerId) &&
+                item.Value.ValueKind == JsonValueKind.String && item.Value.GetString() == externalId))
+            .Select(TrackSnapshotMetadata.IsExplicit).ToArray();
+        return matches.Any(item => item == true) ? true :
+            matches.Length > 0 && matches.All(item => item == false) ? false : null;
     }
 }

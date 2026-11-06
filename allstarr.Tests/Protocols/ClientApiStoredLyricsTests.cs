@@ -16,6 +16,26 @@ namespace allstarr.Tests;
 public sealed class ClientApiStoredLyricsTests
 {
     [Theory]
+    [InlineData(null)]
+    [InlineData("lrclib")]
+    public async Task CleanOnlyStoredLyricsNeverExposeUnverifiedSearchTextEvenWhenPinned(string? pin)
+    {
+        var cache = new TestMemoryApplicationCache();
+        var song = new Song { Title = "Track", Artist = "Artist", ExplicitContentLyrics = 3 };
+        await cache.SetStringAsync("lrclib:automatic:v2:" + CacheKeyBuilder.BuildLyricsKey("Artist", "Track", "", 0),
+            JsonSerializer.Serialize(new LyricsInfo { PlainLyrics = "Unverified words" }));
+        var policy = new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty
+            .Add(ProviderCapabilityKind.Lyrics, ["lrclib"]), ImmutableHashSet<string>.Empty, "lossless", .07)
+        { Preferences = new("CleanOnly") };
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", "listener", null,
+            "stored-clean", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var observed = new List<RichLyrics>();
+        var result = await StoredItemLyrics.ReadAsync(cache, song, null, pin, null, policy, "http://unused.invalid", context, [], [], default, observed.Add);
+        Assert.False(result.Available);
+        Assert.Empty(observed);
+    }
+
+    [Theory]
     [InlineData("lrcred")]
     [InlineData("lrclib")]
     public async Task StoredSearchUsesTheLyricsRoutesSongDurationForLastLineTiming(string provider)

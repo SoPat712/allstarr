@@ -381,7 +381,7 @@ public partial class JellyfinController
             ? null
             : new(kind.Value, GetItemStringValue(item, "Id"), GetItemName(item), SearchArtistText(item), item)
             {
-                ExplicitContentLyrics = GetItemStringValue(item, "OfficialRating").ToLowerInvariant() switch { "clean" => 0, "explicit" => 1, _ => (int?)null },
+                ExplicitContentLyrics = CleanOnlyProtocolContent.Rating(GetItemStringValue(item, "OfficialRating")),
                 AlbumText = GetItemStringValue(item, "Album"),
                 AlbumArtistText = GetItemStringValue(item, "AlbumArtist"),
                 AlbumMetadata = kind == MusicItemKind.Album ? NativeAlbumMetadata(item) : null,

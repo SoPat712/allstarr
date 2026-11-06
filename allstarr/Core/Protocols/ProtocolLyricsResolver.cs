@@ -302,7 +302,7 @@ public sealed partial class ProtocolLyricsResolver(
             var effectivePolicy = householdOnly || protocol.Actor?.EffectiveUserId == null
                 ? await effectivePolicies.ResolveAsync(protocol.CancellationToken)
                 : await effectivePolicies.ResolveForUserAsync(protocol.Actor!.EffectiveUserId!.Value, protocol.CancellationToken);
-            cleanOnly = effectivePolicy.Preferences.ExplicitFilter == "CleanOnly";
+            cleanOnly |= effectivePolicy.Preferences.ExplicitFilter == "CleanOnly";
             var enabled = effectivePolicy.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, order);
             enabledOrder = enabled;
             automaticOrder = effectivePolicy.ApplyAutomaticProviderAvailability(ProviderCapabilityKind.Lyrics, order);

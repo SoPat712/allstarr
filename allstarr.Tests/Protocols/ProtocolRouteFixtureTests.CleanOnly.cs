@@ -17,6 +17,103 @@ namespace allstarr.Tests;
 public sealed partial class ProtocolRouteFixtureTests
 {
     [Theory]
+    [InlineData("Jellyfin")]
+    [InlineData("Subsonic")]
+    public async Task CleanOnlyVerifiedNativeLyricsRemainAvailable(string backend)
+    {
+        using var factory = new ProtocolFactory(backend, request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/Me" => Json(200, """{"Id":"user-1"}"""),
+            "/rest/ping.view" => Json(200, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}"""),
+            "/Users/user-1/Items/native" => Json(200, """{"Id":"native","Type":"Audio","Name":"Track","AlbumArtist":"Artist","OfficialRating":"Clean"}"""),
+            "/Items" => ItemLookup("""{"Id":"native","Type":"Audio","Name":"Track","AlbumArtist":"Artist","OfficialRating":"Clean"}"""),
+            "/Audio/native/Lyrics" => Json(200, """{"Lyrics":[{"Text":"Clean words"}],"Metadata":{"IsSynced":false}}"""),
+            "/rest/getSong" or "/rest/getSong.view" => Json(200, """{"subsonic-response":{"status":"ok","song":{"id":"native","title":"Track","artist":"Artist","explicitStatus":"clean"}}}"""),
+            "/rest/getLyricsBySongId" => Json(200, """{"subsonic-response":{"status":"ok","lyricsList":{"structuredLyrics":[{"synced":false,"line":[{"value":"Clean words"}]}]}}}"""),
+            _ => throw new InvalidOperationException("Unexpected lyrics request")
+        }, CleanOnlyServices(backend));
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync(backend == "Jellyfin" ? "/Audio/native/Lyrics?api_key=fixture"
+            : "/rest/getLyricsBySongId.view?u=fixture&p=secret&v=1.16.1&c=fixture&id=native&f=json");
+        Assert.True(response.StatusCode == HttpStatusCode.OK, await response.Content.ReadAsStringAsync());
+        Assert.Contains("Clean words", await response.Content.ReadAsStringAsync());
+    }
+
+    [Theory]
+    [InlineData("Jellyfin", "json")]
+    [InlineData("Subsonic", "json")]
+    [InlineData("Subsonic", "xml")]
+    public async Task CleanOnlyNativeSearchWithholdsExplicitAndUnknownTracks(string backend, string format)
+    {
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), null))
+            .ReturnsAsync(new allstarr.Models.Search.SearchResult());
+        gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>())).ReturnsAsync([]);
+        using var factory = new ProtocolFactory(backend, request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/Me" => Json(200, """{"Id":"user-1"}"""),
+            "/rest/ping.view" => Json(200, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}"""),
+            _ => backend == "Jellyfin"
+                ? Json(200, """{"Items":[{"Id":"clean","Name":"Track clean","Type":"Audio","OfficialRating":"Clean"},{"Id":"explicit","Name":"Track explicit","Type":"Audio","OfficialRating":"Explicit"},{"Id":"unknown","Name":"Track unknown","Type":"Audio"}],"TotalRecordCount":3}""")
+                : format == "json"
+                    ? Json(200, """{"subsonic-response":{"status":"ok","version":"1.16.1","searchResult3":{"song":[{"id":"clean","title":"Track clean","explicitStatus":"clean"},{"id":"explicit","title":"Track explicit","explicitStatus":"explicit"},{"id":"unknown","title":"Track unknown"}]}}}""")
+                    : Xml("""<subsonic-response xmlns="http://subsonic.org/restapi" status="ok"><searchResult3><song id="clean" title="Track clean" explicitStatus="clean"/><song id="explicit" title="Track explicit" explicitStatus="explicit"/><song id="unknown" title="Track unknown"/></searchResult3></subsonic-response>""")
+        }, services =>
+        {
+            CleanOnlyServices(backend)(services);
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+        });
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync(backend == "Jellyfin"
+            ? "/Items?SearchTerm=Track&IncludeItemTypes=Audio&Limit=20&api_key=fixture"
+            : $"/rest/search3.view?u=fixture&p=secret&v=1.16.1&c=fixture&query=Track&songCount=20&albumCount=0&artistCount=0&f={format}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var text = await response.Content.ReadAsStringAsync();
+        Assert.Contains("Track clean", text);
+        Assert.DoesNotContain("Track explicit", text);
+        Assert.DoesNotContain("Track unknown", text);
+    }
+
+    [Theory]
+    [InlineData("Jellyfin", "json")]
+    [InlineData("Subsonic", "json")]
+    [InlineData("Subsonic", "xml")]
+    public async Task CleanOnlyDirectNativeItemDoesNotExposeExplicitMetadata(string backend, string format)
+    {
+        using var factory = new ProtocolFactory(backend, request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/Me" => Json(200, """{"Id":"user-1"}"""),
+            "/rest/ping.view" => Json(200, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}"""),
+            _ => backend == "Jellyfin" ? ItemLookup("""{"Id":"native","Type":"Audio","Name":"Hidden track","OfficialRating":"Explicit"}""")
+                : format == "json" ? Json(200, """{"subsonic-response":{"status":"ok","song":{"id":"native","title":"Hidden track","explicitStatus":"explicit"}}}""")
+                : Xml("""<subsonic-response xmlns="http://subsonic.org/restapi" status="ok"><song id="native" title="Hidden track" explicitStatus="explicit"/></subsonic-response>""")
+        }, CleanOnlyServices(backend));
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync(backend == "Jellyfin" ? "/Users/user-1/Items/native?api_key=fixture"
+            : $"/rest/getSong.view?u=fixture&p=secret&v=1.16.1&c=fixture&id=native&f={format}");
+        Assert.DoesNotContain("Hidden track", await response.Content.ReadAsStringAsync());
+    }
+
+    [Theory]
+    [InlineData("json")]
+    [InlineData("xml")]
+    public async Task SubsonicCleanOnlyTreatsEditedAndUnknownRatingsConsistently(string format)
+    {
+        using var factory = new ProtocolFactory("Subsonic", request => request.RequestUri!.AbsolutePath == "/rest/ping.view"
+            ? Json(200, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""")
+            : format == "json"
+                ? Json(200, """{"subsonic-response":{"status":"ok","randomSongs":{"song":[{"id":"edited","explicitStatus":"edited"},{"id":"unknown","explicitStatus":"unrecognized"}]}}}""")
+                : Xml("""<subsonic-response xmlns="http://subsonic.org/restapi" status="ok"><randomSongs><song id="edited" explicitStatus="edited"/><song id="unknown" explicitStatus="unrecognized"/></randomSongs></subsonic-response>"""), CleanOnlyServices("Subsonic"));
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync($"/rest/getRandomSongs.view?u=fixture&p=secret&v=1.16.1&c=fixture&f={format}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var text = await response.Content.ReadAsStringAsync();
+        Assert.Contains("edited", text);
+        Assert.DoesNotContain("unknown", text);
+    }
+
+    [Theory]
     [InlineData("/Items?IncludeItemTypes=Audio")]
     [InlineData("/Users/user-1/Items?IncludeItemTypes=Audio")]
     [InlineData("/Items?ParentId=native-album&IncludeItemTypes=Audio")]
@@ -79,14 +176,18 @@ public sealed partial class ProtocolRouteFixtureTests
 
     [Theory]
     [InlineData("Jellyfin", "/Audio/native/stream?api_key=fixture", null)]
+    [InlineData("Jellyfin", "/Audio/native/stream?api_key=fixture", "Explicit")]
     [InlineData("Jellyfin", "/Items/native/Download?api_key=fixture", "Explicit")]
     [InlineData("Jellyfin", "/Items/native/File?api_key=fixture", null)]
     [InlineData("Jellyfin", "/Audio/native/main.m3u8?api_key=fixture", null)]
     [InlineData("Jellyfin", "/Audio/native/hls/old/0.mp4?api_key=fixture", null)]
     [InlineData("Jellyfin", "/Items/native/Lyrics?api_key=fixture", "Explicit")]
+    [InlineData("Jellyfin", "/Items/native/Images/Primary?api_key=fixture", "Explicit")]
     [InlineData("Subsonic", "/rest/getTranscodeStream.view?u=fixture&p=secret&v=1.16.1&c=fixture&id=native&transcodeParams=opaque&f=json", "clean")]
     [InlineData("Subsonic", "/rest/getTranscodeDecision.view?u=fixture&p=secret&v=1.16.1&c=fixture&mediaId=native&f=json", null)]
     [InlineData("Subsonic", "/rest/stream.view?u=fixture&p=secret&v=1.16.1&c=fixture&id=native&f=json", null)]
+    [InlineData("Subsonic", "/rest/stream.view?u=fixture&p=secret&v=1.16.1&c=fixture&id=native&f=json", "explicit")]
+    [InlineData("Subsonic", "/rest/getCoverArt.view?u=fixture&p=secret&v=1.16.1&c=fixture&id=native&f=json", "explicit")]
     [InlineData("Subsonic", "/rest/download.view?u=fixture&p=secret&v=1.16.1&c=fixture&id=native&f=json", "explicit")]
     [InlineData("Subsonic", "/rest/getLyricsBySongId.view?u=fixture&p=secret&v=1.16.1&c=fixture&id=native&f=json", null)]
     public async Task CleanOnlyRefusesUnverifiedDirectNativeMediaBeforeOpeningBytes(string backend, string path, string? rating)
@@ -134,8 +235,8 @@ public sealed partial class ProtocolRouteFixtureTests
             "/Users/Me" => Json(200, """{"Id":"user-1"}"""),
             "/rest/ping.view" => Json(200, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}"""),
             _ => backend == "Jellyfin"
-                ? Json(200, """{"Items":[{"Id":"explicit","Type":"Audio","Name":"Track","Artists":["Artist"],"Album":"Album","RunTimeTicks":1800000000,"OfficialRating":"Explicit"},{"Id":"explicit","Type":"Audio","Name":"Track","Artists":["Artist"],"Album":"Album","RunTimeTicks":1800000000,"OfficialRating":"Explicit"},{"Id":"unknown","Type":"Audio","Name":"Unknown"}],"TotalRecordCount":3}""")
-                : Json(200, """{"subsonic-response":{"status":"ok","version":"1.16.1","playlist":{"entry":[{"id":"explicit","title":"Track","artist":"Artist","album":"Album","duration":180,"explicitStatus":"explicit"},{"id":"explicit","title":"Track","artist":"Artist","album":"Album","duration":180,"explicitStatus":"explicit"},{"id":"unknown","title":"Unknown"}]}}}""")
+                ? Json(200, """{"Items":[{"Id":"explicit","Type":"Audio","Name":"Track (Explicit)","Artists":["Artist"],"Album":"Album","RunTimeTicks":1800000000,"OfficialRating":"Explicit"},{"Id":"explicit","Type":"Audio","Name":"Track (Explicit)","Artists":["Artist"],"Album":"Album","RunTimeTicks":1800000000,"OfficialRating":"Explicit"},{"Id":"unknown","Type":"Audio","Name":"Unknown"}],"TotalRecordCount":3}""")
+                : Json(200, """{"subsonic-response":{"status":"ok","version":"1.16.1","playlist":{"entry":[{"id":"explicit","title":"Track (Explicit)","artist":"Artist","album":"Album","duration":180,"explicitStatus":"explicit"},{"id":"explicit","title":"Track (Explicit)","artist":"Artist","album":"Album","duration":180,"explicitStatus":"explicit"},{"id":"unknown","title":"Unknown"}]}}}""")
         }, services =>
         {
             CleanOnlyServices(backend)(services);

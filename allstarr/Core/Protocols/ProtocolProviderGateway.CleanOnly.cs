@@ -52,7 +52,7 @@ public sealed partial class ProtocolProviderGateway
                 {
                     try
                     {
-                        var result = await SearchAsync(protocol, $"{song.Title} {song.Artist}", 20, 0, 0);
+                        var result = await SearchAsync(protocol, CleanRecordingPolicy.CounterpartQuery(song), 20, 0, 0);
                         replacement = result.Songs.FirstOrDefault(candidate => CleanRecordingPolicy.IsCounterpart(song, candidate));
                     }
                     catch (Exception) when (!protocol.CancellationToken.IsCancellationRequested) { replacement = null; }

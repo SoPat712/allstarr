@@ -139,10 +139,13 @@ public sealed class DurablePlaylistProjectionTests
             new Dictionary<string, LibraryTrackRecord>
             {
                 ["native"] = new() { BackendItemId = "native", Title = "Native title" }
-            }, "spotify", sourceMetadata: metadata);
+            }, "spotify", sourceMetadata: metadata, sourceExternalId: "source-track");
 
         Assert.Same(metadata, track.SourceMetadata);
         Assert.Equal(expected, track.RouteKind);
+        Assert.Equal("spotify", track.SourceProviderId);
+        if (route is "external" or "local") Assert.Equal("source-track", track.SourceExternalId);
+        if (route == "external") Assert.Equal("deezer", track.RouteProviderId);
     }
 
     private static ProjectionRow Row(string id, params string[] alternates) => new(id, alternates);

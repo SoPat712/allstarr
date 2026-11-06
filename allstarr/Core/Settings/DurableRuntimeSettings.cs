@@ -660,7 +660,7 @@ public sealed partial class DurableRuntimeSettingsService : BackgroundService, I
                     .GroupBy(item => item.Key, StringComparer.Ordinal)
                     .ToDictionary(group => group.Key, group => group.Last().Value, StringComparer.Ordinal)
             };
-        if (cleanOnlyLocked) effective = effective with { ExplicitFilter = "CleanOnly" };
+        if (cleanOnlyLocked || household.ExplicitFilter == "CleanOnly") effective = effective with { ExplicitFilter = "CleanOnly" };
         return new(effective, household, personalRows.Count == 0 && !cleanOnlyLocked,
             ComputePreferencesRevision(userId, householdSettings, personalRows, lockRow))
         {

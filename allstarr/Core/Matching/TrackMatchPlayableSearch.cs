@@ -428,9 +428,9 @@ public sealed class TrackMatchPlayableSearch(
     private async Task<(IReadOnlyList<string> ProviderOrder, TrackMatchDecisionEngine Matcher)> MatchingPolicyAsync(
         ProtocolExecutionContext context, CancellationToken cancellationToken)
     {
-        if (effectivePolicies == null)
+        if (effectivePolicies == null && context.Policy == null)
             return (gateway.GetProviderOrder(ProviderCapabilityKind.Streaming), matcher);
-        var policy = context.Actor?.EffectiveUserId is { } userId
+        var policy = effectivePolicies == null ? context.Policy! : context.Actor?.EffectiveUserId is { } userId
             ? await effectivePolicies.ResolveForUserAsync(userId, cancellationToken)
             : await effectivePolicies.ResolveAsync(cancellationToken);
         return (

@@ -58,6 +58,22 @@ public sealed partial class PersonalMixService
                     ExplicitContentLyrics = metadata?.IsExplicit is { } explicitContent ? explicitContent ? 1 : 0 : null
                 };
             }).ToArray() ?? [];
+            if (policy.Preferences.ExplicitFilter == "CleanOnly")
+            {
+                var context = await ContextAsync(user, token);
+                foreach (var song in songs)
+                {
+                    var selected = !song.IsLocal && song.ExternalProvider != null && song.ExternalId != null
+                        ? await providers.GetStoredSongAsync(context, song.ExternalProvider, song.ExternalId) : null;
+                    song.ExplicitContentLyrics = selected?.ExplicitContentLyrics;
+                    if (selected != null && CleanRecordingPolicy.IsVerifiedClean(selected))
+                    {
+                        if (!string.IsNullOrWhiteSpace(selected.Title)) song.Title = selected.Title;
+                        if (!string.IsNullOrWhiteSpace(selected.Artist)) song.Artist = selected.Artist;
+                        if (!string.IsNullOrWhiteSpace(selected.Album)) song.Album = selected.Album;
+                    }
+                }
+            }
             var blocked = await taste.BlockedSongsAsync(user.Id, songs, token);
             var items = songs.Where(song => !blocked.Contains(song) && policy.Includes(song))
                 .Select(song => new PersonalMixItem(link.Id, projection!.SnapshotVersion, SafeSong(song),
@@ -167,15 +183,43 @@ public sealed partial class PersonalMixService
             ExternalProvider = track.RouteProviderId,
             ExternalId = track.RouteExternalId,
             CanonicalRecordingId = track.SourceMetadata?.CanonicalRecordingId,
-            ExplicitContentLyrics = track.SourceMetadata?.IsExplicit is { } explicitContent
-                ? explicitContent ? 1 : 0 : track.PlaybackExplicitContentLyrics
+            ExplicitContentLyrics = track.PlaybackExplicitContentLyrics ?? (track.SourceMetadata?.IsExplicit is { } explicitContent
+                ? explicitContent ? 1 : 0 : null)
         }).ToArray();
         var blocked = await taste.BlockedSongsAsync(owner, songs, token);
         var policy = await policies.ResolveForUserAsync(owner, token);
+        if (policy.Preferences.ExplicitFilter == "CleanOnly")
+            for (var index = 0; index < songs.Length; index++)
+            {
+                var track = playlist.Tracks[index];
+                if (track.RouteKind == allstarr.Core.Matching.TrackRouteKind.Local)
+                    songs[index].ExplicitContentLyrics = track.NativeEntryJson != null &&
+                        System.Text.Json.Nodes.JsonNode.Parse(track.NativeEntryJson) is System.Text.Json.Nodes.JsonObject native
+                            ? CleanOnlyProtocolContent.Rating(native, context.Protocol) : null;
+                else if (track.PlaybackExplicitContentLyrics == null)
+                {
+                    var selected = track.RouteProviderId != null && track.RouteExternalId != null
+                        ? await providers.GetStoredSongAsync(context, track.RouteProviderId, track.RouteExternalId) : null;
+                    songs[index].ExplicitContentLyrics = selected?.ExplicitContentLyrics;
+                    if (selected != null && CleanRecordingPolicy.IsVerifiedClean(selected))
+                    {
+                        if (!string.IsNullOrWhiteSpace(selected.Title)) songs[index].Title = selected.Title;
+                        if (!string.IsNullOrWhiteSpace(selected.Artist)) songs[index].Artist = selected.Artist;
+                        if (!string.IsNullOrWhiteSpace(selected.Album)) songs[index].Album = selected.Album;
+                    }
+                }
+            }
         return playlist with
         {
-            Tracks = playlist.Tracks.Where((_, index) =>
-                !blocked.Contains(songs[index]) && policy.Includes(songs[index])).ToArray()
+            Tracks = playlist.Tracks.Select((track, index) => (Track: track, Song: songs[index]))
+                .Where(item => !blocked.Contains(item.Song) && policy.Includes(item.Song))
+                .Select(item => policy.Preferences.ExplicitFilter == "CleanOnly" ? item.Track with
+                {
+                    Title = item.Song.Title,
+                    Artist = item.Song.Artist,
+                    Album = item.Song.Album,
+                    PlaybackExplicitContentLyrics = item.Song.ExplicitContentLyrics
+                } : item.Track).ToArray()
         };
     }
 }

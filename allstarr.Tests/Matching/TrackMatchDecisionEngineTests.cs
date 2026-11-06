@@ -10,6 +10,130 @@ namespace allstarr.Tests;
 
 public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
 {
+    [Fact]
+    public void OrdinaryTitleContainingCleanDoesNotImplyAContentChoice()
+    {
+        var scope = Scope();
+        var source = Source() with { Title = "Clean Slate", IsExplicit = null };
+        var candidate = Candidate(scope) with { Title = source.Title, IsExplicit = true };
+        Assert.Equal(TrackMatchReviewState.Accepted, new TrackMatchDecisionEngine().Decide(scope, source, [candidate]).State);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CleanTitleRequestCannotSelectAKnownExplicitRecording(bool local)
+    {
+        var scope = Scope();
+        var source = Source() with { Title = "A Song (Clean)", IsExplicit = null };
+        var candidate = Candidate(scope) with { Title = source.Title, IsExplicit = true, IsLocal = local };
+        var engine = new TrackMatchDecisionEngine();
+        Assert.Equal(TrackMatchReviewState.Unresolved, engine.Decide(scope, source, [candidate]).State);
+        Assert.Equal(TrackMatchReviewState.Unresolved, engine.Decide(scope, source, [candidate],
+            new(scope.UserId, source.ProviderId, source.ExternalId, candidate.LibraryTrackId)).State);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CleanOnlySelectsVerifiedCleanCounterpartOfExplicitSource(bool local)
+    {
+        var scope = Scope();
+        var source = Source() with { Title = "A Song (Explicit)", Album = "Album (Explicit)", DurationMilliseconds = 180000, IsExplicit = true };
+        var clean = Candidate(scope) with
+        {
+            Title = "A Song (Clean)",
+            Album = "Album (Clean)",
+            DurationMilliseconds = 180000,
+            IsLocal = local,
+            IsExplicit = false,
+            Isrc = "CLEAN123",
+            MusicBrainzRecordingId = null,
+            CanonicalRecordingId = null
+        };
+        var engine = new TrackMatchDecisionEngine(new TrackMatchPolicy { ExplicitContent = ProviderExplicitContentPolicy.CleanOnly });
+        var decision = engine.Decide(scope, source, [clean]);
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(clean.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.Contains("clean_counterpart", Assert.Single(decision.Candidates).Reasons);
+        Assert.Equal(TrackMatchReviewState.Unresolved, engine.Decide(scope, source,
+            [clean with { Title = "A Song (Clean) (Live)" }]).State);
+        Assert.Equal(TrackMatchReviewState.Unresolved, engine.Decide(scope, source,
+            [clean with { DurationMilliseconds = 240000 }]).State);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, null)]
+    [InlineData(false, true)]
+    [InlineData(false, null)]
+    public void CleanOnlyWithholdsUnverifiedCandidatesIncludingManualPins(bool local, bool? explicitness)
+    {
+        var scope = Scope();
+        var source = Source();
+        var candidate = Candidate(scope) with { IsLocal = local, IsExplicit = explicitness };
+        var engine = new TrackMatchDecisionEngine(new TrackMatchPolicy
+        { ExplicitContent = ProviderExplicitContentPolicy.CleanOnly });
+
+        Assert.Empty(engine.ScoreCandidates(source, [candidate]));
+        var decision = engine.Decide(scope, source, [candidate],
+            new(scope.UserId, source.ProviderId, source.ExternalId, candidate.LibraryTrackId));
+        Assert.Equal(TrackMatchReviewState.Unresolved, decision.State);
+        Assert.Null(decision.SelectedLibraryTrackId);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CleanOnlyAllowsVerifiedCleanCandidatesAndPins(bool local)
+    {
+        var scope = Scope();
+        var source = Source();
+        var candidate = Candidate(scope) with { IsLocal = local, IsExplicit = false };
+        var engine = new TrackMatchDecisionEngine(new TrackMatchPolicy
+        { ExplicitContent = ProviderExplicitContentPolicy.CleanOnly });
+
+        Assert.Equal(TrackMatchReviewState.Accepted, engine.Decide(scope, source, [candidate]).State);
+        Assert.Equal(TrackMatchReviewState.Pinned, engine.Decide(scope, source, [candidate],
+            new(scope.UserId, source.ProviderId, source.ExternalId, candidate.LibraryTrackId)).State);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void CleanSourceCannotSelectAnExplicitRecordingWithoutACleanAlternative(bool local)
+    {
+        var scope = Scope();
+        var source = Source();
+        var candidate = Candidate(scope) with { IsLocal = local, IsExplicit = true };
+        var engine = new TrackMatchDecisionEngine();
+        var decision = engine.Decide(scope, source, [candidate]);
+
+        Assert.Equal(TrackMatchReviewState.Unresolved, decision.State);
+        Assert.Null(decision.SelectedLibraryTrackId);
+        var score = Assert.Single(decision.Candidates);
+        Assert.Equal(0, score.Confidence);
+        Assert.Equal(0, score.Components!["recordingAllowed"]);
+        Assert.Equal(0, score.Components["explicitContent"]);
+        Assert.Contains("explicit_edit_of_clean", score.Reasons);
+        Assert.Equal(TrackMatchReviewState.Unresolved, engine.Decide(scope, source, [candidate],
+            new(scope.UserId, source.ProviderId, source.ExternalId, candidate.LibraryTrackId)).State);
+    }
+
+    [Fact]
+    public void CleanOnlyRequiresVerifiedRatingDespiteACleanAlbumLabel()
+    {
+        var scope = Scope();
+        var source = Source();
+        var candidate = Candidate(scope) with { IsExplicit = null, Album = "The Album (Clean)" };
+        var engine = new TrackMatchDecisionEngine(new TrackMatchPolicy
+        { ExplicitContent = ProviderExplicitContentPolicy.CleanOnly });
+
+        Assert.Empty(engine.ScoreCandidates(source, [candidate]));
+        Assert.Equal(TrackMatchReviewState.Unresolved, engine.Decide(scope, source, [candidate],
+            new(scope.UserId, source.ProviderId, source.ExternalId, candidate.LibraryTrackId)).State);
+    }
+
     [Theory]
     [InlineData("artistgrid", true, false, .05)]
     [InlineData("artistgrid", false, false, 0)]

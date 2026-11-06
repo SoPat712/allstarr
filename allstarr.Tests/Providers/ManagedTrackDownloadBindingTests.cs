@@ -4,6 +4,9 @@ using allstarr.Core.Downloads;
 using allstarr.Core.Operations;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
+using allstarr.Core.Matching;
+using System.Collections.Immutable;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
@@ -11,6 +14,50 @@ namespace allstarr.Tests;
 
 public sealed class ManagedTrackDownloadBindingTests
 {
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)]
+    public async Task CleanOnlyDownloadKeepsVerifiedCleanTracksEligible(int rating)
+    {
+        await using var fixture = await ProviderDownloadArtifactBindingTests.BindingFixture.CreateAsync(accountBound: true);
+        var capability = new RecordingDownloadCapability(fixture.Resolver);
+        var track = Track(fixture.ProviderId, "track");
+        var plan = Plan(fixture, capability, track, track, Account(fixture, 0));
+        var policies = new Mock<IEffectiveProviderPolicyResolver>();
+        policies.Setup(item => item.ResolveForUserAsync(fixture.UserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, .07)
+            { Preferences = new("CleanOnly") });
+        var identities = new Mock<ITrackIdentityService>();
+        identities.Setup(item => item.GetStoredSongsAsync(It.IsAny<ProviderActorContext>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new allstarr.Models.Domain.Song { ExternalProvider = fixture.ProviderId, ExternalId = "track", ExplicitContentLyrics = rating }]);
+        var service = Service(fixture, capability, plan, policies.Object, identities.Object);
+        Assert.True((await service.ExecuteAsync(Command(fixture, "recording-keep", "track"))).Succeeded);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(null)]
+    public async Task CleanOnlyDownloadWithholdsExplicitAndUnknownTracksBeforePlanning(int? rating)
+    {
+        await using var fixture = await ProviderDownloadArtifactBindingTests.BindingFixture.CreateAsync(accountBound: true);
+        var policies = new Mock<IEffectiveProviderPolicyResolver>();
+        policies.Setup(item => item.ResolveForUserAsync(fixture.UserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, .07)
+            { Preferences = new("CleanOnly") });
+        var identities = new Mock<ITrackIdentityService>();
+        identities.Setup(item => item.GetStoredSongsAsync(It.IsAny<ProviderActorContext>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync([new allstarr.Models.Domain.Song { ExternalProvider = fixture.ProviderId, ExternalId = "track", ExplicitContentLyrics = rating }]);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        var service = new ManagedTrackDownloadService(router.Object, Mock.Of<IProviderRegistry>(MockBehavior.Strict), fixture.Resolver,
+            TestClock.Instance, NullLogger<ManagedTrackDownloadService>.Instance, policies.Object, identities: identities.Object);
+        var result = await service.ExecuteAsync(Command(fixture, "recording-keep", "track"));
+        Assert.False(result.Succeeded);
+        Assert.Equal("managed_download_clean_required", result.ErrorCode);
+        router.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task Promotion_RejectsVerifiedArtifactBelowItsRequestedFloor()
     {
@@ -212,13 +259,18 @@ public sealed class ManagedTrackDownloadBindingTests
     private static ManagedTrackDownloadService Service(
         ProviderDownloadArtifactBindingTests.BindingFixture fixture,
         RecordingDownloadCapability capability,
-        ProviderRoutePlan<IProviderDownloadCapability> plan)
+        ProviderRoutePlan<IProviderDownloadCapability> plan, IEffectiveProviderPolicyResolver? policies = null, ITrackIdentityService? identities = null)
     {
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
         router.Setup(item => item.PlanAsync<IProviderDownloadCapability>(It.IsAny<ProviderRouteRequest>()))
             .ReturnsAsync((ProviderRouteRequest request) =>
             {
                 Assert.True(request.Policy.AllowSharedAccount);
+                if (policies != null)
+                {
+                    Assert.Equal(ProviderExplicitContentPolicy.CleanOnly, request.Policy.ExplicitContent);
+                    Assert.False(request.ProviderStates[fixture.ProviderId].IsExplicit);
+                }
                 return plan;
             });
         var providers = new Mock<IProviderRegistry>(MockBehavior.Strict);
@@ -229,7 +281,7 @@ public sealed class ManagedTrackDownloadBindingTests
             providers.Object,
             fixture.Resolver,
             TestClock.Instance,
-            NullLogger<ManagedTrackDownloadService>.Instance);
+            NullLogger<ManagedTrackDownloadService>.Instance, policies, identities: identities);
     }
 
     private static ProviderExecutionPolicy Policy() => new(

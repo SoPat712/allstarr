@@ -33,7 +33,7 @@ public sealed class CleanOnlyProtocolFilter(CleanOnlyProtocolContent content, IP
                 var parameter = http.Request.Path.Value?.Contains("getTranscodeDecision", StringComparison.OrdinalIgnoreCase) == true ? "mediaId" : "id";
                 var id = (context.ActionArguments.TryGetValue("itemId", out var itemId) ? itemId?.ToString() : null) ??
                     (context.ActionArguments.TryGetValue("id", out var argumentId) ? argumentId?.ToString() : null) ?? Parameters(http).GetValueOrDefault(parameter);
-                if (string.IsNullOrWhiteSpace(id) || !await content.AllowsAsync(http, id))
+                if (string.IsNullOrWhiteSpace(id) || !await content.AllowsAsync(http, id, IsArtwork(http.Request.Path)))
                 {
                     context.Result = Refused(http, protocol.Protocol);
                     return;
@@ -149,7 +149,7 @@ public sealed class CleanOnlyProtocolFilter(CleanOnlyProtocolContent content, IP
         foreach (var row in document.Descendants().Where(element => element.Name.LocalName is "song" or "entry" ||
             element.Name.LocalName == "child" && element.Attribute("isDir")?.Value != "true").ToArray())
         {
-            if (row.Attribute("explicitStatus")?.Value == "clean") continue;
+            if (CleanOnlyProtocolContent.Rating(row.Attribute("explicitStatus")?.Value) is 0 or 3) continue;
             var source = new allstarr.Models.Domain.Song
             {
                 Id = row.Attribute("id")?.Value ?? "",
@@ -157,7 +157,7 @@ public sealed class CleanOnlyProtocolFilter(CleanOnlyProtocolContent content, IP
                 Artist = row.Attribute("artist")?.Value ?? "",
                 Album = row.Attribute("album")?.Value ?? "",
                 Duration = int.TryParse(row.Attribute("duration")?.Value, out var duration) ? duration : null,
-                ExplicitContentLyrics = row.Attribute("explicitStatus")?.Value == "explicit" ? 1 : null
+                ExplicitContentLyrics = CleanOnlyProtocolContent.Rating(row.Attribute("explicitStatus")?.Value)
             };
             var replacement = await CounterpartAsync(source, protocol, http);
             if (replacement != null)
@@ -175,7 +175,7 @@ public sealed class CleanOnlyProtocolFilter(CleanOnlyProtocolContent content, IP
             }
         }
         foreach (var album in document.Descendants().Where(element => element.Name.LocalName == "album" && element.Attribute("id") != null).ToArray())
-            if (album.Attribute("explicitStatus")?.Value != "clean" && !album.Elements().Any(element => element.Name.LocalName == "song")) album.Remove();
+            if (CleanOnlyProtocolContent.Rating(album.Attribute("explicitStatus")?.Value) is not (0 or 3) && !album.Elements().Any(element => element.Name.LocalName == "song")) album.Remove();
     }
 
     private async Task<allstarr.Models.Domain.Song?> CounterpartAsync(allstarr.Models.Domain.Song source,
@@ -188,7 +188,7 @@ public sealed class CleanOnlyProtocolFilter(CleanOnlyProtocolContent content, IP
         {
             if (!await content.IsPlaylistAsync(http)) return null;
             if (_counterparts.TryGetValue(key, out var known)) return known;
-            var result = await providers.SearchAsync(protocol, $"{source.Title} {source.Artist}", 20, 0, 0);
+            var result = await providers.SearchAsync(protocol, CleanRecordingPolicy.CounterpartQuery(source), 20, 0, 0);
             var replacement = result.Songs.FirstOrDefault(candidate => CleanRecordingPolicy.IsCounterpart(source, candidate));
             _counterparts[key] = replacement;
             return replacement;
@@ -212,11 +212,14 @@ public sealed class CleanOnlyProtocolFilter(CleanOnlyProtocolContent content, IP
     {
         var value = path.Value ?? "";
         var endpoint = value.TrimEnd('/').Split('/').Last().Replace(".view", "", StringComparison.OrdinalIgnoreCase);
-        return value.StartsWith("/Audio/", StringComparison.OrdinalIgnoreCase) || endpoint.Equals("stream", StringComparison.OrdinalIgnoreCase) ||
+        return IsArtwork(path) || value.StartsWith("/Audio/", StringComparison.OrdinalIgnoreCase) || endpoint.Equals("stream", StringComparison.OrdinalIgnoreCase) ||
             endpoint.Equals("download", StringComparison.OrdinalIgnoreCase) || endpoint.Equals("getTranscodeStream", StringComparison.OrdinalIgnoreCase) ||
             endpoint.Equals("getTranscodeDecision", StringComparison.OrdinalIgnoreCase) || endpoint.Equals("File", StringComparison.OrdinalIgnoreCase) || endpoint.Contains("lyrics", StringComparison.OrdinalIgnoreCase) ||
             endpoint.Equals("PlaybackInfo", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool IsArtwork(PathString path) => path.Value?.Contains("/Images/", StringComparison.OrdinalIgnoreCase) == true ||
+        path.Value?.Contains("/getCoverArt", StringComparison.OrdinalIgnoreCase) == true;
 
     private static SubsonicRequestParameters Parameters(HttpContext http) =>
         http.Items.TryGetValue(SubsonicAuthFilter.RequestParametersItemKey, out var value) && value is SubsonicRequestParameters parameters

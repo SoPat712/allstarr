@@ -66,6 +66,8 @@ internal static class TrackMatchRuleSet
         bool allowVocalSourceAlbumMarkers = false)
     {
         candidate = candidate with { IsExplicit = TrackMatchSignals.Explicitness(candidate) };
+        if ((source.IsExplicit == false || allstarr.Core.Music.CleanRecordingPolicy.RequiresCleanVersion(source.Title)) && candidate.IsExplicit == true)
+            return Reject("explicit_edit_of_clean", "The candidate is explicit and the request requires a clean recording.", "explicitContent");
         foreach (var rule in Default)
         {
             var outcome = rule.Evaluate(source, candidate, policy);
@@ -92,11 +94,16 @@ internal static class TrackMatchRuleSet
                 };
             if (outcome.Disposition != TrackMatchRuleDisposition.Reject && source.IsExplicit.HasValue &&
                 candidate.IsExplicit.HasValue && source.IsExplicit != candidate.IsExplicit)
+            {
+                var components = new Dictionary<string, double>(outcome.Components) { ["explicitContent"] = 0 };
+                if (source.IsExplicit == false) components["recordingAllowed"] = 0;
                 outcome = outcome with
                 {
+                    Confidence = source.IsExplicit == false ? 0 : outcome.Confidence,
                     Reasons = outcome.Reasons.Append(source.IsExplicit == true ? "clean_edit_of_explicit" : "explicit_edit_of_clean").ToArray(),
-                    Components = new Dictionary<string, double>(outcome.Components) { ["explicitContent"] = 0 }
+                    Components = components
                 };
+            }
             return outcome;
         }
 

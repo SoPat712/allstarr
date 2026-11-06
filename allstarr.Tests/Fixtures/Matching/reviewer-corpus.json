@@ -329,8 +329,8 @@
         "isExplicit": true
       }
     ],
-    "expectedState": "Suggested",
-    "expectedCandidate": 0
+    "expectedState": "Unresolved",
+    "expectedCandidate": null
   },
   {
     "name": "anxiety-known-explicit-rejects-clean-only",

@@ -22,7 +22,8 @@ internal static class StoredItemLyrics
         ProtocolExecutionContext execution, IReadOnlyList<ProviderAccountRecord> accounts,
         IReadOnlyList<ProviderTrackIdentityRecord> identities, CancellationToken token, Action<RichLyrics>? observe = null, long? recordingDurationMs = null)
     {
-        if (song == null) return new(false, null, chosenSource);
+        if (song == null || policy.Preferences.ExplicitFilter == "CleanOnly" && !CleanRecordingPolicy.IsVerifiedClean(song))
+            return new(false, null, null);
         var best = new ItemDetailsLyrics(false, null, chosenSource);
         var bestScore = -1.0;
         bool ConsiderProvider(LyricsInfo? info, string provider)
@@ -56,7 +57,8 @@ internal static class StoredItemLyrics
         var lookup = MusicLyrics.ForLookup(song);
         var automatic = ProviderOrderPolicyCatalog.NormalizeOrder(ProviderCapabilityKind.Lyrics, policy.GetProviderOrder(ProviderCapabilityKind.Lyrics));
         var providers = chosenSource == null ? automatic : [LyricsVersions.ProviderId(chosenSource)];
-        foreach (var provider in providers.Where(policy.IsEnabled))
+        foreach (var provider in providers.Where(policy.IsEnabled)
+            .Where(provider => policy.Preferences.ExplicitFilter != "CleanOnly" || provider is "backend" or "kept"))
         {
             token.ThrowIfCancellationRequested();
             if (provider == "kept" && audioPath != null)

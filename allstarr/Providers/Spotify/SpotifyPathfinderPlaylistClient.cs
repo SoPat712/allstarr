@@ -679,8 +679,8 @@ public sealed partial class SpotifyPathfinderPlaylistClient
         var durationMs = TryPath(data, out var duration, "trackDuration")
             ? Integer(duration, "totalMilliseconds")
             : null;
-        var explicitValue = TryPath(data, out var rating, "contentRating")
-            ? String(rating, "label")?.Equals("EXPLICIT", StringComparison.OrdinalIgnoreCase)
+        bool? explicitValue = TryPath(data, out var rating, "contentRating")
+            ? String(rating, "label")?.ToUpperInvariant() switch { "EXPLICIT" => true, "NONE" => false, _ => null }
             : null;
         var trackId = new ProviderExternalResourceId(ProviderId, ProviderResourceKind.Track, id);
         var metadata = new ProviderTrackMetadata(

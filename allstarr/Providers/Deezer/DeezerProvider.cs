@@ -631,9 +631,7 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
             : fallbackTrackNumber;
 
         // Explicit content lyrics value
-        int? explicitContentLyrics = track.TryGetProperty("explicit_content_lyrics", out var ecl)
-            ? ecl.GetInt32()
-            : null;
+        var explicitContentLyrics = ExplicitContent(track);
 
         return new Song
         {
@@ -762,9 +760,7 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
         }
 
         // Explicit content lyrics value
-        int? explicitContentLyrics = track.TryGetProperty("explicit_content_lyrics", out var ecl)
-            ? ecl.GetInt32()
-            : null;
+        var explicitContentLyrics = ExplicitContent(track);
 
         return new Song
         {
@@ -826,6 +822,14 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
         genres.TryGetProperty("data", out var items) && items.ValueKind == JsonValueKind.Array
             ? items.EnumerateArray().Select(item => DeezerText(item, "name")).Where(name => !string.IsNullOrWhiteSpace(name))
                 .Select(name => name!).Distinct(StringComparer.OrdinalIgnoreCase).ToList() : [];
+
+    private static int? ExplicitContent(JsonElement track)
+    {
+        if (track.TryGetProperty("explicit_content_lyrics", out var rating) && rating.ValueKind != JsonValueKind.Null)
+            return rating.ValueKind == JsonValueKind.Number && rating.TryGetInt32(out var value) ? value : null;
+        return track.TryGetProperty("explicit_lyrics", out var flag) && flag.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? flag.GetBoolean() ? 1 : 0 : null;
+    }
 
     private Album ParseDeezerAlbum(JsonElement album)
     {

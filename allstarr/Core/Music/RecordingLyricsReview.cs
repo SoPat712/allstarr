@@ -6,6 +6,7 @@ using allstarr.Core.Capabilities;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using allstarr.Core.Protocols;
+using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
 
@@ -80,19 +81,21 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
     private readonly ILibraryIndexService _library;
     private readonly IProtocolLyricsResolver _lyrics;
     private readonly IRecordingLyricsChoices _choices;
+    private readonly IEffectiveProviderPolicyResolver? _policies;
 
     public RecordingLyricsReview(
         ITrackIdentityService identities,
         IProtocolProviderGateway providers,
         ILibraryIndexService library,
         IProtocolLyricsResolver lyrics,
-        IRecordingLyricsChoices choices)
+        IRecordingLyricsChoices choices, IEffectiveProviderPolicyResolver? policies = null)
     {
         _identities = identities;
         _providers = providers;
         _library = library;
         _lyrics = lyrics;
         _choices = choices;
+        _policies = policies;
     }
 
     public Task<RecordingLyricsReviewResult> GetAsync(
@@ -168,6 +171,10 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
         var song = providerSong ?? (native == null ? null : BuildNativeSong(native, recording.Id));
         if (song == null)
             throw new KeyNotFoundException("Lyrics metadata for this recording is unavailable.");
+        var policy = _policies != null && actor.EffectiveUserId is { } owner
+            ? await _policies.ResolveForUserAsync(owner, token) : context.Policy;
+        if (policy?.Preferences.ExplicitFilter == "CleanOnly" && !CleanRecordingPolicy.IsVerifiedClean(song))
+            throw new KeyNotFoundException("Lyrics metadata for this recording is unavailable.");
 
         var reviewSong = ProjectSong(song);
         Func<CancellationToken, Task<LyricsInfo?>>? backend = null;
@@ -182,7 +189,7 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
         }
 
         var candidates = await _lyrics.FindAllAsync(
-            context,
+            policy?.Preferences.ExplicitFilter == "CleanOnly" ? context with { Policy = policy } : context,
             MusicLyrics.ForLookup(song),
             recording.Id.ToString("N"),
             new ProtocolLyricsSources(Backend: backend, HouseholdOnly: reviewScope == ReviewScope.Household)

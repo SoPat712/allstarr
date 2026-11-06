@@ -6,6 +6,17 @@ namespace allstarr.Tests;
 public sealed class MusicLyricsIdentityTests
 {
     [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(3)]
+    [InlineData(null)]
+    public void CleanAndExplicitEvidenceSurvivesLyricsLookupNormalization(int? rating)
+    {
+        var song = new Song { Title = "Track [A]", ExplicitContentLyrics = rating };
+        Assert.Equal(rating, MusicLyrics.ForLookup(song).ExplicitContentLyrics);
+    }
+
+    [Theory]
     [InlineData("[offset:250]\n[00:01.234]Words", 984)]
     [InlineData("[offset:-250]\n[00:01.234]Words", 1484)]
     [InlineData("[00:01.234]Words\n[offset:+250]", 984)]

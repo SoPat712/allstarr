@@ -17,6 +17,30 @@ namespace allstarr.Tests;
 public sealed class TrackMatchPlayableSearchTests
 {
     [Theory]
+    [InlineData(1)]
+    [InlineData(null)]
+    public async Task CleanOnlyRequestPolicyIsEnforcedWithoutASeparateResolver(int? rating)
+    {
+        var user = Guid.NewGuid();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
+        gateway.Setup(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync(new MatchingSongSearchResult([new Song
+            { Id = "ext-deezer-song-target", ExternalProvider = "deezer", ExternalId = "target", Title = "Track", Artist = "Artist", Duration = 180, ExplicitContentLyrics = rating }], []));
+        var context = Context(user) with
+        {
+            Policy = new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, "Lossless", .07)
+            { Preferences = new("CleanOnly") }
+        };
+        var result = await new TrackMatchPlayableSearch(gateway.Object, new(), NullLogger<TrackMatchPlayableSearch>.Instance).MatchAsync(context,
+            new("source", "spotify", "source", "Track", "Artist", null, null, 180000, null, null, null),
+            new(user, "main", null, 2, 1, new HashSet<string>()), [], null, default);
+        Assert.Equal(TrackMatchReviewState.Unresolved, result.Decision.State);
+        Assert.Null(result.SelectedExternal);
+    }
+
+    [Theory]
     [InlineData("apple-download", "deezer", false, false)]
     [InlineData("deezer", "apple-download", false, true)]
     [InlineData(null, "apple-download", false, true)]

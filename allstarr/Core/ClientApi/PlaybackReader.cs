@@ -15,7 +15,8 @@ public sealed class PlaybackReader(
     IProviderRegistry registry,
     IEnumerable<IPlaybackActivitySource> activity,
     IPlaybackDeliveryActivitySource deliveries,
-    LibraryProviderResolver libraryProvider)
+    LibraryProviderResolver libraryProvider,
+    CleanOnlyProtocolContent content)
 {
     public async Task<ClientPlayback?> ReadAsync(HttpContext http, ProtocolExecutionContext execution, Guid id)
     {
@@ -23,7 +24,8 @@ public sealed class PlaybackReader(
         await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
         var row = await Visible(db, execution).SingleOrDefaultAsync(item => item.Id == id, execution.CancellationToken);
         var sample = row == null ? null : Read(row, execution);
-        return sample == null ? null : await ProjectAsync(http, execution, sample);
+        return sample?.Trace?.Request.ItemId is not { } itemId || !await content.AllowsAsync(http, itemId)
+            ? null : await ProjectAsync(http, execution, sample);
     }
 
     public async Task<ClientPlayback?> CurrentAsync(HttpContext http, ProtocolExecutionContext execution)
@@ -34,7 +36,7 @@ public sealed class PlaybackReader(
             .Where(state => state.UserId == owner && state.DeviceId == device &&
                 state.BackendUserId == execution.VerifiedBackendPrincipalId)
             .OrderByDescending(state => state.LastActivity).FirstOrDefault();
-        if (state == null) return null;
+        if (state == null || !await content.AllowsAsync(http, state.ItemId)) return null;
         await using var db = await factory.CreateDbContextAsync(execution.CancellationToken);
         var rows = await Visible(db, execution).OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
             .Take(PlaybackStartTimingStore.MaximumSamples).ToArrayAsync(execution.CancellationToken);

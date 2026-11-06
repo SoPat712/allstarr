@@ -372,10 +372,18 @@ public sealed class TrackMatchRecordingVersionTests
 
         var result = await search.MatchAsync(Context(), source, Scope(), [], null, CancellationToken.None);
 
-        Assert.Equal(cleanExists ? TrackMatchReviewState.Accepted : TrackMatchReviewState.Suggested, result.Decision.State);
+        Assert.Equal(cleanExists ? TrackMatchReviewState.Accepted : TrackMatchReviewState.Unresolved, result.Decision.State);
         Assert.Equal(!cleanExists, result.Decision.RequiresReview);
-        Assert.Equal(cleanExists ? "clean" : "explicit", result.SelectedExternal!.ExternalId);
-        Assert.Equal(cleanExists ? "clean" : "explicit", Assert.Single(result.RoutableExternalCandidates).ExternalId);
+        if (cleanExists)
+        {
+            Assert.Equal("clean", result.SelectedExternal!.ExternalId);
+            Assert.Equal("clean", Assert.Single(result.RoutableExternalCandidates).ExternalId);
+        }
+        else
+        {
+            Assert.Null(result.SelectedExternal);
+            Assert.Empty(result.RoutableExternalCandidates);
+        }
         gateway.Verify(item => item.SearchMatchingSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Espresso", 15), Times.Once);
     }
 

@@ -361,7 +361,8 @@ public sealed class PlaylistVirtualizationService(
         var sourceByPosition = projection.SourceEntries.ToDictionary(item => item.Position);
         var resolvedTracks = projection.Entries
             .Select(item => ToResolvedVirtualTrack(item, libraryTracks, link.SourceProviderId, nativeItems,
-                sourceByPosition.GetValueOrDefault(item.Position)?.Metadata))
+                sourceByPosition.GetValueOrDefault(item.Position)?.Metadata,
+                sourceByPosition.GetValueOrDefault(item.Position)?.Identity.ExternalId))
             .ToArray();
         var resolvedByPosition = resolvedTracks.ToDictionary(item => item.SourcePosition);
         var sourceTracks = projection.SourceEntries
@@ -467,14 +468,14 @@ public sealed class PlaylistVirtualizationService(
         IReadOnlyDictionary<string, LibraryTrackRecord> libraryTracks,
         string sourceProviderId,
         IReadOnlyDictionary<string, BackendPlaylistMember>? nativeItems = null,
-        PlaylistSourceMetadata? sourceMetadata = null)
+        PlaylistSourceMetadata? sourceMetadata = null, string? sourceExternalId = null)
     {
         if (entry.BackendItemId != null &&
             libraryTracks.TryGetValue(entry.BackendItemId, out var local))
             return new(entry.Position, local.BackendItemId, local.Title, local.Artist,
                 local.Album, local.AlbumArtist, local.DurationMilliseconds ?? entry.DurationMilliseconds,
                 local.CoverArtReference, entry.MatchState ?? TrackMatchState.Unresolved,
-                sourceProviderId, null, TrackRouteKind.Local,
+                sourceProviderId, sourceExternalId, TrackRouteKind.Local,
                 SourceMetadata: sourceMetadata,
                 NativeEntryJson: nativeItems?.GetValueOrDefault(local.BackendItemId)?.NativeEntryJson,
                 SourceEntryId: entry.SourceEntryId);
@@ -486,7 +487,7 @@ public sealed class PlaylistVirtualizationService(
                 entry.Album, null,
                 ResolvedDurationMilliseconds(entry), null,
                 entry.MatchState ?? TrackMatchState.Unresolved,
-                entry.RouteProviderId, entry.ExternalId, TrackRouteKind.External,
+                sourceProviderId, sourceExternalId, TrackRouteKind.External,
                 entry.RouteProviderId, entry.ExternalId, SourceMetadata: sourceMetadata, SourceEntryId: entry.SourceEntryId);
         }
 

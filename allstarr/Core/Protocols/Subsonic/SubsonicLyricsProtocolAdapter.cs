@@ -173,6 +173,7 @@ public sealed class SubsonicLyricsProtocolAdapter
             {
                 Id = expectedId,
                 IsLocal = true,
+                ExplicitContentLyrics = CleanOnlyProtocolContent.Rating(Text(song, "explicitStatus")),
                 Title = Text(song, "title"),
                 Artist = Text(song, "artist"),
                 Album = Text(song, "album"),

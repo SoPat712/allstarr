@@ -23,15 +23,15 @@ public sealed class TrackMatchKnownFactsTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public void OppositeExplicitnessNeedsReviewEvenWithExactIdentity(bool sourceExplicit)
+    public void OppositeExplicitnessPreservesCleanSourceRestrictionEvenWithExactIdentity(bool sourceExplicit)
     {
         var source = Source() with { IsExplicit = sourceExplicit, Isrc = "USAAA2600001" };
         var opposite = Candidate("apple-download") with { IsExplicit = !sourceExplicit, Isrc = source.Isrc };
         var result = Decide(source, opposite);
-        Assert.Equal(TrackMatchReviewState.Suggested, result.State);
+        Assert.Equal(sourceExplicit ? TrackMatchReviewState.Suggested : TrackMatchReviewState.Unresolved, result.State);
         Assert.True(result.RequiresReview);
-        Assert.Equal(opposite.LibraryTrackId, result.SelectedLibraryTrackId);
-        Assert.Contains("explicitness_mismatch_review", result.Warnings);
+        Assert.Equal(sourceExplicit ? opposite.LibraryTrackId : null, result.SelectedLibraryTrackId);
+        Assert.Equal(sourceExplicit, result.Warnings.Contains("explicitness_mismatch_review"));
         var matching = Candidate("deezer") with { IsExplicit = sourceExplicit };
         Assert.Equal(matching.LibraryTrackId, Decide(source, opposite, matching).SelectedLibraryTrackId);
     }
@@ -197,7 +197,7 @@ public sealed class TrackMatchKnownFactsTests
     [InlineData("Clean", true, TrackMatchReviewState.Suggested)]
     [InlineData("Explicit", null, TrackMatchReviewState.Accepted)]
     [InlineData("Explicit", true, TrackMatchReviewState.Accepted)]
-    [InlineData("Explicit", false, TrackMatchReviewState.Suggested)]
+    [InlineData("Explicit", false, TrackMatchReviewState.Unresolved)]
     public void CandidateAlbumExplicitnessLabelsUseExistingReviewRules(string label, bool? sourceExplicit, TrackMatchReviewState expected)
     {
         var source = Source() with { Title = "Good Time", Artist = "Owl City", Album = "Beach Music", IsExplicit = sourceExplicit };
@@ -210,7 +210,7 @@ public sealed class TrackMatchKnownFactsTests
         };
         var result = Decide(source, candidate);
         Assert.Equal(expected, result.State);
-        Assert.Equal(candidate.LibraryTrackId, result.SelectedLibraryTrackId);
+        Assert.Equal(expected == TrackMatchReviewState.Unresolved ? null : candidate.LibraryTrackId, result.SelectedLibraryTrackId);
         Assert.Equal(label == "Explicit", result.Candidates[0].IsExplicit);
         Assert.Equal(expected == TrackMatchReviewState.Suggested, result.Warnings.Contains("explicitness_mismatch_review"));
     }

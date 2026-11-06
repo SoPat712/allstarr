@@ -3,6 +3,8 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
+using allstarr.Core.Settings;
+using System.Text.Json.Nodes;
 using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
 using allstarr.Services.Jellyfin;
@@ -19,7 +21,7 @@ public sealed class ItemLyricsReader(
     ITrackIdentityService identities,
     IRecordingLyricsReview review,
     IRecordingLyricsChoices choices,
-    IProviderRegistry? registry = null)
+    IProviderRegistry? registry = null, IEffectiveProviderPolicyResolver? policies = null)
 {
     public async Task<Guid?> ResolveRecordingIdAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
     {
@@ -148,11 +150,13 @@ public sealed class ItemLyricsReader(
     private async Task<LyricsItem?> ResolveAsync(HttpContext http, ProtocolExecutionContext execution, string itemId)
     {
         if (string.IsNullOrWhiteSpace(itemId)) return null;
+        var policy = policies != null && execution.Actor?.EffectiveUserId is { } owner
+            ? await policies.ResolveForUserAsync(owner, execution.CancellationToken) : execution.Policy;
         var (external, provider, externalId) = localLibrary.ParseSongId(itemId);
         if (external)
         {
             var song = await providers.GetSongAsync(execution, provider!, externalId!);
-            if (song == null) return null;
+            if (song == null || policy?.Includes(song) == false) return null;
             var lookup = MusicLyrics.ForLookup(song);
             lookup.ExternalProvider = provider;
             lookup.ExternalId = externalId;
@@ -166,10 +170,13 @@ public sealed class ItemLyricsReader(
             !SameNativeItem(nativeId.GetString(), itemId) || !body.RootElement.TryGetProperty("Type", out var type) ||
             type.GetString() != "Audio") return null;
         var item = body.RootElement;
+        var rating = CleanOnlyProtocolContent.Rating((JsonObject)JsonNode.Parse(item.GetRawText())!, ProtocolKind.Jellyfin);
+        if (policy?.Includes(rating) == false) return null;
         var native = new Song
         {
             Id = itemId,
             IsLocal = true,
+            ExplicitContentLyrics = rating,
             Title = item.TryGetProperty("Name", out var name) ? name.GetString() ?? "" : "",
             Artist = item.TryGetProperty("AlbumArtist", out var artist) ? artist.GetString() ?? "" : "",
             Album = item.TryGetProperty("Album", out var album) ? album.GetString() ?? "" : "",

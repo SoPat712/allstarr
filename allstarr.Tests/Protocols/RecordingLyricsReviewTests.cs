@@ -5,6 +5,8 @@ using allstarr.Core.Identity;
 using allstarr.Core.Matching;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
+using allstarr.Core.Settings;
+using System.Collections.Immutable;
 using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
 using Moq;
@@ -13,6 +15,46 @@ namespace allstarr.Tests;
 
 public sealed class RecordingLyricsReviewTests
 {
+    [Theory]
+    [InlineData(0, true, "personal")]
+    [InlineData(3, true, "personal")]
+    [InlineData(1, false, "personal")]
+    [InlineData(null, false, "personal")]
+    [InlineData(0, true, "household")]
+    [InlineData(3, true, "household")]
+    [InlineData(1, false, "household")]
+    [InlineData(null, false, "household")]
+    public async Task CleanOnlyReviewWithholdsUnverifiedSongMetadataBeforeProjectingSources(int? rating, bool visible, string scope)
+    {
+        var fixture = new Fixture();
+        fixture.SetupIdentity();
+        fixture.SetupChoices(new(null, null));
+        var song = fixture.ProviderSong();
+        song.ExplicitContentLyrics = rating;
+        fixture.Providers.Setup(item => item.GetSongAsync(fixture.Context, "allstarr", RecordingId.ToString("D"))).ReturnsAsync(song);
+        fixture.Library.Setup(item => item.ResolveKnownTrackAsync(fixture.Context, fixture.Recording.PublicId, fixture.Context.CancellationToken)).ReturnsAsync((string?)null);
+        var policies = new Mock<IEffectiveProviderPolicyResolver>();
+        policies.Setup(item => item.ResolveForUserAsync(UserId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, .07)
+            { Preferences = new("CleanOnly") });
+        var service = new RecordingLyricsReview(fixture.Identities.Object, fixture.Providers.Object, fixture.Library.Object,
+            fixture.Lyrics.Object, fixture.Choices.Object, policies.Object);
+        if (visible)
+        {
+            fixture.Lyrics.Setup(item => item.FindAllAsync(
+                It.Is<ProtocolExecutionContext>(execution => execution.Policy != null && execution.Policy.Preferences.ExplicitFilter == "CleanOnly"),
+                It.IsAny<Song>(), RecordingId.ToString("N"), It.Is<ProtocolLyricsSources>(sources => sources.HouseholdOnly == (scope == "household")))).ReturnsAsync([]);
+            Assert.Equal(song.Title, (await service.GetAsync(fixture.Context, RecordingId, scope)).Song.Title);
+            fixture.Lyrics.VerifyAll();
+        }
+        else
+        {
+            await Assert.ThrowsAsync<KeyNotFoundException>(() => service.GetAsync(fixture.Context, RecordingId, scope));
+            fixture.Lyrics.VerifyNoOtherCalls();
+        }
+    }
+
     [Fact]
     public async Task SpicyPreviewCreditsSurviveTruncationAndCreditOnlyChangesInvalidateRevision()
     {

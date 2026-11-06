@@ -58,6 +58,8 @@ public partial class JellyfinController
             {
                 Id = itemId,
                 IsLocal = true,
+                ExplicitContentLyrics = item.RootElement.TryGetProperty("OfficialRating", out var rating) && rating.ValueKind == JsonValueKind.String
+                    ? CleanOnlyProtocolContent.Rating(rating.GetString()) : null,
                 Title = item.RootElement.TryGetProperty("Name", out var name) ? name.GetString() ?? "" : "",
                 Artist = item.RootElement.TryGetProperty("AlbumArtist", out var artist)
                     ? artist.GetString() ?? ""

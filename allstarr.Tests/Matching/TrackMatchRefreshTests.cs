@@ -23,6 +23,202 @@ namespace allstarr.Tests;
 public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [InlineData(null)]
+    public async Task CleanOnlyRematchUsesStoredLocalRecordingRating(bool? explicitness)
+    {
+        await using var fixture = await Fixture.CreateAsync(ExplicitPayload("IsExplicit", "false"), cleanOnly: true);
+        var local = Local(fixture.Owner, "native", "Track Melodies");
+        local.CanonicalRecordingId = fixture.Recording;
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            (await db.CanonicalRecordings.SingleAsync()).IsExplicit = explicitness;
+            db.LibraryTracks.Add(local);
+            await db.SaveChangesAsync();
+        }
+        Assert.True((await fixture.Service.RematchSnapshotAsync(new(fixture.Owner, false), fixture.SnapshotId, "clean-rematch")).Succeeded);
+        await using var saved = fixture.Factory.CreateDbContext();
+        Assert.Equal(explicitness == false ? TrackMatchState.Accepted : TrackMatchState.Unresolved,
+            (await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync()).State);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Category", "Sqlite")]
+    public async Task CleanOnlyOwnerPolicyWithholdsUnknownLocalMatchesAndPins(bool pinned)
+    {
+        await using var fixture = await Fixture.CreateAsync(cleanOnly: true);
+        var local = Local(fixture.Owner, "local", "Track Melodies");
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            db.LibraryTracks.Add(local);
+            if (pinned)
+                db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
+                {
+                    Id = Guid.NewGuid(),
+                    OwnerUserId = fixture.Owner,
+                    ExternalSnapshotId = fixture.SnapshotId,
+                    SourceProviderId = "spotify",
+                    SourceExternalIdHash = Hash("source"),
+                    Decision = ManualOverrideDecision.Pin,
+                    LibraryTrackId = local.Id,
+                    DecisionVersion = 1,
+                    Revision = 1
+                });
+            await db.SaveChangesAsync();
+        }
+
+        var result = Assert.Single(await fixture.Service.MatchSourceTracksAsync(
+            [new("spotify", "source", "Track Melodies", "Artist", "Album", 180000, null, null, "1")], "clean-refresh"));
+
+        Assert.Equal(TrackMatchReviewState.Unresolved, result.State);
+        Assert.Null(result.LocalBackendItemId);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(true)]
+    [InlineData(false)]
+    [Trait("Category", "Sqlite")]
+    public async Task CleanOnlyRefreshDoesNotRetainAnUnsafeProviderDecision(bool? explicitness)
+    {
+        await using var fixture = await Fixture.CreateAsync(cleanOnly: true);
+        var score = new TrackMatchCandidateScore(Guid.NewGuid(), "target", .99, [], [],
+            ProviderTrackIds: new Dictionary<string, string> { ["deezer"] = "target" }, IsLocal: false)
+        { IsExplicit = explicitness };
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            db.TrackMatches.Add(new TrackMatchRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = fixture.Owner,
+                ExternalSnapshotId = fixture.SnapshotId,
+                CanonicalRecordingId = fixture.Recording,
+                State = TrackMatchState.Accepted,
+                Confidence = .99,
+                Threshold = .88,
+                DecisionVersion = 1,
+                SourceSnapshotVersion = 1,
+                CandidateResultsJson = JsonSerializer.Serialize(new[] { score })
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var result = Assert.Single(await fixture.Service.MatchSourceTracksAsync(
+            [new("spotify", "source", "Track Melodies", "Artist", "Album", 180000, null, null, "1")], "clean-refresh"));
+
+        Assert.Equal(explicitness == false ? TrackMatchReviewState.Accepted : TrackMatchReviewState.Unresolved, result.State);
+        await using var saved = fixture.Factory.CreateDbContext();
+        Assert.Equal(explicitness == false ? TrackMatchState.Accepted : TrackMatchState.Unresolved,
+            (await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync()).State);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(true)]
+    [InlineData(false)]
+    [Trait("Category", "Sqlite")]
+    public async Task CleanOnlyRefreshChecksPinnedProviderRating(bool? explicitness)
+    {
+        await using var fixture = await Fixture.CreateAsync(cleanOnly: true);
+        var score = new TrackMatchCandidateScore(Guid.NewGuid(), "target", .99, [], [],
+            ProviderTrackIds: new Dictionary<string, string> { ["deezer"] = "target" }, IsLocal: false)
+        { IsExplicit = explicitness };
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            db.TrackMatches.Add(new TrackMatchRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = fixture.Owner,
+                ExternalSnapshotId = fixture.SnapshotId,
+                CanonicalRecordingId = fixture.Recording,
+                State = TrackMatchState.Accepted,
+                Confidence = .99,
+                Threshold = .88,
+                DecisionVersion = 1,
+                SourceSnapshotVersion = 1,
+                CandidateResultsJson = JsonSerializer.Serialize(new[] { score })
+            });
+            db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = fixture.Owner,
+                ExternalSnapshotId = fixture.SnapshotId,
+                SourceProviderId = "spotify",
+                SourceExternalIdHash = Hash("source"),
+                Decision = ManualOverrideDecision.Pin,
+                TargetProviderId = "deezer",
+                TargetExternalId = "target",
+                DecisionVersion = 1,
+                Revision = 1
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var result = Assert.Single(await fixture.Service.MatchSourceTracksAsync(
+            [new("spotify", "source", "Track Melodies", "Artist", "Album", 180000, null, null, "1")], "clean-refresh"));
+
+        Assert.Equal(explicitness == false ? TrackMatchReviewState.Pinned : TrackMatchReviewState.Unresolved, result.State);
+        Assert.Null(result.LocalBackendItemId);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(true)]
+    [InlineData(false)]
+    [Trait("Category", "Sqlite")]
+    public async Task CleanOnlyLocalSearchUsesOwnerPolicyAndStoredCanonicalRating(bool? explicitness)
+    {
+        await using var fixture = await Fixture.CreateAsync(cleanOnly: true);
+        var local = Local(fixture.Owner, "local", "Track Melodies");
+        local.CanonicalRecordingId = fixture.Recording;
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            (await db.CanonicalRecordings.SingleAsync()).IsExplicit = explicitness;
+            db.LibraryTracks.Add(local);
+            await db.SaveChangesAsync();
+        }
+
+        var results = await fixture.Service.SearchLocalTracksAsync(new(fixture.Owner, false), "Track Melodies");
+
+        Assert.Equal(explicitness == false, results.Count == 1);
+    }
+
+    [Theory]
+    [InlineData("local", null)]
+    [InlineData("local", true)]
+    [InlineData("local", false)]
+    [InlineData("provider", null)]
+    [InlineData("provider", true)]
+    [InlineData("provider", false)]
+    [Trait("Category", "Sqlite")]
+    public async Task CleanOnlyManualResolutionRequiresStoredCleanTargetEvidence(string targetType, bool? explicitness)
+    {
+        await using var fixture = await Fixture.CreateAsync(cleanOnly: true);
+        var local = Local(fixture.Owner, "local", "Track Melodies");
+        local.CanonicalRecordingId = fixture.Recording;
+        await using (var db = fixture.Factory.CreateDbContext())
+        {
+            (await db.CanonicalRecordings.SingleAsync()).IsExplicit = explicitness;
+            db.LibraryTracks.Add(local);
+            var target = Snapshot(fixture.Owner, null, "target",
+                ExplicitPayload("IsExplicit", JsonSerializer.Serialize(explicitness)), DateTimeOffset.UtcNow);
+            target.ProviderId = "deezer";
+            db.ExternalMetadataSnapshots.Add(target);
+            await db.SaveChangesAsync();
+        }
+
+        var result = await fixture.Service.ResolveSnapshotAsync(new(fixture.Owner, false), fixture.SnapshotId,
+            new(targetType, LibraryTrackId: local.Id, ExternalProvider: "deezer", ExternalId: "target"), "clean-pin");
+
+        Assert.Equal(explicitness == false, result.Succeeded);
+        await using var saved = fixture.Factory.CreateDbContext();
+        Assert.Equal(explicitness == false ? 1 : 0, await saved.ManualTrackOverrides.CountAsync());
+    }
+
+    [Theory]
     [InlineData("Silk & Cologne")]
     [InlineData("silk and cologne")]
     [InlineData("Spider Verse Remix")]
@@ -903,7 +1099,7 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
         public TrackMatchCommandService Service { get; private set; } = null!;
 
         public static async Task<Fixture> CreateAsync(string? payload = null,
-            ProviderUseMode? policyTargetMode = null, IProtocolProviderGateway? gateway = null)
+            ProviderUseMode? policyTargetMode = null, IProtocolProviderGateway? gateway = null, bool cleanOnly = false)
         {
             var fixture = new Fixture(await SqliteTestDatabase.CreateAsync());
             fixture.Factory = new(new DbContextOptionsBuilder<AllstarrDbContext>(fixture.DatabaseOptions)
@@ -951,8 +1147,8 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
             fixture.SnapshotId = snapshot.Id;
             db.ExternalMetadataSnapshots.Add(snapshot);
             await db.SaveChangesAsync();
-            var policies = policyTargetMode.HasValue
-                ? new FixedPolicyResolver(fixture.Owner, policyTargetMode.Value)
+            var policies = policyTargetMode.HasValue || cleanOnly
+                ? new FixedPolicyResolver(fixture.Owner, policyTargetMode ?? ProviderUseMode.Automatic, cleanOnly)
                 : null;
             fixture.Service = new(fixture.Factory, new TrackMatchDecisionEngine(),
                 new ProviderAccountResolver(fixture.Factory), new Clock(), new TestBackendLibraryAccess(fixture.Factory, "music"),
@@ -974,21 +1170,22 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
 
     private sealed class Clock : IPlatformClock { public DateTimeOffset UtcNow => DateTimeOffset.UtcNow; }
 
-    private sealed class FixedPolicyResolver(Guid owner, ProviderUseMode targetMode) : IEffectiveProviderPolicyResolver
+    private sealed class FixedPolicyResolver(Guid owner, ProviderUseMode targetMode, bool cleanOnly = false) : IEffectiveProviderPolicyResolver
     {
-        private EffectiveProviderPolicySnapshot Snapshot(Guid userId) => new(
+        private EffectiveProviderPolicySnapshot Snapshot(Guid userId, bool listener = true) => new(
             ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
             ImmutableHashSet<string>.Empty,
             "lossless",
             0)
         {
             UserId = userId,
+            Preferences = new ListeningPreferences(ExplicitFilter: cleanOnly && listener ? "CleanOnly" : "Allow"),
             ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty
                 .Add("qobuz", targetMode)
         };
 
         public Task<EffectiveProviderPolicySnapshot> ResolveAsync(CancellationToken cancellationToken = default) =>
-            Task.FromResult(Snapshot(owner));
+            Task.FromResult(Snapshot(owner, false));
 
         public Task<EffectiveProviderPolicySnapshot> ResolveForUserAsync(Guid userId,
             CancellationToken cancellationToken = default) => Task.FromResult(Snapshot(userId));

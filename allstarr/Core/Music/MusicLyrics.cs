@@ -59,6 +59,7 @@ public static partial class MusicLyrics
             Id = song.Id,
             CanonicalRecordingId = song.CanonicalRecordingId,
             IsLocal = song.IsLocal,
+            ExplicitContentLyrics = song.ExplicitContentLyrics,
             ExternalProvider = song.ExternalProvider,
             ExternalId = song.ExternalId,
             Isrc = song.Isrc,

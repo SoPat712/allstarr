@@ -2,6 +2,8 @@ using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
+using System.Collections.Immutable;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Protocols;
@@ -17,6 +19,34 @@ namespace allstarr.Tests;
 
 public sealed class DownloadActivityControllerTests
 {
+    [Theory]
+    [InlineData(0, 1)]
+    [InlineData(1, 0)]
+    [InlineData(null, 0)]
+    public async Task CleanOnlyNowPlayingUsesTheViewersVerifiedRecordingPolicy(int? rating, int expected)
+    {
+        var session = AdministratorSession();
+        var owner = session.AllstarrUserId!.Value;
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "primary", "listener",
+            new(owner, "jellyfin", "primary", "listener", "Listener", false), "clean-display", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var policies = new Mock<IEffectiveProviderPolicyResolver>();
+        policies.Setup(item => item.ResolveForUserAsync(owner, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, "Lossless", .07)
+            { Preferences = new("CleanOnly") });
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetStoredSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "track"))
+            .ReturnsAsync(new allstarr.Models.Domain.Song { Id = "ext-deezer-song-track", ExplicitContentLyrics = rating });
+        var access = new Mock<IBackendLibraryAccessResolver>();
+        access.Setup(item => item.ResolveUserAsync(owner, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BackendLibraryAccessContext(context, BackendLibraryAccess.Unavailable));
+        var source = new StubPlaybackSource(new PlaybackActivityState("device", "ext-deezer-song-track", 0, DateTime.UtcNow, owner));
+        var controller = CreateController([source], [], libraryAccess: access.Object, policies: policies.Object, providers: gateway.Object);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = session;
+        using var body = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await controller.GetNowPlaying(default)).Value));
+        Assert.Equal(expected, body.RootElement.GetProperty("items").GetArrayLength());
+    }
+
     [Fact]
     public async Task Artwork_WithoutCoverReturnsNoContentWithReleaseCachePolicy()
     {
@@ -307,7 +337,7 @@ public sealed class DownloadActivityControllerTests
         IPlaybackDeliveryActivitySource? playbackDeliveries = null,
         IDbContextFactory<AllstarrDbContext>? contextFactory = null,
         IBackendLibraryAccessResolver? libraryAccess = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null, IEffectiveProviderPolicyResolver? policies = null, IProtocolProviderGateway? providers = null)
     {
         if (libraryAccess == null)
         {
@@ -326,7 +356,7 @@ public sealed class DownloadActivityControllerTests
             libraryAccess,
             playbackDeliveries,
             contextFactory,
-            timeProvider)
+            timeProvider, providerGateway: providers, policies: policies)
         {
             ControllerContext = new ControllerContext
             {

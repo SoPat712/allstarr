@@ -8,6 +8,11 @@ public static class CleanRecordingPolicy
 {
     public static bool IsVerifiedClean(Song song) => song.ExplicitContentLyrics is 0 or 3;
 
+    internal static string CounterpartQuery(Song song) => $"{RemoveRating(song.Title).Trim()} {RemoveRating(song.Artist).Trim()}".Trim();
+
+    internal static bool RequiresCleanVersion(string? title) => Regex.IsMatch(title ?? "",
+        @"(?:[\(\[]\s*(?:clean(?: version| edit)?|edited|censored|radio[\s-]+edit)\s*[\)\]]|\s+[-–—]\s*(?:clean(?: version| edit)?|edited|censored|radio[\s-]+edit)\s*$)", RegexOptions.IgnoreCase);
+
     public static bool IsCounterpart(Song source, Song candidate)
     {
         if (!IsVerifiedClean(candidate) || source.Id == candidate.Id ||
