@@ -4496,6 +4496,28 @@ test("Compact dialogs share symmetric actions and readable progress", async ({ p
   const serviceButtons = page.locator(".sources-heading-actions button");
   await expect(serviceButtons).toHaveCount(2);
   await expect(serviceButtons.last()).toBeVisible();
+  const entranceSamples = await page.locator(".integrations-workspace").evaluate(element => {
+    const animation = getComputedStyle(element).animation;
+    (element as HTMLElement).style.animation = "none";
+    element.getBoundingClientRect();
+    (element as HTMLElement).style.animation = animation;
+    element.getBoundingClientRect();
+    const entrance = element.getAnimations()[0];
+    if (!entrance) return [];
+    entrance.pause();
+    const duration = Number(entrance.effect!.getComputedTiming().duration);
+    const samples = Array.from({ length: 100 }, (_, index) => {
+      entrance.currentTime = duration * index / 100;
+      return {
+        time: entrance.currentTime,
+        transform: getComputedStyle(element).transform,
+        heights: Array.from(element.querySelectorAll(".sources-heading-actions button"), button => button.getBoundingClientRect().height)
+      };
+    });
+    entrance.finish();
+    return samples.filter(sample => sample.heights.some(height => height < 44));
+  });
+  expect(entranceSamples, JSON.stringify(entranceSamples.slice(0, 5))).toEqual([]);
   for (const width of [320, 390, 650]) {
     await page.setViewportSize({ width, height: 844 });
     const serviceActions = await serviceButtons.evaluateAll((buttons) =>

@@ -23,6 +23,45 @@ public sealed partial class VirtualPlaylistProtocolAdapterTests
     private static readonly string ProtocolId = PlaylistVirtualizationService.CreateProtocolId(LinkId);
 
     [Theory]
+    [InlineData(ProtocolKind.Jellyfin, "json", false)]
+    [InlineData(ProtocolKind.Jellyfin, "json", true)]
+    [InlineData(ProtocolKind.Subsonic, "json", false)]
+    [InlineData(ProtocolKind.Subsonic, "xml", false)]
+    public async Task ResolvedPlaylistSourceProvenancePreservesUnrestrictedResponses(ProtocolKind protocol, string format, bool fullExternal)
+    {
+        var local = new LibraryTrackRecord { BackendItemId = "native", Title = "Local", Artist = "Artist", Album = "Album" };
+        var library = new Dictionary<string, LibraryTrackRecord> { [local.BackendItemId] = local };
+        var tracks = new[] { "local", "external" }.Select(route => PlaylistVirtualizationService.ToResolvedVirtualTrack(
+            new DurablePlaylistEntryProjection(route == "local" ? 0 : 1, Guid.NewGuid(), "selected", "External", ["Artist"], "Album",
+                null, 180_000, null, null, TrackMatchState.Accepted, route == "local" ? local.BackendItemId : null,
+                route, route == "local" ? null : "deezer", [new("deezer", "selected")]),
+            library, "spotify", sourceMetadata: new(IsExplicit: false), sourceExternalId: "source")).ToArray();
+        var model = Model() with { ProjectionMode = PlaylistProjectionMode.Resolved, Tracks = tracks };
+        var legacy = tracks.Select(track => track with
+        {
+            SourceProviderId = track.RouteKind == TrackRouteKind.Local ? "spotify" : track.RouteProviderId,
+            SourceExternalId = track.RouteKind == TrackRouteKind.Local ? null : track.RouteExternalId
+        }).ToArray();
+
+        async Task<string> Response(VirtualPlaylistTrack[] entries)
+        {
+            var service = new StubVirtualizationService(model with { Tracks = entries });
+            if (protocol == ProtocolKind.Jellyfin)
+            {
+                var adapter = new JellyfinVirtualPlaylistProtocolAdapter(service, new StubJellyfinMutationResolver(null),
+                    responseBuilder: fullExternal ? new JellyfinResponseBuilder() : null);
+                return JsonSerializer.Serialize(Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(Context(protocol), ProtocolId, default)).Value);
+            }
+            var subsonic = new SubsonicVirtualPlaylistProtocolAdapter(service, new StubMutationResolver(null));
+            var response = await subsonic.ReadAsync(Context(protocol), ProtocolId, format, default);
+            return format == "json" ? JsonSerializer.Serialize(Assert.IsType<JsonResult>(response).Value)
+                : Assert.IsType<ContentResult>(response).Content!;
+        }
+
+        Assert.Equal(await Response(legacy), await Response(tracks));
+    }
+
+    [Theory]
     [InlineData(ProtocolKind.Jellyfin)]
     [InlineData(ProtocolKind.Subsonic)]
     public async Task CleanOnlyPlaylistDoesNotCertifyAnExplicitSelectedRouteFromCleanSourceMetadata(ProtocolKind protocol)

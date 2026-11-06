@@ -9789,6 +9789,10 @@ select:focus-visible {
   animation: view-enter 280ms var(--ease-emphasized) backwards;
 }
 
+.workspace > .integrations-workspace {
+  animation-name: fade-in;
+}
+
 :is(.source-list, .playlist-rows, .download-rows, .provider-list, .activity-list, .home-attention ul, .settings-fields) > * {
   animation: list-enter 300ms var(--ease-emphasized) backwards;
 }

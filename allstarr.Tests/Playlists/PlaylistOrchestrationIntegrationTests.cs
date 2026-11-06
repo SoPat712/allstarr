@@ -2200,11 +2200,15 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         var unresolvedTrack = virtualPlaylist.Tracks.Single(item => item.SourcePosition == 2);
         Assert.Equal(TrackRouteKind.Local, localTrack.RouteKind);
         Assert.Equal("fixture", localTrack.SourceProviderId);
-        Assert.Null(localTrack.SourceExternalId);
+        Assert.Equal("source-1", localTrack.SourceExternalId);
+        Assert.Null(localTrack.RouteProviderId);
+        Assert.Null(localTrack.RouteExternalId);
         Assert.Equal(TrackRouteKind.External, externalTrack.RouteKind);
         Assert.Equal("ext-deezer-song-deezer-external", externalTrack.BackendItemId);
-        Assert.Equal("deezer", externalTrack.SourceProviderId);
-        Assert.Equal("deezer-external", externalTrack.SourceExternalId);
+        Assert.Equal("fixture", externalTrack.SourceProviderId);
+        Assert.Equal("source-external", externalTrack.SourceExternalId);
+        Assert.Equal("deezer", externalTrack.RouteProviderId);
+        Assert.Equal("deezer-external", externalTrack.RouteExternalId);
         Assert.Equal(TrackRouteKind.Unresolved, unresolvedTrack.RouteKind);
         Assert.StartsWith(PlaylistVirtualizationService.UnresolvedItemPrefix,
             unresolvedTrack.BackendItemId, StringComparison.Ordinal);
