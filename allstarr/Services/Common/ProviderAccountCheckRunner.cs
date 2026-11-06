@@ -46,7 +46,8 @@ public sealed class ProviderAccountCheckRunner(
         await using var db = await factory.CreateDbContextAsync(token);
         var rows = await db.ProviderAccounts.AsNoTracking().Where(row => row.Enabled).ToListAsync(token);
         var accounts = rows.Where(row => !ProviderAccountSettings.IsRemoved(row)).ToDictionary(row => row.Id);
-        foreach (var result in await history.ReadLatestAsync(token))
+        var evidence = (await history.ReadMediaEvidenceAsync(token)).Concat(await history.ReadLatestAsync(token));
+        foreach (var result in evidence)
         {
             if (result.Key.ProviderAccountId is { } id &&
                 (!accounts.TryGetValue(id, out var account) || account.Revision != result.Revision || account.ProviderId != result.Key.Provider)) continue;
@@ -126,8 +127,10 @@ public sealed class ProviderAccountCheckRunner(
                         ReasonCode = exception is OperationCanceledException ? "timeout" : "unreachable"
                     });
                 }
+                status.RestoreCheckResult(key, result.Revision, result.Status,
+                    recordMediaEvidence: !result.CurrentHealth.HasValue);
+                result = result with { CurrentHealth = status.GetCurrentCheckHealth(result) };
                 await history.RecordAsync(result, correlation, token, target.Status.Health);
-                status.RestoreCheckResult(key, result.Revision, result.Status);
                 if (result.Status.Health == ProviderHealthState.Degraded)
                 {
                     success = false;
@@ -170,7 +173,7 @@ public sealed class ProviderAccountCheckRunner(
                 new ProviderBackendPrincipal(administrator.BackendType, administrator.BackendInstanceId, administrator.BackendPrincipalId));
             var measured = await media.MeasureAsync(actor, key.Provider, account?.Id, ProviderAudioQuality.HighResolution,
                 correlation, cancellationToken: token, householdCheck: true);
-            return new(key, account?.Revision, baseline with
+            var result = new ProviderCheckResult(key, account?.Revision, baseline with
             {
                 Health = ProviderRuntimeStatus.IsNeutralReason(measured.ReasonCode) ? ProviderHealthState.Unknown :
                     measured.Succeeded ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
@@ -178,6 +181,7 @@ public sealed class ProviderAccountCheckRunner(
                 LatencyMilliseconds = (long?)measured.ClickToStreamMilliseconds,
                 ReasonCode = measured.ReasonCode
             }, measured.SeekRung);
+            return media.RecordsRuntimeStatus ? result with { CurrentHealth = status.GetCurrentCheckHealth(result) } : result;
         }
         var tested = account == null
             ? await status.TestAccountFreeProviderCapabilityAsync(key.Provider, key.Capability, token)

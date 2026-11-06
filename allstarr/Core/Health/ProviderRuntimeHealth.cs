@@ -57,6 +57,7 @@ public sealed record ProviderHealthObservation(
     internal DateTimeOffset? FailureWindowStartedAt { get; init; }
     internal LyricsConfigurationId? LyricsConfiguration { get; init; }
     internal ProviderHealthState? HealthBeforeProbe { get; init; }
+    internal bool IsRecordedCheck { get; init; }
 }
 
 /// <summary>Volatile observations only. Reading status never contacts a provider or writes storage.</summary>
@@ -150,6 +151,8 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
             {
                 _playbackFailures.Remove(key);
                 ObservePlaybackStart(context, quality, elapsed, media);
+                RecordCore(Key(context.ProviderId, context.Account?.AccountId, ProviderCapabilityKind.Streaming.ToString()),
+                    context.Account?.Revision, true, (long)Math.Max(0, elapsed.TotalMilliseconds), null, false, null, passive: true);
                 return;
             }
             var cooldown = TimeSpan.FromSeconds(Math.Clamp(error.RetryAfter?.TotalSeconds ?? 30, 5, 300));
@@ -222,8 +225,22 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
         string? reason, bool authenticationFailure = false, TimeSpan? retryAfter = null, bool recordAttempt = false) =>
         RecordCore(key, revision, success, latency, reason, authenticationFailure, retryAfter, passive: false, recordAttempt: recordAttempt);
 
+    internal void RestoreMediaCheck(ProviderRuntimeStatusKey key, long? revision, ProviderRuntimeStatus status)
+    {
+        if (key.Capability is not (ProviderCapabilities.Streaming or ProviderCapabilities.Download) ||
+            !status.HasCheckResult || status.TestedAt is not { } at) return;
+        lock (_sync)
+        {
+            if (_observations.TryGetValue(key, out var current) &&
+                (current.AccountRevision > revision || current.AccountRevision == revision &&
+                    (current.ObservedAt >= at || !current.IsRecordedCheck && status.Health == ProviderHealthState.Healthy && IsCircuitOpen(current)))) return;
+            RecordCore(key, revision, status.Health == ProviderHealthState.Healthy, status.LatencyMilliseconds,
+                status.ReasonCode, false, null, passive: false, observedAt: at);
+        }
+    }
+
     private void RecordCore(ProviderRuntimeStatusKey key, long? revision, bool success, long? latency,
-        string? reason, bool authenticationFailure, TimeSpan? retryAfter, bool passive, LyricsConfigurationId? configuration = null, bool recordAttempt = false, bool loginExpired = false)
+        string? reason, bool authenticationFailure, TimeSpan? retryAfter, bool passive, LyricsConfigurationId? configuration = null, bool recordAttempt = false, bool loginExpired = false, DateTimeOffset? observedAt = null)
     {
         if (reason == LocalCapacityException.Code) return;
         lock (_sync)
@@ -232,21 +249,26 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
             if (previous?.AccountRevision > revision) return;
             if (configuration.HasValue && previous?.AccountRevision == revision &&
                 previous?.LyricsConfiguration is { } previousConfiguration && previousConfiguration.Revision > configuration.Value.Revision) return;
-            var now = _clock.UtcNow;
+            var now = observedAt ?? _clock.UtcNow;
             var comparable = previous != null && previous.AccountRevision == revision &&
                 (!configuration.HasValue || previous.LyricsConfiguration == configuration);
             var withinWindow = comparable && previous!.FailureWindowStartedAt?.AddSeconds(_options.SampleTtlSeconds) > now;
             var failures = success ? 0 : withinWindow
                 ? Math.Min(previous!.ConsecutiveFailures + 1, _options.FailureThreshold) : 1;
+            var media = key.Capability is ProviderCapabilities.Streaming or ProviderCapabilities.Download;
+            authenticationFailure |= media && reason is ("unauthorized" or "account-needs-reauthentication" or
+                "account-needs-configuration" or "authentication-required" or "sign_in_needed");
             var opens = !success && (authenticationFailure || retryAfter.HasValue || failures >= _options.FailureThreshold);
             var cooldown = TimeSpan.FromSeconds(_options.CircuitOpenSeconds);
             if (retryAfter > cooldown) cooldown = TimeSpan.FromSeconds(Math.Min(retryAfter.Value.TotalSeconds, 86400));
-            var health = success ? ProviderHealthState.Healthy : !passive || opens ? ProviderHealthState.Degraded :
-                comparable ? previous!.HealthBeforeProbe ?? previous.Health : ProviderHealthState.Unknown;
+            var priorHealth = comparable ? previous!.HealthBeforeProbe ?? previous.Health : ProviderHealthState.Unknown;
+            if (media && !withinWindow && priorHealth == ProviderHealthState.Degraded) priorHealth = ProviderHealthState.Unknown;
+            var health = success ? ProviderHealthState.Healthy : !passive && !media || opens ? ProviderHealthState.Degraded : priorHealth;
             MakeRoom(key);
             _observations[key] = new(revision, health,
                 now, latency, SafeReason(reason), failures, opens ? now.Add(cooldown) : null)
             {
+                IsRecordedCheck = observedAt.HasValue,
                 ReauthenticationRequired = loginExpired || reason is "unauthorized" or "account-needs-reauthentication" or "authentication-required",
                 LyricsConfiguration = configuration,
                 FailureWindowStartedAt = success ? null : withinWindow ? previous!.FailureWindowStartedAt : now,
@@ -254,7 +276,8 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver, ILyricsOut
             };
             if (!_alertSamples.TryGetValue(key, out var alertSamples)) _alertSamples[key] = alertSamples = [];
             if (alertSamples.Count >= 20) alertSamples.RemoveAt(0);
-            alertSamples.Add(_observations[key]);
+            alertSamples.Add(!success && health != ProviderHealthState.Degraded
+                ? _observations[key] with { Health = ProviderHealthState.Degraded } : _observations[key]);
             if (!passive && !recordAttempt) return;
             if (!_recent.TryGetValue(key, out var recent)) _recent[key] = recent = [];
             if (recent.Count >= 20) recent.RemoveAt(0);

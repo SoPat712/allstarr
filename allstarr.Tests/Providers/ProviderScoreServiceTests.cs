@@ -63,6 +63,26 @@ public sealed class ProviderScoreServiceTests
     }
 
     [Fact]
+    public void ReliableFastLowBitrateAudioIsLimitedOnlyByDeliveredQuality()
+    {
+        var rows = Enumerable.Range(0, 25).Select(day => Row("deezer", day, true, 2500, "streaming"));
+        var samples = Enumerable.Range(0, 5).Select(_ => new ProviderScoreService.AudioSample("deezer", "mp3", null, 44100, 128_000));
+        var score = Assert.Single(ProviderScoreService.ForTest(rows, Now, samples, plays: Plays("deezer", 84, 0, 120)));
+        Assert.Equal("MP3 128 kbps", score.Quality!.Typical);
+        Assert.Equal(100d, score.UptimePercent);
+        Assert.Equal(60, score.Score);
+        Assert.Equal(score.Parts!.ReliabilityOutOf, score.Parts.Reliability);
+        Assert.Equal(score.Parts.SpeedOutOf, score.Parts.Speed);
+        Assert.Equal(120, score.Parts.TypicalMilliseconds);
+        Assert.True(score.Parts.TimedOnRealPlays);
+        Assert.Equal(8, score.Parts.Quality);
+        Assert.Equal(60, score.Parts.CappedAt);
+        var dataSaver = Assert.Single(ProviderScoreService.ForTest(rows, Now, samples, target: "DataSaver", plays: Plays("deezer", 84, 0, 120)));
+        Assert.Equal(100, dataSaver.Score);
+        Assert.Null(dataSaver.Parts!.CappedAt);
+    }
+
+    [Fact]
     public void SourcesThatPlayNoAudioHaveNoQualityPartAndEachFeatureHasItsOwnParts()
     {
         var rows = Enumerable.Range(0, 25).Select(day => Row("lyrics", day, true, 4250, "lyrics"));

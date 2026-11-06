@@ -303,8 +303,20 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         var current = status.GetAccountFreeStatus("fixture", "download");
         Assert.Equal(downloadBacked && succeeds ? ProviderHealthState.Healthy : ProviderHealthState.Unknown, current.Health);
         Assert.Equal(downloadBacked && succeeds ? result.MeasurementId : (Guid?)null, current.VerificationMeasurementId);
-        Assert.Equal(succeeds ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
+        Assert.Equal(succeeds ? ProviderHealthState.Healthy : ProviderHealthState.Unknown,
             status.GetAccountFreeStatus("fixture", "streaming").Health);
+        if (!succeeds)
+        {
+            var key = ProviderRuntimeStatusKey.CreateAccountFree("fixture", "streaming");
+            Assert.Equal(1, health.Get(key)!.ConsecutiveFailures);
+            for (var attempt = 2; attempt <= 3; attempt++)
+            {
+                await runner.MeasureAsync(new(ProviderActorKind.SystemJob, null, durableJobId: Guid.NewGuid()),
+                    "fixture", null, ProviderAudioQuality.Any, "download-proof", "track");
+                Assert.Equal(attempt, health.Get(key)!.ConsecutiveFailures);
+            }
+            Assert.Equal(ProviderHealthState.Degraded, status.GetAccountFreeStatus("fixture", "streaming").Health);
+        }
         var history = await new ProviderCheckHistory(factory, TimeProvider.System).ReadLatestAsync(default);
         Assert.Contains(history, item => item.Key.Capability == "streaming");
         if (downloadBacked && succeeds)

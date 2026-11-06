@@ -26,6 +26,7 @@ public sealed class ProviderCtsDiagnosticRunner(
     allstarr.Core.Matching.ITrackIdentityService? identities = null)
 {
     private readonly ProviderDiagnosticSamples _diagnosticSamples = new();
+    internal bool RecordsRuntimeStatus => statusManager != null;
 
     private const int SampleLimitBytes = 64 * 1024;
     private const int MaximumTrackAttempts = 64;
@@ -71,7 +72,8 @@ public sealed class ProviderCtsDiagnosticRunner(
             var verified = statusManager?.RecordDownloadVerification(result, progress.Execution?.Account?.Revision);
             if (contextFactory != null)
                 foreach (var check in new[] { measured, verified }.OfType<ProviderCheckResult>())
-                    await new ProviderCheckHistory(contextFactory, clock).RecordAsync(check, correlationId, deadline.Token).WaitAsync(deadline.Token);
+                    await new ProviderCheckHistory(contextFactory, clock).RecordAsync(
+                        check with { CurrentHealth = statusManager?.GetCurrentCheckHealth(check) }, correlationId, deadline.Token).WaitAsync(deadline.Token);
         }
         catch (LocalCapacityException)
         {
@@ -452,7 +454,7 @@ public sealed class ProviderCtsDiagnosticRunner(
 
     private void RecordFailure(ProviderExecutionContext context, string failureCode, double latencyMilliseconds)
     {
-        if (ProviderRuntimeStatus.IsNeutralReason(failureCode)) return;
+        if (statusManager != null || ProviderRuntimeStatus.IsNeutralReason(failureCode)) return;
         var kind = Enum.TryParse<ProviderErrorKind>(failureCode, out var parsed) ? parsed : ProviderErrorKind.TransientFailure;
         health.Observe(context, ProviderCapabilityKind.Streaming,
             new ProviderError(kind, kind == ProviderErrorKind.RateLimited ? TimeSpan.FromMinutes(1) : null),

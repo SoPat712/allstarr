@@ -67,6 +67,34 @@ public sealed class ProviderAccountCheckRunnerTests
     }
 
     [Fact]
+    public async Task History_RestoresRecentMediaPassesBeforeAnIsolatedFailure()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new ProviderCheckServiceTests.Factory(database.Options);
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var history = new ProviderCheckHistory(factory, time);
+        var key = ProviderRuntimeStatusKey.CreateAccountFree("deezer", "streaming");
+        ProviderRuntimeStatus Check(bool passed) => new()
+        {
+            Provider = "deezer", Capability = "streaming", IsSupported = true, IsEnabled = true,
+            Configuration = ProviderConfigurationState.Configured,
+            Health = passed ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
+            TestedAt = time.GetUtcNow(), ReasonCode = passed ? null : "probe_failed"
+        };
+        await history.RecordAsync(new(key, null, Check(true)), "health-test", default);
+        time.Advance(TimeSpan.FromMinutes(1));
+        await history.RecordAsync(new(key, null, Check(false)), "health-test", default);
+        var config = Config("deezer");
+        var manager = Manager(config, new Handler(), time);
+        await Runner(factory, manager, history, config, time).RestoreAsync(default);
+        var context = new ProviderExecutionContext(
+            new(ProviderActorKind.Administrator, Guid.NewGuid(), new("jellyfin", "fixture", "admin")), "deezer", null,
+            new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
+                true, true, true, ["deezer"]), "playback", "health-test", time.GetUtcNow().AddMinutes(1), default);
+        Assert.Equal(ProviderHealthState.Healthy, manager.GetLatestCapabilityHealth(context, ProviderCapabilityKind.Streaming));
+    }
+
+    [Fact]
     public async Task History_RestoresOriginalTimeBeyondRoutingSampleLifetimeAndRejectsChangedCredentials()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
@@ -367,6 +395,11 @@ public sealed class ProviderAccountCheckRunnerTests
         time.Advance(TimeSpan.FromMinutes(1));
         Assert.False(await runner.SweepAsync(default));
         var notices = await new AdminUpdateFeed(factory).ReadAsync(new(Guid.NewGuid(), true),
+            new(DateTimeOffset.MinValue, 0, Guid.Empty, 0), 100, default);
+        Assert.DoesNotContain(notices, item => item.Action == "provider-degraded");
+        time.Advance(TimeSpan.FromMinutes(1));
+        Assert.False(await runner.SweepAsync(default));
+        notices = await new AdminUpdateFeed(factory).ReadAsync(new(Guid.NewGuid(), true),
             new(DateTimeOffset.MinValue, 0, Guid.Empty, 0), 100, default);
         Assert.Single(notices, item => item.Action == "provider-degraded");
 

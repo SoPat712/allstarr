@@ -69,6 +69,7 @@
     sourceIsInUse,
     sourceUpdateNeedsRefresh,
     sourceTimingLabel,
+    sourceStartTimeLabel,
     settingDefault,
     sourceServerFields,
     supportsPlaybackDiagnostic,
@@ -957,7 +958,7 @@
               {#key pageSource.id}{#await import("$lib/components/SourceHealthHistory.svelte") then { default: SourceHealthHistory }}<SourceHealthHistory providerId={pageSource.id} statuses={providerHealth(pageSource.id)} automatic={pageSource.useMode !== "manualOnly" && pageSource.useMode !== "off"} refreshKey={JSON.stringify(providerHealth(pageSource.id))} onRetryWindow={refresh} />{/await}{/key}
             {/if}
             {#await import("$lib/components/SourceUseSettings.svelte") then { default: SourceUseSettings }}<SourceUseSettings providerId={pageSource.id} {administrator} onSaved={refresh} onUndo={(providerId, run) => sourceUndo = { providerId, run }} />{/await}
-            <dl class="source-facts"><dt>Quality</dt><dd>{qualityOf(pageSource.id) || "Not measured yet"}</dd><dt>Score</dt><dd>{scoreOf(pageSource.id) ?? "Not measured yet"}</dd><dt>Accounts</dt><dd>{providerAccounts(pageSource.id).filter(account => account.enabled).length} of {providerAccounts(pageSource.id).length} on</dd><dt>Start time</dt><dd>{measurements.find(item => item.providerId === pageSource.id) ? ctsMeasurementLabel(measurements.find(item => item.providerId === pageSource.id)!) : "Not measured yet"}</dd></dl>
+            <dl class="source-facts"><dt>Quality</dt><dd>{qualityOf(pageSource.id) || "Not measured yet"}</dd><dt>Score</dt><dd>{scoreOf(pageSource.id) ?? "Not measured yet"}</dd><dt>Accounts</dt><dd>{providerAccounts(pageSource.id).filter(account => account.enabled).length} of {providerAccounts(pageSource.id).length} on</dd><dt>Start time</dt><dd>{sourceStartTimeLabel(measurements.find(item => item.providerId === pageSource.id), scores.find(item => item.providerId.toLowerCase() === pageSource.id.toLowerCase()))}</dd></dl>
             <details class="source-more" bind:open={moreOpen}><summary>Settings, accounts and tests</summary>{@render servicePage(pageSource)}</details>
           {:else}<EmptyState title="This source isn't available" description="It may have been removed or turned off." />{#if administrator}{#await import("$lib/components/ExtensionsView.svelte") then { default: ExtensionsView }}<ExtensionsView view="package" extensionId={pageId} onchanged={refreshAndFollow} />{/await}{/if}{/if}
         </div>

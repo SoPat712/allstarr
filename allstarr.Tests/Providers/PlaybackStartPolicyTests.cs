@@ -56,13 +56,20 @@ public sealed class PlaybackStartPolicyTests
     [Theory]
     [InlineData("Balanced")]
     [InlineData("BestQuality")]
-    [InlineData("FastStart")]
     public void LimitedLossySourceStaysBehindABetterDownloadSource(string mode) =>
         Assert.Equal(1, PlaybackStartPolicy.Order(mode,
         [
             new(0, new("audio/mpeg", "mp3", "mp3", 128000, 44100), TimeSpan.FromMilliseconds(1)),
             new(1, new("audio/mp4", "m4a", "aac", 256000, 44100), TimeSpan.FromSeconds(5))
         ])[0]);
+
+    [Fact]
+    public void FastStartUsesMeasuredSpeedForReliableLowBitrateAudio() =>
+        Assert.Equal([0, 1], PlaybackStartPolicy.Order("FastStart",
+        [
+            new(0, new("audio/mpeg", "mp3", "mp3", 128000), TimeSpan.FromMilliseconds(120)),
+            new(1, Cd, TimeSpan.FromSeconds(4))
+        ]));
 
     [Fact]
     public void LimitedLossySourceRemainsTheLastFallback() =>
@@ -115,7 +122,7 @@ public sealed class PlaybackStartPolicyTests
         [new(0, Mp3, null, IsCached: true), new(1, Mp3, TimeSpan.FromMilliseconds(10))])[0]);
 
     [Theory]
-    [InlineData("FastStart", 7, 2)]
+    [InlineData("FastStart", 7, 0)]
     [InlineData("Balanced", 7, 2)]
     [InlineData("Balanced", 3, 1)]
     [InlineData("BestQuality", 7, 1)]
@@ -148,7 +155,7 @@ public sealed class PlaybackStartPolicyTests
     public void MissingMeasurementsPreserveSourcePriorityWithoutInventingLosslessFacts()
     {
         Assert.Equal([0, 1], PlaybackStartPolicy.Order("Balanced", [new(0, null, null), new(1, null, null)]));
-        Assert.Equal([1, 0], PlaybackStartPolicy.Order("FastStart",
+        Assert.Equal([0, 1], PlaybackStartPolicy.Order("FastStart",
             [new(0, Mp3, TimeSpan.FromMilliseconds(10)), new(1, Cd, null)]));
         Assert.Equal(TimeSpan.FromSeconds(2), PlaybackStartPolicy.HedgeDelay("Balanced"));
         Assert.Equal(TimeSpan.FromSeconds(2), PlaybackStartPolicy.HedgeDelay("FastStart"));

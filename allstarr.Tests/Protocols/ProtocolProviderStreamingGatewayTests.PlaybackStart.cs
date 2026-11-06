@@ -144,14 +144,16 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var first = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
         var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
         var context = StartPreferenceContext(mode);
-        var health = new ProviderRuntimeHealth();
+        var healthClock = new PlaybackHealthClock(DateTimeOffset.UtcNow.AddMinutes(-1));
+        var health = new ProviderRuntimeHealth(clock: healthClock);
         ObserveStart(health, context, "deezer", TimeSpan.FromMilliseconds(100), 96000, 24);
         ObserveStart(health, context, "qobuz", TimeSpan.FromSeconds(4), 44100, 16);
+        healthClock.UtcNow = DateTimeOffset.UtcNow;
         var statuses = PlaybackStatuses(health);
-        var at = DateTimeOffset.UtcNow.AddDays(-1);
+        var at = DateTimeOffset.UtcNow.AddSeconds(-10);
         RestorePlaybackCheck(statuses, "qobuz", "streaming", true, at);
         RestorePlaybackCheck(statuses, "deezer", failingCapability, false, at);
-        if (!stillFailing) RestorePlaybackCheck(statuses, "deezer", failingCapability, true, at.AddMinutes(1));
+        if (!stillFailing) RestorePlaybackCheck(statuses, "deezer", failingCapability, true, at.AddSeconds(1));
         var (gateway, _) = FailoverGateway(first, second, outcomes: health, providerStatuses: statuses);
 
         using var response = (await gateway.OpenStreamAsync(context, "deezer", "source-track", ProviderAudioQuality.Any, null))!.Response;
@@ -159,6 +161,55 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Equal(expected, Assert.Single(response.Headers.GetValues("X-Allstarr-Provider")));
         (expected == "deezer" ? second : first).Verify(item => item.GetStreamLeaseAsync(
             It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task PlaybackStartKeepsSourcesHealthyThroughIsolatedProbeFailures(int failures)
+    {
+        var first = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
+        var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        var context = StartPreferenceContext("Balanced");
+        var health = new ProviderRuntimeHealth();
+        ObserveStart(health, context, "deezer", TimeSpan.FromMilliseconds(100), 96000, 24);
+        ObserveStart(health, context, "qobuz", TimeSpan.FromSeconds(4), 44100, 16);
+        var statuses = PlaybackStatuses(health);
+        var at = DateTimeOffset.UtcNow.AddSeconds(-5);
+        RestorePlaybackCheck(statuses, "deezer", "streaming", true, at);
+        for (var index = 0; index < failures; index++)
+            statuses.RestoreCheckResult(ProviderRuntimeStatusKey.CreateAccountFree("deezer", "streaming"), null, new()
+            {
+                Provider = "deezer", Capability = "streaming", IsSupported = true, IsEnabled = true,
+                Configuration = ProviderConfigurationState.Configured, Health = ProviderHealthState.Degraded,
+                TestedAt = at.AddSeconds(index + 1), ReasonCode = "probe_failed"
+            });
+        var (gateway, _) = FailoverGateway(first, second, outcomes: health, providerStatuses: statuses);
+        using var response = (await gateway.OpenStreamAsync(context, "deezer", "source-track", ProviderAudioQuality.Any, null))!.Response;
+        Assert.Equal("deezer", Assert.Single(response.Headers.GetValues("X-Allstarr-Provider")));
+        second.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task PlaybackStartKeepsLowBitrateDownloadsBehindBetterAudioEvenInFastStart()
+    {
+        var first = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
+        var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        second.As<IProviderAudioFormatSource>().Setup(item => item.PreferredFormat(It.IsAny<ProviderAudioQuality>()))
+            .Returns(new ProviderMediaFormat("audio/flac", "flac", "flac", sampleRate: 44100, bitDepth: 16));
+        var context = DownloadStartContext(ProtocolKind.Jellyfin, "FastStart");
+        var health = new ProviderRuntimeHealth();
+        var actor = context.RequireActor();
+        var execution = new ProviderExecutionContext(actor, "deezer", null,
+            new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
+                true, true, true, ["deezer"]), "playback", "health-test", context.Deadline, default);
+        health.ObservePlaybackStart(execution, ProviderAudioQuality.Any, TimeSpan.FromMilliseconds(100),
+            new("audio/mpeg", "mp3", "mp3", 128000));
+        ObserveStart(health, context, "qobuz", TimeSpan.FromSeconds(4), 44100, 16);
+        var (gateway, _) = FailoverGateway(first, second, outcomes: health);
+        using var response = (await gateway.OpenStreamAsync(context, "allstarr", "source-track", ProviderAudioQuality.Any, null))!.Response;
+        Assert.Equal("qobuz", Assert.Single(response.Headers.GetValues("X-Allstarr-Provider")));
+        first.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
     }
 
     [Fact]
@@ -202,9 +253,10 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             IsEnabled = true,
             Configuration = ProviderConfigurationState.Configured,
             Health = ProviderHealthState.Degraded,
-            ReasonCode = "http-403",
-            TestedAt = DateTimeOffset.UtcNow.AddDays(-1)
+            ReasonCode = "probe_failed",
+            TestedAt = DateTimeOffset.UtcNow
         });
+        for (var index = 0; index < 3; index++) health.Record(key, 1, false, 200, "probe_failed");
 
         Assert.Equal(ProviderHealthState.Degraded, statuses.GetLatestCapabilityHealth(Execution(account, 1), ProviderCapabilityKind.Streaming));
         Assert.Equal(ProviderHealthState.Unknown, statuses.GetLatestCapabilityHealth(Execution(account, 2), ProviderCapabilityKind.Streaming));
@@ -398,18 +450,21 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()), health: health);
 
     private static void RestorePlaybackCheck(ProviderStatusManager statuses, string provider, string capability,
-        bool passed, DateTimeOffset at) => statuses.RestoreCheckResult(
-        ProviderRuntimeStatusKey.CreateAccountFree(provider, capability), null, new()
-        {
-            Provider = provider,
-            Capability = capability,
-            IsSupported = true,
-            IsEnabled = true,
-            Configuration = ProviderConfigurationState.Configured,
-            Health = passed ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
-            ReasonCode = passed ? null : "http-403",
-            TestedAt = at
-        });
+        bool passed, DateTimeOffset at)
+    {
+        for (var index = passed ? 2 : 0; index < 3; index++)
+            statuses.RestoreCheckResult(ProviderRuntimeStatusKey.CreateAccountFree(provider, capability), null, new()
+            {
+                Provider = provider,
+                Capability = capability,
+                IsSupported = true,
+                IsEnabled = true,
+                Configuration = ProviderConfigurationState.Configured,
+                Health = passed ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
+                ReasonCode = passed ? null : "probe_failed",
+                TestedAt = at.AddMilliseconds(index - 2)
+            });
+    }
 
     private static ProtocolExecutionContext StartPreferenceContext(string mode, TimeProvider? clock = null,
         ProviderUseMode? nonAutomatic = null, ProtocolKind protocol = ProtocolKind.Jellyfin)
@@ -431,6 +486,11 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     : ImmutableDictionary<string, ProviderUseMode>.Empty
             }
         };
+    }
+
+    private sealed class PlaybackHealthClock(DateTimeOffset now) : allstarr.Core.Operations.IPlatformClock
+    {
+        public DateTimeOffset UtcNow { get; set; } = now;
     }
 
     private static void ObserveStart(ProviderRuntimeHealth health, ProtocolExecutionContext protocol, string provider,

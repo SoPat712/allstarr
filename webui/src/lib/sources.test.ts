@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProviderAccount, ProviderDefinition, ProviderHealth } from "./api";
+import type { ProviderAccount, ProviderDefinition, ProviderHealth, ProviderScore } from "./api";
 import {
   supportedAudiences,
   sharingDescription,
@@ -27,6 +27,7 @@ import {
   groupSourceChecks,
   settingDefault,
   sourceTimingLabel,
+  sourceStartTimeLabel,
   sourceServerFields,
 } from "./sources";
 
@@ -193,6 +194,28 @@ describe("source presentation", () => {
     expect(sourceTimingLabel({ ...provider, categories: ["streaming"] })).toBe("Not measured yet");
     expect(sourceTimingLabel({ ...provider, categories: ["download"] })).toBe("Not measured yet");
     expect(sourceTimingLabel(provider)).toBe("Not applicable");
+  });
+
+  it("uses successful real-play start timing ahead of a failed playback check", () => {
+    const measurement = { providerId: "deezer", health: "degraded", latencyMs: 0, bars: 0,
+      testedAt: "2026-11-01T12:00:00Z", failureCode: "resolve" };
+    const parts = { earned: 84, reliability: 50, reliabilityOutOf: 50, speed: 19, speedOutOf: 20,
+      quality: 15, qualityOutOf: 30, cappedAt: 60, typicalMilliseconds: 750,
+      realPlays: 4, realPlayFailures: 0, timedOnRealPlays: true };
+    const score: ProviderScore = { providerId: "deezer", score: 60, uptimePercent: 95, checks: 20,
+      days: [], capabilities: [{ capability: "streaming", score: 60, uptimePercent: 95, checks: 20,
+        failures: 1, typicalLatencyMilliseconds: 100, lastFailureCode: "resolve", parts }] };
+
+    expect(sourceStartTimeLabel(measurement, score)).toBe("750 ms in real plays");
+    expect(sourceStartTimeLabel(undefined, score)).toBe("750 ms in real plays");
+    expect(sourceStartTimeLabel(measurement, { ...score, capabilities: [{ ...score.capabilities[0],
+      parts: { ...parts, timedOnRealPlays: false } }] })).toBe("Playback didn't start");
+    expect(sourceStartTimeLabel(measurement, { ...score, capabilities: [{ ...score.capabilities[0],
+      parts: { ...parts, typicalMilliseconds: null } }] })).toBe("Playback didn't start");
+    expect(sourceStartTimeLabel(measurement, { ...score, capabilities: [{ ...score.capabilities[0],
+      capability: "download" }] })).toBe("Playback didn't start");
+    expect(sourceStartTimeLabel({ ...measurement, health: "healthy", latencyMs: 42.1 })).toBe("42.1 ms");
+    expect(sourceStartTimeLabel()).toBe("Not measured yet");
   });
 
   it("labels built-in and extension implementations", () => {

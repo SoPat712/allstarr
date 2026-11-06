@@ -329,13 +329,14 @@ public class ProviderStatusManager
 
     public bool ResumeAutomaticUse(ProviderRuntimeStatusKey key, long? revision) => _health.Resume(key, revision);
 
-    public void RestoreCheckResult(ProviderRuntimeStatusKey key, long? revision, ProviderRuntimeStatus status)
+    public void RestoreCheckResult(ProviderRuntimeStatusKey key, long? revision, ProviderRuntimeStatus status, bool recordMediaEvidence = true)
     {
         if (!IsCapabilitySupported(key.Provider, key.Capability)) return;
         if (ProviderRuntimeStatus.IsNeutralReason(status.ReasonCode))
             status = status with { Health = ProviderHealthState.Unknown, CircuitOpen = false };
         _recordedChecks.AddOrUpdate(key, (revision, status), (_, previous) =>
             previous.Revision > revision || previous.Status.TestedAt > status.TestedAt ? previous : (revision, status));
+        if (recordMediaEvidence) _health.RestoreMediaCheck(key, revision, status);
     }
 
     public bool CanProveAccountAuthentication(ProviderRuntimeStatusKey key) =>
@@ -361,13 +362,13 @@ public class ProviderStatusManager
         var result = BuildBaselineStatus(key) with
         {
             Health = ProviderHealthState.Healthy,
-            TestedAt = _clock.UtcNow,
+            TestedAt = _health.GetForDisplay(key, revision)?.ObservedAt ?? _clock.UtcNow,
             LatencyMilliseconds = (long?)measurement.ClickToStreamMilliseconds,
             ReasonCode = null,
             VerificationMeasurementId = measurement.MeasurementId,
             VerificationMethod = "streaming-download"
         };
-        RestoreCheckResult(key, revision, result);
+        RestoreCheckResult(key, revision, result, recordMediaEvidence: false);
         return new(key, revision, result);
     }
 
@@ -383,11 +384,11 @@ public class ProviderStatusManager
         var result = BuildBaselineStatus(key) with
         {
             Health = !measured ? ProviderHealthState.Unknown : measurement.Succeeded ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
-            TestedAt = _clock.UtcNow,
+            TestedAt = _health.GetForDisplay(key, revision)?.ObservedAt ?? _clock.UtcNow,
             LatencyMilliseconds = (long?)measurement.ClickToStreamMilliseconds,
             ReasonCode = measurement.ReasonCode
         };
-        RestoreCheckResult(key, revision, result);
+        RestoreCheckResult(key, revision, result, recordMediaEvidence: false);
         return new(key, revision, result, measurement.SeekRung);
     }
 
@@ -440,24 +441,42 @@ public class ProviderStatusManager
                 observation.Health != ProviderHealthState.Testing && recorded.Status.TestedAt == observation.ObservedAt))
             return baseline with
             {
-                Health = recorded.Status.Health,
+                Health = CurrentMediaHealth(key, observation, recorded.Status.Health),
                 TestedAt = recorded.Status.TestedAt,
                 LatencyMilliseconds = recorded.Status.LatencyMilliseconds,
                 VerificationMeasurementId = recorded.Status.VerificationMeasurementId,
                 VerificationMethod = recorded.Status.VerificationMethod,
                 CircuitOpen = runtime.CircuitOpen,
-                ReasonCode = BaselineReasonTakesPrecedence(baseline) ? baseline.ReasonCode : recorded.Status.ReasonCode
+                ReasonCode = BaselineReasonTakesPrecedence(baseline) ? baseline.ReasonCode :
+                    CurrentMediaHealth(key, observation, recorded.Status.Health) == ProviderHealthState.Healthy &&
+                        key.Capability is ProviderCapabilities.Streaming or ProviderCapabilities.Download ? null : recorded.Status.ReasonCode
             };
         if (observation == null) return baseline with { CircuitOpen = runtime.CircuitOpen };
         return baseline with
         {
-            Health = observation.Health,
+            Health = CurrentMediaHealth(key, observation, observation.Health),
             TestedAt = observation.Health == ProviderHealthState.Testing ? null : observation.ObservedAt,
             LatencyMilliseconds = observation.LatencyMilliseconds,
             CircuitOpen = runtime.CircuitOpen,
             ReasonCode = BaselineReasonTakesPrecedence(baseline) ? baseline.ReasonCode :
-                runtime.CircuitOpen ? "circuit_open" : observation.ReasonCode
+                runtime.CircuitOpen && !observation.ReauthenticationRequired ? "circuit_open" : CurrentMediaHealth(key, observation, observation.Health) == ProviderHealthState.Healthy &&
+                    key.Capability is ProviderCapabilities.Streaming or ProviderCapabilities.Download ? null : observation.ReasonCode
         };
+    }
+
+    internal ProviderHealthState GetCurrentCheckHealth(ProviderCheckResult result) =>
+        CurrentMediaHealth(result.Key, _health.GetForDisplay(result.Key, result.Revision), result.Status.Health);
+
+    private ProviderHealthState CurrentMediaHealth(ProviderRuntimeStatusKey key, ProviderHealthObservation? observation,
+        ProviderHealthState fallback)
+    {
+        if (key.Capability is not (ProviderCapabilities.Streaming or ProviderCapabilities.Download) ||
+            fallback is ProviderHealthState.Testing or ProviderHealthState.Unknown) return fallback;
+        if (observation == null) return fallback == ProviderHealthState.Degraded ? ProviderHealthState.Unknown : fallback;
+        // A failed check remains in history, but only sustained, fresh failures describe a current outage.
+        if (observation.Health == ProviderHealthState.Degraded && _health.Get(key, observation.AccountRevision) == null)
+            return ProviderHealthState.Unknown;
+        return observation.Health;
     }
 
     /// <summary>
@@ -825,10 +844,10 @@ public class ProviderStatusManager
             RestoreCheckResult(key, revision, BuildBaselineStatus(key) with
             {
                 Health = succeeded ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
-                TestedAt = _clock.UtcNow,
+                TestedAt = _health.GetForDisplay(key, revision)?.ObservedAt ?? _clock.UtcNow,
                 LatencyMilliseconds = elapsedMilliseconds,
                 ReasonCode = reasonCode
-            });
+            }, recordMediaEvidence: false);
     }
 
     private static string? NormalizeTryReason(string? reason) =>
@@ -942,9 +961,9 @@ public class ProviderStatusManager
             ("apple-musickit", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await TestAppleMusicAsync(capability, accountSecrets, cancellationToken),
             ("apple-musickit", ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) => await AsOutcome(TestAppleDownloadAsync(capability, cancellationToken)),
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await TestDeezerMetadataAsync(cancellationToken),
-            ("deezer", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await AsOutcome(TestDeezerAccountAsync(
+            ("deezer", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await TestDeezerAccountAsync(
                 SecretValue(accountSecrets, "arl") ?? _deezerSettings.Arl,
-                cancellationToken)),
+                cancellationToken),
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await TestQobuzMetadataAsync(
                 SecretValue(accountSecrets, "userauthtoken", "token"), cancellationToken),
             ("qobuz", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await AsOutcome(TestQobuzAccountAsync(
@@ -1394,11 +1413,27 @@ public class ProviderStatusManager
         }
     }
 
-    private async Task<bool> TestDeezerAccountAsync(
+    private async Task<ProbeOutcome> TestDeezerAccountAsync(string? arl, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                var result = await TestDeezerAccountOnceAsync(arl, cancellationToken);
+                if (result.Success || result.ReasonCode == "unauthorized" || attempt > 0) return result;
+            }
+            catch (HttpRequestException) when (attempt == 0 && !cancellationToken.IsCancellationRequested) { }
+            catch (OperationCanceledException) when (attempt == 0 && !cancellationToken.IsCancellationRequested) { }
+            catch (JsonException) when (attempt == 0 && !cancellationToken.IsCancellationRequested) { }
+            await Task.Delay(TimeSpan.FromSeconds(1), _services?.GetService<TimeProvider>() ?? TimeProvider.System, cancellationToken);
+        }
+    }
+
+    private async Task<ProbeOutcome> TestDeezerAccountOnceAsync(
         string? arl,
         CancellationToken cancellationToken)
     {
-        using var client = _httpClientFactory.CreateClient();
+        using var client = _httpClientFactory.CreateClient("DeezerApi");
         using var request = new HttpRequestMessage(HttpMethod.Post,
             "https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&input=3&api_version=1.0&api_token=null");
         request.Headers.Add("Cookie", $"arl={arl}");
@@ -1407,7 +1442,7 @@ public class ProviderStatusManager
         using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            return false;
+            return new(false, response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden ? "unauthorized" : "probe_failed");
         }
 
         var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -1416,15 +1451,15 @@ public class ProviderStatusManager
             results.TryGetProperty("USER", out var user) &&
             user.TryGetProperty("USER_ID", out var userId))
         {
-            return userId.ValueKind switch
+            return new(userId.ValueKind switch
             {
                 JsonValueKind.Number => userId.TryGetInt64(out var numericId) && numericId > 0,
                 JsonValueKind.String => long.TryParse(userId.GetString(), out var stringId) && stringId > 0,
                 _ => false
-            };
+            });
         }
 
-        return false;
+        return new(false);
     }
 
     private async Task<ProbeOutcome> TestQobuzMetadataAsync(string? userAuthToken, CancellationToken cancellationToken)

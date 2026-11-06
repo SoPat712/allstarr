@@ -8,6 +8,9 @@ namespace allstarr.Services.Common;
 public sealed record ProviderCheckResult(ProviderRuntimeStatusKey Key, long? Revision,
     ProviderRuntimeStatus Status, string? SeekRung = null)
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ProviderHealthState? CurrentHealth { get; init; }
+
     [JsonPropertyName("providerId")]
     public string ProviderId => Key.Provider;
     [JsonPropertyName("message")]
@@ -85,6 +88,28 @@ public sealed class ProviderCheckHistory(IDbContextFactory<AllstarrDbContext> fa
         return results;
     }
 
+    public async Task<IReadOnlyList<ProviderCheckResult>> ReadMediaEvidenceAsync(CancellationToken token)
+    {
+        await using var db = await factory.CreateDbContextAsync(token);
+        var cutoff = time.GetUtcNow().AddDays(-1);
+        var rows = await db.AuditEvents.AsNoTracking().Where(row => row.Category == Category && row.CreatedAt >= cutoff)
+            .OrderByDescending(row => row.CreatedAt).ThenByDescending(row => row.Id)
+            .Take(4096).Select(row => row.DetailsJson).ToListAsync(token);
+        var results = new List<ProviderCheckResult>();
+        foreach (var json in rows)
+        {
+            if (json is null || json.Length > 16384) continue;
+            try
+            {
+                if (JsonSerializer.Deserialize<ProviderCheckResult>(json) is { Status.TestedAt: not null } result &&
+                    result.Key.Capability is ProviderCapabilities.Streaming or ProviderCapabilities.Download &&
+                    !allstarr.Core.Settings.RetiredProviderSettings.IsRetired(result.Key.Provider)) results.Add(result);
+            }
+            catch (JsonException) { }
+        }
+        return results.OrderBy(result => result.Status.TestedAt).ToArray();
+    }
+
     public async Task<IReadOnlyList<ProviderCheckHistoryItem>> ReadRecentAsync(
         IReadOnlyCollection<ProviderCheckHistoryTarget> targets,
         int limit,
@@ -157,8 +182,10 @@ public sealed class ProviderCheckHistory(IDbContextFactory<AllstarrDbContext> fa
             DetailsJson = JsonSerializer.Serialize(result),
             CreatedAt = now
         });
-        if ((last?.Status.Health == ProviderHealthState.Healthy || previousHealth == ProviderHealthState.Healthy) &&
-            result.Status.Health == ProviderHealthState.Degraded)
+        var wasHealthy = last?.CurrentHealth is { } previousCurrent
+            ? previousCurrent == ProviderHealthState.Healthy
+            : last?.Status.Health == ProviderHealthState.Healthy || previousHealth == ProviderHealthState.Healthy;
+        if (wasHealthy && (result.CurrentHealth ?? result.Status.Health) == ProviderHealthState.Degraded)
             db.AuditEvents.Add(new()
             {
                 Id = Guid.CreateVersion7(),

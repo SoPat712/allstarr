@@ -3,6 +3,7 @@ import type {
   ProviderAccount,
   ProviderDefinition,
   ProviderHealth,
+  ProviderScore,
   ProviderSetting,
   ProviderSummary,
 } from "./api";
@@ -275,6 +276,13 @@ export const sourceDescription = (text: string) =>
 export const ctsMeasurementLabel = (measurement: CtsMeasurement) =>
   measurement.health === "healthy" ? durationLabel(measurement.latencyMs) :
     measurement.health === "degraded" ? checkGuide(measurement.failureCode)?.label ?? "Failed" : "Not measured yet";
+
+export function sourceStartTimeLabel(measurement?: CtsMeasurement, score?: ProviderScore) {
+  const parts = score?.capabilities.find(item => item.capability === "streaming")?.parts;
+  if (parts?.timedOnRealPlays && parts.typicalMilliseconds != null)
+    return `${durationLabel(parts.typicalMilliseconds)} in real plays`;
+  return measurement ? ctsMeasurementLabel(measurement) : "Not measured yet";
+}
 
 // The catalog an extension came from means little to most people; that it's an extension is what matters.
 export const sourceOriginLabel = (provider: ProviderDefinition) =>

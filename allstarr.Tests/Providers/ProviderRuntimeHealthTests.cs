@@ -76,6 +76,25 @@ public sealed class ProviderRuntimeHealthTests
     }
 
     [Fact]
+    public void SuccessfulPlaybackClearsStreamingProbeFailuresWithoutChangingDownloadHealth()
+    {
+        var store = Store();
+        var context = Context();
+        for (var index = 0; index < 3; index++)
+        {
+            store.Record(Key(), context.Account!.Revision, false, 200, "probe_failed");
+            store.Record(Key(capability: "download"), context.Account.Revision, false, 200, "probe_failed");
+        }
+        _clock.UtcNow += TimeSpan.FromSeconds(1);
+        store.ObservePlayback(context, new("deezer", ProviderResourceKind.Track, "played"), ProviderAudioQuality.Any,
+            null, TimeSpan.FromMilliseconds(120), new("audio/mpeg", "mp3", "mp3", 128000));
+        Assert.Equal(HealthState.Healthy, store.Get(Key(), context.Account!.Revision)!.Health);
+        Assert.Equal(0, store.Get(Key(), context.Account.Revision)!.ConsecutiveFailures);
+        Assert.Null(store.Get(Key(), context.Account.Revision)!.RetryAfter);
+        Assert.Equal(HealthState.Degraded, store.Get(Key(capability: "download"), context.Account.Revision)!.Health);
+    }
+
+    [Fact]
     public void LocalCapacityDoesNotCreateHealthFailuresOrPlaybackCooldowns()
     {
         var store = Store();
@@ -276,13 +295,16 @@ public sealed class ProviderRuntimeHealthTests
     }
 
     [Fact]
-    public void ExplicitFailureDegradesImmediately()
+    public void ExplicitMediaFailureUsesTheSameThresholdAsPassiveFailures()
     {
         var store = Store();
         store.Record(Key(), 4, true, 1, null);
-        store.Record(Key(), 4, false, 1, "timeout");
-        Assert.Equal(HealthState.Degraded, store.Get(Key(), 4)!.Health);
-        Assert.Equal(1, store.Get(Key(), 4)!.ConsecutiveFailures);
+        for (var failure = 1; failure <= 3; failure++)
+        {
+            store.Record(Key(), 4, false, 1, "timeout");
+            Assert.Equal(failure < 3 ? HealthState.Healthy : HealthState.Degraded, store.Get(Key(), 4)!.Health);
+            Assert.Equal(failure, store.Get(Key(), 4)!.ConsecutiveFailures);
+        }
     }
 
     [Theory]

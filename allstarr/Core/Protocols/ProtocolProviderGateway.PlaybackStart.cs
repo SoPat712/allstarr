@@ -61,6 +61,7 @@ public sealed partial class ProtocolProviderGateway
             .DistinctBy(candidate => (candidate.Provider.Id, candidate.Context.Account?.AccountId,
                 (candidate.TrackId ?? requestedTrack).Value)).Take(32).ToArray();
         var mode = policy.Preferences.PlaybackStart ?? "Balanced";
+        var qualityMode = mode == "FastStart" && (protocol.IsPreparation || protocol.IsOriginalDownload) ? "Balanced" : mode;
         // Each source's checks read stored facts. One after another they cost most of a second before the first request,
         // so they run side by side, a few at a time.
         using var checks = new SemaphoreSlim(8);
@@ -74,8 +75,8 @@ public sealed partial class ProtocolProviderGateway
         Task<PlaybackStartCandidate?> StartFactsAsync(ProviderRouteCandidate<IProviderStreamingCapability> candidate, int index) =>
             ReadPlaybackStartCandidateAsync(protocol, candidate, requestedTrack, quality, index);
         var failing = eligible.Select(candidate => HasFailingPlaybackHealth(protocol, candidate)).ToArray();
-        var order = PlaybackStartPolicy.Order(mode, facts.Where(fact => fact.IsCached || !failing[fact.Index]).ToArray())
-            .Concat(PlaybackStartPolicy.Order(mode, facts.Where(fact => !fact.IsCached && failing[fact.Index]).ToArray())).ToArray();
+        var order = PlaybackStartPolicy.Order(qualityMode, facts.Where(fact => fact.IsCached || !failing[fact.Index]).ToArray())
+            .Concat(PlaybackStartPolicy.Order(qualityMode, facts.Where(fact => !fact.IsCached && failing[fact.Index]).ToArray())).ToArray();
         var startReason = mode switch
         {
             "FastStart" => "playback-start-fast",
@@ -86,7 +87,7 @@ public sealed partial class ProtocolProviderGateway
         var orderedMedia = order.Select(index =>
         {
             var fact = facts.First(fact => fact.Index == index);
-            return mode != "FastStart" && PlaybackStartPolicy.CompareQuality(fact.AvailableMedia, fact.Media) > 0 ? fact.AvailableMedia : fact.Media;
+            return qualityMode != "FastStart" && PlaybackStartPolicy.CompareQuality(fact.AvailableMedia, fact.Media) > 0 ? fact.AvailableMedia : fact.Media;
         }).ToList();
         var localCapacity = 0;
         ProviderError? lastFailure = null;
@@ -187,7 +188,7 @@ public sealed partial class ProtocolProviderGateway
                         requestedRange?.Ranges.Single().From, false, requestedRange != null, cancellation);
                     if (cached != null)
                     {
-                        if (mode != "FastStart" && PlaybackStartPolicy.CompareQuality(cached.Lease.Media, orderedMedia[index]) < 0)
+                        if (qualityMode != "FastStart" && PlaybackStartPolicy.CompareQuality(cached.Lease.Media, orderedMedia[index]) < 0)
                         {
                             cached.Response.Dispose();
                         }

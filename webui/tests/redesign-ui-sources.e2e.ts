@@ -67,6 +67,40 @@ async function capture(page: Page, name: string) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
 
+test("Sources shows working low-quality playback with real-play start timing", async ({ page }) => {
+  await fixture(page);
+  const streaming = { id: "streaming", health: "healthy", ready: true, canTest: true, canAttempt: true,
+    testedAt: "2026-11-03T12:00:00Z" };
+  const deezer = { id: "deezer", name: "Deezer", implementationOrigin: "built-in", status: "healthy",
+    categories: ["streaming"], useMode: "automatic", runtimeCapabilities: [streaming] };
+  await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { activeBackend: "Jellyfin", providers: [deezer] } }));
+  await page.route("**/api/admin/providers/status", route => route.fulfill({ json: [{ ...streaming,
+    provider: "deezer", capability: "streaming", supported: true, enabled: true }] }));
+  await page.route("**/scores", route => route.fulfill({ json: { providers: [{
+    providerId: "deezer", score: 60, uptimePercent: 95, checks: 20, days: [],
+    quality: { typical: "MP3 128 kbps", best: "MP3 128 kbps", lossless: false, samples: 4 },
+    capabilities: [{ capability: "streaming", score: 60, uptimePercent: 95, checks: 20, failures: 1,
+      typicalLatencyMilliseconds: 100, lastFailureCode: "resolve",
+      parts: { earned: 84, reliability: 50, reliabilityOutOf: 50, speed: 19, speedOutOf: 20,
+        quality: 15, qualityOutOf: 30, cappedAt: 60, typicalMilliseconds: 750,
+        realPlays: 4, realPlayFailures: 0, timedOnRealPlays: true } }],
+  }] } }));
+  await page.route("**/deep-stream/latest", route => route.fulfill({ json: { measurements: [{
+    providerId: "deezer", health: "degraded", latencyMs: 0, bars: 0,
+    testedAt: "2026-11-01T12:00:00Z", failureCode: null,
+  }] } }));
+  await page.goto("#/sources/services/deezer");
+  const row = page.locator(".source-row").filter({ hasText: "Deezer" });
+  await expect(row).toContainText("Working");
+  await expect(row).toContainText("MP3 128 kbps");
+  const panel = page.getByRole("dialog", { name: "Deezer", exact: true });
+  await expect(panel.locator(".source-summary")).toContainText("Working");
+  await expect(panel.locator(".source-facts dt").filter({ hasText: /^Quality$/ }).locator("+ dd")).toHaveText("MP3 128 kbps");
+  await expect(panel.locator(".source-facts dt").filter({ hasText: /^Score$/ }).locator("+ dd")).toHaveText("60");
+  await expect(panel.locator(".source-facts dt").filter({ hasText: /^Start time$/ }).locator("+ dd")).toHaveText("750 ms in real plays");
+  expect(await page.pageErrors()).toEqual([]);
+});
+
 for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"]] as const) {
   test(`Sources redesign services and source panel at ${width} ${theme}`, async ({ page }) => {
     await page.clock.install();

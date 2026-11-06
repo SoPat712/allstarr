@@ -28,9 +28,9 @@ public static class PlaybackStartPolicy
         var quality = candidates.OrderByDescending(item => item.Media, Comparer<ProviderMediaFormat?>.Create(CompareQuality)).ToArray();
         var cached = quality.FirstOrDefault(item => item.IsCached);
         var best = quality[0];
-        var starts = candidates.Where(item => (!item.IsCached && (!IsLimitedLossy(item.Media) || IsLimitedLossy(best.Media))) ||
+        var starts = mode == "FastStart" ? candidates.ToArray() : candidates.Where(item => (!item.IsCached && (!IsLimitedLossy(item.Media) || IsLimitedLossy(best.Media))) ||
             CompareQuality(item.Media, best.Media) >= 0).ToArray();
-        var fastest = starts.Where(item => IsLossless(item.Media))
+        var fastest = (mode == "FastStart" ? [] : starts.Where(item => IsLossless(item.Media)))
             .OrderBy(item => item.IsCached ? TimeSpan.Zero : item.MedianStart ?? TimeSpan.MaxValue)
             .FirstOrDefault() ?? starts.OrderBy(item => item.IsCached ? TimeSpan.Zero : item.MedianStart ?? TimeSpan.MaxValue)
             .ThenByDescending(item => item.Media, Comparer<ProviderMediaFormat?>.Create(CompareQuality)).First();

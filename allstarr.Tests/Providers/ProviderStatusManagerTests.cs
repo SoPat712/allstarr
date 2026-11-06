@@ -1204,7 +1204,9 @@ public sealed partial class ProviderStatusManagerTests
         Assert.Equal(ProviderHealthState.Degraded, tested.Health);
         Assert.Equal(ProviderConfigurationState.Configured, current.Configuration);
         Assert.Equal(ProviderHealthState.Degraded, current.Health);
-        Assert.Equal("probe_failed", current.ReasonCode);
+        Assert.Equal("unauthorized", tested.ReasonCode);
+        Assert.Equal("unauthorized", current.ReasonCode);
+        Assert.True(current.CircuitOpen);
     }
 
     [Fact]
