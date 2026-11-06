@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Net;
 using System.Text;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Core.Providers.AppleDownload;
 using allstarr.Core.Providers.AppleMusicKit;
@@ -16,6 +17,97 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
+    public static IEnumerable<object[]> ProgressiveAppleSamples => AppleProgressiveFixtures.Samples;
+
+    [MediaToolsTheory]
+    [MemberData(nameof(ProgressiveAppleSamples))]
+    public async Task OpenStream_AppleProgressivePipelineOutputIsReadyWithTheRealVerifier(string file)
+    {
+        var sample = AppleProgressiveFixtures.Sample(file);
+        var bytes = AppleProgressiveFixtures.Bytes(file);
+        using var source = new AppleProgressiveFixtures.PendingTail(bytes);
+        using var http = new HttpClient(new AppleProviderTestFactory.Handler(request =>
+        {
+            var response = AppleProgressiveFixtures.Response(source, sample.Mime);
+            response.RequestMessage = request;
+            return response;
+        }));
+        var adapter = new AppleDownloadStreamingCapabilityAdapter(http,
+            new AppleDownloadSettings { BaseUrl = "https://gateway.test/" },
+            new AudioFileDiscovery(), AppleProviderTestFactory.Client());
+        var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        var (gateway, _) = AppleAudioGateway(adapter, second.Object, verifier: new ProviderAudioVerifier());
+        var context = ClientContext() with
+        {
+            AudioDelivery = new()
+            {
+                Profiles = [new([sample.Media.Container], [sample.Codec], ["http"])],
+                MaxBitDepth = sample.BitDepth,
+                MaxSampleRate = sample.SampleRate,
+                EnableTranscoding = false
+            }
+        };
+        try
+        {
+            var opened = await gateway.OpenStreamAsync(context, AppleMusicClient.ProviderId,
+                "101", ProviderAudioQuality.Any, null);
+
+            Assert.NotNull(opened);
+            using var response = opened.Response;
+            Assert.Equal(AppleMusicClient.ProviderId, opened.ServingProviderId);
+            Assert.Equal(sample.Mime, response.Content.Headers.ContentType!.MediaType);
+            Assert.Equal(sample.Codec, opened.Lease.Media.Codec);
+            Assert.Equal(sample.SampleRate, opened.Lease.Media.SampleRate);
+            Assert.Equal(sample.BitDepth, opened.Lease.Media.BitDepth);
+            Assert.Equal(sample.Channels, opened.Lease.Media.Channels);
+            Assert.Equal(sample.DurationSeconds, opened.FileFacts.Measured!.DurationSeconds);
+            Assert.True(context.AudioDelivery.Evaluate(opened.Lease.Media).SupportsDirectPlay);
+            Assert.Null(opened.FileFacts.Size);
+            Assert.Null(response.Content.Headers.ContentLength);
+            Assert.False(source.Release.Task.IsCompleted);
+            source.Release.TrySetResult();
+            Assert.Equal(bytes, await response.Content.ReadAsByteArrayAsync());
+            second.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
+        }
+        finally { source.Release.TrySetResult(); }
+    }
+
+    [MediaToolsTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OpenStream_AppleProgressiveInvalidAudioIsRejectedBeforeUsingAValidFallback(bool corrupt)
+    {
+        var bytes = AppleProgressiveFixtures.Bytes("alac-16-44100.flac");
+        if (corrupt) bytes.AsSpan(AppleProgressiveFixtures.FlacAudioOffset(bytes)).Fill(0);
+        else bytes = bytes[..AppleProgressiveFixtures.PrefixLength(bytes)];
+        using var http = new HttpClient(new AppleProviderTestFactory.Handler(request =>
+        {
+            var source = new AppleProgressiveFixtures.PendingTail(bytes);
+            source.Release.TrySetResult();
+            var response = AppleProgressiveFixtures.Response(source, "audio/flac");
+            response.RequestMessage = request;
+            return response;
+        }));
+        var adapter = new AppleDownloadStreamingCapabilityAdapter(http,
+            new AppleDownloadSettings { BaseUrl = "https://gateway.test/" },
+            new AudioFileDiscovery(), AppleProviderTestFactory.Client());
+        var fallbackBytes = PlaybackAudioFixtures.Wave();
+        var second = PipelineSource("qobuz", (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        { Content = new ByteArrayContent(fallbackBytes) }));
+        var (gateway, router) = AppleAudioGateway(adapter, second.Object, verifier: new ProviderAudioVerifier());
+
+        var opened = await gateway.OpenStreamAsync(ClientContext(), AppleMusicClient.ProviderId,
+            "101", ProviderAudioQuality.Any, null);
+
+        Assert.NotNull(opened);
+        using var delivered = opened.Response;
+        Assert.Equal("qobuz", opened.ServingProviderId);
+        Assert.Equal(fallbackBytes, await delivered.Content.ReadAsByteArrayAsync());
+        router.Verify(item => item.EvaluateFallback(It.IsAny<ProviderRoutePlan<IProviderStreamingCapability>>(), 0,
+            It.Is<ProviderError>(error => error.Kind == ProviderErrorKind.IncompatibleMedia)), Times.Once);
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
@@ -233,7 +325,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     }
 
     private static (ProtocolProviderGateway Gateway, Mock<IProviderRouter> Router) AppleAudioGateway(
-        AppleDownloadStreamingCapabilityAdapter adapter, IProviderStreamingCapability fallback, TimeProvider? clock = null)
+        AppleDownloadStreamingCapabilityAdapter adapter, IProviderStreamingCapability fallback, TimeProvider? clock = null,
+        IProviderAudioVerifier? verifier = null)
     {
         var registry = Registry(adapter, fallback);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
@@ -258,13 +351,14 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 It.IsAny<int>(), It.IsAny<ProviderError>()))
             .Returns((ProviderRoutePlan<IProviderStreamingCapability> plan, int index, ProviderError error) =>
                 new ProviderFallbackDecision<IProviderStreamingCapability>(
-                    error.Kind == ProviderErrorKind.Forbidden ? ProviderFallbackDisposition.StopFailure : ProviderFallbackDisposition.Advance,
-                    error.Code, plan.Candidates[index + 1]));
+                    error.Kind == ProviderErrorKind.Forbidden || index + 1 == plan.Candidates.Count
+                        ? ProviderFallbackDisposition.StopFailure : ProviderFallbackDisposition.Advance,
+                    error.Code, index + 1 < plan.Candidates.Count ? plan.Candidates[index + 1] : null));
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["Providers:StreamingOrder"] = $"{adapter.ProviderId},{fallback.ProviderId}"
         }).Build();
-        return (new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration, timeProvider: clock, audioVerifier: FixtureAudioVerifier.Instance), router);
+        return (new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration, timeProvider: clock, audioVerifier: verifier ?? FixtureAudioVerifier.Instance), router);
     }
 
     private sealed class AudioFileDiscovery(bool audioFile = true) : IAppleDownloadEndpointDiscovery

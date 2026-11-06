@@ -18,7 +18,7 @@ public interface IProviderAudioVerifier
 public sealed class ProviderAudioVerifier(MediaConversionGate? conversions = null) : IProviderAudioVerifier
 {
     private const int PrefixBytes = 256 * 1024;
-    private const int MaximumMoviePrefixBytes = 4 * 1024 * 1024;
+    private const int MaximumPrefixBytes = 4 * 1024 * 1024;
     private static readonly MediaConversionGate DefaultGate = new();
 
     public async Task<ProviderOutcome<TrackMediaFacts>> VerifyPrefixAsync(HttpResponseMessage response,
@@ -55,7 +55,7 @@ public sealed class ProviderAudioVerifier(MediaConversionGate? conversions = nul
             count += read;
             if (count == bytes.Length)
             {
-                var required = MoviePrefixBytes(bytes.AsSpan(0, count), total);
+                var required = VerificationPrefixBytes(bytes.AsSpan(0, count), total);
                 var available = (int)Math.Min(required, content.Headers.ContentLength ?? required);
                 if (available > bytes.Length) Array.Resize(ref bytes, available);
             }
@@ -81,7 +81,7 @@ public sealed class ProviderAudioVerifier(MediaConversionGate? conversions = nul
             var path = Path.Combine(directory, "prefix.audio");
             await File.WriteAllBytesAsync(path, bytes.AsMemory(0, count).ToArray(), token);
             var header = AudioMediaFacts.ReadPrefix(bytes.AsSpan(0, count), total);
-            if (header?.Media.Container == "mp4" && total > count && !HasMovieHeader(bytes.AsSpan(0, count)) &&
+            if (header?.Media.Container == "mp4" && total > count && !HasMovieBox(bytes.AsSpan(0, count), "moov"u8) &&
                 !await AddMovieTailAsync(path, response, total.Value, openRange, token))
                 return await VerifyBufferedFileAsync(response, expected, recordingSeconds, openRange, token);
             using var capacity = await (conversions ?? DefaultGate).EnterAsync(token);
@@ -90,10 +90,13 @@ public sealed class ProviderAudioVerifier(MediaConversionGate? conversions = nul
             var measured = header is { Media.Codec: not "unknown" } ? header : await AudioMediaFacts.ReadFileAsync(path, probing.Token);
             if (measured == null || !Compatible(expected, measured.Media)) return Invalid();
             var complete = ended || total is { } size && count == size;
-            var duration = header?.DurationSeconds ?? (complete || header?.Media.Container == "mp4" ? measured.DurationSeconds : null);
-            if (!Close(duration, recordingSeconds)) return Invalid();
+            var duration = header?.DurationSeconds ?? (complete || header?.Media.Container == "mp4" &&
+                !HasMovieBox(bytes.AsSpan(0, count), "mvex"u8) ? measured.DurationSeconds : null);
+            var guidance = ResponseDuration(response);
+            if (!Close(duration, recordingSeconds) || !Close(guidance, recordingSeconds) || !Close(guidance, duration)) return Invalid();
             var decoded = await DecodeAsync(path, complete, measured.Media, token);
-            if (decoded <= 0 || complete && !Close(decoded, recordingSeconds ?? duration)) return Invalid();
+            if (decoded <= 0 || complete && !Close(decoded, recordingSeconds ?? guidance ?? duration)) return Invalid();
+            duration ??= guidance ?? recordingSeconds ?? (complete ? decoded : null);
             var media = measured.Media;
             if (duration is > 0 && total is > 0 && media.Codec is "flac" or "alac")
                 media = new(media.MimeType, media.Container, media.Codec,
@@ -106,6 +109,32 @@ public sealed class ProviderAudioVerifier(MediaConversionGate? conversions = nul
         catch (Exception error) when (error is IOException or InvalidDataException)
         { return Invalid(); }
         finally { Directory.Delete(directory, true); }
+    }
+
+    private static int VerificationPrefixBytes(ReadOnlySpan<byte> bytes, long? total)
+    {
+        if (bytes.Length < 4 || !bytes[..4].SequenceEqual("fLaC"u8)) return MoviePrefixBytes(bytes, total);
+        var offset = 4;
+        while (offset <= bytes.Length - 4)
+        {
+            var last = (bytes[offset] & 128) != 0;
+            var end = offset + 4 + (bytes[offset + 1] << 16 | bytes[offset + 2] << 8 | bytes[offset + 3]);
+            // Pictures and comments precede the frames needed for a decoding check.
+            if (last || end > bytes.Length)
+                return (int)Math.Min(total ?? MaximumPrefixBytes,
+                    Math.Min(MaximumPrefixBytes, Math.Max(PrefixBytes, (long)end + PrefixBytes / 2)));
+            offset = end;
+        }
+        return (int)Math.Min(total ?? MaximumPrefixBytes,
+            Math.Min(MaximumPrefixBytes, Math.Max(PrefixBytes, (long)offset + 4)));
+    }
+
+    private static double? ResponseDuration(HttpResponseMessage response)
+    {
+        if (!response.Headers.TryGetValues("X-Allstarr-Duration-Seconds", out var values)) return null;
+        var durations = values.ToArray();
+        return durations.Length == 1 && double.TryParse(durations[0], NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) &&
+            double.IsFinite(seconds) && seconds is > 0 and < 86400 ? seconds : null;
     }
 
     private static int MoviePrefixBytes(ReadOnlySpan<byte> bytes, long? total)
@@ -124,23 +153,32 @@ public sealed class ProviderAudioVerifier(MediaConversionGate? conversions = nul
             }
             if (length < (ulong)header || length > long.MaxValue || total is { } size && (size < offset || length > (ulong)(size - offset))) return bytes.Length;
             if (bytes.Slice(offset + 4, 4).SequenceEqual("moov"u8))
-                return (int)Math.Min(total ?? MaximumMoviePrefixBytes,
-                    Math.Min(MaximumMoviePrefixBytes, Math.Max(PrefixBytes,
-                        (long)Math.Min(length, (ulong)MaximumMoviePrefixBytes) + offset + PrefixBytes / 2)));
+                return (int)Math.Min(total ?? MaximumPrefixBytes,
+                    Math.Min(MaximumPrefixBytes, Math.Max(PrefixBytes,
+                        (long)Math.Min(length, (ulong)MaximumPrefixBytes) + offset + PrefixBytes / 2)));
             if (length > (ulong)(bytes.Length - offset)) return bytes.Length;
             offset += (int)length;
         }
         return bytes.Length;
     }
 
-    private static bool HasMovieHeader(ReadOnlySpan<byte> bytes)
+    private static bool HasMovieBox(ReadOnlySpan<byte> bytes, ReadOnlySpan<byte> kind, bool insideMovie = false)
     {
         var offset = 0;
         while (offset <= bytes.Length - 8)
         {
-            var length = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(bytes[offset..]);
-            if (bytes.Slice(offset + 4, 4).SequenceEqual("moov"u8)) return true;
-            if (length < 8 || length > bytes.Length - offset) return false;
+            ulong length = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(bytes[offset..]);
+            var header = 8;
+            if (length == 1)
+            {
+                if (offset > bytes.Length - 16) return false;
+                length = System.Buffers.Binary.BinaryPrimitives.ReadUInt64BigEndian(bytes[(offset + 8)..]);
+                header = 16;
+            }
+            if (length < (ulong)header || length > (ulong)(bytes.Length - offset)) return false;
+            if (bytes.Slice(offset + 4, 4).SequenceEqual(kind)) return true;
+            if (!insideMovie && bytes.Slice(offset + 4, 4).SequenceEqual("moov"u8) &&
+                HasMovieBox(bytes.Slice(offset + header, (int)length - header), kind, insideMovie: true)) return true;
             offset += (int)length;
         }
         return false;

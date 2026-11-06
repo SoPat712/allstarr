@@ -1,0 +1,110 @@
+[
+  {
+    "file": "alac-16-44100.flac",
+    "mime": "audio/flac",
+    "codec": "flac",
+    "bit_depth": 16,
+    "sample_rate": 44100,
+    "channels": 2,
+    "duration_seconds": 3
+  },
+  {
+    "file": "alac-16-44100-ceiling.flac",
+    "mime": "audio/flac",
+    "codec": "flac",
+    "bit_depth": 16,
+    "sample_rate": 44100,
+    "channels": 2,
+    "duration_seconds": 3
+  },
+  {
+    "file": "alac-24-48000.flac",
+    "mime": "audio/flac",
+    "codec": "flac",
+    "bit_depth": 24,
+    "sample_rate": 48000,
+    "channels": 2,
+    "duration_seconds": 3
+  },
+  {
+    "file": "alac-24-48000-ceiling.flac",
+    "mime": "audio/flac",
+    "codec": "flac",
+    "bit_depth": 16,
+    "sample_rate": 44100,
+    "channels": 2,
+    "duration_seconds": 3
+  },
+  {
+    "file": "alac-16-44100-original.m4a",
+    "mime": "audio/mp4",
+    "codec": "alac",
+    "bit_depth": 16,
+    "sample_rate": 44100,
+    "channels": 2,
+    "duration_seconds": 3
+  },
+  {
+    "file": "alac-24-48000-original.m4a",
+    "mime": "audio/mp4",
+    "codec": "alac",
+    "bit_depth": 24,
+    "sample_rate": 48000,
+    "channels": 2,
+    "duration_seconds": 3
+  },
+  {
+    "file": "aac-44100.m4a",
+    "mime": "audio/mp4",
+    "codec": "aac",
+    "bit_depth": null,
+    "sample_rate": 44100,
+    "channels": 2,
+    "duration_seconds": 3
+  },
+  {
+    "file": "aac-44100-ceiling.m4a",
+    "mime": "audio/mp4",
+    "codec": "aac",
+    "bit_depth": null,
+    "sample_rate": 44100,
+    "channels": 2,
+    "duration_seconds": 3
+  },
+  {
+    "file": "aac-48000.m4a",
+    "mime": "audio/mp4",
+    "codec": "aac",
+    "bit_depth": null,
+    "sample_rate": 48000,
+    "channels": 2,
+    "duration_seconds": 3
+  },
+  {
+    "file": "aac-48000-ceiling.m4a",
+    "mime": "audio/mp4",
+    "codec": "aac",
+    "bit_depth": null,
+    "sample_rate": 48000,
+    "channels": 2,
+    "duration_seconds": 3
+  },
+  {
+    "file": "alac-artwork.flac",
+    "mime": "audio/flac",
+    "codec": "flac",
+    "bit_depth": 16,
+    "sample_rate": 44100,
+    "channels": 2,
+    "duration_seconds": 3
+  },
+  {
+    "file": "aac-artwork.m4a",
+    "mime": "audio/mp4",
+    "codec": "aac",
+    "bit_depth": null,
+    "sample_rate": 48000,
+    "channels": 2,
+    "duration_seconds": 3
+  }
+]

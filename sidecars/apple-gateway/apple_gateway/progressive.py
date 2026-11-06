@@ -400,7 +400,8 @@ async def audio_chunks(media, base, settings, directory, *, ceiling=None, origin
     copy = not force_flac and (codec == "aac" or original_container and codec == "alac" and not reduce)
     header = AudioHeader("audio/mp4", ".m4a") if copy else AudioHeader("audio/flac", ".flac")
     conversion = [] if copy or not reduce else ["-ar", str(ceiling[1]), "-sample_fmt", "s16" if ceiling[0] <= 16 else "s32"]
-    output = ["-c:a", "copy", "-movflags", "+empty_moov+frag_keyframe+default_base_moof", "-f", "mp4"] if copy else [
+    output = ["-c:a", "copy", "-movflags", "+empty_moov+frag_keyframe+default_base_moof",
+        "-frag_duration", "200000", "-f", "mp4"] if copy else [
         *conversion, "-c:a", "flac", "-compression_level", "0", "-f", "flac"]
     validation = ["-map", "0:a:0", "-threads", "1", "-f", "null", os.devnull] if copy else []
     process = await asyncio.create_subprocess_exec(settings.ffmpeg_path, "-nostdin", "-v", "error", "-xerror",
