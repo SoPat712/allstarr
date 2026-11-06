@@ -32,6 +32,7 @@ public sealed record CanonicalRecordingIdentity(
     long Revision)
 {
     public string PublicId { get; init; } = string.Empty;
+    public long? DurationMilliseconds { get; init; }
 }
 
 public sealed record CanonicalRecordingCreationResult(
@@ -1054,7 +1055,7 @@ public sealed partial class TrackIdentityService : ITrackIdentityService, ITrack
         Identifier(record, RecordingIdentifierKinds.Isrc),
         Identifier(record, RecordingIdentifierKinds.MusicBrainz),
         record.Revision)
-    { PublicId = record.PublicId };
+    { PublicId = record.PublicId, DurationMilliseconds = record.DurationMilliseconds };
 
     private static TrackIdentityResolution ToResolution(ProviderTrackIdentityRecord record) => new(
         record.CanonicalRecordingId,

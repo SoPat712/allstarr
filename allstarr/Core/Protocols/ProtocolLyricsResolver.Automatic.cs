@@ -9,9 +9,10 @@ namespace allstarr.Core.Protocols;
 public sealed partial class ProtocolLyricsResolver
 {
     private sealed class AutomaticSource(string id, Func<CancellationToken, Task<PreparedLyricsRead?>>? prepare,
-        Func<CancellationToken, Task<LyricsInfo?>>? local)
+        Func<CancellationToken, Task<LyricsInfo?>>? local, bool automaticEligible)
     {
         internal string Id => id;
+        internal bool AutomaticEligible => automaticEligible;
         internal Func<CancellationToken, Task<PreparedLyricsRead?>>? Prepare => prepare;
         internal Func<CancellationToken, Task<LyricsInfo?>>? Local => local;
         internal PreparedLyricsRead? Read { get; set; }
@@ -23,7 +24,7 @@ public sealed partial class ProtocolLyricsResolver
 
     private sealed class AutomaticLookup(string key, DateTimeOffset deadline, CancellationTokenSource timer,
         CancellationTokenSource cancellation, ProtocolExecutionContext protocol, Song song, bool householdOnly,
-        string? preferred, IReadOnlyList<AutomaticSource> sources, bool cacheOnly)
+        string? preferred, long? recordingDurationMs, IReadOnlyList<AutomaticSource> sources, bool cacheOnly)
     {
         internal string Key => key;
         internal DateTimeOffset Deadline => deadline;
@@ -31,6 +32,7 @@ public sealed partial class ProtocolLyricsResolver
         internal Song Song => song;
         internal bool HouseholdOnly => householdOnly;
         internal string? Preferred => preferred;
+        internal long? RecordingDurationMs => recordingDurationMs;
         internal bool CacheOnly => cacheOnly;
         internal IReadOnlyList<AutomaticSource> Sources => sources;
         internal CancellationToken Token => cancellation.Token;
@@ -64,7 +66,7 @@ public sealed partial class ProtocolLyricsResolver
         };
 
     private AutomaticLookup? EnterAutomatic(string key, ProtocolExecutionContext protocol, Song song, bool householdOnly,
-        string? preferred, Func<ProtocolExecutionContext, DateTimeOffset, IReadOnlyList<AutomaticSource>> build)
+        string? preferred, long? recordingDurationMs, Func<ProtocolExecutionContext, DateTimeOffset, IReadOnlyList<AutomaticSource>> build)
     {
         lock (_automaticGate)
         {
@@ -79,7 +81,7 @@ public sealed partial class ProtocolLyricsResolver
             var cancellation = CancellationTokenSource.CreateLinkedTokenSource(timer.Token, _automaticShutdown.Token);
             var owned = WithLyricsToken(protocol, cancellation.Token, deadline);
             var lookup = new AutomaticLookup(key, deadline, timer, cancellation, owned, song, householdOnly,
-                preferred, build(owned, deadline), cacheOnly);
+                preferred, recordingDurationMs, build(owned, deadline), cacheOnly);
             if (!cacheOnly) _automatic.Add(key, lookup);
             _ = PopulateAutomaticAsync(lookup);
             return lookup;
@@ -203,31 +205,47 @@ public sealed partial class ProtocolLyricsResolver
         result?.Availability == allstarr.Core.Capabilities.ProviderLyricsAvailabilityState.Available &&
         (!string.IsNullOrWhiteSpace(result.Content) || result.Versions?.Any(version => !string.IsNullOrWhiteSpace(version.Content)) == true);
 
+    private static IEnumerable<ProtocolLyricsCandidate> AutomaticCandidates(AutomaticLookup lookup) =>
+        lookup.Sources.SelectMany(source => source.Lyrics == null
+            ? new[] { new ProtocolLyricsCandidate(source.Id, null) { State = source.Deferred ? "pending" : source.Finished ? "unavailable" : "pending" } }
+            : LyricsVersions.Candidates(source.Id, source.Lyrics).Select(version =>
+                new ProtocolLyricsCandidate(source.Lyrics.Versions == null ? source.Id : LyricsVersions.SourceId(source.Id, version.Metadata), version)
+                {
+                    AutomaticEligible = source.AutomaticEligible,
+                    IsDefaultVersion = RichLyricsMapper.Map(source.Lyrics) != null && (source.Lyrics.Versions == null ||
+                        LyricsVersions.SourceId(source.Id, version.Metadata) == LyricsVersions.SourceId(source.Id, source.Lyrics.Metadata))
+                })).Take(20);
+
     private static ProtocolLyricsCandidate? BestAutomatic(AutomaticLookup lookup)
     {
-        ProtocolLyricsCandidate? best = null;
-        foreach (var source in lookup.Sources)
+        var candidates = Assess(AutomaticCandidates(lookup), lookup.Song, lookup.RecordingDurationMs);
+        var ready = candidates.Where(candidate => candidate.Assessment != null || RichLyricsMapper.Map(candidate.Lyrics) != null).ToArray();
+        if (lookup.Preferred is { } preferred)
         {
-            if (source.Lyrics == null) continue;
-            if (lookup.Preferred is { } preferred && source.Id == LyricsVersions.ProviderId(preferred))
-            {
-                var versions = LyricsVersions.Candidates(source.Id, source.Lyrics);
-                var pinned = versions.FirstOrDefault(version => version.Source == preferred) ??
-                    (RichLyricsMapper.Map(source.Lyrics) == null ? versions.FirstOrDefault() : source.Lyrics);
-                if (pinned != null && RichLyricsMapper.Map(pinned) != null) return new(pinned.Source ?? source.Id, pinned);
-            }
-            if (LyricsQuality.Rank(source.Lyrics) > LyricsQuality.Rank(best?.Lyrics)) best = new(source.Id, source.Lyrics);
+            var pinned = ready.FirstOrDefault(candidate => candidate.SourceId == preferred) ??
+                ready.FirstOrDefault(candidate => candidate.IsDefaultVersion && LyricsVersions.ProviderId(candidate.SourceId) == LyricsVersions.ProviderId(preferred)) ??
+                ready.FirstOrDefault(candidate => LyricsVersions.ProviderId(candidate.SourceId) == LyricsVersions.ProviderId(preferred));
+            if (pinned != null) return pinned;
         }
-        return best;
+        return ready.Where(candidate => candidate.Assessment != null).OrderByDescending(candidate => candidate.Assessment!.Score).FirstOrDefault();
+    }
+
+    private static ProtocolLyricsCandidate? BestVersion(string provider, LyricsInfo? lyrics, Song song, long? recordingDurationMs)
+    {
+        return LyricsVersions.Candidates(provider, lyrics).Select(version =>
+        {
+            var id = lyrics?.Versions == null ? provider : LyricsVersions.SourceId(provider, version.Metadata);
+            return new ProtocolLyricsCandidate(id, version) { Assessment = LyricsQuality.Evaluate(version, song, recordingDurationMs) };
+        }).Where(candidate => candidate.Assessment != null).OrderByDescending(candidate => candidate.Assessment!.Score).FirstOrDefault();
     }
 
     private static bool IsBestPossible(AutomaticLookup lookup, ProtocolLyricsCandidate best)
     {
         if (lookup.Preferred != null && LyricsVersions.ProviderId(best.SourceId) == LyricsVersions.ProviderId(lookup.Preferred)) return true;
-        var quality = LyricsQuality.Rank(best.Lyrics);
+        var score = best.Assessment?.Score ?? -1;
         var bestRank = lookup.Sources.ToList().FindIndex(source => source.Id == LyricsVersions.ProviderId(best.SourceId));
         return !lookup.Sources.Where((source, rank) => !source.Finished &&
-            (source.Id == LyricsVersions.ProviderId(lookup.Preferred ?? "") || LyricsQuality.CanImprove(source.Id, rank, quality, bestRank))).Any();
+            (source.Id == LyricsVersions.ProviderId(lookup.Preferred ?? "") || LyricsQuality.CanImprove(source.Id, rank, score, bestRank, lookup.Song, lookup.RecordingDurationMs))).Any();
     }
 
     private void ObserveAutomatic(AutomaticLookup lookup, ProtocolLyricsCandidate? best)
@@ -277,15 +295,12 @@ public sealed partial class ProtocolLyricsResolver
                 {
                     lookup.Observed = true;
                     ObserveAutomatic(lookup, best);
-                    if (!all) return best == null ? [] : [best];
-                    return lookup.Sources.SelectMany(source => source.Lyrics == null
-                        ? new[] { new ProtocolLyricsCandidate(source.Id, null) { State = source.Deferred ? "pending" : source.Finished || LyricsClock.GetUtcNow() >= lookup.Deadline ? "unavailable" : "pending" } }
-                        : LyricsVersions.Candidates(source.Id, source.Lyrics).Select(version =>
-                            new ProtocolLyricsCandidate(source.Lyrics.Versions == null ? source.Id : LyricsVersions.SourceId(source.Id, version.Metadata), version)
-                            {
-                                IsDefaultVersion = RichLyricsMapper.Map(source.Lyrics) != null && (source.Lyrics.Versions == null ||
-                                LyricsVersions.SourceId(source.Id, version.Metadata) == LyricsVersions.SourceId(source.Id, source.Lyrics.Metadata))
-                            })).ToArray();
+                    if (!all)
+                    {
+                        if (best?.Lyrics != null) best.Lyrics.Source = best.SourceId;
+                        return best == null ? [] : [best];
+                    }
+                    return AutomaticCandidates(lookup).ToArray();
                 }
                 changed = lookup.Changed.Task;
             }

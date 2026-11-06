@@ -28,6 +28,9 @@ public sealed record RecordingLyricsReviewSource(
     [JsonIgnore] public RichLyrics? FullLyrics { get; init; }
     [JsonIgnore] public ProviderLyricsMetadata? Metadata { get; init; }
     public bool Available => PreviewRevision != null;
+    public double? Score { get; init; }
+    public int? Rank { get; init; }
+    public IReadOnlyList<string>? Reasons { get; init; }
     [JsonIgnore] public string? TimingFormat { get; init; }
     [JsonIgnore] public string? ShortPreview { get; init; }
     [JsonIgnore] public string State { get; init; } = "ready";
@@ -188,9 +191,15 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
                 ReadOnly = readOnly
             });
         token.ThrowIfCancellationRequested();
-        var sources = (candidates ?? Array.Empty<ProtocolLyricsCandidate>())
-            .Select(candidate => ProjectSource(recording.Id, candidate))
-            .ToArray();
+        var assessed = ProtocolLyricsResolver.Assess(candidates ?? [], song, recording.DurationMilliseconds);
+        var ranks = assessed.Where(candidate => candidate.Assessment != null).OrderByDescending(candidate => candidate.Assessment!.Score)
+            .Select((candidate, index) => new { candidate.SourceId, Rank = index + 1 }).ToDictionary(candidate => candidate.SourceId, candidate => candidate.Rank);
+        var sources = assessed.Select(candidate => ProjectSource(recording.Id, candidate) with
+        {
+            Score = candidate.Assessment?.Score,
+            Rank = ranks.TryGetValue(candidate.SourceId, out var rank) ? rank : null,
+            Reasons = candidate.Assessment?.Reasons
+        }).ToArray();
         return new RecordingLyricsReviewResult(
             recording.Id,
             ScopeName(reviewScope),

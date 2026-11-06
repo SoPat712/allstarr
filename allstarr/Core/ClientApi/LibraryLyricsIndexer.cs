@@ -333,7 +333,9 @@ public sealed class LibraryLyricsIndexer(IDbContextFactory<AllstarrDbContext> fa
         {
             if (itemId != null) changes.WatchCacheKey(key, owner, itemId);
         });
-        await StoredItemLyrics.ReadAsync(observedCache, song, recording, null, null, policy, endpoint, context, selectedAccounts, links, token, stored.Add);
+        var recordingDuration = await db.CanonicalRecordings.AsNoTracking().Where(item => item.Id == recording)
+            .Select(item => item.DurationMilliseconds).SingleOrDefaultAsync(token);
+        await StoredItemLyrics.ReadAsync(observedCache, song, recording, null, null, policy, endpoint, context, selectedAccounts, links, token, stored.Add, recordingDuration);
         if (policy.IsEnabled("kept"))
         {
             var keptIdentities = song.IsLocal ? song.ProviderIds.Select(pair => new KeptLyricsIdentity(pair.Key, pair.Value)).ToArray() :

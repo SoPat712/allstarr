@@ -1,11 +1,65 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
+using allstarr.Core.Music;
 
 namespace allstarr.Tests;
 
 public sealed partial class ProtocolLyricsAutomaticTests
 {
+    [Fact]
+    public async Task CachedAutomaticChoiceMatchesTheHighestScoredReadyVersion()
+    {
+        var versions = new[]
+        {
+            new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib", ProviderLyricsFormat.WordTimed,
+                "[00:01]<00:01>Short <00:02>words") { Metadata = new("short", "Fixture", "Artist", "Album", 10000) },
+            new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib", ProviderLyricsFormat.LineTimed,
+                "[01:50]Fitting words") { Metadata = new("fits", "Fixture", "Artist", "Album", 120000) }
+        };
+        var source = new Source("lrclib") { Cached = ProviderOutcome<ProviderLyricsResult>.Success(versions[0] with { Versions = versions }) };
+        await using var fixture = new Fixture(source);
+        var song = new Song { Title = "Fixture", Artist = "Artist", Album = "Album", Duration = 120 };
+        var ready = await fixture.Resolver.FindAllAsync(fixture.Protocol, song, "recording");
+        var best = ready.OrderByDescending(candidate => candidate.Assessment?.Score).First();
+        var selected = await fixture.Resolver.FindAsync(fixture.Protocol, song, "recording", new ProtocolLyricsSources());
+        Assert.Equal("lrclib:fits", best.SourceId);
+        Assert.Equal(best.SourceId, selected?.Source);
+        Assert.Contains("duration_fits", best.Assessment!.Reasons);
+        Assert.Equal(0, source.Calls);
+    }
+
+    [Fact]
+    public async Task AutomaticChoiceUsesTheSameTwentyCandidateLimitAsSourceDiscovery()
+    {
+        var sources = new[] { "lyricsplus", "lrcred", "unison", "paxsenix", "musixmatch" }.Select((provider, index) =>
+        {
+            var versions = Enumerable.Range(0, 5).Select(version => new ProviderLyricsResult(
+                ProviderLyricsAvailabilityState.Available, provider, index == 4 ? ProviderLyricsFormat.WordTimed : ProviderLyricsFormat.PlainText,
+                index == 4 ? "[00:01]<00:01>Extra <00:02>words" : "Visible words")
+            { Metadata = new(version.ToString(), "Fixture", "Artist", "Album", null) }).ToArray();
+            return new Source(provider) { Cached = ProviderOutcome<ProviderLyricsResult>.Success(versions[0] with { Versions = versions }) };
+        }).ToArray();
+        await using var fixture = new Fixture(sources);
+        var song = new Song { Title = "Fixture", Artist = "Artist", Album = "Album" };
+        var candidates = await fixture.Resolver.FindAllAsync(fixture.Protocol, song, "recording");
+        Assert.Equal(20, candidates.Count);
+        var best = candidates.OrderByDescending(candidate => candidate.Assessment?.Score).First();
+        var selected = await fixture.Resolver.FindAsync(fixture.Protocol, song, "recording", new ProtocolLyricsSources());
+        Assert.Equal(best.SourceId, selected?.Source);
+        Assert.Equal("lyricsplus:0", selected?.Source);
+    }
+
+    [Fact]
+    public async Task UnreadablePinnedBodyFallsBackToTheBestReadyCandidate()
+    {
+        var unreadable = new Source("lrclib") { Cached = ProviderOutcome<ProviderLyricsResult>.Success(new(
+            ProviderLyricsAvailabilityState.Available, "lrclib", ProviderLyricsFormat.LineTimed, "Missing timestamps")) };
+        var ready = new Source("lyricsplus") { Cached = Result("lyricsplus", false) };
+        await using var fixture = new Fixture(unreadable, ready) { Recording = Guid.NewGuid(), Preferred = "lrclib" };
+        Assert.Equal("lyricsplus", (await fixture.FindAsync())?.Source);
+    }
+
     [Fact]
     public async Task PermanentSidecarWaitsForTheBestLyricsBeforeSaving()
     {

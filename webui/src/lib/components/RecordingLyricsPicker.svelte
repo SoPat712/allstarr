@@ -3,6 +3,7 @@
   import { Button } from "$lib/components/ui/button";
   import { ApiError, recordingLyrics, type MatchAuthorityScope, type ProviderDefinition, type RecordingLyricsReview } from "$lib/api";
   import { lyricsSourceDisplayName } from "$lib/sources";
+  import { defaultLyricsSourceId, rankedLyricsSources } from "$lib/lyrics-ranking";
   import { toast } from "$lib/toasts";
   import LyricsAttribution from "$lib/components/LyricsAttribution.svelte";
 
@@ -21,7 +22,8 @@
   let refresh = $state(0);
   let alive = true;
   let saveCancellation: AbortController | undefined;
-  const selected = $derived(snapshot?.sources.find(source => source.sourceId === selectedId));
+  const sources = $derived(rankedLyricsSources(snapshot?.sources ?? []));
+  const selected = $derived(sources.find(source => source.sourceId === selectedId));
   const savedChoice = $derived(scope === "personal" ? snapshot?.choices.personal : snapshot?.choices.household);
   const sourceName = (id: string) => lyricsSourceDisplayName(providers, id);
 
@@ -44,8 +46,7 @@
       if (signal.aborted || !alive) return;
       snapshot = result;
       const choice = targetScope === "personal" ? result.choices.effective : result.choices.household;
-      selectedId = result.sources.find(source => source.sourceId === choice?.sourceId && source.available)?.sourceId
-        ?? result.sources.find(source => source.available)?.sourceId ?? "";
+      selectedId = defaultLyricsSourceId(result.sources, choice?.sourceId);
     } catch (error) {
       if (!signal.aborted && alive) loadError = error instanceof Error ? error.message : "Lyrics could not be loaded. Reload the sources and try again.";
     } finally { if (!signal.aborted && alive) loading = false; }
@@ -97,11 +98,12 @@
     <p class="lyrics-help">{#if savedChoice}Saved source: {sourceName(savedChoice.sourceId)}.{:else if scope === "personal" && snapshot.choices.household}Following household source: {sourceName(snapshot.choices.household.sourceId)}.{:else}Following automatic lyrics selection.{/if} A saved source falls back automatically when unavailable.</p>
     <div class="lyrics-comparison">
       <div class="lyrics-source-list" aria-label="Available lyric sources">
-        {#each snapshot.sources as source (source.sourceId)}
+        {#each sources as source (source.sourceId)}
           <Button variant={selectedId === source.sourceId ? "secondary" : "outline"} class="lyrics-source"
             aria-pressed={selectedId === source.sourceId} disabled={!source.available || saving}
             onclick={() => { selectedId = source.sourceId; actionError = ""; }}>
             <span>{sourceName(source.sourceId)}</span><small>{!source.available ? "Unavailable" : source.format === "synced" ? "Synced" : "Plain"}</small>
+            {#if source.rank === 1}<small>Best match</small>{/if}
           </Button>
         {/each}
       </div>

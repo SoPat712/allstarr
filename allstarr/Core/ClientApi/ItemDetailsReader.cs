@@ -220,10 +220,13 @@ public sealed class ItemDetailsReader(
                 Artists = [local.Artist],
                 Album = local.Album ?? "",
                 Isrc = local.Isrc,
+                PreciseDuration = local.DurationMilliseconds is > 0 ? TimeSpan.FromMilliseconds(local.DurationMilliseconds.Value) : null,
+                Duration = local.DurationMilliseconds is > 0 ? (int)(local.DurationMilliseconds.Value / 1000) : null,
                 IsLocal = true
             });
             var lyrics = await StoredItemLyrics.ReadAsync(cache, lyricsSong, recordingId, choice?.SourceId, storedFile?.File.CanonicalPath,
-                policy, lyricsEndpoint, execution, accounts, links, token);
+                policy, lyricsEndpoint, execution, accounts, links, token,
+                recordingDurationMs: recordingId.HasValue ? recordings.GetValueOrDefault(recordingId.Value)?.DurationMilliseconds : null);
             var audio = song == null || song.Codec == null && song.BitDepth == null && song.SampleRate == null && song.Bitrate == null ? null :
                 new ItemDetailsAudio(song.Codec, song.BitDepth, song.SampleRate, song.Bitrate);
             if (audio == null && kept?.Artifact is { } artifact &&

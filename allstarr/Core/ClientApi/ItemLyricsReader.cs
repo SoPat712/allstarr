@@ -43,23 +43,31 @@ public sealed class ItemLyricsReader(
         if (item == null) return null;
         var layers = await ChoicesAsync(execution, item);
         var candidates = await lyrics.FindAllAsync(execution with { RequestedItemId = itemId }, item.Song, item.ResourceKey, item.Sources);
-        var sources = candidates.Select(candidate =>
+        var sources = ProtocolLyricsResolver.Assess(candidates, item.Song).Select(candidate =>
         {
             var rich = RichLyricsMapper.Map(candidate.Lyrics);
             return new { Candidate = candidate, Rich = rich == null ? null : rich with { Source = new(candidate.SourceId, RichLyricsMapper.SourceName(candidate.SourceId)) } };
         }).ToArray();
         var known = sources.Where(source => source.Rich != null).ToArray();
+        var ranked = known.Where(source => source.Candidate.Assessment != null)
+            .OrderByDescending(source => source.Candidate.Assessment!.Score).Select((source, index) => new { source.Candidate.SourceId, Rank = index + 1 })
+            .ToDictionary(source => source.SourceId, source => source.Rank, StringComparer.Ordinal);
         var defaults = known.Where(source => source.Candidate.IsDefaultVersion).ToArray();
         var selected = layers.Effective is { } preference
             ? known.FirstOrDefault(source => source.Candidate.SourceId == preference.SourceId) ??
                 defaults.FirstOrDefault(source => LyricsVersions.ProviderId(source.Candidate.SourceId) == LyricsVersions.ProviderId(preference.SourceId)) ??
                 known.FirstOrDefault(source => LyricsVersions.ProviderId(source.Candidate.SourceId) == LyricsVersions.ProviderId(preference.SourceId))
             : null;
-        selected ??= defaults.OrderByDescending(source => LyricsQuality.Rank(source.Rich?.Format)).FirstOrDefault();
+        selected ??= known.Where(source => ranked.ContainsKey(source.Candidate.SourceId)).OrderBy(source => ranked[source.Candidate.SourceId]).FirstOrDefault();
         return new(sources.Select(source => new ClientLyricsSource(source.Candidate.SourceId, source.Rich?.Format, ShortPreview(source.Rich),
             LyricsVersions.ProviderId(source.Candidate.SourceId), ProviderName(source.Candidate.SourceId), source.Candidate.Lyrics?.Metadata?.Title,
             source.Candidate.Lyrics?.Metadata?.Artist, source.Candidate.Lyrics?.Metadata?.Album, source.Candidate.Lyrics?.Metadata?.DurationMs)
-        { State = source.Rich != null ? "ready" : source.Candidate.State == "pending" ? "pending" : "unavailable" }).ToArray(),
+        {
+            State = source.Rich != null ? "ready" : source.Candidate.State == "pending" ? "pending" : "unavailable",
+            Score = source.Candidate.Assessment?.Score,
+            Rank = ranked.TryGetValue(source.Candidate.SourceId, out var rank) ? rank : null,
+            Reasons = source.Candidate.Assessment?.Reasons
+        }).ToArray(),
             Chosen(layers, selected?.Rich), ClientLyricsRevision.From(layers.Revision));
     }
 

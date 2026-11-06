@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using System.Text.Json;
 using allstarr.Core.Matching;
 using allstarr.Models.Lyrics;
+using allstarr.Core.Music;
 using allstarr.Services.Common;
 using allstarr.Core.Capabilities;
 using allstarr.Core.ClientApi;
@@ -55,6 +56,28 @@ public sealed class ClientApiStoredLyricsTests
         Assert.True(result.Available);
         Assert.Equal(expectedSource, result.Source);
         Assert.Contains(observed, rich => rich.Source.Id == expectedSource && rich.Lines[0].Text == expectedText);
+    }
+
+    [Fact]
+    public async Task StoredLyricsUseTheSharedScoreAcrossVersionsWithRecordingDuration()
+    {
+        var shortVersion = new LyricsInfo { SyncedLyrics = "[00:01]<00:01>Short <00:02>words", Metadata = new("short", "Fixture", "Artist", null, 10000) };
+        var fittingVersion = new LyricsInfo { SyncedLyrics = "[01:50]Fitting line", Metadata = new("fits", "Fixture", "Artist", null, 120000) };
+        shortVersion.Versions = [new() { SyncedLyrics = shortVersion.SyncedLyrics, Metadata = shortVersion.Metadata }, fittingVersion];
+        var cache = new Mock<IApplicationCache>(MockBehavior.Strict);
+        cache.Setup(item => item.GetStringAsync(It.IsAny<string>())).ReturnsAsync(JsonSerializer.Serialize(shortVersion));
+        var policy = new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty
+            .Add(ProviderCapabilityKind.Lyrics, ["lrclib"]), ImmutableHashSet<string>.Empty, "lossless", .07);
+        var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", "listener", null,
+            "stored-score", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var song = new Song { Title = "Fixture", Artist = "Artist", Duration = 10 };
+        var result = await StoredItemLyrics.ReadAsync(cache.Object, song, null, null, null, policy, "http://unused.invalid", context, [], [], default,
+            recordingDurationMs: 120000);
+        Assert.Equal("lrclib:fits", result.Source);
+        Assert.Equal("line", result.Format);
+        Assert.True(LyricsQuality.Evaluate(fittingVersion, song, 120000)!.Score > LyricsQuality.Evaluate(shortVersion, song, 120000)!.Score);
+        cache.Verify(item => item.GetStringAsync(It.IsAny<string>()), Times.Once);
+        cache.VerifyNoOtherCalls();
     }
 
     [Fact]

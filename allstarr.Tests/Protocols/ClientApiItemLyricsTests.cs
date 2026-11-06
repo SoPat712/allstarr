@@ -61,6 +61,14 @@ public sealed class ClientApiItemLyricsTests
         Assert.Equal(["ready", "pending", "unavailable"], sources.Sources.Select(source => source.State));
         Assert.Equal("lrclib", sources.Chosen?.SourceId);
         Assert.Equal("automatic", sources.Chosen?.Layer);
+        Assert.Equal(1, sources.Sources[0].Rank);
+        Assert.Contains("plain_text", sources.Sources[0].Reasons!);
+        Assert.All(sources.Sources.Skip(1), source =>
+        {
+            Assert.Null(source.Score);
+            Assert.Null(source.Rank);
+            Assert.Null(source.Reasons);
+        });
         Assert.Equal(new ClientLyricsRevision(), sources.Revision);
         fixture.AssertSameLookup(itemId, $"deezer:{externalId}", title);
         await using var stored = factory.CreateDbContext();
@@ -150,6 +158,8 @@ public sealed class ClientApiItemLyricsTests
 
         var result = Assert.IsType<ClientLyricsSources>(Assert.IsType<OkObjectResult>((await fixture.Controller().Sources(itemId)).Result).Value);
         Assert.Equal(new ClientLyricsChosen("lrclib:alternate", layer), result.Chosen);
+        Assert.Equal(2, result.Sources[1].Rank);
+        Assert.Equal(1, result.Sources[0].Rank);
         Assert.Equal(ClientLyricsRevision.From(layers.Revision), result.Revision);
         var alternate = result.Sources[1];
         Assert.Equal("plain", alternate.Format);
@@ -162,19 +172,22 @@ public sealed class ClientApiItemLyricsTests
     }
 
     [Fact]
-    public async Task SourcesChooseTheBestDefaultVersionWhenNoPreferenceIsStored()
+    public async Task SourcesRankEveryReadyVersionAndChooseRankOneWhenNoPreferenceIsStored()
     {
         var fixture = new Fixture();
         const string itemId = "ext-deezer-song-103060238";
         fixture.ExternalSong(itemId, "deezer", "103060238", "Song");
         fixture.Candidates = [
             new("lrclib", new LyricsInfo { Source = "lrclib", PlainLyrics = "Default words" }),
-            new("lrclib:alternate", new LyricsInfo { Source = "lrclib:alternate", SyncedLyrics = "[00:01]<00:01>Alternate" }) { IsDefaultVersion = false },
+            new("lrclib:alternate", new LyricsInfo { Source = "lrclib:alternate", SyncedLyrics = "[00:01]<00:01>Alternate <00:02>words" }) { IsDefaultVersion = false },
             new("lrcred", new LyricsInfo { Source = "lrcred", SyncedLyrics = "[00:01]Default timed words" })
         ];
 
         var result = Assert.IsType<ClientLyricsSources>(Assert.IsType<OkObjectResult>((await fixture.Controller().Sources(itemId)).Result).Value);
-        Assert.Equal(new ClientLyricsChosen("lrcred", "automatic"), result.Chosen);
+        Assert.Equal(new ClientLyricsChosen("lrclib:alternate", "automatic"), result.Chosen);
+        Assert.Equal([3, 1, 2], result.Sources.Select(source => source.Rank));
+        Assert.All(result.Sources, source => Assert.InRange(source.Score!.Value, 0, 1));
+        Assert.Contains("synced_words", result.Sources[1].Reasons!);
     }
 
     [Fact]

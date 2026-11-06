@@ -2085,6 +2085,9 @@ export type RecordingLyricsChoiceLayers = {
 };
 export type RecordingLyricsSource = {
   sourceId: string;
+  score?: number | null;
+  rank?: number | null;
+  reasons?: string[] | null;
   format: "synced" | "plain" | null;
   preview: string | null;
   previewRevision: string | null;

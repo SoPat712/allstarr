@@ -6999,10 +6999,11 @@ async function mockRecordingLyrics(page: Page, options: { administrator?: boolea
       return route.fulfill({ json: {
         recordingId: lyricsRecordingId, scope, song: { title: "Fixture song", artist: "Artist", album: "Album", durationSeconds: 180 },
         choices: layers(), sources: [
-          { sourceId: "spotify", available: false, preview: null, previewRevision: null, format: null, truncated: false },
+          { sourceId: "spotify", available: false, preview: null, previewRevision: null, format: null, truncated: false, score: null, rank: null, reasons: null },
           { sourceId: "lrclib", available: true, preview: scope === "household" ? "Shared plain words" : "Personal plain words <script>inert</script>",
-            previewRevision: `sha256:${scope}-plain-${reads}`, format: "plain", truncated: false },
-          { sourceId: "lyricsplus", available: true, preview: "[00:01.234]Timed words", previewRevision: `sha256:${scope}-timed-${reads}`, format: "synced", truncated: true },
+            previewRevision: `sha256:${scope}-plain-${reads}`, format: "plain", truncated: false, score: 0.8, rank: 2, reasons: ["plain_text"] },
+          { sourceId: "lyricsplus", available: true, preview: "[00:01.234]Timed words", previewRevision: `sha256:${scope}-timed-${reads}`, format: "synced", truncated: true,
+            score: 0.95, rank: 1, reasons: ["synced_lines", "duration_fits"] },
         ],
       } });
     }
@@ -7034,6 +7035,11 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(picker).toBeVisible();
     await expect(dialog.getByRole("button", { name: "Nothing fits", exact: true })).toHaveCount(0);
     await expect(dialog.getByRole("button", { name: "Back to match", exact: true })).toBeVisible();
+    await expect(picker.locator(".lyrics-source > span")).toHaveText(["LyricsPlus", "LRCLIB", "Spotify"]);
+    const best = picker.getByRole("button", { name: /LyricsPlus.*Synced/ });
+    await expect(best.getByText("Best match", { exact: true })).toBeVisible();
+    await expect(picker.getByText("Best match", { exact: true })).toHaveCount(1);
+    await expect(best).toHaveAttribute("aria-pressed", "true");
     await expect(picker.getByRole("button", { name: /Spotify.*Unavailable/ })).toBeDisabled();
     await picker.getByRole("button", { name: /LRCLIB.*Plain/ }).click();
     await expect(picker.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Personal plain words <script>inert</script>");
@@ -7054,6 +7060,10 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
       expectedRevision: { personal: { id: "personal-choice", revision: 2 }, household: { id: "household-choice", revision: 2 } } } });
     await picker.getByRole("radio", { name: "Household", exact: true }).check();
     await expect(picker.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Shared plain words");
+    await expect(picker.getByRole("button", { name: /LRCLIB.*Plain/ })).toHaveAttribute("aria-pressed", "true");
+    await expect(best).toHaveAttribute("aria-pressed", "false");
+    await expect(best.getByText("Best match", { exact: true })).toBeVisible();
+    await expect(picker).toContainText("Saved source: LRCLIB.");
     await expect(picker).not.toContainText("Personal plain words");
     await picker.getByRole("button", { name: /LyricsPlus.*Synced/ }).click();
     await expect(picker).toContainText("Preview shortened");
@@ -7100,7 +7110,7 @@ test("Recording lyrics unavailable sources can be reloaded", async ({ page }) =>
   const picker = page.getByRole("region", { name: "Lyrics sources" });
   await expect(picker).toContainText("Lyrics sources are temporarily unavailable.");
   await picker.getByRole("button", { name: "Reload sources", exact: true }).click();
-  await expect(picker.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Personal plain words <script>inert</script>");
+  await expect(picker.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("[00:01.234]Timed words");
   expect(fixture.reads()).toBe(2);
   expect(fixture.writes).toHaveLength(0);
 });

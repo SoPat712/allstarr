@@ -35,6 +35,21 @@ public sealed class ProtocolLyricsQualityTests
         Assert.Equal(serviceCalls, providers.Invocations.Count(call => call.Method.Name == nameof(IProtocolProviderGateway.GetLyricsAsync)));
     }
 
+    [Fact]
+    public async Task EarlierProviderWinsARealWordTimingTieWithLocalLyrics()
+    {
+        var context = Context();
+        var providers = Providers(context, ["lrclib", "kept"], "lrclib", "word");
+        var resolver = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance);
+        var sources = new ProtocolLyricsSources(Kept: _ => Task.FromResult<LyricsInfo?>(Lyrics("word")));
+        var song = Song();
+        var candidates = await resolver.FindAllAsync(context, song, "recording", sources);
+        var best = candidates.OrderByDescending(candidate => candidate.Assessment?.Score).First();
+        var selected = await resolver.FindAsync(context, song, "recording", sources);
+        Assert.Equal("lrclib", best.SourceId);
+        Assert.Equal(best.SourceId, selected?.Source);
+    }
+
     [Theory]
     [InlineData("backend")]
     [InlineData("kept")]
@@ -64,15 +79,17 @@ public sealed class ProtocolLyricsQualityTests
     }
 
     [Fact]
-    public async Task LocalLineSkipsSourcesThatCannotImproveItAndStopsAtFirstWordResult()
+    public async Task LocalLineSkipsPlainSourcesAndStopsAtFirstWordResult()
     {
         var context = Context();
         var providers = Providers(context, ["backend", "genius", "spotify", "lrclib", "lyricsplus", "musixmatch"], "lyricsplus", "word");
+        providers.Setup(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+            "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null)).ReturnsAsync((ProviderLyricsResult?)null);
         var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance)
             .FindAsync(context, Song(), "recording", new ProtocolLyricsSources(Backend: _ => Task.FromResult<LyricsInfo?>(Lyrics("line"))));
         Assert.Equal("lyricsplus", result?.Source);
-        Assert.Equal("lyricsplus", Assert.Single(providers.Invocations, call =>
-            call.Method.Name == nameof(IProtocolProviderGateway.GetLyricsAsync)).Arguments[1]);
+        Assert.Equal(new[] { "lrclib", "lyricsplus" }, providers.Invocations.Where(call =>
+            call.Method.Name == nameof(IProtocolProviderGateway.GetLyricsAsync)).Select(call => call.Arguments[1]));
     }
 
     [Theory]
@@ -115,8 +132,8 @@ public sealed class ProtocolLyricsQualityTests
     {
         PlainLyrics = format == "plain" ? "Service words" : null,
         SyncedLyrics = format == "plain" ? null : "[00:01.000]Service words",
-        TimedLines = format == "word" ? [new("Service words", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1),
-            [new("Service ", TimeSpan.FromSeconds(1)), new("words", TimeSpan.FromSeconds(1.5))])] : null
+        TimedLines = format == "plain" ? null : [new("Service words", TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(119),
+            format == "word" ? [new("Service ", TimeSpan.FromSeconds(1)), new("words", TimeSpan.FromSeconds(1.5))] : null)]
     };
 
     private static Song Song() => new()

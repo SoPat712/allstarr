@@ -180,10 +180,37 @@ Pending and unavailable candidates have null format and preview;
 `chosen` is null when no lyrics can be selected. Each candidate also includes
 `providerId`, `providerName`, and nullable provider metadata: `title`, `artist`,
 `album`, and `durationMs` (an integer in milliseconds). Providers stay in the
-configured order; each provider's best match appears first. Lists contain at
+configured order; each provider's metadata match appears first. Lists contain at
 most five versions per provider and twenty candidates overall. Source discovery
 uses the same response budget and returns the sources known so far. Pending
 sources can become ready on a later read as background lookups fill the caches.
+
+Candidates also have optional `score`, `rank`, and `reasons` fields. `score` is
+between 0 and 1 and uses the exact scorer used for automatic selection. `rank`
+is a unique position among ready, scored candidates, starting at 1 for the best;
+equal scores keep configured provider order, then version order. Pending or
+unavailable candidates have null score, rank, and reasons. Sources configured for
+manual selection remain reviewable but also have null ranking fields because
+they are unavailable to automatic selection. Personal and household
+pins override automatic selection without changing scores or ranks. Without a pin,
+`chosen` is rank 1 among the ready candidates known to the response.
+
+Clients should prefer `rank` for ordering and fall back to their own ordering
+when these fields are absent. Scores compare versions of this recording; they
+are not confidence percentages across different songs. Real word timing scores
+above line timing, then plain text. A cue covering several words, or several words
+sharing one timestamp, does not count as real word timing. A single word with an
+explicit timed duration does. Timing fit uses the matched recording's duration,
+falling back to the item's precise duration or duration in seconds. It uses the
+last timestamp in the cached body, excluding inferred line ends. A timestamp
+below 60% of the duration or beyond the duration by more than 2 seconds or 2%
+(whichever is greater) receives a penalty, so fitting line timing can outrank
+mismatched word timing. Unknown duration adds no fit adjustment. Scoring loads no
+additional lyric bodies and keeps the existing response budget.
+
+`reasons` contains short machine-readable strings: `synced_words`, `synced_lines`,
+or `plain_text`, with `duration_fits` or `duration_mismatch` when duration can be
+checked. Clients should tolerate additional reason strings in future responses.
 
 Version IDs use `<providerId>:<versionKey>`, preserving the provider's record ID
 when available. Otherwise the key is the first sixteen lowercase hexadecimal
@@ -199,7 +226,8 @@ counts are preserved; old best-only LRCLIB cache entries refresh once.
 {
   "sources": [{"sourceId":"lrclib:123","providerId":"lrclib","providerName":"LRCLIB",
     "title":"Two Moons Over Ohio (Live)","artist":"Example Artist","album":null,
-    "durationMs":271000,"format":"line","preview":"Hello\nEcho","state":"ready"}],
+    "durationMs":271000,"format":"line","preview":"Hello\nEcho","state":"ready",
+    "score":0.7,"rank":1,"reasons":["synced_lines","duration_fits"]}],
   "chosen": {"sourceId":"lrclib:123","layer":"personal"},
   "revision": {"personal":null,"household":null}
 }

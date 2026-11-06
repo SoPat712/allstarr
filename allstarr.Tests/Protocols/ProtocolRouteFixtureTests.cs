@@ -1615,7 +1615,7 @@ public sealed partial class ProtocolRouteFixtureTests
         if (expectBackend)
             Assert.Equal(CanonicalJson(JsonDocument.Parse(native).RootElement), CanonicalJson(JsonDocument.Parse(body).RootElement));
         else Assert.Contains("Provider line", body, StringComparison.Ordinal);
-        Assert.Equal(backendTimed && order.StartsWith("backend", StringComparison.Ordinal) ? ["backend"] : new[] { "backend", "lrclib" }, calls);
+        Assert.Equal(new[] { "backend", "lrclib" }, calls);
     }
 
     [Theory]
@@ -3970,7 +3970,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var body = await response.Content.ReadAsStringAsync();
         if (expectBackend) Assert.Equal(native, body);
         else Assert.Contains("Provider line", body, StringComparison.Ordinal);
-        Assert.Equal(backendTimed && order.StartsWith("backend", StringComparison.Ordinal) ? ["backend"] : new[] { "backend", "lrclib" }, calls);
+        Assert.Equal(new[] { "backend", "lrclib" }, calls);
     }
 
     [Theory]

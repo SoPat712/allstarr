@@ -37,7 +37,7 @@ public sealed partial class ProtocolLyricsAutomaticTests
     }
 
     [Fact]
-    public async Task LocalLineUpgradeUsesTheExistingProviderCacheOnRepeat()
+    public async Task AutomaticChoiceUsesTheExistingProviderCacheOnRepeat()
     {
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         var root = Path.Combine(Path.GetTempPath(), "lyrics-upgrade-" + Guid.NewGuid().ToString("N"));
@@ -52,8 +52,7 @@ public sealed partial class ProtocolLyricsAutomaticTests
         var skipped = new Source("spotify", Result("spotify", true));
         var later = new Source("lyricsplus", Result("lyricsplus", true));
         await using var fixture = new Fixture(clock, skipped, source, later);
-        var sources = new ProtocolLyricsSources(Backend: _ => Task.FromResult<allstarr.Models.Lyrics.LyricsInfo?>(
-            new() { SyncedLyrics = "[00:01.000]Local words" }));
+        var sources = new ProtocolLyricsSources();
         for (var index = 0; index < 2; index++)
         {
             var result = await fixture.FindAsync(sources);
@@ -616,7 +615,7 @@ public sealed partial class ProtocolLyricsAutomaticTests
     [Fact]
     public async Task ColdEligibleSourceRunsConcurrentlyWithOtherSources()
     {
-        var source = new Source("lrclib");
+        var source = new Source("genius");
         var fallback = new Source("musixmatch", Result("musixmatch", true)) { Mode = LyricsSpeculationMode.RecentHealthy };
         await using var fixture = new Fixture(source, fallback);
         var pending = fixture.FindAsync();
@@ -1006,5 +1005,5 @@ public sealed partial class ProtocolLyricsAutomaticTests
     private static ProviderOutcome<ProviderLyricsResult> Result(string provider, bool timed) => ProviderOutcome<ProviderLyricsResult>.Success(new(
         ProviderLyricsAvailabilityState.Available, provider, timed ? ProviderLyricsFormat.LineTimed : ProviderLyricsFormat.PlainText,
         timed ? "[00:01]Words" : "Words", timedLines: timed ? [new("Words", TimeSpan.FromSeconds(1),
-            segments: [new("Words", TimeSpan.FromSeconds(1))])] : null));
+            segments: [new("Wo", TimeSpan.FromSeconds(1)), new("rds", TimeSpan.FromSeconds(1.5))])] : null));
 }

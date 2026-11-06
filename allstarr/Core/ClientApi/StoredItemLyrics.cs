@@ -20,38 +20,38 @@ internal static class StoredItemLyrics
     public static async Task<ItemDetailsLyrics> ReadAsync(IApplicationCache cache, Song? song, Guid? recordingId,
         string? chosenSource, string? audioPath, EffectiveProviderPolicySnapshot policy, string lyricsEndpoint,
         ProtocolExecutionContext execution, IReadOnlyList<ProviderAccountRecord> accounts,
-        IReadOnlyList<ProviderTrackIdentityRecord> identities, CancellationToken token, Action<RichLyrics>? observe = null)
+        IReadOnlyList<ProviderTrackIdentityRecord> identities, CancellationToken token, Action<RichLyrics>? observe = null, long? recordingDurationMs = null)
     {
         if (song == null) return new(false, null, chosenSource);
         var best = new ItemDetailsLyrics(false, null, chosenSource);
-        bool Consider(RichLyrics? rich, string source)
-        {
-            if (rich != null) observe?.Invoke(rich);
-            if (rich != null && LyricsQuality.Rank(rich.Format) > LyricsQuality.Rank(best.Format))
-                best = new(true, rich.Format, source);
-            return observe == null && best.Format == "word";
-        }
+        var bestScore = -1.0;
         bool ConsiderProvider(LyricsInfo? info, string provider)
         {
             if (info == null) return false;
             info.Source = provider;
-            var versions = info.Versions?.Select(version =>
+            var versions = LyricsVersions.Candidates(provider, info);
+            foreach (var version in versions)
             {
-                version.Source = LyricsVersions.SourceId(provider, version.Metadata);
+                if (info.Versions != null) version.Source = LyricsVersions.SourceId(provider, version.Metadata);
                 if (version.Metadata?.DurationMs is { } milliseconds) version.Duration = (int)((milliseconds + 999) / 1000);
-                return RichLyricsMapper.Map(version);
-            }).OfType<RichLyrics>().ToArray() ?? [];
-            foreach (var version in versions) observe?.Invoke(version);
-            var rich = versions.FirstOrDefault(version => version.Source.Id == chosenSource) ?? RichLyricsMapper.Map(info);
-            if (rich == null) return false;
-            var pinned = chosenSource != null && LyricsVersions.ProviderId(chosenSource) == provider;
-            if (pinned)
+                if (RichLyricsMapper.Map(version) is { } rich) observe?.Invoke(rich);
+            }
+            if (chosenSource != null && LyricsVersions.ProviderId(chosenSource) == provider)
             {
-                observe?.Invoke(rich);
+                var pinned = versions.FirstOrDefault(version => version.Source == chosenSource) ??
+                    (RichLyricsMapper.Map(info) != null ? info : versions.FirstOrDefault());
+                if (RichLyricsMapper.Map(pinned) is not { } rich) return false;
+                if (info.Versions != null && ReferenceEquals(pinned, info)) observe?.Invoke(rich);
                 best = new(true, rich.Format, rich.Source.Id);
                 return true;
             }
-            return Consider(rich, rich.Source.Id);
+            foreach (var version in versions)
+            {
+                if (LyricsQuality.Evaluate(version, song, recordingDurationMs) is not { } score || score.Score <= bestScore) continue;
+                bestScore = score.Score;
+                best = new(true, RichLyricsMapper.Map(version)!.Format, version.Source);
+            }
+            return false;
         }
         var lookup = MusicLyrics.ForLookup(song);
         var automatic = ProviderOrderPolicyCatalog.NormalizeOrder(ProviderCapabilityKind.Lyrics, policy.GetProviderOrder(ProviderCapabilityKind.Lyrics));

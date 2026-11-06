@@ -16,6 +16,9 @@ public sealed record ClientLyricsSource(
     [property: JsonPropertyName("durationMs"), JsonNumberHandling(JsonNumberHandling.Strict)] long? DurationMs)
 {
     [JsonPropertyName("state")] public string State { get; init; } = "ready";
+    [JsonPropertyName("score"), JsonNumberHandling(JsonNumberHandling.Strict)] public double? Score { get; init; }
+    [JsonPropertyName("rank")] public int? Rank { get; init; }
+    [JsonPropertyName("reasons")] public IReadOnlyList<string>? Reasons { get; init; }
 }
 
 public sealed record ClientLyricsChosen(

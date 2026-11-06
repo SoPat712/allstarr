@@ -194,23 +194,48 @@ public sealed class ProtocolLyricsResolverTests
     }
 
     [Fact]
-    public async Task KeptWordLyricsWinBeforeAnyAutomaticProviderCall()
+    public async Task ManualOnlySourceRemainsReviewableWithoutAnAutomaticScore()
+    {
+        var context = LyricsContext();
+        var providers = LyricsProviders(context, ProviderLyricsFormat.LineTimed, ProviderLyricsFormat.LineTimed);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrclib", "kept"]);
+        var policy = new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+            ImmutableHashSet<string>.Empty, "lossless", 0.07)
+        { ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("kept", ProviderUseMode.ManualOnly) };
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        policies.Setup(item => item.ResolveForUserAsync(context.Principal!.UserId, context.CancellationToken)).ReturnsAsync(policy);
+        var candidates = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance,
+            effectivePolicies: policies.Object).FindAllAsync(context, LyricsSong(), "recording", new ProtocolLyricsSources(Kept: _ =>
+                Task.FromResult<allstarr.Models.Lyrics.LyricsInfo?>(new() { SyncedLyrics = "[00:01]<00:01>Kept <00:02>words" })));
+        var manual = Assert.Single(candidates, candidate => candidate.SourceId == "kept");
+        Assert.Equal("ready", manual.State);
+        Assert.NotNull(manual.Lyrics);
+        Assert.Null(manual.Assessment);
+        Assert.NotNull(Assert.Single(candidates, candidate => candidate.SourceId == "lrclib").Assessment);
+    }
+
+    [Fact]
+    public async Task KeptWordLyricsWinWhenTheEarlierSourceIsUnavailable()
     {
         var context = LyricsContext();
         var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrclib", "kept"]);
+        providers.Setup(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+            "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null)).ReturnsAsync((ProviderLyricsResult?)null);
         var reads = 0;
         var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance)
             .FindAsync(context, LyricsSong(), "recording", new ProtocolLyricsSources(Kept: token =>
             {
                 Assert.Equal(context.CancellationToken, token);
                 reads++;
-                return Task.FromResult<allstarr.Models.Lyrics.LyricsInfo?>(new() { SyncedLyrics = "[00:01.000]<00:01.000>Kept <00:01.500>words" });
+                return Task.FromResult<allstarr.Models.Lyrics.LyricsInfo?>(new() { SyncedLyrics = "[01:50.000]<01:50.000>Kept <01:50.500>words" });
             }));
         Assert.Equal("kept", result?.Source);
         Assert.Contains("Kept", result?.SyncedLyrics);
         Assert.Equal(1, reads);
         providers.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics), Times.Once);
+        providers.Verify(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+            "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null), Times.Once);
         providers.VerifyNoOtherCalls();
     }
 
@@ -289,7 +314,12 @@ public sealed class ProtocolLyricsResolverTests
         var kept = new Mock<IKeptLyricsReader>(MockBehavior.Strict);
         kept.Setup(item => item.ReadAsync(context, song, It.Is<IReadOnlyList<KeptLyricsIdentity>>(
                 ids => ids.Count == 1 && ids[0] == new KeptLyricsIdentity("spotify", "exact"))))
-            .ReturnsAsync(new allstarr.Models.Lyrics.LyricsInfo { SyncedLyrics = "[00:01.234]Owned" });
+            .ReturnsAsync(new allstarr.Models.Lyrics.LyricsInfo
+            {
+                SyncedLyrics = "[01:50.234]Owned",
+                TimedLines = [new("Owned", TimeSpan.FromMilliseconds(110234), TimeSpan.FromSeconds(1),
+                    [new("Owned", TimeSpan.FromMilliseconds(110234), TimeSpan.FromSeconds(1))])]
+            });
         var index = new Mock<ILibraryIndexService>(MockBehavior.Strict);
         if (native) index.Setup(item => item.FindByBackendItemAsync(context, "native-item", context.CancellationToken))
             .ReturnsAsync(new IndexedLibraryTrack(Guid.CreateVersion7(), "native-item", "/untrusted/never-use.flac",
@@ -299,7 +329,7 @@ public sealed class ProtocolLyricsResolverTests
                 keptLyrics: kept.Object, libraryIndex: index.Object)
             .FindAsync(context, song, song.Id);
         Assert.Equal("kept", result?.Source);
-        Assert.Equal("[00:01.234]Owned", result?.SyncedLyrics);
+        Assert.Equal("[01:50.234]Owned", result?.SyncedLyrics);
         kept.VerifyAll();
         index.VerifyAll();
         providers.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics), Times.Once);
@@ -377,7 +407,7 @@ public sealed class ProtocolLyricsResolverTests
             .Callback(() => calls.Add("lrclib"))
             .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib",
                 laterTimed ? ProviderLyricsFormat.LineTimed : ProviderLyricsFormat.PlainText,
-                laterTimed ? "[00:01.234]Provider" : "Provider"));
+                laterTimed ? "[01:50.234]Provider" : "Provider"));
         var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
         policies.Setup(item => item.ResolveForUserAsync(context.Actor!.EffectiveUserId!.Value, context.CancellationToken))
             .ReturnsAsync(new EffectiveProviderPolicySnapshot(new Dictionary<ProviderCapabilityKind, ImmutableArray<string>>
@@ -388,14 +418,14 @@ public sealed class ProtocolLyricsResolverTests
             Assert.Equal(context.CancellationToken, token);
             calls.Add(source);
             return Task.FromResult<allstarr.Models.Lyrics.LyricsInfo?>(new()
-            { Source = source, SyncedLyrics = timed ? "[00:01.234]Local" : null, PlainLyrics = timed ? null : "Local" });
+            { Source = source, SyncedLyrics = timed ? "[01:50.234]Local" : null, PlainLyrics = timed ? null : "Local" });
         }
         var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance,
                 effectivePolicies: policies.Object).FindAsync(context, LyricsSong(), "native-song",
             new ProtocolLyricsSources(token => Read("backend", backendTimed, token), token => Read("kept", laterTimed, token)));
         Assert.Equal(expected, result?.Source);
         Assert.Equal(laterTimed, result?.SyncedLyrics != null);
-        Assert.Equal(expected == "lrclib" || !laterTimed ? new[] { "backend", "kept", "lrclib" } : ["backend", "kept"], calls);
+        Assert.Equal(new[] { "backend", "kept", "lrclib" }, calls);
         policies.VerifyAll();
     }
 
@@ -495,7 +525,7 @@ public sealed class ProtocolLyricsResolverTests
                 "Fixture song", It.IsAny<IReadOnlyList<string>>(), "Fixture album", 240, null))
             .ReturnsAsync(new ProviderLyricsResult(
                 ProviderLyricsAvailabilityState.Available, "lrclib",
-                ProviderLyricsFormat.LineTimed, "[00:01.00]<00:01.00>Fixture line\n"));
+                ProviderLyricsFormat.LineTimed, "[03:40.00]<03:40.00>Fixture <03:41.00>line\n"));
         var resolver = new ProtocolLyricsResolver(
             providers.Object, NullLogger<ProtocolLyricsResolver>.Instance);
 
@@ -516,7 +546,7 @@ public sealed class ProtocolLyricsResolverTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task Resolver_UsesResolvedCrosslinksBeforeLyricsFallback(bool cached)
+    public async Task Resolver_UsesResolvedCrosslinksWhenComparingLyrics(bool cached)
     {
         var protocol = new ProtocolExecutionContext(
             ProtocolKind.Jellyfin, "backend", "listener", new AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "backend", "listener", "Listener", false), "lyrics-translation",
@@ -533,11 +563,11 @@ public sealed class ProtocolLyricsResolverTests
                 "Rocket", It.IsAny<IReadOnlyList<string>>(), "Fixture album", 210, null))
             .ReturnsAsync(new ProviderLyricsResult(
                 ProviderLyricsAvailabilityState.Available, "apple-download",
-                ProviderLyricsFormat.LineTimed, "[00:01.00]Rocket line\n"));
+                ProviderLyricsFormat.LineTimed, "[03:20.00]Rocket line\n"));
         providers.Setup(item => item.GetLyricsAsync(protocol, "lrclib", It.IsAny<string>(),
                 ProviderLyricsFormat.LineTimed, "Rocket", It.IsAny<IReadOnlyList<string>>(), "Fixture album", 210, null))
             .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib",
-                ProviderLyricsFormat.LineTimed, "[00:01.00]Rocket line\n"));
+                ProviderLyricsFormat.LineTimed, "[03:20.00]Rocket line\n"));
         var links = new Mock<ICrossProviderLinkResolver>();
         links.Setup(item => item.ResolveAsync(It.IsAny<ExternalTrackMatchSnapshot>(),
                 It.IsAny<IReadOnlyList<ProviderExternalResourceId>>(), It.IsAny<ProviderActorContext>(),
@@ -563,17 +593,14 @@ public sealed class ProtocolLyricsResolverTests
                 call.Arguments[1] is "spotify" or "apple-download");
             return;
         }
-        Assert.Equal(
-            "spotify:2takcwOaAZWiXQijPHIx7B|apple-download:2037093408",
-            string.Join('|', providers.Invocations
-                .Where(call => call.Method.Name == nameof(IProtocolProviderGateway.GetLyricsAsync))
-                .Select(call => $"{call.Arguments[1]}:{call.Arguments[2]}")));
+        Assert.Equal(new[] { "spotify", "apple-download", "lrclib" }, providers.Invocations
+            .Where(call => call.Method.Name == nameof(IProtocolProviderGateway.GetLyricsAsync)).Select(call => call.Arguments[1]));
         Assert.Equal("apple-download", result?.Source);
-        Assert.Equal("[00:01.00]Rocket line\n", result?.SyncedLyrics);
+        Assert.Equal("[03:20.00]Rocket line\n", result?.SyncedLyrics);
         providers.Verify(item => item.GetLyricsAsync(
             It.IsAny<ProtocolExecutionContext>(), "lrclib", It.IsAny<string>(),
             It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
-            It.IsAny<string>(), It.IsAny<int?>(), null), Times.Never);
+            It.IsAny<string>(), It.IsAny<int?>(), null), Times.Once);
     }
 
 
@@ -595,7 +622,7 @@ public sealed class ProtocolLyricsResolverTests
             ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null), Times.Once);
         providers.Verify(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(),
             ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null),
-            first == ProviderLyricsFormat.PlainText ? Times.Once() : Times.Never());
+            Times.Once());
     }
 
     [Fact]
@@ -668,7 +695,7 @@ public sealed class ProtocolLyricsResolverTests
         providers.Setup(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
                 "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
             .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib", format,
-                "[00:01]<00:01>Words"));
+                "[01:50]<01:50>Two <01:51>words"));
         providers.Setup(item => item.GetLyricsAsync(context, "paxsenix", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
                 "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
             .Returns(new TaskCompletionSource<ProviderLyricsResult?>().Task);
@@ -717,7 +744,7 @@ public sealed class ProtocolLyricsResolverTests
             providers.Setup(item => item.GetLyricsAsync(context, id, It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
                     "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
                 .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, id, format,
-                    format == ProviderLyricsFormat.PlainText ? "Synthetic words" : "[00:01.00]Synthetic words"));
+                    format == ProviderLyricsFormat.PlainText ? "Synthetic words" : "[01:50.00]Synthetic words"));
         return providers;
     }
 

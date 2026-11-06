@@ -163,6 +163,21 @@ public sealed class ProtocolLyricsChoiceResolutionTests
     }
 
     [Fact]
+    public async Task UnavailableDurationDoesNotDiscardTheSavedChoice()
+    {
+        var context = Context();
+        var recording = Guid.NewGuid();
+        var choices = Choices(context, recording, new(new(Guid.NewGuid(), recording, context.Principal!.UserId, "lrclib", 1), null));
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        identities.Setup(item => item.ResolveRecordingAsync(context.Actor!, recording.ToString("D"), context.CancellationToken))
+            .ThrowsAsync(new HttpRequestException());
+        var result = await new ProtocolLyricsResolver(Providers(context, true).Object, NullLogger<ProtocolLyricsResolver>.Instance,
+            choices: choices.Object, identities: identities.Object).FindAsync(context, Song(recording), "source", "spotify", "exact");
+        Assert.Equal("lrclib", result?.Source);
+        Assert.Equal("Chosen plain words", result?.PlainLyrics);
+    }
+
+    [Fact]
     public async Task MetadataRequestHashNeverBecomesRecordingAuthority()
     {
         var context = Context();

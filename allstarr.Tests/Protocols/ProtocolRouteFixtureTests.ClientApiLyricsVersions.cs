@@ -155,10 +155,43 @@ public sealed partial class ProtocolRouteFixtureTests
         const string path = "/allstarr/v1/items/ext-deezer-song-lyrics/lyrics";
         var sources = await ReadClientLyricsJsonAsync(client, path + "/sources");
         Assert.Equal(3, sources["sources"]!.AsArray().Count(source => source!["providerId"]!.GetValue<string>() == "lrclib"));
-        Assert.Null(sources["chosen"]);
+        Assert.Equal("lrclib:101", sources["chosen"]!["sourceId"]!.GetValue<string>());
         Assert.Equal("Concert fireworks", (await ReadClientLyricsJsonAsync(client, path + "?sourceId=lrclib:103"))["lines"]![0]!["text"]!.GetValue<string>());
-        using var automatic = await client.GetAsync(path);
-        await AssertClientApiError(automatic, 404, "not_found");
+        Assert.Equal("Studio constellation", (await ReadClientLyricsJsonAsync(client, path))["lines"]![0]!["text"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClientApi_LyricsAutomaticAndJellyfinChooseRankOneUsingRecordingDuration(bool native)
+    {
+        var recording = Guid.NewGuid();
+        var versions = new[]
+        {
+            new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib", ProviderLyricsFormat.WordTimed,
+                "[00:01]<00:01>Short <00:02>words") { Metadata = new("short", "Fixture", "Artist", "Album", 10000) },
+            new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib", ProviderLyricsFormat.LineTimed,
+                "[00:01]First line\n[01:50]Last line") { Metadata = new("fits", "Fixture", "Artist", "Album", 120000) }
+        };
+        using var factory = ClientLyricsFactory(recording, new() { ["lrclib"] = versions[0] with { Versions = versions } });
+        using var client = CreateClientApiClient(factory);
+        client.DefaultRequestHeaders.Add("X-Emby-Token", "listener-token");
+        await SeedClientLyricsAsync(factory, recording);
+        await using (var db = await factory.Services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync())
+        {
+            (await db.CanonicalRecordings.SingleAsync(item => item.Id == recording)).DurationMilliseconds = 120000;
+            await db.SaveChangesAsync();
+        }
+        var itemId = native ? "native" : "ext-deezer-song-lyrics";
+        var path = $"/allstarr/v1/items/{itemId}/lyrics";
+        var sources = await ReadClientLyricsJsonAsync(client, path + "/sources");
+        var best = Assert.Single(sources["sources"]!.AsArray(), source => source!["rank"]?.GetValue<int>() == 1)!;
+        Assert.Equal("lrclib:fits", best["sourceId"]!.GetValue<string>());
+        Assert.Contains("duration_fits", best["reasons"]!.AsArray().Select(reason => reason!.GetValue<string>()));
+        Assert.Equal(best["sourceId"]!.GetValue<string>(), sources["chosen"]!["sourceId"]!.GetValue<string>());
+        Assert.Equal(best["sourceId"]!.GetValue<string>(), (await ReadClientLyricsJsonAsync(client, path))["source"]!["id"]!.GetValue<string>());
+        var jellyfin = await ReadClientLyricsJsonAsync(client, $"/Audio/{itemId}/Lyrics");
+        Assert.Equal("Last line", jellyfin["Lyrics"]!.AsArray()[^1]!["Text"]!.GetValue<string>());
     }
 
     private static string ClientLyricsVersionText(int index) => new[] { "Studio constellation", "Acoustic lantern", "Concert fireworks" }[index];
