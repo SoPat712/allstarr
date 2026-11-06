@@ -62,7 +62,8 @@ public sealed partial class LibraryPromotionService
         _ => throw new ArgumentException("Choose album or song.")
     };
 
-    private async Task<PromotionRunRecord> StartAlbumAsync(ProtocolExecutionContext context, PromoteSongRequest request, CancellationToken token)
+    private async Task<PromotionRunRecord> StartAlbumAsync(ProtocolExecutionContext context, PromoteSongRequest request, CancellationToken token,
+        IReadOnlyList<allstarr.Models.Domain.Song>? savedSongs = null, Guid? requestId = null, Guid? approver = null)
     {
         if (request.RecordingId == Guid.Empty || string.IsNullOrWhiteSpace(request.BackendLibraryId) ||
             string.IsNullOrWhiteSpace(request.RequestKey) || request.RequestKey.Length > 100)
@@ -84,7 +85,7 @@ public sealed partial class LibraryPromotionService
             if (!(await libraryAccess.ResolveAsync(context, token)).Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
             var profile = (await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token)).Values;
             var root = await roots.RequireAsync(request.RootId == Guid.Empty ? profile.LibraryRootId ?? Guid.Empty : request.RootId, token);
-            var songs = await promotionCatalog!.ResolveAsync(context, request.RecordingId, Unit(request, profile), token);
+            var songs = savedSongs ?? await promotionCatalog!.ResolveAsync(context, request.RecordingId, Unit(request, profile), token);
             if (songs.Count is 0 or > 256 || songs.Any(song => song.CanonicalRecordingId is null || song.CanonicalRecordingId == Guid.Empty))
                 throw new InvalidOperationException("A bounded release tracklist with recording identities is required.");
             var tracks = new List<PromotionTrack>();
@@ -121,6 +122,7 @@ public sealed partial class LibraryPromotionService
                 Tracks = tracks
             };
             db.Add(run);
+            if (requestId is { } approvalId) await LinkApprovedRequestAsync(db, approvalId, run, approver!.Value, token);
             await db.SaveChangesAsync(token);
             await transaction.CommitAsync(token);
             return run;

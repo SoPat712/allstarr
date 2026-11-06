@@ -43,6 +43,7 @@ public sealed partial class RecordingKeptFilesTests
         var original = await PublishInitialFavoriteAsync();
         await using (var db = factory.CreateDbContext())
         {
+            (await db.Users.SingleAsync(item => item.Id == owner)).IsTrustedListener = true;
             (await db.Set<ProviderDownloadArtifactEntity>().SingleAsync()).QualityCheckJson =
                 JsonSerializer.Serialize(new AudioQualityCheck(44100, 16, 21000, "standard", .9));
             await db.SaveChangesAsync();

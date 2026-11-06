@@ -29,6 +29,14 @@ internal sealed class SqliteTestDatabase : IAsyncDisposable
         DatabaseFileName = Path.GetFileName(DatabasePath)
     };
 
+    public static Task InsertHistoricalUserAsync(AllstarrDbContext db, UserRecord user) =>
+        db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO users (Id, BackendType, BackendInstanceId, BackendPrincipalId, DisplayName,
+                IsAdmin, IsSynthetic, Enabled, CreatedAt, UpdatedAt, LastSeenAt)
+            VALUES ({user.Id}, {user.BackendType}, {user.BackendInstanceId}, {user.BackendPrincipalId}, {user.DisplayName},
+                {user.IsAdmin}, {user.IsSynthetic}, {user.Enabled}, {user.CreatedAt.UtcTicks}, {user.UpdatedAt.UtcTicks}, {user.LastSeenAt.UtcTicks})
+            """);
+
     public static async Task<SqliteTestDatabase> CreateAsync(bool useTemplate = true)
     {
         var directory = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));

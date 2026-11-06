@@ -38,7 +38,8 @@ public sealed class SharedProviderHeartsMigrationTests
         await migrator.MigrateAsync(Before);
         var owner = Guid.NewGuid();
         var synthetic = Guid.NewGuid();
-        db.Users.AddRange(User(owner, false), User(synthetic, true));
+        await SqliteTestDatabase.InsertHistoricalUserAsync(db, User(owner, false));
+        await SqliteTestDatabase.InsertHistoricalUserAsync(db, User(synthetic, true));
         var jobs = new Dictionary<Guid, Guid>();
         foreach (var user in new[] { owner, synthetic })
         {

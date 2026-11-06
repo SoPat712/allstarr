@@ -18,20 +18,20 @@ public sealed class SharedTagMigrationTests
         const string target = "20261028200000_SharedTagProfiles";
         await migrator.MigrateAsync(before);
         var owner = Guid.NewGuid();
-        db.Users.Add(new() { Id = owner, BackendPrincipalId = "fixture", DisplayName = "Listener" });
+        await SqliteTestDatabase.InsertHistoricalUserAsync(db, new() { Id = owner, BackendPrincipalId = "fixture", DisplayName = "Listener" });
         await db.SaveChangesAsync();
         await db.Database.ExecuteSqlRawAsync("CREATE TABLE tag_upgrade_fixture (Value TEXT NOT NULL); INSERT INTO tag_upgrade_fixture VALUES('preserved');");
 
         await migrator.MigrateAsync(target);
         Assert.Equal(0, await db.SharedTagProfiles.CountAsync());
-        Assert.Equal(owner, (await db.Users.SingleAsync()).Id);
+        Assert.Equal(owner, await db.Users.Select(item => item.Id).SingleAsync());
         Assert.Equal("preserved", await db.Database.SqlQueryRaw<string>("SELECT Value FROM tag_upgrade_fixture").SingleAsync());
         Assert.Equal(0, await db.Database.SqlQueryRaw<int>("SELECT count(*) AS Value FROM promotion_runs").SingleAsync());
         Assert.Equal(0, await db.Database.SqlQueryRaw<int>("SELECT count(*) AS Value FROM promotion_steps").SingleAsync());
         Assert.Equal(0, await db.Database.SqlQueryRaw<int>("SELECT count(*) AS Value FROM pragma_foreign_key_check").SingleAsync());
 
         await migrator.MigrateAsync(before);
-        Assert.Equal(owner, (await db.Users.SingleAsync()).Id);
+        Assert.Equal(owner, await db.Users.Select(item => item.Id).SingleAsync());
         Assert.Equal("preserved", await db.Database.SqlQueryRaw<string>("SELECT Value FROM tag_upgrade_fixture").SingleAsync());
         Assert.Equal(0, await db.Database.SqlQueryRaw<int>("SELECT count(*) AS Value FROM promotion_runs").SingleAsync());
         await migrator.MigrateAsync(target);

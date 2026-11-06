@@ -23,6 +23,50 @@ namespace allstarr.Tests;
 
 public sealed class AdminUiActivityTests
 {
+    [Theory]
+    [InlineData("approved", "Your request for Album was approved.")]
+    [InlineData("declined", "Your request for Album was declined. Please choose the deluxe edition.")]
+    [InlineData("added", "Album was added to your library.")]
+    [InlineData("failed", "Album could not be added to your library.")]
+    public async Task PromotionRequestActivity_IsVisibleToRequesterInHistoryAndHome(string action, string message)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var owner = Guid.CreateVersion7();
+        var other = Guid.CreateVersion7();
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            foreach (var id in new[] { owner, other })
+                db.Users.Add(new() { Id = id, DisplayName = "Listener", BackendType = "jellyfin", BackendInstanceId = "fixture", BackendPrincipalId = id.ToString("N") });
+            db.AuditEvents.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                ActorUserId = owner,
+                Category = "library-promotion",
+                Action = $"request-{action}",
+                Outcome = action == "failed" ? "failed" : "success",
+                SubjectType = "promotion-request",
+                SubjectId = Guid.NewGuid().ToString("N"),
+                DetailsJson = JsonSerializer.Serialize(new { message }),
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var matches = new TrackMatchCommandService(factory, new TrackMatchDecisionEngine(), new ProviderAccountResolver(factory), new SystemPlatformClock(), Mock.Of<IBackendLibraryAccessResolver>());
+        foreach (var limit in new[] { 5, 20 })
+        {
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(
+                await Controller(factory, matches, owner).GetDashboardActivity(limit: limit)).Value));
+            var row = Assert.Single(json.RootElement.GetProperty("items").EnumerateArray());
+            Assert.Equal(message, Text(row, "Detail"));
+            Assert.Equal("library", Text(row, "Kind"));
+            Assert.Equal("Jellyfin library", Text(row, "Source"));
+        }
+        using var hidden = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(
+            await Controller(factory, matches, other).GetDashboardActivity()).Value));
+        Assert.Empty(hidden.RootElement.GetProperty("items").EnumerateArray());
+    }
+
     [Fact]
     public async Task Empty_playlist_source_attention_shows_kept_songs_message_in_activity()
     {

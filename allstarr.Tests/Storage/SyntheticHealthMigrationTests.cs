@@ -88,6 +88,6 @@ public sealed class SyntheticHealthMigrationTests
         await db.Users.ExecuteUpdateAsync(set => set.SetProperty(user => user.IsSynthetic, true));
         var failure = await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(() => migrator.MigrateAsync("20261023010000_PersonalPlaybackStart"));
         Assert.Contains("CK_synthetic_listeners_require_backup_restore", failure.Message);
-        Assert.True((await db.Users.AsNoTracking().SingleAsync()).IsSynthetic);
+        Assert.True(await db.Users.Select(user => user.IsSynthetic).SingleAsync());
     }
 }

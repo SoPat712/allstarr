@@ -3,6 +3,7 @@ using System.Text.Json;
 using allstarr.Core.Identity;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Storage;
+using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,6 +20,7 @@ public sealed partial class ProviderAccountsControllerTests
         {
             var user = await db.Users.SingleAsync(item => item.Id == _userId);
             user.IsAdmin = true;
+            user.IsTrustedListener = true;
             user.LastSeenAt = now.AddDays(-1);
             for (var index = 1; index <= 6; index++)
                 db.ListeningEvents.Add(ListenerPlay(_userId, now.AddHours(-index), $"Song {index}"));
@@ -54,6 +56,7 @@ public sealed partial class ProviderAccountsControllerTests
         var listener = Assert.Single(listeners, item => item.GetProperty("Id").GetGuid() == _userId);
         Assert.Equal("User one", listener.GetProperty("DisplayName").GetString());
         Assert.True(listener.GetProperty("isAdministrator").GetBoolean());
+        Assert.True(listener.GetProperty("isTrustedListener").GetBoolean());
         Assert.Equal(latestActivity, listener.GetProperty("lastActiveAt").GetDateTimeOffset());
         Assert.Equal(7, listener.GetProperty("playsThisWeek").GetInt32());
         Assert.False(listener.GetProperty("playlistEditingAllowed").GetBoolean());
@@ -86,6 +89,7 @@ public sealed partial class ProviderAccountsControllerTests
         Assert.Equal(2, listeners.Length);
         var unknown = Assert.Single(listeners, item => item.GetProperty("Id").GetGuid() == _userId);
         Assert.False(unknown.GetProperty("isAdministrator").GetBoolean());
+        Assert.All(listeners, item => Assert.False(item.GetProperty("isTrustedListener").GetBoolean()));
         Assert.Equal(JsonValueKind.Null, unknown.GetProperty("lastActiveAt").ValueKind);
         Assert.Equal(0, unknown.GetProperty("playsThisWeek").GetInt32());
         Assert.Empty(unknown.GetProperty("recentPlays").EnumerateArray());
@@ -138,6 +142,138 @@ public sealed partial class ProviderAccountsControllerTests
             Assert.IsType<OkObjectResult>(await Controller(Session(_userId)).List()).Value));
         Assert.Empty(payload.RootElement.GetProperty("audienceUsers").EnumerateArray());
     }
+
+    [Fact]
+    public async Task ListenerTrust_DefaultsToFalseForNewUsers()
+    {
+        Assert.False(new UserRecord().IsTrustedListener);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.All(await db.Users.AsNoTracking().ToListAsync(), user => Assert.False(user.IsTrustedListener));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Administrator_CanSetAndUnsetListenerTrust(bool trusted)
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.Users.SingleAsync(item => item.Id == _userId)).IsAdmin = true;
+            (await db.Users.SingleAsync(item => item.Id == _otherUserId)).IsTrustedListener = !trusted;
+            await db.SaveChangesAsync();
+        }
+
+        var result = Assert.IsType<OkObjectResult>(await Controller(ListenerTrustSession())
+            .SetListenerTrust(_otherUserId, new() { IsTrustedListener = trusted }));
+        using var payload = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        Assert.Equal(_otherUserId, payload.RootElement.GetProperty("id").GetGuid());
+        Assert.Equal(trusted, payload.RootElement.GetProperty("isTrustedListener").GetBoolean());
+        await using var persisted = await _factory.CreateDbContextAsync();
+        Assert.Equal(trusted, (await persisted.Users.AsNoTracking()
+            .SingleAsync(item => item.Id == _otherUserId)).IsTrustedListener);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task Listener_CannotChangeTheirOwnOrAnotherListenersTrust(bool self, bool trusted)
+    {
+        var target = self ? _userId : _otherUserId;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.Users.SingleAsync(item => item.Id == target)).IsTrustedListener = !trusted;
+            await db.SaveChangesAsync();
+        }
+
+        AssertForbidden(await Controller(ListenerTrustSession(administrator: false))
+            .SetListenerTrust(target, new() { IsTrustedListener = trusted }));
+        await using var persisted = await _factory.CreateDbContextAsync();
+        Assert.Equal(!trusted, (await persisted.Users.AsNoTracking()
+            .SingleAsync(item => item.Id == target)).IsTrustedListener);
+    }
+
+    [Theory]
+    [InlineData("not-administrator")]
+    [InlineData("session-not-administrator")]
+    [InlineData("disabled")]
+    [InlineData("missing")]
+    [InlineData("backend-type")]
+    [InlineData("backend-instance")]
+    [InlineData("backend-principal")]
+    [InlineData("expired")]
+    [InlineData("unlinked")]
+    public async Task ListenerTrust_RequiresMatchingEnabledStoredAdministrator(string invalidIdentity)
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var administrator = await db.Users.SingleAsync(item => item.Id == _userId);
+            administrator.IsAdmin = invalidIdentity != "not-administrator";
+            if (invalidIdentity == "disabled") administrator.Enabled = false;
+            if (invalidIdentity == "missing") db.Users.Remove(administrator);
+            if (invalidIdentity == "backend-type") administrator.BackendType = "subsonic";
+            if (invalidIdentity == "backend-instance") administrator.BackendInstanceId = "another-instance";
+            if (invalidIdentity == "backend-principal") administrator.BackendPrincipalId = "another-principal";
+            await db.SaveChangesAsync();
+        }
+        var session = ListenerTrustSession(administrator: invalidIdentity != "session-not-administrator",
+            linked: invalidIdentity != "unlinked");
+        if (invalidIdentity == "expired") session.ExpiresAtUtc = DateTime.UtcNow.AddMinutes(-1);
+
+        AssertForbidden(await Controller(session)
+            .SetListenerTrust(_otherUserId, new() { IsTrustedListener = true }));
+        await using var persisted = await _factory.CreateDbContextAsync();
+        Assert.False((await persisted.Users.AsNoTracking()
+            .SingleAsync(item => item.Id == _otherUserId)).IsTrustedListener);
+    }
+
+    [Fact]
+    public async Task ListenerTrust_RequiresAuthentication()
+    {
+        var controller = Controller(ListenerTrustSession());
+        controller.HttpContext.Items.Remove(AdminAuthSessionService.HttpContextSessionItemKey);
+
+        Assert.IsType<UnauthorizedObjectResult>(await controller
+            .SetListenerTrust(_otherUserId, new() { IsTrustedListener = true }));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ListenerTrust_ReturnsNotFoundForMissingOrDisabledListener(bool disabled)
+    {
+        var target = disabled ? _otherUserId : Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.Users.SingleAsync(item => item.Id == _userId)).IsAdmin = true;
+            if (disabled) (await db.Users.SingleAsync(item => item.Id == target)).Enabled = false;
+            await db.SaveChangesAsync();
+        }
+
+        Assert.IsType<NotFoundResult>(await Controller(ListenerTrustSession())
+            .SetListenerTrust(target, new() { IsTrustedListener = true }));
+        if (disabled)
+        {
+            await using var persisted = await _factory.CreateDbContextAsync();
+            Assert.False((await persisted.Users.AsNoTracking()
+                .SingleAsync(item => item.Id == target)).IsTrustedListener);
+        }
+    }
+
+    private AdminAuthSession ListenerTrustSession(bool administrator = true, bool linked = true) => new()
+    {
+        SessionId = Guid.NewGuid().ToString("N"),
+        UserId = _userId.ToString(),
+        UserName = "fixture",
+        IsAdministrator = administrator,
+        BackendType = "Jellyfin",
+        BackendInstanceId = "fixture",
+        AllstarrUserId = linked ? _userId : null,
+        JellyfinAccessToken = "protected-in-real-session-store",
+        ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
+        LastSeenUtc = DateTime.UtcNow
+    };
 
     private static ListeningEventRecord ListenerPlay(Guid owner, DateTimeOffset at, string title) => new()
     {

@@ -16,12 +16,12 @@ public sealed class PromotionProfileMigrationTests
         var migrator = db.GetService<IMigrator>();
         await migrator.MigrateAsync("20261030120000_CollectionMigration");
         var owner = Guid.CreateVersion7();
-        db.Users.Add(new() { Id = owner, BackendPrincipalId = "profile-fixture", DisplayName = "Listener" });
+        await SqliteTestDatabase.InsertHistoricalUserAsync(db, new() { Id = owner, BackendPrincipalId = "profile-fixture", DisplayName = "Listener" });
         db.SharedTagProfiles.Add(new() { Key = "profile-fixture", PayloadJson = "{}" });
         await db.SaveChangesAsync();
         await migrator.MigrateAsync();
         Assert.Empty(await db.PromotionProfiles.ToArrayAsync());
-        Assert.Equal(owner, (await db.Users.SingleAsync()).Id);
+        Assert.Equal(owner, await db.Users.Select(item => item.Id).SingleAsync());
         Assert.Equal("profile-fixture", (await db.SharedTagProfiles.SingleAsync()).Key);
         Assert.False(db.Database.HasPendingModelChanges());
         var assembly = db.GetService<IMigrationsAssembly>();

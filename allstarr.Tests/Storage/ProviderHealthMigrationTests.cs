@@ -93,6 +93,7 @@ public sealed class ProviderHealthMigrationTests
         AssertSchemaPreserved(beforeSchema, await Schema(db));
         Assert.All(await db.DownloadedSongMappings.AsNoTracking().ToArrayAsync(), mapping => Assert.Null(mapping.CacheIdentityJson));
         Assert.All(await db.Users.AsNoTracking().ToArrayAsync(), listener => Assert.False(listener.IsSynthetic));
+        Assert.All(await db.Users.AsNoTracking().ToArrayAsync(), listener => Assert.False(listener.IsTrustedListener));
         Assert.Equal(beforeRows, await Rows(db));
         Assert.Equal("Existing", await db.Database.SqlQuery<string>($"SELECT DestinationMode AS Value FROM playlist_links").SingleAsync());
         Assert.Equal("{}", await db.Database.SqlQuery<string>($"SELECT SettingsJson AS Value FROM provider_accounts").SingleAsync());
@@ -123,6 +124,7 @@ public sealed class ProviderHealthMigrationTests
         AssertSchemaPreserved(beforeSchema, await Schema(restored));
         Assert.All(await restored.DownloadedSongMappings.AsNoTracking().ToArrayAsync(), mapping => Assert.Null(mapping.CacheIdentityJson));
         Assert.All(await restored.Users.AsNoTracking().ToArrayAsync(), listener => Assert.False(listener.IsSynthetic));
+        Assert.All(await restored.Users.AsNoTracking().ToArrayAsync(), listener => Assert.False(listener.IsTrustedListener));
         Assert.Equal(beforeRows, await Rows(restored));
         Assert.Equal("Existing", await restored.Database.SqlQuery<string>($"SELECT DestinationMode AS Value FROM playlist_links").SingleAsync());
         Assert.Equal(originalKeyRing, await File.ReadAllBytesAsync(keys.KeyRingPath));
@@ -211,7 +213,7 @@ public sealed class ProviderHealthMigrationTests
         Assert.DoesNotContain(before, row => row.Name == userDataTable);
         Assert.Single(after, row => row.Type == "table" && row.Name == userDataTable);
 
-        Assert.Equal(["\"IsSynthetic\" INTEGER NOT NULL DEFAULT 0"],
+        Assert.Equal(["\"IsSynthetic\" INTEGER NOT NULL DEFAULT 0", "\"IsTrustedListener\" INTEGER NOT NULL DEFAULT 0"],
             TableColumns(after, "users").Except(TableColumns(before, "users")));
         Assert.Empty(TableColumns(before, "users").Except(TableColumns(after, "users")));
         Assert.Equal(["\"CacheIdentityJson\" TEXT NULL"],
@@ -292,7 +294,9 @@ public sealed class ProviderHealthMigrationTests
         string[] promotionObjects =
         [
             "promotion_runs", "IX_promotion_runs_OwnerUserId_RequestKey", "IX_promotion_runs_JobId",
-            "IX_promotion_runs_ManagedFileId", "promotion_steps"
+            "IX_promotion_runs_ManagedFileId", "promotion_steps", "promotion_requests",
+            "IX_promotion_requests_DecidedByUserId", "IX_promotion_requests_RequesterUserId_IdentityKey",
+            "IX_promotion_requests_RunId", "IX_promotion_requests_State"
         ];
         Assert.DoesNotContain(before, row => promotionObjects.Contains(row.Name));
         Assert.Equal(promotionObjects.Order(StringComparer.Ordinal), after.Where(row => promotionObjects.Contains(row.Name))
@@ -426,7 +430,7 @@ public sealed class ProviderHealthMigrationTests
                     var values = Enumerable.Range(0, reader.FieldCount)
                         .Where(index => !(name == "provider_accounts" && reader.GetName(index) == "SettingsJson") &&
                                         !(name == "playlist_links" && reader.GetName(index) == "DestinationMode") &&
-                                        !(name == "users" && reader.GetName(index) == "IsSynthetic") &&
+                                        !(name == "users" && reader.GetName(index) is "IsSynthetic" or "IsTrustedListener") &&
                                         !(name == "downloaded_song_mappings" && reader.GetName(index) == "CacheIdentityJson"))
                         .Select(index => $"{reader.GetName(index)}={CanonicalValue(reader.GetValue(index))}")
                         .Order(StringComparer.Ordinal)
@@ -471,7 +475,7 @@ public sealed class ProviderHealthMigrationTests
     private static bool IsDeliberateNewColumn(string table, string component) =>
         (table == "favorite_events" && SharedFavoriteEventAdditions.Contains(component)) ||
         (table == "downloaded_song_mappings" && component == "\"CacheIdentityJson\" TEXT NULL") ||
-        (table == "users" && component == "\"IsSynthetic\" INTEGER NOT NULL DEFAULT 0") ||
+        (table == "users" && component is "\"IsSynthetic\" INTEGER NOT NULL DEFAULT 0" or "\"IsTrustedListener\" INTEGER NOT NULL DEFAULT 0") ||
         (table == "provider_accounts" && component == "\"SettingsJson\" TEXT NOT NULL DEFAULT '{}'") ||
         (table == "playlist_links" && component is "\"DestinationMode\" TEXT NOT NULL DEFAULT 'Existing'" or "\"DestinationMode\" TEXT NOT NULL") ||
         (table == "playlist_target_memberships" && component == "\"RemovalConfirmedAt\" INTEGER NULL") ||

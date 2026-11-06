@@ -37,6 +37,7 @@ public sealed class PublicPlaylistSourceMigrationTests
         await db.Database.MigrateAsync();
 
         Assert.All(await db.Users.AsNoTracking().ToArrayAsync(), listener => Assert.False(listener.IsSynthetic));
+        Assert.All(await db.Users.AsNoTracking().ToArrayAsync(), listener => Assert.False(listener.IsTrustedListener));
         Assert.Equal(beforeLegacyRows, await SnapshotLegacyRowsAsync(db));
         Assert.Equal(user.ToString(), await ScalarAsync<string>(db, "SELECT Id AS Value FROM users"), StringComparer.OrdinalIgnoreCase);
         Assert.Equal("spotify", await ScalarAsync<string>(db, "SELECT ProviderId AS Value FROM provider_accounts"));
@@ -244,14 +245,14 @@ public sealed class PublicPlaylistSourceMigrationTests
         var snapshots = new List<string>();
         foreach (var table in new[] { "users", "provider_accounts", "playlist_links", "playlist_source_snapshots", "external_metadata_snapshots" })
         {
-            foreach (var row in await ReadRowsAsync(db, $"SELECT * FROM {table}", omitSyntheticDesignation: table == "users"))
+            foreach (var row in await ReadRowsAsync(db, $"SELECT * FROM {table}", omitListenerSettings: table == "users"))
                 snapshots.Add($"{table}|{row}");
         }
 
         return snapshots.OrderBy(item => item, StringComparer.Ordinal).ToArray();
     }
 
-    private static async Task<string[]> ReadRowsAsync(AllstarrDbContext db, string sql, bool omitSyntheticDesignation = false)
+    private static async Task<string[]> ReadRowsAsync(AllstarrDbContext db, string sql, bool omitListenerSettings = false)
     {
         var connection = db.Database.GetDbConnection();
         var closeWhenDone = connection.State != ConnectionState.Open;
@@ -267,7 +268,7 @@ public sealed class PublicPlaylistSourceMigrationTests
             while (await reader.ReadAsync())
             {
                 var values = Enumerable.Range(0, reader.FieldCount)
-                    .Where(index => !omitSyntheticDesignation || reader.GetName(index) != "IsSynthetic")
+                    .Where(index => !omitListenerSettings || reader.GetName(index) is not ("IsSynthetic" or "IsTrustedListener"))
                     .Select(index => $"{reader.GetName(index)}={CanonicalValue(reader.GetValue(index))}")
                     .OrderBy(value => value, StringComparer.Ordinal);
                 rows.Add(string.Join(",", values));

@@ -1,12 +1,51 @@
 using allstarr.Core.Identity;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Storage;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Controllers;
 
 public sealed partial class ProviderAccountsController
 {
+    [HttpPut("listeners/{userId:guid}/trust")]
+    public async Task<IActionResult> SetListenerTrust(
+        Guid userId,
+        [FromBody] UpdateListenerTrustRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        if (!TryGetSession(out var session, out var error)) return error!;
+        if (!session.IsAdministrator || session.AllstarrUserId is not { } administratorId ||
+            session.ExpiresAtUtc <= DateTime.UtcNow)
+            return ManagementForbidden();
+
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var backendType = session.BackendType.ToLowerInvariant();
+        var administratorExists = await context.Users.AsNoTracking().AnyAsync(item =>
+            item.Id == administratorId && item.Enabled && item.IsAdmin &&
+            item.BackendType == backendType && item.BackendInstanceId == session.BackendInstanceId &&
+            item.BackendPrincipalId == session.UserId, cancellationToken);
+        if (!administratorExists) return ManagementForbidden();
+
+        var listener = await context.Users.SingleOrDefaultAsync(item => item.Id == userId && item.Enabled,
+            cancellationToken);
+        if (listener == null) return NotFound();
+        listener.IsTrustedListener = request.IsTrustedListener;
+        listener.UpdatedAt = DateTimeOffset.UtcNow;
+        AddAudit(context, session, "listener.trust-updated", "succeeded", new
+        {
+            userId = listener.Id,
+            isTrustedListener = listener.IsTrustedListener
+        });
+        await context.SaveChangesAsync(cancellationToken);
+        return Ok(new { id = listener.Id, isTrustedListener = listener.IsTrustedListener });
+    }
+
+    public sealed class UpdateListenerTrustRequest
+    {
+        public bool IsTrustedListener { get; set; }
+    }
+
     private static async Task<List<object>> ReadListenerSummariesAsync(
         AllstarrDbContext context, CancellationToken cancellationToken)
     {
@@ -20,6 +59,7 @@ public sealed partial class ProviderAccountsController
                 item.Id,
                 item.DisplayName,
                 item.IsAdmin,
+                item.IsTrustedListener,
                 item.LastSeenAt,
                 playlistEditingAllowed = context.SecretReferences.Any(secret => secret.UserId == item.Id &&
                     secret.RevokedAt == null &&
@@ -75,6 +115,7 @@ public sealed partial class ProviderAccountsController
                 user.Id,
                 user.DisplayName,
                 isAdministrator = user.IsAdmin,
+                isTrustedListener = user.IsTrustedListener,
                 lastActiveAt,
                 playsThisWeek = weeklyCounts.GetValueOrDefault(user.Id),
                 user.playlistEditingAllowed,

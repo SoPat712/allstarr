@@ -19,7 +19,10 @@ public sealed record PromoteSongRequest(Guid RecordingId, Guid ArtifactId, Guid 
 {
     public string? Unit { get; init; }
 }
-public sealed record PromotionPreview(string DestinationPath, string[] Steps, long Size);
+public sealed record PromotionPreview(string DestinationPath, string[] Steps, long Size)
+{
+    public bool CanAddDirectly { get; init; }
+}
 internal sealed record PromotionPlan(MetadataEnrichmentPlan Metadata, ManagedTrackPathValues Track,
     string Provider, string? ExternalId, string? QualityJson)
 {
@@ -43,7 +46,8 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
     public async Task<PromotionPreview> PreviewAsync(ProtocolExecutionContext context, PromoteSongRequest request,
         CancellationToken token = default)
     {
-        if (promotionCatalog != null) return await PreviewAlbumAsync(context, request, token);
+        var canAddDirectly = await CanAddDirectlyAsync(context, token);
+        if (promotionCatalog != null) return (await PreviewAlbumAsync(context, request, token)) with { CanAddDirectly = canAddDirectly };
         await using var db = await factory.CreateDbContextAsync(token);
         await AuthorizeAsync(db, context, token);
         var root = await roots.RequireAsync(request.RootId, token);
@@ -52,13 +56,13 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
         var source = await SourceAsync(db, context.Principal!.UserId, request, token);
         var plan = await PlanAsync(db, context, request, source, token);
         var destination = Destination(root.Path, plan);
-        return new(destination, Steps, source.Length);
+        return new(destination, Steps, source.Length) { CanAddDirectly = canAddDirectly };
     }
 
-    public async Task<PromotionRunRecord> StartAsync(ProtocolExecutionContext context, PromoteSongRequest request,
-        CancellationToken token = default)
+    private async Task<PromotionRunRecord> StartRunAsync(ProtocolExecutionContext context, PromoteSongRequest request,
+        CancellationToken token, IReadOnlyList<Song>? savedSongs = null, Guid? requestId = null, Guid? approver = null)
     {
-        if (promotionCatalog != null) return await StartAlbumAsync(context, request, token);
+        if (promotionCatalog != null) return await StartAlbumAsync(context, request, token, savedSongs, requestId, approver);
         if (string.IsNullOrWhiteSpace(request.RequestKey) || request.RequestKey.Length > 100 ||
             request.RecordingId == Guid.Empty || request.ArtifactId == Guid.Empty || string.IsNullOrWhiteSpace(request.BackendLibraryId))
             throw new ArgumentException("A song, complete original, library and request key are required.");
@@ -100,6 +104,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
                 CreatedAt = DateTimeOffset.UtcNow
             };
             db.Set<PromotionRunRecord>().Add(run);
+            if (requestId is { } approvalId) await LinkApprovedRequestAsync(db, approvalId, run, approver!.Value, token);
             await db.SaveChangesAsync(token);
             await transaction.CommitAsync(token);
             return run;
@@ -183,6 +188,7 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             run.Reason = run.ManagedFileId == null ? "Cancelled; private working files removed." : "Cancelled; the placed library file is retained.";
             run.Revision++;
             await db.SaveChangesAsync(token);
+            await SynchronizeRequestsForRunAsync(run.Id, token);
             return run;
         }
         finally { gate.Release(); }
@@ -365,7 +371,11 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
             }
             return DurableJobCompletion.Failure("promotion_stopped", run?.Reason);
         }
-        finally { gate.Release(); }
+        finally
+        {
+            try { if (!token.IsCancellationRequested) await SynchronizeRequestsForRunAsync(id, token); }
+            finally { gate.Release(); }
+        }
     }
 
     private async Task<VerifiedProviderDownloadArtifact> SourceAsync(AllstarrDbContext db, Guid owner,

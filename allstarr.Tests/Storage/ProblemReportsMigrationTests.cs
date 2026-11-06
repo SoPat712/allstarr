@@ -24,7 +24,7 @@ public sealed class ProblemReportsMigrationTests
         var migrator = db.GetService<IMigrator>();
         await migrator.MigrateAsync(Before);
         var owner = Guid.NewGuid();
-        db.Users.Add(User(owner));
+        await SqliteTestDatabase.InsertHistoricalUserAsync(db, User(owner));
         await db.SaveChangesAsync();
         await db.Database.ExecuteSqlRawAsync("""
             CREATE TABLE report_fixture (Value TEXT NOT NULL);
@@ -36,7 +36,7 @@ public sealed class ProblemReportsMigrationTests
         var objects = await db.Database.SqlQueryRaw<string>(Objects).ToArrayAsync();
         await migrator.MigrateAsync(Target);
         Assert.Equal(objects, await db.Database.SqlQueryRaw<string>(Objects).ToArrayAsync());
-        Assert.Equal("Listener", (await db.Users.SingleAsync()).DisplayName);
+        Assert.Equal("Listener", await db.Users.Select(item => item.DisplayName).SingleAsync());
         Assert.Equal("existing", await db.Database.SqlQueryRaw<string>("SELECT Value FROM report_fixture").SingleAsync());
         Assert.Equal(0, await db.Database.SqlQueryRaw<int>("SELECT count(*) AS Value FROM pragma_foreign_key_check").SingleAsync());
         await migrator.MigrateAsync(Before);
@@ -52,7 +52,7 @@ public sealed class ProblemReportsMigrationTests
         await using var db = new AllstarrDbContext(database.Options);
         await db.GetService<IMigrator>().MigrateAsync(Target);
         var owner = Guid.NewGuid();
-        db.Users.Add(User(owner));
+        await SqliteTestDatabase.InsertHistoricalUserAsync(db, User(owner));
         var report = Record(owner);
         db.ProblemReports.Add(report);
         await db.SaveChangesAsync();

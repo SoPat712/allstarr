@@ -19,14 +19,14 @@ public sealed class TasteMigrationTests
         const string target = "20261028210000_TasteProfiles";
         await migrator.MigrateAsync(before);
         var owner = Guid.NewGuid();
-        db.Users.Add(new() { Id = owner, BackendPrincipalId = "fixture", DisplayName = "Listener" });
+        await SqliteTestDatabase.InsertHistoricalUserAsync(db, new() { Id = owner, BackendPrincipalId = "fixture", DisplayName = "Listener" });
         db.SharedTagProfiles.Add(new() { Key = "fixture:tag", PayloadJson = "{}" });
         await db.SaveChangesAsync();
         await migrator.MigrateAsync(target);
         Assert.Empty(await db.TasteProfiles.ToArrayAsync());
         await migrator.MigrateAsync(before);
         Assert.Equal("fixture:tag", (await db.SharedTagProfiles.AsNoTracking().SingleAsync()).Key);
-        Assert.Equal(owner, (await db.Users.AsNoTracking().SingleAsync()).Id);
+        Assert.Equal(owner, await db.Users.Select(item => item.Id).SingleAsync());
         Assert.Equal(0, await db.Database.SqlQueryRaw<int>("SELECT count(*) AS Value FROM promotion_runs").SingleAsync());
         await migrator.MigrateAsync(target);
         Assert.Equal("ok", await db.Database.SqlQueryRaw<string>("SELECT integrity_check AS Value FROM pragma_integrity_check").SingleAsync());
@@ -47,7 +47,7 @@ public sealed class TasteMigrationTests
         await Assert.ThrowsAsync<SqliteException>(() => db.GetService<IMigrator>().MigrateAsync("20261028120000_ProblemAlerts"));
         Assert.Equal(payload, (await db.TasteProfiles.AsNoTracking().SingleAsync()).PayloadJson);
         Assert.Equal("fixture:tag", (await db.SharedTagProfiles.AsNoTracking().SingleAsync()).Key);
-        Assert.Equal(owner, (await db.Users.AsNoTracking().SingleAsync()).Id);
+        Assert.Equal(owner, await db.Users.Select(item => item.Id).SingleAsync());
         Assert.Equal(0, await db.Database.SqlQueryRaw<int>("SELECT count(*) AS Value FROM promotion_runs").SingleAsync());
     }
 }

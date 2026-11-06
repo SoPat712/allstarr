@@ -26,7 +26,33 @@ public sealed class LibraryPromotionsController(LibraryPromotionService promotio
 
     [HttpPost]
     public Task<IActionResult> Promote([FromBody] PromoteSongRequest request, CancellationToken token) => ExecuteAsync(token,
-        async (_, context) => Receipt(await promotions.StartAsync(context, request, token)), accepted: true);
+        async (_, context) => StartReceipt(await promotions.StartOrRequestAsync(context, request, token)), accepted: true);
+
+    [HttpPost("requests")]
+    public Task<IActionResult> CreateRequest([FromBody] PromoteSongRequest request, CancellationToken token) => ExecuteAsync(token,
+        async (_, context) => StartReceipt(await promotions.StartOrRequestAsync(context, request, token, requestApproval: true)), accepted: true);
+
+    [HttpGet("requests")]
+    public Task<IActionResult> Requests([FromQuery] string? state, CancellationToken token) => ExecuteAsync(token,
+        async (_, context) => (await promotions.ListRequestsAsync(context, state, token)).Select(RequestReceipt));
+
+    [HttpGet("requests/{id:guid}")]
+    public Task<IActionResult> GetRequest(Guid id, CancellationToken token) => ExecuteAsync(token,
+        async (_, context) => RequestReceipt(await promotions.GetRequestAsync(context, id, token)));
+
+    [HttpPost("requests/{id:guid}/approve")]
+    public Task<IActionResult> ApproveRequest(Guid id, CancellationToken token) => ExecuteAsync(token,
+        async (_, context) => RequestReceipt(await promotions.ApproveRequestAsync(context, id, token)), accepted: true);
+
+    [HttpPost("requests/{id:guid}/decline")]
+    public Task<IActionResult> DeclineRequest(Guid id,
+        [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] PromotionRequestDecline? request,
+        CancellationToken token) => ExecuteAsync(token,
+        async (_, context) => RequestReceipt(await promotions.DeclineRequestAsync(context, id, request?.Note, token)));
+
+    [HttpPost("requests/{id:guid}/cancel")]
+    public Task<IActionResult> CancelRequest(Guid id, CancellationToken token) => ExecuteAsync(token,
+        async (_, context) => RequestReceipt(await promotions.CancelRequestAsync(context, id, token)));
 
     [HttpGet("{id:guid}")]
     public Task<IActionResult> Get(Guid id, CancellationToken token) => ExecuteAsync(token,
@@ -46,6 +72,29 @@ public sealed class LibraryPromotionsController(LibraryPromotionService promotio
 
     private static object Receipt(Core.Storage.PromotionRunRecord run) => new
     { run.Id, run.JobId, run.Step, run.Outcome, run.Reason, run.ManagedFileId, run.ApprovedByUserId, run.ApprovalReason, run.Tracks };
+
+    private static object StartReceipt(PromotionStartResult result) => result.Run is { } run
+        ? Receipt(run) : new { requested = true, request = RequestReceipt(result.Request!) };
+
+    private static object RequestReceipt(Core.Storage.PromotionRequestRecord request) => new
+    {
+        request.Id,
+        request.RequesterUserId,
+        request.RecordingId,
+        request.ReleaseIdentity,
+        request.Title,
+        request.Artist,
+        request.Year,
+        request.SongCount,
+        request.CoverReference,
+        request.Unit,
+        request.State,
+        request.DecidedByUserId,
+        request.DecidedAt,
+        request.DeclineNote,
+        request.RunId,
+        request.CreatedAt
+    };
 
     private async Task<IActionResult> ExecuteAsync<T>(CancellationToken token,
         Func<AdminAuthSession, ProtocolExecutionContext, Task<T>> action, bool accepted = false)
@@ -69,3 +118,4 @@ public sealed class LibraryPromotionsController(LibraryPromotionService promotio
 
 public sealed record PromotionApproval(string Reason);
 public sealed record PromotionSongReview(string Action, string? Reason = null);
+public sealed record PromotionRequestDecline(string? Note = null);

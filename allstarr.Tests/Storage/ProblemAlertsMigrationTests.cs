@@ -20,11 +20,11 @@ public sealed class ProblemAlertsMigrationTests
         var migrator = db.GetService<IMigrator>();
         await migrator.MigrateAsync(Before);
         var owner = Guid.NewGuid();
-        db.Users.Add(new() { Id = owner, BackendPrincipalId = "fixture", DisplayName = "Listener" });
+        await SqliteTestDatabase.InsertHistoricalUserAsync(db, new() { Id = owner, BackendPrincipalId = "fixture", DisplayName = "Listener" });
         await db.SaveChangesAsync();
         await db.Database.ExecuteSqlRawAsync("CREATE TABLE alert_fixture (Value TEXT NOT NULL); INSERT INTO alert_fixture VALUES('preserved');");
         await migrator.MigrateAsync(Target);
-        Assert.Equal("Listener", (await db.Users.SingleAsync()).DisplayName);
+        Assert.Equal("Listener", await db.Users.Select(item => item.DisplayName).SingleAsync());
         Assert.Equal("preserved", await db.Database.SqlQueryRaw<string>("SELECT Value FROM alert_fixture").SingleAsync());
         Assert.Equal(0, await db.Database.SqlQueryRaw<int>("SELECT count(*) AS Value FROM pragma_foreign_key_check").SingleAsync());
         await migrator.MigrateAsync(Before);

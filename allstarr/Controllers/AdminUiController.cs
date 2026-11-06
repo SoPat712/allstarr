@@ -1051,7 +1051,7 @@ public class AdminUiController : ControllerBase
             "scrobble" => "scrobble",
             "provider-route" => "streaming",
             "track-identity" or "track-match" => "matching",
-            "library-index" => "library",
+            "library-index" or "library-promotion" => "library",
             _ => "administration"
         };
         var providerId = ActivityPresentation.SafeText(AuditDetail(item.DetailsJson, "providerId") ?? AuditDetail(item.DetailsJson, "selectedProviderId"), 200);
@@ -1076,6 +1076,13 @@ public class AdminUiController : ControllerBase
             "scrobble" => "Scrobble recorded",
             "provider-route" when item.Action == "plan" => "Playback route selected",
             "provider-route" => "Provider request completed",
+            "library-promotion" => item.Action switch
+            {
+                "request-approved" => "Library request approved",
+                "request-declined" => "Library request declined",
+                "request-added" => "Added to your library",
+                _ => "Library request failed"
+            },
             _ => HumanizeAuditCategory(item.Action)
         };
         var details = SafeAuditDetails(item.DetailsJson);

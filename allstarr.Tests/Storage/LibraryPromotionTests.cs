@@ -65,6 +65,7 @@ public sealed partial class LibraryPromotionTests : IAsyncLifetime
             BackendInstanceId = "backend",
             BackendPrincipalId = "principal",
             DisplayName = "Owner",
+            IsTrustedListener = true,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         });
