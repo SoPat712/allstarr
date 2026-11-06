@@ -39,16 +39,20 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
   }
   await page.clock.install(); await page.clock.pauseAt(new Date());
   await expect(page.locator(".routing-group").getByText("Save order", { exact: true })).toHaveCount(0);
+  await page.getByLabel("Reorder SoundCloud", { exact: true }).click();
   const up = page.getByRole("button", { name: "Move SoundCloud up", exact: true });
   await up.focus(); await page.keyboard.press("Enter");
   await expect(page.locator(".routing-group").getByRole("status")).toHaveText("SoundCloud moved to position 1.");
   await expect(page.getByRole("region", { name: "Notifications", exact: true }).getByRole("status")).toHaveCount(0);
   await page.clock.runFor(600);
+  await page.getByLabel("Reorder Media server", { exact: true }).click();
   await page.getByRole("button", { name: "Move Media server up", exact: true }).click();
   await page.clock.runFor(799); expect(fixture.writes).toEqual([]);
   await page.clock.runFor(1);
   await expect.poll(() => fixture.writes).toEqual([{ MULTI_PROVIDER_METADATA_ORDER: "soundcloud,backend,deezer" }]);
   await expect(page.getByText("Order saved", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Move Media server up", exact: true })).toBeFocused();
+  await expect(page.getByRole("button", { name: "Move Deezer down", exact: true })).toBeHidden();
   await capture(page, "routing-undo", width, theme);
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await page.clock.runFor(800);
@@ -68,6 +72,7 @@ test("Source order saves drag and score changes automatically", async ({ page })
 
 test("Source order reloads after a conflict without retrying stale moves", async ({ page }) => {
   const fixture = await routing(page, true);
+  await page.getByLabel("Reorder SoundCloud", { exact: true }).click();
   await page.getByRole("button", { name: "Move SoundCloud up", exact: true }).click();
   await expect(page.getByText("Order changed in another session.", { exact: true })).toBeVisible();
   await expect(page.locator(".routing-group li strong")).toHaveText(["Media server", "SoundCloud", "Deezer"]);
@@ -76,8 +81,10 @@ test("Source order reloads after a conflict without retrying stale moves", async
 
 test("Source order retains moves made while a save is pending", async ({ page }) => {
   const fixture = await routing(page, false, true);
+  await page.getByLabel("Reorder SoundCloud", { exact: true }).click();
   await page.getByRole("button", { name: "Move SoundCloud up", exact: true }).click();
   await expect.poll(() => fixture.writes.length).toBe(1);
+  await page.getByLabel("Reorder Media server", { exact: true }).click();
   await page.getByRole("button", { name: "Move Media server up", exact: true }).click();
   fixture.release();
   await expect.poll(() => fixture.writes.at(-1)).toEqual({ MULTI_PROVIDER_METADATA_ORDER: "soundcloud,backend,deezer" });
@@ -103,6 +110,7 @@ test("Source order conflict waits for a pending refresh before reloading", async
   });
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect.poll(() => held).toBe(true);
+  await page.getByLabel("Reorder SoundCloud", { exact: true }).click();
   await page.getByRole("button", { name: "Move SoundCloud up", exact: true }).click();
   await page.waitForFunction(() => (window as unknown as { orderConflictRead?: boolean }).orderConflictRead);
   release();
@@ -131,7 +139,8 @@ for (const conflict of [false, true]) test(`Personal lyrics order ${conflict ? "
   });
   await page.goto("/#/preferences");
   if (!conflict) {
-    await page.getByRole("radio", { name: /Hide clean\/edited versions/ }).check();
+    await page.getByRole("button", { name: "Explicit songs", exact: true }).click();
+    await page.getByRole("option", { name: "Hide clean/edited versions", exact: true }).click();
     await expect.poll(() => writes.length).toBe(1);
     expect(writes[0]).toMatchObject({ explicitFilter: "ExplicitOnly", expectedRevision: "1" });
     expect(writes[0]).not.toHaveProperty("lyricsOrder");
@@ -144,7 +153,7 @@ for (const conflict of [false, true]) test(`Personal lyrics order ${conflict ? "
   } else {
     await expect.poll(() => writes.length).toBe(2);
     expect(writes[1]).toMatchObject({ lyricsOrder: "backend,lrclib,kept", explicitFilter: "ExplicitOnly", expectedRevision: "2" });
-    await expect(page.getByRole("radio", { name: /Hide clean\/edited versions/ })).toBeChecked();
+    await expect(page.getByRole("button", { name: "Explicit songs", exact: true })).toContainText("Hide clean/edited versions");
     await page.getByRole("status").filter({ hasText: "Order saved" }).getByRole("button", { name: "Undo", exact: true }).click();
     await expect.poll(() => writes.length).toBe(3);
     expect(writes[2]).toMatchObject({ lyricsOrder: "backend,kept,lrclib", explicitFilter: "ExplicitOnly", expectedRevision: "3" });

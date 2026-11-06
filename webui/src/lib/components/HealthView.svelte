@@ -11,9 +11,25 @@
   import EmptyState from "$lib/components/patterns/EmptyState.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
+  import CheckStrip from "$lib/components/CheckStrip.svelte";
+  import GroupedRow from "$lib/components/patterns/GroupedRow.svelte";
   let { initialPanel = "" }: { initialPanel?: string } = $props();
   let snapshot = $state<HealthSnapshot | null>(null);
   let panelOpen = $state(false), selectedRun = $state(""), selectedStep = $state(""), filter = $state("all");
+  let stripIndex = $state(0), stripFocused = $state(false);
+  const stripHelpId = $props.id();
+  const stripRuns = $derived(snapshot?.runs.slice(0, 30) ?? []);
+  const stripSelection = $derived(stripRuns[Math.min(stripIndex, stripRuns.length - 1)]);
+  function stripKey(event: KeyboardEvent) {
+    if (event.key === "Enter" || event.key === " ") {
+      if (stripSelection) { event.preventDefault(); openDetail(stripSelection); }
+      return;
+    }
+    const next = event.key === "ArrowLeft" ? stripIndex + 1 : event.key === "ArrowRight" ? stripIndex - 1 : event.key === "Home" ? stripRuns.length - 1 : event.key === "End" ? 0 : null;
+    if (next === null) return;
+    event.preventDefault();
+    stripIndex = Math.max(0, Math.min(stripRuns.length - 1, next));
+  }
   let form = $state<HTMLFormElement>();
   let saveTimer: ReturnType<typeof setTimeout>;
   const currentRun = $derived(snapshot?.runs.find(run => run.id === selectedRun));
@@ -21,6 +37,14 @@
   const currentStep = $derived(currentRun?.steps.find(step => step.name === selectedStep));
   const passing = (run: HealthRun) => !run.steps.some(step => step.status === "failed") && run.steps.some(step => step.status === "passed");
   const filteredRuns = $derived((snapshot?.runs ?? []).filter(run => filter === "all" || (filter === "passing" ? passing(run) : run.steps.some(step => step.status === "failed"))));
+  const runGroups = $derived.by(() => {
+    const groups = new Map<string, HealthRun[]>();
+    for (const run of filteredRuns) {
+      const key = JSON.stringify(run.steps.map(step => [step.name, step.status, step.reason]));
+      groups.set(key, [...(groups.get(key) ?? []), run]);
+    }
+    return [...groups.values()];
+  });
   function openDetail(run: HealthRun, step?: HealthStep) { selectedRun = run.id; selectedStep = step?.name ?? ""; panelOpen = true; }
   function scheduleSave() {
     clearTimeout(saveTimer);
@@ -67,7 +91,7 @@
   function when(value: string | null) {
     if (!value) return "Not scheduled";
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? "Time unavailable" : date.toLocaleString();
+    return Number.isNaN(date.getTime()) ? "Time unavailable" : date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   }
 
   function latency(value: number | null) {
@@ -172,15 +196,15 @@
   {#if loading}<RowsSkeleton />
   {:else if !snapshot}<ErrorState title="Health monitoring could not be loaded" detail={error} onretry={() => load(true)} />
   {:else}
-    <div class="settings-toolbar"><span class="settings-muted">{serverMode ? serviceReady ? "Server API key ready" : "Server API key needed" : configured ? "Listener configured" : "Choose a dedicated test listener"}</span><div class="health-actions"><Button variant="text" disabled={Boolean(action)} onclick={() => { polls = 0; pollLimitReached = false; void load(); }}>Refresh results</Button><Button disabled={locked || !canRun} onclick={() => void run()}>{action === "run" ? "Queuing…" : "Run now"}</Button></div></div>
+    <div class="settings-toolbar"><span class="settings-muted">{serverMode ? serviceReady ? "Server API key ready" : "Server API key needed" : configured ? "Listener configured" : "Choose a dedicated test listener"}</span><div class="health-actions"><Button variant="text" disabled={Boolean(action)} onclick={() => { polls = 0; pollLimitReached = false; void load(); }}>Refresh results</Button><Button variant="outline" disabled={locked || !canRun} onclick={() => void run()}>{action === "run" ? "Queuing…" : "Run now"}</Button></div></div>
     {#if !serviceReady && serverMode}<Button href="#/settings/setup" variant="outline">Open Setup</Button>{/if}
     {#if running}<p role="status">A check is running. {pollLimitReached ? "Refresh results to keep following it." : "Results update automatically."}</p>{/if}
     {#if error}<ErrorState title="Health could not finish that request" detail={error} onretry={() => load(true)} />{/if}
     <section class="settings-card check-strip-card" aria-label="Recent checks"><header><h3>Last 30 checks</h3></header>
-      <div class="check-strip" role="group" aria-label="Last 30 checks">
-        {#each Array(Math.max(0, 30 - snapshot.runs.length)).fill(0) as _}<span class="check-slot" title="No check recorded"></span>{/each}
-        {#each snapshot.runs.slice(0, 30).toReversed() as run (run.id)}<button type="button" class="check-slot" data-tone={outcome(run).tone} aria-label={`${outcome(run).label}, ${when(run.completedAt ?? run.startedAt)}`} title={`${outcome(run).label} · ${when(run.completedAt ?? run.startedAt)}`} onclick={() => openDetail(run)}></button>{/each}
-      </div>
+      <div class="health-strip"><CheckStrip tabindex={0} onkeydown={stripKey} onfocus={() => stripFocused = true} onblur={() => stripFocused = false} aria-describedby={stripHelpId}>
+        {#each Array(Math.max(0, 30 - snapshot.runs.length)).fill(0) as _}<span data-outcome="empty" title="No check recorded"></span>{/each}
+        {#each stripRuns.toReversed() as run (run.id)}<button type="button" tabindex="-1" data-active={stripFocused && stripSelection?.id === run.id} data-outcome={outcome(run).tone === "ok" ? "ok" : outcome(run).tone === "stop" ? "failed" : "neutral"} aria-label={`${outcome(run).label}, ${when(run.completedAt ?? run.startedAt)}`} title={`${outcome(run).label} · ${when(run.completedAt ?? run.startedAt)}`} onclick={() => openDetail(run)}></button>{/each}
+      </CheckStrip><span id={stripHelpId} class="sr-only" aria-live="polite">Use left and right arrows to explore checks, Home and End to reach either end, and Enter to open details.{#if stripSelection} {outcome(stripSelection).label}, {when(stripSelection.completedAt ?? stripSelection.startedAt)}.{/if}</span></div>
       <div class="strip-axis"><span>{snapshot.runs.length ? when(snapshot.runs[Math.min(29, snapshot.runs.length - 1)].startedAt) : "No checks recorded"}</span><span>Now</span></div>
     </section>
     {#if latest}
@@ -213,7 +237,7 @@
     </form>
     {#if snapshot.runs.length > 1}
       <FilterSegments value={filter} storageKey="allstarr.settings.health.filter" label="Filter checks" onchange={value => filter = value} options={[{ id: "all", label: "All", count: snapshot.runs.length }, { id: "passing", label: "Passing", count: snapshot.runs.filter(passing).length }, { id: "failed", label: "Failed", count: snapshot.runs.filter(run => run.steps.some(step => step.status === "failed")).length }]} />
-      <section class="settings-card" aria-label="Check history">{#each filteredRuns as run (run.id)}<ItemRow title={when(run.completedAt ?? run.startedAt)} subtitle={`${run.mode === "server-api-key" ? "Server check" : "Listener check"} · ${counts(run)}`} onclick={() => openDetail(run)}>{#snippet pill()}<StatePill tone={outcome(run).tone} text={outcome(run).label} />{/snippet}</ItemRow>{:else}<EmptyState title="No checks match this filter" />{/each}</section>
+      <section class="settings-stack" aria-label="Check history">{#each runGroups as group (group[0].id)}<GroupedRow count={group.length} summary={`${outcome(group[0]).label} · ${counts(group[0])}`} expanded={group.length === 1}>{#snippet members()}{#each group as run (run.id)}<ItemRow title={when(run.completedAt ?? run.startedAt)} subtitle={run.mode === "server-api-key" ? "Server check" : "Listener check"} onclick={() => openDetail(run)} />{/each}{/snippet}</GroupedRow>{:else}<EmptyState title="No checks match this filter" />{/each}</section>
     {/if}
   {/if}
 </div>
@@ -230,14 +254,8 @@
   {/await}
 {/if}
 <style>
+  .health-strip { padding: var(--space-1) var(--space-4); }
   .health-actions { display: flex; align-items: center; gap: var(--space-2); }
-  .check-strip { display: flex; gap: 3px; padding: var(--space-1) var(--space-4); }
-  .check-slot { flex: 1; min-width: 0; height: 24px; border: 0; border-radius: var(--radius-sm); padding: 0; background: var(--color-panel-raised); }
-  button.check-slot { cursor: pointer; }
-  .check-slot[data-tone="ok"] { background: var(--success); }
-  .check-slot[data-tone="stop"] { background: var(--danger); }
-  .check-slot[data-tone="neutral"] { background: var(--color-ink-muted); }
   .strip-axis { display: flex; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) var(--space-4) var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); }
   .settings-table td:last-child { width: 45%; }
-  @media (max-width: 650px) { .check-strip { gap: var(--space-1); overflow-x: auto; } .check-slot { min-width: 44px; height: 44px; flex: 0 0 44px; } span.check-slot { display: none; } }
 </style>

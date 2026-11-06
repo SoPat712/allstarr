@@ -85,7 +85,7 @@
   <ErrorState title="Connection details are unavailable." detail={error} onretry={load} />
 {:else if context}
   <section class="settings-content connect-apps" aria-label="Listening guide">
-    <header class="panel-heading"><div><h2>Listen in the app you already use</h2><p>Allstarr looks like a {context.backend === "Jellyfin" ? "Jellyfin" : "Subsonic"} server, so your music app connects to it with these two details and your usual media-server password.</p></div></header>
+    <header class="panel-heading"><p>Allstarr works inside the music apps you already use. Pick yours.</p></header>
 
     <PageStatus label="Connection status" items={[
       { label: `${context.backend === "Jellyfin" ? "Jellyfin" : "Subsonic"} apps` },
@@ -134,10 +134,10 @@
       {#if administrator}<footer><Button variant="outline" href="#/settings/access">Set the household address</Button></footer>{/if}
     </div>
 
-        <ol>{#each activeApp.steps as step}<li>{step}</li>{/each}</ol>
+        <ol class="app-steps" aria-label="Connection steps">{#each activeApp.steps as step, index}<li><span class="step-circle" aria-hidden="true">{index + 1}</span><span>{step}</span></li>{/each}</ol>
         {#if activeApp.url || activeApp.name === "Jellyfin Web"}
           <footer>
-            {#if activeApp.url}<Button variant="secondary" href={activeApp.url} target="_blank" rel="noopener noreferrer">{activeApp.name === "Jellyfin Web" ? "Web player help" : "Get the app"}</Button>{/if}
+            {#if activeApp.url}<Button variant="text" href={activeApp.url} target="_blank" rel="noopener noreferrer">{activeApp.name === "Jellyfin Web" ? "Web player help" : "Get the app"}</Button>{/if}
             {#if activeApp.name === "Jellyfin Web"}<Button href={webUrl || undefined} disabled={!usableAddress} target="_blank" rel="noopener noreferrer">Open web player</Button>{/if}
           </footer>
         {/if}
@@ -146,8 +146,8 @@
 
     <div class="connect-help">
       <article class="settings-card help-card">
-        <h3>Coming from Spotify?</h3><p>Bring your playlists and liked songs. Nothing changes in Spotify.</p>
-        <Button variant="ghost" href="#/library/import">Move your Spotify collection</Button>
+        <h3>Coming from Spotify or Apple Music?</h3><p>Bring your playlists and liked songs. Nothing changes there.</p>
+        <Button variant="ghost" href="#/library/import">Import your music</Button>
       </article>
       <article class="settings-card help-card">
         <h3>Something not working?</h3><p>Use a song's report action to attach its details, or send a general note. Reports stay inside Allstarr for your administrator.</p>
@@ -180,15 +180,16 @@
   .connect-app-list { display: grid; gap: var(--space-3); grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr)); }
   .app-choice { display: flex; min-width: 0; min-height: 9rem; align-items: center; justify-content: center; flex-direction: column; gap: var(--space-2); padding: var(--space-4) var(--space-2); color: var(--color-ink); font: inherit; text-align: center; cursor: pointer; transition: background var(--motion-standard), border-color var(--motion-standard); }
   .app-choice:hover { background: var(--row-hover); }
-  .app-choice.selected { border-color: var(--color-signal); background: var(--color-signal-muted); }
+  .app-choice.selected { border-color: var(--color-signal); outline: 1px solid var(--color-signal); }
   .app-choice:focus-visible, summary:focus-visible { outline: 2px solid var(--color-ring); outline-offset: 2px; }
   .app-icon { display: grid; width: var(--control-lg); height: var(--control-lg); place-items: center; border-radius: var(--radius-lg); background: var(--color-panel-raised); color: var(--color-signal); }
   .app-name { font-size: var(--text-sm); font-weight: 600; }
   .app-choice small { color: var(--color-ink-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
   .app-guide { min-width: 0; overflow: hidden; }
-  .app-guide ol { display: grid; gap: var(--space-3); margin: 0; padding: var(--surface-gutter) var(--surface-gutter) var(--surface-gutter) calc(var(--surface-gutter) + 1.25rem); font-size: var(--text-sm); color: var(--color-ink-muted); }
-  .app-guide li { padding-inline-start: var(--space-2); }
-  .app-guide li::marker { color: var(--color-ink); font-weight: 600; }
+  .app-guide ol { margin: 0; padding: 0; list-style: none; font-size: var(--text-sm); color: var(--color-ink); }
+  .app-guide li { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-4); border-bottom: 1px solid var(--color-edge); }
+  .app-guide li:last-child { border-bottom: 0; }
+  .step-circle { display: grid; width: 26px; height: 26px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); font-size: var(--text-xs); font-weight: 600; }
   .app-guide footer { display: flex; flex-wrap: wrap; gap: var(--space-2); }
   .connect-help { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: var(--space-3); }
   .help-card { min-width: 0; padding: var(--space-4); }

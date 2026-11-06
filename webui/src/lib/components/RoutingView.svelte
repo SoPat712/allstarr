@@ -2,8 +2,7 @@
   import { toast } from "$lib/toasts";
   let { embedded = false }: { embedded?: boolean } = $props();
   import { onMount } from "svelte";
-  import { ArrowDown, ArrowUp, ChevronDown, GripVertical, Lock, Sparkles } from "@lucide/svelte";
-  import { Badge } from "$lib/components/ui/badge";
+  import { ArrowDown, ArrowUp, ChevronDown, GripVertical, Lock } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
   import { ApiError, home, settings, sources, type PriorityGroup, type ProviderScore, type UiSchema } from "$lib/api";
   import SettingsFields from "$lib/components/SettingsFields.svelte";
@@ -189,18 +188,18 @@
     {#if policyFields.length}
       <SettingsFields section={{ id: "quality-policy", label: "Audio quality", fields: policyFields }} {config} onChanged={async () => { await refresh(); loadScores(); }} />
     {/if}
-    {#if groups.length > 1}
-      <FilterSegments label="Source orders" options={groups.map(item => ({ id: item.id, label: tabNames[item.id] ?? item.label, count: (orders[item.id] ?? item.providers).length }))}
-        value={shown ?? ""} storageKey={tabKey} onchange={id => { chooseTab(id); expanded = false; }} />
-    {/if}
     <div class="routing-groups">
       {#each groups.filter((item) => item.id === shown) as group}
         <section class="settings-card routing-group">
           <p class="sr-only" role="status">{moveAnnouncement?.groupId === group.id ? moveAnnouncement.message : ""}</p>
-          <header>
-            <div><h3>{tabNames[group.id] ?? group.label.replace(/ order$/i, "")} order</h3><small>{group.id === "lyrics" ? "A lyrics choice saved for a song always wins. Otherwise the best-timed lyrics win: word by word, then line by line, then plain text. This order decides between equally timed lyrics." : group.description || "Drag services, or use the arrows, to change the order Allstarr tries them."}</small></div>
-            {#if scores.length && group.id !== "lyrics"}<Button variant="outline" onclick={() => sortByScore(group)}><Sparkles size={16} aria-hidden="true" />Sort by score</Button>{/if}
-          </header>
+          <header><div><h3>Source order</h3><small>Drag to reorder. Saves as you drop.</small></div>{#if scores.length && group.id !== "lyrics"}<Button variant="text" onclick={() => sortByScore(group)}>Sort by score</Button>{/if}</header>
+          <div class="routing-tabs">
+            {#if groups.length > 1}
+              <FilterSegments label="Source orders" options={groups.map(item => ({ id: item.id, label: tabNames[item.id] ?? item.label, count: (orders[item.id] ?? item.providers).length }))}
+                value={shown ?? ""} storageKey={tabKey} onchange={id => { chooseTab(id); expanded = false; }} />
+            {/if}
+          </div>
+          <h4 class="sr-only">{tabNames[group.id] ?? group.label.replace(/ order$/i, "")} order</h4>
           <ol>
             {#if group.pinnedProvider}
               <li class="pinned">
@@ -209,7 +208,7 @@
                 <span class="routing-copy"><strong>{group.pinnedProvider.name}</strong><small>{group.pinnedProvider.reason} · always tried first</small></span>
               </li>
             {/if}
-            {#each (orders[group.id] ?? group.providers).slice(0, expanded ? undefined : 5) as providerId, index}
+            {#each (orders[group.id] ?? group.providers).slice(0, expanded ? undefined : 5) as providerId, index (providerId)}
               {@const definition = provider(providerId)}
               {@const label = group.id === "lyrics" ? lyricsSourceDisplayName(schema?.providers ?? [], providerId) : definition?.name ?? providerId}
               {@const scoreKey = `${group.id}:${providerId}`}
@@ -217,7 +216,7 @@
               <li
                 draggable={true}
                 class:has-score={Boolean(scoreFor(providerId))}
-                onclick={(event) => { if (scoreFor(providerId) && !(event.target as Element).closest("button, a, input, .score-details")) toggleScore(scoreKey); }}
+                onclick={(event) => { if (scoreFor(providerId) && !(event.target as Element).closest("button, a, input, details, .score-details")) toggleScore(scoreKey); }}
                 class:dragging={dragging?.groupId === group.id && dragging.index === index}
                 ondragstart={() => { dragging = { groupId: group.id, index }; }}
                 ondragover={(event) => event.preventDefault()}
@@ -226,7 +225,8 @@
               >
                 <span class="routing-index" aria-hidden="true"><GripVertical size={16} />{index + 1}</span>
                 <ProviderArtwork id={providerId} definition={definition} label={label} />
-                <span class="routing-copy"><span class="routing-name"><strong>{group.id === "lyrics" ? label : definition?.name ?? humanize(providerId)}</strong>{#if definition}<Badge tone="neutral" class="origin-badge">{sourceOriginLabel(definition)}</Badge>{/if}{#if scoreFor(providerId)?.quality}<span class="routing-quality-label" class:lossy={!scoreFor(providerId)?.quality?.lossless}>{scoreFor(providerId)?.quality?.typical}</span>{/if}</span><small>{providerId === "backend" ? "Lyrics supplied by your media server" : providerId === "kept" ? "Saved lyrics from your library" : definition?.categories?.map(humanize).join(" · ") || "Provider service"}</small></span>
+                <span class="routing-copy"><strong>{label}</strong><small>{definition ? sourceOriginLabel(definition) : providerId === "backend" ? "Media server" : "Kept lyrics"}</small></span>
+                <span class="routing-quality-label">{scoreFor(providerId)?.quality?.typical ?? "—"}</span>
                 {#if scoreFor(providerId)}
                   {@const ranked = isRanked(definition?.useMode)}
                   {@const value = ranked ? capabilityScore(scoreFor(providerId), group.id) : null}
@@ -234,14 +234,13 @@
                     aria-label={ranked ? `${label} score ${value ?? "not rated yet"}. ${scoreOpen && openScore === scoreKey ? "Hide" : "Show"} details.` : `${label} is ${definition?.useMode === "off" ? "turned off" : "manual only"} and isn't scored. ${scoreOpen && openScore === scoreKey ? "Hide" : "Show"} details.`}
                     onclick={() => toggleScore(scoreKey)}>
                     <span class="score-chip" data-tier={scoreTier(value)}>{ranked ? value ?? "New" : definition?.useMode === "off" ? "Off" : "Manual"}</span>
-                    <span class="score-toggle-label">{scoreOpen && openScore === scoreKey ? "Hide" : "Details"}</span>
-                    <ChevronDown size={16} aria-hidden="true" />
                   </button>
+                {:else}<span class="score-unavailable" aria-label="Score not measured">—</span>
                 {/if}
-                <span class="routing-actions">
+                <details class="routing-move"><summary aria-label={`Reorder ${label}`}><ChevronDown size={16} aria-hidden="true" /></summary><span class="routing-actions">
                   <Button variant="ghost" size="icon" aria-label={`Move ${label} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
                   <Button variant="ghost" size="icon" aria-label={`Move ${label} down`} disabled={index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
-                </span>
+                </span></details>
               </li>
             {/each}
           </ol>
@@ -268,28 +267,33 @@
 {/if}
 
 <style>
+  .routing-tabs { min-width: 0; padding: 0 var(--space-4) var(--space-3); overflow-x: auto; }
+  .routing-move summary { display: grid; place-items: center; min-height: 44px; min-width: 44px; cursor: pointer; list-style: none; color: var(--color-ink-muted); }
+  .routing-move summary::-webkit-details-marker { display: none; }
+  .routing-move { position: relative; }
+  .routing-move:not([open]) .routing-actions { display: none; }
+  .routing-move[open] .routing-actions { display: flex; width: max-content; position: absolute; z-index: 1; right: 0; bottom: 100%; padding: var(--space-1); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--color-popover); }
+  .routing-copy small { display: block; color: var(--color-ink-muted); }
+
   .routing-score-panel :global(.score-details) { padding: 0; }
-  :global(.routing-group li) { grid-template-columns: 3rem 2.5rem minmax(0, 1fr) auto auto; }
+  :global(.routing-group li) { grid-template-columns: 3rem 2.5rem minmax(0, 1fr) auto auto auto; }
   :global(.routing-group li.pinned) { grid-template-columns: 3rem 2.5rem minmax(0, 1fr); }
-  .routing-name { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .score-toggle { display: inline-flex; align-items: center; gap: var(--space-2); min-height: 2.5rem; padding: var(--space-1) var(--space-2); border: 0; border-radius: 999px; background: transparent; color: var(--color-ink-muted); font-size: 0.8125rem; font-weight: 500; cursor: pointer; transition: background-color 200ms var(--ease-emphasized), color 200ms var(--ease-emphasized); }
   @media (max-width: 560px) {
     :global(.routing-group li) { grid-template-columns: 2.25rem 2.5rem minmax(0, 1fr) auto; row-gap: var(--space-2); }
     :global(.routing-group li.pinned) { grid-template-columns: 2.25rem 2.5rem minmax(0, 1fr); }
     .routing-copy { grid-column: 3 / -1; }
     .score-toggle { grid-column: 3; grid-row: 2; justify-self: start; min-height: 44px; }
-    .routing-actions { grid-column: 4; grid-row: 2; }
+    .score-unavailable { grid-column: 3; grid-row: 2; justify-self: start; }
+    .routing-move { grid-column: 4; grid-row: 2; }
+    .routing-quality-label { grid-column: 3; }
   }
   .routing-quality-label { color: var(--color-ink-muted); font-size: var(--text-xs); }
-  .routing-quality-label.lossy { color: var(--on-warning-container); }
-  :global(.dark) .routing-quality-label.lossy { color: var(--warning); }
+  .score-unavailable { min-width: 2.75rem; color: var(--color-ink-muted); text-align: center; font-size: var(--text-sm); }
   :global(.routing-group li.has-score) { cursor: pointer; transition: background-color 200ms var(--ease-emphasized); }
   :global(.routing-group li.has-score:hover) { background: color-mix(in srgb, var(--color-ink) 4%, transparent); }
   .score-toggle:hover { background: color-mix(in srgb, var(--color-ink) 8%, transparent); color: var(--color-ink); }
   .score-toggle:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .score-toggle :global(svg) { transition: transform 240ms var(--ease-emphasized); }
-  .score-toggle[aria-expanded="true"] :global(svg) { transform: rotate(180deg); }
-  .score-toggle-label { min-width: 2.75rem; text-align: left; }
   .score-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 2.75rem; min-height: 1.75rem; padding-inline: var(--space-2); border: 1px solid transparent; border-radius: 999px; font-size: var(--text-sm); font-variant-numeric: tabular-nums; font-weight: 700; }
   .score-chip[data-tier="great"] { background: var(--success-container); color: var(--on-success-container); }
   .score-chip[data-tier="good"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }

@@ -33,10 +33,11 @@
     },
   ] as const;
 
-  let { value, name, onchange }: { value: string; name: string; onchange?: () => void } = $props();
+  let { value, name, onchange, showDetails = true, requestedQualities = $bindable<readonly string[]>([]) }: { value: string; name: string; onchange?: () => void; showDetails?: boolean; requestedQualities?: readonly string[] } = $props();
   let selected = $state(steps.length - 1);
   let lastValue = $state("");
   const current = $derived(steps[selected] ?? steps.at(-1)!);
+  $effect(() => { requestedQualities = current.providers; });
   const pick = (index: number) => { selected = index; onchange?.(); };
 
   $effect.pre(() => {
@@ -72,10 +73,10 @@
     {#each steps as step, index}<button type="button" tabindex="-1" class:active={step.value === current.value} onclick={() => pick(index)}>{step.label}</button>{/each}
   </div>
   <p aria-live="polite"><strong>{current.label}</strong><span>{current.summary}</span></p>
-  <details>
+  {#if showDetails}<details>
     <summary class="disclosure-summary compact"><DisclosureLabel title="Music source quality details" description="See the exact quality requested from each provider" /></summary>
     <ul>{#each current.providers as provider}<li>{provider}</li>{/each}</ul>
-  </details>
+  </details>{/if}
 </div>
 
 <style>

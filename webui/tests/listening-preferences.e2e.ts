@@ -50,19 +50,19 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
         usesHouseholdDefaults: false, cleanOnlyLocked: locked }));
     });
     await page.goto("/#/preferences");
-    const clean = page.getByRole("radio", { name: "Clean only", exact: false });
-    await expect(page.getByText("Hides explicit songs and songs whose rating isn't known.", { exact: true })).toBeVisible();
-    await clean.check();
+    const clean = page.getByRole("button", { name: "Explicit songs", exact: true });
+    const external = page.getByRole("switch", { name: "Show [A] for external tracks", exact: true });
+    await expect(external).toBeVisible();
+    const switchBox = await external.boundingBox();
+    expect(switchBox!.x + switchBox!.width).toBeGreaterThan(width * 0.8);
+    await chooseFilter(page, "Clean only");
     await page.screenshot({ path: `test-results/shots-uisettings/clean-only-unlocked-${width}-${theme}.png`, fullPage: true });
     await expect(page.getByRole("status").filter({ hasText: "Listening preferences saved." }).last()).toBeVisible();
-    await expect(clean).toBeChecked();
+    await expect(clean).toContainText("Clean only");
     locked = true;
     await page.reload();
-    await expect(clean).toBeChecked();
-    const radios = page.getByRole("group", { name: "Release filter" }).getByRole("radio");
-    await expect(radios).toHaveCount(3);
-    for (const radio of await radios.all())
-      await expect(radio).toBeDisabled();
+    await expect(clean).toContainText("Clean only");
+    await expect(clean).toBeDisabled();
     await expect(page.getByText("Your administrator turned this on.", { exact: true })).toBeVisible();
     await expect(page.getByRole("switch", { name: "Show [E] for explicit tracks", exact: true })).toBeEnabled();
     await page.screenshot({ path: `test-results/shots-uisettings/clean-only-locked-${width}-${theme}.png`, fullPage: true });
@@ -145,12 +145,11 @@ test("listener autosaves each change and resets with the latest returned revisio
   await page.goto("/");
   await page.getByRole("button", { name: "More destinations" }).click();
   await page.getByRole("link", { name: /Listening preferences/ }).click();
-  await expect(page).toHaveURL(/#\/preferences$/);
-  await expect(page.getByRole("heading", { name: "Listening preferences", level: 1 })).toBeVisible();
-  await expect(page.getByText("affect only your listener account", { exact: false })).toBeVisible();
-  await expect(page.getByText("Native library titles remain untouched", { exact: false })).toBeVisible();
+  await expect(page).toHaveURL(/#\/settings\/preferences$/);
+  await expect(page.getByRole("heading", { name: "Settings", level: 1 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Listening preferences", level: 2 })).toBeVisible();
 
-  await page.getByRole("radio", { name: "Hide clean/edited versions" }).check();
+  await chooseFilter(page, "Hide clean/edited versions");
   await expect(page.getByRole("switch", { name: "Show [A] for external tracks", exact: true })).toBeEnabled();
   await page.getByRole("switch", { name: "Show [A] for external tracks", exact: true }).click();
   await expect(page.getByRole("switch", { name: "Show [E] for explicit tracks", exact: true })).toBeEnabled();
@@ -160,7 +159,7 @@ test("listener autosaves each change and resets with the latest returned revisio
 
   await page.getByRole("button", { name: "Reset to household defaults" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Household defaults restored." })).toBeVisible();
-  await expect(page.getByRole("radio", { name: /^All\b/ })).toBeChecked();
+  await expect(page.getByRole("button", { name: "Explicit songs", exact: true })).toContainText("All");
   await expect(page.getByRole("switch", { name: "Show [A] for external tracks", exact: true })).toBeChecked();
   await expect(page.getByRole("switch", { name: "Show [E] for explicit tracks", exact: true })).toBeChecked();
   expect(writes.map(({ method }) => method)).toEqual(["PUT", "PUT", "PUT", "DELETE"]);
@@ -197,12 +196,12 @@ test("administrator reloads a 409 conflict before saving against the refreshed r
 
   await page.goto("/");
   await page.getByRole("link", { name: "Listening preferences" }).click();
-  await page.getByRole("radio", { name: "Clean only" }).check();
+  await chooseFilter(page, "Clean only");
   await expect(page.locator(".preferences-view").getByRole("alert")).toContainText("changed in another session");
   await page.getByRole("button", { name: "Reload latest" }).click();
   await expect(page.getByRole("status").filter({ hasText: "Saved explicit filter: LegacyMode" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Save preferences" })).toHaveCount(0);
-  await page.getByRole("radio", { name: "Clean only" }).check();
+  await chooseFilter(page, "Clean only");
   await expect(page.getByRole("status").filter({ hasText: "Listening preferences saved." }).last()).toBeVisible();
 
   expect(putBodies[0].expectedRevision).toBe("revision-1");
@@ -355,3 +354,8 @@ test("Lyrics source order can be dragged and saves the new order", async ({ page
   await expect(region.getByRole("listitem")).toHaveText(["Spotify", "Media server lyrics", "Kept LRC", "LRCLIB", "LyricsPlus"]);
   await expect(page.getByRole("status").filter({ hasText: "Order saved" })).toBeVisible();
 });
+
+async function chooseFilter(page: Page, label: string) {
+  await page.getByRole("button", { name: "Explicit songs", exact: true }).click();
+  await page.getByRole("option", { name: label, exact: true }).click();
+}

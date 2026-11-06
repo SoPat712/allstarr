@@ -280,14 +280,6 @@
   <ErrorState title="Listening preferences could not be loaded." detail={error} onretry={load} />
 {:else}
   <section class="preferences-view" aria-busy={busy || saving}>
-    <header class="preferences-intro">
-
-      <h2>Tune your listening experience</h2>
-      <p>
-        These choices affect only your listener account. They save as you change them. Native library titles remain untouched.
-      </p>
-    </header>
-
     <PageStatus label="Listening preferences status" items={[
       { label: snapshot.usesHouseholdDefaults ? "Using household defaults" : "Personal choices" },
       { label: busy || saving ? "Saving…" : conflict ? "Reload needed" : "Changes save automatically", tone: conflict ? "warn" : "neutral" },
@@ -303,73 +295,24 @@
     {/if}
 
 
-    <div class="panel preferences-panel">
-      <header class="panel-heading preferences-heading">
-        <div>
+    <section class="settings-card preferences-panel" aria-label="What you hear">
+      <header><h3>What you hear</h3></header>
+      <div class="settings-row">
+        <div><strong>Explicit songs</strong><small>{snapshot.cleanOnlyLocked ? "Your administrator turned this on." : filterOptions.find(option => option.value === explicitFilter)?.description ?? "Choose a release filter."}</small></div>
+        <SelectField label="Explicit songs" value={explicitFilter} options={filterOptions} disabled={controlsDisabled || snapshot.cleanOnlyLocked} onchange={value => void changePreference("explicitFilter", value)} />
+      </div>
+      {#if !selectedFilter}<p class="unknown-value" role="status">Saved explicit filter: <strong>{snapshot.values.explicitFilter}</strong>. Choose a supported option to replace it.</p>{/if}
+      <div class="settings-row"><div><strong>Mark external songs</strong><small>Show an A next to songs from outside your library.</small></div><span class="settings-toggle"><Switch checked={showExternalLabel} disabled={controlsDisabled || !selectedFilter} onchange={event => void changePreference("showExternalLabel", event.currentTarget.checked)} aria-label="Show [A] for external tracks" /></span></div>
+      <div class="settings-row"><div><strong>Mark explicit songs</strong><small>Show an E next to explicit songs in Allstarr.</small></div><span class="settings-toggle"><Switch checked={showExplicitLabel} disabled={controlsDisabled || !selectedFilter} onchange={event => void changePreference("showExplicitLabel", event.currentTarget.checked)} aria-label="Show [E] for explicit tracks" /></span></div>
+      <div class="settings-row playback-row"><div><strong>Playback start</strong><small>Balanced favors quality when starts stay under 3 seconds.</small></div><ThreeDetentSwitch label="Playback start" value={playbackStart} options={playbackStartOptions} disabled={controlsDisabled || !selectedFilter} onchange={value => void changePreference("playbackStart", value)} /></div>
+      <div class="settings-row"><div><strong>Quality limit</strong><small>You can choose less than the household’s limit, not more.</small></div><SelectField value={qualityLimit} label="Quality limit" options={qualityChoices} disabled={controlsDisabled || !selectedFilter} onchange={value => void changePreference("qualityLimit", value)} /></div>
+    </section>
 
-          <h3>What you hear</h3>
-          <p>Choose which songs appear in your Allstarr results.</p>
-        </div>
-
-      </header>
-
-      <fieldset class="filter-options" disabled={controlsDisabled || snapshot.cleanOnlyLocked}>
-        <legend>Release filter</legend>
-        {#if snapshot.cleanOnlyLocked}<p class="unknown-value">Your administrator turned this on.</p>{/if}
-        {#each filterOptions as option}
-          <label class:active={explicitFilter === option.value}>
-            <input checked={explicitFilter === option.value} onchange={() => void changePreference("explicitFilter", option.value)} type="radio" name="explicit-filter" value={option.value} />
-            <span><strong>{option.label}</strong><small>{option.description}</small></span>
-          </label>
-        {/each}
-        {#if !selectedFilter}
-          <p class="unknown-value" role="status">
-            Saved explicit filter: <strong>{snapshot.values.explicitFilter}</strong>. Choose a supported option to replace it.
-          </p>
-        {/if}
-      </fieldset>
-
-      <section class="label-options" aria-labelledby="track-labels-title">
-        <div>
-          <h3 id="track-labels-title">Track labels</h3>
-          <p>Keep source and content cues visible without changing any track title.</p>
-        </div>
-        <label>
-          <span class="settings-toggle"><Switch checked={showExternalLabel} disabled={controlsDisabled || !selectedFilter} onchange={event => void changePreference("showExternalLabel", event.currentTarget.checked)} aria-label="Show [A] for external tracks" /></span>
-          <span><strong>Show [A] for external tracks</strong><small>Marks tracks supplied outside the native library.</small></span>
-        </label>
-        <label>
-          <span class="settings-toggle"><Switch checked={showExplicitLabel} disabled={controlsDisabled || !selectedFilter} onchange={event => void changePreference("showExplicitLabel", event.currentTarget.checked)} aria-label="Show [E] for explicit tracks" /></span>
-          <span><strong>Show [E] for explicit tracks</strong><small>Marks tracks identified as explicit.</small></span>
-        </label>
-      </section>
-
-      <section class="preference-options" aria-labelledby="playback-start-title">
-        <div>
-          <h3 id="playback-start-title">Playback start</h3>
-          <p>Fast start chooses quick lossless playback. Balanced favors the best quality when recent starts take 3 seconds or less. Best quality prefers the highest quality.</p>
-        </div>
-        <ThreeDetentSwitch label="Playback start" value={playbackStart} options={playbackStartOptions} disabled={controlsDisabled || !selectedFilter} onchange={value => void changePreference("playbackStart", value)} />
-      </section>
-
-      <section class="preference-options" aria-labelledby="quality-limit-title">
-        <div class="preference-link-row">
-          <div>
-            <h3 id="quality-limit-title">Quality limit</h3>
-            <p>The highest quality Allstarr fetches for you. You can choose less than your household's limit, not more. Songs already kept stay as they are.</p>
-          </div>
-          <SelectField value={qualityLimit} label="Quality limit" options={qualityChoices} disabled={controlsDisabled || !selectedFilter} onchange={value => void changePreference("qualityLimit", value)} />
-        </div>
-        {#if administrator}<Button variant="outline" href="#/settings/quality">Change the household limit</Button>{/if}
-      </section>
-
-    </div>
-
-    <div class="panel preferences-panel">
+    <div class="settings-card preferences-panel">
       <section class="preference-options" aria-label="Lyrics source order">
         <div>
           <h3>Lyrics source order</h3>
-          <p>Your saved choice for a song takes precedence. Otherwise, word timing wins over line timing, then plain text. This order breaks ties. Sources must be enabled and available to your account.</p>
+          <p>A version you picked for a song always wins. Otherwise word timing beats line timing, then plain text; this order breaks ties.</p>
         </div>
         {#if !lyricsOrder.length}<EmptyState title="No lyrics sources available" description="Available lyrics sources appear here when they are enabled for your account." />{:else}
         <ol class="lyrics-order-list">
@@ -390,7 +333,7 @@
 
     </div>
 
-    <div class="panel preferences-panel elsewhere-panel">
+    <div class="settings-card preferences-panel elsewhere-panel">
       <header class="panel-heading"><h3>Elsewhere</h3></header>
       <section class="preference-options" aria-labelledby="library-profile-title">
         <div class="preference-link-row">
@@ -402,12 +345,13 @@
         <div class="preference-link-row">
           <div>
             <h3 id="problem-alerts-title">Alerts</h3>
-            <p>Choose where Allstarr tells you about problems.</p>
+            <p>Where Allstarr tells you about your own accounts.</p>
           </div>
-          <Button variant="secondary" href="#/settings/alerts">Manage alerts</Button>
+          <Button variant="text" href="#/settings/alerts">Manage alerts</Button>
         </div>
       </section>
 
+      {#if administrator}<div class="settings-row"><div><strong>Household limits</strong><small>The highest quality everyone can use.</small></div><Button variant="text" href="#/settings/quality">Change the household limit</Button></div>{/if}
     </div>
 
       <footer class="preferences-actions">
@@ -418,7 +362,7 @@
           · Playback: {playbackStartLabel(snapshot.householdDefaults.playbackStart)}
         </p>
         <div>
-          <Button variant="outline" disabled={controlsDisabled || snapshot.usesHouseholdDefaults} onclick={() => void reset()}>
+          <Button variant="text" disabled={controlsDisabled || snapshot.usesHouseholdDefaults} onclick={() => void reset()}>
             Reset to household defaults
           </Button>
 
@@ -428,52 +372,25 @@
 {/if}
 
 <style>
-  .preference-link-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
-  .preference-link-row > div { min-width: 0; max-width: 100%; }
-  .preference-link-row :global(.select-root) { width: min(100%, 28rem); }
-  .preference-link-row :global(.select-trigger > span) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .preference-link-row p { color: var(--color-ink-muted); font-size: var(--text-sm); }
-  .preferences-view { display: grid; min-width: 0; gap: var(--section-gap); }
-  .preference-options { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); border-top: 1px solid var(--color-edge); padding: var(--surface-gutter); }
-  .preference-options h3 { margin: 0 0 .3rem; font-size: 1rem; font-weight: 600; }
-  .preference-options p { margin: 0; color: var(--color-ink-muted); line-height: 1.55; }
-  .lyrics-order-list { counter-reset: lyrics-rank; display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
-  .lyrics-order-list li { counter-increment: lyrics-rank; display: grid; grid-template-columns: 20px 1.5rem minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); border-bottom: 1px solid var(--color-edge); padding: var(--space-2) 0; }
-  .lyrics-order-list strong { min-width: 0; overflow-wrap: anywhere; font-size: var(--text-sm); }
-  .lyrics-order-list li::before { grid-column: 2; grid-row: 1; content: counter(lyrics-rank); color: var(--color-ink-muted); font-size: var(--text-sm); font-variant-numeric: tabular-nums; text-align: center; }
-  .lyrics-order-list li:last-child { border-bottom: 0; }
-  .lyrics-grip { grid-column: 1; grid-row: 1; color: var(--color-ink-muted); cursor: grab; }
-  .lyrics-order-actions { display: flex; gap: var(--space-1); }
-  .preferences-intro { padding-block: .2rem; }
-  .preferences-intro h2 { margin: 0 0 .25rem; font-size: 1.375rem; line-height: 1.75rem; font-weight: 600; }
-  .preferences-intro p:last-child, .preferences-heading p:last-child, .label-options p, .preferences-actions p {
-    margin: 0; color: var(--color-ink-muted); line-height: 1.55;
-  }
+  .preferences-view { display: grid; min-width: 0; gap: var(--space-4); font-size: var(--text-sm); }
   .preferences-panel { min-width: 0; overflow: hidden; }
-  .preferences-heading h3, .label-options h3 { margin: .15rem 0 .3rem; }
-  .filter-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); margin: 0; border: 0; padding: var(--surface-gutter); }
-  .filter-options legend { width: 100%; margin-bottom: var(--space-3); font-weight: 750; }
-  .filter-options label { display: grid; min-width: 0; min-height: var(--control-lg); grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); padding: var(--space-3); cursor: pointer; }
-  .filter-options label.active { border-color: var(--color-signal); background: color-mix(in srgb, var(--color-signal) 8%, transparent); }
-  .preferences-panel { border-radius: var(--radius-lg); }
-  .preferences-heading h3, .label-options h3 { font-size: 1rem; font-weight: 600; }
-  .filter-options input { width: 1.15rem; height: 1.15rem; margin-top: .1rem; accent-color: var(--color-signal); }
-  .filter-options strong, .filter-options small, .label-options strong, .label-options small { display: block; overflow-wrap: anywhere; }
-  .filter-options small, .label-options small { margin-top: .2rem; color: var(--color-ink-muted); line-height: 1.4; }
-  .unknown-value { grid-column: 1 / -1; margin: 0; border-radius: var(--radius-md); background: var(--color-panel-raised); padding: var(--space-3); overflow-wrap: anywhere; }
-  .label-options { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: var(--space-4); border-top: 1px solid var(--color-edge); padding: var(--surface-gutter); }
-  .label-options label { display: grid; min-width: 0; min-height: var(--control-md); grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: var(--space-3); padding-block: .35rem; cursor: pointer; }
-  .preferences-panel > .preference-options:first-child { border-top: 0; }
-  .elsewhere-panel h3 { margin: 0; font-size: var(--text-md); font-weight: 600; }
-  .preferences-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-4); padding-block: var(--space-2); }
-  .preferences-actions > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); }
-  @media (max-width: 760px) {
-    .filter-options, .label-options { grid-template-columns: minmax(0, 1fr); }
-    .preferences-actions { grid-template-columns: minmax(0, 1fr); }
-    .preferences-actions > div { display: grid; grid-template-columns: minmax(0, 1fr); }
-    .preferences-actions :global([data-slot="button"]) { width: 100%; white-space: normal; }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .filter-options label { transition: none; }
-  }
+  .preferences-panel > header { padding: var(--space-3) var(--space-4); }
+  .preferences-panel h3 { margin: 0; font-size: var(--text-sm); font-weight: 600; }
+  .preferences-panel .settings-row :global(.select-root) { min-width: 0; }
+  .preference-options { min-width: 0; }
+  .preference-options > div:first-child { padding: var(--space-3) var(--space-4); }
+  .preference-options p, .preferences-actions p { margin: var(--space-2) 0 0; color: var(--color-ink-muted); font-size: var(--text-sm); line-height: 1.5; }
+  .lyrics-order-list { counter-reset: lyrics-rank; margin: 0; padding: 0; list-style: none; }
+  .lyrics-order-list li { counter-increment: lyrics-rank; display: grid; grid-template-columns: 20px 1.5rem minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); border-top: 1px solid var(--color-edge); padding: var(--space-2) var(--space-4); }
+  .lyrics-order-list strong { min-width: 0; font-size: var(--text-sm); }
+  .lyrics-order-list li::before { grid-column: 2; grid-row: 1; content: counter(lyrics-rank); color: var(--color-ink-muted); font-variant-numeric: tabular-nums; text-align: center; }
+  .lyrics-grip { grid-column: 1; grid-row: 1; color: var(--color-ink-muted); cursor: grab; }
+  .lyrics-order-actions { display: flex; }
+  .preferences-actions { display: flex; align-items: start; justify-content: space-between; gap: var(--space-3); }
+  .preferences-actions p { margin: 0; font-size: var(--text-xs); }
+  .unknown-value { padding: var(--space-3) var(--space-4); font-size: var(--text-sm); }
+  .preference-link-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+  .preference-link-row p { margin: var(--space-1) 0 0; color: var(--color-ink-muted); font-size: var(--text-sm); }
+  @media (max-width: 900px) { .playback-row { grid-template-columns: minmax(0, 1fr) !important; } }
+  @media (max-width: 599px) { .preferences-actions, .preference-link-row { flex-wrap: wrap; } .lyrics-order-list li { gap: var(--space-2); } }
 </style>

@@ -174,11 +174,11 @@ test("a song report posts only server selectors and saves once while a request i
   await expect(page.getByText("Untrusted", { exact: true })).toHaveCount(0);
   const send = page.getByRole("button", { name: "Send report", exact: true });
   await expect(send).toBeDisabled();
-  await page.getByLabel("What happened?", { exact: true }).fill(" No sound after seeking. ");
+  await page.getByLabel("What's wrong?", { exact: true }).fill(" No sound after seeking. ");
   await send.click();
   await expect.poll(() => state.creates.length).toBe(1);
   await expect(page.getByRole("button", { name: "Saving…" })).toBeDisabled();
-  expect(state.creates[0]).toEqual({ requestId: expect.any(String), kind: "playback", note: "No sound after seeking.",
+  expect(state.creates[0]).toEqual({ requestId: expect.any(String), kind: "other", note: "No sound after seeking.",
     selector: { itemId: "ext-deezer-song-fixture", playback: { subjectUserId: listenerId, deviceId: "fixture-device" } } });
   expect(Object.keys(state.creates[0])).toEqual(["requestId", "kind", "note", "selector"]);
   release();
@@ -192,7 +192,7 @@ test("failed report retries preserve the note and request identity, while an edi
   const state = await mockSupport(page);
   state.createFailure = true;
   await page.goto("/#/report");
-  const note = page.getByLabel("What happened?", { exact: true });
+  const note = page.getByLabel("What's wrong?", { exact: true });
   await note.fill("Playback stopped.");
   const send = page.getByRole("button", { name: "Send report", exact: true });
   await send.click();
@@ -214,7 +214,7 @@ test("expired playback context keeps the note until the listener explicitly drop
   const state = await mockSupport(page);
   await page.goto(`/#/report?item=ext-deezer-song-fixture&user=${listenerId}&device=fixture-device`);
   await expect(page.getByText("Playing from", { exact: true })).toBeVisible();
-  const note = page.getByLabel("What happened?", { exact: true });
+  const note = page.getByLabel("What's wrong?", { exact: true });
   await note.fill("The song stopped in Feishin.");
   state.createContextFailure = true;
   await page.getByRole("button", { name: "Send report", exact: true }).click();
@@ -235,7 +235,7 @@ test("an incomplete report link allows a general report without losing a typed n
   const state = await mockSupport(page);
   await page.goto(`/#/report?item=ext-deezer-song-fixture&snapshot=${snapshotId}`);
   await expect(page.getByRole("alert")).toContainText("incomplete song details");
-  await page.getByLabel("What happened?", { exact: true }).fill("I need help connecting my app.");
+  await page.getByLabel("What's wrong?", { exact: true }).fill("I need help connecting my app.");
   await page.getByRole("button", { name: "Continue without song details" }).click();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.getByRole("article", { name: "Included report details" })).toHaveCount(0);
@@ -322,7 +322,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     const state = await mockSupport(page, true);
     await page.goto(`/#/report?snapshot=${snapshotId}`);
     await expect(page.getByText("Catalog source", { exact: true })).toBeVisible();
-    await page.getByLabel("What happened?", { exact: true }).fill("The displayed song differs from the recording. ".repeat(20));
+    await page.getByLabel("What's wrong?", { exact: true }).fill("The displayed song differs from the recording. ".repeat(20));
     await page.getByText("Included diagnostics", { exact: true }).click();
     if (width === 390) await expectContainedMobileGeometry(page);
     await page.evaluate(() => { (document.activeElement as HTMLElement)?.blur(); window.scrollTo(0, 0); });
@@ -695,7 +695,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     const form = page.getByRole("form", { name: "Problem report" });
     await expect(form).toBeVisible();
     await expect(page.getByLabel("Problem", { exact: true })).toBeVisible();
-    await form.getByLabel("What happened?", { exact: true }).fill("The navigation stopped responding.");
+    await form.getByLabel("What's wrong?", { exact: true }).fill("The navigation stopped responding.");
     await expect(form.getByRole("button", { name: "Send report", exact: true })).toBeEnabled();
     await expect(page.getByRole("alert")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Refresh details" })).toHaveCount(0);
@@ -717,7 +717,7 @@ test("Report context failures still offer retry and preserve the note", async ({
   await page.goto("/#/report?item=ext-deezer-song-fixture");
   await expect(page.getByRole("alert")).toContainText("Song details are no longer available.");
   await expect(page.getByRole("button", { name: "Refresh details", exact: true })).toBeVisible();
-  const note = page.getByLabel("What happened?", { exact: true });
+  const note = page.getByLabel("What's wrong?", { exact: true });
   await note.fill("The song would not play.");
   await expect(page.getByRole("button", { name: "Send report", exact: true })).toBeDisabled();
   state.contextFailure = false;
@@ -737,7 +737,7 @@ test("connection cards show one app guide and keep help nearby", async ({ page }
   await expect(steps.getByRole("listitem")).toHaveCount(3);
   await expect(page.getByRole("region", { name: "Set up Finer Player", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Finamp Android and iOS", exact: true })).toHaveAttribute("aria-pressed", "true");
-  await expect(page.getByRole("link", { name: "Move your Spotify collection", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Import your music", exact: true })).toBeVisible();
   await page.getByText("Read the tips", { exact: true }).click();
   await expect(page.getByText("Manual-only sources", { exact: true })).toBeVisible();
   await expect(page.getByText("Finamp formats", { exact: true })).toBeVisible();
@@ -751,9 +751,40 @@ test("song reason chips use supported report kinds and still require a note", as
   await reasons.getByRole("radio", { name: "Wrong lyrics", exact: true }).click();
   const send = page.getByRole("button", { name: "Send report", exact: true });
   await expect(send).toBeDisabled();
-  await page.getByLabel("What happened?", { exact: true }).fill("The words belong to another song.");
+  await page.getByLabel("What's wrong?", { exact: true }).fill("The words belong to another song.");
   await send.click();
   await expect(page.getByRole("heading", { name: "Report saved", level: 2 })).toBeVisible();
   expect(state.creates[0].kind).toBe("wrong-lyrics");
+  expect(state.creates[0].selector).toEqual({ itemId: "ext-deezer-song-fixture" });
+});
+
+
+test("General reports start with a neutral reason and a full-width note", async ({ page }) => {
+  const state = await mockSupport(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#/report");
+  const form = page.getByRole("form", { name: "Problem report", exact: true });
+  const note = form.getByLabel("What's wrong?", { exact: true });
+  await expect(note).toBeVisible();
+  const noteBox = await note.boundingBox();
+  const formBox = await form.boundingBox();
+  expect(noteBox!.width).toBeGreaterThan(formBox!.width * 0.8);
+  await expect(page.getByRole("checkbox", { name: "Include what was playing", exact: true })).toBeDisabled();
+  await note.fill("The navigation stopped responding.");
+  await form.getByRole("button", { name: "Send report", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Report saved", exact: true })).toBeVisible();
+  expect(state.creates[0].kind).toBe("other");
+});
+
+test("Playback details can be excluded without dropping the song", async ({ page }) => {
+  const state = await mockSupport(page);
+  await page.goto(`/#/report?item=ext-deezer-song-fixture&user=${listenerId}&device=fixture-device`);
+  const include = page.getByRole("checkbox", { name: "Include what was playing", exact: true });
+  await expect(include).toBeChecked();
+  await include.click();
+  await expect(include).not.toBeChecked();
+  await page.getByLabel("What's wrong?", { exact: true }).fill("The song title is wrong.");
+  await page.getByRole("button", { name: "Send report", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Report saved", exact: true })).toBeVisible();
   expect(state.creates[0].selector).toEqual({ itemId: "ext-deezer-song-fixture" });
 });

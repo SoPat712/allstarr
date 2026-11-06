@@ -39,7 +39,7 @@ async function fixture(page: Page, libraryFailure = false) {
     if (path.endsWith("/access/backend")) return reply({ settings: { supported: true, connectionSaved: true, configured: true, needsReview: false, revision: "1" }, csrfToken: "test" });
     if (path.endsWith("/storage/files")) return reply({ settings: { available: true, files: 0, pending: false }, csrfToken: "test" });
     if (path.endsWith("/providers/scores")) return reply({ providers: [{ providerId: "first", score: 100, uptimePercent: 100, checks: 1, days: [], capabilities: [{ capability: "metadata", score: 100, uptimePercent: 100, checks: 1, failures: 0 }] }] });
-    if (path.endsWith("/provider-accounts")) return reply({ accounts: [], audienceUsers: [{ id: "sam", displayName: "Sam" }] });
+    if (path.endsWith("/provider-accounts")) return reply({ accounts: [], listenersCanConnectOwnAccounts: true, audienceUsers: [{ id: "sam", displayName: "Sam", isAdministrator: true, lastActiveAt: "2026-11-06T12:00:00Z", playsThisWeek: 36, playlistEditingAllowed: true, recentPlays: [{ title: "Home again", artist: "River", playedAt: "2026-11-06T12:00:00Z" }] }] });
     if (path.endsWith("/playlist-links")) return reply({ playlistLinks: [] });
     if (path.endsWith("/playlist-forks")) return reply([]);
     if (path.endsWith("/clean-only-lock")) return reply({ revision: "1", cleanOnlyLocked: false, values: {}, householdDefaults: {} });
@@ -56,7 +56,7 @@ async function fixture(page: Page, libraryFailure = false) {
 }
 
 const pages = ["general", "quality", "access", "listeners", "alerts", "storage", "sound-analysis", "backups", "health", "setup", "appearance"];
-for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"]] as const) {
+for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [390, "dark"]] as const) {
   test(`Settings pages and panels ${width} ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
@@ -242,4 +242,47 @@ test("Libraries retain manual ID entry when discovery fails", async ({ page }) =
   await page.getByRole("alertdialog").getByRole("button", { name: "Restart and apply", exact: true }).click();
   await expect.poll(() => writes.length).toBe(1);
   expect(writes[0]).toEqual({ updates: { BACKEND_MUSIC_LIBRARY_IDS: "music,books" } });
+});
+
+
+test("Settings structure keeps source orders inside their card and playlist permissions together", async ({ page }) => {
+  await fixture(page);
+  await page.goto("/#/settings/quality");
+  const card = page.locator(".routing-group");
+  await expect(card.getByRole("radiogroup", { name: "Source orders", exact: true })).toBeVisible();
+  await expect(card.getByText("Details", { exact: true })).toHaveCount(0);
+  const policy = page.getByRole("form", { name: "Audio quality settings", exact: true });
+  await expect(policy.locator(":scope > details.settings-fold")).toHaveText(/Exact quality asked from each service/);
+  await page.goto("/#/settings/access");
+  const permissions = page.getByRole("region", { name: "Playlist editing", exact: true });
+  await expect(permissions.getByText("Per listener", { exact: true })).toBeVisible();
+  await expect(permissions.getByText("Household fallback", { exact: true })).toBeVisible();
+  await expect(permissions.getByRole("link", { name: "See who", exact: true })).toHaveAttribute("href", "#/settings/listeners");
+});
+
+test("Identical passing health runs share one history group", async ({ page }) => {
+  await fixture(page);
+  await page.route("**/api/admin/health", route => route.fulfill({ json: { protocol: "Jellyfin", configuration: { mode: "server-api-key", hasConfiguration: true, serviceCredentialReady: true, enabled: true, intervalMinutes: 60 }, listeners: [], runs: [1, 2].map(index => ({ id: String(index), protocol: "Jellyfin", mode: "server-api-key", startedAt: `2026-11-0${index}T12:00:00Z`, completedAt: `2026-11-0${index}T12:00:01Z`, alertStatus: "none", steps: [{ name: "backend", status: "passed", latencyMilliseconds: 5, reason: null }] })) } }));
+  await page.goto("/#/settings/health");
+  const history = page.getByRole("region", { name: "Check history", exact: true });
+  await expect(history.locator(".grouped-row")).toHaveCount(1);
+  await expect(history.getByRole("button", { name: /Passing/ })).toContainText("2");
+  await expect(page.getByRole("group", { name: "Last 30 checks", exact: true }).locator(":scope > *")).toHaveCount(30);
+  await history.getByRole("button", { name: /Passing/ }).click();
+  await expect(history.locator(".item-row")).toHaveCount(2);
+  const strip = page.getByRole("group", { name: "Last 30 checks", exact: true });
+  await strip.focus();
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog", { name: "Jellyfin check", exact: true })).toBeVisible();
+});
+
+test("A song.link key is requested with an action before showing a replacement field", async ({ page }) => {
+  const writes = await fixture(page);
+  await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { providers: [], configSections: [{ id: "operator", label: "Links", fields: [{ key: "ODESLI_API_KEY", label: "song.link API key", type: "password", valuePath: "operatorSettings.Odesli:ApiKey", sensitive: true, requiresRestart: true }] }] } }));
+  await page.goto("/#/settings/general");
+  await expect(page.getByLabel("song.link API key", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Add key…", exact: true }).click();
+  await expect(page.getByLabel("song.link API key", { exact: true })).toBeVisible();
+  expect(writes).toEqual([]);
 });

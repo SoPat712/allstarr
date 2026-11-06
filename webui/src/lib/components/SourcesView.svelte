@@ -335,8 +335,9 @@
     const waiting = waitingFor(account);
     if (waiting) return `${waiting} waiting`;
     if (!provider(account.providerId)?.usesSignedSession && (!account.secret.configured || account.secret.revoked)) return "Sign in again";
-    const checks = health.filter(item => item.providerAccountId === account.id);
-    return checks.some(item => item.health === "degraded") ? "Needs attention" : checks.length && checks.every(item => item.ready) ? "Working" : "Connected";
+    const checks = providerHealth(account.providerId).filter(item => !item.providerAccountId || item.providerAccountId === account.id);
+    if (checks.some(item => item.health === "degraded" && item.reasonCode?.replaceAll("-", "_") === "service_unavailable")) return "Service down";
+    return checks.some(item => item.health === "degraded") ? "Needs attention" : "Working";
   }
   const panelIndex = $derived(panelAccount ? filteredAccounts.findIndex(account => account.id === panelAccount.id) : filteredSources.findIndex(item => item.id === pageId));
   const panelCount = $derived(panelAccount ? filteredAccounts.length : filteredSources.length);
@@ -659,10 +660,16 @@
   });
 </script>
 
+{#snippet sourceUseAndFacts(source: ProviderDefinition)}
+  {#await import("$lib/components/SourceUseSettings.svelte") then { default: SourceUseSettings }}<SourceUseSettings providerId={source.id} {administrator} onSaved={refresh} onUndo={(providerId, run) => sourceUndo = { providerId, run }} />{/await}
+  <dl class="source-facts"><dt>Quality</dt><dd>{qualityOf(source.id) || "Not measured yet"}</dd><dt>Score</dt><dd>{scoreOf(source.id) ?? "Not measured yet"}</dd><dt>Accounts</dt><dd>{providerAccounts(source.id).filter(account => account.enabled).length} of {providerAccounts(source.id).length} on</dd><dt>Start time</dt><dd>{sourceStartTimeLabel(measurements.find(item => item.providerId === source.id), scores.find(item => item.providerId.toLowerCase() === source.id.toLowerCase()))}</dd></dl>
+{/snippet}
+
 {#snippet accountMenu(account: ProviderAccount)}
   <DropdownMenu.Root>
     <DropdownMenu.Trigger class="icon-button" aria-label={`Actions for ${account.displayName}`} disabled={Boolean(action)}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
     <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+      <DropdownMenu.Item class="bits-menu-item" onSelect={() => window.location.hash = servicePath(account.providerId, account.id)}>Account details</DropdownMenu.Item>
       {#if account.canManage}<DropdownMenu.Item class="bits-menu-item" onSelect={() => configure(account)}>Reconnect</DropdownMenu.Item>{/if}
       {#if account.canChangeAudience}<DropdownMenu.Item class="bits-menu-item" onSelect={() => manageAccess(account)}>Edit access</DropdownMenu.Item>{/if}
       {#if administrator && account.canManage}<DropdownMenu.Item class="bits-menu-item" onSelect={() => void test(account)}>Test connection</DropdownMenu.Item>{/if}
@@ -673,18 +680,21 @@
 
 {#snippet accountList()}
   {#if filteredAccounts.length}
-    <div class="accounts-table-wrap"><table class="accounts-table" aria-label="Accounts"><thead><tr><th>Service</th><th>Account</th><th>Shared with</th><th>State</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>
-      {#each filteredAccounts as account (account.id)}
-        <tr class:account-selected={focusAccount === account.id} id={`connection-${account.id}`}>
-          <td><a class="account-opener" href={servicePath(account.providerId, account.id)} data-sveltekit-keepfocus data-sveltekit-noscroll aria-label={`Open ${providerDisplayName(providers, account.providerId)} account`}><ProviderArtwork id={account.providerId} definition={provider(account.providerId)} decorative /><strong>{providerDisplayName(providers, account.providerId)}</strong></a></td>
-          <td data-label="Account">{account.ownerDisplayName || account.creatorDisplayName || account.displayName}{#if account.customLabel}<small>{account.customLabel}</small>{/if}</td>
-          <td data-label="Shared with">{account.scope === "Shared" ? "Everyone" : `Just ${account.ownerDisplayName || "you"}`}</td>
-          <td data-label="State"><StatePill tone={!account.enabled ? "neutral" : ["Working", "Connected"].includes(accountState(account)) ? "ok" : "warn"} text={accountState(account)} /></td>
-          <td>{#if account.canManage || account.canChangeAudience}{@render accountMenu(account)}{:else}<span class="muted">Read only</span>{/if}</td>
+    {@const groups = [...new Set(filteredAccounts.map(account => account.providerId))].map(id => filteredAccounts.filter(account => account.providerId === id))}
+    <div class="accounts-table-wrap"><table class="accounts-table" aria-label="Accounts"><thead><tr><th>Service</th><th>Account</th><th>Owner</th><th>Shared with</th><th>State</th><th><span class="sr-only">Actions</span></th></tr></thead><tbody>
+      {#each groups as group (group[0].providerId)}
+        {@const account = group[0]}
+        <tr class:account-selected={group.some(item => focusAccount === item.id)} id={`connection-${account.id}`}>
+          <td><a class="account-opener" href={servicePath(account.providerId, account.id)} data-sveltekit-keepfocus data-sveltekit-noscroll aria-label={`Open ${providerDisplayName(providers, account.providerId)} account`}><ProviderArtwork id={account.providerId} definition={provider(account.providerId)} decorative /><strong>{providerDisplayName(providers, account.providerId)}{group.length > 1 ? ` · ${countLabel(group.length, "account")}` : ""}</strong></a></td>
+          <td data-label="Account">{group.map(item => item.customLabel || String(item.configuration?.username || item.configuration?.userName || (item.displayName !== providerDisplayName(providers, item.providerId) ? item.displayName : "Not provided"))).join(", ")}</td>
+          <td data-label="Owner">{[...new Set(group.map(item => item.ownerDisplayName || item.creatorDisplayName || "Unknown"))].join(", ")}</td>
+          <td data-label="Shared with">{[...new Set(group.map(item => item.scope === "Shared" ? "Everyone" : `Just ${item.ownerDisplayName || "you"}`))].join(", ")}</td>
+          <td data-label="State">{#each [...new Set(group.map(accountState))] as state}<StatePill tone={state === "Working" ? "ok" : state === "Service down" ? "stop" : ["Off", "Connected"].includes(state) ? "neutral" : "warn"} text={state} />{/each}</td>
+          <td><div class="account-menus">{#each group as item (item.id)}{#if item.canManage || item.canChangeAudience}{@render accountMenu(item)}{:else}<span class="muted">Read only</span>{/if}{/each}</div></td>
         </tr>
       {/each}
     </tbody></table></div>
-  {:else}<EmptyState title={search ? "No accounts found" : "No accounts connected"} description="Connect a service to add your library and playlists.">{#snippet icon()}<Plus size={24} />{/snippet}</EmptyState>{/if}
+  {:else}<EmptyState title={accounts.length ? "No accounts in this view" : "No accounts connected"} description={accounts.length ? "Try a different search." : "Connect an account to use your subscriptions and send listens."} />{/if}
 {/snippet}
 
 {#snippet checkRow(label: string, check: Omit<SourceCheck, "id">, result?: ConnectivityResult, onTest?: () => void, canTest = false, testKey = "", onTry?: () => void)}
@@ -954,12 +964,11 @@
             {#if panelAccount.providerId === "spotify" && panelAccount.scope === "Personal" && panelAccount.enabled && panelAccount.ownerUserId === currentUserId}<Button variant="outline" href={`#/library/import?account=${encodeURIComponent(panelAccount.id)}`}>Move your Spotify collection</Button>{/if}
             {#if pageSource}<details class="source-more" open><summary>Settings and tests</summary>{@render servicePage(pageSource)}</details>{/if}
           {:else if pageSource}
-            <div class="source-summary" data-tone={sourceTone(pageSource)}><StatePill tone={sourceTone(pageSource)} text={sourceLabel(pageSource)} /><p>{sourceFact(pageSource)}</p>{#if needsSetup.includes(pageSource)}<p>{providerHealth(pageSource.id).some(check => !check.canAttempt && check.enabled && check.supported) ? "Playback skips this source while it is paused. Other sources can still play." : "Open the latest checks below for the next step."}</p>{/if}</div>
+            <div class="source-summary" data-tone={sourceTone(pageSource)} role="status"><StatePill tone={sourceTone(pageSource)} text={sourceLabel(pageSource)} /><p>{sourceFact(pageSource)}</p>{#if needsSetup.includes(pageSource)}<p>{providerHealth(pageSource.id).some(check => !check.canAttempt && check.enabled && check.supported) ? "Playback skips this source while it is paused. Other sources can still play." : "Playback can use other available sources. Open the latest checks for the next step."}</p>{/if}</div>
             {#if administrator}
-              {#key pageSource.id}{#await import("$lib/components/SourceHealthHistory.svelte") then { default: SourceHealthHistory }}<SourceHealthHistory checksSupported={sourceHasChecks(pageSource, providerHealth(pageSource.id))} providerId={pageSource.id} statuses={providerHealth(pageSource.id)} automatic={pageSource.useMode !== "manualOnly" && pageSource.useMode !== "off"} refreshKey={JSON.stringify(providerHealth(pageSource.id))} onRetryWindow={refresh} />{/await}{/key}
-            {/if}
-            {#await import("$lib/components/SourceUseSettings.svelte") then { default: SourceUseSettings }}<SourceUseSettings providerId={pageSource.id} {administrator} onSaved={refresh} onUndo={(providerId, run) => sourceUndo = { providerId, run }} />{/await}
-            <dl class="source-facts"><dt>Quality</dt><dd>{qualityOf(pageSource.id) || "Not measured yet"}</dd><dt>Score</dt><dd>{scoreOf(pageSource.id) ?? "Not measured yet"}</dd><dt>Accounts</dt><dd>{providerAccounts(pageSource.id).filter(account => account.enabled).length} of {providerAccounts(pageSource.id).length} on</dd><dt>Start time</dt><dd>{sourceStartTimeLabel(measurements.find(item => item.providerId === pageSource.id), scores.find(item => item.providerId.toLowerCase() === pageSource.id.toLowerCase()))}</dd></dl>
+              {#key pageSource.id}{#await import("$lib/components/SourceHealthHistory.svelte") then { default: SourceHealthHistory }}<SourceHealthHistory checksSupported={sourceHasChecks(pageSource, providerHealth(pageSource.id))} providerId={pageSource.id} statuses={providerHealth(pageSource.id)} automatic={pageSource.useMode !== "manualOnly" && pageSource.useMode !== "off"} refreshKey={JSON.stringify(providerHealth(pageSource.id))} onRetryWindow={refresh}>{#snippet afterStrip()}{@render sourceUseAndFacts(pageSource!)}{/snippet}</SourceHealthHistory>{/await}{/key}
+            {:else}{@render sourceUseAndFacts(pageSource)}{/if}
+
             <details class="source-more" bind:open={moreOpen}><summary>Settings, accounts and tests</summary>{@render servicePage(pageSource)}</details>
           {:else}<EmptyState title="This source isn't available" description="It may have been removed or turned off." />{#if administrator}{#await import("$lib/components/ExtensionsView.svelte") then { default: ExtensionsView }}<ExtensionsView view="package" extensionId={pageId} onchanged={refreshAndFollow} />{/await}{/if}{/if}
         </div>
@@ -1010,7 +1019,8 @@
   .source-row + .source-row { border-top: 1px solid var(--color-edge); }
   .accounts-table { width: 100%; border-collapse: collapse; background: var(--color-panel); font-size: var(--text-sm); table-layout: fixed; }
   .accounts-table th:first-child { width: 30%; }
-  .accounts-table th:nth-child(4) { width: 10rem; }
+  .accounts-table th:nth-child(5) { width: 8rem; }
+  .account-menus { display: flex; flex-wrap: wrap; position: relative; z-index: 1; }
   .accounts-table th:last-child { width: calc(44px + var(--space-3) * 2); }
   .accounts-table td { overflow-wrap: anywhere; }
   .account-opener strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1028,7 +1038,9 @@
   .source-filter-note, .muted { color: var(--color-ink-muted); font-size: var(--text-xs); }
   .source-panel-content { display: grid; min-width: 0; gap: var(--space-5); }
   .source-summary { display: grid; gap: var(--space-2); border-radius: var(--radius-md); padding: var(--space-3); background: var(--color-panel-raised); }
-  .source-summary[data-tone="stop"] { background: color-mix(in srgb, var(--danger) 8%, var(--color-panel)); }
+  .source-summary[data-tone="stop"] { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+  .source-summary[data-tone="warn"] { background: var(--warning-container); color: var(--on-warning-container); }
+  .source-summary[data-tone="stop"] p, .source-summary[data-tone="warn"] p { color: inherit; }
   .source-summary p { margin: 0; font-size: var(--text-sm); color: var(--color-ink-muted); }
   .source-facts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: var(--space-3); margin: 0; font-size: var(--text-sm); }
   .source-facts dt { color: var(--color-ink-muted); }.source-facts dd { margin: 0; overflow-wrap: anywhere; }
@@ -1063,8 +1075,8 @@
   @container (max-width: 640px) {
     .accounts-table, .accounts-table tbody, .accounts-table tr, .accounts-table td { display: block; }
     .accounts-table thead { display: none; }.accounts-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: var(--space-3); border-bottom: 1px solid var(--color-edge); }
-    .accounts-table tr:last-child { border: 0; }.accounts-table td { padding: var(--space-1); border: 0; min-width: 0; }.accounts-table td:first-child { grid-column: 1; }.accounts-table td:nth-child(2), .accounts-table td:nth-child(3) { grid-column: 1; padding-left: calc(28px + var(--space-4)); color: var(--color-ink-muted); font-size: var(--text-xs); }
-    .accounts-table td:nth-child(4) { grid-column: 2; grid-row: 1; align-self: center; }.accounts-table td:last-child { grid-column: 2; grid-row: 2 / 4; justify-self: end; }
+    .accounts-table tr:last-child { border: 0; }.accounts-table td { padding: var(--space-1); border: 0; min-width: 0; }.accounts-table td:first-child { grid-column: 1; }.accounts-table td:nth-child(2), .accounts-table td:nth-child(3), .accounts-table td:nth-child(4) { grid-column: 1; padding-left: calc(28px + var(--space-4)); color: var(--color-ink-muted); font-size: var(--text-xs); }
+    .accounts-table td:nth-child(5) { grid-column: 2; grid-row: 1; align-self: center; }.accounts-table td:last-child { grid-column: 2; grid-row: 2 / 5; justify-self: end; }
   }
   @media (max-width: 599px) { .source-toolbar { align-items: stretch; }.source-toolbar :global(.filter-segments) { width: 100%; } }
   .source-setting-control {

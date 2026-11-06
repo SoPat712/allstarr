@@ -1,6 +1,6 @@
 <script lang="ts">
   import { countLabel } from "$lib/count-label";
-  import { tick, untrack } from "svelte";
+  import { tick, untrack, type Snippet } from "svelte";
   import { sources, type ProviderCheckHistory, type ProviderHealth } from "$lib/api";
   import { checkGuide, humanize } from "$lib/sources";
   import { Badge } from "$lib/components/ui/badge";
@@ -8,14 +8,16 @@
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import { Button } from "$lib/components/ui/button";
   import { sourceCheckCard } from "$lib/source-check-card";
+  import CheckStrip from "$lib/components/CheckStrip.svelte";
 
-  let { providerId, statuses, refreshKey, onRetryWindow, automatic = true, checksSupported = true }: {
+  let { providerId, statuses, refreshKey, onRetryWindow, automatic = true, checksSupported = true, afterStrip }: {
     providerId: string;
     automatic?: boolean;
     checksSupported?: boolean;
     statuses: ProviderHealth[];
     refreshKey: string;
     onRetryWindow: () => Promise<void>;
+    afterStrip?: Snippet;
   } = $props();
 
   let history = $state<ProviderCheckHistory | null>(null);
@@ -240,7 +242,7 @@
     <div class="check-strip-anchor">
       <!-- One tab stop describes the current check while arrow keys explore the group. -->
       <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-      <div bind:this={strip} class="check-strip" role="group" tabindex="0" aria-label={stripSummary}
+      <CheckStrip bind:element={strip} tabindex={0} label={stripSummary}
         aria-describedby={activeSlot !== null ? cardId : `${cardId}-help`}
         onfocus={() => { focused = true; void showSlot(keyboardSlot); }}
         onblur={() => { focused = false; closeCard(); }} onkeydown={navigateStrip}
@@ -253,7 +255,7 @@
         {#each stripSlots as check, index}
           <span aria-hidden="true" data-check-slot={index} data-active={activeSlot === index} data-outcome={check ? stripOutcome(check) : "empty"}></span>
         {/each}
-      </div>
+      </CheckStrip>
       <span id={`${cardId}-help`} class="sr-only">Use arrow keys to explore checks, Home or End to reach either end, and Escape to close check details.</span>
       {#if activeSlot !== null}
         <div bind:this={card} id={cardId} class="check-card" role="tooltip" aria-live="polite"
@@ -277,7 +279,9 @@
 
 {#if empty}
   <p class="check-empty">{emptyLabel}</p>
-{:else}
+{/if}
+{@render afterStrip?.()}
+{#if !empty}
 <details class="settings-card check-details" aria-label="Recent diagnostic checks">
   <summary class="settings-row" style="grid-template-columns: minmax(0, 1fr); min-height: var(--control-md); cursor: pointer;">
     <div><strong>Latest checks</strong><small>{#if history}{history.counts.passed} passed · {history.counts.failed} failed · {history.counts.neutral} neutral{:else if loading}Loading recent checks…{:else}Recent checks unavailable{/if}</small></div>
@@ -317,16 +321,7 @@
 <style>
   .check-history { display: grid; min-width: 0; gap: var(--space-2); }
   .check-history h3 { margin: 0; color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 600; }
-  .check-strip { display: flex; justify-content: flex-end; height: 26px; gap: 2px; }
   .check-strip-anchor { position: relative; min-width: 0; }
-  .check-strip:focus-visible { outline: 2px solid var(--color-signal); outline-offset: 4px; border-radius: var(--radius-sm); }
-  .check-strip span { flex: 0 0 5px; border-radius: calc(var(--radius-sm) / 3); background: var(--color-ink-muted); }
-  .check-strip [data-active="true"] { outline: 2px solid var(--color-ink); outline-offset: 1px; opacity: 1; }
-  .check-strip [data-outcome="empty"] { opacity: 0.18; }
-  .check-strip [data-outcome="neutral"] { opacity: 0.55; }
-  .check-strip [data-outcome="ok"] { background: var(--success); }
-  .check-strip [data-outcome="slow"] { background: var(--warning); }
-  .check-strip [data-outcome="failed"] { background: var(--danger); }
   .check-card { position: absolute; z-index: 2; display: grid; gap: var(--space-1); width: min(264px, 100%); box-sizing: border-box; padding: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--color-popover); color: var(--color-ink-muted); box-shadow: var(--shadow-lg); font-size: var(--text-xs); overflow-wrap: anywhere; }
   .check-card-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); color: var(--color-ink); }
   .settings-card.check-details > summary.settings-row { padding-inline: 0; }

@@ -8,6 +8,7 @@
   import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import ProblemContextCard from "$lib/components/ProblemContextCard.svelte";
+  import { Checkbox } from "$lib/components/ui/checkbox";
   import { listenerSupport, newReportRequestId, reportKinds, reportReturnHref, reportSelection,
     supportError, type ProblemContext, type ReportKind, type ReportReceipt, type ReportSelector } from "$lib/support";
 
@@ -21,7 +22,8 @@
   let busy = $state(false);
   let error = $state("");
   let contextError = $state("");
-  let kind = $state<ReportKind>("playback");
+  let kind = $state<ReportKind>("other");
+  let attachedSelector = $state<ReportSelector>();
   let note = $state("");
   let receipt = $state<ReportReceipt | null>(null);
   let routeKey: string | null = null;
@@ -37,8 +39,9 @@
     routeKey = key;
     const selected = reportSelection(query);
     selector = selected.selector;
+    attachedSelector = selected.selector;
     selectionError = selected.error ?? "";
-    context = null; receipt = null; kind = "playback"; note = ""; error = ""; requestId = ""; submittedKey = "";
+    context = null; receipt = null; kind = "other"; note = ""; error = ""; requestId = ""; submittedKey = "";
     void preview();
   });
   async function preview() {
@@ -53,7 +56,13 @@
     finally { if (current === generation) loading = false; }
   }
   async function general() {
-    selector = undefined; selectionError = ""; error = ""; context = null;
+    selector = undefined; attachedSelector = undefined; selectionError = ""; error = ""; context = null;
+    await preview();
+  }
+  async function includePlaying(include: boolean) {
+    if (!attachedSelector) return;
+    const { playback, ...song } = attachedSelector;
+    selector = include ? attachedSelector : Object.keys(song).length ? song : undefined;
     await preview();
   }
   async function withoutPlayback() {
@@ -98,17 +107,17 @@
     {#if loading}<RowsSkeleton count={2} />
     {:else if context && !selectionError && !contextError}<ProblemContextCard {context} {providers} />{/if}
     <form class="settings-card" aria-label="Problem report" onsubmit={(event) => void submit(event)}>
-      <header><h3>Your note</h3></header>
       <fieldset class="settings-fields" disabled={busy}>
         {#if selector}
           <fieldset class="report-reasons" disabled={busy}>
             <legend>Problem</legend><p>Choose the closest description.</p>
-            <ThreeDetentSwitch label="Problem" options={reportKinds.map(reason => ({ value: reason.value, label: reasonLabels[reason.value] }))} value={kind} disabled={busy} onchange={value => kind = value} />
+            <div class="reason-scroll"><ThreeDetentSwitch label="Problem" options={reportKinds.map(reason => ({ value: reason.value, label: reasonLabels[reason.value] }))} value={kind} disabled={busy} onchange={value => kind = value} /></div>
           </fieldset>
         {:else}
           <div class="setting-field settings-row"><div><strong>Problem</strong><small>Choose the closest description.</small></div><SelectField label="Problem" value={kind} options={reportKinds} onchange={(value) => kind = value as ReportKind} /></div>
         {/if}
-        <label class="setting-field settings-row"><div><strong>What happened?</strong><small>Include the app and what you tried. Leave out passwords, tokens and private links.</small></div><textarea aria-label="What happened?" required maxlength="2000" rows="5" bind:value={note}></textarea></label>
+        <label class="report-note"><strong>What's wrong?</strong><textarea aria-label="What's wrong?" required maxlength="2000" rows="5" bind:value={note}></textarea><small>Include the app and what you tried. Leave out passwords, tokens and private links.</small></label>
+        <label class="report-include"><Checkbox aria-label="Include what was playing" checked={Boolean(selector?.playback)} disabled={busy || !attachedSelector?.playback} onCheckedChange={value => void includePlaying(value === true)} /><span>Include what was playing{#if !attachedSelector?.playback}<small>No playback details are available. Report a song from its menu to attach them.</small>{/if}</span></label>
         {#if error}<ErrorState title="The report could not be saved." detail={error} />{/if}
         <footer><span class="report-note-hint">{#if !selector}Reporting one song? Use its report action to include the song details.<br />{/if}{note.length}/2000</span><Button type="submit" disabled={blocked || !note.trim()}>{busy ? "Saving…" : "Send report"}</Button></footer>
       </fieldset>
@@ -121,6 +130,12 @@
   .report-view { min-width: 0; }
   .report-view > :global(.panel-heading) { padding-inline: 0; border: 0; }
   .report-view form { min-width: 0; }
+  .report-note { display: grid; gap: var(--space-2); padding: var(--surface-gutter); font-size: var(--text-sm); }
+  .report-note textarea { width: 100%; min-width: 0; min-height: 8rem; padding: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: transparent; color: var(--color-ink); font: inherit; resize: vertical; }
+  .report-note small, .report-include small { display: block; color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .report-include { display: flex; align-items: center; gap: var(--space-2); padding-inline: var(--surface-gutter); font-size: var(--text-sm); }
+  .reason-scroll { min-width: 0; overflow-x: auto; }
+  .reason-scroll :global(.seg) { width: max-content; flex-wrap: nowrap; }
   .report-reasons { display: grid; gap: var(--space-2); margin: 0; border: 0; padding: var(--surface-gutter); border-bottom: 1px solid var(--color-edge); }
   .report-reasons legend { float: left; width: 100%; padding: 0; font-size: var(--text-sm); font-weight: 600; }
   .report-reasons p { margin: 0; color: var(--color-ink-muted); font-size: var(--text-sm); }

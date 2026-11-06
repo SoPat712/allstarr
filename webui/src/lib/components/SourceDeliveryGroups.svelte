@@ -99,7 +99,7 @@
             <div class="delivery-actions">
               {#if canResend(first)}
                 {#if first.requiresReauthentication && destination(first)?.canManage}<Button variant="outline" size="sm" disabled={busy} onclick={() => onConfigure(destination(first)!)}>Reconnect saved account</Button>
-                {:else if needsAction(first)}<Button variant={accountId && group === groups[0] ? "default" : "outline"} size="sm" disabled={busy || !group.items.every(canRetry)} onclick={() => choose(group.items, "retry")}>{first.providerCode === "destination-unbound" ? "Confirm destination" : "Retry all"}</Button>{/if}
+                {:else if needsAction(first)}<Button variant="outline" size="sm" disabled={busy || !group.items.every(canRetry)} onclick={() => choose(group.items, "retry")}>{first.providerCode === "destination-unbound" ? "Confirm destination" : "Retry all"}</Button>{/if}
                 {#if first.providerCode === "destination-unbound"}<Button variant="text" size="sm" disabled={busy || !group.items.every(canRetry)} onclick={() => choose(group.items, "retry")}>Retry all</Button>{/if}
               {/if}
             </div>
@@ -110,7 +110,7 @@
               <div class="listen-row">
                 <span class="listen-icon" aria-hidden="true"><Music2 size={18} /></span>
                 <div class="listen-copy"><strong>{item.submission?.title ?? "Saved listen"}</strong>
-                  <small>{item.submission?.artist ?? name} · {new Date(item.submission?.occurredAt ?? item.updatedAt).toLocaleString()}</small>
+                  <small>{item.submission?.artist ?? name} · {new Date(item.submission?.occurredAt ?? item.updatedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</small>
                   <small>{item.destinationAccountId ? "Saved account" : "Destination to confirm"}: {account?.displayName ?? "Connect the intended account"}</small>
                   {#if canResend(item) && !item.destinationAccountId && item.availableDestinationAccountIds?.length}
                     <SelectField label="Destination account for older listen" value={account?.id ?? ""} options={accounts.filter(a => item.availableDestinationAccountIds?.includes(a.id)).map(a => ({ value: a.id, label: `${a.displayName} (${a.scope})` }))} disabled={busy} onchange={value => selectedDestinations[item.id] = value} />

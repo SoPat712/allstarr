@@ -81,7 +81,7 @@
   .setup-overview li > div { flex: 1; min-width: 0; }
   .setup-overview small { display: block; color: var(--color-ink-muted); font-size: var(--text-xs); }
   .step-title { min-height: 44px; border: 0; padding: 0; background: transparent; color: var(--color-ink); font-size: var(--text-sm); font-weight: 500; text-align: left; cursor: pointer; }
-  .step-number { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; border-radius: var(--radius-sm); background: var(--color-panel-raised); color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .step-number { display: grid; width: 28px; height: 28px; flex: 0 0 auto; place-items: center; border-radius: 50%; background: var(--color-panel-raised); color: var(--color-ink-muted); font-size: var(--text-xs); }
   .setup-layout { display: grid; grid-template-columns: minmax(170px, 1fr) minmax(0, 3fr); gap: var(--space-5); align-items: start; }
   .setup-steps { padding: var(--space-2); }
   .setup-steps button { display: flex; align-items: center; width: 100%; min-height: 48px; gap: var(--space-2); border: 0; padding: var(--space-2); border-radius: var(--radius-md); text-align: left; background: transparent; color: var(--color-ink); font-size: var(--text-sm); cursor: pointer; }

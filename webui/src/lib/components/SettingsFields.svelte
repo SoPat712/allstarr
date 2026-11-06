@@ -24,6 +24,8 @@
   let librariesLoading = $state(false);
   let drafts = $state<Record<string, string>>({}), saved = $state<Record<string, boolean>>({});
   let busy = $state(false), error = $state(""), restartOpen = $state(false);
+  let keyOpen = $state(false);
+  let requestedQualities = $state<readonly string[]>([]);
   let pending = $state<{ field: ConfigField; value: string; previous: string; removing?: boolean } | null>(null);
   const abort = new AbortController();
   const id = $props.id();
@@ -52,11 +54,19 @@
   const original = (field: ConfigField) => settingValue(config, field);
   const value = (field: ConfigField) => drafts[field.key] ?? original(field);
   const help: Record<string, string> = {
+    CLIENT_API_ENABLED: "Let signed-in music apps use song details, lyrics and mixes.",
+    LISTENERS_CAN_CONNECT_OWN_ACCOUNTS: "Let listeners connect personal accounts. Existing connections stay usable.",
+    DOWNLOAD_MODE: "Save just the song, or its whole album.",
+    PLAYBACK_START_PREFERENCE: "Balanced favors quality when starts stay under 3 seconds.",
+    PLAYBACK_PREPARE_UPCOMING_SONGS: "Prepare the next Apple song after 30 seconds of playback. Uses cache space.",
+    PLAYBACK_LASTFM_SIMILAR_ENABLED: "Use a connected Last.fm account when a service has no suggestions.",
+    PLAYBACK_LISTENBRAINZ_SIMILAR_ENABLED: "Use ListenBrainz when the service and Last.fm have no suggestions.",
     BACKEND_MUSIC_LIBRARY_IDS: "Choose libraries, or use every library your server allows.",
-    ODESLI_ENABLED: "Uses Deezer, Apple Music and enabled sources. Song.link Web, UniTune, MusicBrainz and Squigly provide fallback links without a key.",
+    ODESLI_ENABLED: "Find links to the same song across your enabled services.",
     ODESLI_API_KEY: "Optional. With a key, the official API is tried first. Leave unchanged to keep it.",
     STORAGE_MODE: "Songs saved after streaming start faster next time. Hearts, Keep and retained playlists protect their copies in either mode.",
     CACHE_DURATION_HOURS: "After the last play. The size limit can remove cached songs sooner.",
+    MATCHING_LOCAL_PREFERENCE_PERCENT: "Only for matches below the automatic threshold. Never raises confidence.",
   };
   const displayValue = (field: ConfigField) => edits[field.key]?.value ?? value(field);
   const externallyChanged = $derived(section.fields.some(field => edits[field.key] && edits[field.key].base !== original(field)));
@@ -141,15 +151,17 @@
   {#if externallyChanged}<div class="degraded-banner" role="status"><p><strong>Someone else changed these settings.</strong> Your unsaved edits are kept.</p><Button variant="outline" type="button" onclick={() => { edits = {}; drafts = {}; error = ""; }}>Reload server values</Button></div>{/if}
   <div class="settings-fields">
     {#each section.fields as field (field.key)}
-      <div class="setting-field settings-row" class:wide-control={field.type === "audio-quality" || field.key === "PLAYBACK_START_PREFERENCE"}>
-        <div>
+      <div class="setting-field settings-row" class:wide-control={field.type === "audio-quality" || field.key === "PLAYBACK_START_PREFERENCE"} class:quality-row={field.type === "audio-quality"}>
+        <div class:sr-only={field.type === "audio-quality"}>
           <label for={`${id}-${field.key}`}><strong>{label(field)}</strong></label>
           {#if !locked(field) && (help[field.key] || field.helpText && !field.helpText.startsWith("Saved in the data folder"))}<small>{help[field.key] || field.helpText}</small>{/if}
-          {#if !locked(field) && field.requiresRestart}<small>Restarts Allstarr</small>{/if}
+          {#if !locked(field) && field.requiresRestart}<small class="restart-note">· Restarts Allstarr</small>{/if}
           {#if saved[field.key]}<small class="setting-saved" role="status">✓ Saved</small>{/if}
         </div>
         {#if locked(field)}
           <div class="locked-setting"><output>{toggle(field) ? value(field) === "true" ? "On" : "Off" : field.sensitive ? fieldValue(config, field) ? "Key saved" : "Not set" : optionLabel(field, value(field)) || "Not set"}</output><small><Lock size={12} aria-hidden="true" />Set in your deployment</small></div>
+        {:else if field.key === "ODESLI_API_KEY" && !keyOpen}
+          <Button variant="outline" disabled={busy} onclick={() => keyOpen = true}>{fieldValue(config, field) ? "Change key…" : "Add key…"}</Button>
         {:else if field.key === "BACKEND_MUSIC_LIBRARY_IDS" && libraries !== null}
           <fieldset id={`${id}-${field.key}`} class="library-choices quality-control" aria-label={label(field)} disabled={busy}>
             <label><Checkbox aria-label="All libraries" checked={!splitLibraryIds(value(field)).length} onCheckedChange={checked => change(field, checked ? "" : joinLibraryIds(libraries?.map(item => item.id) ?? []))} /><span>All libraries</span></label>
@@ -165,7 +177,7 @@
           <p role="status">Loading music libraries…</p>
         {:else if field.type === "audio-quality"}
           <fieldset disabled={busy} id={`${id}-${field.key}-quality`} class="quality-control">
-            <AudioQualityField name={field.key} value={value(field)} onchange={() => void qualityChanged(field)} />
+            <AudioQualityField name={field.key} value={value(field)} showDetails={false} bind:requestedQualities onchange={() => void qualityChanged(field)} />
           </fieldset>
         {:else if field.key === "MATCHING_LOCAL_PREFERENCE_PERCENT"}
           <div class="matching-preference"><span class="settings-toggle"><Switch aria-label={label(field)} checked={Number(value(field)) > 0} disabled={busy} onchange={event => change(field, event.currentTarget.checked ? "7" : "0")} /></span><details><summary>Preference window</summary><input type="number" aria-label="Preference window (points)" value={value(field)} min={field.min ?? 0} max={field.max ?? 20} disabled={busy} onchange={event => { if (event.currentTarget.reportValidity()) change(field, event.currentTarget.value); }} /></details></div>
@@ -192,12 +204,17 @@
       </div>
     {/each}
   </div>
+  {#if section.fields.some(field => field.type === "audio-quality")}<details class="settings-fold"><summary>Exact quality asked from each service</summary><ul class="requested-qualities">{#each requestedQualities as quality}<li>{quality}</li>{/each}</ul></details>{/if}
   {#if error}<p role="alert" class="settings-impact notice-error">{error}</p>{/if}
 </form>
 
 <ConfirmDialog bind:open={restartOpen} title={pending?.removing ? pending.field.requiresRestart ? "Remove the key and restart Allstarr?" : "Remove the saved key?" : "Restart Allstarr to apply?"} description={pending?.removing && !pending.field.requiresRestart ? "The saved key is removed. You will need to enter it again to use it." : `Changing ${pending ? label(pending.field).toLowerCase() : "this setting"} needs a restart. Music that is playing will pause briefly. This page reconnects when Allstarr is ready.`} confirmLabel={busy ? "Applying…" : pending?.removing ? pending.field.requiresRestart ? "Remove key and restart" : "Remove key" : "Restart and apply"} confirmVariant={pending?.removing ? "destructive" : "default"} disabled={busy} closeOnConfirm={false} {error} onConfirm={() => pending ? persist(pending.field, pending.value, pending.previous) : undefined} />
 
 <style>
+  .wide-control.quality-row { grid-template-columns: minmax(0, 1fr) !important; }
+  .requested-qualities { margin: 0; padding: var(--space-3) var(--space-6); color: var(--color-ink-muted); font-size: var(--text-sm); }
+
+  .restart-note { color: var(--on-warning-container); }
   .library-choices, .library-fallback { display: grid; gap: var(--space-2); min-width: 0; }
   .library-choices label { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; }
   .library-choices span { overflow-wrap: anywhere; }

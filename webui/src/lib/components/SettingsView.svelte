@@ -23,7 +23,7 @@
   } = $props();
   const allPages = [
     { id: "appearance", label: "Appearance", group: "You", icon: Palette, description: "How Allstarr looks on this device." },
-    { id: "preferences", label: "Listening preferences", group: "You", icon: Headphones, description: "", href: "#/preferences" },
+    { id: "preferences", label: "Listening preferences", group: "You", icon: Headphones, description: "Your own choices. They save as you change them and never go above the household’s limits." },
     { id: "adding-to-library", label: "Adding to the library", group: "You", icon: Library, description: "Your own process. Saved as you go; the household default applies to listeners without one." },
     { id: "general", label: "General", group: "Server", icon: SlidersHorizontal, description: "Server-wide behavior for every listener. Changes save as you make them." },
     { id: "quality", label: "Quality and routing", group: "Server", icon: Gauge, description: "The highest quality Allstarr plays and downloads, and the order it tries sources. Your own music always comes first." },
@@ -41,7 +41,7 @@
   const requested = $derived(legacy[section] ?? section);
   const active = $derived(pages.some(item => item.id === requested) ? requested : administrator ? "general" : "appearance");
   const activePage = $derived(pages.find(item => item.id === active) ?? pages[0]);
-  const href = (item: (typeof allPages)[number]) => "href" in item ? item.href : `#/settings/${item.id}`;
+  const href = (item: (typeof allPages)[number]) => `#/settings/${item.id}`;
   let schema = $state<UiSchema | null>(null), config = $state<Record<string, unknown>>({});
   let cache = $state<Awaited<ReturnType<typeof settings.cache>> | null>(null), preview = $state<Awaited<ReturnType<typeof settings.cachePreview>> | null>(null);
   let cachedSongs = $state<DownloadsResponse | null>(null), keptSongs = $state<DownloadsResponse | null>(null);
@@ -55,7 +55,7 @@
   const sectionFor = (id: string) => schema?.configSections?.find(item => item.id === id)?.fields ?? [];
   const group = (id: string, label: string, selected: typeof fields): ConfigSection => ({ id, label, fields: selected });
   const generalGroups = $derived([
-    group("library", "Library", fields.filter(field => field.key === "BACKEND_TYPE" || /MusicLibraryIds/.test(field.valuePath ?? ""))),
+    group("library", "Library", [...fields.filter(field => /MusicLibraryIds/.test(field.valuePath ?? "")), ...fields.filter(field => field.key === "BACKEND_TYPE")]),
     group("general", "Defaults for everyone", sectionFor("general").filter(field => !qualityKeys.has(field.key) && !["BACKEND_TYPE", "STORAGE_MODE"].includes(field.key))),
     group("links", "Song links and extensions", fields.filter(field => linkKeys(field.key) && field.key !== "ODESLI_RATE_LIMIT_MS")),
     ...((schema?.configSections ?? []).filter(item => !["operator", "general", "paths", "cache", "audio-limits", "network", "client-address", "spotify-import"].includes(item.id))),
@@ -66,7 +66,7 @@
   const audioMaximum = $derived(Number((config.cache as Record<string, unknown> | undefined)?.audioMaximumGiB ?? 2) * 1024 ** 3);
   const cacheAudioBytes = $derived(typeof cachedSongs?.totalSize === "number" ? cachedSongs.totalSize : null);
   const keptAudioBytes = $derived(typeof keptSongs?.totalSize === "number" ? keptSongs.totalSize : null);
-  const storageItems = $derived([{ label: cacheAudioBytes === null ? "Cached song usage unavailable" : `${bytes(cacheAudioBytes)} cached of ${bytes(audioMaximum)}` }, { label: keptAudioBytes === null ? "Kept song usage unavailable" : `${bytes(keptAudioBytes)} kept` }]);
+  const storageItems = $derived([{ label: cacheAudioBytes === null ? "Cached song usage unavailable" : `${bytes(cacheAudioBytes)} cached of ${bytes(audioMaximum)}` }, { label: keptAudioBytes === null ? "Kept song usage unavailable" : `${bytes(keptAudioBytes)} kept` }, { label: "Database size unavailable" }]);
   const storageSegments = $derived(cacheAudioBytes !== null && keptAudioBytes !== null ? [
     { label: "Cached songs (MiB)", value: Math.round(cacheAudioBytes / 1024 ** 2), tone: "info" as const },
     { label: "Kept songs (MiB)", value: Math.round(keptAudioBytes / 1024 ** 2), tone: "good" as const },
@@ -127,12 +127,14 @@
     {:else if !schema || error}<ErrorState title="Some settings could not be loaded" detail={error} onretry={refresh} />{/if}
     {#if !loading && schema}
       {#if ["general", "access", "storage", "setup"].includes(active)}
-        <PageStatus segments={active === "storage" ? storageSegments : []} items={active === "storage" ? storageItems : active === "setup" ? [{ label: `${countLabel(onboardingState?.steps?.filter(step => step.state !== "pending").length ?? 0, "step")} reviewed or skipped` }, { label: "Progress saved for your account" }] : [{ label: "Changes save as you make them" }, { label: "Restart changes ask first" }]} />
+        <div class:setup-progress={active === "setup"}><PageStatus segments={active === "storage" ? storageSegments : active === "setup" ? [{ label: "Reviewed", value: onboardingState?.steps?.filter(step => step.state !== "pending").length ?? 0, tone: "info" }, { label: "Left", value: onboardingState?.steps?.filter(step => step.state === "pending").length ?? 0, tone: "neutral" }] : []} items={active === "storage" ? storageItems : active === "setup" ? [{ label: `${onboardingState?.steps?.filter(step => step.state !== "pending").length ?? 0} of ${countLabel(onboardingState?.steps?.length ?? 0, "step")} reviewed or skipped` }, { label: "Playback works while setup is open" }] : [{ label: "Changes save as you make them" }, { label: "Restart changes ask first" }]} /></div>
       {/if}
       {#if active === "appearance"}
         {#await import("./SettingsAppearance.svelte")}<RowsSkeleton count={1} />{:then { default: Appearance }}<Appearance />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
       {:else if active === "adding-to-library"}
         {#await import("./LibraryPromotionSettings.svelte")}<RowsSkeleton count={4} />{:then { default: Promotion }}<Promotion {administrator} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
+      {:else if active === "preferences"}
+        {#await import("./ListeningPreferencesView.svelte")}<RowsSkeleton />{:then { default: Preferences }}<Preferences {administrator} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
       {:else if active === "quality"}
         {#await import("./RoutingView.svelte")}<RowsSkeleton />{:then { default: Routing }}<Routing embedded />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
       {:else if active === "listeners"}
@@ -154,9 +156,9 @@
           {#if onboardingState}<Guide state={onboardingState} onChanged={onSetupChanged} embedded={onboardingState.completed} />{:else}<Button variant="outline" onclick={() => onOpenSetup()}>Open setup guide</Button>{/if}
         {:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
       {:else if active === "general"}
-        <section class="settings-card" aria-label="About Allstarr"><header><h3>Allstarr</h3></header><div class="settings-row"><strong>Version</strong><span>beta {__APP_VERSION__}</span></div></section>
         {#each generalGroups as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh} />{/each}
         {#if fields.some(field => field.key === "ODESLI_RATE_LIMIT_MS")}<details class="settings-fold"><summary>Advanced: wait between song.link lookups</summary><SettingsFields section={group("link-timing", "Song link timing", fields.filter(field => field.key === "ODESLI_RATE_LIMIT_MS"))} {config} onChanged={refresh} /></details>{/if}
+        <p class="settings-muted">Allstarr · beta {__APP_VERSION__}</p>
       {:else if active === "access"}
         {#await import("./AccessSettingsCard.svelte")}<RowsSkeleton count={2} />{:then { default: Access }}<Access kind="backend" /><Access kind="oidc" />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
         {#if accessFields.some(field => !/Cors:/.test(field.valuePath ?? ""))}<SettingsFields section={group("network", "Addresses and network", accessFields.filter(field => !/Cors:/.test(field.valuePath ?? "")))} {config} onChanged={refresh} />{/if}
@@ -175,3 +177,8 @@
   </div>
 </section>
 <ConfirmDialog bind:open={purgeOpen} title="Remove cached files?" description="Temporary cached files will be removed. Kept songs, downloads and media-server files stay safe." confirmLabel="Remove cache" onConfirm={purge} />
+
+<style>
+  .setup-progress :global(.status-legend) { display: none; }
+  .setup-progress :global(.status-bar [data-tone="neutral"]) { background: var(--color-panel-raised); }
+</style>

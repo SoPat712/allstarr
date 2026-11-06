@@ -2570,11 +2570,11 @@ for (const [administrator, backend] of [[true, "Jellyfin"], [false, "Navidrome"]
     await expect(page.locator(".profile small")).toHaveText(administrator ? "Administrator" : "Listener");
     await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
     await expect(nav.getByRole("link", { name: "Listening preferences", exact: true })).toHaveCount(0);
-    if (administrator) await expect(page.getByRole("region", { name: "About Allstarr" })).toContainText("beta");
+    if (administrator) await expect(page.getByText(/^Allstarr · beta /)).toBeVisible();
     const settingsNav = page.getByRole("navigation", { name: "Settings sections", exact: true }).first();
     await expect(settingsNav.getByText("You", { exact: true })).toBeVisible();
     await settingsNav.getByRole("link", { name: "Listening preferences", exact: true }).click();
-    await expect(page).toHaveURL(/#\/preferences$/);
+    await expect(page).toHaveURL(/#\/settings\/preferences$/);
     await expect(nav.getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("aria-current", "page");
   });
 }
@@ -9315,7 +9315,8 @@ test("Source health history recovers from an error without busying Refresh", asy
   await history.locator("summary").click();
   await expect(history).toContainText("Couldn’t load recent checks.");
   await history.getByRole("button", { name: "Retry" }).click();
-  await expect(history).toContainText("No recorded diagnostic checks.");
+  await expect(page.getByRole("dialog").getByText("No checks yet", { exact: true })).toBeVisible();
+  await expect(history).toHaveCount(0);
   expect(reads).toBe(2);
   await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
   await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
@@ -9325,21 +9326,22 @@ test("Source health history ignores a response after changing source", async ({ 
   await mockApi(page);
   let release!: () => void;
   const pending = new Promise<void>(resolve => { release = resolve; });
-  let requested = false;
+  let requested = false, returned = false;
   await page.route("**/api/admin/providers/lumen-audio/health-history**", async route => {
     requested = true;
     await pending;
-    await route.fulfill({ json: sourceHistory }).catch(() => {});
+    await route.fulfill({ json: sourceHistory }).catch(() => {}).finally(() => { returned = true; });
   });
   await page.goto("#/integrations/services/lumen-audio");
   await expect.poll(() => requested).toBe(true);
   await page.evaluate(() => { location.hash = "#/integrations/services/spotify"; });
-  const history = page.getByRole("group", { name: /Recent diagnostic checks/ });
-  await history.locator("summary").click();
-  await expect(history).toContainText("No recorded diagnostic checks.");
+  const panel = page.getByRole("dialog", { name: "Spotify", exact: true });
+  await expect(panel.getByText("This source isn't checked automatically", { exact: true })).toBeVisible();
   release();
-  await expect(history).not.toContainText("Household account");
-  await expect(page.getByRole("heading", { name: "Spotify", exact: true })).toBeVisible();
+  await expect.poll(() => returned).toBe(true);
+  await expect(panel).not.toContainText("Household account");
+  await expect(panel.getByText("This source isn't checked automatically", { exact: true })).toBeVisible();
+  await expect(panel).toBeVisible();
 });
 
 test("Source health retry follows server time and refreshes quietly once", async ({ page }) => {

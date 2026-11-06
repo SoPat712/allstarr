@@ -387,8 +387,8 @@ test("Spotify Sources and Getting started lead to the music import", async ({ pa
   await page.getByRole("dialog", { name: "Spotify", exact: true }).locator(".source-more > summary").click();
   await expect(page.getByRole("link", { name: "Move your Spotify collection", exact: true })).toHaveAttribute("href", `#/library/import?account=${accountId}`);
   await page.goto("/#/getting-started");
-  await expect(page.getByText("Coming from Spotify?", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Move your Spotify collection", exact: true })).toHaveAttribute("href", "#/library/import");
+  await expect(page.getByText("Coming from Spotify or Apple Music?", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Import your music", exact: true })).toHaveAttribute("href", "#/library/import");
 });
 
 test("Import offers only newly accepted songs after completion", async ({ page }) => {

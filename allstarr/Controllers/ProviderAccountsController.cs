@@ -84,11 +84,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
                 .Where(item => userIds.Contains(item.Id))
                 .ToDictionaryAsync(item => item.Id, item => item.DisplayName, cancellationToken);
         var audienceUsers = CanManageAllAccounts(session)
-            ? await context.Users.AsNoTracking()
-                .Where(item => item.Enabled)
-                .OrderBy(item => item.DisplayName)
-                .Select(item => new { item.Id, item.DisplayName })
-                .ToListAsync(cancellationToken)
+            ? await ReadListenerSummariesAsync(context, cancellationToken)
             : [];
         var configurations = await ReadAccountConfigurationsAsync(
             accounts.Where(account => CanManageAccount(account, session) && account.SecretReferenceId.HasValue &&

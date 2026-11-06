@@ -46,6 +46,7 @@ async function fixture(page: Page) {
     }
     if (path.includes("/providers/test/")) body = { success: true, healthy: true };
     if (path === "/api/admin/scrobbling/deliveries") body = { items: listens };
+    if (path.startsWith("/api/admin/provider-favorite-links")) body = { items: [], nextCursor: null, activeProtocol: "jellyfin" };
     if (path.endsWith("/resolve")) { listens = listens.filter(item => !path.includes(item.id)); body = {}; }
     if (path.endsWith("/auth/playlist-consent")) {
       if (request.method() === "DELETE") granted = false;
@@ -63,6 +64,9 @@ async function fixture(page: Page) {
 
 async function capture(page: Page, name: string) {
   await mkdir("test-results/ui-sources", { recursive: true });
+  const dismiss = page.getByRole("region", { name: "Notifications", exact: true }).getByRole("button", { name: "Dismiss notification", exact: true });
+  while (await dismiss.count()) await dismiss.first().click();
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({ path: `test-results/ui-sources/${name}.png`, fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 }
@@ -101,7 +105,7 @@ test("Sources shows working low-quality playback with real-play start timing", a
   expect(await page.pageErrors()).toEqual([]);
 });
 
-for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"]] as const) {
+for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"], [390, "dark"]] as const) {
   test(`Sources redesign services and source panel at ${width} ${theme}`, async ({ page }) => {
     await page.clock.install();
     await page.setViewportSize({ width, height: 900 });
@@ -162,6 +166,14 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"]] a
     await expect(page.getByRole("region", { name: "Accounts status" })).toContainText("2 accounts");
     await expect(page.getByRole("region", { name: "Accounts status" })).toContainText("2 listens waiting to send");
     await expect(page.locator(".grouped-row")).toHaveCount(1);
+    const hearts = page.getByRole("region", { name: "Shared provider hearts", exact: true });
+    await expect(hearts.getByRole("button", { name: "Review profiles", exact: true })).toBeDisabled();
+    const jellyfinProfile = await hearts.getByRole("button", { name: "Jellyfin profile", exact: true }).boundingBox();
+    const subsonicProfile = await hearts.getByRole("button", { name: "Subsonic profile", exact: true }).boundingBox();
+    if (width > 650) {
+      expect(subsonicProfile!.x).toBeGreaterThan(jellyfinProfile!.x + jellyfinProfile!.width);
+      expect(subsonicProfile!.y).toBe(jellyfinProfile!.y);
+    } else expect(subsonicProfile!.y).toBeGreaterThan(jellyfinProfile!.y + jellyfinProfile!.height);
     await page.getByRole("searchbox", { name: "Search accounts" }).fill("ListenBrainz");
     await expect(page.getByRole("link", { name: "Open Apple Music account" })).toBeHidden();
     await page.getByRole("searchbox", { name: "Search accounts" }).fill("");
@@ -361,6 +373,14 @@ for (const width of [320, 1280]) {
       return Math.abs(element.getBoundingClientRect().left - heading.getBoundingClientRect().left);
     });
     expect(offset).toBeLessThanOrEqual(1);
+    const followsSettings = await latest.evaluate(element => {
+      const panel = element.closest("[data-side-panel]")!;
+      const settings = panel.querySelector(".source-use-settings")!;
+      const facts = panel.querySelector(".source-facts")!;
+      return Boolean(settings.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING) &&
+        Boolean(facts.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    expect(followsSettings).toBe(true);
   });
 }
 
@@ -466,4 +486,41 @@ test("Sources history load errors stay recoverable", async ({ page }) => {
   } }));
   await page.getByRole("button", { name: "Try again", exact: true }).click();
   await expect(page.getByText("No checks yet", { exact: true })).toBeVisible();
+});
+
+
+test("Account rows group duplicate services and keep account names separate from owners", async ({ page }) => {
+  await fixture(page);
+  await page.route("**/api/admin/provider-accounts", route => route.fulfill({ json: { accounts: [["apple-musickit", "Morning"], ["apple-musickit", "Evening"], ["qobuz", "Main"]].map(([providerId, name], index) => ({ id: `account-${index}`, providerId, displayName: name, ownerDisplayName: "Listener", scope: "Shared", canManage: true, enabled: true, revision: 1, secret: { configured: true, revoked: false }, createdAt: "2026-11-01T12:00:00Z" })), audienceUsers: [] } }));
+  await page.goto("/#/sources/accounts");
+  const table = page.getByRole("table", { name: "Accounts", exact: true });
+  await expect(table.getByRole("columnheader", { name: "Owner", exact: true })).toBeVisible();
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+  await expect(table).toContainText("Apple Music · 2 accounts");
+  await expect(table.locator('[data-label="Account"]').first()).toHaveText("Morning, Evening");
+  await expect(table.locator('[data-label="Owner"]').first()).toHaveText("Listener");
+  await expect(table.locator("tbody tr").last()).toContainText("Service down");
+  await page.getByRole("button", { name: "Connect account", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Connect an account", exact: true });
+  await expect(dialog.getByLabel("Connection steps", { exact: true })).toBeVisible();
+  await expect(dialog.getByRole("radiogroup", { name: "Service", exact: true })).toContainText("Built-in");
+  const tiles = dialog.getByRole("radio");
+  await tiles.first().focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(tiles.nth(1)).toBeFocused();
+  await expect(tiles.nth(1)).toHaveAttribute("aria-checked", "true");
+});
+
+for (const width of [390, 1280]) test(`Connection tile keyboard follows the grid at ${width}px`, async ({ page }) => {
+  await fixture(page);
+  await page.setViewportSize({ width, height: 900 });
+  await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { activeBackend: "Jellyfin", providers: Array.from({ length: 8 }, (_, index) => ({ id: `service-${index}`, name: `Service ${index + 1}`, categories: ["streaming"], implementationOrigin: index % 2 ? "extension" : "built-in", accountSettings: [{ key: "token", label: "Token", type: "text", sensitive: true }] })) } }));
+  await page.goto("/#/sources/accounts");
+  await page.getByRole("button", { name: "Connect account", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Connect an account", exact: true });
+  const tiles = dialog.getByRole("radio");
+  await tiles.first().focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(tiles.nth(width === 390 ? 2 : 4)).toBeFocused();
+  await expect(dialog.locator(".dialog-actions")).toHaveCSS("position", "sticky");
 });

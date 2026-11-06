@@ -1860,7 +1860,7 @@ export const sources = {
   accounts: () =>
     json<{
       listenersCanConnectOwnAccounts?: boolean;
-      audienceUsers: { id: string; displayName: string }[];
+      audienceUsers: { id: string; displayName: string; isAdministrator?: boolean; lastActiveAt?: string | null; playsThisWeek?: number; playlistEditingAllowed?: boolean; recentPlays?: { title: string | null; artist: string | null; playedAt: string }[] }[];
       accounts: ProviderAccount[];
     }>("/api/admin/provider-accounts"),
   health: () => json<ProviderHealth[]>("/api/admin/providers/status"),

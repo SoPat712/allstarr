@@ -175,7 +175,7 @@
     <div class="channel-grid">
       {#each administrator ? [false, true] : [false] as forHousehold}
         {@const channels = data.channels.filter(channel => channel.household === forHousehold)}
-        <article class="settings-card" role="region" aria-label={forHousehold ? "Household alerts" : "Your alert channels"}>
+        <article class="settings-card" class:channel-empty={!channels.length} role="region" aria-label={forHousehold ? "Household alerts" : "Your alert channels"}>
           {#if channels.length}
             <header><h3>{forHousehold ? "Household alerts" : "Your alert channels"}</h3><Button variant="text" disabled={Boolean(action)} aria-label={forHousehold ? "Add household channel" : "Add your channel"} onclick={() => edit(null, forHousehold)}>Add channel</Button></header>
             {#each channels as channel (channel.id)}
@@ -207,10 +207,10 @@
             {#if !thresholds}<p class="notice-error alert-notice" role="alert">Check the limits and recovery margins. Warning limits must be at least the critical limits.</p>{/if}
           </fieldset>
         </form>
-      </article>
       <details class="settings-fold"><summary>Advanced: hosts listeners may send alerts to</summary>
         <form class="settings-card" aria-label="Allowed destination hosts" onsubmit={event => event.preventDefault()} onchange={() => { if (hostsDirty) void saveConfiguration("hosts"); }}><label class="settings-row"><div><strong>Allowed hosts</strong><small>One host per line, with an optional port. Administrators can use other hosts. Leave empty to allow no listener destinations.</small></div><textarea aria-label="Allowed hosts" rows="4" bind:value={hosts} spellcheck="false" disabled={Boolean(action)}></textarea></label>{#if !permittedHosts}<p class="notice-error alert-notice" role="alert">Enter host names with optional ports, without a scheme, path or username.</p>{/if}</form>
       </details>
+      </article>
     {/if}
   {/if}
 </div>
@@ -232,6 +232,9 @@
   </Dialog.Content></Dialog.Portal>
 </Dialog.Root>
 <style>
+  .channel-empty { border-style: dashed; }
+  .channel-empty :global(.empty-state) { align-items: flex-start; min-height: 0; padding: var(--space-4); text-align: left; }
+  .channel-empty :global(.empty-icon) { display: none; }
   .alerts-settings { display: grid; gap: var(--space-4); min-width: 0; }
   .settings-toolbar h3 { margin: 0; font-size: var(--text-sm); }
   .channel-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }

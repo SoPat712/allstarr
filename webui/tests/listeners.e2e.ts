@@ -18,7 +18,7 @@ async function mockListeners(page: Page, administrator = true) {
     if (path === "/api/admin/updates/stream") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" });
     if (path === "/api/admin/ui/schema") return json(route, { configSections: [], providers: [] });
     if (path === "/api/admin/provider-accounts") return json(route, {
-      audienceUsers: [{ id: "sam", displayName: "Sam" }, { id: "pat", displayName: "Pat" }], accounts: [] });
+      listenersCanConnectOwnAccounts: true, audienceUsers: [{ id: "sam", displayName: "Sam", isAdministrator: true, lastActiveAt: "2026-11-06T12:00:00Z", playsThisWeek: 36, playlistEditingAllowed: true, recentPlays: [{ title: "Home again", artist: "River", playedAt: "2026-11-06T12:00:00Z" }] }, { id: "pat", displayName: "Pat" }], accounts: [] });
     if (path === "/api/admin/playlist-links") return json(route, { playlistLinks: [{
       id: "12345678-1234-1234-1234-123456789abc", name: "Road trip", targetBackendInstanceId: "main", targetPlaylistId: "original" }] });
     if (path.endsWith("/playlist-forks")) return json(route, path.includes("/sam/") ? [{
@@ -115,3 +115,20 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.screenshot({ path: `test-results/shots-uisettings/listeners-${width}-${theme}.png`, fullPage: true });
   });
 }
+
+
+test("Listener table and panel use stored activity and permission details", async ({ page }) => {
+  await mockListeners(page);
+  await page.goto("/#/settings/listeners");
+  const row = page.getByRole("row", { name: "Sam", exact: true });
+  await expect(row).toContainText("36");
+  await expect(row).toContainText("Allowed");
+  await expect(row).toContainText("Admin");
+  await expect(page.getByText("Unavailable", { exact: true })).toHaveCount(0);
+  await row.getByRole("button", { name: "Open Sam", exact: true }).click();
+  const panel = page.getByRole("dialog", { name: "Sam", exact: true });
+  await expect(panel.getByLabel("Listener totals", { exact: true })).toContainText("36");
+  await expect(panel.getByRole("region", { name: "Recent plays", exact: true })).toContainText("Home again");
+  await expect(panel.getByRole("region", { name: "Recent plays", exact: true }).getByText("Home again", { exact: true })).toBeInViewport();
+  await expect(panel.getByRole("link", { name: "See their activity", exact: true })).toBeVisible();
+});

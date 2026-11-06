@@ -56,7 +56,7 @@
   function date(value?: string | null) {
     if (!value) return "Not available";
     const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? "Not available" : new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(parsed);
+    return Number.isNaN(parsed.getTime()) ? "Not available" : new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(parsed);
   }
   function size(value?: number | null) {
     return typeof value === "number" && Number.isFinite(value) && value > 0
@@ -177,7 +177,7 @@
     {#if error}<ErrorState title="Backup status is unavailable" detail={error} onretry={() => { polls = 0; return refresh(); }} />{/if}
     {#if !data && !error}<RowsSkeleton count={4} />
     {:else if data}
-      <div class="settings-toolbar"><output aria-label="Backup status">{stateLabel}</output><div class="backup-actions"><Button variant="text" disabled={Boolean(action)} onclick={() => { polls = 0; void refresh(); }}>Refresh status</Button><Button disabled={Boolean(action) || !ready || pending || active || directoryUnavailable} onclick={() => start()}>{action === "backup" ? "Queuing…" : "Back up now"}</Button></div></div>
+      <div class="settings-toolbar"><output aria-label="Backup status" class:sr-only={stateLabel === "Ready"}>{stateLabel}</output><div class="backup-actions"><Button variant="text" disabled={Boolean(action)} onclick={() => { polls = 0; void refresh(); }}>Refresh status</Button><Button disabled={Boolean(action) || !ready || pending || active || directoryUnavailable} onclick={() => start()}>{action === "backup" ? "Queuing…" : "Back up now"}</Button></div></div>
       {#if pending}<p class="notice-info" role="status">A restore is staged. Restart Allstarr to finish replacing saved state and credentials.</p>{/if}
       {#if failed && status?.lastFailure}<ErrorState title="Last backup failed" detail={`${status.lastFailure.message} · ${date(status.lastFailure.at)}`} />{/if}
       {#if active && polls >= 60}<p role="status">The backup is still running. Refresh its status to check again.</p>{/if}
@@ -201,10 +201,10 @@
         {#if !ready}<p class="settings-impact" role="status">The backup list is unavailable until durable storage is ready.</p>
         {:else if data.backups.length}
           <table class="settings-table"><thead><tr><th>Made</th><th>Size</th><th>State</th><th></th></tr></thead><tbody>
-            {#each data.backups as backup (backup.id)}<tr title={backup.fileName}><td>{date(backup.createdAt)}<small>{backup.origin === "scheduled" ? "Scheduled" : backup.origin === "manual" ? "Manual" : "Existing backup"}{backup.retentionBuckets?.length ? ` · ${backup.retentionBuckets.join(", ")}` : ""}</small></td><td class="number">{size(backup.bytes)}</td><td><StatePill tone={backup.status === "verified" ? "ok" : backup.status === "changed" || backup.status === "invalid" ? "warn" : "neutral"} text={backup.status === "verified" ? "Verified" : backup.status === "changed" ? "File changed" : backup.status === "invalid" ? "Verification failed" : "Verify on download"} /></td><td><div class="backup-actions"><Button variant="outline" size="sm" disabled={backup.status === "changed" || backup.status === "invalid"} href={settings.backupDownloadUrl(backup.id)} download={backup.fileName}>Download</Button><DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label={`More actions for ${date(backup.createdAt)}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="menu-content"><DropdownMenu.Item class="menu-item settings-danger" disabled={Boolean(action) || pending || active || backup.status === "changed" || backup.status === "invalid"} onSelect={() => openRestore(backup)}>Restore…</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div></td></tr>{/each}
+            {#each data.backups as backup (backup.id)}<tr title={backup.fileName}><td>{date(backup.createdAt)}<small>{backup.origin === "scheduled" ? "Scheduled" : backup.origin === "manual" ? "Manual" : "Existing backup"}{backup.retentionBuckets?.length ? ` · ${backup.retentionBuckets.join(", ")}` : ""}</small></td><td class="number">{size(backup.bytes)}</td><td><StatePill tone={backup.status === "verified" ? "ok" : backup.status === "changed" || backup.status === "invalid" ? "warn" : "neutral"} text={backup.status === "verified" ? "Verified" : backup.status === "changed" ? "File changed" : backup.status === "invalid" ? "Verification failed" : "Verify on download"} /></td><td><div class="backup-actions"><Button variant="text" size="sm" disabled={backup.status === "changed" || backup.status === "invalid"} href={settings.backupDownloadUrl(backup.id)} download={backup.fileName}>Download</Button><DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label={`More actions for ${date(backup.createdAt)}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="menu-content"><DropdownMenu.Item class="menu-item settings-danger" disabled={Boolean(action) || pending || active || backup.status === "changed" || backup.status === "invalid"} onSelect={() => openRestore(backup)}>Restore…</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root></div></td></tr>{/each}
           </tbody></table>
         {:else}<EmptyState title="No backups yet" description="Back up now to save your settings, accounts and history.">{#snippet icon()}<Archive size={24} />{/snippet}</EmptyState>{/if}
-        <footer class="restore-upload">{#key pickerRevision}<FilePicker label="Backup ZIP file" accept=".zip,application/zip" buttonLabel="Choose a backup ZIP" disabled={Boolean(action) || pending || active} onselect={files => { restoreFile = files[0] ?? null; if (restoreFile) openRestore(); }} />{/key}<small>Backups include saved sign-ins. Audio, caches and installed extensions need separate backups.</small></footer>
+        <footer class="restore-upload" class:has-file={Boolean(restoreFile)}><div class="settings-row"><div><strong>Restore from a file</strong><small>Choose a backup ZIP. Saved sign-ins are included; audio and caches need separate backups.</small></div>{#key pickerRevision}<FilePicker label="Backup ZIP file" accept=".zip,application/zip" buttonLabel="Choose a backup ZIP" disabled={Boolean(action) || pending || active} onselect={files => { restoreFile = files[0] ?? null; if (restoreFile) openRestore(); }} />{/key}</div></footer>
       </article>
     {/if}
   </div>
@@ -223,6 +223,9 @@
   </Dialog.Root>
 {/if}
 <style>
+  .restore-upload .settings-row { padding: 0; width: 100%; }
+  .restore-upload:not(.has-file) :global(.file-picker-name) { display: none; }
+
   .backup-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: var(--space-2); }
   .restore-upload { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
   .restore-upload small { color: var(--color-ink-muted); font-size: var(--text-xs); }

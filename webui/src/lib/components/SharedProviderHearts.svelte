@@ -193,7 +193,7 @@
 </script>
 
 {#if administrator}
-<section class="settings-card p-5 my-4 space-y-3" aria-labelledby="shared-hearts-title">
+<section class="settings-card shared-hearts" aria-labelledby="shared-hearts-title">
   <div class="panel-heading">
     <div><h3 id="shared-hearts-title" class="font-semibold">Shared provider hearts</h3><p>Combine provider hearts for two profiles of the same person.</p></div>
     <div class="panel-heading-actions"><RefreshButton variant="secondary" disabled={Boolean(action)} onrefresh={refresh} label="Refresh profiles" /></div>
@@ -218,8 +218,8 @@
     {/each}
     {#if nextLinks}<Button variant="secondary" disabled={Boolean(action)} onclick={() => void more("links")}>More linked profiles</Button>{/if}
     {#if polls >= 120 && active.length}<p class="notice-info" role="status">Combining hearts is still running. Refresh its status to check again.</p>{/if}
-    <form class="settings-content" aria-label="Link listener profiles" onsubmit={event => { event.preventDefault(); void review(); }}>
-      <div class="settings-fields">
+    <form class="hearts-form" aria-label="Link listener profiles" onsubmit={event => { event.preventDefault(); void review(); }}>
+      <div class="hearts-profiles">
         <label class="field"><span>Jellyfin profile</span><SelectField value={jellyfinId} label="Jellyfin profile" placeholder="Choose a Jellyfin profile" options={options(jellyfinMembers)} disabled={Boolean(action) || !jellyfinMembers.length} onchange={value => { jellyfinId = value; changed(); }} /></label>
         <label class="field"><span>Subsonic profile</span><SelectField value={subsonicId} label="Subsonic profile" placeholder="Choose a Subsonic profile" options={options(subsonicMembers)} disabled={Boolean(action) || !subsonicMembers.length} onchange={value => { subsonicId = value; changed(); }} /></label>
       </div>
@@ -227,7 +227,7 @@
       {#if !subsonicMembers.length}<p class="setting-help">No eligible Subsonic profile is available. Profiles must have previously signed in, be enabled, and not already be linked or used for testing.</p>{/if}
       {#if nextJellyfin}<Button variant="secondary" disabled={Boolean(action)} onclick={() => void more("jellyfin")}>More Jellyfin profiles</Button>{/if}
       {#if nextSubsonic}<Button variant="secondary" disabled={Boolean(action)} onclick={() => void more("subsonic")}>More Subsonic profiles</Button>{/if}
-      <div><Button type="submit" variant="secondary" disabled={!pairReady || Boolean(action)}>{action === "preview" ? "Reviewing…" : "Review profiles"}</Button></div>
+      <div><Button type="submit" variant="outline" disabled={!pairReady || Boolean(action)}>{action === "preview" ? "Reviewing…" : "Review profiles"}</Button></div>
     </form>
     {#if preview}
       <section class="settings-card space-y-3" aria-label="Confirm profiles">
@@ -241,3 +241,15 @@
   {/if}
 </section>
 {/if}
+
+<style>
+  .shared-hearts { margin-top: var(--space-4); padding: var(--space-4); font-size: var(--text-sm); }
+  .shared-hearts > .panel-heading { padding: 0 0 var(--space-3); border: 0; }
+  .shared-hearts h3 { font-size: var(--text-sm); }
+  .shared-hearts p, .setting-help { color: var(--color-ink-muted); font-size: var(--text-sm); }
+  .shared-hearts .setting-help { text-align: left; }
+  .hearts-form { display: grid; gap: var(--space-3); }
+  .hearts-profiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
+  .hearts-profiles .field { min-width: 0; margin: 0; }
+  @media (max-width: 650px) { .hearts-profiles { grid-template-columns: minmax(0, 1fr); } }
+</style>

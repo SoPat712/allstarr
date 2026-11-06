@@ -1,6 +1,7 @@
 <script lang="ts">
   import SourcesView from "$lib/components/SourcesView.svelte";
   import SharedProviderHearts from "$lib/components/SharedProviderHearts.svelte";
+  import "$lib/components/settings-surface.css";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
 
   let {
@@ -31,7 +32,7 @@
 
 </script>
 
-<section class="settings-workspace integrations-workspace">
+<section class="settings-workspace integrations-workspace settings-surface">
   <SegmentedNav variant="tabs"
     class="route-tabs"
     label="Source sections"

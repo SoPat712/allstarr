@@ -6,7 +6,7 @@
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import { Switch } from "$lib/components/ui/switch";
-  import { setupAccess, type OidcAccess, type BackendAccess } from "$lib/api";
+  import { setupAccess, sources, type OidcAccess, type BackendAccess } from "$lib/api";
   import { consumeAccessRestored, markAccessRestored, savedBeforeRestart, waitForRestart } from "$lib/restart";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
@@ -17,6 +17,7 @@
   let busy = $state(false), error = $state(""), saved = $state(false), editing = $state(false), restored = $state(false);
   let confirmOpen = $state(false), form = $state<HTMLFormElement>();
   let confirming = $state(false);
+  let playlistListeners = $state<{ playlistEditingAllowed?: boolean }[] | null>(null);
   const abort = new AbortController();
   function requestSave() {
     if (busy || !snapshot || !form?.checkValidity()) return;
@@ -71,7 +72,10 @@
     editing = false; enabled = true; username = ""; password = ""; error = "";
   }
   onMount(() => {
-    if (kind === "backend") restored = consumeAccessRestored();
+    if (kind === "backend") {
+      restored = consumeAccessRestored();
+      void sources.accounts().then(result => playlistListeners = result.audienceUsers ?? []).catch(() => {});
+    }
     void load();
     return () => abort.abort();
   });
@@ -89,7 +93,7 @@
     </div><div class="connection-actions"><Badge tone="success">Connected</Badge><Button variant="outline" onclick={() => { editing = true; restored = false; }}>Change access</Button></div></div>
   {:else if snapshot && !saved}
     <form bind:this={form} class="access-form" onchange={() => requestSave()} onsubmit={event => { event.preventDefault(); requestSave(); }}>
-      <div class="settings-row"><div><strong>{kind === "oidc" ? "Sign in with your identity provider" : "Allow playlist sync and library scans"}</strong><small>{kind === "oidc" ? "OpenID Connect. Connection fields appear when switched on. Media-server sign-in stays available." : "Verify an administrator sign-in. The password is discarded after verification."}</small><small>Restarts Allstarr</small></div><span class="settings-toggle"><Switch aria-label={kind === "oidc" ? "Enable single sign-on" : "Allow playlist sync and library scans"} bind:checked={enabled} disabled={busy} /></span></div>
+      <div class="settings-row"><div><strong>{kind === "oidc" ? "Sign in with your identity provider" : "Allow playlist sync and library scans"}</strong><small>{kind === "oidc" ? "OpenID Connect. Connection fields appear when switched on. Media-server sign-in stays available." : "Verify an administrator sign-in. The password is discarded after verification."}</small><small class="restart-note">· Restarts Allstarr</small></div><span class="settings-toggle"><Switch aria-label={kind === "oidc" ? "Enable single sign-on" : "Allow playlist sync and library scans"} bind:checked={enabled} disabled={busy} /></span></div>
       {#if kind === "oidc" && enabled}
         {#if snapshot.needsReview}<p class="settings-impact notice-error">The saved connection needs attention. Enter fresh credentials or turn it off.</p>{/if}
         <label class="settings-row"><div><strong>Issuer address</strong></div><input type="url" aria-label="Issuer address" bind:value={authority} disabled={busy} required /></label>
@@ -108,9 +112,17 @@
   {#if saved}<p class="settings-impact" role="status">Access settings are saved. Waiting for Allstarr to restart…</p>{/if}
   {#if error}<ErrorState title="Access could not be saved" detail={error} onretry={() => saved ? save() : load()} />{/if}
 </article>
+{#if kind === "backend"}
+  <section class="settings-card" aria-label="Playlist editing">
+    <header><div><h3>Playlist editing</h3><small>Keeps media-server playlists in the same order as their source.</small></div></header>
+    <div class="settings-row"><div><strong>Per listener</strong><small>Each listener allows it in Sources › Accounts{#if playlistListeners} · {playlistListeners.filter(listener => listener.playlistEditingAllowed).length} of {playlistListeners.length} have{/if}.</small></div><Button variant="text" href="#/settings/listeners">See who</Button></div>
+    <div class="settings-row"><div><strong>Household fallback</strong><small>An administrator sign-in used when a listener hasn’t allowed it.</small></div><Button variant="outline" disabled={!backend?.supported || !backend.connectionSaved} onclick={() => { editing = true; enabled = true; restored = false; }}>{connected ? "Change…" : "Set up…"}</Button></div>
+  </section>
+{/if}
 <ConfirmDialog bind:open={confirmOpen} title="Restart Allstarr to apply?" description="Changing sign-in or media-server access needs a restart. Music that is playing pauses briefly. This page reconnects when Allstarr is ready." confirmLabel={busy ? "Applying…" : "Restart and apply"} confirmVariant="default" disabled={busy} closeOnConfirm={false} {error} onConfirm={save} />
 <style>
   .access-form { min-width: 0; }
+  .restart-note { color: var(--on-warning-container); }
   .connection-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: end; gap: var(--space-2); }
   @media (max-width: 650px) { .connection-actions { justify-content: start; } }
 </style>

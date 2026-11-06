@@ -275,7 +275,7 @@ for (const { width, theme } of modes) {
     await expect(page.getByRole("alert")).toHaveCount(0);
     await expect(page.getByRole("article", { name: "Included report details", exact: true })).toHaveCount(0);
     expect(state.previews).toEqual([]);
-    await form.getByLabel("What happened?", { exact: true }).fill("My music app stops responding when I open a playlist.");
+    await form.getByLabel("What's wrong?", { exact: true }).fill("My music app stops responding when I open a playlist.");
     await expect(form.getByRole("button", { name: "Send report", exact: true })).toBeEnabled();
     await page.evaluate(() => { (document.activeElement as HTMLElement)?.blur(); window.scrollTo(0, 0); });
     await shot(page, "report-general", width, theme);
@@ -298,7 +298,7 @@ for (const { width, theme } of modes) {
     expect(state.previews).toEqual([{ itemId: "ext-deezer-song-fixture" }]);
     const send = form.getByRole("button", { name: "Send report", exact: true });
     await expect(send).toBeDisabled();
-    await form.getByLabel("What happened?", { exact: true }).fill("The words belong to a different song.");
+    await form.getByLabel("What's wrong?", { exact: true }).fill("The words belong to a different song.");
     await expect(send).toBeEnabled();
     await page.evaluate(() => { (document.activeElement as HTMLElement)?.blur(); window.scrollTo(0, 0); });
     await shot(page, "report-song", width, theme);
