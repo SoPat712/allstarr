@@ -6,14 +6,15 @@ const aliases: Record<string, string> = {
   applemusickit: "applemusic", spotifyweb: "spotify", tidalweb: "tidal", qobuzweb: "qobuz",
   ytmusic: "youtubemusic", ytmusicspotiflac: "youtubemusic", youtube: "youtubemusic",
   melonmusic: "melon", geniemusic: "genie", bugsmusic: "bugs",
+  neteaselyrics: "netease", qqlyrics: "qqmusic", kugoulyrics: "kugou",
   opensubsonic: "subsonic", local: "jellyfin", native: "jellyfin", musicbrainzenrichment: "musicbrainz",
 };
 const colorFiles: Record<string, string> = Object.fromEntries([
   "allstarr", "amazonmusic", "applemusic", "artistgrid", "deezer", "genius", "jellyfin", "navidrome", "subsonic", "listenbrainz",
-  "lrcred", "lyricsplus", "monochrome", "multiscrobbler", "musicbrainz", "musixmatch", "paxsenix",
+  "lrcmux", "lrcred", "netease", "lyricsplus", "monochrome", "multiscrobbler", "musicbrainz", "musixmatch", "paxsenix",
   "qobuz", "soundcloud", "spicylyrics", "spotify", "tidal", "unison", "youtubemusic",
 ].map(brand => [brand, "color.svg"]));
-for (const brand of ["bugs", "genie", "jiosaavn", "koito", "lastfm", "lrclib", "melon"])
+for (const brand of ["amll", "bugs", "genie", "jiosaavn", "koito", "kugou", "lastfm", "lrclib", "melon", "qqmusic"])
   colorFiles[brand] = "color.png";
 const generic = new Set(["extension", "lyrics"]);
 const markless = new Set(["mediaserverlyrics", "keptlrc"]);

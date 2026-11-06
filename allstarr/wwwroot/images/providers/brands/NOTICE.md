@@ -29,5 +29,10 @@ These files show which service or source a song comes from. Every mark is a trad
 | Koito | gabehf/Koito | MIT |
 | multi-scrobbler | FoxxMD/multi-scrobbler | MIT |
 | LyricsPlus | Vector redrawing of the YouLyPlus icon (ibratabian17/YouLyPlus) | MIT |
+| AMLL TTML DB | amll-dev GitHub organisation avatar | AMLL contributors |
+| NetEase Cloud Music | Glyph from Simple Icons (CC0) on NetEase red | NetEase trademark |
+| QQ Music | Official app icon; glyph traced from it | Tencent trademark |
+| Kugou | Official app icon; glyph traced from it | Kugou trademark |
+| LRCMux | lrcmux.dev logo | LRCMux |
 | lrc.red, Paxsenix | Simple lettermarks drawn for Allstarr; these sources publish no logo | Allstarr |
 | Allstarr | Allstarr | Allstarr |

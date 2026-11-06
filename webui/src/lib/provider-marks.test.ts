@@ -82,7 +82,7 @@ describe("provider mark sources", () => {
     const root = new URL("../../../allstarr/wwwroot/", import.meta.url);
     const brands = readdirSync(new URL("./images/providers/brands", root), { withFileTypes: true })
       .filter(entry => entry.isDirectory()).map(entry => entry.name);
-    expect(brands).toHaveLength(31);
+    expect(brands).toHaveLength(36);
     for (const brand of brands) {
       const id = ["melon", "genie", "bugs"].includes(brand) ? `spotiflac-${brand}-music`
         : brand === "jiosaavn" ? "spotiflac-jiosaavn" : brand;
@@ -92,6 +92,8 @@ describe("provider mark sources", () => {
       const legacy = brand === "multiscrobbler" ? "multi-scrobbler.svg" : brand === "spicylyrics" ? "spicylyrics.ico" : `${brand}.svg`;
       if (existsSync(new URL(`./images/providers/${legacy}`, root))) expect(sources).toContain(`/images/providers/${legacy}`);
     }
+    for (const [id, brand] of [["neteaselyrics", "netease"], ["qqlyrics", "qqmusic"], ["kugoulyrics", "kugou"]])
+      expect(providerMarkSources(id, { id, name: id, icon: "lyrics" })[0]).toMatch(new RegExp(`^/images/providers/brands/${brand}/color\\.(svg|png)$`));
     expect(providerMarkSources("lastfm", { id: "lastfm", name: "Last.fm", logoUrl: "/images/providers/brands/lastfm/color.png" })).toEqual([
       "/images/providers/brands/lastfm/color.png", "/images/providers/lastfm.svg",
     ]);
