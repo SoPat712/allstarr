@@ -319,7 +319,7 @@
   {#if useYearWindow && yearItems.length > 1}
     <div class="heatmap-year-picker">
       <span>Activity year</span>
-      <SegmentedNav items={yearItems} active={selectedYear} label="Activity year" class="heatmap-year-tabs" onchange={(year) => selectedYear = year} />
+      <SegmentedNav variant="segments" items={yearItems} active={selectedYear} label="Activity year" class="heatmap-year-tabs" onchange={(year) => selectedYear = year} />
     </div>
   {/if}
   <p class="heatmap-range">{rangeLabel()} · {timeZoneId} · {totalImportedCount.toLocaleString()} imported · {totalPlaybackCount.toLocaleString()} playback</p>

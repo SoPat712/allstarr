@@ -524,7 +524,7 @@
 
       <div class="playlist-add-body" bind:this={addBody} aria-busy={loading}>
         {#if step === 1}
-          <SegmentedNav label="Choose playlist source" items={[{ id: "accounts", label: "From my accounts" }, { id: "link", label: "Paste a link" }]} active={sourceTab} onchange={value => sourceTab = value} />
+          <SegmentedNav variant="segments" label="Choose playlist source" items={[{ id: "accounts", label: "From my accounts" }, { id: "link", label: "Paste a link" }]} active={sourceTab} onchange={value => sourceTab = value} />
           {#if sourceTab === "link"}<section class="pl-section">
             <form class="url-import-form" onsubmit={(event) => { event.preventDefault(); void resolveLink(); }}>
               <label class="url-import-field">

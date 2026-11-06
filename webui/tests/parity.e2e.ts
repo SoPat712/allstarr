@@ -2436,7 +2436,69 @@ for (const theme of ["light", "dark"]) {
   });
 }
 
+async function expectUnderlineTabs(tabs: Locator) {
+  await expect(tabs).toHaveClass(/\btabs\b/);
+  await expect(tabs).not.toHaveClass(/\bseg\b/);
+  await expect(tabs).toHaveCSS("border-radius", "0px");
+  await expect(tabs).toHaveCSS("border-top-width", "0px");
+  await expect(tabs).toHaveCSS("border-bottom-width", "1px");
+  const selected = tabs.getByRole("tab", { selected: true });
+  await expect(selected).toHaveCSS("font-weight", "500");
+  await expect(selected).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(tabs.locator(".slide-indicator")).toBeVisible();
+  await expect.poll(() => tabs.evaluate(element => {
+    const probe = document.createElement("span");
+    document.body.append(probe);
+    const color = (token: string) => {
+      probe.style.color = `var(${token})`;
+      return getComputedStyle(probe).color;
+    };
+    const errors: string[] = [];
+    const row = getComputedStyle(element);
+    if (row.borderBottomColor !== color("--color-edge")) errors.push("row border");
+    for (const tab of element.querySelectorAll('[role="tab"]')) {
+      const style = getComputedStyle(tab);
+      if (style.color !== color(tab.getAttribute("aria-selected") === "true" ? "--color-ink" : "--color-ink-muted")) errors.push("text color");
+      if (style.borderRadius !== "0px" || style.backgroundColor !== "rgba(0, 0, 0, 0)") errors.push("tab surface");
+    }
+    const selected = element.querySelector('[aria-selected="true"]')!;
+    const indicator = element.querySelector(".slide-indicator")!;
+    const underline = getComputedStyle(indicator);
+    if (underline.height !== "2px" || underline.backgroundColor !== color("--color-signal")) errors.push("underline style");
+    const tabBounds = selected.getBoundingClientRect(), lineBounds = indicator.getBoundingClientRect();
+    if (Math.abs(lineBounds.left - tabBounds.left) > 1 || Math.abs(lineBounds.width - tabBounds.width) > 1 || Math.abs(lineBounds.bottom - tabBounds.bottom) > 1) errors.push("underline position");
+    probe.remove();
+    return errors;
+  })).toEqual([]);
+}
+
 for (const theme of ["light", "dark"] as const) {
+  for (const width of [390, 1280]) {
+    test(`Page navigation uses sliding underline tabs in ${theme} at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.addInitScript(mode => localStorage.setItem("allstarr.theme", mode), theme);
+      await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+      await page.route("**/*", route => ["localhost", "127.0.0.1"].includes(new URL(route.request().url()).hostname) ? route.fallback() : route.abort());
+      await mockApi(page);
+      for (const [href, label, next] of [
+        ["#/library/playlists", "Library sections", "Matches"],
+        ["#/for-you", "For you sections", "Recap"],
+        ["#/sources/services", "Source sections", "Accounts"],
+        ["#/activity?view=history", "Activity views", "Plays"],
+        ...(width < 768 ? [["#/settings/general", "Settings sections", "Appearance"]] : []),
+      ]) {
+        await page.goto(href);
+        await page.mouse.move(0, 0);
+        const tabs = page.getByRole("navigation", { name: label, exact: true }).getByRole("tablist");
+        await expectUnderlineTabs(tabs);
+        await tabs.getByRole("tab", { name: next, exact: true }).click();
+        await page.mouse.move(0, 0);
+        await expect(tabs.getByRole("tab", { name: next, exact: true })).toHaveAttribute("aria-selected", "true");
+        await expectUnderlineTabs(tabs);
+      }
+    });
+  }
+
   test(`Segmented controls share borders and selected colors across workspaces in ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.addInitScript(mode => localStorage.setItem("allstarr.theme", mode), theme);
@@ -2451,10 +2513,15 @@ for (const theme of ["light", "dark"] as const) {
       ["#/activity?view=tasks", "Task filters"],
       ["#/settings/appearance", "Color theme"],
       ["#/settings/listeners", "Filter listeners"],
+      ["#/for-you?section=recap", "Stats period"],
     ];
     for (const [href, label] of screens) {
       await page.goto(href);
-      await expect(page.getByRole("radiogroup", { name: label, exact: true })).toBeVisible();
+      const group = label === "Stats period"
+        ? page.getByRole("navigation", { name: label, exact: true }).getByRole("tablist")
+        : page.getByRole("radiogroup", { name: label, exact: true });
+      await expect(group).toBeVisible();
+      await expect(group).toHaveClass(/\bseg\b/);
       const mismatches = await page.locator(".seg").evaluateAll(groups => {
         const probe = document.createElement("span");
         document.body.append(probe);
@@ -2530,16 +2597,7 @@ test("Shared selects and settings tabs preserve selection without remounting", a
   const routing = page.getByRole("tab", { name: "Matches" });
   await routing.click();
   await expect(tabs).toHaveAttribute("data-instance", "stable");
-  await expect(tabs.locator(".slide-indicator")).toHaveCount(0);
-  await expect(tabs).toHaveCSS("border-top-width", "1px");
-  await expect.poll(() => routing.evaluate(element => {
-    const sample = document.createElement("span");
-    sample.style.backgroundColor = "var(--md-sys-color-secondary-container)";
-    document.body.append(sample);
-    const matches = getComputedStyle(element).backgroundColor === getComputedStyle(sample).backgroundColor;
-    sample.remove();
-    return matches;
-  })).toBe(true);
+  await expectUnderlineTabs(tabs);
 });
 
 test("Legacy Library links open their current shared views", async ({ page }) => {

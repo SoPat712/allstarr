@@ -438,7 +438,7 @@
       {:else if !tabs.length}
         <div class="try-body"><div class="try-outcome" data-tone="neutral" role="status"><SearchX size={20} aria-hidden="true" /><div><strong>{name} has nothing to try yet.</strong><small>Turn on one of its features first.</small></div></div></div>
       {:else}
-        {#if tabs.length > 1}<SegmentedNav items={tabs} active={tab} label={`${name} features`} class="route-tabs try-tabs" onchange={(id) => tab = id as Tab} />{/if}
+        {#if tabs.length > 1}<SegmentedNav variant="segments" items={tabs} active={tab} label={`${name} features`} class="route-tabs try-tabs" onchange={(id) => tab = id as Tab} />{/if}
 
         <div class="try-body" role="tabpanel" aria-label={tabLabels[tab]}>
           {#if tab === "metadata" && current}

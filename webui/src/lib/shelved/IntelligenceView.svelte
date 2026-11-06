@@ -397,7 +397,7 @@
 
   {#if librarySetupFeedback}<p class="degraded-banner library-setup-feedback" role="status">{librarySetupFeedback}</p>{/if}
 
-  <SegmentedNav items={[
+  <SegmentedNav variant="tabs" items={[
     { id: "overview", label: "Overview", href: "#/intelligence?section=overview", icon: LayoutDashboard },
     { id: "history", label: "History", href: "#/intelligence?section=history", icon: History },
     { id: "imports", label: "Import", href: "#/intelligence?section=imports", icon: FileUp },

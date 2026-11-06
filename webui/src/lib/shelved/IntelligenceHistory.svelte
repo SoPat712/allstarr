@@ -575,7 +575,7 @@
 
     <form class="history-toolbar panel" onsubmit={(event) => { event.preventDefault(); void (section === "overview" ? loadAll() : loadHistory()); }}>
       {#if section === "history"}<SearchField bind:value={search} label="Search listening history" placeholder="Search songs, artists, or albums" />{/if}
-      <SegmentedNav items={[
+      <SegmentedNav variant="segments" items={[
         { id: "all", label: "All time" }, { id: "30", label: "30 days" }, { id: "90", label: "90 days" },
         { id: "365", label: "1 year" }, { id: "custom", label: "Custom" },
       ]} active={period} label="History period" class="route-tabs period-tabs" onchange={(value) => period = value} />
@@ -624,14 +624,14 @@
 
     <div class="history-insights">
       <section class="panel activity-card">
-        <header><div><p class="eyebrow">Activity</p><h3>Listening rhythm</h3></div><SegmentedNav items={[{ id: "daily", label: "Daily" }, { id: "monthly", label: "Monthly" }]} active={activityGranularity} label="Listening activity period" onchange={(value) => activityGranularity = value as typeof activityGranularity} /></header>
+        <header><div><p class="eyebrow">Activity</p><h3>Listening rhythm</h3></div><SegmentedNav variant="segments" items={[{ id: "daily", label: "Daily" }, { id: "monthly", label: "Monthly" }]} active={activityGranularity} label="Listening activity period" onchange={(value) => activityGranularity = value as typeof activityGranularity} /></header>
         {#if activity}
           <ListeningActivityHeatmap buckets={activity.buckets} granularity={activityGranularity} timeZoneId={activity.period.timeZoneId} from={activity.period.from} through={activity.period.to} />
         {:else}<p class="muted">No activity in this period. Play music or import a history file to begin.</p>{/if}
       </section>
 
       <section class="panel top-card">
-        <header><div><p class="eyebrow">Most played</p><h3>Top {topKind === "track" ? "songs" : `${topKind}s`}</h3></div><SegmentedNav items={[{ id: "artist", label: "Artists" }, { id: "album", label: "Albums" }, { id: "track", label: "Songs" }]} active={topKind} label="Top listening category" onchange={(value) => topKind = value as typeof topKind} /></header>
+        <header><div><p class="eyebrow">Most played</p><h3>Top {topKind === "track" ? "songs" : `${topKind}s`}</h3></div><SegmentedNav variant="segments" items={[{ id: "artist", label: "Artists" }, { id: "album", label: "Albums" }, { id: "track", label: "Songs" }]} active={topKind} label="Top listening category" onchange={(value) => topKind = value as typeof topKind} /></header>
         <ol>{#each selectedTop.slice(0, 5) as item}<li><span><strong>{topKind === "artist" ? item.artist : topKind === "album" ? item.album : item.title}</strong>{#if topKind !== "artist"}<small>{item.artist}</small>{/if}</span><span>{countLabel(item.listenCount, "listen")}</span></li>{:else}<li class="muted">Nothing to rank yet. Play music or import a history file to begin.</li>{/each}</ol>
       </section>
     </div>

@@ -120,7 +120,7 @@
       {/if}
     {/each}
   </nav>
-  <SegmentedNav items={pages.map(item => ({ id: item.id, label: item.label, href: href(item) }))} {active} label="Settings sections" class="route-tabs settings-tabs" />
+  <SegmentedNav variant="tabs" items={pages.map(item => ({ id: item.id, label: item.label, href: href(item) }))} {active} label="Settings sections" class="route-tabs settings-tabs" />
   <div class="settings-content">
     <header class="settings-page-head"><h2>{activePage.label}</h2><p>{activePage.description}</p></header>
     {#if loading}<RowsSkeleton count={5} />

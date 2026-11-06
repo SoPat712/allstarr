@@ -62,7 +62,7 @@
     <Popover.Root open={selected === `${kind}:${name}`} onOpenChange={open => { selected = open ? `${kind}:${name}` : ""; if (open) duration = "today"; }}>
       <Popover.Trigger class={`${buttonVariants({ variant: "secondary" })} taste-chip`} aria-label={`Steer ${name}`} disabled={action}>{name}{#if nudgeValue}<span aria-hidden="true"> {nudgeMarker(nudgeValue.mode)}</span>{/if}</Popover.Trigger>
       <Popover.Portal><Popover.Content class="bits-menu taste-popover" sideOffset={8}>
-        <SegmentedNav label={`Duration for ${name}`} items={[{ id: "today", label: "Today only" }, { id: "persistent", label: "Until I change it" }]} active={duration} onchange={value => duration = value} />
+        <SegmentedNav variant="segments" label={`Duration for ${name}`} items={[{ id: "today", label: "Today only" }, { id: "persistent", label: "Until I change it" }]} active={duration} onchange={value => duration = value} />
         <div class="nudge-options">{#each ["more", "less", "never"] as mode}<Button variant="ghost" disabled={action} onclick={() => nudge(kind, name, mode as TasteNudge["mode"])}>{mode === "more" ? "More" : mode === "less" ? "Less" : "Never"}</Button>{/each}</div>
       </Popover.Content></Popover.Portal>
     </Popover.Root>

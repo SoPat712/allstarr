@@ -58,7 +58,7 @@
 {/snippet}
 
 <div class="activity-content">
-<SegmentedNav label="Activity views" items={[
+<SegmentedNav variant="tabs" label="Activity views" items={[
   { id: "history", label: "History" }, { id: "plays", label: "Plays" },
   ...(administrator ? [{ id: "jobs", label: "Jobs" }, { id: "tasks", label: "Tasks" }, { id: "reports", label: "Reports" }] : []),
 ]} active={view} onchange={(next) => { scopeFocus = null; view = next; }} />

@@ -2442,6 +2442,68 @@
     max-width: 100%;
   }
 
+  .tabs {
+    position: relative;
+    display: flex;
+    max-width: 100%;
+    gap: 20px;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: none;
+    border: 0;
+    border-bottom: 1px solid var(--color-edge);
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .tabs::-webkit-scrollbar { display: none; }
+
+  .tabs > :is(a, button) {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    min-height: var(--control-md);
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    border: 0;
+    border-radius: 0;
+    padding: 0 2px 9px;
+    background: transparent;
+    color: var(--color-ink-muted);
+    font: inherit;
+    font-size: 0.86rem;
+    font-weight: 400;
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: color var(--motion-standard);
+  }
+
+  .tabs > :is(a, button)[aria-selected="true"] {
+    color: var(--color-ink);
+    font-weight: 500;
+  }
+
+  .tabs > :is(a, button)[aria-selected="true"]::after {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    background: var(--color-signal);
+    content: "";
+  }
+
+  .tabs[data-indicator] > :is(a, button)[aria-selected="true"]::after { display: none; }
+
+  .tabs > :is(a, button):hover { color: var(--color-ink); }
+
+  .tabs > :is(a, button):focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: -2px;
+  }
+
   .seg {
     display: flex;
     width: fit-content;
@@ -9558,6 +9620,12 @@
 
 .settings-nav[data-indicator] > a[aria-current="page"] {
   background: transparent;
+}
+
+.tabs .slide-indicator {
+  height: 2px;
+  background: var(--color-signal);
+  transform: translate(var(--x), calc(var(--y) + var(--h) - 2px));
 }
 
 .desktop-navigation a svg,

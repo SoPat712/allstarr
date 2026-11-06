@@ -32,7 +32,7 @@
 </script>
 
 <section class="settings-workspace integrations-workspace">
-  <SegmentedNav
+  <SegmentedNav variant="tabs"
     class="route-tabs"
     label="Source sections"
     active={section === "accounts" || from === "accounts" || initialSection === "playlist-editing" ? "accounts" : "services"}

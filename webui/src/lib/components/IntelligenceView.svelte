@@ -44,7 +44,7 @@
   }
   $effect(() => { if (initialMix && !MixPanel) void loadMixPanel(); });
 </script>
-<SegmentedNav label="For you sections" items={sections} {active} />
+<SegmentedNav variant="tabs" label="For you sections" items={sections} {active} />
 <div class="intelligence-content" class:panel-open={Boolean(initialMix)}>
   {#if error}<ErrorState title="Couldn't load this page" detail={error} onretry={async () => { await load(active); if (initialMix && !MixPanel) await loadMixPanel(); }} />{/if}
   {#if View && loaded === active}<View {administrator} {listenerId} {listenerName} {initialImport} {initialRelease} />{:else if !error}<RowsSkeleton />{/if}

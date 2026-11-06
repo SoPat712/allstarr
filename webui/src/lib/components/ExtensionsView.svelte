@@ -602,7 +602,7 @@
     <Dialog.Portal><Dialog.Overlay class="dialog-overlay" /><Dialog.Content class="source-dialog extension-catalog-dialog">
       <header class="dialog-heading"><div><Dialog.Title>Add an extension</Dialog.Title><Dialog.Description>Extensions add services Allstarr can search, stream or download from. Choose one, review its access, then enable it.</Dialog.Description></div><Dialog.Close class="icon-button" aria-label="Close add an extension" disabled={Boolean(action)}><X size={18} aria-hidden="true" /></Dialog.Close></header>
       {#if catalogTab !== "catalogs"}{@render installSteps(0)}{/if}
-      <SegmentedNav items={catalogTabs} active={catalogTab} label="Ways to add an extension" class="route-tabs extension-tabs" onchange={(id) => { if (!action) catalogTab = id as typeof catalogTab; }} />
+      <SegmentedNav variant="segments" items={catalogTabs} active={catalogTab} label="Ways to add an extension" class="route-tabs extension-tabs" onchange={(id) => { if (!action) catalogTab = id as typeof catalogTab; }} />
       <div class="extension-catalog-body">
         {#if catalogError}<p class="notice-error" role="alert">{catalogError}</p>{/if}
 

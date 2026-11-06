@@ -644,6 +644,7 @@
 
       {#if route.startsWith("/library/") && !forbiddenRoute && LibraryNavigation}
         <LibraryNavigation
+          variant="tabs"
           items={librarySections}
           active={route.split("/").at(-1) ?? "playlists"}
           label="Library sections"

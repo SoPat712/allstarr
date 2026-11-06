@@ -301,7 +301,7 @@
   </header>
   <PageStatus label="Import status" items={[{ label: "Nothing changes in Apple Music or Spotify.", emphasis: true }, ...(status && runState !== "choosing" ? [{ label: `${status.total.accepted} found · ${status.total.review} unsure · ${status.total.unmatched} missing so far` }] : [])]} />
   {#if !loading && providerOptions.length > 1}
-    <SegmentedNav items={providerOptions} active={providerId} label="Music service" onchange={changeProvider} />
+    <SegmentedNav variant="segments" items={providerOptions} active={providerId} label="Music service" onchange={changeProvider} />
   {/if}
   {#if !loading && providerAccounts.length}
     <SelectField value={accountId} options={providerAccounts.map(item => ({ value: item.id, label: item.displayName }))} label={`${providerName} account`} disabled={busy} onchange={changeAccount} />

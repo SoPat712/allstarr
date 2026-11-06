@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { Component } from "svelte";
+  import { slideIndicator } from "$lib/slide-indicator";
 
   type Item = { id: string; label: string; href?: string; count?: number; icon?: Component<any> };
 
@@ -8,17 +9,24 @@
     items,
     active,
     label,
+    variant = "tabs",
     class: className = "",
     onchange,
   }: {
     items: readonly Item[];
     active: string;
     label: string;
+    variant?: "tabs" | "segments";
     class?: string;
     onchange?: (id: string) => void;
   } = $props();
   let tablist = $state<HTMLElement>();
   const focusId = $derived(items.some(item => item.id === active) ? active : items[0]?.id);
+
+  $effect(() => {
+    if (variant !== "tabs" || !tablist) return;
+    return slideIndicator(tablist, '[aria-selected="true"]').destroy;
+  });
 
   $effect(() => {
     const selectedId = active;
@@ -77,7 +85,7 @@
 <nav class="segmented-nav" aria-label={label}>
   <div
     bind:this={tablist}
-    class={`seg segmented-tabs ${className}`}
+    class={`${variant === "tabs" ? "tabs" : "seg"} segmented-tabs ${className}`}
     role="tablist"
     tabindex="-1"
     style={`--tab-count:${items.length}`}

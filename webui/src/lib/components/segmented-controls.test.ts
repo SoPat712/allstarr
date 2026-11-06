@@ -5,16 +5,28 @@ import ThreeDetentSwitch from "./ThreeDetentSwitch.svelte";
 import SourceUseSwitch from "./SourceUseSwitch.svelte";
 
 describe("segmented controls", () => {
-  it("keeps linked tabs and count pills in the shared outlined group", () => {
+  it("defaults linked navigation to underline tabs with counts", () => {
     const html = render(SegmentedNav, { props: { label: "Library", active: "songs", items: [
       { id: "songs", label: "Songs", href: "#/songs", count: 2 }, { id: "albums", label: "Albums", href: "#/albums", count: 0 },
     ] } }).body;
-    expect(html).toMatch(/class="seg segmented-tabs/);
+    expect(html).toMatch(/class="tabs segmented-tabs/);
+    expect(html).not.toMatch(/class="seg /);
     expect(html).toContain('role="tablist"');
     expect(html.match(/tabindex="0"/g)).toHaveLength(1);
     expect(html).toContain('aria-selected="true"');
     expect(html).toContain('href="#/songs"');
     expect(html).toMatch(/segmented-tab-count[^>]*>0</);
+  });
+
+  it("uses the shared outlined group for in-page choices", () => {
+    const html = render(SegmentedNav, { props: { variant: "segments", label: "Stats period", active: "all", items: [
+      { id: "week", label: "Last 7 days" }, { id: "all", label: "All time" },
+    ] } }).body;
+    expect(html).toMatch(/class="seg segmented-tabs/);
+    expect(html).not.toMatch(/class="tabs /);
+    expect(html.match(/role="tab"/g)).toHaveLength(2);
+    expect(html.match(/tabindex="0"/g)).toHaveLength(1);
+    expect(html.match(/aria-selected="true"/g)).toHaveLength(1);
   });
 
   it("preserves a named setting and one selected tab stop for four choices", () => {
