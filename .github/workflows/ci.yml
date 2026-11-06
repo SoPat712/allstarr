@@ -195,7 +195,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5]
     steps:
       - name: Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -236,7 +236,7 @@ jobs:
           --timeout-seconds 480
           --require-tests
           --playwright-json "$RUNNER_TEMP/allstarr-playwright-${{ matrix.shard }}.json"
-          -- npm run test:e2e:existing-build -- --shard=${{ matrix.shard }}/4 --workers=2
+          -- npm run test:e2e:existing-build -- --shard=${{ matrix.shard }}/5 --workers=2
 
       - name: Upload browser test results
         if: always()
