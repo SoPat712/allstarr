@@ -34,6 +34,7 @@
     matchReview,
     mixes,
     playlistLinks,
+    activityWork,
     type MatchReviewItem,
     type PlaylistCopy,
     type PlaylistDetails,
@@ -129,6 +130,7 @@
     duration: true,
   };
   let trackColumns = $state<Record<TrackColumn, boolean>>({ ...defaultTrackColumns });
+  let nextSyncAt = $state<string | null>(null);
   let scheduleEditorOpen = $state(false);
   let scheduleCron = $state("");
   let scheduleTimeZone = $state("");
@@ -356,6 +358,10 @@
             : "Playlists are unavailable.";
       } else {
         playlists = linksResult.value.playlistLinks.filter(link => link.enabled || !isServiceMix(link));
+        const scheduled = await activityWork.tasks().catch(() => null);
+        nextSyncAt = (scheduled?.items ?? []).filter(item => item.enabled && item.runPlaylistLinkId &&
+          playlists.some(playlist => playlist.id === item.runPlaylistLinkId) && item.nextRunAt)
+          .map(item => item.nextRunAt!).toSorted()[0] ?? null;
         const nextId = playlists.some((playlist) => playlist.id === selectedId) ? selectedId : "";
         if (nextId && (detailOpen || initialId === nextId)) await loadDetails(nextId);
         else {
@@ -583,13 +589,14 @@
       <PageStatus label="Playlist status" items={[
         { label: countLabel(playlistCount, "playlist"), emphasis: true },
         { label: `${countLabel(totalSongs, "song")}${playlists.every(item => item.playableCount === item.trackCount) ? ", all playable" : ""}` },
-        ...(orderCount ? [{ label: `${countLabel(orderCount, "order differs", "orders differ")} from the source`, tone: "warn" as const }] : []),
+        ...(orderCount ? [{ label: `${countLabel(orderCount, "order fixing", "orders fixing")} on the next sync`, tone: "warn" as const }] : []),
+        ...(nextSyncAt ? [{ label: `Next sync ${new Date(nextSyncAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}` }] : []),
       ]} />
       {#if error || degraded || copiesError}<div class="degraded-banner" role="status"><p>{error || degraded || copiesError}</p><Button variant="text" onclick={() => void refresh()}>Try again</Button></div>{/if}
       <div class="library-filters">
         <FilterSegments label="Playlist filters" value={stateFilter} storageKey="allstarr.library.playlists.filter" onchange={value => stateFilter = value as typeof stateFilter} options={[
           { id: "attention", label: "Needs a look", count: attentionCount }, { id: "ready", label: "Healthy", count: healthyCount },
-          { id: "all", label: "All", count: playlistCount }, { id: "paused", label: "Paused", count: playlists.filter(item => !item.enabled).length },
+          { id: "all", label: "All", count: playlistCount }, ...(playlists.some(item => !item.enabled) ? [{ id: "paused", label: "Paused", count: playlists.filter(item => !item.enabled).length }] : []),
         ]} />
         <div class="library-search"><SearchField bind:value={query} label="Filter playlists" placeholder="Search playlists" hiddenLabel />
           <SelectField bind:value={sourceFilter} label="Playlist source" options={[{ value: "", label: "All sources" }, ...[...new Set(playlists.map(item => item.sourceProviderId))].map(value => ({ value, label: providerName(value) }))]} />
@@ -664,7 +671,7 @@
         {@const editingWarning = jellyfinPlaylistWarning(selected, providerName(selected.sourceProviderId))}
         {#if editingWarning}<div class="playlist-warning" role="status"><strong>{consent?.needsSignIn ? "Saved Jellyfin sign-in expired" : editingWarning}.</strong> {#if consent?.granted && !consent.needsSignIn && selected.lastRunCode?.split(",").some(code => code.trim() === "order")}Fixing order on the next sync{#if details.schedule?.nextRunAt} · {relativeTime(details.schedule.nextRunAt)}{/if}.{:else}<Button variant="text" href="#/sources/services?section=playlist-editing">Allow editing</Button>{/if}</div>{/if}
         <div class="playlist-kpis"><div><strong>{details.trackCount}</strong><small>{countNoun(details.trackCount, "song")}</small></div><div><strong>{details.playableCount}</strong><small>playable</small></div><div><strong>{details.localCount ?? "—"}</strong><small>from your library</small></div></div>
-        <div class="playlist-match-summary"><strong>{details.reviewCount + details.unresolvedCount ? countLabel(details.reviewCount + details.unresolvedCount, "song needs a look", "songs need a look") : countLabel(details.trackCount, "match is settled", "matches are settled")}</strong><Button variant="text" href="#/library/matches">Open in Matches</Button></div>
+        <div class="playlist-match-summary"><strong>{details.reviewCount + details.unresolvedCount ? countLabel(details.reviewCount + details.unresolvedCount, "song needs a look", "songs need a look") : `All ${countLabel(details.trackCount, "match is settled", "matches are settled")}`}</strong><span>{details.reviewCount + details.unresolvedCount ? "Review these songs in Matches." : "None of this playlist’s songs need a look."} <Button variant="text" size="sm" href="#/library/matches">Open in Matches</Button></span></div>
         {#key selected.id}<PlaylistSyncSettings playlist={selected} schedule={details.schedule ?? null} sourceName={providerName(selected.sourceProviderId)} {targetName} onPlaylist={value => playlists = playlists.map(item => item.id === value.id ? value : item)} onSchedule={(value, id) => { if (details?.id === id) details = { ...details, schedule: value }; }} />{/key}
         <dl class="playlist-panel-facts"><dt>Last synced</dt><dd>{relativeTime(selected.lastRunAt, "Not yet")}</dd><dt>Source</dt><dd>{providerName(selected.sourceProviderId)}</dd></dl>
         <details class="playlist-more" bind:open={songsOpen}><summary>Songs and activity · {countLabel(details.trackCount, "song")}</summary>
@@ -975,11 +982,10 @@
   onConfirm={rebuildPlaylist}
 />
 <style>
-  .library-playlists { min-width: 0; }.library-list { padding: var(--space-5); min-width: 0; }
+  .library-playlists { min-width: 0; }.library-list { min-width: 0; }
   .library-heading, .library-actions, .library-search { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
   .library-heading { justify-content: space-between; margin-bottom: var(--space-3); }.library-heading h2 { margin: 0; font-size: 1.5rem; }
-  .library-filters { display: grid; gap: var(--space-3); margin-block: var(--space-4); }.library-search { min-width: 0; flex-wrap: nowrap; }.library-search > :global(:first-child) { min-width: 0; flex: 1 1 0; }.library-search :global(.select-root) { flex: 0 0 auto; }.library-search :global(.select-trigger) { width: auto; gap: var(--space-2); padding-inline: var(--space-2); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; white-space: nowrap; }
-  .library-search :global(.search-field input) { width: 100%; min-width: 0; height: var(--control-md); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; }
+  .library-filters { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin-block: var(--space-4); }.library-search { flex: 1 1 360px; min-width: 0; flex-wrap: nowrap; }.library-search > :global(:first-child) { min-width: 0; flex: 1 1 0; }.library-search :global(.select-root) { flex: 0 0 auto; }.library-search :global(.select-trigger) { width: auto; gap: var(--space-2); padding-inline: var(--space-2); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; white-space: nowrap; }
   .playlist-row { display: block; min-height: 0; min-width: 0; padding: 0; border: 0; }.playlist-panel-tools { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2); }.hero-route, .playlist-copy-note { margin: 0; font-size: var(--text-xs); color: var(--color-ink-muted); }
   .playlist-warning { margin-block: var(--space-3); border-radius: var(--radius-md); padding: var(--space-3); background: color-mix(in srgb, var(--warning) 12%, var(--color-panel)); color: var(--warning); font-size: var(--text-sm); }
   .playlist-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin-block: var(--space-4); }.playlist-kpis > div { background: var(--color-panel-raised); border-radius: var(--radius-md); padding: var(--space-3); }.playlist-kpis strong { display: block; font-size: 1.35rem; }.playlist-kpis small { color: var(--color-ink-muted); font-size: var(--text-xs); }
@@ -989,7 +995,7 @@
   .playlist-more > summary { min-height: 44px; cursor: pointer; font-size: var(--text-sm); padding-block: var(--space-3); }.playlist-more :global(.playlist-facts) { display: grid; grid-template-columns: 1fr; }.playlist-more :global(.track-toolbar) { display: flex; flex-wrap: wrap; }.playlist-more :global(.track-scroll) { max-height: min(60dvh, 32rem); overflow: auto; }
   .playlist-panel-footer { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); width: 100%; min-width: 0; }.playlist-panel-footer > div { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; }.playlist-panel-footer :global([data-slot="button"]) { padding-inline: var(--space-2); font-size: .75rem; }
   :global(.library-danger) { color: var(--danger); }
-  @media (max-width: 899px) { .library-list { padding: var(--space-3); }.library-search { flex-wrap: wrap; }.library-search > :global(:first-child) { flex-basis: 100%; }.playlist-more :global(.review-filter-button), .playlist-more :global(.schedule-edit-button), .playlist-more :global(.track-menu-trigger) { min-width: 44px; min-height: 44px; } }
+  @media (max-width: 899px) { .library-search { flex-wrap: wrap; }.library-search > :global(:first-child) { flex-basis: 100%; }.playlist-more :global(.review-filter-button), .playlist-more :global(.schedule-edit-button), .playlist-more :global(.track-menu-trigger) { min-width: 44px; min-height: 44px; } }
   @media (max-width: 380px) { .playlist-panel-footer :global([data-slot="button"]) { padding-inline: var(--space-1); font-size: .6875rem; } }
 
 </style>

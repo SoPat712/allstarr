@@ -162,7 +162,7 @@ test("Repeated songs in a service mix render and unchanged refreshes retain rows
   expect(state.calls.filter(call => call.path === "/api/admin/mixes/similar")).toHaveLength(2);
   await expect.poll(() => state.calls.filter(call => call.path === "/api/admin/mixes").length).toBe(2);
   await page.getByRole("button", { name: "Close", exact: true }).click();
-  await page.getByRole("button", { name: "Refresh page", exact: true }).click();
+  await page.reload();
   await expect.poll(() => state.calls.filter(call => call.path === "/api/admin/mixes").length).toBe(3);
 });
 
@@ -228,7 +228,7 @@ for (const outcome of ["Succeeded", "Failed"] as const) test(`Queued mix refresh
   expect(jobReads).toBe(2);
   await page.getByRole("button", { name: "Close", exact: true }).click();
   const before = state.calls.filter(call => call.path === "/api/admin/mixes").length;
-  await page.getByRole("button", { name: "Refresh page", exact: true }).click();
+  await page.reload();
   await expect.poll(() => state.calls.filter(call => call.path === "/api/admin/mixes").length).toBe(before + 1);
   expect(refreshRequests).toBe(1);
 });

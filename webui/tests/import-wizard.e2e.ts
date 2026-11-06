@@ -31,7 +31,7 @@ async function reply(route: Route, body: unknown, status = 200) {
 async function mockImport(page: Page, accounts = [account], withCollections = false) {
   const runAccounts = new Map([[runId, account], [appleRunId, appleAccount]]);
   const accountRuns = new Map(accounts.map(item => [item.id, item.id === accountId ? runId : item.id === appleAccountId ? appleRunId : "99999999-9999-4999-8999-999999999999"]));
-  const fixture = { state: "choosing" as RunState, phase: "collecting", fixed: false, appliedFixed: false, createError: false,
+  const fixture = { state: "choosing" as RunState, phase: "collecting", fixed: false, appliedFixed: false, createError: false, previewError: false,
     albumChosen: false, artistSkipped: false, collectionChoiceError: false, unsupported: [] as { kind: string }[],
     reads: [] as string[], writes: [] as Write[], forbidden: [] as string[] };
   await page.addInitScript(() => {
@@ -96,6 +96,12 @@ async function mockImport(page: Page, accounts = [account], withCollections = fa
       runAccounts.set(id, sourceAccount);
       return reply(route, { id }, 202);
     }
+    if (path === "/api/admin/migrations/preview") {
+      if (fixture.previewError) return reply(route, { error: "The connection is temporarily unavailable." }, 503);
+      return reply(route, url.searchParams.has("cursor")
+        ? { items: [liked, weekend], nextCursor: null, unsupported: fixture.unsupported }
+        : { items: [evening, ...(withCollections ? [followedArtists, savedAlbums] : []), liked], nextCursor: "next-playlists", unsupported: fixture.unsupported });
+    }
     const currentRun = path.match(/^\/api\/admin\/migrations\/([^/]+)/)?.[1] ?? runId;
     if (path === `/api/admin/migrations/${currentRun}/discover`) return reply(route, url.searchParams.has("cursor")
       ? { items: [liked, weekend], nextCursor: null, unsupported: fixture.unsupported }
@@ -144,20 +150,78 @@ async function focusRefresh(page: Page) { await page.evaluate(() => window.dispa
 async function liveRefresh(page: Page) {
   await page.evaluate(id => (window as unknown as { __emitMigrationUpdate: (id: string) => void }).__emitMigrationUpdate(id), jobId);
 }
+
+test("Import previews accounts and selections without starting work", async ({ page }) => {
+  const fixture = await mockImport(page, [account, appleAccount], true);
+  await page.goto(`/#/library/import?account=${accountId}`);
+  await expect(page.getByRole("heading", { name: "Choose what to bring", exact: true })).toBeVisible();
+  await expect(page.getByText("Account verified", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Counts by kind" })).toContainText("Playlists");
+  await page.getByRole("checkbox", { name: "Bring Playlists", exact: true }).check();
+  await page.getByRole("switch", { name: "Make playlists in Jellyfin", exact: true }).uncheck();
+  await page.getByRole("tab", { name: "Apple Music", exact: true }).click();
+  await expect(page.getByRole("checkbox", { name: "Bring Library songs", exact: true })).toBeVisible();
+  await page.getByRole("checkbox", { name: "Bring Library songs", exact: true }).check();
+  expect(fixture.writes).toEqual([]);
+  expect(fixture.reads.some(path => path.startsWith("/api/admin/migrations/preview?"))).toBe(true);
+  await page.getByRole("button", { name: "Start import", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Matching your music…", exact: true })).toBeVisible();
+  expect(fixture.writes.filter(write => write.path === "/api/admin/migrations")).toHaveLength(1);
+  expect(fixture.writes.find(write => write.path.endsWith("/choose"))?.body).toMatchObject({ Collections: [{ SourceId: liked.sourceId, KeepInSync: false }] });
+});
+
+for (const scenario of ["unknown song totals", "an albums-only selection"] as const) test(`Import describes ${scenario}`, async ({ page }) => {
+  const fixture = await mockImport(page, [account], true);
+  const unknown = scenario === "unknown song totals";
+  if (unknown) await page.route("**/api/admin/migrations/preview?*", route => reply(route, {
+    items: [{ ...evening, count: null }], nextCursor: null, unsupported: [],
+  }));
+  await page.goto(`/#/library/import?account=${accountId}`);
+  await page.getByRole("checkbox", { name: unknown ? "Bring Playlists" : "Bring Albums", exact: true }).check();
+  await expect(page.locator(".import-start")).toContainText("Ready to match your selected music");
+  await expect(page.getByRole("button", { name: "Start import", exact: true })).toBeEnabled();
+  expect(fixture.writes).toEqual([]);
+});
+
+test("Import confirms the playlist destination and discovered pages only on Start", async ({ page }) => {
+  const fixture = await mockImport(page);
+  await page.goto(`/#/library/import?account=${accountId}`);
+  const playlists = page.getByRole("checkbox", { name: "Bring Playlists", exact: true });
+  await playlists.check();
+  await page.getByRole("button", { name: "Show more playlists", exact: true }).click();
+  await expect(playlists).toHaveAttribute("aria-checked", "mixed");
+  await playlists.check();
+  await page.getByRole("switch", { name: "Make playlists in Jellyfin", exact: true }).uncheck();
+  expect(fixture.writes).toEqual([]);
+  await page.getByRole("button", { name: "Start import", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Matching your music…", exact: true })).toBeVisible();
+  expect(fixture.writes.find(write => write.path.endsWith("/choose"))?.body).toEqual({
+    MakePlaylists: false, Collections: [{ SourceId: evening.sourceId, KeepInSync: false }, { SourceId: weekend.sourceId, KeepInSync: false }],
+  });
+  expect(fixture.reads).toContain(`/api/admin/migrations/${runId}/discover?cursor=next-playlists`);
+});
+
+async function openCollections(page: Page) {
+  const details = page.locator(".import-collection-details");
+  if (await details.getAttribute("open") === null) await details.getByText("Choose individual collections", { exact: true }).click();
+}
+
 async function discover(page: Page) {
   await page.goto(`/#/library/import?account=${accountId}`);
   await expect(page.getByRole("heading", { name: "Bring your music", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Spotify account", exact: true })).toHaveText("My Spotify");
-  await expect(page.getByRole("navigation", { name: "Music service", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: "Music service", exact: true }).getByRole("tab")).toHaveCount(2);
   await expect(page.getByRole("region", { name: "Import status" })).toBeVisible();
+  await openCollections(page);
   await expect(page.getByRole("checkbox", { name: "Select Liked Songs", exact: true })).toBeVisible();
   await expect(page.getByText("Become hearts", { exact: true })).toBeVisible();
 }
 async function choose(page: Page) {
+  await openCollections(page);
   await page.getByRole("checkbox", { name: "Select Liked Songs", exact: true }).check();
   await page.getByRole("checkbox", { name: "Select Evening mix", exact: true }).check();
   await page.getByRole("checkbox", { name: "Keep Evening mix in sync", exact: true }).check();
-  await page.getByRole("button", { name: "Start import (2 selected)", exact: true }).click();
+  await page.getByRole("button", { name: "Start import", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Matching your music…", exact: true })).toBeVisible();
 }
 async function capture(page: Page, step: string, width: number, theme: string) {
@@ -176,7 +240,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.getByRole("button", { name: "Show more playlists", exact: true }).click();
     await expect(page.getByRole("checkbox", { name: "Select Weekend", exact: true })).toBeVisible();
     await expect(page.getByRole("checkbox", { name: "Select Liked Songs", exact: true })).toHaveCount(1);
-    await expect(page.getByRole("button", { name: "Start import (0 selected)", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Start import", exact: true })).toBeDisabled();
     await expect(page.getByRole("checkbox", { name: "Keep Evening mix in sync", exact: true })).not.toBeChecked();
     await page.getByRole("button", { name: "Select all", exact: true }).click();
     await expect(page.getByRole("checkbox", { name: "Select Weekend", exact: true })).toBeChecked();
@@ -185,10 +249,10 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await capture(page, "choose", width, theme);
     await choose(page);
     await expect(page.getByRole("progressbar", { name: "Music matched", exact: true })).toHaveAttribute("aria-valuenow", /^28\./);
-    await expect(page.getByRole("list", { name: "Import progress" }).locator('[aria-current="step"]')).toHaveText("Match");
+    await expect(page.getByRole("list", { name: "Import progress" }).locator('[aria-current="step"]')).toContainText("Match");
     await expect(page.getByRole("article", { name: "Matching progress" }).getByRole("button", { name: "Stop moving", exact: true })).toBeVisible();
     await capture(page, "matching", width, theme);
-    expect(fixture.writes.find(write => write.path.endsWith("/choose"))?.body).toEqual({ Collections: [{ SourceId: liked.sourceId, KeepInSync: false }, { SourceId: evening.sourceId, KeepInSync: true }] });
+    expect(fixture.writes.find(write => write.path.endsWith("/choose"))?.body).toEqual({ MakePlaylists: true, Collections: [{ SourceId: liked.sourceId, KeepInSync: false }, { SourceId: evening.sourceId, KeepInSync: true }] });
     const creates = fixture.writes.filter(write => write.path === "/api/admin/migrations");
     expect(creates).toHaveLength(1);
     expect(creates[0].body).toEqual({ ProviderAccountId: accountId, RequestKey: expect.any(String) });
@@ -235,25 +299,41 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     if (width === 390 && theme === "light") {
       await page.getByRole("button", { name: "Move more music", exact: true }).click();
       fixture.state = "choosing";
-      await page.getByRole("button", { name: "Find my music", exact: true }).click();
-      await expect(page.getByRole("button", { name: "Start import (0 selected)", exact: true })).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Start import", exact: true })).toBeDisabled();
+      expect(fixture.writes.filter(write => write.path === "/api/admin/migrations")).toHaveLength(1);
+      await page.getByRole("checkbox", { name: "Bring Liked Songs", exact: true }).check();
+      await page.getByRole("button", { name: "Start import", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "Matching your music…", exact: true })).toBeVisible();
       const nextCreate = fixture.writes.filter(write => write.path === "/api/admin/migrations").at(-1)!;
       expect(nextCreate.body.RequestKey).not.toBe(creates[0].body.RequestKey);
     }
   });
 }
 
-test("Import retries an uncertain discovery start with the same request key", async ({ page }) => {
+test("Import retries an uncertain explicit start with the same request key", async ({ page }) => {
   const fixture = await mockImport(page); fixture.createError = true;
   await page.goto(`/#/library/import?account=${accountId}`);
-  await expect(page.getByRole("alert")).toBeVisible();
+  await page.getByRole("checkbox", { name: "Bring Liked Songs", exact: true }).check();
+  expect(fixture.writes).toEqual([]);
+  await page.getByRole("button", { name: "Start import", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Your import could not be started");
   fixture.createError = false;
-  await page.getByRole("button", { name: "Find my music", exact: true }).click();
-  await expect(page.getByRole("checkbox", { name: "Select Liked Songs", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Start import", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Matching your music…", exact: true })).toBeVisible();
   const writes = fixture.writes.filter(write => write.path === "/api/admin/migrations");
   expect(writes).toHaveLength(2);
   expect(writes[1].body).toEqual(writes[0].body);
   expect(writes[0].body.RequestKey).toEqual(expect.stringMatching(/^[0-9a-f-]{36}$/i));
+});
+
+test("Import retries a failed account preview without creating work", async ({ page }) => {
+  const fixture = await mockImport(page); fixture.previewError = true;
+  await page.goto(`/#/library/import?account=${accountId}`);
+  await expect(page.getByRole("alert")).toContainText("Your music could not be found");
+  fixture.previewError = false;
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.getByText("Account verified", { exact: true })).toBeVisible();
+  expect(fixture.writes).toEqual([]);
 });
 
 test("Import resumes a saved run, retries waiting work and confirms before stopping", async ({ page }) => {
@@ -288,21 +368,38 @@ test("Import opens a run URL and refreshes progress on focus without creating an
 });
 
 test("Import explains when no supported account is connected", async ({ page }) => {
-  await mockImport(page, []);
+  const fixture = await mockImport(page, []);
   await page.goto("/#/library/import");
-  await expect(page.getByText("Connect Spotify or Apple Music first.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Connect Spotify first.", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Connect an account", exact: true })).toHaveAttribute("href", "#/integrations/services");
-  await expect(page.getByRole("navigation", { name: "Music service", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: "Music service", exact: true }).getByRole("tab")).toHaveCount(2);
+  await page.getByRole("tab", { name: "Apple Music", exact: true }).click();
+  await expect(page.getByText("Connect Apple Music first.", { exact: true })).toBeVisible();
+  expect(fixture.writes).toEqual([]);
+});
+
+test("Import can show an unconnected service and return to its connected account", async ({ page }) => {
+  const fixture = await mockImport(page);
+  await page.goto("/#/library/import");
+  await page.getByRole("checkbox", { name: "Bring Liked Songs", exact: true }).check();
+  await page.getByRole("tab", { name: "Apple Music", exact: true }).click();
+  await expect(page.getByText("Connect Apple Music first.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Start import", exact: true })).toHaveCount(0);
+  await page.getByRole("tab", { name: "Spotify", exact: true }).click();
+  await expect(page.getByText("Account verified", { exact: true })).toBeVisible();
+  await expect(page.getByRole("checkbox", { name: "Bring Liked Songs", exact: true })).not.toBeChecked();
+  await expect(page.getByRole("button", { name: "Start import", exact: true })).toBeDisabled();
+  expect(fixture.writes).toEqual([]);
 });
 
 test("Import uses Apple Music automatically when it is the only personal service", async ({ page }) => {
   const fixture = await mockImport(page, [appleAccount, { ...account, enabled: false }, { ...account, id: "shared", scope: "Household" }, { ...account, id: "other", ownerUserId: "another-user" }]);
   await page.goto("/#/library/import");
   await expect(page.getByRole("region", { name: "Import status" })).toContainText("Nothing changes in Apple Music or Spotify.");
-  await expect(page.getByRole("navigation", { name: "Music service", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: "Music service", exact: true }).getByRole("tab")).toHaveCount(2);
   await expect(page.getByRole("button", { name: "Apple Music account", exact: true })).toHaveText("My Apple Music");
-  await expect(page.getByRole("checkbox", { name: "Select Library songs", exact: true })).toBeVisible();
-  expect(fixture.writes.find(write => write.path === "/api/admin/migrations")?.body.ProviderAccountId).toBe(appleAccountId);
+  await expect(page.getByRole("checkbox", { name: "Bring Library songs", exact: true })).toBeVisible();
+  expect(fixture.writes).toEqual([]);
 });
 
 test("Import remembers the provider and restores only its own saved move", async ({ page }) => {
@@ -310,6 +407,7 @@ test("Import remembers the provider and restores only its own saved move", async
   await page.goto("/#/library/import");
   const selector = page.getByRole("navigation", { name: "Music service", exact: true });
   await expect(selector.getByRole("tab", { name: "Spotify", exact: true })).toHaveAttribute("aria-selected", "true");
+  await openCollections(page);
   await page.getByRole("checkbox", { name: "Select Liked Songs", exact: true }).check();
   await page.getByRole("checkbox", { name: "Keep Evening mix in sync", exact: true }).check();
   await selector.getByRole("tab", { name: "Apple Music", exact: true }).click();
@@ -319,15 +417,14 @@ test("Import remembers the provider and restores only its own saved move", async
   await expect(page.getByRole("checkbox", { name: "Keep Evening mix in sync", exact: true })).not.toBeChecked();
   await page.reload();
   await expect(selector.getByRole("tab", { name: "Apple Music", exact: true })).toHaveAttribute("aria-selected", "true");
+  await openCollections(page);
   await expect(page.getByRole("checkbox", { name: "Select Library songs", exact: true })).toBeVisible();
   await selector.getByRole("tab", { name: "Spotify", exact: true }).click();
   await expect(page.getByRole("checkbox", { name: "Select Liked Songs", exact: true })).not.toBeChecked();
   await expect(page.getByRole("checkbox", { name: "Keep Evening mix in sync", exact: true })).not.toBeChecked();
-  const creates = fixture.writes.filter(write => write.path === "/api/admin/migrations");
-  expect(creates.map(write => write.body.ProviderAccountId)).toEqual([accountId, appleAccountId]);
-  expect(creates[0].body.RequestKey).not.toBe(creates[1].body.RequestKey);
-  expect(await page.evaluate(key => localStorage.getItem(key), `allstarr:migration:${accountId}`)).toBe(runId);
-  expect(await page.evaluate(key => localStorage.getItem(key), `allstarr:migration:${appleAccountId}`)).toBe(appleRunId);
+  expect(fixture.writes).toEqual([]);
+  expect(await page.evaluate(key => localStorage.getItem(key), `allstarr:migration:${accountId}`)).toBeNull();
+  expect(await page.evaluate(key => localStorage.getItem(key), `allstarr:migration:${appleAccountId}`)).toBeNull();
 });
 
 test("Import clears choices and status when switching accounts within a service", async ({ page }) => {
@@ -338,13 +435,14 @@ test("Import clears choices and status when switching accounts within a service"
   await page.getByRole("button", { name: "Spotify account", exact: true }).click();
   await page.getByRole("option", { name: "Another Spotify", exact: true }).click();
   await expect(page.getByRole("checkbox", { name: "Select Liked Songs", exact: true })).not.toBeChecked();
-  fixture.state = "collecting";
-  await focusRefresh(page);
+  expect(fixture.writes).toEqual([]);
+  await page.getByRole("checkbox", { name: "Select Liked Songs", exact: true }).check();
+  await page.getByRole("button", { name: "Start import", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Matching your music…", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Spotify account", exact: true }).click();
   await page.getByRole("option", { name: "My Spotify", exact: true }).click();
-  expect(fixture.writes.filter(write => write.path === "/api/admin/migrations").map(write => write.body.ProviderAccountId)).toEqual([accountId, secondAccount.id]);
-  await expect(page.getByRole("heading", { name: "Matching your music…", exact: true })).toBeVisible();
+  expect(fixture.writes.filter(write => write.path === "/api/admin/migrations").map(write => write.body.ProviderAccountId)).toEqual([secondAccount.id]);
+  await expect(page.getByRole("button", { name: "Start import", exact: true })).toBeDisabled();
 });
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
@@ -355,6 +453,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     const fixture = await mockImport(page, [account, appleAccount], true);
     await page.goto(`/#/library/import?account=${appleAccountId}`);
     await expect(page.getByRole("navigation", { name: "Music service", exact: true }).getByRole("tab", { name: "Apple Music", exact: true })).toHaveAttribute("aria-selected", "true");
+    await openCollections(page);
     for (const [index, name] of ["Library songs", "Saved albums", "Artists in your library", "Evening mix"].entries())
       await expect(page.getByRole("checkbox", { name: /^Select / }).nth(index)).toHaveAccessibleName(`Select ${name}`);
     await expect(page.getByText("3 songs", { exact: true })).toBeVisible();
@@ -366,7 +465,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.getByRole("checkbox", { name: "Select Library songs", exact: true }).check();
     await page.getByRole("checkbox", { name: "Select Evening mix", exact: true }).check();
     await page.getByRole("checkbox", { name: "Keep Evening mix in sync", exact: true }).check();
-    await page.getByRole("button", { name: "Start import (2 selected)", exact: true }).click();
+    await page.getByRole("button", { name: "Start import", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Matching your music…", exact: true })).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Music service", exact: true }).getByRole("tab", { name: "Apple Music", exact: true })).toHaveAttribute("aria-selected", "true");
     expect(fixture.writes.find(write => write.path === "/api/admin/migrations")?.body.ProviderAccountId).toBe(appleAccountId);
@@ -376,7 +475,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     fixture.state = "waiting";
     await focusRefresh(page);
     await expect(page.getByText("Your progress is saved. Restore the Apple Music connection or check playlist access, then try again.").first()).toBeVisible();
-    expect(fixture.writes.find(write => write.path.endsWith("/choose"))?.body).toEqual({ Collections: [{ SourceId: liked.sourceId, KeepInSync: false }, { SourceId: evening.sourceId, KeepInSync: true }] });
+    expect(fixture.writes.find(write => write.path.endsWith("/choose"))?.body).toEqual({ MakePlaylists: true, Collections: [{ SourceId: liked.sourceId, KeepInSync: false }, { SourceId: evening.sourceId, KeepInSync: true }] });
     expect(fixture.forbidden).toEqual([]);
   });
 }
@@ -421,8 +520,9 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(page.getByText(/can't be moved yet/)).toHaveCount(0);
     for (const name of ["Saved albums", "Followed artists"]) await page.getByRole("checkbox", { name: `Select ${name}`, exact: true }).check();
     await expect(page.getByRole("checkbox", { name: /^Keep (Saved albums|Followed artists)/ })).toHaveCount(0);
-    await page.getByRole("button", { name: "Start import (2 selected)", exact: true }).click();
-    expect(fixture.writes.find(write => write.path.endsWith("/choose"))?.body).toEqual({ Collections: [{ SourceId: savedAlbums.sourceId, KeepInSync: false }, { SourceId: followedArtists.sourceId, KeepInSync: false }] });
+    await page.getByRole("button", { name: "Start import", exact: true }).click();
+    await expect.poll(() => fixture.writes.find(write => write.path.endsWith("/choose"))?.body).toEqual({ MakePlaylists: true, Collections: [{ SourceId: savedAlbums.sourceId, KeepInSync: false }, { SourceId: followedArtists.sourceId, KeepInSync: false }] });
+    await expect(page.getByRole("heading", { name: "Matching your music…", exact: true })).toBeVisible();
     fixture.state = "review";
     await focusRefresh(page);
     await page.locator("summary").filter({ hasText: "Saved albums" }).click();
@@ -483,11 +583,17 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"]] a
     await expect(page.getByRole("region", { name: "Import status" })).toContainText("Nothing changes");
     await expect(page.getByRole("region", { name: "Counts by kind" })).toContainText("2");
     await expectPageSurface(page.locator(".import-page"));
-    await expectPageSurface(page.getByRole("article", { name: "Choose your music" }));
-    await page.getByRole("radio", { name: /Albums/ }).click();
-    await expect(page.getByRole("checkbox", { name: "Select Saved albums", exact: true })).toBeVisible();
-    await expect(page.getByRole("checkbox", { name: "Select Liked Songs", exact: true })).toHaveCount(0);
-    await page.getByRole("radio", { name: /^All/ }).click();
+    const steps = page.getByRole("list", { name: "Import progress" });
+    await expect(steps.locator(":scope > li")).toHaveCount(4);
+    await expect(steps).not.toHaveCSS("border-radius", "0px");
+    const stepBoxes = await steps.locator(":scope > li").evaluateAll(items => items.map(item => item.getBoundingClientRect().y));
+    expect(stepBoxes.every((y, index) => index === 0 || y > stepBoxes[index - 1])).toBe(true);
+    await expect(page.getByText("Account verified", { exact: true })).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: /^Bring / })).toHaveCount(4);
+    await expect(page.getByRole("switch")).toHaveCount(2);
+    await expect(page.getByRole("switch", { name: "Only songs I can play from my library", exact: true })).toBeDisabled();
+    expect(fixture.writes).toEqual([]);
+    if (width === 390) await expectContainedMobileGeometry(page);
     await mkdir("test-results/ui-library", { recursive: true });
     await page.screenshot({ path: `test-results/ui-library/import-${width}-${theme}.png`, fullPage: true });
     await choose(page);

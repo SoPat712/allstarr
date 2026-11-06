@@ -98,8 +98,12 @@ for (const viewport of [{ width: 1280, theme: "light" }, { width: 1280, theme: "
       const panel = page.getByRole("dialog", { name: "Take On Me", exact: true });
       await expect(panel).toBeVisible();
       await expect(panel).toContainText("1064 kbps");
+      await expect(panel.getByRole("region", { name: "In your playlists", exact: true })).toBeVisible();
+      await expect(panel.getByText("Source ID", { exact: true })).not.toBeVisible();
+      await expect(panel.getByText("Filename", { exact: true })).not.toBeVisible();
+      await panel.locator(".advanced > summary").click();
       await expect(panel).toContainText("Take On Me.flac");
-      await expect(panel).toContainText("Last access");
+      await panel.locator(".advanced > summary").click();
       const selected = table.locator("tbody > .download-row.selected");
       await expectSubtleSelection(selected, selected.locator("strong"));
       await expectSingleRowFooter(panel);
@@ -143,7 +147,7 @@ test("cached filters remember their selection and bulk removal confirms exact co
   await expect(page.locator(".download-row")).toHaveCount(1);
   await page.reload();
   await expect(page.getByRole("radio", { name: "Lower quality 1", exact: true })).toBeChecked();
-  await page.getByRole("button", { name: "Remove all", exact: true }).click();
+  await page.getByRole("button", { name: "Remove all…", exact: true }).click();
   const dialog = page.getByRole("alertdialog", { name: "Remove all cached songs?" });
   await expect(dialog).toContainText("4 cached copies");
   await expect(dialog).toContainText("116 MB");
@@ -169,4 +173,27 @@ test("cache off, loading, empty and error states stay useful", async ({ page }) 
   await page.getByRole("button", { name: "Try again", exact: true }).click();
   await expect(page.getByText("No cached songs", { exact: true })).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
+});
+
+
+test("Cross-service copies share a row and song details show real playlist membership", async ({ page }) => {
+  await mockLibrary(page);
+  await page.route("**/api/admin/ui/schema", route => json(route, { providers: [
+    { id: "apple-musickit", name: "Apple Music", categories: ["streaming"] },
+    { id: "deezer", name: "Deezer", categories: ["streaming"] },
+  ] }));
+  await page.route("**/api/admin/downloads?**", route => json(route, {
+    storage: "cache", files: [file, { ...file, path: "cache/deezer/take.flac", provider: "deezer", externalId: "different-service-id", album: "Single" }],
+    managedCount: 2, diagnosticCount: 0, totalSizeFormatted: "58 MB", count: 2,
+  }));
+  await page.route("**/api/admin/playlist-links", route => json(route, { playlistLinks: [{ id: "road", name: "On the Road" }] }));
+  await page.route("**/api/admin/playlist-links/road", route => json(route, {
+    tracks: [{ providerRoutes: [{ providerId: "apple-download", externalId: file.externalId }] }],
+  }));
+  await page.goto("/#/library/cached");
+  await expect(page.locator(".downloads-table-scroll > table > tbody > .download-row")).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Show 2 copies of Take On Me", exact: true })).toBeVisible();
+  await expect(page.locator(".download-row .source-name")).toContainText("Apple Music + Deezer");
+  await page.getByRole("button", { name: "Open song details for Take On Me", exact: true }).click();
+  await expect(page.getByRole("dialog").getByRole("link", { name: "On the Road", exact: true })).toHaveAttribute("href", "#/library/playlists?id=road");
 });

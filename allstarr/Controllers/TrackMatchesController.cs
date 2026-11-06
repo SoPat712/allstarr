@@ -444,6 +444,109 @@ public sealed class TrackMatchesController(
         );
     }
 
+    [HttpGet("{externalSnapshotId:guid}/current")]
+    public async Task<IActionResult> Current(Guid externalSnapshotId, CancellationToken cancellationToken = default)
+    {
+        Response.Headers.CacheControl = "private, no-store";
+        if (!TrySession(out var session, out var error)) return error!;
+        var userId = session!.AllstarrUserId!.Value;
+        var actor = new TrackMatchActor(userId, session.IsAdministrator);
+        var review = await trackMatchCommands.GetReviewDataAsync(actor, externalSnapshotId: externalSnapshotId,
+            cancellationToken: cancellationToken);
+        var snapshot = review.Snapshots.SingleOrDefault(item => item.Id == externalSnapshotId &&
+            item.ResourceKind == "track" && (session.IsAdministrator || item.OwnerUserId == userId));
+        if (snapshot == null) return NotFound();
+
+        ProtocolExecutionContext execution;
+        try
+        {
+            execution = await protocolContexts.CreateAsync(session, HttpContext.TraceIdentifier, cancellationToken);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return StatusCode(403, new { error = "The linked backend identity is unavailable" });
+        }
+        var playableProviders = await providerGateway.GetPlayableProviderOrderAsync(execution.RequireActor(), cancellationToken);
+        var providerPolicy = effectivePolicies == null ? execution.Policy :
+            await effectivePolicies.ResolveForUserAsync(userId, cancellationToken);
+        var decision = review.LatestDecisions.FirstOrDefault(item => item.ExternalSnapshotId == snapshot.Id);
+        var sourceIdentity = review.ProviderIdentities.FirstOrDefault(item => item.Id == snapshot.ProviderTrackIdentityId) ??
+            review.ProviderIdentities.Where(item => MatchesSourceIdentity(snapshot, item))
+                .OrderByDescending(item => item.Verification == ProviderIdentityVerification.Pinned)
+                .ThenByDescending(item => item.VerifiedAt).FirstOrDefault();
+        var row = Row(snapshot, decision, ManualTrackOverrides.Index(review.Snapshots, review.ActiveOverrides, userId)[snapshot.Id],
+            sourceIdentity, new(review.LibraryTracks.ToDictionary(item => item.Id)),
+            review.ProviderIdentities.GroupBy(item => item.CanonicalRecordingId).ToDictionary(group => group.Key, group => group.ToArray()),
+            playableProviders, playableProviders.ToHashSet(StringComparer.Ordinal), userId, session.IsAdministrator, providerPolicy);
+        if (row.State is not (TrackMatchState.Accepted or TrackMatchState.Pinned))
+            return Ok(new { externalSnapshotId, target = (object?)null });
+        if (row.LocalTrack is { } track)
+            return Ok(new
+            {
+                externalSnapshotId,
+                target = new
+                {
+                    providerId = (string?)null,
+                    externalId = (string?)null,
+                    isLocal = true,
+                    libraryTrackId = (Guid?)track.Id,
+                    backendItemId = track.BackendItemId,
+                    title = CurrentFact(track.Title),
+                    artist = CurrentFact(track.Artist),
+                    album = CurrentFact(track.Album),
+                    durationMilliseconds = track.DurationMilliseconds,
+                    isrc = CurrentFact(track.Isrc),
+                    artworkUrl = track.CoverArtReference == null ? null : LocalArtworkUrl(track.BackendItemId)
+                }
+            });
+        if (row.TargetLookup is not { } lookup)
+            return Ok(new { externalSnapshotId, target = (object?)null });
+
+        await new TrackMatchTargetResolver(contextFactory, applicationCache).EnrichAsync(actor,
+            [lookup with { SourceSnapshot = null }], cancellationToken, targetMetadataOnly: true);
+        var target = lookup.Target;
+        try
+        {
+            var song = await providerGateway.GetExactSongAsync(execution with { IsReadOnly = true }, target.ProviderId, target.ExternalId);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (song?.ExternalId == target.ExternalId &&
+                AppleMusicClient.NormalizeProviderId(song.ExternalProvider ?? "") == target.ProviderId)
+            {
+                target.Title = CurrentFact(song.Title) ?? target.Title;
+                target.Artist = CurrentFact(song.Artist) ?? CurrentFact(string.Join(", ", song.Artists)) ?? target.Artist;
+                target.Album = CurrentFact(song.Album) ?? target.Album;
+                target.Isrc = CurrentFact(song.Isrc) ?? target.Isrc;
+                target.DurationMilliseconds = song.PreciseDuration is { } duration && duration > TimeSpan.Zero
+                    ? (long)Math.Round(duration.TotalMilliseconds)
+                    : song.Duration is > 0 ? (long)song.Duration.Value * 1000 : target.DurationMilliseconds;
+            }
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            logger?.LogDebug(exception, "Current match metadata was unavailable for {ProviderId}", target.ProviderId);
+        }
+        return Ok(new
+        {
+            externalSnapshotId,
+            target = new
+            {
+                providerId = target.ProviderId,
+                externalId = target.ExternalId,
+                isLocal = false,
+                libraryTrackId = (Guid?)null,
+                backendItemId = (string?)null,
+                title = target.Title,
+                artist = target.Artist,
+                album = target.Album,
+                durationMilliseconds = target.DurationMilliseconds,
+                isrc = target.Isrc,
+                artworkUrl = target.ArtworkUrl
+            }
+        });
+    }
+
+    private static string? CurrentFact(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
     [HttpGet("targets/local")]
     public async Task<IActionResult> SearchLocalTargets(
         [FromQuery] string query,
@@ -1088,7 +1191,7 @@ public sealed class TrackMatchesController(
             hasManualRejection,
             Details,
             target == null ? null : new(canonicalId, snapshot.OwnerUserId, target, snapshot,
-                projection.PrimaryProviderRoute?.IsManual == true));
+                projection.PrimaryProviderRoute?.IsManual == true), track);
     }
 
     private static (string? Title, string? Artist, string? Album, string? ArtworkUrl, string? Isrc, long? DurationMilliseconds, bool? IsExplicit, string? DurationProvenance) Metadata(string json)
@@ -1324,7 +1427,8 @@ public sealed class TrackMatchesController(
         bool HasManualMatch,
         bool HasManualRejection,
         Func<object> Value,
-        TrackMatchTargetLookup? TargetLookup = null);
+        TrackMatchTargetLookup? TargetLookup = null,
+        LibraryTrackRecord? LocalTrack = null);
 
     private sealed record RowLibrary(IReadOnlyDictionary<Guid, LibraryTrackRecord> Tracks)
     {

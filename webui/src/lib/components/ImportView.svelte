@@ -11,8 +11,8 @@
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Progress } from "$lib/components/ui/progress";
+  import { Switch } from "$lib/components/ui/switch";
   import PageStatus from "$lib/components/patterns/PageStatus.svelte";
-  import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
   import ItemRow from "$lib/components/patterns/ItemRow.svelte";
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import EmptyState from "$lib/components/patterns/EmptyState.svelte";
@@ -52,7 +52,9 @@
   let selectedResource = $state<MigrationReviewItem | null>(null);
   let matchOpen = $state(false);
   let LoadedMatchDialog = $state<typeof import("$lib/components/MatchDialog.svelte").default | null>(null);
-  let kindFilter = $state("all");
+  let makePlaylists = $state(true);
+  let accountVerified = $state(false);
+  let previewCursors: (string | undefined)[] = [];
   const kinds = $derived([
     { id: "liked-songs", label: providerId === "apple-musickit" ? "Library songs" : "Liked Songs", count: choices.filter(item => item.kind === "liked-songs").reduce((sum, item) => sum + (item.count ?? 0), 0) },
     { id: "playlist", label: "Playlists", count: choices.filter(item => item.kind === "playlist").length },
@@ -60,6 +62,9 @@
     { id: "followed-artists", label: "Artists", count: choices.filter(item => item.kind === "followed-artists").reduce((sum, item) => sum + (item.count ?? 0), 0) },
   ]);
   const selectedSongs = $derived(choices.filter(item => selected[item.sourceId] && ["liked-songs", "playlist"].includes(item.kind)).reduce((sum, item) => sum + (item.count ?? 0), 0));
+  const selectionSummary = $derived(choices.some(item => selected[item.sourceId] &&
+    (item.count == null || !["liked-songs", "playlist"].includes(item.kind)))
+    ? "Ready to match your selected music" : `${countLabel(selectedSongs, "song")} to match`);
   let matchLoading = $state(false);
   let selectedMatch = $state<MatchReviewItem | null>(null);
   let matchCollection = "";
@@ -73,8 +78,7 @@
   let reviewInitialized = false;
   let pendingCount = $state(0);
   let selectionVersion = 0;
-  const providerOptions = $derived([{ id: "spotify", label: "Spotify" }, { id: "apple-musickit", label: "Apple Music" }]
-    .filter(provider => accounts.some(account => account.providerId === provider.id)));
+  const providerOptions = [{ id: "apple-musickit", label: "Apple Music" }, { id: "spotify", label: "Spotify" }];
   const providerAccounts = $derived(accounts.filter(account => account.providerId === providerId));
   const providerName = $derived(providerId === "apple-musickit" ? "Apple Music" : "Spotify");
   const step = $derived(migrationStep(status));
@@ -96,8 +100,11 @@
   async function discover(loadMore = false) {
     const id = runId;
     const version = selectionVersion;
-    const next = await migrations.discover(id, loadMore ? cursor ?? undefined : undefined);
+    const nextCursor = loadMore ? cursor ?? undefined : undefined;
+    const next = id ? await migrations.discover(id, nextCursor) : await migrations.preview(accountId, nextCursor);
     if (disposed || id !== runId || version !== selectionVersion) return;
+    accountVerified = true;
+    previewCursors = loadMore ? [...previewCursors, nextCursor] : [undefined];
     const previous = loadMore ? choices : [];
     choices = [...previous, ...next.items.filter(item => !previous.some(old => old.sourceId === item.sourceId))]
       .sort((a, b) => collectionChoiceOrder(a.kind) - collectionChoiceOrder(b.kind));
@@ -123,6 +130,10 @@
     let pending = 0;
     const counts: Record<string, number> = {};
     for (const item of next.collections.filter(item => item.collection.state === "applied")) {
+      if (item.collection.kind === "playlist" && next.run.makePlaylists === false) {
+        counts[item.id] = item.counts.accepted;
+        continue;
+      }
       let added = 0;
       for (let offset = 0; offset < item.collection.read; offset += 50) {
         const rows = await migrations.review(next.id, item.id, offset);
@@ -144,6 +155,7 @@
       const next = await migrations.status(id, ["review", "completed"].includes(runState));
       if (disposed || runId !== id || version !== selectionVersion) return;
       status = next; accountId = next.run.providerAccountId; providerId = next.run.providerId ?? "spotify";
+      makePlaylists = next.run.makePlaylists ?? true;
       remember(); rememberProvider(); error = "";
       if (next.run.state === "choosing" && !choices.length) await discover();
       if (!reviewInitialized && !next.provisional && ["review", "completed"].includes(next.run.state)) {
@@ -200,6 +212,7 @@
     let preferred = candidates[0];
     try { preferred = candidates.find(item => localStorage.getItem(`allstarr:migration:${item.id}`)) ?? preferred; } catch { /* Storage is optional. */ }
     if (preferred) await changeAccount(preferred.id);
+    else { reset(); accountId = ""; providerId = value; rememberProvider(); }
   }
   async function act(action: () => Promise<unknown>, fallback: string) {
     if (busy) return;
@@ -209,15 +222,37 @@
     finally { busy = false; }
   }
   async function findMusic() {
+    await act(() => discover(), "Your music could not be found. Try again with this account.");
+  }
+  function selectKind(kind: string, checked: boolean) {
+    selected = { ...selected, ...Object.fromEntries(choices.filter(item => item.kind === kind).map(item => [item.sourceId, checked])) };
+  }
+  function kindChecked(kind: string) {
+    const items = choices.filter(item => item.kind === kind);
+    return items.length > 0 && items.every(item => selected[item.sourceId]);
+  }
+  function kindPartial(kind: string) {
+    return !kindChecked(kind) && choices.some(item => item.kind === kind && selected[item.sourceId]);
+  }
+  async function startImport() {
+    if (!selectedCount || !accountId) return;
     await act(async () => {
+      const version = selectionVersion;
+      const selection = choices.filter(item => selected[item.sourceId]).map(item => ({ SourceId: item.sourceId, KeepInSync: item.kind === "playlist" && !!sync[item.sourceId] }));
+      const destinationPlaylists = makePlaylists;
       if (!runId) {
         requestKey ||= newUuid();
         const receipt = await migrations.start(accountId, requestKey);
-        if (disposed) return;
+        if (disposed || version !== selectionVersion) return;
         runId = receipt.id; remember();
       }
-      await discover(); await refresh();
-    }, "Your music could not be found. Try again with this account.");
+      for (const nextCursor of previewCursors) {
+        await migrations.discover(runId, nextCursor);
+        if (disposed || version !== selectionVersion) return;
+      }
+      await migrations.choose(runId, selection, destinationPlaylists);
+      await refresh();
+    }, "Your import could not be started. Try again; your selection is saved here.");
   }
   async function command(action: "apply" | "cancel" | "resume") {
     await act(async () => {
@@ -278,11 +313,12 @@
     selectionVersion += 1;
     runId = ""; status = null; choices = []; selected = {}; sync = {}; pages = {}; more = {}; expanded = {}; pageBusy = {};
     unsupported = []; receiptCounts = {}; pendingCount = 0; reviewInitialized = false; cursor = null; requestKey = ""; error = ""; reading = false;
+    previewCursors = []; accountVerified = false; makePlaylists = true;
     confirmStop = false; resourceOpen = false; resourceSaving = false; resourceError = ""; selectedResource = null;
     matchOpen = false; matchLoading = false; selectedMatch = null; matchCollection = ""; matchTrigger = undefined;
   }
   function fresh() {
-    reset(); remember();
+    reset(); remember(); void findMusic();
   }
   const scheduler = createRefreshScheduler(refresh);
   onMount(() => {
@@ -299,56 +335,69 @@
   <header class="import-heading"><div><h2>Bring your music</h2></div>
     {#if runId}<RefreshButton label="Refresh import progress" onrefresh={refresh} />{/if}
   </header>
-  <PageStatus label="Import status" items={[{ label: "Nothing changes in Apple Music or Spotify.", emphasis: true }, ...(status && runState !== "choosing" ? [{ label: `${status.total.accepted} found · ${status.total.review} unsure · ${status.total.unmatched} missing so far` }] : [])]} />
-  {#if !loading && providerOptions.length > 1}
-    <SegmentedNav variant="segments" items={providerOptions} active={providerId} label="Music service" onchange={changeProvider} />
-  {/if}
-  {#if !loading && providerAccounts.length}
-    <SelectField value={accountId} options={providerAccounts.map(item => ({ value: item.id, label: item.displayName }))} label={`${providerName} account`} disabled={busy} onchange={changeAccount} />
-  {/if}
-  <ol class="import-steps" aria-label="Import progress">
-    {#each ["Choose", "Match", "Review", "Done"] as label, index}
-      <li class:current={step === index} aria-current={step === index ? "step" : undefined}>{#if index < step}<Check size={16} aria-hidden="true" />{/if}{label}</li>
-    {/each}
-  </ol>
+  <div class="import-toolbar">
+    {#if !loading}
+      <SegmentedNav variant="segments" items={providerOptions} active={providerId} label="Music service" onchange={changeProvider} />
+    {/if}
+    <PageStatus label="Import status" items={[{ label: "Nothing changes in Apple Music or Spotify." }]} />
+  </div>
   {#if loading}<RowsSkeleton count={5} />
   {:else}
-    {#if error && !accounts.length && !runId}
-      <ErrorState title="Your accounts could not load" detail={error} onretry={load} />
-    {:else if error}<p class="notice-error" role="alert">{error}</p>{/if}
-    {#if (!status || runState === "choosing") && (accounts.length || runId || !error)}
-      {#if !accounts.length && !runId && !error}
-        <EmptyState title="Connect Spotify or Apple Music first.">{#snippet icon()}<Check size={24} />{/snippet}{#snippet action()}<Button href="#/integrations/services">Connect an account</Button>{/snippet}</EmptyState>
-      {:else if !runId}
-        <article class="import-section"><div class="import-body">
-          <Button disabled={busy || !accountId} onclick={findMusic}>Find my music</Button>
-        </div></article>
-      {/if}
-      {#if runId}
-        <article class="import-section" aria-label="Choose your music">
-          <header><h3>Choose your music</h3><div class="import-actions"><Button variant="text" disabled={busy} onclick={() => selected = Object.fromEntries(choices.map(item => [item.sourceId, true]))}>Select all</Button><Button variant="outline" disabled={busy} onclick={() => selected = {}}>Clear</Button></div></header>
-          {#if cursor}<p class="import-count-note">Counts so far. Show more playlists to include the rest.</p>{/if}
-          <section class="import-kind-counts" aria-label="Counts by kind">{#each kinds as kind}<div><strong>{choices.some(item => item.kind === kind.id && item.count == null) ? "?" : kind.count.toLocaleString()}</strong><small>{kind.label}</small></div>{/each}</section>
-          <div class="import-kind-filters"><FilterSegments label="Import kinds" bind:value={kindFilter} storageKey="allstarr.library.import.kind" options={[{ id: "all", label: "All", count: choices.length }, ...kinds]} /></div>
-          {#each choices.filter(item => kindFilter === "all" || item.kind === kindFilter) as item (item.sourceId)}
-            <div class="import-choice">
-              <label class="import-selection"><Checkbox aria-label={`Select ${collectionName(item.kind, item.name, providerId)}`} checked={!!selected[item.sourceId]} disabled={busy} onCheckedChange={value => selected[item.sourceId] = value === true} />
-                <MediaArtwork url={item.artworkUrl} /><span><strong>{collectionName(item.kind, item.name, providerId)}</strong><small>{item.count === null ? "Size unknown" : collectionCount(item.count, item.kind)}</small>{#if item.kind === "liked-songs"}<small>Become hearts</small>{/if}</span></label>
-              {#if item.kind === "playlist"}<label class="import-sync"><span>Keep in sync</span><span class="settings-toggle"><Checkbox aria-label={`Keep ${item.name} in sync`} checked={!!sync[item.sourceId]} disabled={busy} onCheckedChange={value => sync[item.sourceId] = value === true} /></span></label>{/if}
+    {#if error}<ErrorState title={accounts.length ? "Your import needs attention" : "Your accounts could not load"} detail={error} onretry={!accounts.length ? load : runId && runState !== "choosing" ? refresh : findMusic} />{/if}
+    {#if !providerAccounts.length && !runId && !error}
+      <EmptyState title={`Connect ${providerName} first.`}>{#snippet icon()}<Check size={24} />{/snippet}{#snippet action()}<Button href="#/integrations/services">Connect an account</Button>{/snippet}</EmptyState>
+    {:else if accounts.length || runId}
+      <ol class="import-steps" class:running={step > 0} aria-label="Import progress">
+        <li class="import-step import-account" class:done={accountVerified || !!runId}>
+          <span class="import-step-marker">{#if accountVerified || runId}<Check size={16} aria-hidden="true" />{:else}1{/if}</span>
+          <div class="import-step-content">
+            <div class="import-account-heading"><div><h3>Account</h3><small>{accountVerified ? "Account verified" : runId ? "Connected account" : "Checking your account…"}</small></div>
+              {#if providerAccounts.length}<SelectField value={accountId} options={providerAccounts.map(item => ({ value: item.id, label: item.displayName }))} label={`${providerName} account`} disabled={busy} onchange={changeAccount} />{/if}
             </div>
-          {/each}
-          <div class="import-body">
-            {#if cursor}<Button variant="secondary" disabled={busy} onclick={() => act(() => discover(true), "More playlists could not be loaded. Try again.")}>Show more playlists</Button>{/if}
-            {#if !choices.length}<Button variant="secondary" disabled={busy} onclick={findMusic}>Find my music</Button>{/if}
-            <small>Keep in sync updates the playlist when it changes in your connected service. Otherwise it's copied once.</small>
-            {#if unavailableCollectionsLine(unsupported, providerId)}<small>{unavailableCollectionsLine(unsupported, providerId)}</small>{/if}
-            <p>{countLabel(selectedSongs, "song")} selected{cursor ? " · more playlists available" : ""}. Matching runs in the background; you can leave this page.</p>
-            <Button disabled={busy || !selectedCount} onclick={() => act(async () => {
-              await migrations.choose(runId, choices.filter(item => selected[item.sourceId]).map(item => ({ SourceId: item.sourceId, KeepInSync: item.kind === "playlist" && !!sync[item.sourceId] })));
-              await refresh();
-            }, "Your selection could not be saved. Try again.")}>Start import ({selectedCount} selected)</Button>
           </div>
-        </article>
+        </li>
+        <li class="import-step" class:current={step === 0} class:done={step > 0} aria-current={step === 0 ? "step" : undefined}>
+          <span class="import-step-marker">{#if step > 0}<Check size={16} aria-hidden="true" />{:else}2{/if}</span>
+          <article class="import-step-content import-section" aria-label="Choose your music">
+            <header><h3>Choose what to bring</h3>{#if step > 0}<small>{countLabel(collections.length, "collection")} selected</small>{/if}</header>
+            {#if !status || runState === "choosing"}
+              <section class="import-kind-counts" aria-label="Counts by kind">
+                {#each kinds as kind}
+                  <label class="import-kind" class:selected={kindChecked(kind.id)}>
+                    <Checkbox aria-label={`Bring ${kind.label}`} checked={kindChecked(kind.id)} indeterminate={kindPartial(kind.id)} disabled={busy || !choices.some(item => item.kind === kind.id)} onCheckedChange={value => selectKind(kind.id, value === true)} />
+                    <strong>{unsupported.some(item => item.kind === kind.id) ? "—" : choices.some(item => item.kind === kind.id && item.count == null) ? "?" : kind.count.toLocaleString()}</strong><small>{kind.label}</small>
+                  </label>
+                {/each}
+              </section>
+              {#if cursor}<p class="import-count-note">Counts so far. Show more playlists to include the rest.</p>{/if}
+              <div class="import-settings">
+                <div class="import-setting"><div><label for="import-local-only"><strong>Only songs I can play from my library</strong></label><small id="import-local-only-detail">Local-only collection imports are not available yet.</small></div><Switch id="import-local-only" aria-label="Only songs I can play from my library" aria-describedby="import-local-only-detail" checked={false} disabled /></div>
+                <div class="import-setting"><div><label for="import-make-playlists"><strong>Make playlists in {backend}</strong></label><small id="import-playlists-detail">{makePlaylists ? "Each imported playlist appears in your apps" : "Imported playlists stay in Allstarr"}</small></div><Switch id="import-make-playlists" aria-label={`Make playlists in ${backend}`} aria-describedby="import-playlists-detail" bind:checked={makePlaylists} disabled={busy} /></div>
+              </div>
+              <details class="import-collection-details">
+                <summary>Choose individual collections</summary>
+                <div class="import-actions"><Button variant="text" disabled={busy} onclick={() => selected = Object.fromEntries(choices.map(item => [item.sourceId, true]))}>Select all</Button><Button variant="text" disabled={busy} onclick={() => selected = {}}>Clear</Button></div>
+                {#each choices as item (item.sourceId)}
+                  <div class="import-choice">
+                    <label class="import-selection"><Checkbox aria-label={`Select ${collectionName(item.kind, item.name, providerId)}`} checked={!!selected[item.sourceId]} disabled={busy} onCheckedChange={value => selected[item.sourceId] = value === true} />
+                      <MediaArtwork url={item.artworkUrl} /><span><strong>{collectionName(item.kind, item.name, providerId)}</strong><small>{item.count === null ? "Size unknown" : collectionCount(item.count, item.kind)}</small>{#if item.kind === "liked-songs"}<small>Become hearts</small>{/if}</span></label>
+                    {#if item.kind === "playlist"}<label class="import-sync"><span>Keep in sync</span><Checkbox aria-label={`Keep ${item.name} in sync`} checked={!!sync[item.sourceId]} disabled={busy} onCheckedChange={value => sync[item.sourceId] = value === true} /></label>{/if}
+                  </div>
+                {/each}
+              </details>
+              {#if cursor}<Button variant="secondary" disabled={busy} onclick={() => act(() => discover(true), "More playlists could not be loaded. Try again.")}>Show more playlists</Button>{/if}
+              {#if !choices.length && !busy && !error}<EmptyState title="No collections found" description="Try refreshing your connected account." />{/if}
+              {#if unavailableCollectionsLine(unsupported, providerId)}<small>{unavailableCollectionsLine(unsupported, providerId)}</small>{/if}
+            {/if}
+          </article>
+        </li>
+        <li class="import-step" class:current={step === 1 || step === 2} class:done={step === 3} aria-current={step === 1 || step === 2 ? "step" : undefined}>
+          <span class="import-step-marker">{#if step === 3}<Check size={16} aria-hidden="true" />{:else}3{/if}</span><div class="import-step-content"><h3>Match</h3><small>Allstarr finds each song; you review only the unsure ones</small></div>
+        </li>
+        <li class="import-step" class:current={step === 3} aria-current={step === 3 ? "step" : undefined}><span class="import-step-marker">4</span><div class="import-step-content"><h3>Done</h3><small>See what came over and what didn't</small></div></li>
+      </ol>
+      {#if !status || runState === "choosing"}
+        <div class="import-start"><p>{selectionSummary}{cursor ? " · more playlists available" : ""}. This runs in the background; you can leave this page.</p><Button disabled={busy || !selectedCount || !accountVerified} onclick={startImport}>{busy ? "Starting import…" : "Start import"}</Button></div>
       {/if}
     {/if}
     {#if status && (step === 1 || interrupted)}
@@ -359,7 +408,7 @@
         <p>You can leave this page. It keeps going and shows in <a href="#/activity">Activity</a>.</p>
         {#each collections as item}
           <div><strong>{collectionName(item.collection.kind, item.collection.name, providerId)}</strong><small>{collectionStateLabel(interrupted && item.collection.state !== "applied" ? runState : item.collection.state)} · {item.counts.accepted} of {item.counts.selected} found</small>
-            {#if item.collection.error}<p>{migrationError(item.collection.error, status.run.providerId)}</p>{/if}</div>
+            {#if item.collection.error}<ErrorState title="This collection needs attention" detail={migrationError(item.collection.error, status.run.providerId)} />{/if}</div>
         {/each}
         {#if status.total.review > 0}<section class="import-unsure" aria-label="Unsure so far"><h3>Unsure so far</h3>
           {#each collections as collection}{#each (pages[collection.id] ?? []).filter(song => Boolean(song.preview) && needsReview(song)) as song (song.sourceEntryId)}
@@ -446,7 +495,7 @@
             </Button>
           {/each}
           {#if !selectedResource.resource.candidates.length}<p>No matches found. You can skip this one and keep moving your other music.</p>{/if}
-          {#if resourceError}<p class="notice-error" role="alert">{resourceError}</p>{/if}
+          {#if resourceError}<ErrorState title="Your choice could not be saved" detail={resourceError} />{/if}
         </div>
         <footer class="dialog-actions"><Dialog.Close class={buttonVariants({ variant: "text" })} disabled={resourceSaving}>Cancel</Dialog.Close><Button variant="outline" disabled={resourceSaving} onclick={() => saveResource()}>Skip this one</Button></footer>
       {/if}
@@ -461,7 +510,25 @@
   .import-section { min-width: 0; }
   .import-section > header { padding-bottom: var(--space-3); }
   .import-count-note { font-size: var(--text-xs); color: var(--color-ink-muted); }
-  .import-kind-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); padding-block: var(--space-5); }.import-kind-counts > div { display: grid; gap: var(--space-2); padding: var(--space-3); background: var(--color-panel-raised); border-radius: var(--radius-md); }.import-kind-counts strong { font-size: 1.5rem; font-variant-numeric: tabular-nums; }.import-kind-filters { margin-bottom: var(--space-3); }.import-unsure { width: 100%; min-width: 0; }.import-unsure h3 { margin-bottom: var(--space-3); }
+  .import-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+  .import-kind-counts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); }
+  .import-kind { display: grid; gap: var(--space-1); align-content: start; padding: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--color-panel); cursor: pointer; min-width: 0; }
+  .import-kind.selected { border-color: var(--color-signal); }
+  .import-kind strong { font-size: 1.5rem; line-height: 1.2; font-variant-numeric: tabular-nums; }
+  .import-kind small { overflow-wrap: anywhere; }
+  .import-settings { border: 1px solid var(--color-edge); border-radius: var(--radius-md); overflow: hidden; }
+  .import-setting { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-4); }
+  .import-setting + .import-setting { border-top: 1px solid var(--color-edge); }
+  .import-setting > div { min-width: 0; overflow-wrap: anywhere; }
+  .import-setting strong { font-size: var(--text-sm); font-weight: 600; }
+  .import-setting :global(.ui-switch) { flex: none; }
+  .import-start { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); }
+  .import-start p { max-width: 42rem; color: var(--color-ink-muted); font-size: var(--text-sm); }
+  .import-start :global(button) { flex: none; }
+  .import-collection-details { border-top: 1px solid var(--color-edge); }
+  .import-collection-details > summary { padding: var(--space-2) 0; font-size: var(--text-sm); color: var(--color-ink-muted); }
+  .import-unsure { width: 100%; min-width: 0; }
+  .import-unsure h3 { margin-bottom: var(--space-3); }
   @media (max-width: 600px) { .import-kind-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); } }
 
   .import-resource-options { display: grid; gap: var(--space-3); padding: var(--space-4); }
@@ -470,13 +537,22 @@
   :global(.import-resource-option .media-art) { width: 44px; height: 44px; flex: none; }
   :global(.import-resource-option small) { color: var(--color-ink-muted); font-size: var(--text-sm); font-weight: 400; }
   :global(.import-resource-option .import-resource-action) { margin-left: auto; }
-  .import-page { max-width: none; padding: var(--space-5); }
+  .import-page { max-width: none; padding: var(--space-4) 0; }
   .import-section > .import-body { padding-inline: 0; }
   .import-page h3, .import-page p { margin: 0; }
   .import-page small { display: block; color: var(--color-ink-muted); font-size: var(--text-sm); }
-  .import-steps { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
-  .import-steps li { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; color: var(--color-ink-muted); padding: 0 var(--space-3); border-radius: 999px; font-size: var(--text-sm); }
-  .import-steps .current { color: var(--md-sys-color-on-secondary-container); background: var(--md-sys-color-secondary-container); font-weight: 600; }
+  .import-steps { margin: 0; padding: 0; list-style: none; background: var(--color-panel); border: 1px solid var(--color-edge); border-radius: var(--radius-lg); overflow: hidden; }
+  .import-step { display: flex; align-items: start; gap: var(--space-4); min-width: 0; padding: var(--space-5); }
+  .import-step + .import-step { border-top: 1px solid var(--color-edge); }
+  .import-step-marker { display: grid; place-content: center; flex: none; width: 28px; height: 28px; margin-top: 1px; border: 1px solid var(--color-edge); border-radius: 50%; font-size: var(--text-sm); color: var(--color-ink-muted); font-variant-numeric: tabular-nums; }
+  .import-step.current > .import-step-marker { background: var(--color-signal); border-color: var(--color-signal); color: var(--color-on-signal); }
+  .import-step.done > .import-step-marker { color: var(--color-signal); border-color: var(--color-signal); }
+  .import-step-content { display: grid; gap: var(--space-3); min-width: 0; flex: 1; }
+  .import-step-content h3 { font-size: var(--text-md); font-weight: 600; }
+  .import-step-content > header { padding-bottom: 0; }
+  .import-account-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-5); }
+  .import-account-heading > div { min-width: 0; }
+  .import-account-heading :global(.select-root) { width: min(20rem, 52%); min-width: 0; }
   .import-body { display: grid; justify-items: start; gap: var(--space-4); padding: var(--space-5) var(--space-6); min-width: 0; }
   .import-body > :global(.select-root), .import-body > :global([data-slot="progress"]) { width: 100%; }
   .import-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
@@ -496,7 +572,15 @@
   .import-stat strong { font-size: clamp(1.5rem, 3vw, 2rem); font-weight: 600; line-height: 1.2; }
   summary { padding: var(--space-4) var(--space-6); cursor: pointer; min-height: 44px; overflow-wrap: anywhere; }
   @media (max-width: 40rem) {
-    .import-page { padding: var(--space-3); }
+    .import-page { padding: var(--space-3) 0; }
+    .import-step { gap: var(--space-2); padding: var(--space-3); }
+    .import-step-marker { width: 24px; height: 24px; font-size: var(--text-xs); }
+    .import-account-heading { flex-wrap: wrap; gap: var(--space-2); }
+    .import-account-heading :global(.select-root) { width: 100%; }
+    .import-setting { gap: var(--space-3); padding: var(--space-3); }
+    .import-start { flex-wrap: wrap; gap: var(--space-3); }
+    .import-start :global(button) { width: 100%; }
+    .import-steps.running .import-step:not(.current) { display: none; }
     .import-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .import-choice { flex-wrap: wrap; }
     .import-selection { flex-basis: 100%; }

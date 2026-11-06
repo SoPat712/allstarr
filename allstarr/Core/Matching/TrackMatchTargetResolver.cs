@@ -67,7 +67,7 @@ public sealed class TrackMatchTargetResolver(
     }
 
     public async Task EnrichAsync(TrackMatchActor actor, IReadOnlyCollection<TrackMatchTargetLookup> lookups,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, bool targetMetadataOnly = false)
     {
         var visible = lookups.Where(item => actor.IsAdministrator || item.OwnerUserId == actor.UserId).ToArray();
         if (visible.Length == 0) return;
@@ -119,7 +119,7 @@ public sealed class TrackMatchTargetResolver(
             var target = lookup.Target;
             if (RecordingId(lookup) is { } recordingId)
             {
-                if (recordings.TryGetValue(recordingId, out var recording))
+                if (!targetMetadataOnly && recordings.TryGetValue(recordingId, out var recording))
                 {
                     target.Title ??= Nonempty(recording.Title);
                     target.DurationMilliseconds ??= recording.DurationMilliseconds;
@@ -127,11 +127,13 @@ public sealed class TrackMatchTargetResolver(
                         .OrderBy(item => item.Value, StringComparer.Ordinal).Select(item => item.Value).FirstOrDefault();
                 }
                 var stored = snapshots.GetValueOrDefault((recordingId, lookup.OwnerUserId)) ?? [];
+                if (targetMetadataOnly) stored = stored.Where(item =>
+                    item.ProviderId == target.ProviderId && item.ExternalId == target.ExternalId).ToArray();
                 foreach (var item in stored.OrderByDescending(item =>
                              item.ProviderId == target.ProviderId && item.ExternalId == target.ExternalId))
                     FillJson(target, item.Snapshot.PayloadJson, includeAlbum:
                         item.ProviderId == target.ProviderId && item.ExternalId == target.ExternalId);
-                if (lookup.CanonicalRecordingId == recordingId &&
+                if (!targetMetadataOnly && lookup.CanonicalRecordingId == recordingId &&
                     lookup.SourceSnapshot is { } source && source.OwnerUserId == lookup.OwnerUserId)
                     FillJson(target, source.PayloadJson, includeAlbum: false);
             }

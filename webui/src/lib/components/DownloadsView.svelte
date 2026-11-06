@@ -4,7 +4,6 @@
   import { onMount } from "svelte";
   import { Download } from "@lucide/svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
-  import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   import LibraryDownloadRow from "$lib/components/LibraryDownloadRow.svelte";
@@ -20,7 +19,7 @@
   } from "$lib/api";
   import SearchField from "$lib/components/SearchField.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import { filterDownloads, type DownloadSort } from "$lib/downloads";
+  import { filterDownloads, groupDownloadSongs, type DownloadSort } from "$lib/downloads";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { pathValue } from "$lib/settings";
   import { relativeTime } from "$lib/activity";
@@ -60,9 +59,9 @@
   const label = $derived(cached ? "Cached" : "Kept");
   const allFiles = $derived(data?.files ?? []);
   const allGroups = $derived(groupSongs(allFiles));
-  const leavingSoonCount = $derived(allFiles.filter(leavingSoon).length);
-  const lowerQualityCount = $derived(allFiles.filter(lowerQuality).length);
-  const yourKeepsCount = $derived(allFiles.filter(file => file.explicitlyKept).length);
+  const leavingSoonCount = $derived(allGroups.filter(group => group.files.some(leavingSoon)).length);
+  const lowerQualityCount = $derived(allGroups.filter(group => group.files.some(lowerQuality)).length);
+  const yourKeepsCount = $derived(allGroups.filter(group => group.files.some(file => file.explicitlyKept)).length);
   const visible = $derived.by(() => {
     let files = filterDownloads(allFiles, query, providerFilter, sort === "lifecycle" ? "track" : sort)
       .filter(file => segment === "all" || (segment === "leaving" && leavingSoon(file)) ||
@@ -98,22 +97,7 @@
   });
   const availableProviders = $derived([...new Set(allFiles.map(file => file.provider).filter((value): value is string => Boolean(value)))].toSorted());
 
-  function groupSongs(files: ManagedDownload[]): SongGroup[] {
-    const groups = new Map<string, SongGroup>();
-    for (const file of files) {
-      const metadata = [file.artist, file.title, file.album].map(value => value?.trim().toLocaleLowerCase() || "").join("\u0001");
-      // Include metadata even with a source ID: distinct versions must not collapse by an incomplete ID alone.
-      const key = file.title && file.artist ? `${file.provider || ""}\u0001${file.externalId || ""}\u0001${metadata}` : file.path;
-      const group = groups.get(key);
-      if (group) group.files.push(file);
-      else groups.set(key, { key, files: [file] });
-    }
-    return [...groups.values()].map(group => ({ ...group, files: group.files.toSorted((left, right) => copyQuality(right) - copyQuality(left) || left.path.localeCompare(right.path)) }));
-  }
-  function copyQuality(file: ManagedDownload) {
-    return (/^(flac|alac|wav|aiff)$/i.test(file.codec) ? 1e12 : 0) +
-      (file.bitDepth ?? 0) * 1e9 + (file.sampleRateHz ?? 0) * 1e3 + (file.bitrateKbps ?? 0);
-  }
+  function groupSongs(files: ManagedDownload[]) { return groupDownloadSongs(files); }
 
   function expiry(file: ManagedDownload) {
     const timestamp = file.expiresAt ? Date.parse(file.expiresAt) : NaN;
@@ -144,7 +128,7 @@
     }
     const references = Math.max(...files.map(file => file.referenceCount ?? 0));
     if (!files.some(file => file.explicitlyKept) && !references) return files[0].publicationState === "Imported" ? "Imported original" : "No active references";
-    return `${files.some(file => file.explicitlyKept) ? "Your Keep" : "Household"}${references ? ` · ${countLabel(references, "reference")}` : ""}`;
+    return files.some(file => file.explicitlyKept) ? "Keep · you" : "Household";
   }
   function formatSize(bytes: number) {
     if (bytes < 1024) return `${bytes} B`;
@@ -260,8 +244,8 @@
 {/snippet}
 
 {#snippet songRow(file: ManagedDownload, copies: ManagedDownload[], key: string, copiesId: string)}
-  <LibraryDownloadRow {file} {copies} {storage} provider={provider(file.provider)} providerName={providerName(file.provider)}
-    quality={[...new Set(copies.map(qualityLine))].join(" · ")} warnings={warnings(copies)} lowerQuality={copies.some(lowerQuality)}
+  <LibraryDownloadRow {file} {copies} {storage} provider={provider(file.provider)} providerName={[...new Set(copies.map(copy => providerName(copy.provider)))].join(" + ")}
+    quality={[...new Set(copies.map(qualityLine))].map((line, index) => index && line.startsWith(`${file.codec} `) ? line.slice(file.codec.length + 1) : line).join(" · ")} warnings={warnings(copies)} lowerQuality={copies.some(lowerQuality)}
     size={groupSize(copies)} lifecycle={lifecycle(copies)} expanded={expanded.includes(key)} {copiesId}
     selected={panelOpen && selectedFile?.path === file.path} busy={Boolean(action)} moving={movingPaths.includes(file.path)}
     onopen={() => openSong(file)} ontoggle={copies.length > 1 ? () => toggleCopies(key) : undefined}
@@ -274,7 +258,7 @@
     <h2>{label} songs</h2>
     <div class="library-downloads-heading-actions">
       <RefreshButton class="downloads-refresh" disabled={Boolean(action)} onrefresh={refresh} />
-      {#if bulkActionCount}<Button class="danger-text" variant="text" disabled={Boolean(action)} onclick={() => confirm({ kind: "all" })}>Remove all</Button>{/if}
+      {#if cached && bulkActionCount}<Button class="danger-text" variant="text" disabled={Boolean(action)} onclick={() => confirm({ kind: "all" })}>Remove all…</Button>{/if}
     </div>
   </header>
   {#if loading}
@@ -286,14 +270,14 @@
       <PageStatus label={`${label} totals`} items={[
         { label: `${countLabel(allGroups.length, "song")}${allGroups.length !== data.managedCount ? ` · ${countLabel(data.managedCount, "copy", "copies")}` : ""} · ${data.totalSizeFormatted}`, emphasis: true },
         { label: cached ? storageMode !== "Cache" ? "Playback caching is off" : cacheDurationHours ? `Cached for ${cacheDurationHours % 24 === 0 ? countLabel(cacheDurationHours / 24, "day") : countLabel(cacheDurationHours, "hour")} after the last access` : "Temporary copies saved after streaming" : "Never removed by cache cleanup" },
-        ...(cached && leavingSoonCount ? [{ label: `${countLabel(leavingSoonCount, "copy leaves", "copies leave")} in the next day`, tone: "warn" as const }] : []),
+        ...(cached && leavingSoonCount ? [{ label: `${countLabel(leavingSoonCount, "song leaves", "songs leave")} in the next day`, tone: "warn" as const }] : []),
         ...(data.diagnosticCount ? [{ label: `${data.diagnosticCount} need review`, tone: "warn" as const }] : []),
       ]} />
     </div>
     {#if error}<div class="downloads-state"><ErrorState title="Managed audio may be stale" detail={error} onretry={refresh} /></div>{/if}
     <div class="downloads-controls">
       <FilterSegments bind:value={segment} storageKey={`library.${storage}.filter`} label={`${label} song filters`} options={[
-        { id: "all", label: "All", count: allFiles.length },
+        { id: "all", label: "All", count: allGroups.length },
         cached ? { id: "leaving", label: "Leaving soon", count: leavingSoonCount } : { id: "explicit", label: "Your Keeps", count: yourKeepsCount },
         { id: "lower", label: "Lower quality", count: lowerQualityCount },
       ]} />
@@ -343,7 +327,7 @@
         {#snippet action()}{#if !cached}<Button variant="outline" href="#/library/cached">Browse cached songs</Button>{/if}{/snippet}
       </EmptyState>
     {/if}
-    {#if cached}<footer class="track-cache-link"><Badge state={storageMode === "Cache" ? "healthy" : "suggested"}>Playback cache {storageMode === "Cache" ? "on" : "off"}</Badge><Button variant="text" href="#/settings/storage">Cache settings</Button></footer>{/if}
+    {#if cached}<footer class="track-cache-link">{#if storageMode !== "Cache"}<span>Playback cache off</span>{/if}<Button variant="text" href="#/settings/storage">Cache settings</Button></footer>{/if}
   {/if}
 </section>
 
@@ -368,55 +352,55 @@
   disabled={Boolean(action)} closeOnConfirm={false} error={removalError} onConfirm={remove} />
 
 <style>
-  .library-downloads { min-width: 0; padding: var(--space-5); }
+  .library-downloads { min-width: 0; }
   .library-downloads-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding-bottom: var(--space-3); }
-  h2 { margin: 0; font-size: 1.5rem; font-weight: 600; }
+  h2 { margin: 0; font-size: 1.5rem; }
   .library-downloads-heading-actions { display: flex; flex: 0 0 auto; align-items: center; gap: var(--space-2); }
   .library-downloads-heading-actions :global(.danger-text) { color: var(--danger); }
-  :global(.downloads-refresh span) { display: none; }
   .downloads-status { padding-bottom: var(--space-4); }
   .downloads-state, .downloads-loading { padding-block: var(--space-4); }
-  .downloads-controls { display: grid; min-width: 0; gap: var(--space-3); padding-bottom: var(--space-4); }
-  .downloads-search-sort { display: flex; min-width: 0; align-items: center; gap: var(--space-2); }
+  .downloads-controls { display: flex; align-items: center; flex-wrap: wrap; min-width: 0; gap: var(--space-3); padding-bottom: var(--space-4); }
+  .downloads-search-sort { display: flex; flex: 1 1 360px; min-width: 0; align-items: center; gap: var(--space-2); }
   .downloads-search-sort :global(.search-field) { flex: 1 1 0; min-width: 0; }
-  .downloads-search-sort :global(.search-field input) { width: 100%; min-width: 0; height: var(--control-md); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; }
   .downloads-search-sort :global(.select-root) { flex: 0 0 auto; }
   .downloads-search-sort :global(.select-trigger) { width: auto; gap: var(--space-2); padding-inline: var(--space-2); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; white-space: nowrap; }
-  .downloads-table-scroll { min-width: 0; overflow-x: auto; }
+  .downloads-table-scroll { container: downloads / inline-size; min-width: 0; }
   .library-downloads-table { width: 100%; min-width: 800px; table-layout: fixed; border-collapse: collapse; text-align: left; }
   th { border-bottom: 1px solid var(--color-edge); padding: var(--space-2) var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 500; }
   th button { min-height: var(--control-sm); border: 0; padding: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: left; white-space: nowrap; }
   th[aria-sort="ascending"] button, th[aria-sort="descending"] button { color: var(--color-signal-text); font-weight: 600; }
-  .song-heading { width: 32%; padding-left: var(--space-4); }
-  .size-heading { width: 84px; text-align: right; }
-  .actions-heading { width: 150px; }
+  .song-heading { padding-left: var(--space-4); }
+  .source-heading { width: 140px; }
+  .lifecycle-heading { width: 120px; }
+  .size-heading { width: 108px; text-align: right; }
+  .quality-heading { width: 170px; }
+  .actions-heading { width: 176px; }
   .copies-row[hidden] { display: none; }
   .copies-row > td { border-bottom: 1px solid var(--color-edge); padding: var(--space-3); background: var(--color-panel-raised); }
   .copies-explanation { margin: 0 0 var(--space-2); padding-inline: var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); }
   .copies-table { min-width: 0; border: 1px solid var(--color-edge); }
   .track-cache-link { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); border-top: 1px solid var(--color-edge); padding-block: var(--space-3); }
   @media (min-width: 900px) {
-    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .library-downloads-table { min-width: 0; }
-    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .song-heading { width: auto; padding-left: var(--space-2); }
-    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .source-heading { width: 100px; }
-    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .quality-heading { width: 90px; }
-    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .lifecycle-heading, :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .size-heading, :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.lifecycle-cell), :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.size-cell) { display: none; }
-    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open th, :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.library-download-row > td) { padding-inline: var(--space-2); }
-    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.library-download-row > td), :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.song-description > strong) { font-size: var(--text-xs); }
-    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.song-copy) { gap: var(--space-2); }
-    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.library-download-art) { width: 36px; height: 36px; }
-    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.source-name) { flex-wrap: wrap; gap: var(--space-1); overflow-wrap: normal; }
-    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.library-download-actions [data-slot="button"]) { padding-inline: var(--space-2); font-size: var(--text-xs); }
-    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.library-download-actions [data-slot="button"] svg) { display: none; }
-    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.library-download-menu) { width: 32px; min-width: 32px; height: 32px; min-height: 32px; }
+    @container downloads (max-width: 850px) {
+      .library-downloads-table { min-width: 0; }
+      .song-heading { width: auto; padding-left: var(--space-2); }
+      .source-heading { width: 100px; }
+      .quality-heading { width: 90px; }
+      .lifecycle-heading, .size-heading, :global(.lifecycle-cell), :global(.size-cell) { display: none; }
+      th, :global(.library-download-row > td) { padding-inline: var(--space-2); }
+      :global(.library-download-row > td), :global(.song-title > strong) { font-size: var(--text-xs); }
+      :global(.song-copy) { gap: var(--space-2); }
+      :global(.library-download-art) { width: 36px; height: 36px; }
+      :global(.source-name) { flex-wrap: wrap; gap: var(--space-1); overflow-wrap: normal; }
+      :global(.library-download-actions [data-slot="button"]) { padding-inline: var(--space-2); font-size: var(--text-xs); }
+      :global(.library-download-actions [data-slot="button"] svg) { display: none; }
+      :global(.library-download-menu) { width: 32px; min-width: 32px; height: 32px; min-height: 32px; }
+    }
   }
   @media (max-width: 899px) {
-    .library-downloads { padding: var(--space-3); }
     .library-downloads-heading { flex-wrap: wrap; padding-bottom: var(--space-3); }
     h2 { font-size: var(--text-lg); }
     .library-downloads-heading-actions { margin-left: auto; gap: var(--space-1); }
-    .library-downloads-heading-actions :global([data-slot="button"]) { min-height: 44px; }
-    .library-downloads-heading-actions :global(.downloads-refresh) { min-width: 44px; }
     .downloads-controls { padding-bottom: var(--space-3); }
     .downloads-search-sort { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); justify-content: stretch; }
     .downloads-search-sort :global(.search-field) { grid-column: 1 / -1; min-width: 0; }
@@ -426,7 +410,6 @@
     .library-downloads-table thead { display: none; }
     .copies-row, .copies-row > td { display: block; }
     .copies-row > td { padding: var(--space-2); }
-    .track-cache-link :global([data-slot="button"]) { min-height: 44px; }
     .track-cache-link { flex-wrap: wrap; }
   }
 </style>

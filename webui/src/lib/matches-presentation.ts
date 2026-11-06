@@ -57,7 +57,12 @@ export function comparisonRows(source: SongFacts, target: SongFacts | null) {
     let verdict = "Can't compare";
     if (left != null && left !== "" && right != null && right !== "") {
       verdict = normalized(String(left)) === normalized(String(right)) ? "Same" : "Different";
-      if (field === "durationMilliseconds" && left !== right && Math.abs(Number(left) - Number(right)) <= 1000) verdict = "Close";
+      if (field === "title" && verdict === "Different" &&
+        normalized(String(left).replace(/\([^)]*\)|\[[^\]]*\]/g, "")) === normalized(String(right).replace(/\([^)]*\)|\[[^\]]*\]/g, ""))) verdict = "Close";
+      if (field === "durationMilliseconds" && left !== right) {
+        const delta = Number(right) - Number(left);
+        verdict = Math.abs(delta) <= 1000 ? "Close" : `${delta > 0 ? "+" : "-"}${Math.round(Math.abs(delta) / 1000)} s`;
+      }
     }
     const display = (input: typeof left) => input == null || input === "" ? "Not provided"
       : field === "durationMilliseconds" ? formatDuration(Number(input)) : String(input);
@@ -66,7 +71,22 @@ export function comparisonRows(source: SongFacts, target: SongFacts | null) {
 }
 
 const evidence: Record<string, string> = {
-  title: "Title", artist: "Artist", primaryArtist: "Main artist", versionTags: "Version", titleAnnotations: "Title extras", album: "Album", duration: "Length", artwork: "Cover",
+  albumArtist: "Album artist", weakDurationAlbumAgreement: "Album confirms the recording", title: "Title", artist: "Artist", primaryArtist: "Main artist", versionTags: "Version", titleAnnotations: "Title extras", album: "Album", duration: "Length", artwork: "Cover",
+  title_strong: "Title is a strong match", title_partial: "Title partly matches",
+  artist_strong: "Artist is a strong match", artist_partial: "Artist partly matches",
+  album_strong: "Album is a strong match", album_partial: "Album partly matches",
+  album_artist_exact: "Album artist matches exactly", album_artist_strong: "Album artist is a strong match", album_artist_partial: "Album artist partly matches",
+  duration_partial: "Length partly matches", duration_exceeds_tolerance: "Length differs more than expected", duration_mismatch: "Different length",
+  title_annotation_mismatch: "Different title extras", title_annotation_mismatch_review: "Title extras need a look",
+  below_accept_threshold_review: "Confidence needs a look", below_suggestion_threshold: "No confident suggestion", weak_artist_evidence_review: "Artist needs a look",
+  explicitness_mismatch_review: "Clean or explicit version needs a look", explicit_edit_of_clean: "Explicit version of a clean song", clean_version_available: "A clean version is available",
+  weak_source_duration: "Playlist length may be inaccurate", single_album_recording_corroborated: "Album confirms the recording", source_album_marker_confirmation: "Album version needs confirmation", source_album_vocal_evidence: "Album confirms the vocal version",
+  provider_track_id_exact: "Same service recording", canonical_recording_id_exact: "Same known recording", isrc_conflict: "Different ISRC",
+  musicbrainz_recording_id_exact: "Same MusicBrainz recording", musicbrainz_recording_isrc_exact: "MusicBrainz recording and ISRC match", musicbrainz_recording_isrc_conflict: "MusicBrainz recording has a different ISRC", odesli_alias_exact: "Linked recording identity matches",
+  backing_recording_mismatch: "Different backing recording", continuous_mix_excerpt: "Excerpt from a continuous mix", cover_artist_mismatch: "Cover by a different artist",
+  field_score: "Compared recording details", ambiguous_top_candidates: "Several versions are close", no_indexed_candidate: "No recording found",
+  accepted_route_priority_selected: "Uses your preferred source", local_priority_window_selected: "Your library is preferred", provider_priority_window_selected: "Uses your preferred service",
+  manual_override_pinned: "Chosen by you", manual_override_rejected_all: "You rejected these versions", manual_override_target_not_visible: "Your chosen version is unavailable",
   title_exact: "Title matches exactly", title_match: "Title matches", title_case_folded: "Title matches ignoring capitals",
   title_normalized: "Title matches after punctuation is removed", title_decorators_ignored: "Title matches without release labels", title_fuzzy: "Title is similar",
   artist_exact: "Artist matches exactly", artist_match: "Artist matches", album_exact: "Album matches exactly", album_match: "Album matches",
@@ -75,7 +95,7 @@ const evidence: Record<string, string> = {
   limited_recording_metadata: "Some recording details are missing", clean_edit_of_explicit: "Clean version of an explicit song",
 };
 export function evidenceSentence(key: string) {
-  return Object.hasOwn(evidence, key) ? evidence[key] : key;
+  return Object.hasOwn(evidence, key) ? evidence[key] : /[ _]/.test(key) && !key.includes("_") ? key : "Compare the recording details before choosing";
 }
 export const candidateReason = (candidate: Pick<MatchCandidate, "reasons" | "warnings">) =>
   [...candidate.warnings ?? [], ...candidate.reasons ?? []].slice(0, 2).map(evidenceSentence).join(" · ") || "Compare the recording details before choosing";

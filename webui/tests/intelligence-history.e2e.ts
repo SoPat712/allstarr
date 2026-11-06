@@ -85,6 +85,7 @@ async function mockHistory(page: Page, items: HistoryImport[] = []) {
 
 async function openHistory(page: Page) {
   await page.goto("/#/intelligence?section=stats");
+  await page.locator(".recap-imports > summary").click();
   await expect(page.getByRole("heading", { name: "Listening history from other services", exact: true })).toBeVisible();
 }
 async function upload(page: Page, files: typeof file | (typeof file)[] = file) {
@@ -206,6 +207,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await capture(page, "history-batch-collapsed", width, theme);
     state.listLimit = 2;
     await page.reload();
+    await page.locator(".recap-imports > summary").click();
     await expect(card).toContainText("Spotify · 3 files · 2016–2026 · 144,630 plays");
     await expect(card.getByRole("button", { name: "Delete", exact: true })).toHaveCount(1);
     await card.locator("summary").filter({ hasText: "Show files" }).click();

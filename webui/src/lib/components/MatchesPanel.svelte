@@ -30,6 +30,9 @@
     onRematch: (match: MatchReviewItem) => void; onPrevious?: () => void; onNext?: () => void;
     authorities?: Snippet; acceptRequest?: number; lyricsRequest?: number; playlists?: string[];
   } = $props();
+  let loadedMatch = $state<MatchReviewItem | null>(null);
+  let loadingFacts = $state(false);
+  let factsRequest = 0;
   let prepared: MatchReviewItem | null = null;
   let query = $state("");
   let results = $state<MatchTarget[]>([]);
@@ -67,7 +70,7 @@
     const target = fromCandidate(candidate);
     return target && target.id === preview?.id && target.externalProvider === preview?.externalProvider;
   }));
-  const current = $derived(match ? currentSong(match) : null);
+  const current = $derived(loadedMatch ? currentSong(loadedMatch) : match ? currentSong(match) : null);
   const better = $derived(candidates.filter((item, index) => !match?.candidates.filter(candidate => fromCandidate(candidate) != null)[index]?.isCurrent &&
     !(current && (item.externalProvider || "local") === current.providerId && (item.externalId || item.id) === current.identity)));
   const shownResults = $derived(providerFilter ? results.filter(item => (item.externalProvider || "local") === providerFilter) : results);
@@ -75,9 +78,10 @@
   const editable = $derived(Boolean(match && scopes.some(item => item.id === scope && !item.disabled)));
   const comparison = $derived(match ? comparisonRows(match, preview ? targetSong(preview) : null) : []);
   $effect(() => {
-    if (!open) { prepared = null; return; }
+    if (!open) { prepared = null; factsRequest++; loadingFacts = false; return; }
     if (!match || prepared === match) return;
     prepared = match;
+    loadedMatch = match;
     searchVersion++;
     query = match.title || ""; results = []; searched = false; searching = false; error = ""; providerFilter = ""; showLyrics = false; searchOpen = false;
     scope = allowedAuthorityScopes(match).includes("household") ? "household" : "personal";
@@ -85,6 +89,24 @@
     const retained = target && candidates.find(item => item.id === target.identity && (item.externalProvider || "local") === target.providerId);
     preview = target ? { ...retained, ...target, id: target.identity, title: target.title || "", externalProvider: target.providerId === "local" ? null : target.providerId,
       externalId: target.providerId === "local" ? null : target.identity, confidence: match.confidence ?? retained?.confidence } : candidates[0] ?? null;
+    const request = ++factsRequest;
+    const snapshotId = match.externalSnapshotId;
+    const initialPreview = preview;
+    loadingFacts = true;
+    void matchReview.current(snapshotId).then(response => {
+      const target = response.target;
+      const identity = target?.isLocal ? target.libraryTrackId : target?.externalId;
+      const fresh = target && identity && match && (target.isLocal || target.providerId) ? {
+        ...match, target: { ...target, providerId: target.isLocal ? "local" : target.providerId!, externalId: identity }, localTrack: null,
+      } : null;
+      if (request !== factsRequest || !open || match?.externalSnapshotId !== snapshotId || !fresh) return;
+      loadedMatch = fresh;
+      const song = currentSong(fresh);
+      if (song && preview === initialPreview) preview = { ...initialPreview, ...song, id: song.identity, title: song.title || "",
+        externalProvider: song.providerId === "local" ? null : song.providerId, externalId: song.providerId === "local" ? null : song.identity };
+    }).catch(() => {
+      if (request === factsRequest) error = "Current recording details could not be refreshed. Available facts are shown.";
+    }).finally(() => { if (request === factsRequest) loadingFacts = false; });
   });
   $effect(() => { if (acceptRequest !== previousAccept) { previousAccept = acceptRequest; if (open && preview) scopeOpen = true; } });
   $effect(() => { if (lyricsRequest !== previousLyrics) { previousLyrics = lyricsRequest; if (open) showLyrics = true; } });
@@ -154,6 +176,7 @@
       <RecordingLyricsPicker recordingId={match.canonicalRecordingId} {providers} allowHousehold={allowedAuthorityScopes(match).includes("household")} />
     {:else}
       <section class="comparison-section" aria-label="Recording comparison">
+        {#if loadingFacts}<p class="preview-label" role="status">Loading current recording details…</p>{/if}
         <p class="preview-label">{preview ? `Previewing ${name(preview.externalProvider)}${preview.title?.trim() ? ` · ${preview.title}` : ""}` : "No current match"}</p>
         <table class="comparison"><thead><tr><th>Detail</th><th>Original<br /><small>Your playlist</small></th><th>Current<br /><small>Plays as</small></th><th>Verdict</th></tr></thead>
           <tbody>{#each comparison as row}<tr><th scope="row">{row.label}</th><td>{row.original}</td><td>{row.current}</td><td><span class:equal={row.verdict === "Same"}>{row.verdict}</span></td></tr>{/each}</tbody>

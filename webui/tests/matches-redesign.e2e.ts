@@ -41,6 +41,7 @@ async function fixture(page: Page, options: { needs?: boolean; administrator?: b
         stats: { total: songs.length, matched: 2, accepted: 2, automatic: 2, manualMatches: 0, manualRejections: 0, suggested: needs ? 1 : 0, ambiguous: needs ? 1 : 0, review: needs ? 2 : 0, unresolved: needs ? 1 : 0, rejected: 0, attention: needs ? 2 : 0 },
         pagination: { page: 1, pageSize: 200, total: rows.length, totalPages: 1 } };
     }
+    if (url.pathname.endsWith("/current")) body = { target: songs.find(item => url.pathname.includes(`/${item.externalSnapshotId}/`))?.target ?? null };
     if (url.pathname.endsWith("/targets/provider")) body = { tracks: [], providers: [] };
     if (url.pathname.endsWith("/updates/stream")) return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" });
     await route.fulfill({ json: body });
@@ -65,7 +66,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     const status = page.getByRole("region", { name: "Page status", exact: true });
     await expect(status).toContainText("5 songs from 2 playlists");
     await expect(status).toContainText("Matches above 88% are accepted on their own");
-    await expect(status.getByRole("img")).toHaveAttribute("aria-label", "Matched by Allstarr: 2, Chosen by you: 0, Unsure: 2, Without a match: 1");
+    await expect(page.getByRole("img", { name: /^Matched by Allstarr:/ })).toHaveAttribute("aria-label", "Matched by Allstarr: 2, Chosen by you: 0, Unsure: 2, No match: 1");
     await expect(page.getByRole("radio", { name: "Needs a look 3", exact: true })).toHaveAttribute("aria-checked", "true");
     await expect(page.locator(".mapping-row")).toHaveCount(3);
     for (const id of ["One", "Two"]) {
@@ -114,7 +115,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     const bounds = await panel.boundingBox();
     expect(bounds!.height).toBeLessThanOrEqual(900);
     if (width === 390) { expect(bounds!.width).toBe(390); expect(bounds!.y).toBe(0); }
-    else { expect(bounds!.width).toBe(480); await expect(page.locator(".mapping-rows")).toBeVisible(); }
+    else { expect(bounds!.width).toBe(420); await expect(page.locator(".mapping-rows")).toBeVisible(); }
     await page.screenshot({ path: `test-results/patterns/${width === 390 ? "phone-sheet" : "panel"}-${theme}.png` });
     await panel.getByRole("button", { name: "Nothing fits", exact: true }).click();
     const confirm = page.getByRole("alertdialog", { name: "Nothing fits?", exact: true });
@@ -299,11 +300,15 @@ test("Matches redesign keeps desktop status, rows and panel controls compact", a
   await expect(status).toHaveCSS("padding", "0px");
   await expect(status.locator(".status-items strong")).toHaveText("5 songs from 2 playlists");
   await expect(status.locator(".status-dot")).toHaveCount(0);
-  const legendLines = await status.locator(".status-legend li").evaluateAll(items => new Set(items.map(item => item.getBoundingClientRect().top)).size);
+  const legendLines = await page.locator(".match-legend li").evaluateAll(items => new Set(items.map(item => item.getBoundingClientRect().top)).size);
   expect(legendLines).toBe(1);
-  const bar = await status.getByRole("img").boundingBox();
+  const bar = await page.locator(".match-status-bar").boundingBox();
   const statusBounds = await status.boundingBox();
   expect(bar!.width).toBeCloseTo(statusBounds!.width, 0);
+  const headingBounds = await page.locator(".mapping-heading").boundingBox();
+  expect(bar!.width).toBeCloseTo(headingBounds!.width, 0);
+  const rematchBounds = await page.locator(".match-title").getByRole("button", { name: "Rematch all", exact: true }).boundingBox();
+  expect(rematchBounds!.x + rematchBounds!.width).toBeCloseTo(headingBounds!.x + headingBounds!.width, 0);
   const ink = await page.locator(".mapping-queue").evaluate(element => getComputedStyle(element).color);
   const row = page.locator('.mapping-row[data-snapshot="One"]');
   await expect(row.locator(".source-copy strong")).toHaveCSS("color", ink);
@@ -333,7 +338,11 @@ test("Matches redesign keeps desktop status, rows and panel controls compact", a
     const centers = controls.map(rect => rect.y + rect.height / 2);
     expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(1);
     const table = await page.locator(".matches-table").boundingBox(), column = await page.locator(".mapping-rows").boundingBox();
-    expect(table!.width).toBeCloseTo(column!.width, 0);
+    const edges = await page.locator(".mapping-rows").evaluate(element => {
+      const style = getComputedStyle(element);
+      return parseFloat(style.borderLeftWidth) + parseFloat(style.borderRightWidth);
+    });
+    expect(table!.width).toBeCloseTo(column!.width - edges, 0);
     const chips = await row.locator(".difference-chips span").evaluateAll(items => items.map(item => item.getBoundingClientRect().top));
     expect(new Set(chips).size).toBeLessThanOrEqual(2);
   }
@@ -401,4 +410,46 @@ test("Matches redesign keeps save failures visible while version search is colla
   await panel.getByRole("button", { name: "Use Qobuz version", exact: true }).click();
   await expect(panel.getByRole("alert")).toBeVisible();
   await expect(panel.getByRole("button", { name: "Search for another version…", exact: true })).toHaveAttribute("aria-expanded", "false");
+});
+
+
+test("Opening a match refreshes current recording facts and late facts cannot replace the next song", async ({ page }) => {
+  await fixture(page);
+  let finish!: () => void;
+  const pending = new Promise<void>(resolve => { finish = resolve; });
+  await page.route(url => url.pathname.endsWith("/current"), async route => {
+    const id = new URL(route.request().url()).pathname.split("/").at(-2)!;
+    if (id === "One") await pending;
+    const song = makeSong(id, "ambiguous", .9);
+    song.target = { ...song.target!, title: `Loaded ${id}`, album: "Actual current album" };
+    await route.fulfill({ json: { target: song.target } });
+  });
+  await page.goto("/#/library/matches");
+  const { panel } = await openSong(page);
+  await expect(panel.getByRole("status")).toHaveText("Loading current recording details…");
+  await panel.getByRole("button", { name: "Next song", exact: true }).click();
+  const second = page.getByRole("dialog", { name: "Song Two", exact: true });
+  await expect(second.getByRole("table").getByText("Loaded Two", { exact: true })).toBeVisible();
+  const late = page.waitForResponse(response => response.url().endsWith("/One/current"));
+  finish(); await (await late).finished();
+  await expect(second.getByRole("table").getByText("Loaded Two", { exact: true })).toBeVisible();
+  await expect(second.getByText("Loaded One", { exact: true })).toHaveCount(0);
+});
+
+
+test("Match status and legend format large counts and put rematch before filters", async ({ page }) => {
+  await fixture(page);
+  await page.route(url => url.pathname === "/api/admin/track-matches", route => route.fulfill({ json: {
+    matches: [makeSong("One", "ambiguous", .74)],
+    stats: { total: 4999, matched: 4998, accepted: 4998, automatic: 4991, manualMatches: 7, manualRejections: 0, suggested: 0, ambiguous: 1, review: 1, unresolved: 0, rejected: 0, attention: 1 },
+    pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
+  } }));
+  await page.goto("/#/library/matches");
+  await expect(page.getByRole("region", { name: "Page status", exact: true })).toContainText("4,999 songs");
+  await expect(page.getByRole("region", { name: "Page status", exact: true })).toContainText("1 needs a look");
+  await expect(page.locator(".match-legend")).toContainText("4,991");
+  const rematch = await page.getByRole("button", { name: "Rematch all", exact: true }).boundingBox();
+  const filters = await page.getByRole("radiogroup", { name: "Match filters", exact: true }).boundingBox();
+  expect(rematch!.y).toBeLessThan(filters!.y);
+  await expect(page.getByRole("button", { name: "Select", exact: true })).toHaveClass(/border-\[var\(--color-edge-strong\)\]/);
 });

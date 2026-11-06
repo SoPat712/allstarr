@@ -25,6 +25,7 @@ async function fixture(page: Page) {
     if (path === "/api/admin/auth/oidc/status") return reply({ enabled: false });
     if (path === "/api/admin/ui/schema") return reply({ providers: [{ id: "spotify", name: "Spotify" }], settings: [], priorityGroups: [], configSections: [] });
     if (path === "/api/admin/playlist-links") return reply({ playlistLinks: [playlist] });
+    if (path === "/api/admin/activity/tasks") return reply({ items: [{ enabled: true, runPlaylistLinkId: id, nextRunAt: schedule.nextRunAt }] });
     if (path === `/api/admin/playlist-links/${id}`) {
       if (request.method() === "PUT") { playlist = { ...playlist, ...request.postDataJSON(), revision: playlist.revision + 1 }; return reply(playlist); }
       return reply({ ...playlist, schedule, snapshotId: "snapshot", localCount: 2, tracks: [], unresolvedCount: 0, reviewCount: 0, unknownDurationCount: 0, durationMs: 540000 });
@@ -50,6 +51,8 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"]] a
     await page.goto("/#/library/playlists");
     await expect(page.getByRole("region", { name: "Playlist status" })).toContainText("1 playlist");
     await expectPageSurface(page.locator(".library-list"));
+    await expect(page.getByRole("radio", { name: /Paused/ })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Playlist status" })).toContainText("Next sync");
     if (width === 1280) await expectToolbarLayout(page.locator(".library-search"), page.getByRole("radiogroup", { includeHidden: true, name: "Playlist filters" }));
     await page.getByRole("radio", { name: /Healthy/ }).click();
     await expect(page.getByText("No playlists match these filters")).toBeVisible();
@@ -82,10 +85,9 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"]] a
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.getByRole("button", { name: "Import playlist", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Import a playlist", exact: true });
-    await dialog.getByRole("radio", { name: /Spotify/ }).first().check();
-    await expect(dialog.getByRole("radio", { name: /Evening mix/ })).toBeDisabled();
+    await expect(dialog.getByRole("checkbox", { name: /Evening mix/ })).toBeDisabled();
     await expect(dialog).toContainText("Already in your apps");
-    await dialog.getByRole("radio", { name: /Late drive/ }).check();
+    await dialog.getByRole("checkbox", { name: /Late drive/ }).check();
     await page.screenshot({ path: `test-results/ui-library/import-playlist-choose-${width}-${theme}.png`, fullPage: true });
     await dialog.getByRole("button", { name: "Next", exact: true }).click();
     await expect(dialog.getByRole("heading", { name: "What comes over" })).toBeVisible();
@@ -127,4 +129,48 @@ test("Library playlist panel navigation skips mixes that open elsewhere", async 
   const panel = page.getByRole("dialog", { name: "Evening mix", exact: true });
   await expect(panel.getByRole("button", { name: "Previous song", exact: true })).toBeDisabled();
   await expect(panel.getByRole("button", { name: "Next song", exact: true })).toBeDisabled();
+});
+
+
+test("Playlist choices group accounts, clear on tab changes and retry only remaining imports", async ({ page }) => {
+  const writes = await fixture(page);
+  const secondAccount = "44444444-4444-4444-8444-444444444444";
+  await page.route("**/api/admin/playlist-sources", route => route.fulfill({ json: {
+    accounts: [{ id: account, providerId: "spotify", displayName: "My Spotify" }, { id: secondAccount, providerId: "apple", displayName: "My Apple Music" }],
+    blockedAccounts: [], providers: [{ id: "spotify", displayName: "Spotify" }, { id: "apple", displayName: "Apple Music" }],
+  } }));
+  await page.route(`**/playlist-sources/${secondAccount}/playlists**`, route => route.fulfill({ json: { items: [{ id: "replay", providerId: "apple", name: "Replay", trackCount: 8 }] } }));
+  await page.goto("/#/library/playlists");
+  await page.getByRole("button", { name: "Import playlist", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Import a playlist", exact: true });
+  await expect(dialog.getByRole("region", { name: "Spotify · My Spotify", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("region", { name: "Apple Music · My Apple Music", exact: true })).toBeVisible();
+  await dialog.getByRole("checkbox", { name: "Late drive", exact: true }).check();
+  await dialog.getByRole("checkbox", { name: "Replay", exact: true }).check();
+  await expect(dialog.getByRole("status")).toContainText("2 playlists selected · 20 songs");
+  expect(writes.filter(item => item.path === "/api/admin/playlist-links")).toHaveLength(0);
+  await dialog.getByRole("tab", { name: "Paste a link", exact: true }).click();
+  await expect(dialog.getByRole("button", { name: "Next", exact: true })).toBeDisabled();
+  await dialog.getByRole("tab", { name: "From my accounts", exact: true }).click();
+  await expect(dialog.getByRole("checkbox", { name: "Late drive", exact: true })).not.toBeChecked();
+  await dialog.getByRole("checkbox", { name: "Late drive", exact: true }).check();
+  await dialog.getByRole("checkbox", { name: "Replay", exact: true }).check();
+  await dialog.getByRole("button", { name: "Next", exact: true }).click();
+  let failReplay = true;
+  await page.route(url => url.pathname === "/api/admin/playlist-links" && url.search === "", route => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const body = route.request().postDataJSON();
+    writes.push({ path: new URL(route.request().url()).pathname, body });
+    if (body.sourcePlaylistId === "replay" && failReplay) {
+      failReplay = false;
+      return route.fulfill({ status: 503, json: { error: "Replay is temporarily unavailable." } });
+    }
+    return route.fulfill({ json: { id: "new" } });
+  });
+  await dialog.getByRole("button", { name: "Import 20 songs", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("Replay is temporarily unavailable.");
+  await expect(dialog.locator(".import-preview")).toContainText("8 songs from My Apple Music");
+  await dialog.getByRole("button", { name: "Import 8 songs", exact: true }).click();
+  await expect(dialog).toBeHidden();
+  expect(writes.filter(item => item.path === "/api/admin/playlist-links").map(item => item.body.sourcePlaylistId)).toEqual(["late", "replay", "replay"]);
 });

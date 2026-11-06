@@ -15,7 +15,6 @@
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import EmptyState from "$lib/components/patterns/EmptyState.svelte";
-  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import MixShelf from "$lib/components/MixShelf.svelte";
   import IntelligenceHistoryImports from "$lib/components/IntelligenceHistoryImports.svelte";
   let { administrator = false, listenerId = "", listenerName = "", initialImport = false }: { initialImport?: boolean; administrator?: boolean; listenerId?: string; listenerName?: string } = $props();
@@ -144,7 +143,7 @@
   });
 </script>
 <div class="for-you">
-  <div class="section-heading"><h2>{greeting(new Date().getHours(), listenerName)}</h2><div class="page-actions"><RefreshButton label="Refresh page" onrefresh={async () => { await pending; await load(); }} /><Button onclick={() => void startMix()}>Start a mix</Button></div></div>
+  <div class="section-heading"><h2>{greeting(new Date().getHours(), listenerName)}</h2><div class="page-actions"><Button onclick={() => void startMix()}>Start a mix</Button></div></div>
   <PageStatus items={[{ label: `${countLabel(cards.filter(card => card.readiness.ready).length, "mix", "mixes")} ready` }, { label: "Mixes refresh every morning" }]} />
   {#if loading}{#each ["Made for you", "Moods"] as title}<section aria-label={`Loading ${title}`}><h2>{title}</h2><RowsSkeleton count={3} /></section>{/each}
   {:else}
@@ -174,7 +173,7 @@
   .for-you > :global(section) { min-width: 0; }
   .page-actions { display: flex; min-width: 0; max-width: 100%; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
   .section-heading, header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-3); }
-  h2 { font-size: 1.125rem; font-weight: 600; }
+  h2 { font-size: 1.125rem; }
   .muted { color: var(--color-ink-muted); }
   .apps-hint { font-size: var(--text-xs); }
   .checklist { padding: var(--surface-gutter); }

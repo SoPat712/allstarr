@@ -45,7 +45,7 @@ async function mockImportedTaste(page: Page, profile = initialTaste()) {
 
 async function openTaste(page: Page) {
   await page.goto("/#/for-you?section=taste");
-  await expect(page.getByRole("checkbox", { name: toggleLabel, exact: true })).toBeVisible();
+  await expect(page.getByRole("switch", { name: toggleLabel, exact: true })).toBeVisible();
 }
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
@@ -53,7 +53,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await appearance(page, width, theme);
     const state = await mockImportedTaste(page);
     await openTaste(page);
-    await expect(page.getByRole("checkbox", { name: toggleLabel, exact: true })).not.toBeChecked();
+    await expect(page.getByRole("switch", { name: toggleLabel, exact: true })).not.toBeChecked();
     await expect(page.getByText("Imported plays shape your usual taste.", { exact: true })).toBeVisible();
     await expect(page.locator(".taste-settings .settings-row strong")).toHaveText(["Private listening (pause learning)", toggleLabel]);
     await capture(page, "imported-taste-setting", width, theme);
@@ -64,7 +64,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
 test("Imported history can be enabled and disabled and keeps the saved value", async ({ page }) => {
   const state = await mockImportedTaste(page);
   await openTaste(page);
-  const toggle = page.getByRole("checkbox", { name: toggleLabel, exact: true });
+  const toggle = page.getByRole("switch", { name: toggleLabel, exact: true });
   await expect(toggle).not.toBeChecked();
   await toggle.click();
   await expect(toggle).toBeEnabled();
@@ -87,14 +87,14 @@ test("Imported history defaults to enabled when the current profile omits the se
   delete profile.useImportedHistory;
   const state = await mockImportedTaste(page, profile);
   await openTaste(page);
-  await expect(page.getByRole("checkbox", { name: toggleLabel, exact: true })).toBeChecked();
+  await expect(page.getByRole("switch", { name: toggleLabel, exact: true })).toBeChecked();
   expect(state.mutations).toEqual([]);
 });
 
 for (const enabled of [false, true]) test(`A failed imported history update keeps the saved ${enabled ? "enabled" : "disabled"} value`, async ({ page }) => {
   const state = await mockImportedTaste(page, initialTaste(enabled));
   await openTaste(page);
-  const toggle = page.getByRole("checkbox", { name: toggleLabel, exact: true });
+  const toggle = page.getByRole("switch", { name: toggleLabel, exact: true });
   await expect(toggle).toBeChecked({ checked: enabled });
   state.failNext = true;
   await toggle.click();
@@ -114,7 +114,7 @@ for (const enabled of [false, true]) test(`A failed imported history update keep
 test("Focus refresh reads the current imported history value", async ({ page }) => {
   const state = await mockImportedTaste(page);
   await openTaste(page);
-  const toggle = page.getByRole("checkbox", { name: toggleLabel, exact: true });
+  const toggle = page.getByRole("switch", { name: toggleLabel, exact: true });
   await expect(toggle).not.toBeChecked();
   for (const enabled of [true, false]) {
     const reads = state.reads;

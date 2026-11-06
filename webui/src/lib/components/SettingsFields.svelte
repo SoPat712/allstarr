@@ -63,7 +63,7 @@
     PLAYBACK_LASTFM_SIMILAR_ENABLED: "Use a connected Last.fm account when a service has no suggestions.",
     PLAYBACK_LISTENBRAINZ_SIMILAR_ENABLED: "Use ListenBrainz when the service and Last.fm have no suggestions.",
     BACKEND_MUSIC_LIBRARY_IDS: "Choose libraries, or use every library your server allows.",
-    ODESLI_ENABLED: "Find links to the same song across your enabled services.",
+    ODESLI_ENABLED: "Uses Deezer, Apple Music and your enabled sources",
     ODESLI_API_KEY: "Optional. With a key, the official API is tried first. Leave unchanged to keep it.",
     STORAGE_MODE: "Songs saved after streaming start faster next time. Hearts, Keep and retained playlists protect their copies in either mode.",
     CACHE_DURATION_HOURS: "After the last play. The size limit can remove cached songs sooner.",

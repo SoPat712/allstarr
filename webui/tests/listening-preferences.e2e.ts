@@ -263,8 +263,17 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     for (const button of await region.getByRole("button").all()) {
       const box = await button.boundingBox();
       expect(box).not.toBeNull();
-      expect(box!.width).toBeGreaterThanOrEqual(43);
-      expect(box!.height).toBeGreaterThanOrEqual(43);
+      if (width === 1280) {
+        expect(box!.width).toBe(36);
+        expect(box!.height).toBe(36);
+        expect(await button.evaluate(element => {
+          const target = getComputedStyle(element, "::after");
+          return parseFloat(target.minWidth) >= 44 && parseFloat(target.minHeight) >= 44;
+        })).toBe(true);
+      } else {
+        expect(box!.width).toBeGreaterThanOrEqual(44);
+        expect(box!.height).toBeGreaterThanOrEqual(44);
+      }
     }
   });
 }

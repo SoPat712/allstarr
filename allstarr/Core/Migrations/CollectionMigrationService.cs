@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Favorites;
 using allstarr.Core.Identity;
@@ -32,6 +33,7 @@ public sealed class MigrationRun
     public string Protocol { get; set; } = "";
     public string BackendInstanceId { get; set; } = "";
     public string BackendPrincipalId { get; set; } = "";
+    public bool MakePlaylists { get; set; } = true;
     public string State { get; set; } = "choosing";
     public string Phase { get; set; } = "choosing";
     public Guid? JobId { get; set; }
@@ -139,7 +141,25 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         return record.Id;
     }
 
-    public async Task<object> DiscoverAsync(ProtocolExecutionContext execution, Guid id, string? cursor, CancellationToken token)
+    public sealed record DiscoveryChoice([property: JsonPropertyName("sourceId")] string SourceId, string Name,
+        [property: JsonPropertyName("count")] int? Count, [property: JsonPropertyName("kind")] string Kind)
+    {
+        [JsonPropertyName("support")] public string Support => "available";
+    }
+    public sealed record DiscoveryPage([property: JsonPropertyName("items")] IReadOnlyList<DiscoveryChoice> Items,
+        string? NextCursor, [property: JsonPropertyName("unsupported")] IReadOnlyList<object> Unsupported);
+
+    public async Task<DiscoveryPage> PreviewAsync(ProtocolExecutionContext execution, Guid accountId, string? cursor, CancellationToken token)
+    {
+        await using var db = await factory.CreateDbContextAsync(token);
+        var user = await UserAsync(db, execution, token);
+        var source = await SourceAsync(execution, await AccountAsync(db, user.Id, accountId, token), token);
+        var identity = await source.Implementation.GetSourceUserAsync(source.Context);
+        if (!identity.IsSuccess) throw new InvalidOperationException($"Restore the {source.Name} connection.");
+        return await ReadDiscoveryAsync(source, cursor);
+    }
+
+    public async Task<DiscoveryPage> DiscoverAsync(ProtocolExecutionContext execution, Guid id, string? cursor, CancellationToken token)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         var (record, run) = await LoadAsync(db, execution, id, token);
@@ -147,12 +167,37 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         var account = await AccountAsync(db, record.OwnerUserId, run.ProviderAccountId, token);
         var source = await SourceAsync(execution, account, token);
         await VerifySourceAsync(source, run, token);
+        var page = await ReadDiscoveryAsync(source, cursor);
+        foreach (var item in page.Items)
+        {
+            if (await db.Set<CollectionMigrationCollectionRecord>().AnyAsync(value => value.RunId == id && value.SourceId == item.SourceId, token)) continue;
+            db.Add(new CollectionMigrationCollectionRecord
+            {
+                Id = Guid.CreateVersion7(),
+                RunId = id,
+                SourceId = item.SourceId,
+                PayloadJson = JsonSerializer.Serialize(new MigrationCollection
+                {
+                    Name = item.Name,
+                    Expected = item.Count,
+                    Kind = item.Kind,
+                    Resources = item.Kind is "saved-albums" or "followed-artists" ? [] : null
+                })
+            });
+        }
+        await db.SaveChangesAsync(token);
+        return page;
+    }
+
+    private static async Task<DiscoveryPage> ReadDiscoveryAsync(CollectionMigrationSource source, string? cursor)
+    {
         var page = await source.Implementation.GetUserPlaylistsAsync(source.Context, new(new(100, cursor)));
         if (!page.IsSuccess) throw new InvalidOperationException($"{source.Name} playlists are temporarily unavailable.");
         var likes = await source.Implementation.GetPlaylistTracksAsync(source.Context,
-            new(new(run.ProviderId, ProviderResourceKind.Playlist, "liked-songs"), new(1)));
+            new(new(source.ProviderId, ProviderResourceKind.Playlist, "liked-songs"), new(1)));
         if (!likes.IsSuccess) throw new InvalidOperationException("Songs are temporarily unavailable.");
-        var resourceChoices = new List<object>();
+        var choices = page.RequireValue().Items.Append(likes.RequireValue().Playlist).DistinctBy(item => item.Id.Value)
+            .Select(item => new DiscoveryChoice(item.Id.Value, item.Name, item.TrackCount, item.Id.Value == "liked-songs" ? "liked-songs" : "playlist")).ToList();
         var unsupported = new List<object>();
         foreach (var (kind, name) in new[] { ("saved-albums", "Saved albums"), ("followed-artists", source.ArtistsName) })
         {
@@ -164,51 +209,12 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
                 unsupported.Add(new { kind, support = "not-supported-yet", count = (int?)null });
                 continue;
             }
-            resourceChoices.Add(new { sourceId = kind, Name = name, count = (int?)library.RequireValue().Total, kind, support = "available" });
-            if (!await db.Set<CollectionMigrationCollectionRecord>().AnyAsync(value => value.RunId == id && value.SourceId == kind, token))
-                db.Add(new CollectionMigrationCollectionRecord
-                {
-                    Id = Guid.CreateVersion7(),
-                    RunId = id,
-                    SourceId = kind,
-                    PayloadJson = JsonSerializer.Serialize(new MigrationCollection { Kind = kind, Name = name, Expected = library.RequireValue().Total, Resources = [] })
-                });
+            choices.Add(new(kind, name, library.RequireValue().Total, kind));
         }
-        var discovered = page.RequireValue().Items.Append(likes.RequireValue().Playlist).DistinctBy(item => item.Id.Value).ToArray();
-        foreach (var item in discovered)
-        {
-            var row = await db.Set<CollectionMigrationCollectionRecord>().SingleOrDefaultAsync(value => value.RunId == id && value.SourceId == item.Id.Value, token);
-            if (row != null) continue;
-            db.Add(new CollectionMigrationCollectionRecord
-            {
-                Id = Guid.CreateVersion7(),
-                RunId = id,
-                SourceId = item.Id.Value,
-                PayloadJson = JsonSerializer.Serialize(new MigrationCollection
-                {
-                    Name = item.Name,
-                    Expected = item.TrackCount,
-                    Kind = item.Id.Value == "liked-songs" ? "liked-songs" : "playlist"
-                })
-            });
-        }
-        await db.SaveChangesAsync(token);
-        return new
-        {
-            items = discovered.Select(item => (object)new
-            {
-                sourceId = item.Id.Value,
-                item.Name,
-                count = item.TrackCount,
-                kind = item.Id.Value == "liked-songs" ? "liked-songs" : "playlist",
-                support = "available"
-            }).Concat(resourceChoices),
-            page.RequireValue().NextCursor,
-            unsupported
-        };
+        return new(choices, page.RequireValue().NextCursor, unsupported);
     }
 
-    public async Task ChangeAsync(ProtocolExecutionContext execution, Guid id, string action, IReadOnlyList<MigrationSelection>? selections, CancellationToken token)
+    public async Task ChangeAsync(ProtocolExecutionContext execution, Guid id, string action, IReadOnlyList<MigrationSelection>? selections, CancellationToken token, bool makePlaylists = true)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         var (record, run) = await LoadAsync(db, execution, id, token);
@@ -226,6 +232,7 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
             var rows = await db.Set<CollectionMigrationCollectionRecord>().Where(item => item.RunId == id).ToArrayAsync(token);
             if (selections.Any(item => !rows.Any(row => row.SourceId == item.SourceId) || item.SourceId is "liked-songs" or "saved-albums" or "followed-artists" && item.KeepInSync))
                 throw new ArgumentException("Select discovered collections.");
+            run.MakePlaylists = makePlaylists;
             foreach (var row in rows)
             {
                 var collection = Read<MigrationCollection>(row.PayloadJson);
@@ -444,7 +451,7 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         {
             collection.Name = page.Snapshot.Name;
             var link = await playlists.CreateLinkAsync(execution, new(run.ProviderAccountId, run.ProviderId, row.SourceId, Hash(row.SourceId),
-                run.Protocol, run.BackendInstanceId, PlaylistLinkMode.Hybrid, PlaylistMaterializationMode.Reconcile,
+                run.Protocol, run.BackendInstanceId, run.MakePlaylists ? PlaylistLinkMode.Hybrid : PlaylistLinkMode.Virtual, PlaylistMaterializationMode.Reconcile,
                 "playlist-rules-v1", "playlist-policy-v1", MirrorStaleEntries: true,
                 ImportMode: collection.KeepInSync ? PlaylistImportMode.Linked : PlaylistImportMode.OneTime), token);
             collection.LinkId = link.Id;
@@ -488,7 +495,7 @@ public sealed partial class CollectionMigrationService(IDbContextFactory<Allstar
         if (collection.Kind == "playlist")
         {
             var link = await playlists.GetLinkAsync(execution, collection.LinkId!.Value, token);
-            if (link.TargetPlaylistId == null)
+            if (run.MakePlaylists && link.TargetPlaylistId == null)
             {
                 var target = targets.Resolve(run.Protocol);
                 var targetContext = new BackendPlaylistTargetContext(run.BackendInstanceId, run.BackendPrincipalId, link.TargetCredentialReferenceId?.ToString());

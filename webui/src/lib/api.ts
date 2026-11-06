@@ -1825,7 +1825,7 @@ export type MigrationCollectionStatus = {
     keepInSync: boolean; error: string | null; receiptRunId?: string | null };
 };
 export type MigrationStatus = {
-  id: string; run: { providerId: string; providerAccountId: string; state: string; phase: string; jobId: string | null };
+  id: string; run: { providerId: string; providerAccountId: string; state: string; phase: string; jobId: string | null; makePlaylists?: boolean };
   collections: MigrationCollectionStatus[]; total: MigrationCounts; provisional: boolean;
 };
 export type MigrationResourceCandidate = {
@@ -1841,6 +1841,8 @@ export type MigrationReviewItem = {
     candidates: MigrationResourceCandidate[]; chosen: MigrationResourceCandidate | null; applied: boolean } | null;
 };
 export const migrations = {
+  preview: (providerAccountId: string, cursor?: string) => json<{ items: MigrationChoice[]; nextCursor: string | null; unsupported?: { kind: string }[] }>(
+    `/api/admin/migrations/preview?${new URLSearchParams({ providerAccountId, ...(cursor ? { cursor } : {}) })}`),
   start: (providerAccountId: string, requestKey: string) => json<{ id: string }>("/api/admin/migrations", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ ProviderAccountId: providerAccountId, RequestKey: requestKey }),
@@ -1848,8 +1850,8 @@ export const migrations = {
   status: (id: string, summary = false) => json<MigrationStatus>(`/api/admin/migrations/${encodeURIComponent(id)}${summary ? "/summary" : ""}`),
   discover: (id: string, cursor?: string) => json<{ items: MigrationChoice[]; nextCursor: string | null; unsupported?: { kind: string }[] }>(
     `/api/admin/migrations/${encodeURIComponent(id)}/discover${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`),
-  choose: (id: string, collections: { SourceId: string; KeepInSync: boolean }[]) => request(`/api/admin/migrations/${encodeURIComponent(id)}/choose`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ Collections: collections }),
+  choose: (id: string, collections: { SourceId: string; KeepInSync: boolean }[], makePlaylists = true) => request(`/api/admin/migrations/${encodeURIComponent(id)}/choose`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ Collections: collections, MakePlaylists: makePlaylists }),
   }),
   change: (id: string, action: "apply" | "resume" | "cancel") => request(`/api/admin/migrations/${encodeURIComponent(id)}/${action}`, { method: "POST" }),
   chooseResource: (id: string, collectionId: string, entryId: string, choice: { providerId: string; resourceId: string } | { skip: true }) => request(
@@ -2657,6 +2659,8 @@ export const playlistLinks = {
 };
 
 export const matchReview = {
+  current: (externalSnapshotId: string) => json<{ externalSnapshotId: string; target: (Omit<NonNullable<MatchReviewItem["target"]>, "providerId" | "externalId"> & { providerId?: string | null; externalId?: string | null; isLocal?: boolean; libraryTrackId?: string | null; backendItemId?: string | null }) | null }>(
+    `/api/admin/track-matches/${encodeURIComponent(externalSnapshotId)}/current`),
   list: (params: {
     page?: number;
     pageSize?: number;

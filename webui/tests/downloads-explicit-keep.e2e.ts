@@ -173,13 +173,7 @@ for (const width of [390, 1280]) {
       await expect(page.getByRole("menuitem", { name: "Stop keeping", exact: true })).toBeVisible();
       await page.keyboard.press("Escape");
 
-      await page.getByRole("button", { name: "Remove all", exact: true }).click();
-      const bulkDialog = page.getByRole("alertdialog", { name: /Remove all kept songs/i });
-      await expect(bulkDialog).toBeVisible();
-      await expect(bulkDialog).toContainText(/1 explicit Keep/i);
-      await expect(bulkDialog).toContainText(/24-hour grace period/i);
-      await expect(bulkDialog).toContainText(/other household interests remain protected/i);
-      await bulkDialog.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(page.getByRole("button", { name: /^Remove all/ })).toHaveCount(0);
 
       await keptRow.getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
       await page.getByRole("menuitem", { name: "Stop keeping", exact: true }).click();

@@ -62,7 +62,7 @@ async function mockViews(page: Page) {
         ownerUserId: userId, ownerDisplayName: "Alex", enabled: true, canManage: true, revision: 1,
         secret: { configured: true, revoked: false }, createdAt: "2026-10-24T12:00:00Z", updatedAt: "2026-10-24T12:00:00Z" }] });
     if (path === "/api/admin/migrations" && request.method() === "POST") return reply({ id: runId });
-    if (path === `/api/admin/migrations/${runId}/discover`) return reply({ items: [
+    if (path === "/api/admin/migrations/preview" || path === `/api/admin/migrations/${runId}/discover`) return reply({ items: [
       { sourceId: "liked-songs", name: "Liked Songs", count: 3, kind: "liked-songs", support: "available" },
       { sourceId: "evening", name: "Evening mix", count: 4, kind: "playlist", support: "available" },
     ], nextCursor: null, unsupported: [] });
@@ -129,11 +129,12 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     };
 
     await page.goto(`/#/library/import?account=${accountId}`);
+    await page.getByText("Choose individual collections", { exact: true }).click();
     await expect(page.getByRole("checkbox", { name: "Select Liked Songs", exact: true })).toBeVisible();
     const selectAll = page.getByRole("button", { name: "Select all", exact: true });
     const clear = page.getByRole("button", { name: "Clear", exact: true });
     await expectSignalText(selectAll);
-    await expectOutline(clear);
+    await expectSignalText(clear);
     await selectAll.click();
     await expect(page.getByRole("checkbox", { name: "Select Liked Songs", exact: true })).toBeChecked();
     await clear.click();
@@ -170,10 +171,15 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await capture("quality");
 
     await page.goto("/#/for-you?section=recap");
+    await page.locator(".recap-imports > summary").click();
     const imports = page.getByRole("region", { name: "Listening history from other services", exact: true });
     await expect(imports).toContainText("Done");
     const remove = imports.getByRole("button", { name: "Delete", exact: true });
-    await expectOutline(remove);
+    await expect(remove).toBeVisible();
+    expect(await remove.evaluate(element => {
+      const probe = document.createElement("span"); probe.style.color = "var(--danger)"; element.append(probe);
+      const matches = getComputedStyle(element).color === getComputedStyle(probe).color; probe.remove(); return matches;
+    })).toBe(true);
     await expect(remove.locator("svg")).toBeVisible();
     await expect(remove.locator("svg")).toHaveAttribute("aria-hidden", "true");
     await capture("recap");

@@ -72,7 +72,7 @@
       ]} />
     </div>
     <div class="setting"><div><strong>Songs removed in {sourceName}</strong><small>Also leave the {targetName} copy</small></div><span class="locked" title="This playlist requires removed source songs to leave its copy."><LockKeyhole size={14} aria-hidden="true" />{playlist.mirrorStaleEntries === false ? "Off" : "On"}</span></div>
-    <details bind:open={customOpen}><summary>Custom schedule and time zone</summary><form onsubmit={event => {
+    <details bind:open={customOpen}><summary>Advanced</summary><form onsubmit={event => {
       event.preventDefault(); const fields = new FormData(event.currentTarget);
       void changeSchedule({ cronExpression: String(fields.get("cron")), timeZoneId: String(fields.get("zone")) });
     }}><label class="field"><span>Cron schedule</span><input name="cron" bind:value={() => schedule?.cronExpression ?? "0 4 * * *", cronExpression => void changeSchedule({ cronExpression })} required onchange={event => void changeSchedule({ cronExpression: event.currentTarget.value })} /></label><label class="field"><span>Time zone</span><input name="zone" value={schedule?.timeZoneId ?? Intl.DateTimeFormat().resolvedOptions().timeZone} required onchange={event => void changeSchedule({ timeZoneId: event.currentTarget.value })} /></label></form></details>
@@ -87,6 +87,7 @@
   .setting { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); min-height: 64px; padding-block: var(--space-3); border-bottom: 1px solid var(--color-edge); }
   .setting > div { min-width: 0; }.setting strong { font-size: var(--text-sm); }.setting small { display: block; margin-top: var(--space-1); color: var(--color-ink-muted); font-size: var(--text-xs); }
   .setting :global(.select-root) { max-width: 55%; }.setting :global(.select-trigger) { font-size: var(--text-xs); padding-inline: var(--space-2); }
-  summary { display: flex; min-height: 44px; align-items: center; cursor: pointer; color: var(--color-ink-muted); font-size: var(--text-xs); }
+  summary { display: flex; justify-content: space-between; min-height: 44px; align-items: center; cursor: pointer; color: var(--color-signal-text); font-size: var(--text-xs); }
+  summary::after { content: "▾"; }
   form { display: grid; gap: var(--space-2); }p { font-size: var(--text-sm); color: var(--color-ink-muted); }
 </style>

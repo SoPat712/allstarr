@@ -5,7 +5,7 @@
   import { toast } from "$lib/toasts";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { Dialog } from "$lib/components/ui/dialog";
-  import { Checkbox } from "$lib/components/ui/checkbox";
+  import { Switch } from "$lib/components/ui/switch";
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
@@ -75,10 +75,10 @@
     {#if seed}
       <div class="selected-seed"><MediaArtwork url={seed.artworkUrl} /><div><strong>{seed.title}</strong><small>{seed.artist}</small></div><span>Selected</span></div>
       <div class="preview-heading"><h3>First songs in the mix</h3><SelectField bind:value={length} label="Mix length" disabled={saving} options={[{ value: "25", label: "25 songs" }, { value: "50", label: "50 songs" }]} onchange={() => void loadPreview()} /></div>
-      {#if busy && !preview}<RowsSkeleton count={3} />{:else if preview}<MixSongs songs={preview.songs} />{#if !preview.readiness.ready}<p class="muted">{preview.readiness.message}</p>{/if}{/if}
+      {#if busy && !preview}<RowsSkeleton count={3} />{:else if preview}<div class="preview-songs"><MixSongs songs={preview.songs.slice(0, 3)} /></div>{#if !preview.readiness.ready}<p class="muted">{preview.readiness.message}</p>{/if}{/if}
       {#if error}<ErrorState title="The preview could not be loaded" detail={error} onretry={loadPreview} />{/if}
-      <label class="name-field">Mix name<input bind:value={name} disabled={saving} maxlength="200" /></label>
-      <label class="add-option"><Checkbox class="mix-apps-option" bind:checked={addToApps} disabled={saving || !appsAllowed} aria-label="Add to my apps" /><span>Add to my apps</span></label>
+      <div class="mix-options"><label class="name-field">Mix name<input bind:value={name} disabled={saving} maxlength="200" /></label>
+      <label class="add-option"><Switch class="mix-apps-option" bind:checked={addToApps} disabled={saving || !appsAllowed} aria-label="Add to my apps" /><span>Add to my apps</span></label></div>
       {#if !appsAllowed}<p class="muted">Your admin hasn't allowed adding mixes.</p>{/if}
     {/if}
   </div>
@@ -86,7 +86,7 @@
 </Dialog.Content></Dialog.Portal></Dialog.Root>
 <style>
   :global(.start-mix-dialog) { display: flex; width: min(640px, calc(100vw - 32px)); flex-direction: column; overflow: hidden; }
-  .start-body { display: grid; min-height: 0; gap: var(--space-4); overflow-y: auto; padding: var(--surface-gutter); }
+  .start-body { display: grid; grid-auto-rows: max-content; align-content: start; min-height: 0; gap: var(--space-4); overflow-y: auto; scroll-padding-block: var(--space-2); padding: var(--surface-gutter); }
   .seed-results { border: 1px solid var(--color-edge); border-radius: var(--radius-md); margin-top: var(--space-3); }
   .seed-results button, .selected-seed { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-3); width: 100%; min-height: 60px; text-align: left; }
   .seed-results button + button { border-top: 1px solid var(--color-edge); }
@@ -100,9 +100,13 @@
   .seed-pending { padding: var(--space-3); }
   .preview-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
   h3 { font-size: var(--text-sm); font-weight: 600; }
+  .mix-options { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--space-3); }
+  .preview-songs { min-height: min-content; border: 1px solid var(--color-edge); border-radius: var(--radius-md); overflow: hidden; }
+  .preview-songs :global(.mix-songs li) { padding: var(--space-2) var(--space-3); }
+  .preview-songs :global(.song-info strong) { font-size: var(--text-sm); }
+  .preview-songs :global(.song-info small) { font-size: var(--text-xs); }
   .name-field { display: grid; gap: var(--space-2); font-size: var(--text-sm); font-weight: 600; }
-  .name-field input { min-width: 0; width: 100%; }
   .add-option { display: flex; align-items: center; min-height: 44px; gap: var(--space-3); font-size: var(--text-sm); cursor: pointer; }
-  .add-option :global(.mix-apps-option) { width: 44px; height: 44px; }
-  @media (max-width: 599px) { :global(.start-mix-dialog) { width: calc(100vw - 16px); } }
+  .name-field input { width: 100%; min-width: 0; height: var(--control-md); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--color-panel); color: var(--color-ink); padding-inline: var(--space-4); }
+  @media (max-width: 599px) { .mix-options { grid-template-columns: minmax(0, 1fr); } :global(.start-mix-dialog) { width: calc(100vw - 16px); } }
 </style>

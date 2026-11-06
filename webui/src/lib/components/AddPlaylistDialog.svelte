@@ -60,6 +60,21 @@
     existingPlaylists?: PlaylistLink[];
   } = $props();
 
+  type PlaylistChoice = { account: PlaylistSourceAccount; playlist: PlaylistDiscoveryItem };
+  let groupCursors = $state<Record<string, string | null>>({});
+  let groupedPlaylists = $state<Record<string, PlaylistDiscoveryItem[]>>({});
+  let chosenPlaylists = $state<PlaylistChoice[]>([]);
+  let groupErrors = $state<string[]>([]);
+  function togglePlaylist(account: PlaylistSourceAccount, playlist: PlaylistDiscoveryItem, checked: boolean) {
+    clearLink(); publicProviderId = ""; clearFollowNewest();
+    chosenPlaylists = chosenPlaylists.filter(item => item.account.id !== account.id || item.playlist.id !== playlist.id);
+    if (checked) chosenPlaylists = [...chosenPlaylists, { account, playlist }];
+    if (chosenPlaylists.length > 1) targetMode = "new";
+    const first = chosenPlaylists[0];
+    accountId = first?.account.id ?? "";
+    sourcePlaylistId = first?.playlist.id ?? "";
+    sourcePlaylists = first ? [first.playlist] : [];
+  }
   let pastedUrl = $state("");
   let linkPreview = $state<LinkPreview | null>(null);
   let resolvingLink = $state(false);
@@ -105,9 +120,9 @@
   const isLastfmAccount = $derived(selectedAccount?.providerId.toLowerCase() === "lastfm");
   const hasLastfmAccount = $derived(accounts.some((item) => item.providerId.toLowerCase() === "lastfm"));
   const selectedTarget = $derived(targets.find((item) => item.id === targetId));
-  const sourceName = $derived(linkPreview?.source.displayName ?? selectedAccount?.displayName ?? providerNames[publicProviderId] ?? "the source service");
+  const sourceName = $derived(chosenPlaylists.length > 1 ? [...new Set(chosenPlaylists.map(item => accountTitle(item.account)))].join(" and ") : linkPreview?.source.displayName ?? selectedAccount?.displayName ?? providerNames[publicProviderId] ?? "the source service");
   const sourcePlaylistName = $derived(
-    linkPreview?.title ?? sourcePlaylists.find((item) => item.id === sourcePlaylistId)?.name ??
+    (chosenPlaylists.length > 1 ? countLabel(chosenPlaylists.length, "playlist") : null) ?? linkPreview?.title ?? sourcePlaylists.find((item) => item.id === sourcePlaylistId)?.name ??
       (isLastfmAccount ? lastfmSourceName(sourcePlaylistId) : "this playlist"),
   );
   const targetName = $derived(
@@ -138,7 +153,7 @@
     updateCadence,
     trackRetention,
   ));
-  const sourceCount = $derived(linkPreview?.trackCount ?? sourcePlaylists.find(item => item.id === sourcePlaylistId)?.trackCount ?? null);
+  const sourceCount = $derived(chosenPlaylists.length ? chosenPlaylists.every(item => item.playlist.trackCount != null) ? chosenPlaylists.reduce((sum, item) => sum + (item.playlist.trackCount ?? 0), 0) : null : linkPreview?.trackCount ?? sourcePlaylists.find(item => item.id === sourcePlaylistId)?.trackCount ?? null);
   const stepReady = $derived(
     step === 1
       ? Boolean(sourcePlaylistId) && !resolvingLink
@@ -151,6 +166,11 @@
     step;
     queueMicrotask(() => addBody?.scrollTo({ top: 0 }));
   });
+
+  function changeSourceTab(value: string) {
+    sourceTab = value;
+    clearLink(); chosenPlaylists = []; sourcePlaylistId = ""; accountId = ""; publicProviderId = "";
+  }
 
   function definition(id: string) {
     return providers.find((item) => item.id.toLowerCase() === id.toLowerCase());
@@ -199,7 +219,7 @@
     step = 1;
     pastedUrl = "";
     clearLink();
-    accounts = [];
+    accounts = []; groupedPlaylists = {}; chosenPlaylists = []; groupErrors = []; groupCursors = {};
     providerOrder = [];
     providerNames = {};
     publicProviders = [];
@@ -237,6 +257,14 @@
       blocked = sourceResponse.blockedAccounts.length;
       targets = targetResponse.targets;
       targetId = targets[0]?.id ?? "";
+      for (const account of orderedAccounts.filter(item => item.providerId.toLowerCase() !== "lastfm")) {
+        try {
+          const response = await playlistLinks.sourcePlaylists(account.id);
+          if (!open || request !== browseRequest) return;
+          groupedPlaylists = { ...groupedPlaylists, [account.id]: [...new Map([...(account.providerId === "spotify" ? [{ id: "liked-songs", providerId: "spotify", name: "Liked Songs", trackCount: null }] : []), ...response.items].map(item => [item.id, item])).values()] };
+          groupCursors = { ...groupCursors, [account.id]: response.nextCursor ?? null };
+        } catch { groupErrors = [...groupErrors, account.id]; }
+      }
       if (initialSource) {
         const account = accounts.find((item) => item.id === initialSource.accountId);
         if (account) {
@@ -299,7 +327,22 @@
     }
   }
 
+  async function moreAccountPlaylists(account: PlaylistSourceAccount) {
+    const cursor = groupCursors[account.id];
+    if (!cursor || loading) return;
+    const request = browseRequest;
+    loading = true;
+    try {
+      const response = await playlistLinks.sourcePlaylists(account.id, "", cursor);
+      if (!open || request !== browseRequest) return;
+      groupedPlaylists = { ...groupedPlaylists, [account.id]: [...new Map([...(groupedPlaylists[account.id] ?? []), ...response.items].map(item => [item.id, item])).values()] };
+      groupCursors = { ...groupCursors, [account.id]: response.nextCursor ?? null };
+    } catch { error = "More playlists could not be loaded. Try again."; }
+    finally { if (request === browseRequest) loading = false; }
+  }
+
   async function chooseAccount(id: string) {
+    chosenPlaylists = [];
     browseRequest++;
     loading = false;
     clearLink();
@@ -323,6 +366,7 @@
   }
 
   function choosePublicProvider(id: string) {
+    chosenPlaylists = [];
     clearLink();
     clearFollowNewest();
     browseRequest++;
@@ -347,6 +391,7 @@
   }
 
   async function resolveLink() {
+    chosenPlaylists = [];
     clearLink();
     clearFollowNewest();
     accountId = "";
@@ -443,50 +488,60 @@
     if (followNewest) importMode = "linked";
     saving = true;
     error = "";
+    const completedSummary = behaviorSummary;
+    const selections = chosenPlaylists.length ? [...chosenPlaylists] : [null];
+    let completed = 0;
+    let schedulesFailed = 0;
     try {
-      const link = await playlistLinks.create({
-        providerAccountId: linkPreview?.providerAccountId ?? selectedAccount?.id ?? null,
-        sourceProviderId: linkPreview?.source.id ?? selectedAccount?.providerId ?? publicProviderId,
-        sourcePlaylistId,
-        targetProtocol: selectedTarget.protocol,
-        targetBackendInstanceId: selectedTarget.backendInstanceId,
-        targetCredentialReferenceId: selectedTarget.credentialReferenceId,
-        targetPlaylistId: targetMode === "existing" ? targetPlaylistId : null,
-        mode: "hybrid",
-        projectionMode: "resolved",
-        materializationMode: "reconcile",
-        importMode,
-        ...(followNewest && followNewestKind ? { followNewest: true } : {}),
-        trackRetention,
-        mirrorStaleEntries: true,
-        preserveManualEntries: true,
-        syncName: true,
-        syncDescription: true,
-        syncArtwork: true,
-      });
-      if (importMode === "linked") {
-        const cronExpression = ({
-          hourly: "0 * * * *",
-          daily: "0 3 * * *",
-          weekly: "0 3 * * 1",
-        } as Record<string, string>)[schedule];
-        try {
-          await playlistLinks.createSchedule(link.id, {
-            cronExpression,
-            timeZoneId: Intl.DateTimeFormat().resolvedOptions().timeZone,
-            overlapPolicy: "skip",
-            misfirePolicy: "runOnce",
-          });
-        } catch {
-          open = false;
-          await onSaved("Playlist linked, but its automatic schedule could not be saved.");
-          return;
+      for (const choice of selections) {
+        const link = await playlistLinks.create({
+          providerAccountId: choice?.account.id ?? linkPreview?.providerAccountId ?? selectedAccount?.id ?? null,
+          sourceProviderId: choice?.account.providerId ?? linkPreview?.source.id ?? selectedAccount?.providerId ?? publicProviderId,
+          sourcePlaylistId: choice?.playlist.id ?? sourcePlaylistId,
+          targetProtocol: selectedTarget.protocol,
+          targetBackendInstanceId: selectedTarget.backendInstanceId,
+          targetCredentialReferenceId: selectedTarget.credentialReferenceId,
+          targetPlaylistId: targetMode === "existing" ? targetPlaylistId : null,
+          mode: "hybrid",
+          projectionMode: "resolved",
+          materializationMode: "reconcile",
+          importMode,
+          ...(followNewest && followNewestKind ? { followNewest: true } : {}),
+          trackRetention,
+          mirrorStaleEntries: true,
+          preserveManualEntries: true,
+          syncName: true,
+          syncDescription: true,
+          syncArtwork: true,
+        });
+        if (importMode === "linked") {
+          const cronExpression = ({
+            hourly: "0 * * * *",
+            daily: "0 3 * * *",
+            weekly: "0 3 * * 1",
+          } as Record<string, string>)[schedule];
+          try {
+            await playlistLinks.createSchedule(link.id, {
+              cronExpression,
+              timeZoneId: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              overlapPolicy: "skip",
+              misfirePolicy: "runOnce",
+            });
+          } catch {
+            schedulesFailed++;
+          }
+        }
+        completed++;
+        if (choice) {
+          chosenPlaylists = chosenPlaylists.filter(item => item.account.id !== choice.account.id || item.playlist.id !== choice.playlist.id);
+          const remaining = chosenPlaylists[0];
+          if (remaining) { accountId = remaining.account.id; sourcePlaylistId = remaining.playlist.id; sourcePlaylists = [remaining.playlist]; }
         }
       }
       open = false;
-      await onSaved(`${importMode === "oneTime" ? "Playlist import started" : "Playlist linked and initial import started"}. ${behaviorSummary}`);
+      await onSaved(`${completed > 1 ? `${countLabel(completed, "playlist")} started` : importMode === "oneTime" ? "Playlist import started" : "Playlist linked and initial import started"}. ${completedSummary}${schedulesFailed ? ` ${countLabel(schedulesFailed, "automatic schedule could not", "automatic schedules could not")} be saved. Open the playlist’s sync settings to try again.` : ""}`);
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Playlist could not be linked.";
+      error = `${completed ? `${countLabel(completed, "playlist")} started. ` : ""}${cause instanceof Error ? cause.message : "Playlist could not be linked."}`;
     } finally {
       saving = false;
     }
@@ -524,7 +579,7 @@
 
       <div class="playlist-add-body" bind:this={addBody} aria-busy={loading}>
         {#if step === 1}
-          <SegmentedNav variant="segments" label="Choose playlist source" items={[{ id: "accounts", label: "From my accounts" }, { id: "link", label: "Paste a link" }]} active={sourceTab} onchange={value => sourceTab = value} />
+          <SegmentedNav variant="segments" label="Choose playlist source" items={[{ id: "link", label: "Paste a link" }, { id: "accounts", label: "From my accounts" }]} active={sourceTab} onchange={changeSourceTab} />
           {#if sourceTab === "link"}<section class="pl-section">
             <form class="url-import-form" onsubmit={(event) => { event.preventDefault(); void resolveLink(); }}>
               <label class="url-import-field">
@@ -567,12 +622,33 @@
             <strong>Playlist setup is unavailable</strong>
             <Button variant="secondary" onclick={() => void load()}>Try again</Button>
           </div>
-        {:else if step === 1}
+        {:else if step === 1 && sourceTab === "accounts"}
           {#if !accounts.length && !publicProviders.length && !loading}
             {#if !linkPreview}
               <div class="compact-empty"><strong>Connect your music account first</strong><p>Your Spotify or other playlist account is encrypted, owned by you, and kept separate from other listeners.</p><Button href="#/sources/accounts?source=spotify&connect=1">Connect Spotify</Button></div>
             {/if}
           {:else}
+            {#if sourceTab === "accounts"}
+              <section class="account-playlists" aria-label="Playlists from your accounts">
+                <SearchField bind:value={sourceQuery} label="Filter account playlists" placeholder="Search playlists" hiddenLabel />
+                {#each orderedAccounts.filter(item => item.providerId.toLowerCase() !== "lastfm") as account}
+                  <section class="account-playlist-group" aria-label={`${accountTitle(account)} · ${account.displayName}`}>
+                    <h3>{accountTitle(account)} · {accountDetail(account) || account.displayName}</h3>
+                    {#each (groupedPlaylists[account.id] ?? []).filter(item => !sourceQuery || item.name.toLocaleLowerCase().includes(sourceQuery.toLocaleLowerCase())) as playlist}
+                      {@const added = existingPlaylists.some(item => item.enabled && item.providerAccountId === account.id && item.sourcePlaylistId === playlist.id)}
+                      <label class="account-playlist-choice">
+                        <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
+                        <span><strong>{playlist.name}</strong><small>{playlist.trackCount == null ? "Song count unavailable" : countLabel(playlist.trackCount, "song")}{added ? " · Already in your apps" : ""}</small></span>
+                        <Checkbox checked={chosenPlaylists.some(item => item.account.id === account.id && item.playlist.id === playlist.id)} disabled={added} aria-label={`${playlist.name}${added ? ", already in your apps" : ""}`} onCheckedChange={checked => togglePlaylist(account, playlist, checked === true)} />
+                      </label>
+                    {:else}<p class="pl-help">{loading ? "Loading playlists…" : groupErrors.includes(account.id) ? "Playlists could not be loaded. Reopen to try again." : "No playlists found."}</p>{/each}
+                    {#if groupCursors[account.id]}<Button variant="text" size="sm" disabled={loading} onclick={() => void moreAccountPlaylists(account)}>Show more playlists</Button>{/if}
+                  </section>
+                {/each}
+                {#if chosenPlaylists.length}<p class="pl-help" role="status">{countLabel(chosenPlaylists.length, "playlist")} selected{sourceCount == null ? "" : ` · ${countLabel(sourceCount, "song")}`}</p>{/if}
+              </section>
+            {/if}
+            <details class="other-sources"><summary>Other playlist sources</summary>
             <section class="pl-section">
               <h3 id="playlist-add-account">Import from</h3>
               <div class="pl-options pl-options-two" role="radiogroup" aria-labelledby="playlist-add-account">
@@ -661,6 +737,7 @@
                 {#if sourceCursor}<Button class="pl-more" variant="secondary" disabled={loading} onclick={() => void browseSources(sourceCursor)}>Load more</Button>{/if}
               </section>
             {/if}
+            </details>
           {/if}
           {#if !hasLastfmAccount}
             <section class="pl-section"><p class="pl-help">Import your loved, top, or similar tracks from Last.fm.</p><Button variant="secondary" href="#/sources/accounts?source=lastfm&connect=1">Connect Last.fm</Button></section>
@@ -696,7 +773,7 @@
                 <span class="pl-option-text"><strong>New playlist</strong><small>Create a new playlist in {targetName} using the source name.</small></span>
               </label>
               <label class="pl-option" class:active={targetMode === "existing"}>
-                <input bind:group={targetMode} type="radio" name="playlist-target-mode" value="existing" onchange={() => void chooseTargetMode("existing")} />
+                <input bind:group={targetMode} type="radio" name="playlist-target-mode" value="existing" disabled={chosenPlaylists.length > 1} onchange={() => void chooseTargetMode("existing")} />
                 <span class="pl-option-text"><strong>Existing playlist</strong><small>Keep the playable songs in a playlist you already manage.</small></span>
               </label>
             </div>
@@ -776,6 +853,16 @@
 </Dialog.Root>
 
 <style>
+  .account-playlists { display: grid; gap: var(--space-3); }
+  .account-playlist-group { border: 1px solid var(--color-edge); border-radius: var(--radius-lg); overflow: hidden; }
+  .account-playlist-group h3 { padding: var(--space-3); background: var(--color-panel-raised); font-size: var(--text-sm); font-weight: 600; }
+  .account-playlist-choice { display: flex; align-items: center; gap: var(--space-3); min-height: 64px; padding: var(--space-3); border-top: 1px solid var(--color-edge); cursor: pointer; }
+  .account-playlist-choice :global([data-slot="checkbox"]) { flex: none; min-height: 20px; width: 20px; height: 20px; }
+  .account-playlist-choice > span { min-width: 0; flex: 1; }
+  .account-playlist-choice strong, .account-playlist-choice small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); }
+  .account-playlist-choice small { color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .account-playlist-choice :global(.media-art) { flex: none; width: 36px; height: 36px; }
+  .other-sources > summary { color: var(--color-signal-text); cursor: pointer; min-height: 44px; display: flex; align-items: center; font-size: var(--text-sm); }
   .import-preview > strong { font-size: var(--text-sm); }
 
   .url-import-form, .url-import-field { width: 100%; }

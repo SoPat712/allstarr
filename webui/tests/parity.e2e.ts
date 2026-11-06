@@ -2,6 +2,13 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { expectContainedMobileGeometry, widenText } from "./mobile-geometry";
 
+async function openOtherPlaylistSources(dialog: Locator) {
+  const sources = dialog.locator(".other-sources");
+  await expect(sources.locator(":scope > summary")).toBeVisible();
+  if (await sources.getAttribute("open") === null)
+    await sources.locator(":scope > summary").click();
+}
+
 async function nextPlaylistOptions(dialog: Locator) {
   const next = dialog.getByRole("button", { name: "Next", exact: true });
   if (await next.count()) await next.click();
@@ -2535,9 +2542,7 @@ for (const theme of ["light", "dark"] as const) {
     ];
     for (const [href, label] of screens) {
       await page.goto(href);
-      const group = label === "Stats period"
-        ? page.getByRole("navigation", { name: label, exact: true }).getByRole("tablist")
-        : page.getByRole("radiogroup", { name: label, exact: true });
+      const group = page.getByRole("radiogroup", { name: label, exact: true });
       await expect(group).toBeVisible();
       await expect(group).toHaveClass(/\bseg\b/);
       const mismatches = await page.locator(".seg").evaluateAll(groups => {
@@ -3334,6 +3339,7 @@ test("Import playlist separates source, import mode, destination, updates, and s
   expect(dialogBox!.height).toBeLessThanOrEqual(844 * 0.92 + 1);
   await expect(dialog.getByRole("status", { name: "Loading items" })).toBeVisible();
   sources.release();
+  await openOtherPlaylistSources(dialog);
   await expect(dialog.getByRole("radiogroup", { name: "Import from" }).getByRole("radio")).toHaveCount(5);
   await expect(dialog.getByRole("button", { name: "Choose", exact: true })).toBeDisabled();
   await expect(dialog.getByRole("button", { name: "Options and review", exact: true })).toBeDisabled();
@@ -3344,13 +3350,15 @@ test("Import playlist separates source, import mode, destination, updates, and s
   await expect(dialog).toBeHidden();
   await expect(add).toBeFocused();
   await add.click();
+  await openOtherPlaylistSources(dialog);
   const sourceGroups = dialog.getByRole("radiogroup", { name: "Import from" }).locator(".pl-option-text strong");
   await expect(sourceGroups).toHaveCount(5);
   expect(await sourceGroups.allTextContents()).toEqual([
     "Jellyfin", "Subsonic", "Spotify", "Lumen Audio", "Qobuz",
   ]);
+  await openOtherPlaylistSources(dialog);
   await dialog.getByRole("radio", { name: /Spotify/ }).check();
-  await expect(dialog.locator(".playlist-art > span")).toBeVisible();
+  await expect(dialog.locator(".other-sources .playlist-art > span")).toBeVisible();
   await dialog.getByRole("button", { name: "Load more" }).click();
   await expect(dialog.getByRole("radio", { name: /Second Mix/ })).toBeVisible();
   await dialog.getByRole("radio", { name: /Source Mix/ }).check();
@@ -3741,8 +3749,14 @@ test("Mappings keep phone filters, differences and menus readable", async ({ pag
   await page.goto("#/library/mappings");
   const filters = page.getByRole("radiogroup", { name: "Match filters" });
   await expect(filters).toBeVisible();
-  await expect(filters).toHaveClass(/wrapped/);
-  for (const option of await filters.getByRole("radio").all()) await expect(option).toBeInViewport();
+  expect(await filters.getByRole("radio").evaluateAll(items => new Set(items.map(item => item.getBoundingClientRect().top)).size)).toBeGreaterThan(1);
+  expect(await filters.evaluate(rail => {
+    const bounds = rail.getBoundingClientRect();
+    return [...rail.querySelectorAll("button")].every(button => {
+      const box = button.getBoundingClientRect();
+      return box.left >= bounds.left && box.right <= bounds.right;
+    });
+  })).toBe(true);
   expect(await filters.getByRole("radio").evaluateAll(items => items.every(item => item.getBoundingClientRect().height >= 44))).toBe(true);
   const row = page.locator(".mapping-row").first();
   await expect(row.locator(".item-row")).toContainText("Not Remix");
@@ -3781,6 +3795,7 @@ test("Shared search fields reserve icon space", async ({ page }) => {
   await page.goto("#/library/playlists");
   await page.getByRole("button", { name: "Import playlist" }).click();
   const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+  await openOtherPlaylistSources(dialog);
   await dialog.getByRole("radio", { name: /Spotify/ }).check();
   await expect(dialog.getByRole("searchbox", { name: "Find a source playlist" })).toBeVisible();
 });
@@ -3873,7 +3888,9 @@ test("Cached and Kept keep media facts and actions readable on mobile", async ({
   const panel = page.getByRole("dialog");
   await expect(panel).toContainText("900 kbps");
   await expect(panel).toContainText("1000 KiB");
-  await expect(panel).toContainText("Track cache");
+  await expect(panel.getByLabel("Song facts", { exact: true }).getByText("Last played", { exact: true })).toBeVisible();
+  await expect(panel.getByLabel("Song facts", { exact: true }).getByText("Not provided", { exact: true })).toBeVisible();
+  await expect(panel.locator(".advanced")).not.toHaveAttribute("open");
   await expect(panel.getByRole("link", { name: "Download", exact: true })).toBeVisible();
   await panel.getByRole("button", { name: "Close", exact: true }).click();
   await page.goto("#/library/kept");
@@ -3903,7 +3920,7 @@ test("Cached owns track storage and retention controls", async ({ page }) => {
   });
 
   await page.goto("#/library/cached");
-  await expect(page.getByText("Playback cache on", { exact: true })).toBeVisible();
+  await expect(page.getByText("Playback cache on", { exact: true })).toHaveCount(0);
   await page.getByRole("link", { name: "Cache settings", exact: true }).click();
   await expect(page.locator('input[name="CACHE_DURATION_HOURS"]')).toHaveValue("24");
   await page.getByText("Advanced: activity retention, cache durations, saved-file verification", { exact: true }).click();
@@ -4485,7 +4502,11 @@ test("Sparse data surfaces use the shared compact empty state", async ({ page })
   const expectCompactEmpty = async (selector: string, title: string) => {
     const empty = page.locator(selector);
     await expect(empty.getByRole("heading", { name: title, exact: true })).toBeVisible();
-    await expect(empty).toHaveCSS("min-height", "192px");
+    await expect(empty).toHaveCSS("min-height", "0px");
+    await expect(empty).toHaveCSS("border-top-style", "dashed");
+    await expect(empty).toHaveCSS("border-radius", "14px");
+    await expect(empty).toHaveCSS("align-items", "flex-start");
+    await expect(empty).toHaveCSS("padding", "16px");
     const bounds = await empty.boundingBox();
     expect(bounds?.height ?? Infinity).toBeLessThanOrEqual(288);
     expect(await empty.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
@@ -4520,8 +4541,11 @@ test("Operational tables adapt before the workspace needs horizontal scrolling",
       await expect.poll(() => surface.evaluate(element => element.scrollWidth - element.clientWidth),
         { message: `${route} fits at ${width}px` }).toBeLessThanOrEqual(1);
       if (selector === ".accounts-table-wrap") {
-        await expect.poll(() => surface.locator("td:not(:first-child)").evaluateAll(cells => cells.every(cell =>
-          cell.scrollWidth <= cell.clientWidth + 1)), { message: `Account cells fit at ${width}px` }).toBe(true);
+        await expect.poll(() => surface.locator("td:not(:first-child)").evaluateAll(cells => cells
+          .filter(cell => cell.scrollWidth > cell.clientWidth + 1)
+          .map(cell => ({ label: cell.getAttribute("data-label"), text: cell.textContent?.trim(), width: cell.clientWidth, scroll: cell.scrollWidth,
+            children: [...cell.children].map(child => ({ class: child.className, width: child.getBoundingClientRect().width, scroll: child.scrollWidth })) }))),
+        { message: `Account cells fit at ${width}px` }).toEqual([]);
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }
@@ -4900,14 +4924,14 @@ test("Score details open from the whole row, close again, and dim what does not 
   const row = page.locator(".routing-group li.has-score").first();
   const chip = row.locator(".score-toggle");
   await expect(row.locator(".score-chip")).toHaveText("82");
-  await expect(chip).toHaveAccessibleName(/Show details\.$/);
+  await expect(chip).toHaveAccessibleName(/Show details/);
   await expect(chip).toHaveAttribute("aria-expanded", "false");
 
   await row.locator(".routing-copy").click();
   const panel = page.getByRole("dialog", { name: "Lumen Audio", exact: true });
   const details = panel.locator(".score-details");
   await expect(details).toBeVisible();
-  await expect(chip).toHaveAccessibleName(/Hide details\.$/);
+  await expect(chip).toHaveAccessibleName(/Hide details/);
   await expect(details.locator(".score-part").filter({ hasText: "Quality" })).toContainText("Meets your CD lossless setting");
   await expect(details.locator(".score-part").filter({ hasText: "Has the song" })).toContainText("Still measuring");
   await expect(details.locator(".score-row.current")).toContainText("Streaming");
@@ -6397,6 +6421,7 @@ for (const width of [390, 1280]) {
           await page.goto("#/library/playlists");
           await page.getByRole("button", { name: "Import playlist" }).click();
           const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+          await openOtherPlaylistSources(dialog);
           await dialog.getByRole("radio", { name: /Spotify/ }).check();
           await dialog.getByRole("radio", { name: /Source Mix/ }).check();
           await nextPlaylistOptions(dialog);
@@ -6460,6 +6485,7 @@ for (const width of [390, 1280]) {
       await page.goto("#/library/playlists");
       await page.getByRole("button", { name: "Import playlist" }).click();
       const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+      await openOtherPlaylistSources(dialog);
       await dialog.getByRole("radio", { name: /Public Spotify playlist/ }).check();
       await expect(dialog.getByRole("button", { name: "Next" })).toBeDisabled();
       await dialog.getByRole("searchbox", { name: "Playlist link, URI or ID" }).fill("https://open.spotify.com/playlist/public-mix?si=discard");
@@ -6489,6 +6515,7 @@ test("Liked Songs uses the selected Spotify account", async ({ page }) => {
   await page.goto("#/library/playlists");
   await page.getByRole("button", { name: "Import playlist" }).click();
   const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+  await openOtherPlaylistSources(dialog);
   await dialog.getByRole("radio", { name: /Spotify/ }).check();
   await dialog.getByRole("radio", { name: /Liked Songs/ }).check();
   await nextPlaylistOptions(dialog);
@@ -6526,6 +6553,7 @@ for (const width of [390, 1280]) {
       await page.goto("#/library/playlists");
       await page.getByRole("button", { name: "Import playlist" }).click();
       const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+      await openOtherPlaylistSources(dialog);
       await dialog.getByRole("radio", { name: /Public Spotify playlist/ }).check();
       await dialog.getByRole("searchbox", { name: "Spotify user link, URI or ID" }).fill("spotify:user:profile-owner");
       await dialog.getByRole("button", { name: "Browse playlists" }).click();
@@ -6566,6 +6594,7 @@ test("Public Spotify profile edits invalidate stale discovery and selection", as
   await page.goto("#/library/playlists");
   await page.getByRole("button", { name: "Import playlist" }).click();
   const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+  await openOtherPlaylistSources(dialog);
   await dialog.getByRole("radio", { name: /Public Spotify playlist/ }).check();
   const user = dialog.getByRole("searchbox", { name: "Spotify user link, URI or ID" });
   await user.fill("old-user");
@@ -7133,17 +7162,23 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
 async function expectRecordingLyricsGeometry(page: Page, picker: Locator, width: number) {
   if (width === 390) await expectContainedMobileGeometry(page);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
-  const audit = await picker.evaluate(element => {
+  const audit = await picker.evaluate((element, phone) => {
     const failures: string[] = [];
     for (const child of element.querySelectorAll<HTMLElement>("*")) {
       const rect = child.getBoundingClientRect();
       if (!rect.width || !rect.height) continue;
       if (rect.left < -1 || rect.right > innerWidth + 1) failures.push(`overflow: ${child.tagName}`);
-      if (child.matches("button, textarea, label") && (rect.width < 43 || rect.height < 43))
-        failures.push(`target: ${child.tagName} ${rect.width}×${rect.height}`);
+      if (child.matches("button, textarea, label")) {
+        const target = getComputedStyle(child, "::after");
+        const expanded = !phone && child.matches('button[data-slot="button"]') && target.content === '""';
+        const targetWidth = expanded ? Math.max(rect.width, parseFloat(target.width) || 0, parseFloat(target.minWidth) || 0) : rect.width;
+        const targetHeight = expanded ? Math.max(rect.height, parseFloat(target.height) || 0, parseFloat(target.minHeight) || 0) : rect.height;
+        if (targetWidth < 44 || targetHeight < 44)
+          failures.push(`target: ${child.tagName} ${targetWidth}×${targetHeight}`);
+      }
     }
     return failures;
-  });
+  }, width < 900);
   expect(audit, "lyrics controls stay contained and provide 44px targets in both layouts").toEqual([]);
 }
 
@@ -7241,7 +7276,12 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
       expectedRevision: { personal: { id: "personal-choice", revision: 1 }, household: { id: "household-choice", revision: 2 } },
       previewRevision: "sha256:personal-plain-1" } });
     await expect(page.getByRole("status").filter({ hasText: "Lyrics source saved for you." })).toBeVisible();
-    await picker.getByRole("button", { name: "Use household default", exact: true }).click();
+    const useDefault = picker.getByRole("button", { name: "Use household default", exact: true });
+    if (width === 1280) {
+      await useDefault.scrollIntoViewIfNeeded();
+      const target = await useDefault.boundingBox();
+      await page.mouse.click(target!.x + target!.width / 2, target!.y - 2);
+    } else await useDefault.click();
     await expect.poll(() => fixture.writes.length).toBe(2);
     expect(fixture.writes[1]).toMatchObject({ method: "DELETE", body: { scope: "personal",
       expectedRevision: { personal: { id: "personal-choice", revision: 2 }, household: { id: "household-choice", revision: 2 } } } });
@@ -8975,12 +9015,13 @@ test("URL import keeps a later browsing choice when its preview arrives", async 
   const dialog = page.getByRole("dialog", { name: "Import a playlist" });
   await dialog.getByRole("tab", { name: "Paste a link", exact: true }).click();
   const input = dialog.getByRole("textbox", { name: "Paste a link" });
-  await dialog.getByRole("radio", { name: /Spotify/ }).check();
   await input.fill("https://open.spotify.com/playlist/old");
   const requested = page.waitForRequest("**/api/admin/playlist-links/resolve-url");
   await input.press("Enter");
   await requested;
   await expect(dialog.getByRole("searchbox", { name: "Playlist link, URI or ID" })).toHaveCount(0);
+  await dialog.getByRole("tab", { name: "From my accounts", exact: true }).click();
+  await openOtherPlaylistSources(dialog);
   await dialog.getByRole("radio", { name: /Spotify/ }).check();
   await dialog.getByRole("radio", { name: /Source Mix/ }).check();
   response.release();

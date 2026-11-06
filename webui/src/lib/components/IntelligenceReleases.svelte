@@ -3,7 +3,7 @@
   import { onMount, type Component } from "svelte";
   import { goto } from "$app/navigation";
   import { X } from "@lucide/svelte";
-  import { releaseInbox, mixes, type FollowedReleaseArtist, type ReleaseInbox, type ReleaseInboxEntry } from "$lib/api";
+  import { releaseInbox, type FollowedReleaseArtist, type ReleaseInbox, type ReleaseInboxEntry } from "$lib/api";
   import { releaseDate } from "$lib/intelligence";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
@@ -20,11 +20,9 @@
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
-  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
 
   let { initialRelease = "" }: { initialRelease?: string } = $props();
-  let radar = $state("");
   let inbox = $state<ReleaseInbox | null>(null), artists = $state<FollowedReleaseArtist[]>([]);
   let loading = $state(true), error = $state(""), pendingAction = $state("");
   let artistsOpen = $state(false), followOpen = $state(false), followError = $state("");
@@ -147,7 +145,6 @@
   const scheduler = createRefreshScheduler(async () => { if (!pendingAction) await load(); });
   onMount(() => {
     void load();
-    void mixes.list().then(cards => { if (!disposed) radar = cards.find(card => card.kind === "release-radar")?.id ?? ""; }).catch(() => {});
     const unsubscribe = liveUpdates.subscribe(scheduler.schedule);
     return () => { disposed = true; unsubscribe(); scheduler.cancel(); };
   });
@@ -155,7 +152,6 @@
 
 <div class="releases-inbox">
   <PageStatus items={[{ label: `${inbox?.entries.length ?? 0} ${(inbox?.entries.length ?? 0) === 1 ? "release" : "releases"} from ${countLabel(artists.length, "artist")} you follow` }, { label: "Just Dropped collects these every Friday." }]} />
-  {#if radar}<Button variant="text" size="sm" class="radar-link" href={`#/for-you?mix=${encodeURIComponent(radar)}`}>Open Just Dropped</Button>{/if}
   <section class="following-row" aria-label="Following artists">
     <Button variant="text" size="sm" onclick={() => artistsOpen = true}>Following ({artists.length})</Button>
     <div class="artist-faces">{#each artists.slice(0, 6) as artist, index (`${index}:${artist.providerId}:${artist.artistId}`)}<button type="button" onclick={() => artistsOpen = true} aria-label={`Manage ${artist.displayName}`}><MediaArtwork url={`/api/admin/stats/art?${new URLSearchParams({ artist: artist.displayName })}`} /><span>{artist.displayName}</span></button>{/each}</div>
@@ -165,7 +161,6 @@
     <FilterSegments options={filters} bind:value={type} storageKey="allstarr.releases.type" label="Release type" />
     <div class="release-actions"><SelectField label="Release order" bind:value={sort} options={[{ value: "newest", label: "Newest first" }, { value: "oldest", label: "Oldest first" }]} />
       <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label="Release actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu release-menu" align="end"><DropdownMenu.Item class="bits-menu-item" onSelect={() => void followTop()}>Follow my top artists</DropdownMenu.Item><DropdownMenu.Item class="bits-menu-item" onSelect={() => { followError = ""; followOpen = true; }}>Follow artists from my hearts</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
-      <RefreshButton label="Refresh releases" disabled={Boolean(pendingAction)} onrefresh={load} />
     </div>
   </div>
   {#if error}<ErrorState title="Couldn't load new releases" detail={error} onretry={async () => { await load(); if (initialRelease && !ReleasePanel) await loadReleasePanel(); }} />{/if}
@@ -226,7 +221,6 @@
 
 <style>
   .releases-inbox { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); min-width: 0; }
-  :global(.radar-link) { width: fit-content; }
   .following-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-lg); background: var(--color-panel); }
   .artist-faces { display: flex; flex: 1; min-width: 0; gap: var(--space-4); overflow-x: auto; }
   .artist-faces button { display: grid; flex: 0 0 auto; justify-items: center; gap: var(--space-1); min-width: 44px; max-width: 88px; font-size: var(--text-xs); color: var(--color-ink-muted); }
@@ -240,7 +234,7 @@
   .release-open :global(.release-art) { width: 100%; aspect-ratio: 1; height: auto; margin-bottom: var(--space-2); }
   .release-open h3 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: 600; }
   .release-open p { margin-top: var(--space-1); color: var(--color-ink-muted); font-size: var(--text-xs); overflow-wrap: anywhere; }
-  .release-card :global(.release-card-menu) { position: absolute; right: var(--space-1); top: var(--space-1); background: var(--color-panel); }
+  .release-card :global(.release-card-menu) { display: flex; margin-top: var(--space-1); margin-left: auto; color: var(--color-signal-text); }
   .checking-note { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); font-size: var(--text-sm); color: var(--color-ink-muted); }
   .checking-note summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; }
   .release-disclosure { padding: var(--space-3); border-top: 1px solid var(--color-edge); font-size: var(--text-sm); color: var(--color-ink-muted); }

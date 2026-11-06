@@ -31,11 +31,11 @@
   </div>
 </section>
 <style>
-  section { min-width: 0; }
+  section { container-type: inline-size; min-width: 0; }
   header, .shelf-actions { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
   header { margin-bottom: var(--space-3); }
-  h2 { font-size: 1.125rem; font-weight: 600; }
-  .mix-shelf { display: grid; grid-auto-flow: column; grid-auto-columns: max(132px, calc((100% - (var(--shelf-columns) - 1) * var(--space-3)) / var(--shelf-columns))); overflow-x: auto; scroll-snap-type: x mandatory; align-items: stretch; gap: var(--space-3); padding-block: var(--space-1) var(--space-2); }
+  h2 { font-size: 1.125rem; }
+  .mix-shelf { display: grid; grid-auto-flow: column; grid-auto-columns: calc((100% - (var(--shelf-columns) - 1) * var(--space-3)) / var(--shelf-columns)); overflow-x: auto; scroll-snap-type: x mandatory; align-items: stretch; gap: var(--space-3); padding-block: var(--space-1) var(--space-2); }
   .mix-card { min-width: 0; scroll-snap-align: start; text-align: left; color: var(--color-ink); }
   .cover, .mix-open { display: flex; flex-direction: column; width: 100%; min-width: 0; gap: var(--space-2); }
   .cover { height: 100%; }
@@ -43,11 +43,14 @@
   .mix-open:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
   .artwork { display: block; width: 100%; }
   .artwork.unready { opacity: 0.6; }
-  small { display: flex; align-items: center; min-height: 44px; margin-top: auto; font-size: var(--text-xs); color: var(--color-ink-muted); }
+  small { display: flex; align-items: center; min-height: var(--control-sm); height: var(--control-sm); margin-top: auto; font-size: var(--text-xs); color: var(--color-ink-muted); }
   small.added { color: var(--success); }
-  .cover :global(.add-chip) { align-self: start; min-height: 44px; max-width: 100%; margin-top: auto; padding-inline: var(--space-2); font-size: var(--text-xs); }
+  .cover :global(.add-chip) { align-self: stretch; width: 100%; max-width: 100%; margin-top: auto; }
   strong { display: -webkit-box; width: 100%; overflow: hidden; white-space: normal; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; font-size: var(--text-sm); font-weight: 600; }
   .description { display: -webkit-box; min-height: 2.8em; overflow: hidden; color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.4; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
+  @media (min-width: 900px) and (max-width: 1199px) { .mix-shelf { grid-auto-columns: 132px; } }
+  @container (max-width: 899px) { .mix-shelf { grid-auto-columns: 132px; } }
   @media (max-width: 899px) { .mix-shelf { grid-auto-columns: 148px; } }
+  @media (max-width: 899px), (pointer: coarse) { small { min-height: 44px; height: 44px; } }
   @media (pointer: coarse) { .mix-shelf { scrollbar-width: none; } }
 </style>

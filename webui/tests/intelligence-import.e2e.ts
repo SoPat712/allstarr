@@ -99,6 +99,7 @@ async function openImport(page: Page) {
   await page.goto("/#/library/playlists");
   await page.getByRole("button", { name: "Import playlist", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+  await dialog.getByText("Other playlist sources", { exact: true }).click();
   await expect(dialog.getByRole("radio", { name: /Public ListenBrainz playlist/ })).toBeVisible();
   return dialog;
 }
@@ -129,7 +130,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     const state = await mockImport(page);
     const dialog = await openImport(page);
     await dialog.getByRole("radio", { name: /Last\.fm/ }).check();
-    await expect(dialog.getByRole("searchbox", { name: "Find a source playlist" })).toHaveCount(0);
+    await expect(dialog.locator(".other-sources").getByRole("searchbox", { name: "Find a source playlist" })).toHaveCount(0);
     await dialog.getByRole("radio", { name: /Top tracks/ }).check();
     await expect(dialog.getByRole("button", { name: "Top tracks period" })).toContainText("All time");
     await dialog.getByRole("button", { name: "Top tracks period" }).scrollIntoViewIfNeeded();

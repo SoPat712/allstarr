@@ -78,7 +78,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(page.getByRole("button", { name: "Steer R&B", exact: true })).toBeVisible();
     const details = page.locator("details").filter({ hasText: "See the details" });
     await expect(details.getByRole("progressbar").first()).not.toBeVisible();
-    await page.getByText("See the details", { exact: true }).click();
+    await details.locator(":scope > summary").click();
     const lately = details.locator(".taste-layers > section").filter({ has: page.getByRole("heading", { name: "Lately", exact: true }) });
     const usually = details.locator(".taste-layers > section").filter({ has: page.getByRole("heading", { name: "Usually", exact: true }) });
     for (const layer of [lately, usually]) {
@@ -139,7 +139,7 @@ test("Never hides an artist persistently and Undo removes the preference", async
 test("Pause learning can be resumed", async ({ page }) => {
   const state = await mockTaste(page);
   await openTaste(page);
-  const toggle = page.getByRole("checkbox", { name: "Private listening (pause learning)", exact: true });
+  const toggle = page.getByRole("switch", { name: "Private listening (pause learning)", exact: true });
   await toggle.check();
   await expect(toggle).toBeChecked();
   await toggle.uncheck();

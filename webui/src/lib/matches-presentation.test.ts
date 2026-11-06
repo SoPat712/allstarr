@@ -29,6 +29,11 @@ describe("match differences", () => {
     ]);
     expect(comparisonRows(song, { title: "  ", artist: "  " }).every(row => row.verdict === "Can't compare")).toBe(true);
   });
+  it("calls title extras close and shows the actual length difference", () => {
+    const rows = comparisonRows(song, { ...song, title: "Song (Live)", durationMilliseconds: 218000 });
+    expect(rows.find(row => row.label === "Title")?.verdict).toBe("Close");
+    expect(rows.find(row => row.label === "Length")?.verdict).toBe("+38 s");
+  });
   it("keeps an identified target with missing metadata available for comparison", () => {
     const target = currentSong({ ...match("accepted"), target: { providerId: "qobuz", externalId: "saved", title: null } });
     expect(target).toMatchObject({ providerId: "qobuz", identity: "saved", title: null });
@@ -72,9 +77,17 @@ describe("plain language evidence", () => {
   it.each([["title_exact", "Title matches exactly"], ["duration_close", "Length within 1 second"], ["title", "Title"], ["artist", "Artist"], ["primaryArtist", "Main artist"], ["versionTags", "Version"], ["titleAnnotations", "Title extras"], ["album", "Album"], ["duration", "Length"], ["artwork", "Cover"]])("explains %s", (key, label) => {
     expect(evidenceSentence(key)).toBe(label);
   });
-  it.each(["ArtistGrid best version +5", "MusicBrainz identity", "providerTrackId", "unknown_reason", "artistGrid_bestVersion"])('preserves "%s" without changing names or unknown tokens', (reason) => {
+  it.each(["ArtistGrid best version +5", "MusicBrainz identity"])('preserves readable evidence "%s"', (reason) => {
     expect(evidenceSentence(reason)).toBe(reason);
   });
+  it.each(["title_strong", "title_annotation_mismatch", "album_artist_partial", "below_accept_threshold_review", "unknown_reason", "providerTrackId", "artistGrid_bestVersion"])("never exposes a machine key: %s", key => {
+    expect(evidenceSentence(key)).not.toBe(key);
+    expect(evidenceSentence(key)).not.toContain("_");
+  });
+  it("uses a neutral explanation for unfamiliar evidence", () => {
+    expect(evidenceSentence("new_reason")).toBe("Compare the recording details before choosing");
+  });
+
 });
 
 describe("match filters and ordering", () => {

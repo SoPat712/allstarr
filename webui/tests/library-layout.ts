@@ -32,7 +32,9 @@ export async function expectToolbarLayout(toolbar: Locator, filters: Locator) {
   expect(Math.max(...boxes.map(box => box.y)) - Math.min(...boxes.map(box => box.y))).toBeLessThanOrEqual(1);
   expect(boxes.some(box => box.clipped)).toBe(false);
   const filterBox = await filters.boundingBox(), toolbarBox = await toolbar.boundingBox();
-  expect(filterBox!.y + filterBox!.height).toBeLessThanOrEqual(toolbarBox!.y);
+  if (toolbarBox!.x > filterBox!.x + filterBox!.width - 1)
+    expect(Math.abs((filterBox!.y + filterBox!.height / 2) - (toolbarBox!.y + toolbarBox!.height / 2))).toBeLessThanOrEqual(1);
+  else expect(filterBox!.y + filterBox!.height).toBeLessThanOrEqual(toolbarBox!.y + 1);
 }
 
 export async function expectSingleRowFooter(panel: Locator) {

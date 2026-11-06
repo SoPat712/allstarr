@@ -24,7 +24,10 @@ async function expectGeometry(page: Page) {
       for (const button of group.querySelectorAll("button")) {
         if (!visible(button)) continue;
         const rect = button.getBoundingClientRect();
-        if (rect.left < bounds.left - 1 || rect.right > bounds.right + 1 || rect.top < bounds.top - 1 || rect.bottom > bounds.bottom + 1) filterEscapes.push(identify(button));
+        const outsideX = rect.left < bounds.left - 1 || rect.right > bounds.right + 1;
+        const outsideY = rect.top < bounds.top - 1 || rect.bottom > bounds.bottom + 1;
+        if (outsideY || outsideX)
+          filterEscapes.push(`${identify(button)} [${rect.left}, ${rect.right}] outside [${bounds.left}, ${bounds.right}], scroll ${group.scrollLeft}/${group.scrollWidth - group.clientWidth}`);
       }
     }
     const narrowText: string[] = [];
@@ -110,12 +113,16 @@ for (const [width, theme] of appearances) for (const state of ["expanded", "coll
     if (screen.name === "for-you-mix") {
       const cards = page.locator(".mix-shelf .mix-card");
       await expect(cards).toHaveCount(8);
-      expect(await cards.evaluateAll(elements => elements.every(element => element.getBoundingClientRect().width >= 132))).toBe(true);
+      if (width >= 1200)
+        expect(await page.locator(".mix-shelf").evaluateAll(elements => elements.every(element => element.scrollWidth <= element.clientWidth + 1))).toBe(true);
+      else expect(await cards.evaluateAll(elements => elements.every(element => element.getBoundingClientRect().width >= 132))).toBe(true);
     }
     const content = page.locator(".sources-redesign, .library-playlists, .library-downloads, .mapping-page, .activity-content, .mix-shelf").first();
     const before = await content.boundingBox();
     await opener.click();
     const panel = await expectPanel(page);
+    if (screen.name === "for-you-mix" && await panel.getAttribute("data-mode") === "docked")
+      expect(await page.locator(".mix-shelf .mix-card").evaluateAll(elements => elements.every(element => element.getBoundingClientRect().width >= 132))).toBe(true);
     if (await panel.getAttribute("aria-modal") === "true") {
       const after = await content.boundingBox();
       expect(after!.width, "opening a modal sheet preserves the content width").toBeCloseTo(before!.width, 0);
@@ -236,5 +243,14 @@ test("source cards and filter pills adapt to narrow containers on desktop", asyn
   const filters = page.locator(".source-toolbar .filter-segments");
   await filters.evaluate(element => { element.style.maxWidth = "220px"; });
   expect(await filters.locator("button").evaluateAll(elements => new Set(elements.map(element => element.getBoundingClientRect().top)).size)).toBeGreaterThan(1);
+  const first = filters.getByRole("radio").first(), last = filters.getByRole("radio").last();
+  await first.focus(); await first.press("End");
+  await expect(last).toBeFocused();
+  expect(await last.evaluate(element => {
+    const bounds = element.getBoundingClientRect(), group = element.parentElement!.getBoundingClientRect();
+    return bounds.left >= group.left - 1 && bounds.right <= group.right + 1;
+  })).toBe(true);
+  await last.press("Home");
+  await expect(first).toBeFocused();
   await expectGeometry(page);
 });

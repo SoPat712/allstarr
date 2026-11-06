@@ -5,6 +5,17 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
   await page.getByRole("searchbox", { name: "Start a mix from a song or artist" }).fill("gold");
   await page.getByRole("button", { name: "Golden hour by Mira", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Start a mix" }); await expect(dialog.getByText("Calm sound").first()).toBeVisible();
+  await expect(dialog.getByRole("list", { name: "Songs", exact: true }).getByRole("listitem")).toHaveCount(3);
+  expect(await dialog.locator(".preview-songs").evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    return [...element.querySelectorAll("li")].every(row => {
+      const rect = row.getBoundingClientRect();
+      return rect.top >= bounds.top - 1 && rect.bottom <= bounds.bottom + 1;
+    });
+  })).toBe(true);
+  const previewBounds = await dialog.locator(".preview-songs").boundingBox(), optionsBounds = await dialog.locator(".mix-options").boundingBox();
+  expect(optionsBounds!.y).toBeGreaterThanOrEqual(previewBounds!.y + previewBounds!.height);
+  await expect(dialog.getByRole("switch", { name: "Add to my apps", exact: true })).toBeVisible();
   await capture(page, "preview", width, theme);
   await dialog.getByLabel("Mix name").fill("Evening listening"); await dialog.getByRole("button", { name: "Start mix", exact: true }).click();
   await expect(page.getByRole("region", { name: "Your mixes", exact: true }).getByText("Evening listening")).toBeVisible();

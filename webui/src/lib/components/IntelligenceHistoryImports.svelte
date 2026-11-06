@@ -215,7 +215,7 @@
               <span class="history-state">{groupState(group.items)}</span>
               {#if group.items.some(active)}<Progress value={group.items.length > 1 ? importBatchProgress(group.items).percent : importProgress(group.items[0])} aria-label={`${source(group.items)} import`} />{/if}
             </div>
-            <div class="history-actions">{#if group.items.some(item => importPhase(item) === "previewed")}<Button variant="secondary" disabled={uploading || action} onclick={() => review(group.items)}>Review</Button>{/if}<Button variant="outline" disabled={uploading || action} onclick={() => { removing = [...group.items]; deleteError = ""; deleteOpen = true; }}><Trash2 data-icon="inline-start" aria-hidden="true" />Delete</Button></div>
+            <div class="history-actions">{#if group.items.some(item => importPhase(item) === "previewed")}<Button variant="secondary" disabled={uploading || action} onclick={() => review(group.items)}>Review</Button>{/if}<Button variant="text" class="history-delete" disabled={uploading || action} onclick={() => { removing = [...group.items]; deleteError = ""; deleteOpen = true; }}><Trash2 data-icon="inline-start" aria-hidden="true" />Delete</Button></div>
           </div>
           {#if group.items.length > 1}
             <details class="history-files"><summary class="disclosure-summary"><DisclosureLabel title="Show files" /></summary>
@@ -323,6 +323,7 @@
   .history-list > li + li { border-top: 1px solid var(--color-edge); }
   .history-state { font-size: var(--text-sm); overflow-wrap: anywhere; }
   .history-list :global([data-slot="progress"]) { margin-top: var(--space-2); }
+  .history-actions :global(.history-delete) { color: var(--danger); }
   .history-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); justify-content: end; }
   .history-preview { display: grid; min-width: 0; gap: var(--space-3); }
   .history-preview p, .history-preview small, .history-file-list small { color: var(--color-ink-muted); }

@@ -57,16 +57,17 @@ test("Recap periods and past years send separate exact selections", async ({ pag
   await page.goto("/#/for-you?section=recap");
   await expect(page.getByText("1,234", { exact: true })).toBeVisible();
   for (const [label, period] of [["Last 7 days", "7d"], ["This year", "year"], ["All time", "all"], ["Last 30 days", "30d"]]) {
-    await page.getByRole("navigation", { name: "Stats period" }).getByRole("tab", { name: label, exact: true }).click();
+    await page.getByRole("radiogroup", { name: "Stats period" }).getByRole("radio", { name: label, exact: true }).click();
     await expect.poll(() => calls.at(-1)).toBe(`?period=${period}`);
   }
+  await page.getByRole("radio", { name: "Past years", exact: true }).click();
   await page.getByRole("button", { name: "Year in review", exact: true }).click();
-  await page.getByRole("option", { name: "2024", exact: true }).click();
+  await page.getByRole("menuitem", { name: "2024", exact: true }).click();
   await expect.poll(() => calls.includes("?year=2024")).toBe(true);
   await page.getByRole("button", { name: "Year in review", exact: true }).focus();
   await page.keyboard.press("Shift+Tab");
-  await expect(page.getByRole("navigation", { name: "Stats period" }).getByRole("tab", { name: "Last 7 days", exact: true })).toBeFocused();
-  await page.getByRole("navigation", { name: "Stats period" }).getByRole("tab", { name: "Last 7 days", exact: true }).click();
+  await expect(page.getByRole("radiogroup", { name: "Stats period" }).getByRole("radio", { name: "Past years", exact: true })).toBeFocused();
+  await page.getByRole("radiogroup", { name: "Stats period" }).getByRole("radio", { name: "Last 7 days", exact: true }).click();
   await expect.poll(() => calls.at(-1)).toBe("?period=7d");
 });
 
@@ -83,8 +84,9 @@ test("Completed imported-only plays populate their original year", async ({ page
   const historical = { ...stats, period: { ...stats.period, from: "2015-01-01T05:00:00Z", to: "2016-01-01T05:00:00Z" }, playCount: 450, importedCount: 450, observedSince: "2015-10-16T23:45:56Z" };
   const calls = await mockStats(page, historical);
   await page.goto("/#/for-you?section=recap");
+  await page.getByRole("radio", { name: "Past years", exact: true }).click();
   await page.getByRole("button", { name: "Year in review", exact: true }).click();
-  await page.getByRole("option", { name: "2015", exact: true }).click();
+  await page.getByRole("menuitem", { name: "2015", exact: true }).click();
   await expect.poll(() => calls.includes("?year=2015")).toBe(true);
   await expect(page.locator(".stats-numbers").getByText("450", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Top songs", exact: true })).toContainText("Evening light");
@@ -100,7 +102,7 @@ test("A failed period change does not label the previous totals as the new perio
   await page.route("**/api/admin/stats?period=7d*", route => route.fulfill({ status: 503, json: { error: "Unavailable" } }));
   await page.goto("/#/for-you?section=recap");
   await expect(page.getByText("1,234", { exact: true })).toBeVisible();
-  await page.getByRole("navigation", { name: "Stats period" }).getByRole("tab", { name: "Last 7 days", exact: true }).click();
+  await page.getByRole("radiogroup", { name: "Stats period" }).getByRole("radio", { name: "Last 7 days", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Your stats are unavailable", exact: true })).toBeVisible();
   await expect(page.getByText("1,234", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Page status", exact: true })).not.toContainText("1,234");

@@ -8,8 +8,7 @@
   import UiIcon from "$lib/components/UiIcon.svelte";
   import { formatCount, listeningTime, recapClock, recapTimeline } from "$lib/intelligence";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
-  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
-  import SelectField from "$lib/components/SelectField.svelte";
+  import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   import IntelligenceHistoryImports from "$lib/components/IntelligenceHistoryImports.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
@@ -92,7 +91,7 @@
     finally { if (current === request) { loading = false; refreshing = false; } }
   }
 
-  function selectPeriod(value: string) { period = value; year = ""; void load(); }
+  function selectPeriod(value: string) { if (value === "past") year = years[1]?.value ?? String(new Date().getFullYear() - 1); else { period = value; year = ""; } void load(); }
   function importsChanged() {
     void load();
     clearTimeout(importedRefresh);
@@ -110,8 +109,9 @@
   <h2 class="visually-hidden">Your listening</h2>
   <PageStatus items={[{ label: stats && loadedSelection === selection ? countLabel(stats.playCount, "play") : "Your listening recap" }, { label: year || periods.find(item => item.id === period)?.label || "All time" }]} />
   <div class="stats-toolbar">
-    <SegmentedNav variant="segments" label="Stats period" items={periods} active={year ? "" : period} onchange={selectPeriod} />
-    <div class="stats-actions"><SelectField bind:value={year} label="Year in review" options={years} onchange={() => void load()} /><RefreshButton label="Refresh stats" onrefresh={load} /></div>
+    <FilterSegments label="Stats period" options={[...periods, { id: "past", label: "Past years" }]} value={year ? "past" : period} onchange={selectPeriod} />
+    {#if year}<DropdownMenu.Root><DropdownMenu.Trigger class="year-picker" aria-label="Year in review">{year} ▾</DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="start">{#each years.filter(item => item.value) as item}<DropdownMenu.Item class="bits-menu-item" onSelect={() => { year = item.value; void load(); }}>{item.label}</DropdownMenu.Item>{/each}</DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/if}
+    <RefreshButton label="Refresh stats" onrefresh={load} />
   </div>
   {#if loading || refreshing && loadedSelection !== selection}<RowsSkeleton />
   {:else if !stats || error && loadedSelection !== selection}<ErrorState title="Your stats are unavailable" detail={error} onretry={load} />
@@ -197,15 +197,18 @@
       {#if stats.shortPlayCount}<p>{countLabel(stats.shortPlayCount, "skip or play under 30 seconds isn't counted", "skips and plays under 30 seconds aren't counted")}.</p>{/if}
     </footer>
   {/if}
-  <section aria-label="Your data"><h2>Bring in your history</h2><IntelligenceHistoryImports onchanged={importsChanged} /></section>
+  <details class="recap-imports" aria-label="Your data"><summary><span>Bring in your history</span><span aria-hidden="true">▾</span></summary><IntelligenceHistoryImports onchanged={importsChanged} /></details>
 </div>
 
 <style>
   .your-stats { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--section-gap); }
   .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .stats-toolbar, .stats-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
-  .stats-toolbar { justify-content: space-between; }
-  .stats-toolbar :global(.segmented-nav) { min-width: 0; max-width: 100%; }
+  .stats-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+  .stats-toolbar { justify-content: flex-start; }
+  :global(.year-picker) { min-height: 44px; padding-inline: var(--space-3); color: var(--color-signal-text); font-size: var(--text-sm); }
+  .recap-imports { border: 1px solid var(--color-edge); border-radius: var(--radius-lg); overflow: hidden; }
+  .recap-imports > summary { display: flex; align-items: center; justify-content: space-between; min-height: 48px; padding: var(--space-3) var(--space-4); color: var(--color-signal-text); cursor: pointer; list-style: none; font-size: var(--text-sm); }
+  .recap-imports > summary::-webkit-details-marker { display: none; }
   .recap-hero { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-6); padding: var(--surface-gutter); }
   .hero-artist { display: flex; align-items: center; gap: var(--space-4); min-width: min(100%, 280px); flex: 1 1 280px; }
   .hero-artist :global(.hero-art) { flex: none; width: 96px; height: 96px; border-radius: 50%; overflow: hidden; }
@@ -227,7 +230,7 @@
   .genre-name { font-size: var(--text-sm); overflow-wrap: anywhere; text-transform: capitalize; }
   .genre-track { display: block; height: 8px; }
   .genre-track span { display: block; height: 100%; min-width: 2px; background: var(--md-sys-color-primary); border-radius: 0 4px 4px 0; }
-  .stats-lists { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--section-gap); align-items: start; }
+  .stats-lists { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--section-gap); align-items: start; }
   .stats-lists section { padding: var(--surface-gutter); min-width: 0; }
   h2 { font-size: 1rem; font-weight: 600; margin-bottom: var(--space-4); }
   ol { list-style: none; margin: 0; padding: 0; }
@@ -239,7 +242,7 @@
   .stats-lists :global(.list-art img) { width: 100%; height: 100%; object-fit: cover; }
   .stats-name { min-width: 0; flex: 1; }
   .stats-lists :global(.row-menu) { flex: none; width: 44px; height: 44px; }
-  .stats-name strong, .stats-name small { display: block; overflow-wrap: break-word; }
+  .stats-name strong, .stats-name small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .stats-name strong { font-size: var(--text-sm); font-weight: 600; line-height: 1.3; }
   .plays-count { color: var(--color-ink-muted); font-size: var(--text-sm); white-space: nowrap; font-variant-numeric: tabular-nums; }
   @media (max-width: 480px) { .stats-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -254,5 +257,6 @@
   .new-artists li { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
   .new-artists strong { font-size: var(--text-sm); font-weight: 600; }
   footer { display: grid; gap: var(--space-1); }
-  @media (max-width: 1000px) { .chart-row, .stats-lists { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 1000px) { .chart-row { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 599px) { .stats-lists { grid-template-columns: minmax(0, 1fr); } }
 </style>

@@ -74,6 +74,8 @@ public interface IProtocolProviderGateway
 
     Task<Song?> GetSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
 
+    Task<Song?> GetExactSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
+
     Task<bool> CanPlaySongAsync(ProtocolExecutionContext protocol, Song song);
 
     Task<Song?> GetStoredSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId) =>
@@ -792,6 +794,47 @@ public sealed partial class ProtocolProviderGateway(
         }
 
         return await GetKnownSongAsync(protocol, routedProviderId, externalId);
+    }
+
+    public async Task<Song?> GetExactSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId)
+    {
+        ArgumentNullException.ThrowIfNull(protocol);
+        protocol.RequireActor();
+        var provider = NormalizeProvider(providerId);
+        var id = new ProviderExternalResourceId(provider, ProviderResourceKind.Track, externalId);
+        var policy = await ResolveEffectivePolicyAsync(protocol);
+        if (policy?.IsEnabled(provider) == false)
+            throw new UnauthorizedAccessException("That source is disabled for this listener.");
+        var routed = await PlanExactAsync<IProviderMetadataCapability>(protocol, provider,
+            ProviderCapabilityKind.Metadata, "protocol-current-match-metadata");
+        if (routed.Candidate is not { } candidate || NormalizeProvider(candidate.Context.ProviderId) != provider ||
+            candidate.Context.Actor != protocol.RequireActor())
+            return null;
+        bool Matches(Song song) => !song.IsLocal && NormalizeProvider(song.ExternalProvider) == provider && song.ExternalId == id.Value;
+        var cached = await ReadCachedSongAsync(candidate.Context.Actor, provider, id.Value, candidate.Context.Account);
+        if (cached != null && (!Matches(cached) || policy?.Includes(cached) == false)) cached = null;
+        try
+        {
+            var outcome = await candidate.Implementation.GetTrackAsync(candidate.Context, new(id));
+            protocol.CancellationToken.ThrowIfCancellationRequested();
+            if (!outcome.IsSuccess)
+            {
+                if (cached != null || outcome.Error!.Kind == ProviderErrorKind.NotFound) return cached;
+                ThrowRouteFailure(outcome.Error);
+                return null;
+            }
+            var metadata = outcome.RequireValue();
+            if (NormalizeProvider(metadata.Id.ProviderId) != provider || metadata.Id.Value != id.Value) return cached;
+            var song = Map(metadata);
+            if (policy?.Includes(song) == false) return null;
+            await CacheSongsAsync(candidate.Context, [song], true);
+            return song;
+        }
+        catch (Exception exception) when (cached != null && exception is not OperationCanceledException)
+        {
+            logger?.LogDebug(exception, "Current recording metadata was unavailable for {ProviderId}", provider);
+            return cached;
+        }
     }
 
     public async Task<Album?> GetAlbumAsync(

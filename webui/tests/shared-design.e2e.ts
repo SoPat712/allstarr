@@ -122,7 +122,7 @@ for (const width of [1280, 390]) for (const theme of ["dark", "light"] as const)
         await expect(dialog).toBeHidden();
       }
       if (capturePhase === "after" && path === "library/cached") {
-        await page.getByRole("button", { name: "Remove all", exact: true }).click();
+        await page.getByRole("button", { name: "Remove all…", exact: true }).click();
         const confirmation = page.getByRole("alertdialog");
         await expect(confirmation).toBeVisible();
         await expect(confirmation.getByRole("button", { name: "Cancel", exact: true })).toHaveClass(/text-\[var\(--color-signal-text\)\]/);

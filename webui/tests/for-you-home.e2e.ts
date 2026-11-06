@@ -23,9 +23,9 @@ for (const width of [390, 899, 900, 1280]) test(`Mix shelves keep one row and ev
       const box = element.getBoundingClientRect(); return { top: Math.round(box.top), width: box.width };
     }));
     expect(new Set(geometry.map(card => card.top)).size).toBe(1);
-    expect(geometry.every(card => card.width >= 132)).toBe(true);
+    expect(geometry.every(card => card.width >= (width >= 1200 ? 96 : 132))).toBe(true);
     const needsScroll = await shelf.evaluate(element => element.scrollWidth > element.clientWidth);
-    if (await cards.count() === 8) expect(needsScroll).toBe(true);
+    if (await cards.count() === 8) expect(needsScroll).toBe(width < 1200);
     const controls = shelf.locator("button:not([disabled])");
     await controls.first().focus();
     for (let index = 0; index < await controls.count(); index++) {
@@ -66,14 +66,14 @@ test("A failed mix request can retry in place and background reads stay silent",
   await page.route("**/api/admin/mixes?**", route => failing ? route.fulfill({ status: 503, json: {} }) : route.fallback());
   await page.goto("/#/for-you"); await expect(page.getByRole("alert")).toContainText("Couldn't load your mixes."); failing = false;
   await page.getByRole("button", { name: "Try again", exact: true }).click(); await openHome(page);
-  await page.evaluate(() => window.dispatchEvent(new Event("focus"))); await expect(page.getByRole("button", { name: "Refresh page" })).toHaveAttribute("aria-busy", "false");
+  await page.evaluate(() => window.dispatchEvent(new Event("focus"))); await expect(page.getByRole("button", { name: "Refresh page" })).toHaveCount(0);
 });
 test("Loading shelves never push the page wider than the window", async ({ page }) => {
   await page.setViewportSize({ width: 1000, height: 800 }); await mockForYou(page, { partial: true });
   await page.route(url => url.pathname === "/api/admin/mixes", () => new Promise(() => {}));
   await openHome(page).catch(() => {});
   await expect(page.getByRole("region", { name: "Loading Made for you" })).toBeVisible();
-  const refresh = page.getByRole("button", { name: "Refresh page" }); await expect(refresh).toBeVisible();
+  const refresh = page.getByRole("button", { name: "Start a mix", exact: true }); await expect(refresh).toBeVisible();
   const box = await refresh.boundingBox(); expect(box!.x + box!.width).toBeLessThanOrEqual(1000);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1000);
 });
@@ -142,6 +142,7 @@ test.describe("Cover touch targets", () => {
 });
 
 test("Tips list only unfinished actions", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await mockForYou(page, { partial: true, admin: true }); await openHome(page);
   const tips = page.getByRole("region", { name: "Get more from your mixes", exact: true });
   await expect(tips.locator(".check-row")).toHaveCount(1);

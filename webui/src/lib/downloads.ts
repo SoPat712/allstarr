@@ -42,3 +42,23 @@ function formatSampleRate(value: number) {
   const kilohertz = value / 1_000;
   return kilohertz.toFixed(value % 1_000 ? 1 : 0);
 }
+
+
+export function groupDownloadSongs(files: ManagedDownload[]) {
+  const groups: { key: string; files: ManagedDownload[] }[] = [];
+  const normalize = (value: string) => value.trim().toLocaleLowerCase();
+  for (const file of files) {
+    const group = file.title && file.artist ? groups.find(group => {
+      const first = group.files[0];
+      if (normalize(first.title) !== normalize(file.title) || normalize(first.artist) !== normalize(file.artist)) return false;
+      if (first.durationMilliseconds && file.durationMilliseconds)
+        return Math.abs(first.durationMilliseconds - file.durationMilliseconds) <= 2000;
+      return Boolean(file.album && normalize(first.album) === normalize(file.album));
+    }) : undefined;
+    if (group) group.files.push(file);
+    else groups.push({ key: file.path, files: [file] });
+  }
+  const quality = (file: ManagedDownload) => (/^(flac|alac|wav|aiff)$/i.test(file.codec) ? 1e12 : 0) +
+    (file.bitDepth ?? 0) * 1e9 + (file.sampleRateHz ?? 0) * 1e3 + (file.bitrateKbps ?? 0);
+  return groups.map(group => ({ ...group, files: group.files.toSorted((a, b) => quality(b) - quality(a) || a.path.localeCompare(b.path)) }));
+}

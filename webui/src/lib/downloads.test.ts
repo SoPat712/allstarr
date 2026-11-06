@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ManagedDownload } from "./api";
-import { filterDownloads, qualityDetails } from "./downloads";
+import { filterDownloads, groupDownloadSongs, qualityDetails } from "./downloads";
 
 const file = (title: string, provider: string, size: number): ManagedDownload => ({
   path: `${title}.flac`,
@@ -38,5 +38,21 @@ describe("managed download presentation", () => {
   it("formats complete audio quality facts", () => {
     expect(qualityDetails(file("Track", "future-extension", 1)))
       .toEqual(["FLAC", "900 kbps", "24-bit", "44.1 kHz", "2 ch"]);
+  });
+});
+
+
+describe("cached song copies", () => {
+  it("groups matching recordings across services and album releases", () => {
+    const original = { ...file("Same song", "deezer", 1), durationMilliseconds: 180000, externalId: "one" };
+    const other = { ...original, path: "other.flac", provider: "apple", externalId: "two", album: "Single", durationMilliseconds: 181000 };
+    expect(groupDownloadSongs([original, other])[0].files).toHaveLength(2);
+  });
+  it("keeps different versions and uncertain recordings separate", () => {
+    const original = { ...file("Same song", "deezer", 1), durationMilliseconds: 180000 };
+    const live = { ...original, path: "live.flac", title: "Same song (Live)" };
+    const longer = { ...original, path: "long.flac", durationMilliseconds: 210000 };
+    expect(groupDownloadSongs([original, live, longer])).toHaveLength(3);
+    expect(groupDownloadSongs([original, { ...original, path: "unknown.flac", album: "Single", durationMilliseconds: null }])).toHaveLength(2);
   });
 });

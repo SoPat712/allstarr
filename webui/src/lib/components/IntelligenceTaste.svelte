@@ -7,6 +7,7 @@
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button, buttonVariants } from "$lib/components/ui/button";
+  import { Switch } from "$lib/components/ui/switch";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Popover } from "$lib/components/ui/popover";
   import { Progress } from "$lib/components/ui/progress";
@@ -14,7 +15,6 @@
   import PageStatus from "$lib/components/patterns/PageStatus.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
-  import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   let profile = $state<TasteProfile | null>(null), loading = $state(true), error = $state("");
@@ -98,12 +98,12 @@
     </section>
     <section class="settings-card taste-settings"><header><h2>Privacy & learning</h2></header>
       {#key toggleRevision}
-      <label class="settings-row"><div><strong>Private listening (pause learning)</strong></div><span class="settings-toggle"><Checkbox checked={profile.paused} disabled={action} aria-label="Private listening (pause learning)" onCheckedChange={paused => update(() => taste.pause(paused === true))} /></span></label>
-      <label class="settings-row"><div><strong>Use imported history</strong><small>Imported plays shape your usual taste.</small></div><span class="settings-toggle"><Checkbox checked={profile.useImportedHistory ?? true} disabled={action} aria-label="Use imported history" onCheckedChange={enabled => update(() => taste.importedHistory(enabled === true))} /></span></label>
+      <label class="settings-row"><div><strong>Private listening (pause learning)</strong></div><span class="settings-toggle"><Switch disabled={action} aria-label="Private listening (pause learning)" bind:checked={() => profile?.paused ?? false, paused => void update(() => taste.pause(paused))} /></span></label>
+      <label class="settings-row"><div><strong>Use imported history</strong><small>Imported plays shape your usual taste.</small></div><span class="settings-toggle"><Switch disabled={action} aria-label="Use imported history" bind:checked={() => profile?.useImportedHistory ?? true, enabled => void update(() => taste.importedHistory(enabled))} /></span></label>
       {/key}
-      <footer><Button variant="secondary" disabled={action} onclick={() => { clearNudges = false; resetError = ""; resetOpen = true; }}>Reset taste</Button></footer>
+      <footer><Button variant="text" class="reset-taste" disabled={action} onclick={() => { clearNudges = false; resetError = ""; resetOpen = true; }}>Reset taste</Button></footer>
     </section>
-    <details class="settings-card taste-section"><summary class="disclosure-summary"><DisclosureLabel title="See the details" /></summary><div class="taste-layers">{#each layers as layer}<section><h3>{layer.title}</h3>{#each [{ title: "Styles", rows: layer.data.tags }, { title: "Artists", rows: layer.data.artists }] as group}<h4>{group.title}</h4>{#each group.rows.slice(0, 5) as row}<div class="taste-strength"><strong>{row.name}</strong><Progress value={Math.max(0, Math.min(100, row.strength))} aria-label={`${row.name} strength`} /></div>{/each}{#if !group.rows.length}<p>No {group.title.toLowerCase()} yet.</p>{/if}{/each}</section>{/each}</div></details>
+    <details class="taste-details"><summary><span>See the details</span><span aria-hidden="true">▾</span></summary><div class="taste-layers">{#each layers as layer}<section><h3>{layer.title}</h3>{#each [{ title: "Styles", rows: layer.data.tags }, { title: "Artists", rows: layer.data.artists }] as group}<h4>{group.title}</h4>{#each group.rows.slice(0, 5) as row}<div class="taste-strength"><strong>{row.name}</strong><Progress value={Math.max(0, Math.min(100, row.strength))} aria-label={`${row.name} strength`} /></div>{/each}{#if !group.rows.length}<p>No {group.title.toLowerCase()} yet.</p>{/if}{/each}</section>{/each}</div></details>
   {/if}
 </div>
 <ConfirmDialog bind:open={resetOpen} title="Reset taste" description="Start learning your taste again from new plays and skips?" confirmLabel="Reset taste" disabled={action} closeOnConfirm={false} error={resetError} onConfirm={() => update(() => taste.reset(clearNudges), true)}><label class="reset-nudges"><span class="settings-toggle"><Checkbox bind:checked={clearNudges} disabled={action} aria-label="Also remove my nudges" /></span><span>Also remove my nudges</span></label></ConfirmDialog>
@@ -120,6 +120,10 @@
   :global(.nudge-options) { display: flex; gap: var(--space-2); justify-content: space-between; margin-top: var(--space-3); }
   ul { list-style: none; padding: 0; margin: var(--space-3) 0 0; } li { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); min-height: 44px; } li + li { border-top: 1px solid var(--color-edge); } li span { overflow-wrap: anywhere; min-width: 0; }
   .taste-settings :global(.settings-row) { grid-template-columns: minmax(0, 1fr) auto; }
+  .taste-settings :global(.reset-taste) { color: var(--danger); }
+  .taste-details { border-top: 1px solid var(--color-edge); }
+  .taste-details > summary { display: flex; align-items: center; justify-content: space-between; padding-block: var(--space-3); color: var(--color-signal-text); font-size: var(--text-sm); list-style: none; }
+  .taste-details > summary::-webkit-details-marker { display: none; }
   .taste-layers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-6); }
   .taste-strength { display: grid; gap: var(--space-2); margin-block: var(--space-3); } .taste-strength strong { font-size: var(--text-sm); }
   summary { min-height: 44px; cursor: pointer; } .reset-nudges { display: flex; align-items: center; gap: var(--space-2); min-height: 44px; margin-top: var(--space-4); }

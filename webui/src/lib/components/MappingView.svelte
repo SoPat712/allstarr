@@ -120,6 +120,13 @@
 
   const query = (requested = page) => ({ page: requested, pageSize: 50, search, state: stateFilter, sort: sort.startsWith("confidence") ? sort : "confidence_asc", backendLibraryId });
   const counts = $derived(data ? filterCounts(data.stats) : { needs: 0, automatic: 0, manual: 0, rejected: 0, all: 0 });
+  const breakdown = $derived([
+          { label: "Matched by Allstarr", value: counts.automatic, color: "var(--color-signal)" },
+          { label: "Chosen by you", value: counts.manual, color: "var(--md-sys-color-tertiary)" },
+          { label: "Unsure", value: data?.stats.review ?? 0, color: "var(--warning)" },
+          { label: "No match", value: data?.stats.unresolved ?? 0, color: "var(--danger)" },
+        ]);
+
   let threshold = $state<number | null>(null);
   const collections = new Map<string, { response: MatchReviewResponse; rows: MatchReviewItem[] }>();
   const playlistSearch = () => Boolean(search && Object.values(playlistNames).some(names => names.some(name => name.toLocaleLowerCase().includes(search.toLocaleLowerCase()))));
@@ -662,18 +669,18 @@
   <ErrorState title="Matches could not load" detail={error} onretry={load} />
 {:else if data}
   <section class="mapping-page" class:panel-open={dialogOpen} aria-busy={refreshing}>
-    <article class="panel mapping-queue">
+    <article class="mapping-queue">
       <header class="mapping-heading">
-        <h2>Matches</h2>
+        <div class="match-title"><h2>Matches</h2><Button variant="outline" size="sm" disabled={Boolean(action) || refreshing} onclick={() => rematchAllOpen = true}>Rematch all</Button></div>
         <PageStatus items={[
           { label: `${countLabel(data.stats.total, "song")}${playlistCount == null ? "" : ` from ${countLabel(playlistCount, "playlist")}`}`, emphasis: true },
+          { label: `${counts.needs.toLocaleString()} ${counts.needs === 1 ? "needs" : "need"} a look`, tone: "warn" },
           ...(threshold == null ? [] : [{ label: `Matches above ${percent(threshold)} are accepted on their own` }]),
-        ]} segments={[
-          { label: "Matched by Allstarr", value: counts.automatic, tone: "info" },
-          { label: "Chosen by you", value: counts.manual, tone: "neutral" },
-          { label: "Unsure", value: data.stats.review, tone: "warn" },
-          { label: "Without a match", value: data.stats.unresolved, tone: "stop" },
         ]} />
+        <div class="match-status-bar" role="img" aria-label={breakdown.map(item => `${item.label}: ${item.value.toLocaleString()}`).join(", ")}>
+          {#each breakdown as item}{#if item.value}<span style:background={item.color} style:flex-grow={item.value}></span>{/if}{/each}
+        </div>
+        <ul class="match-legend" aria-label="Status breakdown">{#each breakdown as item}<li><span class="legend-swatch" style:background={item.color}></span>{item.label} <strong>{item.value.toLocaleString()}</strong></li>{/each}</ul>
       </header>
       {#if degraded || error}<div class="degraded-banner" role="status"><p>{error || degraded}</p><Button variant="text" onclick={() => { void loadProviders(); void load(); }}>Try again</Button></div>{/if}
       <div class="matches-controls">
@@ -691,8 +698,7 @@
             { value: "confidence_asc", label: "Least sure first" }, { value: "confidence_desc", label: "Most sure first" },
             { value: "newest", label: "Newest" }, { value: "title", label: "Title" }, { value: "playlist", label: "Playlist", disabled: !playlistSortReady },
           ]} onchange={() => { page = 1; void load(); }} />
-          <Button variant="text" size="sm" aria-pressed={bulkMode} onclick={() => { bulkMode = !bulkMode; if (!bulkMode) chosen = new Map(); }}>{bulkMode ? "Done selecting" : "Select"}</Button>
-          <Button variant="outline" size="sm" disabled={Boolean(action) || refreshing} onclick={() => rematchAllOpen = true}>Rematch all</Button>
+          <Button variant="outline" size="sm" aria-pressed={bulkMode} onclick={() => { bulkMode = !bulkMode; if (!bulkMode) chosen = new Map(); }}>{bulkMode ? "Done selecting" : "Select"}</Button>
           <RefreshButton class="matches-refresh" disabled={Boolean(action)} onrefresh={reload} />
         </div>
       </div>
@@ -731,9 +737,9 @@
           </table>
         {:else}<EmptyState title="No songs in this filter" description="Try another filter or search." />{/if}
       </div>
-      <nav class="playlist-pagination mapping-pagination" aria-label="Match review pages"><span>{countLabel(data.pagination.total, "song")}</span><div>
-        <Button variant="text" disabled={page <= 1} onclick={() => goToPage(page - 1)}>Previous</Button><span>Page {page} of {data.pagination.totalPages}</span><Button variant="text" disabled={page >= data.pagination.totalPages} onclick={() => goToPage(page + 1)}>Next</Button>
-      </div></nav>
+      {#if data.pagination.totalPages > 1}<nav class="mapping-pagination" aria-label="Match review pages"><span>{countLabel(data.pagination.total, "song")}</span><div>
+        <Button variant="text" disabled={page <= 1} onclick={() => goToPage(page - 1)}>Previous</Button><span>Page {page.toLocaleString()} of {data.pagination.totalPages.toLocaleString()}</span><Button variant="text" disabled={page >= data.pagination.totalPages} onclick={() => goToPage(page + 1)}>Next</Button>
+      </div></nav>{/if}
       {#if chosen.size}<div class="mapping-bulk" role="toolbar" aria-label="Actions for selected songs"><strong>{chosen.size} selected</strong><div>
         <Button disabled={Boolean(action) || !bulkAccept.length} onclick={() => void bulkAcceptBest()}>Accept</Button>
         <Button variant="outline" disabled={Boolean(action)} onclick={() => void bulkRematch()}>Rematch</Button>
@@ -764,19 +770,23 @@
 </Dialog.Content></Dialog.Portal></Dialog.Root>
 
 <style>
-  .mapping-queue { padding: var(--space-5); overflow: visible; }
-  .mapping-heading { display: grid; gap: var(--space-3); margin-bottom: var(--space-5); }
+  .mapping-queue { overflow: visible; }
+  .mapping-heading { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: stretch; align-items: start; gap: var(--space-3); margin-bottom: var(--space-5); }
+  .match-title { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+  .match-status-bar { display: flex; gap: 2px; height: 8px; overflow: hidden; border-radius: var(--radius-sm); background: var(--color-panel-raised); }
+  .match-status-bar span { min-width: 3px; }
+  .match-legend { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); list-style: none; margin: 0; padding: 0; font-size: var(--text-xs); }
+  .match-legend li { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--color-ink-muted); }
+  .legend-swatch { width: 9px; height: 9px; border-radius: 2px; }
+  .mapping-pagination, .mapping-pagination > div { display: flex; align-items: center; gap: var(--space-2); }
+  .mapping-pagination { justify-content: space-between; padding-block: var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); }
   .mapping-heading h2 { margin: 0; font-size: 1.5rem; }
   .matches-controls { display: grid; gap: var(--space-3); margin-bottom: var(--space-4); min-width: 0; }
   .matches-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
   .matches-toolbar :global(.matches-search) { min-width: 280px; flex: 1 1 280px; }
-  .matches-toolbar :global(.matches-search input) { width: 100%; min-width: 0; height: var(--control-md); border: 1px solid var(--color-edge); border-radius: var(--radius-md); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; }
   .matches-toolbar :global(.select-root) { flex: 0 0 auto; }
   .matches-toolbar :global(.select-trigger) { width: auto; gap: var(--space-2); padding-inline: var(--space-2); background: var(--color-panel); color: var(--color-ink); font-size: .8125rem; white-space: nowrap; }
-  .matches-toolbar :global([data-slot="button"]) { padding-inline: var(--space-2); }
-  .matches-toolbar :global(.matches-refresh) { width: 32px; height: 32px; padding: 0; color: var(--color-ink-muted); }
-  .matches-toolbar :global(.matches-refresh span) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .mapping-rows { overflow: auto; min-width: 0; }
+  .mapping-rows { min-width: 0; }
   .matches-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: .8125rem; }
   .matches-table th { text-align: left; font-weight: 500; color: var(--color-ink-muted); padding: var(--space-2); font-size: .75rem; border-bottom: 1px solid var(--color-edge); }
   .matches-table th:nth-last-child(5) { width: 32%; }.matches-table th:nth-last-child(4) { width: 20%; }.matches-table th:nth-last-child(3) { width: 84px; }.matches-table th:last-child { width: 80px; }
@@ -816,7 +826,7 @@
   :global(.shortcuts-card dl > div) { display: flex; gap: var(--space-4); margin-block: var(--space-2); }:global(.shortcuts-card dd) { margin: 0; }:global(.shortcuts-card > .icon-button) { position: absolute; top: var(--space-2); right: var(--space-2); }
   @media (min-width: 1100px) { .matches-toolbar { flex-wrap: nowrap; } :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .matches-toolbar { flex-wrap: wrap; } }
   @media (max-width: 899px) {
-    .mapping-queue { padding: var(--space-3); }.matches-toolbar { flex-wrap: wrap; }.matches-table, .matches-table tbody { display: block; }.matches-table thead, .desktop-cell { display: none; }.mapping-row { display: block; height: auto; }.mapping-row .phone-cell { display: block; padding: 0; border: 0; }.matches-table { table-layout: auto; }
+    .matches-toolbar { flex-wrap: wrap; }.matches-table, .matches-table tbody { display: block; }.matches-table thead, .desktop-cell { display: none; }.mapping-row { display: block; height: auto; }.mapping-row .phone-cell { display: block; padding: 0; border: 0; }.matches-table { table-layout: auto; }
     .mapping-bulk { bottom: calc(var(--mobile-nav-height) + var(--space-2)); }.mapping-pagination { flex-wrap: wrap; gap: var(--space-2); }.mapping-pagination > div { display: flex; align-items: center; }
   }
 </style>
