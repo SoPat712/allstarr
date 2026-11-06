@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Portal } from "bits-ui";
   import { onMount, tick } from "svelte";
   import { readActivityScope, rememberActivityScope, type ActivityScope } from "$lib/activity-scope";
   import { Button } from "$lib/components/ui/button";
@@ -13,22 +14,17 @@
   let scope = $state<ActivityScope>("mine");
   let ready = $state(false);
   let attention = $state(false);
-  let mobile = $state(false);
   let mineButton = $state<HTMLButtonElement>();
   let everyoneButton = $state<HTMLButtonElement>();
   let scopeFocus = $state<ActivityScope | null>(null);
   $effect(() => { view = ["history", "plays", ...(administrator ? ["jobs", "tasks", "reports"] : [])].includes(initialView) ? initialView : "history"; });
   onMount(() => {
-    const breakpoint = matchMedia("(max-width: 650px)");
-    const syncMobile = () => mobile = breakpoint.matches;
-    syncMobile();
-    breakpoint.addEventListener("change", syncMobile);
     scope = readActivityScope(administrator);
     ready = true;
     const unsubscribe = liveUpdates.subscribe((update) => {
       if (administrator && scope === "mine" && update.requiresAdministrator) attention = true;
     });
-    return () => { unsubscribe(); breakpoint.removeEventListener("change", syncMobile); };
+    return unsubscribe;
   });
   async function chooseScope(next: ActivityScope) {
     scopeFocus = next;
@@ -38,13 +34,13 @@
     liveUpdates.setScope(next);
     await tick();
     const button = next === "mine" ? mineButton : everyoneButton;
-    if (button?.isConnected && (!mobile || view !== "history")) { button.focus(); scopeFocus = null; }
+    if (button?.isConnected) { button.focus(); scopeFocus = null; }
   }
   function restoreScopeFocus(button: HTMLButtonElement, id: ActivityScope) {
     void tick().then(() => {
       if (scopeFocus === id && button.isConnected) {
         button.focus();
-        if (!mobile || view !== "history" || button.closest(".event-log-chip-row")) scopeFocus = null;
+        scopeFocus = null;
       }
     });
   }
@@ -62,11 +58,8 @@
   { id: "history", label: "History" }, { id: "plays", label: "Plays" },
   ...(administrator ? [{ id: "jobs", label: "Jobs" }, { id: "tasks", label: "Tasks" }, { id: "reports", label: "Reports" }] : []),
 ]} active={view} onchange={(next) => { scopeFocus = null; view = next; }} />
-{#if view !== "reports"}
-<div class="activity-toolbar">
-  {#if administrator && (!mobile || view !== "history")}{@render scopeControls()}{/if}
-  <p class="activity-scope">{scope === "everyone" ? "Your household’s activity" : "Your activity"} · <span role="status" aria-live="polite">{liveUpdates.state.status === "live" ? "Live updates connected" : "Reconnecting to live updates; checking periodically"}</span></p>
-</div>
+{#if administrator && ready}
+  <Portal to=".workspace-header > .flex"><div class="activity-header-controls">{@render scopeControls()}</div></Portal>
 {/if}
 {#if view !== "reports" && administrator && scope === "mine" && attention}
   <div class="degraded-banner" role="status">
@@ -83,7 +76,7 @@
     {:else if view === "plays"}
       {#await import("./ActivityPlays.svelte")}<RowsSkeleton label="Loading plays" />{:then module}{@const View = module.default}<View {administrator} {scope} {currentUserId} />{:catch}<ErrorState title="Plays could not be opened." onretry={() => window.location.reload()} />{/await}
     {:else}
-      {#if view === "jobs"}{#await import("./ActivityJobs.svelte")}<RowsSkeleton label="Loading jobs" />{:then module}{@const View = module.default}<View {administrator} {scope} {initialJobId} />{:catch}<ErrorState title="Jobs could not be opened." onretry={() => window.location.reload()} />{/await}{:else}<EventHistoryFeed {administrator} {scope} scopeControls={administrator && mobile ? scopeControls : undefined} />{/if}
+      {#if view === "jobs"}{#await import("./ActivityJobs.svelte")}<RowsSkeleton label="Loading jobs" />{:then module}{@const View = module.default}<View {administrator} {scope} {initialJobId} />{:catch}<ErrorState title="Jobs could not be opened." onretry={() => window.location.reload()} />{/await}{:else}<EventHistoryFeed {administrator} {scope} />{/if}
     {/if}
   {/key}
 {/if}
@@ -106,7 +99,14 @@
   .activity-content :global(:is([data-tone="danger"], .badge-danger)) { --activity-ink: var(--md-sys-color-on-error-container); --activity-container: var(--md-sys-color-error-container); }
 
   :global(body:has([data-side-panel])) .activity-content { margin-right: var(--side-panel-offset, 0px); }
-  .activity-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1rem; margin-block: var(--space-5) var(--section-gap); }
-  .activity-content :global(.activity-audience button) { min-height: var(--control-md); }
-  .activity-scope { margin: 0; color: var(--md-sys-color-on-surface-variant); font-size: .8125rem; }
+  .activity-header-controls { order: -1; min-width: 0; }
+  :global(.workspace-header:has(.activity-header-controls)) { flex-wrap: wrap; }
+  :global(.workspace-header:has(.activity-header-controls) > .flex) { min-width: 0; flex-wrap: wrap; }
+  .activity-header-controls :global(button) { min-height: 44px; }
+  .activity-content > :global(.segmented-nav) { margin-bottom: var(--space-4); }
+
+  @media (max-width: 760px) {
+    :global(.workspace-header:has(.activity-header-controls)) { grid-template-columns: minmax(0, 1fr); row-gap: var(--space-2); }
+    :global(.workspace-header:has(.activity-header-controls) > .flex) { grid-column: 1; grid-row: 2; justify-content: space-between; width: 100%; }
+  }
 </style>

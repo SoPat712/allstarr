@@ -3,7 +3,7 @@
   import { CalendarClock } from "@lucide/svelte";
   import { playlistLinks, type ActivityTask, type PlaylistDetails, type PlaylistLink, type PlaylistSchedule, type ProviderDefinition } from "$lib/api";
   import { providerDisplayName } from "$lib/sources";
-  import { internalActivityLink } from "$lib/activity";
+  import { internalActivityLink, taskLastResult } from "$lib/activity";
   import { toast } from "$lib/toasts";
   import { Button } from "$lib/components/ui/button";
   import { Switch } from "$lib/components/ui/switch";
@@ -124,7 +124,7 @@
     {/if}
     {#if saved}<p class="saved" role="status">Saved</p>{/if}
     <section class="settings-group" aria-label="Recent runs"><h3>Recent runs</h3>
-      {#if task.lastRunAt}<p>{time(task.lastRunAt)}</p><ActivityOutcome state={task.state} label={task.state === "Scheduled" ? "Run recorded" : task.state} />{:else}<p>No runs recorded yet.</p>{/if}
+      {#if task.lastRunAt}<p>{time(task.lastRunAt)}</p><span>{taskLastResult(task.state, task.lastRunAt)}</span>{:else}<p>No runs recorded yet.</p>{/if}
       <Button variant="ghost" href="#/activity?view=history">Open in History</Button>
     </section>
   {:else}<section class="settings-group"><h3>About this task</h3><p>{task.cadence}</p><p>{task.detail || "Runs automatically when needed."}</p><ActivityOutcome state={task.state} label={task.state} /></section>{/if}

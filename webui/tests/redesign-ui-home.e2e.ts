@@ -3,7 +3,7 @@ import { mkdir } from "node:fs/promises";
 import { appearance, mockForYou, openHome } from "./for-you-fixtures";
 import { expectContainedMobileGeometry, widenText } from "./mobile-geometry";
 
-const modes = [{ width: 1280, theme: "light" }, { width: 1280, theme: "dark" }, { width: 390, theme: "light" }, { width: 320, theme: "light" }] as const;
+const modes = [{ width: 1280, theme: "light" }, { width: 1280, theme: "dark" }, { width: 390, theme: "light" }, { width: 390, theme: "dark" }, { width: 320, theme: "light" }] as const;
 test("For you actions fit with wider text at 320px", async ({ page }) => {
   await appearance(page, 320, "light");
   const state = await mockForYou(page);
@@ -23,7 +23,7 @@ test("For you actions fit with wider text at 320px", async ({ page }) => {
 async function shot(page: Page, name: string, width: number, theme: string) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   if (width <= 390) await expectContainedMobileGeometry(page);
-  const folder = new URL("../../test-results/ui-home/", import.meta.url).pathname;
+  const folder = new URL("../test-results/ui-home/", import.meta.url).pathname;
   await mkdir(folder, { recursive: true });
   await page.screenshot({ path: `${folder}${name}-${width}-${theme}.png`, fullPage: !(await page.getByRole("dialog").count()) });
 }
@@ -37,11 +37,16 @@ async function homeFixture(page: Page, admin: boolean) {
     providerHealth: { providers: [{ providerId: "catalog", enabledAccountCount: 1, capabilityTotal: 4, healthyCapabilityCount: 3, failedCapabilityCount: 1 }] },
     activity: { items: [
       { id: "routine", kind: "job", label: "Background task", state: "succeeded", detail: "routine", occurredAt: "2026-11-03T20:00:00Z" },
+      { id: "waiting", kind: "job", label: "Background task", state: "deferred", detail: "Waiting for the next scheduled retry", occurredAt: "2026-11-03T20:00:00Z" },
+      { id: "settings", kind: "administration", label: "Runtime settings source use", state: "recorded", detail: "Runtime settings", occurredAt: "2026-11-03T20:00:00Z" },
       { id: "recorded", kind: "job", label: "Record a listen", state: "succeeded", detail: "routine", occurredAt: "2026-11-03T20:00:00Z" },
       { id: "saved", kind: "download", label: "Saved a copy of Blue morning", state: "succeeded", detail: "North", occurredAt: "2026-11-03T20:00:00Z" },
     ], hasMore: false },
   } }));
   await page.route("**/api/admin/ui/now-playing", route => route.fulfill({ json: { items: admin ? [{ deviceId: "phone", itemId: "song", userId: "listener", userName: "Listener", client: "Finamp", device: "Phone", title: "Blue morning", artist: "North", album: "Open skies", providerId: "catalog", sourceConfirmed: true, positionSeconds: 60, durationSeconds: 180, lastActivity: "2026-11-03T20:00:00Z", scrobbled: true }] : [] } }));
+  await page.route("**/api/admin/downloads?*", route => route.fulfill({ json: { totalSize: new URL(route.request().url()).searchParams.get("storage") === "cache" ? 600 * 1024 ** 2 : 118 * 1024 ** 2, files: [], count: 79, managedCount: 79 } }));
+  await page.route("**/api/admin/config", route => route.fulfill({ json: { cache: { audioMaximumGiB: 2 } } }));
+  await page.route("**/api/admin/track-matches?*", route => route.fulfill({ json: { matches: [], stats: { matched: 4999, automatic: 4992, manualMatches: 6, ambiguous: 1, suggested: 1, attention: 1 } } }));
   await page.route("**/api/admin/cache", route => route.fulfill({ json: { media: { payloadBytes: 1670000000, maximumBytes: 2000000000 } } }));
   await page.route("**/api/admin/storage", route => route.fulfill({ json: { backups: [{ id: "backup", status: "verified", createdAt: "2026-11-02T22:00:00Z", bytes: 185100000 }], backupPolicy: { enabled: true }, backupStatus: { nextRunAt: "2026-11-04T22:00:00Z" } } }));
   await page.route("**/api/admin/stats?*", route => route.fulfill({ json: { playCount: 36, timelineUnit: "day", timeline: [{ key: "2026-10-29", plays: 5 }, { key: "2026-10-30", plays: 8 }, { key: "2026-10-31", plays: 3 }, { key: "2026-11-01", plays: 4 }, { key: "2026-11-02", plays: 6 }, { key: "2026-11-03", plays: 7 }, { key: "2026-11-04", plays: 3 }] } }));
@@ -77,7 +82,36 @@ for (const { width, theme } of modes) {
     await appearance(page, width, theme); await homeFixture(page, admin); await page.goto("/#/");
     await expect(page.getByRole("region", { name: "Page status", exact: true })).toContainText(admin ? "1 listening" : "Nothing playing");
     await expect(page.getByRole("region", { name: "Your setup", exact: true })).toHaveCount(admin ? 1 : 0);
-    if (admin) await expect(page.locator(".setup-tile")).toHaveCount(6);
+    if (admin) {
+      await expect(page.locator(".setup-tile")).toHaveCount(6);
+      const matches = page.locator(".setup-tile").filter({ has: page.getByRole("heading", { name: "Matches", exact: true }) });
+      await expect(matches.locator(".tile-value")).toContainText("4,999 matched");
+      await expect(matches.locator(".match-gauge > span")).toHaveCount(3);
+      await expect(matches).toContainText("4,992 by Allstarr · 6 by you · 1 unsure");
+      const storage = page.locator(".setup-tile").filter({ has: page.getByRole("heading", { name: "Storage", exact: true }) });
+      await expect(storage.locator(".tile-value")).toHaveText("600 MiB cached of 2 GiB");
+      await expect(page.locator(".source-dots > i")).toHaveCount(1);
+      await expect(page.locator(".setup-tile").filter({ hasText: "Background work" }).locator(".tile-gauge")).toHaveCount(0);
+      await expect(page.getByRole("region", { name: "Needs your attention" })).toContainText("Playback falls back to the others.");
+      await expect(page.getByRole("heading", { name: "Runtime settings source use", exact: true })).toHaveCount(0);
+      const setup = (await page.getByRole("region", { name: "Your setup", exact: true }).boundingBox())!;
+      const week = (await page.getByRole("region", { name: "This week", exact: true }).boundingBox())!;
+      const recent = (await page.getByRole("region", { name: "Recent activity", exact: true }).boundingBox())!;
+      if (width === 1280) {
+        expect(Math.abs(week.y - recent.y)).toBeLessThanOrEqual(1);
+        expect(recent.x).toBeGreaterThan(week.x + week.width);
+      } else {
+        expect(week.y + week.height).toBeLessThanOrEqual(recent.y);
+        expect(recent.y + recent.height).toBeLessThanOrEqual(setup.y);
+      }
+      const tiles = await page.locator(".week-numbers > div").evaluateAll(items => items.map(item => {
+        const box = item.getBoundingClientRect(); return { x: box.x, y: box.y };
+      }));
+      expect(tiles[0].y).toBe(tiles[1].y);
+      expect(tiles[2].y).toBe(tiles[3].y);
+      expect(tiles[2].y).toBeGreaterThan(tiles[0].y);
+      await expect(page.locator(".recent-panel .activity-status-icon")).toHaveCount(1);
+    }
     await expect(page.getByRole("group", { name: "Your listening each day", exact: true })).toBeVisible();
     await expect(page.getByText("Background task", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("heading", { name: /^record a listen$/i })).toHaveCount(0);

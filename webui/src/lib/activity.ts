@@ -1,5 +1,5 @@
 import { countLabel } from "./count-label";
-import type { ActivityItem } from "./api";
+import type { ActivityItem, Job, JobAttempt, PlayTrace } from "./api";
 
 export type ActivityFilters = {
   query: string;
@@ -27,8 +27,9 @@ export function isProblem(item: ActivityItem) {
 
 /** Plumbing that succeeded: useful when asked for, noise in a list of what happened. */
 export function isRoutineActivity(item: ActivityItem) {
-  return !isProblem(item) &&
-    /background.?task|library.?index|refresh.?library|refresh.?your.?mixes|scan.?completed|health.?check|track.?identity|canonical.?recording|history.?resolution/i.test(item.label);
+  const routine = /background.?task|runtime settings source use|record[\s_-]+(?:a[\s_-]+)?listen|playback\.signal|track.?identity|canonical.?recording|history.?resolution/i.test(item.label);
+  const waiting = ["pending", "waiting", "deferred", "retryscheduled"].includes(item.state.toLowerCase().replaceAll(/[-_ ]/g, ""));
+  return routine && (waiting || !isProblem(item));
 }
 
 export function dayLabel(value: string, now = new Date()) {
@@ -109,6 +110,11 @@ export function filterActivity(items: ActivityItem[], filters: ActivityFilters) 
   });
 }
 
+function listenReceipt(item: ActivityItem) {
+  return item.kind === "scrobble" || item.kind === "job" &&
+    /^(?:Record a listen|playback\.signal(?:\.process)?)$/i.test(item.label);
+}
+
 function activityJobKey(item: ActivityItem) {
   return item.jobId ? `${item.actorUserId ?? "household"}|job:${item.jobId.toLowerCase().replaceAll("-", "")}` : "";
 }
@@ -124,8 +130,9 @@ export function groupActivity(items: ActivityItem[]) {
   const operations = new Map<string, ActivityGroup>();
   for (const item of items) {
     const jobKey = activityJobKey(item);
-    const correlated = Boolean(jobKey || item.correlationId && item.action);
-    const operationKey = jobKey || (correlated
+    const listenKey = listenReceipt(item) && item.correlationId ? `${item.actorUserId ?? "household"}|listen:${item.correlationId}` : "";
+    const correlated = Boolean(listenKey || jobKey || item.correlationId && item.action);
+    const operationKey = listenKey || jobKey || (correlated
       ? `${item.actorUserId ?? "household"}|${item.correlationId}|${item.action}`
       : item.id);
     const group = correlated ? operations.get(operationKey) : undefined;
@@ -192,6 +199,10 @@ function groupTitle(entries: ActivityItem[]) {
 }
 
 export function groupOutcome(entries: ActivityItem[]) {
+  if (entries.every(listenReceipt) && entries.some(item => item.kind === "scrobble")) {
+    const receipts = entries.filter(item => item.kind === "scrobble");
+    if (receipts.every(item => activityTone(item.state) === "success")) return "delivered";
+  }
   if (activityJobKey(entries[0])) return entries[0].state.toLowerCase();
   const states = uniqueStates(entries.map((item) => item.state));
   return states.length === 1 ? states[0] : "mixed";
@@ -275,7 +286,7 @@ export const jobNames: Record<string, string> = {
   "mixes.refresh": "Mix refresh", "collection.migrate": "Moving your music", "compilation": "Compilation",
   "listening-history.resolve": "Find imported songs", "smart-playlist.materialize": "Update smart playlist",
 };
-export function jobName(type: string, displayName?: string | null) { return displayName?.trim() || jobNames[type] || "Background task"; }
+export function jobName(type: string, displayName?: string | null) { return displayName?.trim() && !/^Background task$/i.test(displayName.trim()) ? displayName.trim() : jobNames[type] || "Background task"; }
 export function jobState(state: string) {
   const normalized = state.toLowerCase().replaceAll(/[-_ ]/g, "");
   return ({ pending: "Waiting", running: "Running", retryscheduled: "Retry scheduled", deferred: "Waiting",
@@ -311,7 +322,7 @@ export function activityText(value?: string | null) {
 }
 export function activityHeadline(item: ActivityItem) {
   if (item.kind === "job") {
-    if (item.displayName?.trim()) return activityText(item.displayName);
+    if (item.displayName?.trim()) return activityText(jobName(item.action || item.label, item.displayName));
     if (jobNames[item.label] || /^[a-z0-9-]+\.[a-z0-9.-]+$/.test(item.label)) return jobName(item.label);
     if (item.label.toLowerCase() === "background task") return jobName(item.action || "");
   }
@@ -330,4 +341,54 @@ export function activityRecovery(value?: string | null, now = new Date()) {
   if (Number.isNaN(date.getTime())) return text;
   const today = date.toDateString() === now.toDateString();
   return `Retrying at ${new Intl.DateTimeFormat(undefined, { timeStyle: "short", ...(today ? {} : { dateStyle: "medium" }) }).format(date)}`;
+}
+
+
+export function jobResultLabel(job: Pick<Job, "type" | "state" | "displayState">) {
+  if (job.type === "health.smoke") {
+    if (["passed", "partly_checked"].includes(job.displayState ?? "")) return "Passing";
+    if (job.displayState === "not_checked") return "Not checked";
+  }
+  return jobState(job.displayState || job.state);
+}
+
+export function jobSummary(value?: string | null) {
+  return /^Completed \(succeeded\)\.?$/i.test(value?.trim() ?? "") ? "" : activityText(value);
+}
+
+export function clockRange(start?: string | null, end?: string | null) {
+  const clock = (value?: string | null) => value && Number.isFinite(Date.parse(value))
+    ? new Date(value).toLocaleTimeString(undefined, { timeStyle: "short" }) : "";
+  const first = clock(start), last = clock(end);
+  return !first || first === last ? last : !last ? first : first + "–" + last;
+}
+
+export function taskCadence(cadence: string) {
+  return cadence.split(" · ")[0].replace(/\bat (\d{1,2}):(\d{2})\b/, (_, hour: string, minute: string) =>
+    `${Number(hour) % 12 || 12}:${minute} ${Number(hour) < 12 ? "AM" : "PM"}`);
+}
+
+export function taskLastResult(state: string, lastRunAt?: string | null) {
+  if (!lastRunAt) return "Not recorded";
+  return ["succeeded", "failed", "cancelled", "verified", "completed", "passed"].includes(state.toLowerCase())
+    ? jobState(state) : "Result not recorded";
+}
+
+export function groupAttempts(attempts: JobAttempt[]) {
+  const groups: JobAttempt[][] = [];
+  for (const attempt of attempts) {
+    const previous = groups.at(-1)?.[0];
+    if (previous && previous.outcome === attempt.outcome && previous.errorCode === attempt.errorCode && previous.errorMessage === attempt.errorMessage)
+      groups.at(-1)!.push(attempt);
+    else groups.push([attempt]);
+  }
+  return groups;
+}
+
+
+export function playArtwork(play: Pick<PlayTrace, "request" | "resolution">) {
+  const artwork = play.request.presented.artwork;
+  if (artwork && artwork !== "available") return artwork;
+  if (play.resolution.externalSnapshotId) return `/api/admin/track-matches/${encodeURIComponent(play.resolution.externalSnapshotId)}/artwork`;
+  return play.request.itemId ? `/api/admin/downloads/artwork/${encodeURIComponent(play.request.itemId)}` : null;
 }

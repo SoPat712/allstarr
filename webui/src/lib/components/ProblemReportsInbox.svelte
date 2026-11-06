@@ -160,7 +160,7 @@
 </script>
 
 {#if administrator}
-  <section class="settings-content" aria-label="Problem report inbox">
+  <section class="settings-content report-inbox" aria-label="Problem report inbox">
     <PageStatus label="Reports status" items={[{ label: loading ? "Loading reports…" : countLabel(count("new"), "new report") }, { label: count("seen") + " seen · " + count("fixed") + " fixed · " + countLabel(known.length, "report") + " loaded" }]} />
     <div class="report-toolbar"><FilterSegments label="Report status" value={filter} onchange={(next) => void choose(next)} storageKey="activity.reports" options={[
       { id: "new", label: "New", count: count("new") }, { id: "seen", label: "Seen", count: count("seen") },
@@ -240,6 +240,8 @@
 {/if}
 
 <style>
+  .report-inbox { padding-top: var(--space-4); }
+  .report-inbox > :global(.empty-state) { border: 1px dashed var(--color-edge-strong); border-radius: var(--radius-lg); }
   .report-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); margin-block: var(--space-4); }
   .report-list { overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
   .report-list footer { padding: var(--space-3); text-align: center; }

@@ -31,7 +31,10 @@ async function mockActivity(page: Page, events: unknown[] = rows, options: { tas
   return { reads, writes };
 }
 async function expectOutcome(badge: Locator, tone: string) {
-  await expect(badge).toHaveClass(new RegExp(`badge-${tone}`));
+  await expect(badge).toBeVisible();
+  const circle = await badge.evaluate(element => element.classList.contains("activity-status-icon"));
+  if (circle) await expect(badge).toHaveAttribute("data-tone", tone);
+  else await expect(badge).toHaveClass(new RegExp(`badge-${tone}`));
   await expect(badge.locator("svg")).toHaveCount(1);
   const colors = await badge.evaluate(element => {
     const style = getComputedStyle(element);
@@ -46,7 +49,7 @@ async function expectOutcome(badge: Locator, tone: string) {
     return { color: style.color, background: style.backgroundColor, contrast: (Math.max(ink, background) + .05) / (Math.min(ink, background) + .05) };
   });
   expect(colors.contrast).toBeGreaterThanOrEqual(4.5);
-  expect((await badge.textContent())?.trim()).toBeTruthy();
+  expect(circle ? await badge.getAttribute("aria-label") : (await badge.textContent())?.trim()).toBeTruthy();
   return colors;
 }
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
@@ -58,15 +61,15 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     const tones = ["success", "danger", "accent", "warning", "warning", "neutral"];
     const colors = [];
     for (let index = 0; index < tones.length; index++) {
-      await expect(groups.nth(index).locator(".item-row .event-kind-icon")).toHaveAttribute("data-tone", tones[index]);
-      colors.push(await expectOutcome(groups.nth(index).locator(".item-row [data-slot=badge]"), tones[index]));
+      await expect(groups.nth(index).locator(".item-row .activity-status-icon")).toHaveAttribute("data-tone", tones[index]);
+      colors.push(await expectOutcome(groups.nth(index).locator(".item-row .activity-status-icon"), tones[index]));
     }
-    expect(new Set(colors.slice(0, 4).map(value => value.color)).size).toBe(4);
-    expect(new Set(colors.slice(0, 4).map(value => value.background)).size).toBe(4);
-    const iconColor = async (index: number) => groups.nth(index).locator(".item-row .event-kind-icon").evaluate(element => getComputedStyle(element).color);
+    expect(new Set(colors.slice(0, 4).map(value => value.color)).size).toBeGreaterThanOrEqual(3);
+    expect(new Set(colors.slice(0, 4).map(value => value.background)).size).toBeGreaterThanOrEqual(3);
+    const iconColor = async (index: number) => groups.nth(index).locator(".item-row .activity-status-icon").evaluate(element => getComputedStyle(element).color);
     expect(await iconColor(0)).not.toBe(await iconColor(5));
     expect(await iconColor(1)).not.toBe(await iconColor(0));
-    expect(await iconColor(2)).not.toBe(await iconColor(0));
+    expect(await iconColor(2)).toBe(await iconColor(0));
     await expect(groups.first().locator(".item-row")).toContainText("Housewife");
     await expect(groups.first().locator(".item-row")).toContainText("Apple Music");
     const failed = groups.nth(1); await failed.locator(".row-action").focus(); await page.keyboard.press("Enter");
@@ -82,7 +85,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(selected.getByRole("heading", { name: /Keep a song/ })).toBeVisible();
     await expect(selected).toContainText(job.targetName); await expect(selected).toContainText(job.recovery);
     await expect(page.getByRole("region", { name: "Attempt history" })).toContainText("Attempt 1");
-    await expectOutcome(selected.locator(".job-attempts [data-slot=badge]"), "danger");
+    await expectOutcome(selected.locator(".job-attempts .activity-status-icon"), "danger");
     if (width === 390) await expectContainedMobileGeometry(page);
     await page.screenshot({ path: testInfo.outputPath(`activity-job-${width}-${theme}.png`) });
     expect(fixture.reads.length).toBeGreaterThan(0); expect(fixture.writes).toEqual([]);
@@ -96,7 +99,7 @@ test("Activity lifecycle uses the latest result while retaining earlier failures
   ].map(item => ({ ...item, label: "Keep a song", jobId, actorUserId: "viewer", actorDisplayName: "Josh", kind: "job", source: "Apple Music" }));
   await mockActivity(page, events); await page.goto("/#/activity");
   const group = page.locator(".event-log-group"); await expect(group).toHaveCount(1);
-  await expect(group.locator(".item-row [data-slot=badge]")).toHaveClass(/badge-success/);
+  await expect(group.locator(".item-row .activity-status-icon")).toHaveAttribute("data-tone", "success");
   await group.locator(".row-action").click(); await expect(page.locator("[data-side-panel]")).toContainText("The first source timed out.");
   await page.locator("[data-side-panel]").getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("radio", { name: /^Problems/ }).click();
@@ -120,9 +123,9 @@ test("Activity consolidates repeated song updates and expands all items", async 
   await expect(groups).toHaveCount(2);
   const succeeded = groups.first(), failed = groups.last();
   await expect(succeeded.locator(".item-row")).toContainText("Song details updated · 100 songs");
-  await expect(succeeded.locator(".item-row [data-slot=badge]")).toHaveText("Completed");
-  await expectOutcome(succeeded.locator(".item-row [data-slot=badge]"), "success");
-  await expect(succeeded.locator(".item-row .event-kind-icon")).toHaveAttribute("data-tone", "success");
+  await expect(succeeded.locator(".item-row .activity-status-icon")).toHaveAttribute("aria-label", "Completed");
+  await expectOutcome(succeeded.locator(".item-row .activity-status-icon"), "success");
+  await expect(succeeded.locator(".item-row .activity-status-icon")).toHaveAttribute("data-tone", "success");
   await expect(page.locator("[data-side-panel] .event-child").first()).not.toBeVisible();
   await succeeded.locator(".row-action").click();
   await expect(page.locator("[data-side-panel] .event-child")).toHaveCount(100);
@@ -130,7 +133,7 @@ test("Activity consolidates repeated song updates and expands all items", async 
   await expect(page.locator("[data-side-panel]").getByText("Song 100", { exact: true })).toBeVisible();
   await page.locator("[data-side-panel]").getByRole("button", { name: "Close", exact: true }).click();
   await expect(failed.locator(".item-row")).toContainText("Song details updated · 2 songs");
-  await expectOutcome(failed.locator(".item-row [data-slot=badge]"), "danger");
+  await expectOutcome(failed.locator(".item-row .activity-status-icon"), "danger");
   await failed.locator(".row-action").click();
   await expect(page.locator("[data-side-panel] .event-child")).toHaveCount(2);
   await expect(page.locator("[data-side-panel]").getByText("Song 1 could not be updated.", { exact: true })).toBeVisible();
@@ -147,11 +150,11 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     { ...rows[2], id: "diagnostic-running", kind: "extension", state: "running", label: "Checking source" },
   ], {
     jobs: states.map((state, index) => ({ ...job, id: index === 1 ? jobId : `${index}1111111-1111-4111-8111-111111111111`, type: `fixture.${index}`, state })),
-    tasks: states.map((state, index) => ({ id: String(index), kind: "maintenance", name: `Task ${index + 1}`, state, enabled: true, cadence: "Hourly" })),
+    tasks: states.map((state, index) => ({ id: String(index), kind: "maintenance", name: `Task ${index + 1}`, state, enabled: true, cadence: "Hourly", lastRunAt: job.updatedAt })),
     attempts: states.map((state, index) => ({ attemptNumber: index + 1, startedAt: job.updatedAt, outcome: state.toLowerCase() })),
   });
   await page.goto("/#/activity");
-  const diagnostics = page.locator(".event-log-group .item-row [data-slot=badge]");
+  const diagnostics = page.locator(".event-log-group .item-row .activity-status-icon");
   for (const [index, tone] of ["success", "danger", "accent"].entries()) await expectOutcome(diagnostics.nth(index), tone);
   await page.getByRole("tab", { name: "Jobs", exact: true }).click();
   const jobs = page.locator(".job-row"); await expect(jobs).toHaveCount(3);
@@ -159,16 +162,16 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
   for (const [index, tone] of ["success", "danger", "accent"].entries()) {
     const row = jobs.filter({ has: page.locator(`.badge-${tone}`) });
     colors.push(await expectOutcome(row.locator(".row-pill [data-slot=badge]"), tone));
-    await expect(row.locator(".event-kind-icon")).toHaveAttribute("data-tone", tone);
+    await expect(row.locator(".activity-status-icon")).toHaveAttribute("data-tone", tone);
   }
   expect(new Set(colors.map(value => value.color)).size).toBe(3);
   await page.locator(`[data-job-id="${jobId}"]  .row-action`).click();
-  for (const [index, tone] of ["success", "danger", "accent"].entries()) await expectOutcome(page.locator(".job-attempts [data-slot=badge]").nth(index), tone);
+  for (const [index, tone] of ["success", "danger", "accent"].entries()) await expectOutcome(page.locator(".job-attempts .activity-status-icon").nth(index), tone);
   if (width === 390) await expectContainedMobileGeometry(page);
   await page.screenshot({ path: testInfo.outputPath(`activity-jobs-${width}-${theme}.png`), fullPage: true });
   await page.locator("[data-side-panel]").getByRole("button", { name: "Close", exact: true }).click();
   await page.getByRole("tab", { name: "Tasks", exact: true }).click();
-  for (const [index, tone] of ["success", "danger", "accent"].entries()) await expectOutcome(page.locator(".activity-task [data-slot=badge]").nth(index), tone);
+  await expect(page.locator(".activity-task .last-result")).toHaveText(["Completed", "Failed", "Result not recorded"]);
   if (width === 390) await expectContainedMobileGeometry(page);
   await page.screenshot({ path: testInfo.outputPath(`activity-tasks-${width}-${theme}.png`), fullPage: true });
 });
@@ -191,8 +194,8 @@ test("Tasks explains Health and backup schedules with relevant settings links", 
   const tasks = page.locator(".activity-task"); await expect(tasks).toHaveCount(2);
   await tasks.first().locator(".task-open").click();
   await expect(page.locator("[data-side-panel]")).toContainText("authentication was rejected");
-  await expect(tasks.first().locator("[data-slot=badge]")).toHaveClass(/badge-warning/);
-  await expect(tasks.last().locator("[data-slot=badge]")).toHaveClass(/badge-accent/);
+  await expect(tasks.first().locator(".last-result")).toHaveText("Not recorded");
+  await expect(tasks.last().locator(".last-result")).toHaveText("Not recorded");
   await expect(page.locator("[data-side-panel]").getByRole("link", { name: "Open Health" })).toHaveAttribute("href", "#/settings/health");
   await page.locator("[data-side-panel]").getByRole("button", { name: "Close", exact: true }).click();
   await tasks.last().locator(".task-open").click();
@@ -222,8 +225,8 @@ test("Diagnostic event groups do not pretend to be unfinished jobs", async ({ pa
   ]);
   await page.goto("/#/activity");
   const group = page.locator(".event-log-group"); await expect(group).toHaveCount(1);
-  await expect(group.locator(".item-row [data-slot=badge]")).toHaveText("Warning · 2 events");
-  await expectOutcome(group.locator(".item-row [data-slot=badge]"), "warning");
+  await expect(group.locator(".item-row .activity-status-icon")).toHaveAttribute("aria-label", "Warning · 2 events");
+  await expectOutcome(group.locator(".item-row .activity-status-icon"), "warning");
   await group.locator(".row-action").click();
   await expectOutcome(page.locator("[data-side-panel] .event-child [data-slot=badge]").nth(0), "neutral");
   await expectOutcome(page.locator("[data-side-panel] .event-child [data-slot=badge]").nth(1), "warning");
@@ -307,7 +310,7 @@ test("Activity uses readable retry badges and local retry times", async ({ page 
   await mockActivity(page, [{ ...rows[1], state: "RetryScheduled", label: "mixes.refresh", displayName: "Mix refresh", recovery: "Retry scheduled for 2026-11-03 04:00:27 UTC." }]);
   await page.goto("/#/activity");
   const group = page.locator(".event-log-group");
-  await expect(group.locator(".item-row [data-slot=badge]")).toHaveText("Retry scheduled");
+  await expect(group.locator(".item-row .activity-status-icon")).toHaveAttribute("aria-label", "Retry scheduled");
   await group.locator(".row-action").click();
   await expect(page.locator("[data-side-panel] .event-child-meta [data-slot=badge]")).toHaveText("Retry scheduled");
   const localTime = await page.evaluate(() => new Intl.DateTimeFormat(undefined, { timeStyle: "short" }).format(new Date("2026-11-03T04:00:27Z")));
@@ -344,9 +347,9 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await bar.evaluate(element => element.scrollTo({ left: 0, behavior: "instant" }));
     await page.getByRole("button", { name: "Everyone", exact: true }).click();
     await expect(page.getByRole("button", { name: "Everyone", exact: true })).toHaveAttribute("aria-pressed", "true");
-    await expect(bar.getByRole("button", { name: "Everyone", exact: true })).toBeFocused();
+    await expect(page.locator(".workspace-header").getByRole("button", { name: "Everyone", exact: true })).toBeFocused();
   } else {
-    await expect(page.locator(".activity-toolbar").getByRole("group", { name: "Activity scope", exact: true })).toBeVisible();
+    await expect(page.locator(".workspace-header").getByRole("group", { name: "Activity scope", exact: true })).toBeVisible();
   }
   await capture(page, "activity-filters", width, theme);
 });

@@ -7,7 +7,6 @@
   import { toast } from "$lib/toasts";
   import { Button } from "$lib/components/ui/button";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
-  import ActivityOutcome from "$lib/components/ActivityOutcome.svelte";
   import PageStatus from "$lib/components/patterns/PageStatus.svelte";
   import FilterSegments from "$lib/components/patterns/FilterSegments.svelte";
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
@@ -15,6 +14,7 @@
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import MediaArtwork from "./MediaArtwork.svelte";
   import { providerDisplayName } from "$lib/sources";
+  import { taskCadence, taskLastResult } from "$lib/activity";
   import { plainTaskName } from "./activity-rows";
 
   let { administrator = false, scope = "mine" }: { administrator?: boolean; scope?: "mine" | "everyone" } = $props();
@@ -38,11 +38,12 @@
   const filtered = $derived(items.filter(task => filter === "all" || (filter === "paused" ? !task.enabled : task.enabled)));
   const playlists = $derived(filtered.filter(isPlaylist));
   const upkeep = $derived(filtered.filter(task => !isPlaylist(task)));
+  const zones = $derived([...new Set(items.map(task => task.cadence.split(" · ")[1]).filter(Boolean))]);
   const next = $derived(items.filter(task => task.enabled && task.nextRunAt).toSorted((a, b) => a.nextRunAt!.localeCompare(b.nextRunAt!))[0]);
 
   function time(value?: string | null) {
     if (!value || Number.isNaN(Date.parse(value))) return "Not recorded";
-    return new Date(value).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    return new Date(value).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", ...(zones.length === 1 ? { timeZone: zones[0] } : {}) });
   }
   async function load() {
     if (busy) return;
@@ -97,6 +98,7 @@
 <section class="activity-tasks" aria-label="Background tasks" aria-busy={busy}>
   <PageStatus label="Tasks status" items={[
     { label: loading ? "Loading tasks…" : items.filter(task => task.enabled).length + " scheduled" },
+    ...(zones.length ? [{ label: "Times in " + zones.join(", ") }] : []),
     { label: next ? "Next: " + plainTaskName(next.name, isPlaylist(next) ? "playlist" : next.kind) + " · " + time(next.nextRunAt) : "Work runs when needed" },
   ]} />
   <div class="tasks-heading">
@@ -122,10 +124,10 @@
                 {@const playlist = links.find(link => link.id === task.runPlaylistLinkId)}
                 <tr class="activity-task" class:selected={selected?.id === task.id}>
                   <td><button class="task-open" type="button" onclick={() => void open(task)}><MediaArtwork url={playlist?.artworkUrl} fallback="↻" /><span><strong>{plainTaskName(task.name, isPlaylist(task) ? "playlist" : task.kind)}</strong><small>{[playlist ? providerDisplayName(providers, playlist.sourceProviderId, "Playlist sync") : isPlaylist(task) ? "Playlist sync" : "Automatic upkeep", administrator ? task.ownerName : ""].filter(Boolean).join(" · ")}</small></span></button></td>
-                  <td class="cadence">{task.cadence}</td>
-                  <td><span class="last-run">{time(task.lastRunAt)}</span><ActivityOutcome state={task.state} label={task.state} /></td>
+                  <td class="cadence">{taskCadence(task.cadence)}</td>
+                  <td>{#if task.lastRunAt}<span class="last-run">{time(task.lastRunAt)}</span>{/if}<span class="last-result">{taskLastResult(task.state, task.lastRunAt)}</span></td>
                   <td>{task.enabled ? task.nextRunAt ? time(task.nextRunAt) : task.state === "Running" ? "After this run" : "When needed" : "Paused"}</td>
-                  <td>{#if task.runPlaylistLinkId}<Button variant="outline" size="sm" disabled={Boolean(running) || queued.has(task.id)} onclick={() => void run(task)}>{queued.has(task.id) ? "Queued" : running === task.id ? "Queuing…" : "Run now"}</Button>{:else}<Button variant="ghost" size="sm" onclick={() => void open(task)}>Details</Button>{/if}</td>
+                  <td>{#if task.runPlaylistLinkId}<Button variant="text" size="sm" disabled={Boolean(running) || queued.has(task.id)} onclick={() => void run(task)}>{queued.has(task.id) ? "Queued" : running === task.id ? "Queuing…" : "Run now"}</Button>{:else}<Button variant="ghost" size="sm" onclick={() => void open(task)}>Details</Button>{/if}</td>
                 </tr>
               {/each}
               {#if group.name === "Playlist syncs" && group.tasks.length > 4}<tr><td colspan="5"><Button variant="ghost" onclick={() => showAll = !showAll}>{showAll ? "Show fewer playlist syncs" : "Show " + countLabel(group.tasks.length - 4, "more playlist sync")}</Button></td></tr>{/if}

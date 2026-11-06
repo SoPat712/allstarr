@@ -3,10 +3,10 @@
   import { onMount } from "svelte";
   import { CircleAlert, CircleCheck, CircleDashed, Headphones, KeyRound, Music, Pause } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
-  import { home, listeningStats, mixes, releaseInbox, settings, type CacheDiagnostics, type ListeningStats, type MixCard, type ReleaseInboxEntry, type StorageOverview } from "$lib/api";
-  import { humanize, relativeTime, isRoutineActivity, isProblem } from "$lib/activity";
+  import { home, listeningStats, mixes, releaseInbox, settings, downloads, matchReview, type MatchReviewResponse, type ListeningStats, type MixCard, type ReleaseInboxEntry, type StorageOverview } from "$lib/api";
+  import { humanize, relativeTime, isRoutineActivity, isProblem, activityHeadline } from "$lib/activity";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
-  import ActivityIcon from "$lib/components/ActivityIcon.svelte";
+  import ActivityStatusIcon from "$lib/components/ActivityStatusIcon.svelte";
   import PageStatus from "$lib/components/patterns/PageStatus.svelte";
   import ItemRow from "$lib/components/patterns/ItemRow.svelte";
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
@@ -27,19 +27,25 @@
   let week = $state<ListeningStats | null>(null);
   let shelf = $state<MixCard[]>([]);
   let releases = $state<ReleaseInboxEntry[]>([]);
-  let cache = $state<CacheDiagnostics | null>(null);
+  let audio = $state<{ bytes: number; maximum: number; keptBytes: number | null } | null>(null);
+  let matchStats = $state<MatchReviewResponse["stats"] | null>(null);
   let storage = $state<StorageOverview | null>(null);
   let extrasPending = false, extrasAt = 0, disposed = false;
   const daily = $derived(recapTimeline(week?.timeline ?? [], week?.timelineUnit ?? "day"));
   async function loadExtras() {
     if (extrasPending || Date.now() - extrasAt < 30_000) return;
     extrasPending = true;
-    const results = await Promise.allSettled([listeningStats.get("7d"), mixes.list(), releaseInbox.get(), administrator ? settings.cache() : Promise.resolve(null), administrator ? settings.storage() : Promise.resolve(null)] as const);
+    const results = await Promise.allSettled([listeningStats.get("7d"), mixes.list(), releaseInbox.get(), administrator ? downloads.list("cache") : Promise.resolve(null), administrator ? settings.storage() : Promise.resolve(null), administrator ? settings.config() : Promise.resolve(null), administrator ? downloads.list("kept") : Promise.resolve(null), administrator ? matchReview.list({ pageSize: 1 }) : Promise.resolve(null)] as const);
     if (!disposed) {
       if (results[0].status === "fulfilled") week = results[0].value;
       if (results[1].status === "fulfilled" && Array.isArray(results[1].value)) shelf = results[1].value.filter(card => card.readiness.ready).sort((a, b) => Number(b.inApps) - Number(a.inApps)).slice(0, 6);
       if (results[2].status === "fulfilled") releases = results[2].value.entries ?? [];
-      if (results[3].status === "fulfilled") cache = results[3].value;
+      if (results[3].status === "fulfilled" && typeof results[3].value?.totalSize === "number" && results[5].status === "fulfilled" && results[5].value) {
+        const config = results[5].value;
+        const maximum = Number((config.cache as Record<string, unknown> | undefined)?.audioMaximumGiB ?? 2) * 1024 ** 3;
+        audio = { bytes: results[3].value.totalSize, maximum, keptBytes: results[6].status === "fulfilled" ? results[6].value?.totalSize ?? null : null };
+      }
+      if (results[7].status === "fulfilled") matchStats = results[7].value?.stats ?? null;
       if (results[4].status === "fulfilled") storage = results[4].value;
       extrasAt = Date.now();
     }
@@ -235,7 +241,7 @@
       items.push({
         key: `health:${failing[0].providerId}`,
         title: `${providerName(failing[0].providerId)} is failing ${countLabel(failing[0].failedCapabilityCount, "check")}`,
-        detail: `${failing[0].healthyCapabilityCount} of ${countLabel(failing[0].capabilityTotal, "check")} passed ${relativeTime(failing[0].lastCheckedAt, "")}`.trim(),
+        detail: "Playback falls back to the others.",
         href: `#/sources/services/${encodeURIComponent(failing[0].providerId)}`,
         action: "Open service",
       });
@@ -243,11 +249,11 @@
       items.push({
         key: "health:several",
         title: countLabel(failing.length, "source is failing checks", "sources are failing checks"),
-        detail: failing.map((provider) => providerName(provider.providerId)).join(", "),
+        detail: failing.map((provider) => providerName(provider.providerId)).join(", ") + ". Playback falls back to the others.",
         href: "#/sources/services",
         action: "Review sources",
       });
-    return administrator ? items : [];
+    return administrator ? items.toSorted((a, b) => Number(b.key.startsWith("health:") || b.key.startsWith("source:")) - Number(a.key.startsWith("health:") || a.key.startsWith("source:"))) : [];
   });
 
   onMount(() => {
@@ -372,14 +378,15 @@
     {@const item = attention[0]}
     <section class="attention-banner" aria-label="Needs your attention">
       <CircleAlert size={20} aria-hidden="true" />
-      <div><strong>{item.title}</strong><p>{item.detail}{#if attention.length > 1} · {countLabel(attention.length - 1, "more thing")} to review in your setup.{/if}</p></div>
+      <div><strong>{item.title}</strong> · <span>{item.detail}</span></div>
       <Button variant="outline" size="sm" href={item.href}>{item.action}</Button>
     </section>
   {/if}
-  {#if administrator}<HomeSetup {snapshot} {cache} {storage} />{/if}
+  {#if administrator}<HomeSetup {snapshot} {audio} {matchStats} {storage} />{/if}
 
+  <div class="home-summary" class:administrator>
   <section class="week-panel panel" aria-label={administrator ? "This week" : "Your week"} aria-busy={refreshing}>
-    <header><h2>{administrator ? "This week" : "Your week"}</h2><a href="#/for-you?section=recap">Open Recap</a></header>
+    <header><h2>{administrator ? "This week" : "Your week"}</h2><Button variant="text" size="sm" href="#/for-you?section=recap">Open Recap</Button></header>
     {#if snapshot.stats}
       <div class="week-numbers">
         <div><strong>{snapshot.stats.currentWeekListens.toLocaleString()}</strong><span>{countNoun(snapshot.stats.currentWeekListens, "song")} finished</span><small>{listenTrend(snapshot.stats.currentWeekListens, snapshot.stats.previousWeekListens)}</small></div>
@@ -393,41 +400,49 @@
 
   {#if administrator || visibleActivity.length}
     <section class="recent-panel panel" aria-label="Recent activity">
-      <header><h2>Recent activity</h2><a href="#/activity">View all</a></header>
+      <header><h2>Recent activity</h2><Button variant="text" size="sm" href="#/activity">View all</Button></header>
       {#if visibleActivity.length}
         {#each visibleActivity as item}
-          <ItemRow title={humanize(item.label)} subtitle={`${activitySource(item.source)}${activityDetail(item.detail)} · ${relativeTime(item.occurredAt)}`} href="#/activity">
-            {#snippet leading()}<ActivityIcon kind={item.kind} />{/snippet}
+          <ItemRow title={activityHeadline(item)} subtitle={`${activitySource(item.source)}${activityDetail(item.detail)} · ${relativeTime(item.occurredAt)}`} href="#/activity">
+            {#snippet leading()}<ActivityStatusIcon state={item.state} severity={item.severity} kind={item.kind} />{/snippet}
           </ItemRow>
         {/each}
       {:else}<EmptyState title="Nothing new lately" description="Matches, playlist updates and source problems will show up here." />{/if}
     </section>
   {/if}
+  </div>
+  <div class="home-mixes">
   {#if shelf.length}<MixShelf title="Pick up where you left off" cards={shelf} columns={6} seeAll="#/for-you" seeAllLabel="All mixes" onopen={card => { window.location.hash = `#/for-you?mix=${encodeURIComponent(card.id)}`; }} />
   {:else}<EmptyState title="Your mixes start here" description="Play some music or import your history to get mixes made for you.">{#snippet icon()}<Headphones size={24} />{/snippet}{#snippet action()}<Button variant="outline" href="#/for-you">Explore your mixes</Button>{/snippet}</EmptyState>{/if}
+  </div>
   {#if !administrator && releases.length}<div class="release-note"><span>New from artists you follow: <strong>{releases[0].title}</strong> by {releases[0].artist}</span><a href="#/for-you?section=releases">See releases</a></div>{/if}
 </div>
 {/if}
 <style>
-  .home-view { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
+  .home-view { display: flex; flex-direction: column; gap: var(--space-4); }
+  .home-summary { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); order: 1; }
+  .home-summary.administrator { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .home-mixes, .release-note { order: 3; }
   .home-now:empty { display: none; }
   .now-playing-card.hero { grid-template-columns: 88px minmax(0, 1fr); gap: var(--space-4); padding: var(--space-4); border: 1px solid var(--color-edge); }
   .now-playing-card.hero .now-playing-artwork { width: 88px; }
   .now-playing-card.hero .now-playing-title h2 { font-size: 1.25rem; line-height: 1.4; }
   .now-playing-backdrop { display: none; }
   .now-playing-meta { gap: var(--space-4); }
-  .attention-banner { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 1px solid color-mix(in srgb, var(--warning) 35%, var(--color-edge)); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--warning) 7%, var(--color-panel)); }
-  .attention-banner > :global(svg) { color: var(--warning); flex: 0 0 auto; }
+  .attention-banner { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border: 0; border-radius: var(--radius-lg); background: var(--warning-container); color: var(--on-warning-container); }
+  .attention-banner > :global(svg) { color: var(--on-warning-container); flex: 0 0 auto; }
   .attention-banner > div { min-width: 0; flex: 1; font-size: var(--text-sm); }
-  .attention-banner p, .muted { color: var(--color-ink-muted); font-size: var(--text-sm); }
+  .muted { color: var(--color-ink-muted); font-size: var(--text-sm); }
   .week-panel { padding: var(--space-4); }
+  .week-panel, .recent-panel { border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
   header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
   h2 { font-size: 1.125rem; font-weight: 600; }
-  header a, .release-note a { display: inline-flex; min-height: 44px; align-items: center; font-size: var(--text-sm); }
-  .week-numbers { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-4); margin-block: var(--space-3) var(--space-5); }
-  .week-numbers > div { display: grid; align-content: start; gap: var(--space-1); min-width: 0; }
-  .week-numbers strong { font: 600 1.65rem/1.2 var(--font-display); overflow-wrap: anywhere; }
-  .week-numbers span, .week-numbers small, .week-chart > p { color: var(--color-ink-muted); font-size: var(--text-sm); }
+  header :global([data-slot="button"]) { flex: none; }
+  .release-note a { display: inline-flex; min-height: 44px; align-items: center; font-size: var(--text-sm); }
+  .week-numbers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); margin-block: var(--space-3) var(--space-4); }
+  .week-numbers > div { display: grid; align-content: start; gap: var(--space-1); min-width: 0; padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-panel-raised); }
+  .week-numbers strong { font: 600 1.25rem/1.2 var(--font-display); overflow-wrap: anywhere; }
+  .week-numbers span, .week-numbers small, .week-chart > p { color: var(--color-ink-muted); font-size: var(--text-xs); }
   .week-chart { overflow-x: auto; }
   .week-chart :global(.recap-bars) { min-width: 348px; }
   .week-chart > p { margin-bottom: var(--space-4); }
@@ -436,5 +451,6 @@
   .recent-panel { overflow: hidden; }
   .recent-panel header { padding: var(--space-2) var(--space-4); }
   .release-note { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); font-size: var(--text-sm); }
-  @media (max-width: 650px) { .week-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); } .attention-banner { flex-wrap: wrap; } .attention-banner > div { flex-basis: calc(100% - 40px); } .attention-banner > :global(a) { margin-left: 32px; } .now-playing-card.hero { grid-template-columns: 56px minmax(0, 1fr); } .now-playing-card.hero .now-playing-artwork { width: 56px; } .now-playing-card.hero .now-playing-title h2 { font-size: 1.125rem; } .now-playing-meta { flex-wrap: wrap; } }
+  @media (max-width: 850px) { .home-summary.administrator { grid-template-columns: minmax(0, 1fr); } }
+  @media (max-width: 650px) { .home-view :global(.home-setup) { order: 2; } .week-numbers { grid-template-columns: repeat(2, minmax(0, 1fr)); } .attention-banner { flex-wrap: wrap; } .attention-banner > div { flex-basis: calc(100% - 40px); } .attention-banner > :global(a) { margin-left: 32px; } .now-playing-card.hero { grid-template-columns: 56px minmax(0, 1fr); } .now-playing-card.hero .now-playing-artwork { width: 56px; } .now-playing-card.hero .now-playing-title h2 { font-size: 1.125rem; } .now-playing-meta { flex-wrap: wrap; } }
 </style>

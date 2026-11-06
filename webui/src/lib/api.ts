@@ -163,7 +163,7 @@ export type PlayTrace = {
   listenerId?: string | null;
   startedAt: string;
   outcome: string;
-  request: { presented: { title?: string | null; artist?: string | null; album?: string | null; durationMilliseconds?: number | null; artwork?: string | null } };
+  request: { itemId?: string | null; presented: { title?: string | null; artist?: string | null; album?: string | null; durationMilliseconds?: number | null; artwork?: string | null } };
   resolution: { provider?: string | null; cached?: boolean | null; state?: string | null; externalSnapshotId?: string | null;
     authorityScope?: MatchAuthorityScope | "automatic"; authorityId?: string | null; authorityRevision?: number | null };
   received?: { tags?: { title?: string | null; artist?: string | null; album?: string | null } | null; durationSeconds?: number | null } | null;

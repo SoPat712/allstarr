@@ -78,8 +78,9 @@ public sealed class PlayTraceService(IDbContextFactory<AllstarrDbContext> factor
         {
             var sample = JsonSerializer.Deserialize<PlaybackStartSample>(row.DetailsJson);
             if (sample?.Trace is not { } trace || trace.OwnerUserId != row.ActorUserId) return null;
-            return new(row.Id, row.CreatedAt, sample.Outcome, trace.Request, trace.Resolution, trace.Received, trace.Delivery,
-                PlayTraceDifferences.Compare(trace.Request.Presented, trace.Received),
+            var request = PlayTraceText.CatalogLabels(trace.Request, sample.Title, sample.Artist);
+            return new(row.Id, row.CreatedAt, sample.Outcome, request, trace.Resolution, trace.Received, trace.Delivery,
+                PlayTraceDifferences.Compare(request.Presented, trace.Received),
                 new(sample.ElapsedMs, sample.HeadersMs, sample.FirstByteMs, sample.Phases, sample.OmittedPhases), trace.OwnerUserId);
         }
         catch (JsonException) { return null; }

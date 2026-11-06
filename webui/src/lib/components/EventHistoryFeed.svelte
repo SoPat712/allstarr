@@ -1,9 +1,10 @@
 <script lang="ts">
   import { countLabel } from "$lib/count-label";
   import { writeFilter } from "$lib/components/patterns/helpers";
-  import type { Snippet } from "svelte";
   import { onMount, tick, untrack } from "svelte";
   import { flip } from "svelte/animate";
+  import { Switch } from "$lib/components/ui/switch";
+  import ActivityStatusIcon from "$lib/components/ActivityStatusIcon.svelte";
   import { ArrowRight } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
   import PageStatus from "$lib/components/patterns/PageStatus.svelte";
@@ -28,7 +29,6 @@
     activityRecovery,
     jobState,
     activityText,
-    activityTone,
     activityDuration,
     activityCategory,
     isRoutineActivity,
@@ -49,7 +49,7 @@
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { findProviderDefinition } from "$lib/sources";
 
-  let { administrator = false, scope = "mine", scopeControls }: { administrator?: boolean; scope?: "mine" | "everyone"; scopeControls?: Snippet } = $props();
+  let { administrator = false, scope = "mine" }: { administrator?: boolean; scope?: "mine" | "everyone" } = $props();
 
   let opener: HTMLElement | null = null;
   let disposed = false;
@@ -81,9 +81,10 @@
 
   // Routine background work stays out of the way unless someone asks for it or it went wrong.
   let showBackground = $state(false);
+  const listenReceipts = $derived(new Set(items.filter(item => item.kind === "scrobble" && item.correlationId).map(item => `${item.actorUserId ?? "household"}|${item.correlationId}`)));
   const visibleItems = $derived(showBackground || scope === "everyone" || category === "system" || query || problemsOnly
     ? items
-    : items.filter((item) => !isRoutineActivity(item)));
+    : items.filter((item) => !isRoutineActivity(item) || item.correlationId && listenReceipts.has(`${item.actorUserId ?? "household"}|${item.correlationId}`)));
   const filtered = $derived(filterActivity(visibleItems, {
     query,
     category: category === "library" ? "" : category,
@@ -312,15 +313,13 @@
 </script>
 
 <PageStatus label="History status" items={[
-  { label: loading ? "Loading history…" : countLabel(items.length, "event") + " loaded" },
+  { label: loading ? "Loading history…" : countLabel(items.filter(item => dayLabel(item.occurredAt) === "Today").length, "event") + " today" },
   { label: countFor("problems") ? countFor("problems") + " need attention" : "Nothing failed", tone: countFor("problems") ? "warn" : "neutral" },
 ]} />
 
 {#if loading}
-  {#if scopeControls}{@render scopeControls()}{/if}
   <RowsSkeleton label={administrator ? "Loading Event log" : "Loading Your activity"} />
 {:else if error && !items.length}
-  {#if scopeControls}{@render scopeControls()}{/if}
   <ErrorState title={error} label={administrator ? "Event log unavailable" : "Your activity unavailable"} onretry={() => load("initial")} />
 {:else}
   {#if error}
@@ -335,31 +334,35 @@
     <p class="sr-only" aria-live="polite" aria-atomic="true">{streamAnnouncement}</p>
     <div class="event-log-toolbar">
       <form class="event-log-search" onsubmit={(event) => event.preventDefault()}>
-        <SearchField bind:value={query} label="Search" placeholder="Search songs, playlists or sources" hiddenLabel />
+        <SearchField bind:value={query} label="Search" placeholder="Search activity" hiddenLabel />
       </form>
       <div class="event-log-chip-row">
-        {#if scopeControls}{@render scopeControls()}{/if}
-        <FilterSegments label="History filters" storageKey={"activity.history." + scope} value={segment} onchange={selectFilter} options={[
+              <FilterSegments label="History filters" storageKey={"activity.history." + scope} value={segment} onchange={selectFilter} options={[
           { id: "all", label: "All", count: countFor("all") },
           { id: "problems", label: "Problems", count: countFor("problems") },
           { id: "playlists", label: "Playlists", count: countFor("playlists") },
           { id: "matching", label: "Matches", count: countFor("matching") },
           { id: "listening", label: "Listening", count: countFor("listening") },
           { id: "library", label: "Library", count: countFor("library") },
-          { id: "sources", label: "Sources", count: countFor("sources") },
-          { id: "system", label: "System", count: countFor("system") },
         ]} />
-        {#if administrator}<button type="button" class="filter-chip background-toggle" aria-pressed={showBackground} onclick={() => showBackground = !showBackground}>Background work</button>{/if}
-        <div class="event-log-toolbar-end">
-          {#if eventProviders.length > 1}
-            <SelectField bind:value={providerFilter} label="Provider" class="event-log-provider" options={[
-              { value: "", label: "All sources" }, ...eventProviders.map((value) => ({ value, label: providerName(value) })),
-            ]} />
-          {/if}
-          <RefreshButton variant="outline" class="event-log-refresh" disabled={loadingEarlier} onrefresh={() => load("refresh")} />
-        </div>
       </div>
+      <RefreshButton variant="outline" class="event-log-refresh" disabled={loadingEarlier} onrefresh={() => load("refresh")} />
     </div>
+    <details class="event-more-filters">
+      <summary>More filters{providerFilter || showBackground || ["sources", "system"].includes(category) ? " · active" : ""}</summary>
+      <div class="more-filter-fields">
+        {#if administrator}<label class="background-option"><span>Background work</span><Switch checked={showBackground} aria-label="Background work" onchange={(event) => showBackground = event.currentTarget.checked} /></label>{/if}
+        <SelectField bind:value={providerFilter} label="Source" options={[
+          { value: "", label: "All sources" }, ...eventProviders.map((value) => ({ value, label: providerName(value) })),
+        ]} />
+        <SelectField label="Activity type" value={category} onchange={(value) => selectFilter(value || "all")} options={[
+          { value: "", label: "All types" }, { value: "playlists", label: "Playlists" }, { value: "matching", label: "Matches" },
+          { value: "listening", label: "Listening" }, { value: "library", label: "Library" }, { value: "sources", label: "Sources" }, { value: "system", label: "System" },
+        ]} />
+      </div>
+    </details>
+
+    <div class="history-days">
 
     {#each days as day (day.label)}
       <section class="event-log-day" aria-label={day.label}>
@@ -369,11 +372,9 @@
             {@const first = group.entries[0]}
             {@const groupState = groupOutcome(group.entries)}
             {@const severityState = groupSeverity(group.entries)}
-            {@const tone = activityTone(groupState, severityState)}
             <div class="event-log-group" class:streaming={group.entries.some(item => streamedIds.has(item.id))} animate:flip={{ duration: reducedMotion ? 0 : 260 }}>
               <ItemRow title={group.entries.length > 1 ? group.title : activityHeadline(first)} subtitle={groupSubtitle(group.entries)} selected={panelOpen && selectedKey === group.key} onclick={(event) => { opener = event.currentTarget instanceof HTMLElement ? event.currentTarget : null; selectedKey = group.key; panelOpen = true; }}>
-                {#snippet leading()}<span class="event-kind-icon" data-tone={tone} aria-hidden="true"><ActivityIcon kind={first.kind} /></span>{/snippet}
-                {#snippet pill()}<ActivityOutcome state={groupState} severity={severityState} label={groupBadge(group.entries, groupState)} />{/snippet}
+                {#snippet leading()}<ActivityStatusIcon state={groupState} severity={severityState} kind={first.kind} label={groupBadge(group.entries, groupState)} />{/snippet}
                 {#snippet trailing()}<time datetime={first.occurredAt} title={fullTime(first.occurredAt)}>{clockTime(first.occurredAt)}</time>{/snippet}
               </ItemRow>
             </div>
@@ -387,8 +388,9 @@
       </EmptyState>
     {/each}
 
+    </div>
     {#if filtering && groups.length}
-      <p class="event-log-count">Showing {filtered.length} of {items.length} loaded events · <Button variant="link" size="sm" onclick={resetFilters}>Clear filters</Button></p>
+      <p class="event-log-count">{countLabel(groups.length, "result")} · <Button variant="link" size="sm" onclick={resetFilters}>Clear filters</Button></p>
     {/if}
 
     {#if hasMore}
@@ -454,13 +456,21 @@
 
 <style>
   .event-log-panel { min-width: 0; grid-template-columns: minmax(0, 1fr); container-type: inline-size; }
-  @container (max-width: 650px) { .event-log-group :global(.row-controls) { display: none; } }
-  .event-log-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); margin-block: var(--space-4); }
-  .event-log-search { margin-left: auto; order: 2; }
-  .event-log-chip-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; flex: 1; }
-  .event-log-toolbar-end { display: flex; gap: var(--space-2); align-items: center; }
+  .event-log-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(160px, 220px) auto; align-items: center; gap: var(--space-2); margin-block: var(--space-4) var(--space-1); }
+  .event-log-search { min-width: 0; order: 2; }
+  .event-log-chip-row { min-width: 0; overflow-x: auto; order: 1; }
+  .event-log-chip-row :global(.filter-segments) { width: max-content; min-width: 100%; max-width: none; flex-wrap: nowrap; }
+  .event-log-toolbar :global(.event-log-refresh) { order: 3; }
+  .event-more-filters { margin-bottom: var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .event-more-filters summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; gap: var(--space-1); }
+  .event-more-filters summary::after { content: "⌄"; }
+  .more-filter-fields { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4); padding-block: var(--space-2); }
+  .background-option { display: flex; align-items: center; gap: var(--space-3); min-height: 44px; }
+  .history-days { overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
+  .history-days:has(> :global(.empty-state)) { border-style: dashed; }
+  .event-log-day + .event-log-day { border-top: 1px solid var(--color-edge); }
   .event-log-day h2 { padding: var(--space-2) var(--space-4); margin: 0; background: var(--color-panel-raised); color: var(--color-ink-muted); font-size: var(--text-xs); }
-  .event-log-list { overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
+  .event-log-list { overflow: hidden; }
   .event-log-group { border: 0; border-bottom: 1px solid var(--color-edge); }
   .event-log-group:last-child { border-bottom: 0; }
   .event-log-group.streaming :global(.item-row) { animation: event-stream-arrive 600ms ease-out; }
@@ -478,15 +488,12 @@
   .event-log-pagination { display: flex; justify-content: center; padding-block: var(--space-4); }
 
   .event-technical > summary { min-height: var(--control-md); display: flex; align-items: center; }
-  @media (max-width: 650px) {
-    .event-log-chip-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; grid-row: 2; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: var(--space-1); }
-    .event-log-chip-row::-webkit-scrollbar { display: none; }
-    .event-log-search { width: 100%; order: 0; }
-    .event-log-chip-row :global(.filter-segments) { flex: 0 0 auto; max-width: none; }
-    .event-log-group :global(.row-controls) { display: none; }
-
-    .event-log-toolbar-end { flex: none; gap: var(--space-2); }
-    .event-log-chip-row :global(.activity-audience) { flex: none; }
-    .event-log-chip-row :global(button), .event-log-chip-row :global(select) { min-height: 44px; min-width: 44px; }
+  @container (max-width: 800px) {
+    .event-log-toolbar { grid-template-columns: minmax(0, 1fr) auto; }
+    .event-log-search { grid-column: 1; order: 1; }
+    .event-log-chip-row { grid-column: 1 / -1; grid-row: 2; order: 3; }
+    .event-log-toolbar :global(.event-log-refresh) { order: 2; }
+    .more-filter-fields { align-items: stretch; }
+    .more-filter-fields :global(.field) { flex: 1 1 180px; min-width: 0; }
   }
 </style>

@@ -58,7 +58,7 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
         lock (sync)
         {
             if (closed) return;
-            title = Label(song.Title); artist = Label(song.Artist);
+            title = Label(song.Title) ?? title; artist = Label(song.Artist) ?? artist;
         }
     }
     private static string? Label(string? value) => string.IsNullOrWhiteSpace(value) ? null :
@@ -208,8 +208,9 @@ public sealed class PlaybackStartTimings(TimeProvider clock) : IDisposable
         {
             if (!closed && received?.Invoke() is { } facts && play != null) play = play with { Received = PlayTraceText.Facts(facts) };
             if (complete) { closed = true; received = null; }
+            var trace = play == null ? null : play with { Request = PlayTraceText.CatalogLabels(play.Request, title, artist) };
             return new(id, startedAt, outcome, provider ?? phases.LastOrDefault(phase => phase.Provider != null)?.Provider, title, artist, accountScope, cached,
-                Elapsed, headers, firstByte, phases.OrderBy(item => item.StartedMs).ToArray(), omitted, play, deviceId);
+                Elapsed, headers, firstByte, phases.OrderBy(item => item.StartedMs).ToArray(), omitted, trace, deviceId);
         }
     }
     public void Dispose() => Ambient.Value = previous;

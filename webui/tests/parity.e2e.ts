@@ -3809,8 +3809,8 @@ test("Event log groups matching work and preserves actionable history", async ({
 
   await expect(page.getByText("Matched 3 songs in 2 playlists")).toBeVisible();
   const group = page.locator(".event-log-group").filter({ hasText: "Matched 3 songs" });
-  await expect(page.locator(".event-log-group .item-row .event-kind-icon img")).toHaveCount(0);
-  await expect(group.locator(".item-row .event-kind-icon svg")).toBeVisible();
+  await expect(page.locator(".event-log-group .item-row .activity-status-icon img")).toHaveCount(0);
+  await expect(group.locator(".item-row .activity-status-icon svg")).toBeVisible();
   await expect(page.getByText("Playlist sync", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Load earlier events" })).toHaveCount(0);
   await expect.poll(() => page.evaluate(() =>
@@ -7670,7 +7670,7 @@ test("Activity queue refreshes after reconnect and sends server-side filters", a
   completed = true;
   await page.evaluate(() => window.__emitAllstarrUpdate?.());
   await expect(page.getByText("No jobs match these filters", { exact: true })).toBeVisible();
-  await expect(page.getByText("Live updates connected", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status", { name: "Live updates live", exact: true })).toBeVisible();
 });
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {

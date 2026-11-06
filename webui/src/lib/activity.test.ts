@@ -8,6 +8,14 @@ import {
   activityRecovery,
   jobState,
   jobName,
+  isRoutineActivity,
+  jobResultLabel,
+  jobSummary,
+  clockRange,
+  taskCadence,
+  taskLastResult,
+  groupAttempts,
+  playArtwork,
   dayLabel,
   filterActivity,
   groupActivity,
@@ -288,6 +296,7 @@ describe("activity labels and retry times", () => {
       expect(jobName(type)).toBe(label);
       expect(activityHeadline({ ...item(type, "Finished"), kind: "job", label: "Background task", action: type })).toBe(label);
     }
+    expect(jobName("listening-history.resolve", "Background task")).toBe("Find imported songs");
     expect(jobName("mixes.refresh", "Refresh evening mixes")).toBe("Refresh evening mixes");
     expect(activityHeadline({ ...item("job", "Finished"), kind: "job", label: "mixes.refresh", displayName: "Refresh evening mixes" })).toBe("Refresh evening mixes");
   });
@@ -321,4 +330,61 @@ it("uses sentence case while preserving acronyms and service names", () => {
 it("labels waiting job states consistently in stored and enum spellings", () => {
   for (const state of ["Deferred", "deferred", "DEFERRED", "Pending"])
     expect(jobState(state)).toBe("Waiting");
+});
+
+
+describe("activity overview details", () => {
+  it("hides waiting work and settings reads while retaining failures and useful completions", () => {
+    for (const state of ["succeeded", "waiting", "deferred", "RetryScheduled"])
+      expect(isRoutineActivity({ ...item("routine", "Waiting for the next scheduled retry"), kind: "job", label: "Background task", state })).toBe(true);
+    expect(isRoutineActivity({ ...item("settings", "Runtime settings"), kind: "administration", label: "Runtime settings source use", state: "recorded" })).toBe(true);
+    expect(isRoutineActivity({ ...item("failed", "Retry needed"), kind: "job", label: "Background task", state: "failed" })).toBe(false);
+    for (const label of ["Health check passing", "Library index refreshed", "Mixes refreshed"])
+      expect(isRoutineActivity({ ...item(label, "Done"), label, kind: "job", state: "succeeded" })).toBe(false);
+  });
+
+  it("pairs a listen receipt with its work without merging other listeners or songs", () => {
+    const work = { ...item("work", "Evening song"), kind: "job", label: "Record a listen", action: "playback.signal", correlationId: "listen", state: "succeeded", actorUserId: "one" };
+    const sent = { ...work, id: "sent", kind: "scrobble", label: "Scrobble recorded", action: "scrobble.delivered", state: "delivered", sourceTitle: "Evening song" };
+    expect(groupActivity([sent, work])).toHaveLength(1);
+    expect(groupActivity([sent, work])[0].entries).toHaveLength(2);
+    expect(groupOutcome(groupActivity([sent, work])[0].entries)).toBe("delivered");
+    expect(groupActivity([sent, { ...work, actorUserId: "two" }])).toHaveLength(2);
+    expect(groupActivity([sent, { ...work, correlationId: null }])).toHaveLength(2);
+  });
+
+  it("uses passing health results, concise summaries and one time for the same minute", () => {
+    expect(jobResultLabel({ type: "health.smoke", state: "Succeeded", displayState: "partly_checked" })).toBe("Passing");
+    expect(jobResultLabel({ type: "health.smoke", state: "Succeeded", displayState: "not_checked" })).toBe("Not checked");
+    expect(jobSummary("Completed (succeeded).")).toBe("");
+    expect(jobSummary("Health check: 4 passed, 3 not checked.")).toBe("Health check: 4 passed, 3 not checked.");
+    const stamp = "2026-11-04T23:19:00Z";
+    expect(clockRange(stamp, "2026-11-04T23:19:20Z")).not.toContain("–");
+    expect(clockRange(stamp, "2026-11-04T23:21:00Z")).toContain("–");
+  });
+
+  it("formats daily schedules locally and never presents a schedule as a last-run result", () => {
+    expect(taskCadence("Daily at 04:00 · UTC")).toBe("Daily 4:00 AM");
+    expect(taskCadence("Weekly on Monday at 04:00 · America/New_York")).toBe("Weekly on Monday 4:00 AM");
+    expect(taskLastResult("Scheduled", "2026-11-04T04:00:00Z")).toBe("Result not recorded");
+    expect(taskLastResult("Scheduled", null)).toBe("Not recorded");
+    expect(taskLastResult("Succeeded", "2026-11-04T04:00:00Z")).toBe("Completed");
+  });
+
+  it("groups matching attempts into a compact timeline while keeping every receipt", () => {
+    const attempts = Array.from({ length: 100 }, (_, index) => ({ attemptNumber: 100 - index, startedAt: "2026-11-04T04:00:00Z", completedAt: "2026-11-04T04:01:00Z", outcome: "deferred" }));
+    const grouped = groupAttempts(attempts);
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0]).toHaveLength(100);
+    expect(groupAttempts([attempts[0], { ...attempts[1], outcome: "failed", errorMessage: "Source unavailable" }, attempts[2]])).toHaveLength(3);
+  });
+});
+
+
+it("uses retained covers and existing artwork routes for play receipts", () => {
+  const play = { request: { presented: { artwork: "available" }, itemId: "song" }, resolution: { externalSnapshotId: "snapshot" } };
+  expect(playArtwork(play)).toBe("/api/admin/track-matches/snapshot/artwork");
+  expect(playArtwork({ ...play, resolution: {} })).toBe("/api/admin/downloads/artwork/song");
+  expect(playArtwork({ request: { presented: { artwork: "/cover.jpg" } }, resolution: {} })).toBe("/cover.jpg");
+  expect(playArtwork({ request: { presented: { artwork: "available" } }, resolution: {} })).toBeNull();
 });

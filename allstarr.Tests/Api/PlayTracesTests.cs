@@ -49,6 +49,86 @@ public sealed class PlayTracesTests
         fixture.Access.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData(null, null, "Serving song", "Catalog artist")]
+    [InlineData("Requested song", null, "Requested song", "Catalog artist")]
+    [InlineData(null, "Requested artist", "Serving song", "Requested artist")]
+    [InlineData("Requested song", "Requested artist", "Requested song", "Requested artist")]
+    public async Task CatalogLabelsFillMissingPresentedLabelsWithoutReplacingTheRequestedSong(string? title, string? artist, string expectedTitle, string expectedArtist)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        using var timing = fixture.Timing(fixture.Listener);
+        timing.Present(new Song { Title = title ?? "", Artist = artist ?? "", Album = "Requested album", Duration = 200 });
+        timing.Catalog(new Song { Title = "Serving song", Artist = "Catalog artist" });
+        timing.Catalog(new Song());
+        var sample = timing.Snapshot("completed");
+        Assert.Equal(expectedTitle, sample.Trace!.Request.Presented.Title);
+        Assert.Equal(expectedArtist, sample.Trace.Request.Presented.Artist);
+        Assert.Equal("Requested album", sample.Trace.Request.Presented.Album);
+        Assert.Equal(200000, sample.Trace.Request.Presented.DurationMilliseconds);
+        await fixture.Store.RecordAsync(sample);
+        var trace = Assert.Single(await fixture.Service().ListAsync(fixture.Listener, 10, default));
+        Assert.Equal(expectedTitle, trace.Request.Presented.Title);
+        Assert.Equal(expectedArtist, trace.Request.Presented.Artist);
+    }
+
+    [Theory]
+    [InlineData(null, null, "Saved song", "Saved artist")]
+    [InlineData(" ", " ", "Saved song", "Saved artist")]
+    [InlineData("Requested song", null, "Requested song", "Saved artist")]
+    [InlineData(null, "Requested artist", "Saved song", "Requested artist")]
+    public async Task SavedCatalogLabelsFillMissingPresentedLabels(string? title, string? artist, string expectedTitle, string expectedArtist)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        using var timing = fixture.Timing(fixture.Listener);
+        var sample = timing.Snapshot("completed");
+        sample = sample with
+        {
+            Title = "Saved song",
+            Artist = "Saved artist",
+            Trace = sample.Trace! with { Request = sample.Trace.Request with { Presented = new(title, artist) } }
+        };
+        await fixture.Store.RecordAsync(sample);
+        var restarted = fixture.Service();
+        var listed = Assert.Single(await restarted.ListAsync(fixture.Listener, 10, default));
+        var detailed = await restarted.DetailAsync(fixture.Listener, sample.Id, default);
+        foreach (var trace in new[] { listed, detailed })
+        {
+            Assert.Equal(expectedTitle, trace.Request.Presented.Title);
+            Assert.Equal(expectedArtist, trace.Request.Presented.Artist);
+        }
+    }
+
+    [Fact]
+    public async Task ReceivedTagsDoNotSupplyMissingPresentedLabels()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        using var timing = fixture.Timing(fixture.Listener);
+        timing.Receive(new(new("audio/flac", "flac", "flac"), Tags: new("Received song", "Received artist")));
+        await fixture.Store.RecordAsync(timing.Snapshot("completed"));
+        var trace = await fixture.Service().DetailAsync(fixture.Listener, timing.Id, default);
+        Assert.Null(trace.Request.Presented.Title);
+        Assert.Null(trace.Request.Presented.Artist);
+    }
+
+    [Fact]
+    public async Task SavedCatalogFallbackUsesTheSameTextRedactionAsPresentedMetadata()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        using var timing = fixture.Timing(fixture.Listener);
+        var sample = timing.Snapshot("completed") with
+        {
+            Title = "Saved song token=private-token",
+            Artist = "Saved artist listener@example.test"
+        };
+        await fixture.Store.RecordAsync(sample);
+        var trace = await fixture.Service().DetailAsync(fixture.Listener, timing.Id, default);
+        Assert.StartsWith("Saved song", trace.Request.Presented.Title);
+        Assert.StartsWith("Saved artist", trace.Request.Presented.Artist);
+        Assert.DoesNotContain("private-token", trace.Request.Presented.Title);
+        Assert.DoesNotContain("listener@example.test", trace.Request.Presented.Artist);
+    }
+
     [Fact]
     public async Task CopyDiagnosticsOmitsIdentityAndRedactsEveryFreeTextSurface()
     {

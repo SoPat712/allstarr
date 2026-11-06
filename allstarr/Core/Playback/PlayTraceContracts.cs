@@ -39,6 +39,14 @@ public static partial class PlayTraceText
             song.Duration is > 0 and < 86400 ? song.Duration * 1000L : null,
         string.IsNullOrWhiteSpace(song.CoverArtUrl) ? null : "available",
         song.ExplicitContentLyrics switch { 0 or 3 => false, 1 => true, _ => null });
+    internal static PlayTraceRequest CatalogLabels(PlayTraceRequest request, string? title, string? artist) => request with
+    {
+        Presented = request.Presented with
+        {
+            Title = Clean(request.Presented.Title) ?? Clean(title),
+            Artist = Clean(request.Presented.Artist) ?? Clean(artist)
+        }
+    };
     internal static TrackMediaFacts? Facts(TrackMediaFacts? facts) => facts == null ? null : facts with
     {
         Media = new(Clean(facts.Media.MimeType) ?? "application/octet-stream", Reference(facts.Media.Container) ?? "unknown",

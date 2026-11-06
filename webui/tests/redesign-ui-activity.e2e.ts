@@ -15,7 +15,7 @@ const waiting = { id: jobId, type: "playlist.materialize", displayName: "Update 
   summary: "Progress saved. More songs remain.", availableAt: "2026-11-04T13:00:00Z", startedAt: timestamp,
   updatedAt: timestamp, createdAt: timestamp, canCancel: true, attemptCount: 1 };
 const trace = (id: string, firstByteMs: number, outcome: string) => ({ id, listenerId: userId, startedAt: timestamp, outcome,
-  request: { presented: { title: "Evening song", artist: "River" } }, resolution: { provider: "library", cached: true },
+  request: { presented: { title: "Evening song", artist: "River", artwork: "available" } }, resolution: { provider: "library", cached: true, externalSnapshotId: "cover" },
   timing: { firstByteMs, elapsedMs: 60000, headersMs: 100, omittedPhases: 0, phases: [] } });
 
 async function fixture(page: Page, eventState = "succeeded") {
@@ -60,6 +60,7 @@ async function fixture(page: Page, eventState = "succeeded") {
     if (path.startsWith("/api/admin/play-traces/")) return reply(trace(path.split("/").at(-1)!, 4600, "completed"));
     if (path === "/api/admin/problem-reports") return reply({ items: !url.searchParams.has("status") || url.searchParams.get("status") === status ? [report()] : [], nextCursor: null });
     if (path === "/api/admin/problem-reports/" + reportId) return reply({ ...report(), context: { schemaVersion: 1, capturedAt: timestamp, subjectName: "Listener", song: { title: "Evening song", artist: "River", catalogProviderId: "jellyfin" }, match: null, playback: { clientName: "Music app" }, checks: [] } });
+    if (path === "/api/admin/track-matches/cover/artwork") return route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#437c9a"/></svg>' });
     if (path === "/api/admin/updates/stream") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" });
     return reply({});
   });
@@ -68,7 +69,7 @@ async function fixture(page: Page, eventState = "succeeded") {
 
 const variants = [
   { width: 1280, height: 900, theme: "light" }, { width: 1280, height: 900, theme: "dark" },
-  { width: 390, height: 900, theme: "light" }, { width: 320, height: 900, theme: "light" },
+  { width: 390, height: 900, theme: "light" }, { width: 390, height: 900, theme: "dark" }, { width: 320, height: 900, theme: "light" },
   { width: 667, height: 375, theme: "light" },
 ] as const;
 const pages = [
@@ -104,6 +105,40 @@ for (const variant of variants) for (const screen of pages) {
     await expect(page.getByRole("region", { name: screen.status, exact: true })).toBeVisible();
     const filters = page.getByRole("radiogroup", { name: screen.filters, exact: true });
     await expect(filters).toBeVisible();
+    await expect(page.locator(".workspace-header").getByRole("group", { name: "Activity scope" })).toBeVisible();
+    await expect(page.locator(".activity-toolbar")).toHaveCount(0);
+    const headingBox = (await page.getByRole("heading", { name: "Activity", exact: true, level: 1 }).boundingBox())!;
+    const scopeBox = (await page.locator(".workspace-header").getByRole("group", { name: "Activity scope" }).boundingBox())!;
+    if (variant.width <= 760) expect(scopeBox.y).toBeGreaterThanOrEqual(headingBox.y + headingBox.height);
+    else expect(scopeBox.x).toBeGreaterThan(headingBox.x + headingBox.width);
+    if (screen.view === "history") {
+      await expect(filters.getByRole("radio")).toHaveCount(6);
+      await expect(page.locator(".history-days .event-log-day")).toHaveCount(1);
+      await expect(page.locator(".event-log-group .row-pill")).toHaveCount(0);
+      await expect(page.locator(".event-log-group .activity-status-icon")).toHaveCount(2);
+      const more = page.locator(".event-more-filters");
+      await expect(more).not.toHaveAttribute("open");
+      await more.locator("summary").click();
+      await expect(more.getByRole("switch", { name: "Background work" })).toBeVisible();
+      await expect(more.getByRole("button", { name: "Source", exact: true })).toBeVisible();
+      await more.locator("summary").click();
+      if (variant.width === 1280) {
+        const filterBox = (await filters.boundingBox())!, searchBox = (await page.getByRole("searchbox", { name: "Search", exact: true }).boundingBox())!;
+        expect(Math.abs(filterBox.y - searchBox.y)).toBeLessThanOrEqual(8);
+      }
+    }
+    if (screen.view === "plays") {
+      await expect(page.locator(".plays-list > .play-headings")).toHaveCount(1);
+      await expect(page.locator(".play-row .media-art img")).toBeVisible();
+      await expect(page.locator(".play-result [data-slot=badge]")).toHaveCount(0);
+      await expect(page.locator(".play-result")).toHaveText("Played · Stopped");
+    }
+    if (screen.view === "tasks") {
+      await expect(page.locator(".cadence")).toHaveText("Daily 4:00 AM");
+      await expect(page.locator(".activity-task .activity-outcome")).toHaveCount(0);
+      await expect(page.locator(".last-result")).toHaveText("Result not recorded");
+      await expect(page.locator(".activity-task").getByRole("button", { name: "Run now", exact: true })).toHaveClass(/bg-transparent/);
+    }
     await expect(filters.getByRole("radio").first()).toContainText(/\d/);
     await expect(page.locator(screen.row).first()).toBeVisible();
     const emptyFilter = screen.view === "tasks" ? "Paused" : screen.view === "reports" ? "Fixed" : screen.view === "jobs" ? "Failed" : "Problems";
@@ -261,7 +296,7 @@ test("Activity uses sentence case and waiting labels with a separate report icon
   await fixture(page, "reviewRequired");
   await page.goto("/#/activity");
   const event = page.locator(".event-log-group .item-row").filter({ hasText: "Playlist updated" });
-  await expect(event.locator(".activity-outcome")).toHaveText("Review required");
+  await expect(event.locator(".activity-status-icon")).toHaveAttribute("aria-label", "Review required");
   await page.goto("/#/activity?view=plays");
   await expect(page.getByRole("region", { name: "Plays status", exact: true })).toContainText("1 slow start");
   await page.goto("/#/activity?view=jobs");
@@ -274,4 +309,52 @@ test("Activity uses sentence case and waiting labels with a separate report icon
   const activityIcon = await page.locator('a[href="#/activity"] svg').first().innerHTML();
   const reportIcon = await page.locator('a[href="#/report"] svg').first().innerHTML();
   expect(reportIcon).not.toBe(activityIcon);
+});
+
+
+test("Activity history pairs listen receipts and retains both details", async ({ page }) => {
+  await fixture(page);
+  await page.route("**/api/admin/ui/activity?**", route => route.fulfill({ json: { items: [
+    { id: "receipt", kind: "scrobble", label: "Scrobble recorded", detail: "Sent to Last.fm", state: "delivered", occurredAt: timestamp, correlationId: "listen", actorUserId: userId },
+    { id: "work", kind: "job", label: "Record a listen", detail: "Evening song", state: "succeeded", occurredAt: timestamp, correlationId: "listen", actorUserId: userId },
+  ], hasMore: false } }));
+  await page.goto("/#/activity");
+  await expect(page.locator(".event-log-group")).toHaveCount(1);
+  await page.locator(".event-log-group .row-action").click();
+  await expect(page.locator(".event-child")).toHaveCount(2);
+  await expect(page.getByRole("dialog")).toContainText("Sent to Last.fm");
+  await expect(page.getByRole("dialog")).toContainText("Evening song");
+});
+
+test("Activity reports has a dashed empty card below its filters", async ({ page }) => {
+  await fixture(page);
+  await page.route("**/api/admin/problem-reports?**", route => route.fulfill({ json: { items: [], nextCursor: null } }));
+  await page.goto("/#/activity?view=reports");
+  const empty = page.locator(".report-inbox > .empty-state");
+  await expect(empty).toBeVisible();
+  await expect(empty).toHaveCSS("border-top-style", "dashed");
+  const filters = (await page.getByRole("radiogroup", { name: "Report status", exact: true }).boundingBox())!, card = (await empty.boundingBox())!;
+  expect(card.y).toBeGreaterThan(filters.y + filters.height);
+});
+
+
+test("Activity jobs keeps passing health checks and a compact attempt timeline", async ({ page }) => {
+  await fixture(page);
+  const health = { ...waiting, id: "health", type: "health.smoke", displayName: "Health check", state: "Succeeded", displayState: "partly_checked", completedAt: timestamp, summary: "Health check: 4 passed, 3 not checked." };
+  const listen = { ...waiting, type: "playback.signal", displayName: "Record a listen", state: "Succeeded", completedAt: timestamp, summary: "Completed (succeeded)." };
+  await page.route("**/api/admin/jobs?**", route => route.fulfill({ json: { jobs: new URL(route.request().url()).searchParams.get("view") === "queue" ? [] : [health, listen, { ...listen, id: "earlier", completedAt: "2026-11-04T12:00:20Z" }], progress: [], hasMore: false } }));
+  await page.route("**/api/admin/jobs/" + jobId + "?**", route => route.fulfill({ json: { job: listen, attempts: Array.from({ length: 500 }, (_, index) => ({ attemptNumber: 500 - index, startedAt: timestamp, completedAt: timestamp, outcome: "succeeded" })), progress: [{ jobId, detailsJson: JSON.stringify({ completed: 6, total: 10 }) }], hasMore: false } }));
+  await page.goto("/#/activity?view=jobs");
+  const check = page.locator(".job-row").filter({ hasText: "Health check" });
+  await expect(check.locator(".row-pill")).toHaveText("Passing");
+  const listens = page.locator(".job-row").filter({ hasText: "Record a listen" });
+  await expect(listens).toHaveCount(1);
+  await expect(listens.locator("time")).not.toContainText("–");
+  await expect(page.getByRole("region", { name: "Jobs", exact: true })).not.toContainText("Completed (succeeded).");
+  await listens.locator(".row-action").click();
+  const panel = page.getByRole("dialog");
+  await expect(panel.locator(".attempt-timeline > li")).toHaveCount(1);
+  await expect(panel.getByRole("region", { name: "Attempt history" })).toContainText("500 attempts");
+  await expect(panel.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "60");
+  await expect(panel.getByRole("link", { name: "Open in History" })).toHaveClass(/bg-transparent/);
 });

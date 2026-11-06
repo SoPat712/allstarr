@@ -47,9 +47,10 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.getByRole("tab", { name: "Plays", exact: true }).click();
     const row = page.locator(".play-row").filter({ hasText: "Evening song" });
     await expect(row).toContainText("River");
-    await expect(row).toContainText("Started in 1.2 s");
+    await expect(row).toContainText("1.2 s");
     await expect(row).toContainText("Apple Music");
-    await expect(row.locator("[data-slot=badge]")).toHaveClass(/badge-success/);
+    await expect(row.locator(".play-result")).toHaveText("Played");
+    await expect(row.locator(".play-result [data-slot=badge]")).toHaveCount(0);
     await expect(row.locator(".row-leading img")).toBeVisible();
     await expect(page.getByRole("group", { name: "Activity scope" })).toHaveCount(0);
     const folder = "test-results/shots-uiactivity";

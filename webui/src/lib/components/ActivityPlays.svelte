@@ -4,8 +4,8 @@
   import { onMount, tick } from "svelte";
   import { ApiError, home, matchReview, playTraces, type MatchAuthorityScope, type MatchReviewItem, type PlayTrace, type PlayTraceChoice, type ProviderDefinition } from "$lib/api";
   import { expectedAuthorityForScope } from "$lib/matching-api";
-  import { dayLabel } from "$lib/activity";
-  import { playDuration, playOutcome, playPhase, playSource, playStart, playComparison, playActionError } from "$lib/play-traces";
+  import { dayLabel, playArtwork } from "$lib/activity";
+  import { playDuration, playOutcome, playPhase, playSource, playComparison, playActionError } from "$lib/play-traces";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { toast } from "$lib/toasts";
   import { Button } from "$lib/components/ui/button";
@@ -22,7 +22,6 @@
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import { groupPlays } from "./activity-rows";
-  import ActivityOutcome from "$lib/components/ActivityOutcome.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import RefreshButton from "$lib/components/RefreshButton.svelte";
   let matchModule = $state<typeof import("./MatchDialog.svelte")>();
@@ -77,7 +76,7 @@
   function startRange(runs: PlayTrace[]) {
     const starts = runs.map(run => run.timing.firstByteMs).filter((value): value is number => value != null && Number.isFinite(value) && value >= 0);
     if (!starts.length) return "Start not recorded";
-    if (runs.length === 1) return playStart(starts[0]);
+
     const low = Math.round(Math.min(...starts) / 100) / 10, high = Math.round(Math.max(...starts) / 100) / 10;
     return (low === high ? String(low) : low + "–" + high) + " s";
   }
@@ -257,28 +256,28 @@
     { id: "failed", label: "Problems", count: plays.filter(play => play.outcome.toLowerCase() === "failed").length },
     { id: "slow", label: "Slow starts", count: plays.filter(play => (play.timing.firstByteMs ?? 0) > 4000).length },
   ]} /><RefreshButton variant="outline" label="Refresh plays" onrefresh={() => load()} /></div>
-  <div class="play-headings" aria-hidden="true"><span>Song</span><span>Played from</span><span>Start</span><span>Result</span><span>When</span></div>
   {#if loading}
     <RowsSkeleton label="Loading plays" />
   {:else if error && !plays.length}
     <ErrorState title={error} onretry={() => load()} />
   {:else}
     {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
+    <div class="plays-list">
+    {#if days.length}<div class="play-headings" aria-hidden="true"><span>Song</span><div class="play-columns"><span>Played from</span><span>Start</span><span>Result</span><span>When</span></div></div>{/if}
     {#each days as day (day.label)}
       <section class="event-log-day" aria-label={day.label}>
         <h2>{day.label}</h2>
         <div class="event-log-list">
           {#each day.plays as runs (runs[0].id)}
             {@const play = runs[0]}
-            {@const outcome = playOutcome(play.outcome)}
             <article class="play-row">
               <ItemRow title={(play.request.presented.title || "Unknown song") + (runs.length > 1 ? " ×" + runs.length : "")} subtitle={play.request.presented.artist || "Unknown artist"} selected={panelOpen && selectedRuns[0]?.id === play.id} onclick={() => { selectedRuns = runs; toggle(play); }}>
-                {#snippet leading()}<MediaArtwork url={play.request.presented.artwork === "available" ? null : play.request.presented.artwork} />{/snippet}
+                {#snippet leading()}<MediaArtwork url={playArtwork(play)} />{/snippet}
                 {#snippet trailing()}
                   <div class="play-columns">
-                    <span class="play-source">{#each [...new Set(runs.map(run => playSource(run.resolution.provider, run.resolution.cached, providers)))] as source}<span><ProviderMark id={runs.find(run => playSource(run.resolution.provider, run.resolution.cached, providers) === source)?.resolution.provider || "library"} definition={providers.find(item => item.name === source)} label={source} />{source}</span>{/each}</span>
+                    <span class="play-source">{#each [...new Set(runs.map(run => playSource(run.resolution.provider, run.resolution.cached, providers)))] as source}<span>{#if source !== "Saved copy"}<ProviderMark decorative id={runs.find(run => playSource(run.resolution.provider, run.resolution.cached, providers) === source)?.resolution.provider || "library"} definition={providers.find(item => item.name === source)} label={source} />{/if}{source}</span>{/each}</span>
                     <span class="play-start-time">{startRange(runs)}{#if runs.some(run => (run.timing.firstByteMs ?? 0) > 4000)}<StatePill tone="warn" text="Slow start" />{/if}</span>
-                    <span class="play-result"><ActivityOutcome state={runs.some(run => run.outcome.toLowerCase() === "failed") ? "failed" : outcome.state} label={outcomes(runs)} /></span>
+                    <span class="play-result" title={outcomes(runs)}>{outcomes(runs).replace("Could not play", "Couldn't play")}</span>
                     <time datetime={play.startedAt} title={time(play.startedAt)}>{clock(play.startedAt)}</time>
                   </div>
                 {/snippet}
@@ -290,6 +289,7 @@
     {:else}
       <EmptyState title={plays.length ? "No plays match this filter" : "No plays yet"} description={plays.length ? "Choose All to see every loaded play." : "Play something and it will show up here."}>{#snippet icon()}<Headphones size={24} />{/snippet}</EmptyState>
     {/each}
+    </div>
     {#if hasMore}<div class="plays-toolbar"><Button variant="secondary" disabled={busy} onclick={() => void load(true)}>Load earlier plays</Button></div>{/if}
   {/if}
 </section>
@@ -365,15 +365,18 @@
 <style>
   .activity-plays { container-type: inline-size; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--section-gap); min-width: 0; }
   .plays-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-3); justify-content: space-between; align-items: center; }
-  .play-row + .play-row { border-top: 1px solid var(--color-edge); }
-  .play-row :global(.row-controls) { flex: 0 1 58%; min-width: 0; pointer-events: none; }
-  .play-columns { display: grid; grid-template-columns: minmax(90px, 1.2fr) minmax(100px, 1fr) minmax(90px, 1fr) 65px; gap: var(--space-3); align-items: center; width: 100%; color: var(--color-ink-muted); font-size: var(--text-xs); }
-  .play-source, .play-start-time { display: grid; gap: var(--space-1); }
+  .plays-list { overflow: hidden; border: 1px solid var(--color-edge); border-radius: var(--radius-lg); }
+  .play-row + .play-row, .event-log-day + .event-log-day { border-top: 1px solid var(--color-edge); }
+  .event-log-day h2 { margin: 0; padding: var(--space-2) var(--space-4); color: var(--color-ink-muted); font-size: var(--text-xs); background: var(--color-panel-raised); }
+  .play-row :global(.item-row), .play-headings { display: grid; grid-template-columns: 36px minmax(0, 1fr) minmax(0, 1.7fr) 18px; gap: var(--space-3); }
+  .play-row :global(.row-controls) { min-width: 0; width: 100%; pointer-events: none; }
+  .play-columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, .9fr) minmax(0, 1.2fr) auto; gap: var(--space-3); align-items: center; width: 100%; color: var(--color-ink-muted); font-size: var(--text-xs); }
+  .play-source, .play-start-time { display: grid; gap: var(--space-1); min-width: 0; }
   .play-source > span { display: flex; align-items: center; gap: var(--space-1); }
+  .play-result { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .play-columns time { white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .play-headings { display: grid; grid-template-columns: minmax(0, 1fr) 1.2fr 1fr 1fr 65px; gap: var(--space-3); padding: var(--space-2) var(--space-5); color: var(--color-ink-muted); font-size: var(--text-xs); }
-  .play-headings > span:first-child { width: 38%; }
-  .play-headings { grid-template-columns: 40% minmax(90px, 1.2fr) minmax(100px, 1fr) minmax(90px, 1fr) 65px; }
+  .play-headings { padding: var(--space-2) var(--space-4); background: var(--color-panel); color: var(--color-ink-muted); font-size: var(--text-xs); text-transform: uppercase; }
+  .play-headings > span { grid-column: 1 / 3; }
   .play-detail { display: grid; gap: var(--space-4); }
   :global(.play-forget) { color: var(--danger); }
   .play-runs { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-4); }
@@ -396,7 +399,7 @@
   p { margin: 0; }
   @container (max-width: 720px) {
     .play-headings { display: none; }
-    .play-row :global(.item-row) { flex-wrap: wrap; }
+    .play-row :global(.item-row) { display: flex; flex-wrap: wrap; }
     .play-row :global(.row-copy) { flex-basis: calc(100% - 90px); }
     .play-row :global(.row-controls) { flex: 1 1 100%; margin-left: 48px; }
     .play-row :global(.row-chevron) { display: none; }
