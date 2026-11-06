@@ -33,6 +33,7 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Controllers/DownloadsController.cs"] = "managed audio and lyrics sidecars",
             ["Core/Downloads/ProviderDownloadArtifactResolver.cs"] = "managed audio",
             ["Core/Enrichment/LibraryPromotionService.cs"] = "private promotion audio workspace",
+            ["Core/Enrichment/LibraryPromotionService.Albums.cs"] = "private promotion audio workspace and new library sidecars",
             ["Core/Enrichment/PromotionRoots.cs"] = "temporary approved-root write probe",
             ["Core/Enrichment/TagLibManagedMetadataWriter.cs"] = "managed audio and artwork",
             ["Providers/Extensions/ExtensionSdkV1.cs"] = "extension packages",
