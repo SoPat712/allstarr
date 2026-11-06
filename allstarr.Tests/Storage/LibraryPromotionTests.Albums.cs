@@ -83,7 +83,7 @@ public sealed partial class LibraryPromotionTests
     }
 
     [Fact]
-    public async Task Album_ContinuesOtherSongsAndPlacesOnlyAfterReviewIsResolved()
+    public async Task Album_ContinuesOtherSongsWhileReviewIsPending()
     {
         await SaveBatchProfileAsync();
         var second = Guid.NewGuid();
@@ -104,9 +104,9 @@ public sealed partial class LibraryPromotionTests
         var review = await batch.GetAsync(Context, run.Id);
         Assert.Equal("Needs review", review.Outcome);
         Assert.Equal("Needs review", review.Tracks[0].Outcome);
-        Assert.Equal("Ready", review.Tracks[1].Outcome);
+        Assert.Equal("Placed", review.Tracks[1].Outcome);
         Assert.Contains(review.Tracks[1].Steps, step => step.Name == "Lyrics" && step.Outcome == "None fits");
-        await using (var db = factory.CreateDbContext()) Assert.Empty(await db.ManagedFiles.ToArrayAsync());
+        await using (var db = factory.CreateDbContext()) Assert.Single(await db.ManagedFiles.ToArrayAsync());
         await Assert.ThrowsAsync<InvalidOperationException>(() => batch.ReviewAsync(Context, run.Id, recordingId, "add-anyway", "Accept source"));
         await batch.ReviewAsync(Context, run.Id, recordingId, "skip", null);
         await ExecuteBatchAsync(batch);
@@ -445,7 +445,7 @@ public sealed partial class LibraryPromotionTests
     }
 
     private LibraryPromotionService BatchService(IPromotionCatalog catalog, IPromotionAcquisition acquisition, IManagedMetadataWriter? writer = null,
-        IProtocolLyricsResolver? lyricsResolver = null)
+        IProtocolLyricsResolver? lyricsResolver = null, ITrackIdentityService? identityService = null)
     {
         var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(directory, "workspaces") };
         var resolver = new ProviderDownloadArtifactResolver(new EfProviderDownloadArtifactStore(factory), options);
@@ -453,6 +453,6 @@ public sealed partial class LibraryPromotionTests
             new SystemPlatformClock(), Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.FileMediaApplicationCache>.Instance);
         return new(factory, queue, roots, resolver, options, services.GetRequiredService<IServiceScopeFactory>(),
             writer ?? new TagLibManagedMetadataWriter(new TagLibManagedTagFileMutator(), new PhysicalManagedFileOperations()), new allstarr.Services.Common.AudioQualityAnalyzer(cache), new TestBackendLibraryAccess(factory, "music"),
-            promotionCatalog: catalog, promotionAcquisition: acquisition, lyrics: lyricsResolver);
+            identities: identityService, promotionCatalog: catalog, promotionAcquisition: acquisition, lyrics: lyricsResolver);
     }
 }

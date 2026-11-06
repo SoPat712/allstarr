@@ -39,6 +39,7 @@
     { id: "mappings", label: "Matches", href: "#/library/matches" },
     { id: "cached", label: "Cached", href: "#/library/cached" },
     { id: "kept", label: "Kept", href: "#/library/kept" },
+    { id: "to-library", label: "To library", href: "#/library/to-library" },
     { id: "import", label: "Import", href: "#/library/import" },
   ];
   const bootMessages = [
@@ -93,7 +94,7 @@
     .map(href => navigationDestinations.find(item => item.href === href)!).filter(Boolean)]);
   const librarySections = $derived(administrator
     ? allLibrarySections
-    : allLibrarySections.filter((item) => item.id === "playlists" || item.id === "mappings" || item.id === "import"));
+    : allLibrarySections.filter((item) => item.id === "playlists" || item.id === "mappings" || item.id === "to-library" || item.id === "import"));
 
   // Addresses read like the labels people see; the older ones still open the same pages.
   function currentRoute(path: string): string {
@@ -165,8 +166,8 @@
             }
           : route === "/library/cached"
             ? { storage: "cache" }
-            : route === "/library/kept"
-              ? { storage: "kept" }
+            : route === "/library/to-library"
+              ? { initialRun: routeQuery.get("run") ?? "", initialRequest: routeQuery.get("request") ?? "", initialRecording: routeQuery.get("recording") ?? "", administrator }
               : route === "/intelligence" || route === "/for-you"
                 ? {
                     initialSection: routeQuery.get("section") ?? (developmentIntelligence ? "overview" : "for-you"),
@@ -258,7 +259,9 @@
     if (path === "/library/import") return import("$lib/components/ImportView.svelte");
     if (path === "/library/playlists") return import("$lib/components/PlaylistsView.svelte");
     if (path === "/library/mappings") return import("$lib/components/MappingView.svelte");
-    if (path === "/library/cached" || path === "/library/kept") {
+    if (path === "/library/kept") return import("$lib/components/KeptSongsView.svelte");
+    if (path === "/library/to-library") return import("$lib/components/LibraryPromotionsView.svelte");
+    if (path === "/library/cached") {
       return import("$lib/components/DownloadsView.svelte");
     }
     if (path === "/activity") return import("$lib/components/EventLogView.svelte");

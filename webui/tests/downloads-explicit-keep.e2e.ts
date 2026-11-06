@@ -167,13 +167,20 @@ for (const width of [390, 1280]) {
       await expect(row).toHaveCount(0);
 
       await page.goto("/#/library/kept");
-      const keptRow = page.locator(".download-row").filter({ hasText: "Fixture Song" });
+      const keptRow = page.locator(".item-row").filter({ hasText: "Fixture Song" });
       await expect(keptRow).toBeVisible();
       await keptRow.getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
       await expect(page.getByRole("menuitem", { name: "Stop keeping", exact: true })).toBeVisible();
       await page.keyboard.press("Escape");
 
-      await expect(page.getByRole("button", { name: /^Remove all/ })).toHaveCount(0);
+      await page.getByRole("button", { name: "Actions for kept songs", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Remove all", exact: true }).click();
+      const bulkDialog = page.getByRole("alertdialog", { name: /Remove all kept songs/i });
+      await expect(bulkDialog).toBeVisible();
+      await expect(bulkDialog).toContainText(/1 explicit Keep/i);
+      await expect(bulkDialog).toContainText(/24-hour grace period/i);
+      await expect(bulkDialog).toContainText(/other household interests remain protected/i);
+      await bulkDialog.getByRole("button", { name: "Cancel", exact: true }).click();
 
       await keptRow.getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
       await page.getByRole("menuitem", { name: "Stop keeping", exact: true }).click();
@@ -217,7 +224,7 @@ for (const width of [390, 1280]) {
       for (const badge of await page.locator(".quality-check-badge").all()) {
         await expect(badge).toHaveAttribute("title", /.+\.$/);
       }
-      const row = page.locator(".download-row").filter({ hasText: "Quality 4" });
+      const row = page.locator(".item-row").filter({ hasText: "Quality 4" });
       await expect(row.locator(".quality-check-badge")).toHaveCount(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await page.screenshot({ path: `test-results/hires-downloads-${width}-${colorScheme}.png`, fullPage: true });
@@ -253,9 +260,12 @@ for (const width of [390, 1280]) {
         return json(route, { jobId: "delete-job", queued: true }, 202);
       });
       await page.goto("/#/library/kept");
-      const row = page.locator(".download-row").filter({ hasText: "Check" });
-      await expect(row).toContainText("Apple Music");
-      await expect(row).not.toContainText("Unknown source");
+      const row = page.locator(".item-row").filter({ hasText: "Check" });
+      await row.getByRole("button", { name: "Open song details for Check", exact: true }).click();
+      const panel = page.locator("[data-side-panel][data-state=open]");
+      await expect(panel).toContainText("Apple Music");
+      await expect(panel).not.toContainText("Unknown source");
+      await panel.getByRole("button", { name: "Close", exact: true }).click();
       const menu = row.getByRole("button", { name: "Actions for Check", exact: true });
       await menu.click();
       const remove = page.getByRole("menuitem", { name: "Delete kept copy…", exact: true });
@@ -316,6 +326,7 @@ test("kept deletion keeps a changed confirmation open and requires a fresh previ
   const dialog = page.getByRole("alertdialog", { name: "Delete the kept copy of Fixture Song?" });
   await dialog.getByRole("button", { name: "Delete kept copy", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("The references changed");
+  await expect(dialog.getByRole("button", { name: "Delete kept copy", exact: true })).toBeDisabled();
   expect(requests).toHaveLength(1);
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await menu.click();
@@ -345,18 +356,140 @@ test("completed Keep reports the move and removes the Cache row", async ({ page 
   await expect(row).toHaveCount(0);
 });
 
+test("kept search and copy actions stay reachable without library status", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  await mockDownloadsApp(page);
+  const copies = [
+    { ...baseFile, path: "first.flac", storage: "kept", title: "First copy", explicitlyKept: true },
+    { ...baseFile, path: "second.mp3", storage: "kept", title: "Second copy", codec: "MP3", provider: "apple-musickit", bitrateKbps: 128, size: 512_000, sizeFormatted: "500 KiB" },
+  ];
+  await page.route("**/api/admin/downloads?storage=kept", route => json(route, {
+    storage: "kept", files: copies, count: 2, managedCount: 2, diagnosticCount: 1,
+    totalSize: 1_536_000, totalSizeFormatted: "1500 KiB",
+  }));
+  await page.route("**/api/admin/library-promotions/kept", route => json(route, { error: "Library status is unavailable." }, 503));
+  await page.goto("/#/library/kept");
+  await expect(page.locator(".item-row")).toHaveCount(2);
+  const actions = page.getByRole("button", { name: "Actions for kept songs", exact: true });
+  await actions.click();
+  await page.getByRole("menuitem", { name: "Search and sort", exact: true }).click();
+  await page.getByRole("searchbox", { name: "Filter kept songs", exact: true }).fill("Second");
+  await expect(page.locator(".item-row")).toHaveCount(1);
+  await page.getByRole("searchbox", { name: "Filter kept songs", exact: true }).fill("");
+  await page.getByRole("radio", { name: "Your Keeps 1", exact: true }).click();
+  await expect(page.locator(".item-row")).toHaveCount(1);
+  await expect(page.locator(".item-row")).toContainText("First copy");
+  await page.reload();
+  await expect(page.getByRole("radio", { name: "Your Keeps 1", exact: true })).toBeChecked();
+  await expect(page.locator(".item-row")).toHaveCount(1);
+  await page.getByRole("radio", { name: "Lower quality 1", exact: true }).click();
+  const row = page.locator(".item-row");
+  await expect(row).toContainText("Second copy");
+  await page.getByRole("button", { name: "Sort songs", exact: true }).click();
+  await page.getByRole("option", { name: "Size", exact: true }).click();
+  await page.getByRole("button", { name: "Source", exact: true }).click();
+  await page.getByRole("option", { name: "Apple Music", exact: true }).click();
+  await row.getByRole("button", { name: "Open song details for Second copy", exact: true }).click();
+  const panel = page.locator("[data-side-panel][data-state=open]");
+  await expect(panel).toContainText("Apple Music");
+  await expect(panel).toContainText("500 KiB");
+  await panel.getByText("Copy details", { exact: true }).click();
+  await expect(panel.getByText("Last access", { exact: true })).toBeVisible();
+  await expect(panel.getByText("Filename", { exact: true })).toBeVisible();
+  await expect(panel.getByText("fixture-track", { exact: true })).toBeVisible();
+  await expect(panel.getByRole("link", { name: "Download", exact: true })).toHaveAttribute("href", /path=second.mp3.*storage=kept/);
+  await expectContainedMobileGeometry(page);
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
+  await actions.click();
+  await page.getByRole("menuitem", { name: "Remove all", exact: true }).click();
+  const dialog = page.getByRole("alertdialog", { name: "Remove all kept songs?", exact: true });
+  await expect(dialog).toContainText("1 explicit Keep");
+  await expect(dialog).toContainText("1 unreferenced kept copy");
+  await expect(dialog).toContainText("1500 KiB");
+  await expect(dialog).toContainText("1 diagnostic file stays untouched");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+});
+
+test("kept copies sharing a recording each retain their own actions", async ({ page }) => {
+  await mockDownloadsApp(page);
+  const recordingId = "11111111-1111-4111-8111-111111111111";
+  await page.route("**/api/admin/downloads?storage=kept", route => json(route, {
+    storage: "kept", files: [
+      { ...baseFile, path: "first.flac", storage: "kept", explicitlyKept: true },
+      { ...baseFile, path: "second.flac", storage: "kept", provider: "apple-musickit", bitDepth: 24, sampleRateHz: 96_000, canDeleteKeptCopy: true,
+        qualityCheck: { verdict: "upsampled", likelySourceRate: 44_100 } },
+      { ...baseFile, path: "third.mp3", storage: "kept", codec: "MP3", bitrateKbps: 128, bitDepth: null, removable: false, referenceCount: 2 },
+    ], count: 3, managedCount: 3, diagnosticCount: 0, totalSize: 3_072_000, totalSizeFormatted: "3 MB",
+  }));
+  await page.route("**/api/admin/library-promotions/kept", route => json(route, {
+    items: ["first.flac", "second.flac", "third.mp3"].map(path => ({ path, recordingId, inLibrary: false })),
+  }));
+  await page.goto("/#/library/kept");
+  const rows = page.locator(".item-row");
+  await expect(rows).toHaveCount(1);
+  await expect(page.getByRole("region", { name: "Kept totals", exact: true })).toContainText("1 kept");
+  await expect(page.getByRole("region", { name: "Kept totals", exact: true })).toContainText("3 copies");
+  await expect(rows.first().locator(".row-pill .state-pill")).toHaveText("FLAC 24/96");
+  await expect(rows.first()).toContainText("Likely upscaled");
+  await expect(rows.first()).toContainText("1 below CD quality");
+  await rows.first().getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Download", exact: true })).toHaveAttribute("href", /path=second.flac/);
+  await page.keyboard.press("Escape");
+  const expander = rows.first().getByRole("button", { name: /3 copies of Fixture Song$/ });
+  await expect(expander).toHaveAccessibleName("Show 3 copies of Fixture Song");
+  await expander.click();
+  await expect(expander).toHaveAttribute("aria-expanded", "true");
+  const copies = page.getByRole("group", { name: "Copies of Fixture Song", exact: true });
+  await expect(copies.locator(".item-row")).toHaveCount(3);
+  const firstCopy = copies.locator(".item-row").filter({ hasText: "FLAC 16/44" });
+  const secondCopy = copies.locator(".item-row").filter({ hasText: "FLAC 24/96" });
+  const thirdCopy = copies.locator(".item-row").filter({ hasText: "MP3 128" });
+  await expect(firstCopy).toContainText("Lumen Audio");
+  await expect(secondCopy).toContainText("Apple Music");
+  await expect(secondCopy).toContainText("Likely upscaled");
+  await expect(thirdCopy.locator('.state-pill[data-tone="warn"]')).toHaveText("Below CD quality");
+  await firstCopy.getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Stop keeping", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Download", exact: true })).toHaveAttribute("href", /path=first.flac/);
+  await page.keyboard.press("Escape");
+  await secondCopy.getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Delete kept copy…", exact: true })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Download", exact: true })).toHaveAttribute("href", /path=second.flac/);
+  await page.keyboard.press("Escape");
+  await thirdCopy.getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Protected copy", exact: true })).toBeDisabled();
+  await expect(page.getByRole("menuitem", { name: "Stop keeping", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "Download", exact: true })).toHaveAttribute("href", /path=third.mp3/);
+  await page.keyboard.press("Escape");
+  await firstCopy.getByRole("button", { name: "Open song details for Fixture Song", exact: true }).click();
+  const panel = page.locator("[data-side-panel][data-state=open]");
+  await expect(panel).toContainText("first.flac");
+  await expect(panel.getByRole("link", { name: "Download", exact: true })).toHaveAttribute("href", /path=first.flac/);
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
+  await page.setViewportSize({ width: 390, height: 900 });
+  await expectContainedMobileGeometry(page);
+  await page.getByRole("button", { name: "Hide 3 copies of Fixture Song", exact: true }).click();
+  await expect(rows).toHaveCount(1);
+});
+
 
 for (const storage of ["cached", "kept"]) test(`Downloads have one outlined action and a menu in ${storage}`, async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await mockDownloadsApp(page, true, storage === "kept");
   await page.goto(`/#/library/${storage}`);
-  const table = page.getByRole("table", { name: `${storage === "cached" ? "Cached" : "Kept"} songs` });
-  await expect(table.locator("thead th")).toHaveText(["Song", "Source", "Quality", storage === "cached" ? "Leaves cache" : "Kept by", "Size", "Actions"]);
-  const row = table.locator(".download-row").first();
+  const list = storage === "cached" ? page.getByRole("table", { name: "Cached songs" }) : page.getByRole("region", { name: "Kept songs", exact: true });
+  if (storage === "cached") await expect(list.locator("thead th")).toHaveText(["Song", "Source", "Quality", "Leaves cache", "Size", "Actions"]);
+  else {
+    await expect(list.getByRole("button", { name: "Add selected to library", exact: true })).toBeVisible();
+    await expect(list.locator(".row-pill")).toHaveText("FLAC 16/44");
+    await expect(list.locator(".row-chevron")).toBeVisible();
+    await list.getByRole("button", { name: "Open song details for Fixture Song", exact: true }).click();
+  }
+  const row = storage === "cached" ? list.locator(".download-row").first() : page.locator("[data-side-panel][data-state=open] .kept-copy-actions");
   const action = storage === "cached" ? row.getByRole("button", { name: "Keep", exact: true }) : row.getByRole("link", { name: "Download", exact: true });
   await expect(action).toBeVisible();
   expect(await action.evaluate(element => getComputedStyle(element).borderTopStyle)).toBe("solid");
-  await expect(row.locator('.download-actions > [data-slot="button"]')).toHaveCount(1);
+  await expect(row.locator(storage === "cached" ? '.download-actions > [data-slot="button"]' : ':scope > [data-slot="button"]')).toHaveCount(1);
   await row.getByRole("button", { name: "Actions for Fixture Song", exact: true }).click();
   if (storage === "cached") {
     await expect(page.getByRole("menuitem", { name: "Download", exact: true })).toBeVisible();

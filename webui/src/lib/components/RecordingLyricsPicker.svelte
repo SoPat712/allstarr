@@ -144,7 +144,7 @@
   .lyrics-source-list small { font-weight: 400; }
   textarea { width: 100%; min-width: 0; max-height: 18rem; resize: vertical; background: transparent; color: inherit; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: var(--text-sm); line-height: 1.65; border: 1px solid var(--color-border); padding: var(--space-3); border-radius: var(--radius-md); }
   .lyrics-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .lyrics-actions :global(button) { white-space: normal; height: auto; min-height: 44px; padding-block: var(--space-2); }
+  .lyrics-actions :global(button) { white-space: normal; height: auto; min-height: var(--control-md); padding-block: var(--space-2); }
   .lyrics-error { color: var(--color-danger); font-size: var(--text-sm); line-height: 1.5; }
   @media (max-width: 650px) {
     .lyrics-comparison { grid-template-columns: minmax(0, 1fr); }

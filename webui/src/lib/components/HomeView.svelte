@@ -389,6 +389,7 @@
   .home-summary { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); order: 1; }
   .home-summary.administrator { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .home-mixes, .release-note { order: 3; }
+  .home-mixes :global(.empty-state) { min-height: 12rem; }
   .home-now:empty { display: none; }
   .now-playing-card.compact-playing { grid-template-columns: 72px minmax(0, 1fr) auto; align-items: center; gap: 16px; padding: 14px; border: 1px solid var(--color-edge); }
   .compact-playing .now-playing-artwork { width: 72px; }

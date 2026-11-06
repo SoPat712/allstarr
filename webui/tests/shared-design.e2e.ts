@@ -83,13 +83,21 @@ for (const width of [1280, 390]) for (const theme of ["dark", "light"] as const)
       if (capturePhase === "after") {
         await sharedControls(page, width);
         if (["library/playlists", "library/matches", "library/cached", "library/kept"].includes(path)) {
-          const list = page.locator(path.endsWith("playlists") ? ".library-rows" : path.endsWith("matches") ? ".mapping-rows" : ".downloads-table-scroll");
+          const list = page.locator(path.endsWith("playlists") ? ".library-rows" : path.endsWith("matches") ? ".mapping-rows" : path.endsWith("kept") ? ".promotion-list" : ".downloads-table-scroll");
           expect(await list.evaluate(element => ({ border: getComputedStyle(element).borderTopWidth, radius: getComputedStyle(element).borderRadius }))).toEqual({ border: "1px", radius: "14px" });
-          const title = page.locator(path.endsWith("playlists") ? ".library-heading" : path.endsWith("matches") ? ".mapping-heading" : ".library-downloads-heading");
+          const title = page.locator(path.endsWith("playlists") ? ".library-heading" : path.endsWith("matches") ? ".mapping-heading" : path.endsWith("kept") ? ".promotion-page-heading" : ".library-downloads-heading");
           await expect(title.locator("h2")).toHaveCSS("font-weight", "600");
           expect((await title.boundingBox())!.x).toBeCloseTo((await page.locator(".library-tabs").boundingBox())!.x, 0);
-          if (["library/cached", "library/kept"].includes(path) && width === 1280) {
+          if (path === "library/cached" && width === 1280) {
             expect(await page.locator(".library-download-row").first().locator("td").evaluateAll(cells => cells.every(cell => Math.abs(cell.getBoundingClientRect().bottom - cells[0].getBoundingClientRect().bottom) < 1))).toBe(true);
+          }
+          if (path === "library/kept" && width === 1280) {
+            await expect(list.locator(".kept-song-group > .item-row")).toHaveCount(2);
+            const centers = await list.locator(".item-row").first().locator(".row-leading, .row-copy, .row-pill, .row-controls").evaluateAll(cells => cells.map(cell => {
+              const box = cell.getBoundingClientRect(); return box.y + box.height / 2;
+            }));
+            expect(centers).toHaveLength(4);
+            expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(1);
           }
         }
         if (path === "settings/alerts") {

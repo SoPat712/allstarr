@@ -17,13 +17,16 @@
   import ItemRow from "$lib/components/patterns/ItemRow.svelte";
   import StatePill from "$lib/components/patterns/StatePill.svelte";
   import { rememberActivityScope } from "$lib/activity-scope";
+  import { promotionProfiles, type HouseholdPromotionProfile } from "$lib/promotion-profile-api";
 
-  type Listener = { id: string; displayName: string; isAdministrator?: boolean; lastActiveAt?: string | null; playsThisWeek?: number; playlistEditingAllowed?: boolean; recentPlays?: { title: string | null; artist: string | null; playedAt: string }[]; preferences: PersonalListeningPreferences | null; copies: ListenerPlaylistCopy[] | null; error: string };
+  type Listener = { id: string; displayName: string; isAdministrator?: boolean; isTrustedListener: boolean; lastActiveAt?: string | null; playsThisWeek?: number; playlistEditingAllowed?: boolean; recentPlays?: { title: string | null; artist: string | null; playedAt: string }[]; preferences: PersonalListeningPreferences | null; copies: ListenerPlaylistCopy[] | null; error: string };
   let { initialPanel = "" }: { initialPanel?: string } = $props();
   let listeners = $state<Listener[]>([]), links = $state<PlaylistLink[]>([]), accounts = $state<ProviderAccount[]>([]);
   let loading = $state(true), error = $state(""), action = $state(""), selected = $state(""), panelOpen = $state(false), filter = $state("all");
   let ownConnections = $state<boolean | null>(null);
-  let fetching = false, initialized = false;
+  let household = $state<HouseholdPromotionProfile | null>(null), policyError = $state("");
+  let fetching = $state(false);
+  let fetchingPolicy = false, initialized = false;
   const current = $derived(listeners.find(item => item.id === selected));
   const lockedCount = $derived(listeners.filter(item => item.preferences?.cleanOnlyLocked).length);
   const filtered = $derived(listeners.filter(item => filter === "all" || item.preferences?.cleanOnlyLocked));
@@ -68,9 +71,33 @@
       } else toast.error("Listener settings could not be saved. Try again.");
     } finally { action = ""; }
   }
+  async function loadPolicy() {
+    if (fetchingPolicy || action) return;
+    fetchingPolicy = true; household = null; policyError = "";
+    try {
+      const profile = await promotionProfiles.household();
+      if (profile?.addWithoutApproval !== "admins" && profile?.addWithoutApproval !== "admins-and-trusted-listeners") throw new Error("Household approval setting is unavailable.");
+      household = profile;
+    } catch { policyError = "Listener library permissions are unavailable until the household setting can be loaded. Try again."; }
+    finally { fetchingPolicy = false; }
+  }
+  async function setTrust(listener: Listener, trusted: boolean) {
+    if (action || fetching || fetchingPolicy || household?.addWithoutApproval !== "admins-and-trusted-listeners") return;
+    const previous = listener.isTrustedListener;
+    listener.isTrustedListener = trusted; action = listener.id;
+    try {
+      const saved = await sources.setListenerTrust(listener.id, trusted);
+      listener.isTrustedListener = saved.isTrustedListener;
+      toast.success("Listener library permission saved.");
+    } catch {
+      listener.isTrustedListener = previous;
+      toast.error("Listener library permission could not be saved. Try again.");
+    } finally { action = ""; }
+  }
+  async function refresh() { await Promise.all([load(), loadPolicy()]); }
   function open(listener: Listener) { selected = listener.id; panelOpen = true; }
-  const scheduler = createRefreshScheduler(load);
-  onMount(() => { void load(); const unsubscribe = liveUpdates.subscribe(scheduler.schedule); return () => { unsubscribe(); scheduler.cancel(); }; });
+  const scheduler = createRefreshScheduler(refresh);
+  onMount(() => { void refresh(); const unsubscribe = liveUpdates.subscribe(scheduler.schedule); return () => { unsubscribe(); scheduler.cancel(); }; });
 </script>
 
 <div class="settings-stack">
@@ -79,7 +106,7 @@
   {:else if error && !listeners.length}<ErrorState title="Listeners could not be loaded" detail={error} onretry={load} />
   {:else}
     {#if error}<ErrorState title="Some listener details are unavailable" detail={error} onretry={load} />{/if}
-    <div class="settings-toolbar"><FilterSegments bind:value={filter} storageKey="allstarr.settings.listeners.filter" label="Filter listeners" options={[{ id: "all", label: "All", count: listeners.length }, { id: "locked", label: "Locked to clean", count: lockedCount }]} /><RefreshButton onrefresh={load} label="Refresh listeners" /></div>
+    <div class="settings-toolbar"><FilterSegments bind:value={filter} storageKey="allstarr.settings.listeners.filter" label="Filter listeners" options={[{ id: "all", label: "All", count: listeners.length }, { id: "locked", label: "Locked to clean", count: lockedCount }]} /><RefreshButton onrefresh={refresh} label="Refresh listeners" /></div>
     <section class="settings-card" aria-label="Listeners">
       {#if filtered.length}
         <table class="settings-table listener-table"><thead><tr><th>Listener</th><th class="desktop-column">Last active</th><th class="desktop-column">Plays this week</th><th class="desktop-column">Accounts</th><th class="desktop-column">Playlist editing</th><th>Clean only, locked</th><th></th></tr></thead><tbody>
@@ -105,7 +132,10 @@
       <div class="settings-stack settings-surface listener-details">
         <div class="listener-kpis" aria-label="Listener totals"><div><strong>{current.playsThisWeek?.toLocaleString() ?? "—"}</strong><small>Plays in 7 days</small></div><div><strong>{current.copies?.length ?? 0}</strong><small>Playlist copies</small></div><div><strong>{ownAccounts(current.id).length}</strong><small>Own accounts</small></div></div>
         {#if current.error}<ErrorState title="Some listener details are unavailable" detail={current.error} onretry={load} />{/if}
+        <section class="settings-card" aria-label="Recent plays"><header><h3>Recent plays</h3></header>{#each current.recentPlays ?? [] as play}<ItemRow title={play.title || "Title unavailable"} subtitle={`${play.artist || "Artist unavailable"} · ${lastActive(play.playedAt)}`} />{:else}<EmptyState title="No plays yet" description="This listener’s recent plays appear here." />{/each}</section>
+        {#if policyError}<ErrorState title="Library approval settings could not be loaded" detail={policyError} onretry={loadPolicy} />{/if}
         <section class="settings-card"><div class="settings-row"><div><strong>Clean only, locked</strong><small>This listener can't turn explicit songs back on.</small></div><Switch aria-label="Lock clean only" checked={current.preferences?.cleanOnlyLocked ?? false} disabled={Boolean(action) || !current.preferences} onchange={event => void toggle(current!, event.currentTarget.checked)} /></div>
+        {#if household?.addWithoutApproval === "admins-and-trusted-listeners"}<div class="settings-row"><div><strong>Adds to the library without approval</strong><small>Follows the household's approval setting.</small></div><Switch aria-label="Adds to the library without approval" checked={current.isTrustedListener ?? false} disabled={Boolean(action) || fetching} onchange={event => void setTrust(current!, event.currentTarget.checked)} /></div>{/if}
         <div class="settings-row"><div><strong>Can connect their own accounts</strong><small>Follows the household setting.</small></div><span>{ownConnections === null ? "Not provided" : ownConnections ? "Household · On" : "Household · Off"}</span></div><div class="settings-row"><div><strong>Playlist editing</strong><small>Each listener allows it in Sources › Accounts.</small></div><StatePill tone={current.playlistEditingAllowed ? "ok" : "neutral"} text={current.playlistEditingAllowed ? "Allowed" : "Not yet"} /></div></section>
         <section class="settings-card" aria-label="Playlist copies"><header><h3>Playlist copies</h3></header>
           {#if current.copies === null}<ErrorState title="Personal copies could not be loaded" onretry={load} />
@@ -113,7 +143,6 @@
           {:else}{#each current.copies as copy (copy.id)}<ItemRow title={copy.name} subtitle={`From ${originalCopyName(copy, links)}`} />{/each}{/if}
         </section>
         {#if ownAccounts(current.id).length}<section class="settings-card"><header><h3>Own accounts</h3></header>{#each ownAccounts(current.id) as account (account.id)}<ItemRow title={account.displayName} subtitle={account.providerId} />{/each}</section>{/if}
-        <section class="settings-card" aria-label="Recent plays"><header><h3>Recent plays</h3></header>{#each current.recentPlays ?? [] as play}<ItemRow title={play.title || "Title unavailable"} subtitle={`${play.artist || "Artist unavailable"} · ${lastActive(play.playedAt)}`} />{:else}<EmptyState title="No plays yet" description="This listener’s recent plays appear here." />{/each}</section>
       </div>
       {#snippet footer()}<Button href={`#/activity?view=plays&user=${encodeURIComponent(current.id)}`} onclick={() => rememberActivityScope("everyone")}>See their activity</Button>{/snippet}
     </SidePanel>

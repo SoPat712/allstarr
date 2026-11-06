@@ -84,7 +84,7 @@ const screens = [
   { name: "sources-accounts", url: "/#/sources/accounts", opener: 'a[aria-label="Open Apple Music account"]', title: "Apple Music" },
   { name: "library-playlists", url: "/#/library/playlists", opener: 'button[aria-label="Open Evening mix playlist details"]', title: "Evening mix" },
   { name: "library-cached", url: "/#/library/cached", opener: 'button[aria-label="Open song details for Take On Me"]', title: "Take On Me" },
-  { name: "library-kept", url: "/#/library/kept", opener: 'button[aria-label="Open song details for Take On Me"]', title: "Take On Me" },
+  { name: "library-kept", url: "/#/library/kept", opener: 'button[aria-label="Open song details for Take On Me"]', title: "Hunting High and Low" },
   { name: "library-matches", url: "/#/library/matches", opener: 'button[aria-label="Open match for Evening song One"]:visible', title: "Evening song One" },
   { name: "activity-jobs", url: "/#/activity?view=jobs", opener: ".job-row .row-action", title: "Update playlist" },
   { name: "activity-tasks", url: "/#/activity?view=tasks", opener: ".task-open", title: "Evening mix" },
@@ -117,7 +117,7 @@ for (const [width, theme] of appearances) for (const state of ["expanded", "coll
         expect(await page.locator(".mix-shelf").evaluateAll(elements => elements.every(element => element.scrollWidth <= element.clientWidth + 1))).toBe(true);
       else expect(await cards.evaluateAll(elements => elements.every(element => element.getBoundingClientRect().width >= 132))).toBe(true);
     }
-    const content = page.locator(".sources-redesign, .library-playlists, .library-downloads, .mapping-page, .activity-content, .mix-shelf").first();
+    const content = page.locator(".sources-redesign, .library-playlists, .library-downloads, .promotion-page, .mapping-page, .activity-content, .mix-shelf").first();
     const before = await content.boundingBox();
     await opener.click();
     const panel = await expectPanel(page);
@@ -134,7 +134,7 @@ for (const [width, theme] of appearances) for (const state of ["expanded", "coll
       expect((await panel.boundingBox())!.width).toBeLessThanOrEqual(420);
       expect(await panel.locator("[data-dialog-title]").evaluate(element => getComputedStyle(element).fontWeight)).toBe("600");
       for (const description of await panel.locator("[data-dialog-description]").all()) {
-        expect(await description.evaluate(element => ({ wrap: getComputedStyle(element).whiteSpace, overflow: getComputedStyle(element).textOverflow }))).toEqual({ wrap: "nowrap", overflow: "ellipsis" });
+        expect(await description.evaluate(element => ({ wrap: getComputedStyle(element).whiteSpace, overflow: getComputedStyle(element).textOverflow }))).toEqual({ wrap: screen.name === "library-kept" ? "normal" : "nowrap", overflow: "ellipsis" });
       }
       const header = page.locator(".workspace-header");
       expect((await header.boundingBox())!.x + (await header.boundingBox())!.width).toBeLessThanOrEqual((await panel.boundingBox())!.x);

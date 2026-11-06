@@ -41,13 +41,26 @@ async function mockLibrary(page: Page, options: { cacheOff?: boolean; error?: bo
       ];
       return json(route, { storage: kept ? "kept" : "cache", files, count: files.length, managedCount: files.length, diagnosticCount: 0, totalSize: files.length * file.size, totalSizeFormatted: files.length ? "116 MB" : "0 B" });
     }
+    if (url.pathname === "/api/admin/library-promotions/kept") return json(route, {
+      backendLibraryId: "music", items: [file.path, "cache/apple/Nicole-24.flac", "cache/apple/Nicole-16.flac", "cache/apple/Low.mp3"].map((path, index) => ({
+        path, recordingId: `10000000-0000-4000-8000-00000000000${index + 1}`, backendLibraryId: "music", inLibrary: false,
+      })),
+    });
+    if (url.pathname === "/api/admin/library-promotions/preview") {
+      const nicole = /[23]$/.test(request.postDataJSON().recordingId);
+      return json(route, {
+        album: { title: nicole ? "PRIMA" : file.album, artist: nicole ? "ADÉLA" : file.artist, songCount: 1 }, canAddDirectly: true, alreadyInLibrary: 0,
+        backendLibraryId: "music", destinationPath: nicole ? "/music/ADÉLA/PRIMA/01 - Nicole Kidman.flac" : "/music/a-ha/Hunting High and Low/01 - Take On Me.flac",
+        bestCopies: [{ provider: "apple-musickit", codec: "FLAC", bitDepth: 16, sampleRate: 44100, verdict: "meets-your-floor" }], profileSteps: [],
+      });
+    }
     if (request.method() !== "GET") mutations.push(request.method() + " " + url.pathname);
     return json(route, { success: true, deletedCount: 4 });
   });
   return mutations;
 }
 
-for (const width of [320, 390]) for (const storage of ["cached", "kept"]) {
+for (const width of [320, 390]) for (const storage of ["cached"]) {
   test(`${storage} actions fit with wider text at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ reducedMotion: "reduce" });
@@ -70,7 +83,7 @@ for (const width of [320, 390]) for (const storage of ["cached", "kept"]) {
 }
 
 for (const viewport of [{ width: 1280, theme: "light" }, { width: 1280, theme: "dark" }, { width: 390, theme: "light" }] as const) {
-  for (const storage of ["cached", "kept"] as const) {
+  for (const storage of ["cached"] as const) {
     test(`${storage} table and song panel at ${viewport.width}px ${viewport.theme}`, async ({ page }) => {
       await page.setViewportSize({ width: viewport.width, height: 900 });
       await page.emulateMedia({ colorScheme: viewport.theme, reducedMotion: "reduce" });
@@ -138,6 +151,79 @@ for (const viewport of [{ width: 1280, theme: "light" }, { width: 1280, theme: "
       }
     });
   }
+}
+
+for (const width of [320, 390]) test(`kept actions fit with wider text at ${width}px`, async ({ page }) => {
+  await page.setViewportSize({ width, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await mockLibrary(page);
+  await page.goto("/#/library/kept");
+  const opener = page.getByRole("button", { name: "Open song details for Take On Me", exact: true });
+  await expect(opener).toBeVisible();
+  await widenText(page.getByRole("button", { name: "Add selected to library", exact: true }));
+  await expectContainedMobileGeometry(page);
+  await opener.focus();
+  await opener.press("Enter");
+  const panel = page.getByRole("dialog", { name: file.album, exact: true });
+  await expect(panel.getByRole("button", { name: "Add album to library", exact: true })).toBeVisible();
+  await widenText(panel.locator(".panel-footer [data-slot=button]"));
+  await expectSingleRowFooter(panel);
+  expect(await panel.locator(".panel-footer [data-slot=button]").evaluateAll(elements =>
+    elements.every(element => element.scrollWidth <= element.clientWidth + 1))).toBe(true);
+  await expectContainedMobileGeometry(page);
+});
+
+for (const viewport of [{ width: 1280, theme: "light" }, { width: 1280, theme: "dark" }, { width: 390, theme: "light" }] as const) {
+  test(`kept rows and album panel at ${viewport.width}px ${viewport.theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: viewport.width, height: 900 });
+    await page.emulateMedia({ colorScheme: viewport.theme, reducedMotion: "reduce" });
+    await mockLibrary(page);
+    await page.route("**/api/admin/playlist-links", route => json(route, { playlistLinks: [{ id: "road", name: "On the Road" }] }));
+    await page.route("**/api/admin/playlist-links/road", route => json(route, {
+      tracks: [{ providerRoutes: [{ providerId: "apple-download", externalId: file.externalId }] }],
+    }));
+    await page.goto("/#/library/kept");
+    const list = page.getByRole("region", { name: "Kept songs", exact: true });
+    await expectPageSurface(list);
+    await expect(list.locator(".kept-song-group")).toHaveCount(3);
+    await expect(list.getByRole("button", { name: "Add selected to library", exact: true })).toBeVisible();
+    if (viewport.width === 1280) expect((await list.getByRole("button", { name: "Add selected to library", exact: true }).boundingBox())!.height).toBe(32);
+    await page.getByRole("button", { name: "Show 2 copies of Nicole Kidman", exact: true }).click();
+    const copies = page.getByRole("group", { name: "Copies of Nicole Kidman", exact: true });
+    await expect(copies.locator(".item-row")).toHaveCount(2);
+    await expect(copies).toContainText("Apple Music");
+    await page.getByRole("button", { name: "Hide 2 copies of Nicole Kidman", exact: true }).click();
+    await expect(list.getByText("Below CD quality", { exact: true })).toBeVisible();
+    if (viewport.width === 390) await expectContainedMobileGeometry(page);
+    await page.screenshot({ path: `test-results/ui-library/kept-${viewport.width}-${viewport.theme}.png`, fullPage: true });
+    const opener = page.getByRole("button", { name: "Open song details for Take On Me", exact: true });
+    await opener.focus();
+    await opener.press("Enter");
+    const panel = page.getByRole("dialog", { name: file.album, exact: true });
+    await expect(panel).toContainText("1064 kbps");
+    await expect(panel.getByRole("region", { name: "In your playlists", exact: true })).toBeVisible();
+    await expect(panel.getByRole("link", { name: "On the Road", exact: true })).toHaveAttribute("href", "#/library/playlists?id=road");
+    await expect(panel.getByText("Source ID", { exact: true })).not.toBeVisible();
+    await expect(panel.getByText("Filename", { exact: true })).not.toBeVisible();
+    await panel.getByText("Copy details", { exact: true }).click();
+    await expect(panel).toContainText("Take On Me.flac");
+    await panel.getByText("Copy details", { exact: true }).click();
+    const selected = list.locator(".kept-song-group > .item-row.selected");
+    await expectSubtleSelection(selected, selected.locator("h3"));
+    await expectSingleRowFooter(panel);
+    await expect(panel.getByRole("link", { name: "Download", exact: true })).toHaveAttribute("href", /downloads\/file/);
+    if (viewport.width === 390) await expectContainedMobileGeometry(page);
+    await page.screenshot({ path: `test-results/ui-library/kept-panel-${viewport.width}-${viewport.theme}.png`, fullPage: true });
+    await panel.getByRole("button", { name: "Next song", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "PRIMA", exact: true })).toBeVisible();
+    await page.keyboard.press("ArrowUp");
+    await expect(panel).toBeVisible();
+    await page.keyboard.press("Tab");
+    expect(await page.evaluate(() => Boolean(document.activeElement?.closest('[data-side-panel]')))).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(panel).not.toBeVisible();
+    await expect(opener).toBeFocused();
+  });
 }
 
 test("cached filters remember their selection and bulk removal confirms exact copies and size", async ({ page }) => {

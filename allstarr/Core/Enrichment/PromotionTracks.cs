@@ -25,10 +25,13 @@ public sealed class PromotionTrack
     public Dictionary<string, string>? PendingTags { get; set; }
     public PromotionTrackStep? PendingMetadataStep { get; set; }
     public Guid? ManagedFileId { get; set; }
+    public Guid? RefreshJobId { get; set; }
     public string? DestinationPath { get; set; }
     public Guid? ApprovedByUserId { get; set; }
     public string? ApprovalReason { get; set; }
     public List<PromotionTrackStep> Steps { get; set; } = [];
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public PromotionNextSource? NextSource { get; set; }
 }
 
 public sealed record PromotionTrackStep(string Name, string Outcome, string Reason);

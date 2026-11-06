@@ -1,14 +1,14 @@
 <script lang="ts">
   import { countLabel } from "$lib/count-label";
   import { adminUrl } from "$lib/admin-url";
-  import { playlistLinks, type ManagedDownload, type ProviderDefinition } from "$lib/api";
+  import type { ManagedDownload, ProviderDefinition } from "$lib/api";
   import { relativeTime } from "$lib/activity";
-  import { canonicalProviderId } from "$lib/sources";
   import { qualityDetails } from "$lib/downloads";
   import { formatDuration } from "$lib/playlists";
   import LibraryDownloadActions from "$lib/components/LibraryDownloadActions.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SidePanel from "$lib/components/patterns/SidePanel.svelte";
+  import SongPlaylistMembership from "$lib/components/SongPlaylistMembership.svelte";
 
   let { open = $bindable(false), file, storage, provider, providerName, warning, lowerQuality = false,
     busy = false, moving = false, onPrevious, onNext, onkeep, onrelease, onremove, ondeletion }: {
@@ -29,27 +29,6 @@
     ondeletion: () => void;
   } = $props();
 
-  let playlists = $state<{ id: string; name: string }[]>([]);
-  let membershipUnavailable = $state(false);
-  let membershipRequest = 0;
-  $effect(() => {
-    const song = file;
-    if (!open) { membershipRequest++; return; }
-    const request = ++membershipRequest;
-    playlists = []; membershipUnavailable = false;
-    void (async () => {
-      try {
-        const links = (await playlistLinks.list()).playlistLinks ?? [];
-        const found: { id: string; name: string }[] = [];
-        for (const link of links) {
-          const detail = await playlistLinks.details(link.id);
-          if (detail.tracks?.some(track => track.providerRoutes?.some(route => canonicalProviderId(route.providerId) === canonicalProviderId(song.provider ?? "") && route.externalId === song.externalId)))
-            found.push({ id: link.id, name: link.name });
-        }
-        if (request === membershipRequest) playlists = found;
-      } catch { if (request === membershipRequest) membershipUnavailable = true; }
-    })();
-  });
   const cached = $derived(storage === "cache");
 </script>
 
@@ -74,10 +53,7 @@
       <dt>Saved</dt><dd><time datetime={file.lastModified} title={file.lastModified}>{relativeTime(file.lastModified)}</time></dd>
       <dt>Last played</dt><dd>Not provided</dd>
     </dl>
-    <section aria-label="In your playlists"><h3>In your playlists</h3>
-      {#each playlists as playlist}<a class="playlist-link" href={`#/library/playlists?id=${encodeURIComponent(playlist.id)}`}>{playlist.name}<span aria-hidden="true">›</span></a>
-      {:else}<p class="empty-playlists">{membershipUnavailable ? "Playlist membership could not be loaded." : "No playlists found for this copy."}</p>{/each}
-    </section>
+    <SongPlaylistMembership {file} {open} />
     <details class="advanced"><summary><span>Advanced</span><span aria-hidden="true">▾</span></summary><dl>
       <dt>Artist</dt><dd>{file.artist || "Unknown artist"}</dd><dt>Album</dt><dd>{file.album || "Unknown album"}</dd>
       <dt>Duration</dt><dd>{formatDuration(file.durationMilliseconds)}</dd>
@@ -106,14 +82,11 @@
   .lifecycle-note strong, .quality-note strong { font-weight: 600; }
   .lifecycle-note p, .quality-note p { margin: var(--space-1) 0 0; color: var(--color-ink-muted); }
   .lower-quality { margin: 0; color: var(--warning); font-size: var(--text-sm); }
-  h3 { margin: 0 0 var(--space-3); color: var(--color-ink-muted); font-size: var(--text-xs); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
   dl { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.8fr); gap: var(--space-3); margin: 0; font-size: var(--text-sm); line-height: 1.5; }
   dt { color: var(--color-ink-muted); }
   dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
   .source-name { display: inline-flex; align-items: center; gap: var(--space-2); }
   .source-name :global(.provider-mark) { width: var(--space-4); height: var(--space-4); }
-  .playlist-link { display: flex; align-items: center; justify-content: space-between; min-height: 44px; border-bottom: 1px solid var(--color-edge); color: var(--color-signal-text); font-size: var(--text-sm); }
-  .empty-playlists { margin: 0; color: var(--color-ink-muted); font-size: var(--text-sm); }
   .advanced { border-top: 1px solid var(--color-edge); }
   .advanced > summary { display: flex; align-items: center; justify-content: space-between; min-height: 44px; color: var(--color-signal-text); font-size: var(--text-sm); cursor: pointer; list-style: none; }
   .advanced > summary::-webkit-details-marker { display: none; }

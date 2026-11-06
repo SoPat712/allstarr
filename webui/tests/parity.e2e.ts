@@ -3893,13 +3893,61 @@ test("Cached and Kept keep media facts and actions readable on mobile", async ({
   await expect(panel.locator(".advanced")).not.toHaveAttribute("open");
   await expect(panel.getByRole("link", { name: "Download", exact: true })).toBeVisible();
   await panel.getByRole("button", { name: "Close", exact: true }).click();
+  const title = "Stay Alive (Prod. SUGA of BTS)";
+  const artist = "Jung Kook";
+  const album = "Stay Alive (Original Soundtrack from 7FATES: CHAKHO)";
+  const recordingId = "10000000-0000-0000-0000-000000000003";
+  await page.route("**/api/admin/downloads?storage=kept", route => route.fulfill({ json: {
+    storage: "kept", files: [{
+      path: "/managed/song.flac", storage: "kept", title, artist, album, fileName: "song.flac",
+      size: 1_024_000, sizeFormatted: "1000 KiB", codec: "FLAC", bitDepth: 16, sampleRateHz: 44_100,
+      lastModified: "2026-01-01", explicitlyKept: false, removable: true,
+    }], count: 1, managedCount: 1, diagnosticCount: 0, totalSize: 1_024_000, totalSizeFormatted: "1000 KiB",
+  } }));
+  await page.route("**/api/admin/library-promotions/kept", route => route.fulfill({ json: {
+    items: [{ path: "/managed/song.flac", recordingId, backendLibraryId: "music", inLibrary: false }],
+    backendLibraryId: "music", rootId: null, alreadyInLibrary: 0,
+  } }));
+  await page.route("**/api/admin/library-promotions/preview", route => route.fulfill({ json: {
+    album: { title: album, artist, songCount: 1 }, canAddDirectly: true, alreadyInLibrary: 0,
+    destinationPath: "/music/Jung Kook/Stay Alive/01 - Stay Alive.flac",
+    bestCopies: [{ provider: "qobuz", codec: "flac", bitDepth: 16, sampleRate: 44100, verdict: "meets-your-floor" }],
+    profileSteps: [],
+  } }));
   await page.goto("#/library/kept");
-  const kept = page.locator(".download-row");
+  const kept = page.getByRole("region", { name: "Kept songs", exact: true });
+  const row = kept.locator(".item-row");
+  await expect(row.getByRole("heading", { name: title, exact: true })).toBeVisible();
+  await expect(row.locator(".row-copy p")).toHaveText(`${artist} · ${album}`);
+  await expect(row.locator(".state-pill")).toHaveText("FLAC 16/44");
   await expect(kept.getByRole("button", { name: "Keep", exact: true })).toHaveCount(0);
-  await expect(kept.getByRole("link", { name: "Download", exact: true })).toBeVisible();
-  await kept.getByRole("button", { name: /Actions for/ }).click();
+  const expectReadableRow = async () => {
+    expect(await row.locator(".row-copy h3, .row-copy p, .state-pill").evaluateAll(elements =>
+      elements.every(element => element.scrollWidth <= element.clientWidth))).toBe(true);
+    await expectContainedMobileGeometry(page);
+  };
+  await expectReadableRow();
+  const opener = row.getByRole("button", { name: `Open song details for ${title}`, exact: true });
+  await opener.focus();
+  await opener.press("Enter");
+  await expect(panel).toHaveAccessibleName(album);
+  await expect(panel).toContainText("Qobuz · FLAC 16-bit / 44.1 kHz");
+  await expect(panel).toContainText("01 - Stay Alive.flac");
+  await expect(panel.getByRole("button", { name: "Only this song", exact: true })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Add album to library", exact: true })).toBeVisible();
+  await expect(panel.getByRole("link", { name: "Download", exact: true })).toHaveAttribute("href", /downloads\/file/);
+  await expectContainedMobileGeometry(page);
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
+  await kept.getByRole("button", { name: "Add selected to library", exact: true }).click();
+  await expect(row.getByRole("checkbox", { name: `Select ${title}`, exact: true })).toBeVisible();
+  await expectReadableRow();
+  await row.getByRole("button", { name: `Actions for ${title}`, exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Download", exact: true })).toHaveAttribute("href", /downloads\/file/);
   await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
-  await expect(page.getByRole("alertdialog")).toBeVisible();
+  const removal = page.getByRole("alertdialog", { name: "Remove this song?", exact: true });
+  await expect(removal).toContainText("audio file and its lyrics");
+  await expectContainedMobileGeometry(page);
+  await removal.getByRole("button", { name: "Cancel", exact: true }).click();
 });
 
 test("Cached owns track storage and retention controls", async ({ page }) => {
@@ -4423,6 +4471,7 @@ test("Compact dialogs share symmetric actions and readable progress", async ({ p
   await expect(toolbar.getByRole("button", { name: "Import playlist", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Import playlist" }).click();
   const playlistDialog = page.getByRole("dialog", { name: "Import a playlist" });
+  await expect(playlistDialog).toBeVisible();
   const steps = await playlistDialog.locator(".playlist-add-steps button").evaluateAll((buttons) =>
     buttons.map((button) => {
       const rect = button.getBoundingClientRect();

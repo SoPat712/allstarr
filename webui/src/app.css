@@ -401,7 +401,7 @@
     overflow: hidden;
     border-right: 1px solid var(--color-edge);
     background: var(--color-panel-raised);
-    padding: 4rem 1rem 1.25rem;
+    padding: 4rem calc((5rem - var(--control-lg) - 1px) / 2) 1.25rem;
   }
 
   .sidebar-expander {

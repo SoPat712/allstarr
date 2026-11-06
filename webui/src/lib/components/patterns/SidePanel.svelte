@@ -22,6 +22,10 @@
     onPrevious,
     onNext,
     onclose,
+    width,
+    minimumContentWidth,
+    wrapTitle = false,
+    inlineFooter = false,
   }: {
     open?: boolean;
     title: string;
@@ -37,6 +41,10 @@
     onPrevious?: () => void;
     onNext?: () => void;
     onclose?: () => void;
+    width?: number;
+    minimumContentWidth?: number;
+    wrapTitle?: boolean;
+    inlineFooter?: boolean;
   } = $props();
 
   let navigation: HTMLElement | null = null;
@@ -56,7 +64,7 @@
       const available = workspace && style
         ? workspace.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
         : window.innerWidth;
-      const layout = sidePanelLayout(window.innerWidth, available);
+      const layout = sidePanelLayout(window.innerWidth, available, { width, minimumContentWidth });
       docked = layout.docked;
       panelWidth = layout.width;
     }
@@ -119,7 +127,7 @@
         <div {...props} aria-modal={docked ? undefined : "true"}>
           <div class="panel-layout">
             <div class="panel-grip" aria-hidden="true"><span></span></div>
-            <header class="panel-header" class:with-artwork={Boolean(artwork)}>
+            <header class="panel-header" class:with-artwork={Boolean(artwork)} class:wrap-title={wrapTitle}>
               {#if artwork}<div class="panel-artwork">{@render artwork()}</div>{/if}
               <div class="panel-title">
                 <Dialog.Title>{title}</Dialog.Title>
@@ -135,8 +143,8 @@
               </div>
               {#if header}<div class="panel-header-extra">{@render header()}</div>{/if}
             </header>
-            <div class="panel-body">{@render children?.()}</div>
-            {#if footer}<footer class="panel-footer" bind:offsetHeight={footerHeight}>{@render footer()}</footer>{/if}
+            <div class="panel-body">{@render children?.()}{#if footer && inlineFooter}<footer class="panel-inline-footer">{@render footer()}</footer>{/if}</div>
+            {#if footer && !inlineFooter}<footer class="panel-footer" bind:offsetHeight={footerHeight}>{@render footer()}</footer>{/if}
           </div>
         </div>
       {/snippet}
@@ -159,6 +167,8 @@
   .panel-title { min-width: 0; }
   .panel-title :global([data-dialog-title]) { overflow: hidden; margin: 0; color: var(--color-ink); font-size: 1.05rem; font-weight: 600; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
   .panel-title :global([data-dialog-description]) { overflow: hidden; margin: var(--space-1) 0 0; color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+  .wrap-title .panel-title :global([data-dialog-title]), .wrap-title .panel-title :global([data-dialog-description]) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; white-space: normal; }
+  .wrap-title .panel-title :global([data-dialog-description]) { font-size: .74rem; }
   .panel-controls, .panel-navigation { display: flex; align-items: center; gap: 0; }
   .panel-controls :global(button) { display: inline-flex; width: 32px; height: 32px; min-height: var(--touch-target-min, 32px); align-items: center; justify-content: center; padding: 0; color: var(--color-ink-muted); }
   .panel-header-extra { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; color: var(--color-ink-muted); font-size: .8125rem; line-height: 1.4; }
@@ -166,13 +176,17 @@
   :global(body:has(.toaster .toast)) .panel-body { margin-bottom: max(0px, calc(var(--toast-height, 0px) + var(--toast-bottom, 24px) - var(--side-panel-footer-height, 0px) + var(--space-3))); }
   .panel-body :global(.sec-label) { margin: 0 0 var(--space-3); color: var(--color-ink-muted); font-size: .7rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
   .panel-footer { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; border-top: 1px solid var(--color-edge); padding: var(--space-3) var(--space-4) max(var(--space-3), env(safe-area-inset-bottom)); background: var(--color-panel); }
+  .panel-inline-footer { padding-top: var(--space-5); }
   :global(.side-panel-overlay--docked) { display: none; }
+  :global(body:has([data-side-panel][data-mode="docked"]) .workspace > .workspace-header) { margin-right: var(--side-panel-offset, 0px); }
+  :global(body:has([data-side-panel][data-mode="docked"]) .workspace > .segmented-nav:has(.route-tabs)) { width: calc(100% - var(--side-panel-offset, 0px)); }
   @media (min-width: 900px) { :global(.side-panel) { width: var(--panel-width); } .panel-grip { display: none; } }
   @keyframes panel-in { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
   @keyframes panel-out { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(100%); } }
   @media (max-width: 899px) {
     .panel-footer > :global(*) { min-width: 0; max-width: 100%; }
     .panel-footer :global([data-slot="button"]) { min-width: 44px; max-width: 100%; height: auto; min-height: 44px; flex-shrink: 1; white-space: normal; overflow-wrap: anywhere; }
+    .panel-inline-footer :global([data-slot="button"]) { min-width: 44px; min-height: 44px; }
     :global(.side-panel-overlay) { z-index: max(var(--layer-overlay), calc(var(--layer-navigation) + 1)); }
     :global(.side-panel) { z-index: max(var(--layer-dialog), calc(var(--layer-navigation) + 2)); inset: 0; height: 100dvh; max-height: 100dvh; border-left: 0; }
     @keyframes panel-in { from { opacity: 0; transform: translateY(100%); } to { opacity: 1; transform: translateY(0); } }

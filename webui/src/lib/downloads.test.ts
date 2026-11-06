@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ManagedDownload } from "./api";
-import { filterDownloads, groupDownloadSongs, qualityDetails } from "./downloads";
+import { filterDownloads, groupDownloadSongs, qualityDetails, qualityWarning } from "./downloads";
 
 const file = (title: string, provider: string, size: number): ManagedDownload => ({
   path: `${title}.flac`,
@@ -38,6 +38,17 @@ describe("managed download presentation", () => {
   it("formats complete audio quality facts", () => {
     expect(qualityDetails(file("Track", "future-extension", 1)))
       .toEqual(["FLAC", "900 kbps", "24-bit", "44.1 kHz", "2 ch"]);
+  });
+
+  it("keeps measured quality warnings distinct from the claimed format", () => {
+    const copy = file("Track", "future-extension", 1);
+    const check = { claimedSampleRate: 96000, claimedBitDepth: 24, effectiveBandwidthHz: 20000, confidence: 0.8 };
+    expect(qualityWarning({ ...copy, qualityCheck: { ...check, verdict: "upsampled", likelySourceRate: 48000 } }))
+      .toEqual({ label: "Likely upscaled", detail: "The measured bandwidth suggests a 48 kHz source in this higher-rate file." });
+    expect(qualityWarning({ ...copy, qualityCheck: { ...check, verdict: "padded-bit-depth" } })?.label).toBe("Padded");
+    expect(qualityWarning({ ...copy, qualityCheck: { ...check, verdict: "lossy-transcode-suspected" } })?.label).toBe("Lossy source?");
+    expect(qualityWarning({ ...copy, qualityCheck: { ...check, verdict: "true-hi-res" } })).toBeNull();
+    expect(qualityWarning(copy)).toBeNull();
   });
 });
 

@@ -24,77 +24,71 @@ public sealed class LibraryPromotionsController(LibraryPromotionService promotio
     public Task<IActionResult> Preview([FromBody] PromoteSongRequest request, CancellationToken token) => ExecuteAsync(token,
         (_, context) => promotions.PreviewAsync(context, request, token));
 
+    [HttpGet]
+    public Task<IActionResult> List([FromQuery] string state = "active", [FromQuery] int limit = 30,
+        [FromQuery] string? cursor = null, CancellationToken token = default) => ExecuteAsync(token,
+        (_, context) => promotions.ListAsync(context, state, limit, cursor, token));
+
+    [HttpGet("kept")]
+    public Task<IActionResult> Kept(CancellationToken token) => ExecuteAsync(token,
+        (_, context) => promotions.KeptAsync(context, token));
+
     [HttpPost]
     public Task<IActionResult> Promote([FromBody] PromoteSongRequest request, CancellationToken token) => ExecuteAsync(token,
-        async (_, context) => StartReceipt(await promotions.StartOrRequestAsync(context, request, token)), accepted: true);
+        async (_, context) => await StartReceiptAsync(context, await promotions.StartOrRequestAsync(context, request, token), token), accepted: true);
 
     [HttpPost("requests")]
     public Task<IActionResult> CreateRequest([FromBody] PromoteSongRequest request, CancellationToken token) => ExecuteAsync(token,
-        async (_, context) => StartReceipt(await promotions.StartOrRequestAsync(context, request, token, requestApproval: true)), accepted: true);
+        async (_, context) => await StartReceiptAsync(context, await promotions.StartOrRequestAsync(context, request, token, requestApproval: true), token), accepted: true);
 
     [HttpGet("requests")]
     public Task<IActionResult> Requests([FromQuery] string? state, CancellationToken token) => ExecuteAsync(token,
-        async (_, context) => (await promotions.ListRequestsAsync(context, state, token)).Select(RequestReceipt));
+        (_, context) => promotions.ListRequestReceiptsAsync(context, state, token));
 
     [HttpGet("requests/{id:guid}")]
     public Task<IActionResult> GetRequest(Guid id, CancellationToken token) => ExecuteAsync(token,
-        async (_, context) => RequestReceipt(await promotions.GetRequestAsync(context, id, token)));
+        async (_, context) => await promotions.RequestReceiptAsync(await promotions.GetRequestAsync(context, id, token), token));
+
+    [HttpGet("requests/{id:guid}/preview")]
+    public Task<IActionResult> RequestPreview(Guid id, CancellationToken token) => ExecuteAsync(token,
+        (_, context) => promotions.PreviewRequestAsync(context, id, token));
 
     [HttpPost("requests/{id:guid}/approve")]
     public Task<IActionResult> ApproveRequest(Guid id, CancellationToken token) => ExecuteAsync(token,
-        async (_, context) => RequestReceipt(await promotions.ApproveRequestAsync(context, id, token)), accepted: true);
+        async (_, context) => await promotions.RequestReceiptAsync(await promotions.ApproveRequestAsync(context, id, token), token), accepted: true);
 
     [HttpPost("requests/{id:guid}/decline")]
     public Task<IActionResult> DeclineRequest(Guid id,
         [FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] PromotionRequestDecline? request,
         CancellationToken token) => ExecuteAsync(token,
-        async (_, context) => RequestReceipt(await promotions.DeclineRequestAsync(context, id, request?.Note, token)));
+        async (_, context) => await promotions.RequestReceiptAsync(await promotions.DeclineRequestAsync(context, id, request?.Note, token), token));
 
     [HttpPost("requests/{id:guid}/cancel")]
     public Task<IActionResult> CancelRequest(Guid id, CancellationToken token) => ExecuteAsync(token,
-        async (_, context) => RequestReceipt(await promotions.CancelRequestAsync(context, id, token)));
+        async (_, context) => await promotions.RequestReceiptAsync(await promotions.CancelRequestAsync(context, id, token), token));
 
     [HttpGet("{id:guid}")]
     public Task<IActionResult> Get(Guid id, CancellationToken token) => ExecuteAsync(token,
-        async (_, context) => Receipt(await promotions.GetAsync(context, id, token)));
+        (_, context) => promotions.GetReceiptAsync(context, id, token));
 
     [HttpPost("{id:guid}/approve")]
     public Task<IActionResult> Approve(Guid id, [FromBody] PromotionApproval request, CancellationToken token) => ExecuteAsync(token,
-        async (_, context) => Receipt(await promotions.ApproveAsync(context, id, request.Reason, token)), accepted: true);
+        async (_, context) => await promotions.GetReceiptAsync(context, (await promotions.ApproveAsync(context, id, request.Reason, token)).Id, token), accepted: true);
 
     [HttpPost("{id:guid}/cancel")]
     public Task<IActionResult> Cancel(Guid id, CancellationToken token) => ExecuteAsync(token,
-        async (_, context) => Receipt(await promotions.CancelAsync(context, id, token)));
+        async (_, context) => await promotions.GetReceiptAsync(context, (await promotions.CancelAsync(context, id, token)).Id, token));
 
     [HttpPost("{id:guid}/songs/{recordingId:guid}/review")]
     public Task<IActionResult> Review(Guid id, Guid recordingId, [FromBody] PromotionSongReview request, CancellationToken token) => ExecuteAsync(token,
-        async (_, context) => Receipt(await promotions.ReviewAsync(context, id, recordingId, request.Action, request.Reason, token)), accepted: true);
+        async (_, context) => await promotions.GetReceiptAsync(context, (await promotions.ReviewAsync(context, id, recordingId, request.Action, request.Reason, token)).Id, token), accepted: true);
 
-    private static object Receipt(Core.Storage.PromotionRunRecord run) => new
-    { run.Id, run.JobId, run.Step, run.Outcome, run.Reason, run.ManagedFileId, run.ApprovedByUserId, run.ApprovalReason, run.Tracks };
-
-    private static object StartReceipt(PromotionStartResult result) => result.Run is { } run
-        ? Receipt(run) : new { requested = true, request = RequestReceipt(result.Request!) };
-
-    private static object RequestReceipt(Core.Storage.PromotionRequestRecord request) => new
+    private async Task<object> StartReceiptAsync(ProtocolExecutionContext context, PromotionStartResult result, CancellationToken token)
     {
-        request.Id,
-        request.RequesterUserId,
-        request.RecordingId,
-        request.ReleaseIdentity,
-        request.Title,
-        request.Artist,
-        request.Year,
-        request.SongCount,
-        request.CoverReference,
-        request.Unit,
-        request.State,
-        request.DecidedByUserId,
-        request.DecidedAt,
-        request.DeclineNote,
-        request.RunId,
-        request.CreatedAt
-    };
+        if (result.Run is { } run && run.OwnerUserId != Guid.Empty)
+            return await promotions.GetReceiptAsync(context, run.Id, token);
+        return new { requested = true, request = await promotions.RequestReceiptAsync(result.Request!, token) };
+    }
 
     private async Task<IActionResult> ExecuteAsync<T>(CancellationToken token,
         Func<AdminAuthSession, ProtocolExecutionContext, Task<T>> action, bool accepted = false)

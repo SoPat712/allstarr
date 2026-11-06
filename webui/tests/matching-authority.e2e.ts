@@ -159,7 +159,8 @@ test("match review hides unlabeled and internal rows while keeping saved manual 
   await expect(panel.locator(".comparison tbody tr td:last-child")).toHaveText(Array(6).fill("Can't compare"));
   await panel.getByRole("button", { name: "Close", exact: true }).click();
   await expect(rows.filter({ hasText: "Unmatched source song" })).toContainText("No match yet");
-  await expect(page.getByRole("navigation", { name: "Match review pages" })).toContainText("4 songs");
+  await expect(page.getByRole("region", { name: "Page status", exact: true })).toContainText("4 songs");
+  await expect(page.getByRole("navigation", { name: "Match review pages" })).toHaveCount(0);
   await page.getByRole("button", { name: "Select", exact: true }).click();
   await page.getByRole("checkbox", { name: "Select all songs on this page" }).check();
   await expect(page.getByRole("toolbar", { name: "Actions for selected songs" })).toContainText("4 selected");

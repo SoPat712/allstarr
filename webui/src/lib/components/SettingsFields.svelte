@@ -148,7 +148,7 @@
 </script>
 
 <form class="settings-card settings-disclosure" aria-label={`${section.label} settings`} onsubmit={event => event.preventDefault()}>
-  <header><h3>{section.label}</h3></header>
+  <header><div><h3>{section.label}</h3>{#if section.id === "links"}<p>Find links to the same song across your enabled services.</p>{/if}</div></header>
   {#if externallyChanged}<div class="degraded-banner" role="status"><p><strong>Someone else changed these settings.</strong> Your unsaved edits are kept.</p><Button variant="outline" type="button" onclick={() => { edits = {}; drafts = {}; error = ""; }}>Reload server values</Button></div>{/if}
   <div class="settings-fields">
     {#each section.fields as field (field.key)}
@@ -212,6 +212,7 @@
 <ConfirmDialog bind:open={restartOpen} title={pending?.removing ? pending.field.requiresRestart ? "Remove the key and restart Allstarr?" : "Remove the saved key?" : "Restart Allstarr to apply?"} description={pending?.removing && !pending.field.requiresRestart ? "The saved key is removed. You will need to enter it again to use it." : `Changing ${pending ? label(pending.field).toLowerCase() : "this setting"} needs a restart. Music that is playing will pause briefly. This page reconnects when Allstarr is ready.`} confirmLabel={busy ? "Applying…" : pending?.removing ? pending.field.requiresRestart ? "Remove key and restart" : "Remove key" : "Restart and apply"} confirmVariant={pending?.removing ? "destructive" : "default"} disabled={busy} closeOnConfirm={false} {error} onConfirm={() => pending ? persist(pending.field, pending.value, pending.previous) : undefined} />
 
 <style>
+  header p { margin: var(--space-1) 0 0; color: var(--color-ink-muted); font-size: var(--text-sm); line-height: 1.5; }
   .wide-control.quality-row { grid-template-columns: minmax(0, 1fr) !important; }
   .requested-qualities { margin: 0; padding: var(--space-3) var(--space-6); color: var(--color-ink-muted); font-size: var(--text-sm); }
 

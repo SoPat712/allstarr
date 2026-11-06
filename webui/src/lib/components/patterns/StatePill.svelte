@@ -30,7 +30,7 @@
   [data-tone="stop"] { --pill-color: var(--danger); }
   [data-tone="info"] { --pill-color: var(--info); }
   .compact { padding: 2px 7px; font-size: .7rem; line-height: 1.4; }
-  .filled { background: var(--md-sys-color-surface-container-highest); }
+  .filled { border-radius: 999px; background: var(--md-sys-color-surface-container-highest); }
   .filled[data-tone="ok"] { background: var(--success-container); color: var(--on-success-container); }
   .filled[data-tone="warn"] { background: var(--warning-container); color: var(--on-warning-container); }
   .filled[data-tone="stop"] { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }

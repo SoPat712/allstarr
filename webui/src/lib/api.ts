@@ -1209,6 +1209,14 @@ export type ManagedDownload = {
   explicitlyKept: boolean;
   removable: boolean;
   canDeleteKeptCopy?: boolean;
+  qualityCheck?: {
+    verdict: string;
+    claimedSampleRate?: number;
+    claimedBitDepth?: number;
+    effectiveBandwidthHz?: number;
+    confidence?: number;
+    likelySourceRate?: number | null;
+  } | null;
 };
 
 export type KeptCopyDeletionPreview = {
@@ -1866,9 +1874,15 @@ export const sources = {
   accounts: () =>
     json<{
       listenersCanConnectOwnAccounts?: boolean;
-      audienceUsers: { id: string; displayName: string; isAdministrator?: boolean; lastActiveAt?: string | null; playsThisWeek?: number; playlistEditingAllowed?: boolean; recentPlays?: { title: string | null; artist: string | null; playedAt: string }[] }[];
+      audienceUsers: { id: string; displayName: string; isAdministrator?: boolean; isTrustedListener: boolean; lastActiveAt?: string | null; playsThisWeek?: number; playlistEditingAllowed?: boolean; recentPlays?: { title: string | null; artist: string | null; playedAt: string }[] }[];
       accounts: ProviderAccount[];
     }>("/api/admin/provider-accounts"),
+  setListenerTrust: (id: string, isTrustedListener: boolean) =>
+    json<{ id: string; isTrustedListener: boolean }>(`/api/admin/provider-accounts/listeners/${encodeURIComponent(id)}/trust`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isTrustedListener }),
+    }),
   health: () => json<ProviderHealth[]>("/api/admin/providers/status"),
   scores: () => json<{ providers: ProviderScore[]; qualityTarget?: string }>("/api/admin/providers/scores"),
   history: (provider: string, signal?: AbortSignal) =>

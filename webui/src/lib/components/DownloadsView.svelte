@@ -19,7 +19,7 @@
   } from "$lib/api";
   import SearchField from "$lib/components/SearchField.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import { filterDownloads, groupDownloadSongs, type DownloadSort } from "$lib/downloads";
+  import { filterDownloads, groupDownloadSongs, formatDownloadSize as formatSize, lowerDownloadQuality as lowerQuality, qualityWarning, type DownloadSort } from "$lib/downloads";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { pathValue } from "$lib/settings";
   import { relativeTime } from "$lib/activity";
@@ -104,17 +104,6 @@
     return Number.isFinite(timestamp) ? timestamp : Number.MAX_SAFE_INTEGER;
   }
   function leavingSoon(file: ManagedDownload) { return Boolean(file.expiresAt) && expiry(file) <= Date.now() + 24 * 60 * 60 * 1000; }
-  function lowerQuality(file: ManagedDownload) {
-    return /^(mp3|aac|opus|ogg|vorbis|wma)$/i.test(file.codec) ||
-      Boolean(file.sampleRateHz && file.sampleRateHz < 44100) || Boolean(file.bitDepth && file.bitDepth < 16);
-  }
-  function qualityWarning(file: ManagedDownload) {
-    const check = (file as ManagedDownload & { qualityCheck?: { verdict: string; likelySourceRate?: number | null } }).qualityCheck;
-    if (check?.verdict === "upsampled") return { label: "Likely upscaled", detail: `The measured bandwidth suggests a ${check.likelySourceRate === 48000 ? "48" : "44.1"} kHz source in this higher-rate file.` };
-    if (check?.verdict === "padded-bit-depth") return { label: "Padded", detail: "The low sample bits suggest 16-bit audio padded to 24-bit." };
-    if (check?.verdict === "lossy-transcode-suspected") return { label: "Lossy source?", detail: "A sharp high-frequency cutoff suggests a lossy source inside this lossless file." };
-    return null;
-  }
   function warnings(files: ManagedDownload[]) {
     return [...new Map(files.map(qualityWarning).filter(value => value !== null).map(value => [value.label, value])).values()];
   }
@@ -129,11 +118,6 @@
     const references = Math.max(...files.map(file => file.referenceCount ?? 0));
     if (!files.some(file => file.explicitlyKept) && !references) return files[0].publicationState === "Imported" ? "Imported original" : "No active references";
     return files.some(file => file.explicitlyKept) ? "Keep · you" : "Household";
-  }
-  function formatSize(bytes: number) {
-    if (bytes < 1024) return `${bytes} B`;
-    const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), 4);
-    return `${(bytes / 1024 ** unit).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${["B", "KiB", "MiB", "GiB", "TiB"][unit]}`;
   }
   function groupSize(files: ManagedDownload[]) { return files.length === 1 ? files[0].sizeFormatted : formatSize(files.reduce((sum, file) => sum + file.size, 0)); }
   function toggleSort(next: Sort) { if (sort === next) reversed = !reversed; else { sort = next; reversed = false; } }

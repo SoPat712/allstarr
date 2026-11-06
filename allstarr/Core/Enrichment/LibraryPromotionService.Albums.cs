@@ -7,6 +7,7 @@ using allstarr.Core.ManagedFiles;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Enrichment;
@@ -24,14 +25,22 @@ public sealed partial class LibraryPromotionService
 
     private static async Task ProjectHandoverAsync(AllstarrDbContext db, PromotionRunRecord run, CancellationToken token)
     {
-        if (ReadAlbum(run)?.RefreshJobId is not { } refreshId) return;
-        var refresh = await db.Jobs.AsNoTracking().SingleOrDefaultAsync(item => item.Id == refreshId && item.OwnerUserId == run.OwnerUserId, token);
-        if (refresh == null) return;
-        var key = $"promotion-refresh:{refreshId:N}";
-        var link = await db.Jobs.AsNoTracking().SingleOrDefaultAsync(item => item.Type == allstarr.Core.Matching.LibraryRecordingLinkQueue.JobType &&
-            item.OwnerUserId == run.OwnerUserId && item.IdempotencyKey == key, token);
+        var album = ReadAlbum(run);
+        if (album == null) return;
+        var legacyRefresh = !run.Tracks.Any(item => item.RefreshJobId != null);
+        var refreshIds = run.Tracks.Select(item => item.RefreshJobId ?? (legacyRefresh ? album.RefreshJobId : null))
+            .OfType<Guid>().Distinct().ToArray();
+        var refreshes = await db.Jobs.AsNoTracking().Where(item => refreshIds.Contains(item.Id) && item.OwnerUserId == run.OwnerUserId)
+            .ToDictionaryAsync(item => item.Id, token);
+        var keys = refreshIds.Select(id => $"promotion-refresh:{id:N}").ToArray();
+        var links = await db.Jobs.AsNoTracking().Where(item => item.Type == allstarr.Core.Matching.LibraryRecordingLinkQueue.JobType &&
+            item.OwnerUserId == run.OwnerUserId && keys.Contains(item.IdempotencyKey)).ToDictionaryAsync(item => item.IdempotencyKey, token);
         foreach (var track in run.Tracks.Where(item => item.ManagedFileId != null || item.Steps.Any(step => step.Name == "Dedupe")))
         {
+            var id = track.RefreshJobId ?? (legacyRefresh ? album.RefreshJobId : null);
+            if (id == null || !refreshes.TryGetValue(id.Value, out var refresh)) continue;
+            var link = links.GetValueOrDefault($"promotion-refresh:{id.Value:N}");
+            track.Steps.RemoveAll(item => item.Name is "Refresh" or "Handover");
             track.Steps.Add(new("Refresh", refresh.State == DurableJobState.Succeeded ? "Complete" : refresh.State.ToString(),
                 refresh.State == DurableJobState.Succeeded ? "The backend accepted the refresh request." : "Waiting for the backend refresh request."));
             track.Steps.Add(new("Handover", link?.State == DurableJobState.Succeeded ? "Complete" : link?.State.ToString() ?? "Pending",
@@ -39,20 +48,76 @@ public sealed partial class LibraryPromotionService
         }
     }
 
-    private async Task<PromotionPreview> PreviewAlbumAsync(ProtocolExecutionContext context, PromoteSongRequest request, CancellationToken token)
+    private async Task<PromotionPreview> PreviewAlbumAsync(ProtocolExecutionContext context, PromoteSongRequest request, CancellationToken token, IReadOnlyList<Song>? savedSongs = null)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         await AuthorizeAsync(db, context, token);
-        if (!(await libraryAccess.ResolveAsync(context, token)).Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
+        var access = await libraryAccess.ResolveAsync(context, token);
+        var library = string.IsNullOrWhiteSpace(request.BackendLibraryId)
+            ? access.LibraryIds.Order(StringComparer.Ordinal).FirstOrDefault() : request.BackendLibraryId;
+        if (library == null || !access.Allows(library)) throw new UnauthorizedAccessException();
         var profile = (await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token)).Values;
         var root = await roots.RequireAsync(request.RootId == Guid.Empty ? profile.LibraryRootId ?? Guid.Empty : request.RootId, token);
-        var songs = await promotionCatalog!.ResolveAsync(context, request.RecordingId, Unit(request, profile), token);
-        var first = songs.FirstOrDefault() ?? throw new InvalidOperationException("The release has no tracks.");
-        var rendered = PromotionNaming.Render(profile.NamingScript, PromotionSongFields.FromSong(first));
+        var songs = savedSongs ?? await promotionCatalog!.ResolveAsync(context, request.RecordingId, Unit(request, profile), token);
+        if (songs.Count is 0 or > 256) throw new InvalidOperationException("A bounded release tracklist is required.");
+        var opened = songs.FirstOrDefault(song => song.CanonicalRecordingId == request.RecordingId)
+            ?? throw new InvalidOperationException("The release does not contain the opened recording.");
+        var already = 0;
+        foreach (var song in songs.DistinctBy(song => song.CanonicalRecordingId))
+            if (song.CanonicalRecordingId is { } id && await AlreadyInLibraryAsync(db, context, library,
+                    new PromotionTrack { RecordingId = id, Song = song }, token)) already++;
+        var stored = identities == null ? [] : await identities.GetStoredSongsAsync(context.RequireActor(), request.RecordingId.ToString("D"), token);
+        var candidates = CandidateSources(profile, stored.Append(opened)).OrderByDescending(song =>
+            PromotionQuality.Accepts(profile, song.Codec, song.BitDepth, song.SampleRate) ? 2 :
+            string.IsNullOrWhiteSpace(song.Codec) || song.SampleRate == null ||
+                PromotionQuality.IsLossless(song.Codec) && song.BitDepth == null ? 1 : 0).ToArray();
+        var best = candidates.FirstOrDefault(song => PromotionQuality.Accepts(profile, song.Codec, song.BitDepth, song.SampleRate));
+        var fields = PromotionSongFields.FromSong(opened);
+        var pathKnown = false;
+        if (best?.BitDepth is { } bits && best.SampleRate is { } rate)
+        {
+            var converts = bits > profile.HiResCeiling.MaxBitDepth || rate > profile.HiResCeiling.MaxSampleRate;
+            var format = new allstarr.Models.Domain.Song
+            {
+                Codec = converts ? "flac" : best.Codec,
+                Container = converts ? "flac" : best.Container,
+                BitDepth = Math.Min(bits, profile.HiResCeiling.MaxBitDepth),
+                SampleRate = Math.Min(rate, profile.HiResCeiling.MaxSampleRate)
+            };
+            var quality = PromotionSongFields.FromSong(format);
+            fields["_extension"] = quality["_extension"];
+            fields["_quality"] = quality["_quality"];
+            pathKnown = !string.IsNullOrWhiteSpace(format.Container);
+        }
+        var rendered = PromotionNaming.Render(profile.NamingScript, fields);
         if (rendered.RelativePath == null) throw new ArgumentException("The naming script does not produce a safe path.");
         var path = PromotionNaming.ContainedPath(root.Path, rendered.RelativePath);
         PromotionRoots.RejectLinks(path);
-        return new(path, ["Acquire best copy", "Quality screen", "MusicBrainz tags and cover", "Verified lyrics", "Track and album ReplayGain", "Place in library", "Refresh and link recordings"], 0);
+        static string Rate(int value) => (value == 44100 ? 44 : value / 1000.0).ToString("0.#", CultureInfo.InvariantCulture);
+        var floor = $"{profile.QualityFloor.CodecFamily} {profile.QualityFloor.MinBitDepth}/{Rate(profile.QualityFloor.MinSampleRate)}";
+        var ceiling = $"{profile.HiResCeiling.MaxBitDepth}/{Rate(profile.HiResCeiling.MaxSampleRate)}";
+        var copies = candidates.Select(song =>
+        {
+            var meets = PromotionQuality.Accepts(profile, song.Codec, song.BitDepth, song.SampleRate);
+            var unknown = string.IsNullOrWhiteSpace(song.Codec) || song.SampleRate == null ||
+                PromotionQuality.IsLossless(song.Codec) && song.BitDepth == null;
+            return new PromotionCopyPreview(song.ExternalProvider!, song.Codec, song.BitDepth, song.SampleRate,
+                song == best ? "meets-your-floor" : meets || unknown ? "fallback" : "skipped-below-floor",
+                song == best ? $"Your floor is {floor} · keeps hi-res up to {ceiling}" :
+                meets ? $"Next choice if {best!.ExternalProvider} fails" :
+                unknown ? $"Source format unknown · the downloaded file must meet {floor}" :
+                "Below your floor · never used for the library");
+        }).ToArray();
+        var steps = ProfileSteps(profile);
+        return new(pathKnown ? path : "", steps.Where(step => step.Enabled).Select(step => step.Title).ToArray(), 0)
+        {
+            Album = AlbumSummary(opened, songs.Count),
+            AlreadyInLibrary = already,
+            BestCopies = copies,
+            ProfileSteps = steps,
+            BackendLibraryId = library,
+            RootId = root.Id
+        };
     }
 
     private static string Unit(PromoteSongRequest request, PromotionProfile profile) => (request.Unit ?? profile.DefaultUnit) switch
@@ -163,6 +228,7 @@ public sealed partial class LibraryPromotionService
             {
                 track.ApprovedByUserId = context.Principal!.UserId;
                 track.ApprovalReason = reason!.Trim();
+                track.Lossy = true;
                 track.Outcome = "Queued";
             }
             else
@@ -188,6 +254,9 @@ public sealed partial class LibraryPromotionService
         PromotionAlbumPlan album, DurableJobExecutionContext execution, CancellationToken token)
     {
         var request = JsonSerializer.Deserialize<PromoteSongRequest>(run.RequestJson)!;
+        if (album.RefreshJobId != null && !album.Tracks.Any(item => item.RefreshJobId != null))
+            foreach (var track in album.Tracks.Where(item => item.Outcome == "Placed" || item.Steps.Any(step => step.Name == "Dedupe")))
+                track.RefreshJobId = album.RefreshJobId;
         var access = await libraryAccess.ResolveUserAsync(run.OwnerUserId, token);
         if (access.Context == null || !access.Access.Allows(request.BackendLibraryId)) throw new UnauthorizedAccessException();
         var root = await roots.RequireAsync(request.RootId == Guid.Empty ? album.Profile.LibraryRootId ?? Guid.Empty : request.RootId, token);
@@ -355,25 +424,16 @@ public sealed partial class LibraryPromotionService
                 }
             }
         }
-        if (album.Tracks.Any(item => item.Outcome == "Queued"))
+        var ready = album.Tracks.Where(item => item.Outcome == "Ready").ToArray();
+        var partialAlbum = album.Tracks.Any(item => item.Outcome is "Queued" or "Needs review" or "Placed");
+        if (album.Profile.ReplayGain && ready.Any(item => !item.Steps.Any(step => step.Name == "ReplayGain")))
         {
-            await Persist();
-            return DurableJobCompletion.Defer("promotion_download_pending", "Waiting for managed track downloads.", TimeSpan.FromSeconds(10));
-        }
-        if (album.Tracks.Any(item => item.Outcome == "Needs review"))
-        {
-            run.Outcome = "Needs review";
-            run.Reason = "Review individual songs; the remaining tracks are ready.";
-            await Persist();
-            return DurableJobCompletion.Success();
-        }
-        var ready = album.Tracks.Where(item => item.Outcome is "Ready" or "Placed").ToArray();
-        if (album.Profile.ReplayGain && ready.Length > 0 && !album.ReplayGainComplete)
-        {
+            if (album.ReplayGainTags != null && ready.Any(item => !album.ReplayGainTags.ContainsKey(item.RecordingId)))
+                album.ReplayGainTags = null;
             if (album.ReplayGainTags == null)
             {
                 run.Step = "ReplayGain";
-                run.Reason = "Measuring track and album loudness and true peaks.";
+                run.Reason = partialAlbum ? "Measuring track loudness and gain for the ready batch; the complete album is not available." : "Measuring track and album loudness and true peaks.";
                 foreach (var track in ready) track.Step = "ReplayGain";
                 await Persist();
                 foreach (var track in ready) await VerifyAsync(TrackPath(run.Id, track), track.ContentSha256!, track.Length, token);
@@ -384,9 +444,11 @@ public sealed partial class LibraryPromotionService
             }
             foreach (var track in ready.Where(item => !item.Steps.Any(step => step.Name == "ReplayGain")))
             {
+                var gainReason = partialAlbum ? "Track gain and ready-batch group gain measured at the -18 LUFS reference with true peak; this is not complete album gain." :
+                    "Track and album gain measured at the -18 LUFS reference with true peak.";
                 await WriteTrackTagsAsync(run, track, album.ReplayGainTags[track.RecordingId], Persist, token,
-                    new("ReplayGain", "Complete", "Track and album gain measured at the -18 LUFS reference with true peak."));
-                await Step(track, "ReplayGain", "Complete", "Track and album gain measured at the -18 LUFS reference with true peak.");
+                    new("ReplayGain", "Complete", gainReason));
+                await Step(track, "ReplayGain", "Complete", gainReason);
             }
             album.ReplayGainComplete = true;
             await Persist();
@@ -414,20 +476,39 @@ public sealed partial class LibraryPromotionService
             track.Outcome = "Placed";
             await Step(track, "Placement", "Complete", "Placed with a durable library reference.");
         }
-        var handoverRecordings = ready.Select(item => item.RecordingId).Concat(album.Tracks.Where(item => item.Steps.Any(step => step.Name == "Dedupe"))
-            .Select(item => item.RecordingId)).Distinct().ToArray();
-        if (album.RefreshJobId == null && handoverRecordings.Length > 0)
+        var handoverTracks = album.Tracks.Where(item => item.RefreshJobId == null &&
+            (item.Outcome == "Placed" || item.Steps.Any(step => step.Name == "Dedupe"))).ToArray();
+        var handoverRecordings = handoverTracks.Select(item => item.RecordingId).Distinct().ToArray();
+        if (handoverRecordings.Length > 0)
         {
+            var batchHash = Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
+                string.Join('-', handoverRecordings.Order().Select(id => id.ToString("N"))))));
+            var batchKey = album.RefreshJobId == null ? $"promotion:{run.Id:N}" : $"promotion:{run.Id:N}:batch:{batchHash}";
             var queued = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<BackendLibraryRefreshJobPayload>("library.refresh",
-                $"promotion:{run.Id:N}", new(request.BackendLibraryId, access.Context.BackendInstanceId,
+                batchKey, new(request.BackendLibraryId, access.Context.BackendInstanceId,
                     access.Context.VerifiedBackendPrincipalId, request.CredentialReferenceId)
                 { RecordingIds = handoverRecordings, RemoveKeptCopy = album.Profile.RemoveKeptCopy }, run.OwnerUserId), token);
             album.RefreshJobId = queued.JobId;
+            foreach (var track in handoverTracks) track.RefreshJobId = queued.JobId;
         }
-        run.ManagedFileId = ready.FirstOrDefault()?.ManagedFileId;
+        run.ManagedFileId = album.Tracks.FirstOrDefault(item => item.ManagedFileId != null)?.ManagedFileId;
+        if (album.Tracks.Any(item => item.Outcome == "Queued"))
+        {
+            run.Outcome = "Running";
+            run.Reason = "Ready songs were placed; waiting for the remaining managed downloads.";
+            await Persist();
+            return DurableJobCompletion.Defer("promotion_download_pending", run.Reason, TimeSpan.FromSeconds(10));
+        }
+        if (album.Tracks.Any(item => item.Outcome == "Needs review"))
+        {
+            run.Outcome = "Needs review";
+            run.Reason = "Ready songs were placed; review the held songs individually.";
+            await Persist();
+            return DurableJobCompletion.Success();
+        }
         run.Outcome = "Placed";
         run.Step = "Refresh";
-        run.Reason = ready.Length == 0 ? "All tracks were skipped." : "Placement complete; refresh and recording handover queued.";
+        run.Reason = album.Tracks.All(item => item.Outcome == "Skipped") ? "All tracks were skipped." : "Placement complete; refresh and recording handover queued.";
         await Persist();
         Cleanup(run.Id);
         return DurableJobCompletion.Success();

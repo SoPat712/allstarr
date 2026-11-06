@@ -22,6 +22,12 @@ public sealed record PromoteSongRequest(Guid RecordingId, Guid ArtifactId, Guid 
 public sealed record PromotionPreview(string DestinationPath, string[] Steps, long Size)
 {
     public bool CanAddDirectly { get; init; }
+    public PromotionAlbumSummary? Album { get; init; }
+    public int AlreadyInLibrary { get; init; }
+    public IReadOnlyList<PromotionCopyPreview> BestCopies { get; init; } = [];
+    public IReadOnlyList<PromotionProfileStep> ProfileSteps { get; init; } = [];
+    public string? BackendLibraryId { get; init; }
+    public Guid? RootId { get; init; }
 }
 internal sealed record PromotionPlan(MetadataEnrichmentPlan Metadata, ManagedTrackPathValues Track,
     string Provider, string? ExternalId, string? QualityJson)
@@ -56,7 +62,30 @@ public sealed partial class LibraryPromotionService(IDbContextFactory<AllstarrDb
         var source = await SourceAsync(db, context.Principal!.UserId, request, token);
         var plan = await PlanAsync(db, context, request, source, token);
         var destination = Destination(root.Path, plan);
-        return new(destination, Steps, source.Length) { CanAddDirectly = canAddDirectly };
+        var profile = (await (profiles ?? new PromotionProfiles(factory)).GetMineAsync(context, token)).Values;
+        var song = new Song
+        {
+            CanonicalRecordingId = request.RecordingId,
+            Title = plan.Track.Title,
+            Artist = plan.Track.Artist,
+            Album = plan.Track.Album ?? "",
+            AlbumArtist = plan.Track.AlbumArtist,
+            Year = plan.Track.Year
+        };
+        var artifact = await db.Set<ProviderDownloadArtifactEntity>().AsNoTracking().SingleAsync(item => item.Id == request.ArtifactId, token);
+        var meets = PromotionQuality.Accepts(profile, artifact.Codec, artifact.BitDepth, artifact.SampleRate);
+        return new(destination, Steps, source.Length)
+        {
+            CanAddDirectly = canAddDirectly,
+            Album = AlbumSummary(song, 1),
+            BackendLibraryId = request.BackendLibraryId,
+            RootId = root.Id,
+            AlreadyInLibrary = await AlreadyInLibraryAsync(db, context, request.BackendLibraryId,
+                new PromotionTrack { RecordingId = request.RecordingId, Song = song }, token) ? 1 : 0,
+            BestCopies = [new(source.ProviderId, artifact.Codec, artifact.BitDepth, artifact.SampleRate,
+                meets ? "meets-your-floor" : "fallback", meets ? "The verified source meets your saved quality floor." : "Source format information is incomplete or below your saved floor.")],
+            ProfileSteps = ProfileSteps(profile)
+        };
     }
 
     private async Task<PromotionRunRecord> StartRunAsync(ProtocolExecutionContext context, PromoteSongRequest request,

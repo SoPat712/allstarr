@@ -11,6 +11,7 @@
     action,
     members,
     expanded = $bindable(false),
+    collapsible = true,
   }: {
     count: number;
     summary: string;
@@ -20,21 +21,24 @@
     action?: Snippet;
     members?: Snippet;
     expanded?: boolean;
+    collapsible?: boolean;
   } = $props();
 
   const id = $props.id();
 </script>
 
-<section class="grouped-row" class:expanded data-tone={tone}>
+<section class="grouped-row" class:expanded data-tone={tone} class:static-group={!collapsible} aria-label={collapsible ? undefined : summary}>
   <div class="group-heading">
+    {#if collapsible}
     <button type="button" class="group-toggle" aria-expanded={expanded} aria-controls={`${id}-members`} onclick={() => expanded = !expanded}>
       <span class="group-icon" aria-hidden="true">{#if icon}{@render icon()}{:else if tone === "warn"}<CircleAlert size={18} />{:else}<Layers size={18} />{/if}</span>
       <span class="group-copy"><span class="group-summary"><span class="group-count">{count.toLocaleString()}</span> {summary}</span>{#if reason}<span class="group-reason">{reason}</span>{/if}</span>
       <ChevronDown class="group-chevron" size={16} aria-hidden="true" />
     </button>
+    {:else}<h3 class="group-label">{summary} · {count}</h3>{/if}
     {#if action}<div class="group-action">{@render action()}</div>{/if}
   </div>
-  <div id={`${id}-members`} class="group-members" hidden={!expanded}>{@render members?.()}</div>
+  <div id={`${id}-members`} class="group-members" hidden={collapsible && !expanded}>{@render members?.()}</div>
 </section>
 
 <style>
@@ -59,5 +63,9 @@
     .group-toggle :global(.group-chevron) { top: 30px; }
     .group-action { order: 2; flex-basis: 100%; padding: 0 var(--space-4) var(--space-3); }
   }
+  .static-group[data-tone] { border: 0; border-radius: 0; }
+  .static-group + :global(.static-group) { border-top: 1px solid var(--color-edge); }
+  .static-group .group-heading { min-height: 0; padding: 0; background: var(--color-panel-raised); }
+  .group-label { margin: 0; padding: 10px 14px; color: var(--color-ink-muted); font-size: .7rem; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; }
   @media (prefers-reduced-motion: reduce) { .group-toggle :global(.group-chevron) { transition: none; } }
 </style>

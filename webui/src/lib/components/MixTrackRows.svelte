@@ -14,12 +14,13 @@
       <MediaArtwork url={artworkUrl(row.song.id)} />
       <div class="song-info"><strong>{row.song.title}</strong><small>{row.song.artist}{row.song.album ? ` · ${row.song.album}` : ""}</small><small class="reason-chip">{row.reason}</small></div>
       <span class="plays-from">{row.source === "library" ? "Your library" : row.source === "history" ? "Your listening" : row.source === "audiomuse" ? "Similar sound" : row.source === "services" || row.source === "service" ? "Your services" : humanize(row.source)}</span>
-      {#if onfeedback}<DropdownMenu.Root>
+      {#if onfeedback || row.song.canonicalRecordingId}<DropdownMenu.Root>
         <DropdownMenu.Trigger class="icon-button" disabled={busy} aria-label={`Actions for ${row.song.title}`}><UiIcon name="more" /></DropdownMenu.Trigger>
         <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu song-menu" sideOffset={6} align="end">
-          <DropdownMenu.Sub><DropdownMenu.SubTrigger class="bits-menu-item">More like this</DropdownMenu.SubTrigger><DropdownMenu.Portal><DropdownMenu.SubContent class="bits-menu song-menu"><DropdownMenu.Item class="bits-menu-item" onSelect={() => onfeedback?.(row, "moreLikeThis", true)}>Today only</DropdownMenu.Item><DropdownMenu.Item class="bits-menu-item" onSelect={() => onfeedback?.(row, "moreLikeThis", false)}>Until I change it</DropdownMenu.Item></DropdownMenu.SubContent></DropdownMenu.Portal></DropdownMenu.Sub>
+          {#if row.song.canonicalRecordingId}<DropdownMenu.Item class="bits-menu-item" onSelect={() => window.location.hash = `#/library/to-library?recording=${encodeURIComponent(row.song.canonicalRecordingId!)}`}>Add to library…</DropdownMenu.Item>{/if}
+          {#if onfeedback}<DropdownMenu.Sub><DropdownMenu.SubTrigger class="bits-menu-item">More like this</DropdownMenu.SubTrigger><DropdownMenu.Portal><DropdownMenu.SubContent class="bits-menu song-menu"><DropdownMenu.Item class="bits-menu-item" onSelect={() => onfeedback?.(row, "moreLikeThis", true)}>Today only</DropdownMenu.Item><DropdownMenu.Item class="bits-menu-item" onSelect={() => onfeedback?.(row, "moreLikeThis", false)}>Until I change it</DropdownMenu.Item></DropdownMenu.SubContent></DropdownMenu.Portal></DropdownMenu.Sub>
           <DropdownMenu.Item class="bits-menu-item" onSelect={() => onfeedback?.(row, "notForMe")}>Not for me</DropdownMenu.Item>
-          <DropdownMenu.Item class="bits-menu-item" onSelect={() => onfeedback?.(row, "neverArtist")}>Don't play this artist</DropdownMenu.Item>
+          <DropdownMenu.Item class="bits-menu-item" onSelect={() => onfeedback?.(row, "neverArtist")}>Don't play this artist</DropdownMenu.Item>{/if}
         </DropdownMenu.Content></DropdownMenu.Portal>
       </DropdownMenu.Root>{/if}
     </li>

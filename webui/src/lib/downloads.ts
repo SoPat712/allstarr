@@ -38,6 +38,25 @@ export function qualityDetails(file: ManagedDownload) {
   ].filter(Boolean);
 }
 
+export function qualityWarning(file: ManagedDownload) {
+  const check = file.qualityCheck;
+  if (check?.verdict === "upsampled") return { label: "Likely upscaled", detail: `The measured bandwidth suggests a ${check.likelySourceRate === 48000 ? "48" : "44.1"} kHz source in this higher-rate file.` };
+  if (check?.verdict === "padded-bit-depth") return { label: "Padded", detail: "The low sample bits suggest 16-bit audio padded to 24-bit." };
+  if (check?.verdict === "lossy-transcode-suspected") return { label: "Lossy source?", detail: "A sharp high-frequency cutoff suggests a lossy source inside this lossless file." };
+  return null;
+}
+
+export function formatDownloadSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), 4);
+  return `${(bytes / 1024 ** unit).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${["B", "KiB", "MiB", "GiB", "TiB"][unit]}`;
+}
+
+export function lowerDownloadQuality(file: ManagedDownload) {
+  return /^(mp3|aac|opus|ogg|vorbis|wma)$/i.test(file.codec) ||
+    Boolean(file.sampleRateHz && file.sampleRateHz < 44100) || Boolean(file.bitDepth && file.bitDepth < 16);
+}
+
 function formatSampleRate(value: number) {
   const kilohertz = value / 1_000;
   return kilohertz.toFixed(value % 1_000 ? 1 : 0);

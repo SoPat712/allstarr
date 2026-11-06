@@ -346,13 +346,22 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"]] a
       await expect(page.locator(".match-title").getByRole("button", { name: "Rematch all", exact: true })).toBeVisible();
       await expect(page.locator(".mapping-pagination")).toHaveCount(0);
     }
-    if (["cached", "kept"].includes(name)) {
+    if (name === "cached") {
       await expect(page.locator(".downloads-table-scroll > table > tbody > .download-row")).toHaveCount(3);
-      if (name === "cached") await expect(page.getByText("Playback cache on", { exact: true })).toHaveCount(0);
-      if (name === "kept") await expect(page.getByRole("button", { name: /^Remove all/ })).toHaveCount(0);
+      await expect(page.getByText("Playback cache on", { exact: true })).toHaveCount(0);
       if (width === 1280) {
         expect(await page.locator(".library-download-actions").first().evaluate(element => getComputedStyle(element).display)).toBe("table-cell");
         expect(await page.locator(".song-title > strong").first().evaluate(element => getComputedStyle(element).whiteSpace)).toBe("nowrap");
+      }
+    }
+    if (name === "kept") {
+      const list = page.getByRole("region", { name: "Kept songs", exact: true });
+      await expect(list.locator(".kept-song-group")).toHaveCount(3);
+      await expect(list.getByRole("button", { name: "Add selected to library", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: /^Remove all/ })).toHaveCount(0);
+      if (width === 1280) {
+        await expect(list.getByRole("button", { name: "Actions for Take On Me", exact: true })).toBeVisible();
+        expect(await list.locator(".row-copy h3").first().evaluate(element => getComputedStyle(element).whiteSpace)).toBe("nowrap");
       }
     }
     if (name === "mixes") {

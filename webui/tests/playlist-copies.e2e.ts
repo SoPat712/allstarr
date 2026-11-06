@@ -171,10 +171,11 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(rows).toHaveCount(1);
     await expect(rows).toContainText(keptMix.name);
     await page.getByRole("searchbox", { name: "Filter playlists" }).fill("");
-    for (const status of ["Healthy", "Needs a look", "Paused"]) {
+    for (const status of ["Healthy", "Needs a look"]) {
       await page.getByRole("radio", { name: new RegExp(`^${status}`) }).click();
       await expect(rows.getByText(/Mix · in your apps/)).toHaveCount(0);
     }
+    await expect(page.getByRole("radio", { name: /^Paused/ })).toHaveCount(0);
     await page.getByRole("radio", { name: /^All/ }).click();
     await row.getByRole("link", { name: `Open ${keptMix.name} mix`, exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/#/for-you\\?mix=${keptMix.id}$`));

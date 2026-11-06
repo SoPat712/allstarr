@@ -11,6 +11,7 @@
     cancelLabel = "Cancel",
     confirmVariant = "destructive",
     disabled = false,
+    confirmDisabled = false,
     preventScroll = true,
     closeOnConfirm = true,
     error = "",
@@ -24,6 +25,7 @@
     cancelLabel?: string;
     confirmVariant?: ButtonVariant;
     disabled?: boolean;
+    confirmDisabled?: boolean;
     preventScroll?: boolean;
     closeOnConfirm?: boolean;
     error?: string;
@@ -43,9 +45,9 @@
       <footer class="dialog-actions">
         <AlertDialog.Cancel type="button" class={buttonVariants({ variant: "text" })} {disabled}>{cancelLabel}</AlertDialog.Cancel>
         {#if closeOnConfirm}
-          <AlertDialog.Action class={buttonVariants({ variant: confirmVariant })} {disabled} onclick={() => void onConfirm()}>{confirmLabel}</AlertDialog.Action>
+          <AlertDialog.Action class={buttonVariants({ variant: confirmVariant })} disabled={disabled || confirmDisabled} onclick={() => void onConfirm()}>{confirmLabel}</AlertDialog.Action>
         {:else}
-          <button class={buttonVariants({ variant: confirmVariant })} {disabled} type="button" onclick={() => void onConfirm()}>{confirmLabel}</button>
+          <button class={buttonVariants({ variant: confirmVariant })} disabled={disabled || confirmDisabled} type="button" onclick={() => void onConfirm()}>{confirmLabel}</button>
         {/if}
       </footer>
     </AlertDialog.Content>

@@ -21,4 +21,9 @@ describe("side sheet layout", () => {
     expect(sidePanelLayout(899, 1500)).toEqual({ width: 899, docked: false });
     expect(sidePanelLayout(390, 1500)).toEqual({ width: 390, docked: false });
   });
+  it("docks a compact sheet when the list retains its requested width", () => {
+    expect(sidePanelLayout(1280, 984, { width: 380, minimumContentWidth: 560 })).toEqual({ width: 380, docked: true });
+    expect(sidePanelLayout(1024, 728, { width: 380, minimumContentWidth: 560 }).docked).toBe(false);
+    expect(sidePanelLayout(390, 366, { width: 380, minimumContentWidth: 560 })).toEqual({ width: 390, docked: false });
+  });
 });

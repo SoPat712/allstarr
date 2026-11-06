@@ -15,7 +15,9 @@ public sealed record AudioQualityCheck(
     [property: JsonPropertyName("effectiveBandwidthHz")] double? EffectiveBandwidthHz,
     [property: JsonPropertyName("verdict")] string Verdict,
     [property: JsonPropertyName("confidence")] double Confidence,
-    [property: JsonPropertyName("likelySourceRate")] int? LikelySourceRate = null);
+    [property: JsonPropertyName("likelySourceRate")] int? LikelySourceRate = null,
+    [property: JsonPropertyName("energyByFrequency")] double?[]? EnergyByFrequency = null,
+    [property: JsonPropertyName("frequencyMaxHz")] int? FrequencyMaxHz = null);
 
 public sealed class AudioQualityAnalyzer(FileMediaApplicationCache cache, MediaConversionGate? conversions = null)
 {
@@ -319,9 +321,32 @@ public sealed class AudioQualityAnalyzer(FileMediaApplicationCache cache, MediaC
 
         public AudioQualityCheck Result()
         {
+            const int frequencyMax = 22000;
+            double?[]? bands = null;
             AudioQualityCheck ResultOf(string verdict, double confidence, double? bandwidth, int? source = null) =>
-                new(format.Rate, format.Bits, bandwidth, verdict, confidence, source);
+                new(format.Rate, format.Bits, bandwidth, verdict, confidence, source, bands, bands == null ? null : frequencyMax);
             if (_windows == 0 || _energy / (_windows * TransformSize) < 1e-12) return ResultOf("unknown", 0, null);
+            var measuredBands = new double?[24];
+            bands = measuredBands;
+            for (var band = 0; band < measuredBands.Length; band++)
+            {
+                var from = (double)band * frequencyMax / measuredBands.Length;
+                var to = (double)(band + 1) * frequencyMax / measuredBands.Length;
+                if (to > format.Rate / 2.0) continue;
+                var begin = Math.Max(1, (int)Math.Ceiling(from * TransformSize / format.Rate));
+                var end = Math.Min(_powers.Length - 1, (int)Math.Floor(to * TransformSize / format.Rate));
+                if (end < begin) continue;
+                double power = 0;
+                for (var bin = begin; bin <= end; bin++) power += _powers[bin];
+                measuredBands[band] = power / (end - begin + 1);
+            }
+            var maximumBand = measuredBands.Where(value => value.HasValue).Select(value => value!.Value).DefaultIfEmpty().Max();
+            if (maximumBand > 0)
+            {
+                for (var band = 0; band < measuredBands.Length; band++)
+                    if (measuredBands[band] is { } power) measuredBands[band] = Math.Clamp(power / maximumBand, 0, 1);
+            }
+            else bands = null;
             var peak = _powers.Max();
             var threshold = peak * Math.Pow(10, -65.0 / 10);
             var last = Array.FindLastIndex(_powers, value => value > threshold);

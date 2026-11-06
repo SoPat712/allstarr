@@ -9,7 +9,7 @@
     storage: "cache" | "kept";
     busy?: boolean;
     moving?: boolean;
-    placement?: "row" | "panel";
+    placement?: "row" | "panel" | "menu";
     onkeep: () => void;
     onrelease: () => void;
     onremove: () => void;
@@ -36,14 +36,16 @@
     </div>
   </div>
 {:else}
+  {#if placement !== "menu"}
   {#if moving}<Button variant="outline" size="sm" disabled>Moving to Kept…</Button>
   {:else if canKeep}<Button variant="outline" size="sm" disabled={busy} title={`Keep this ${file.quality || file.codec} copy`} onclick={onkeep}>Keep</Button>
   {:else}<Button variant="outline" size="sm" href={downloads.fileUrl(file.path, storage)}><Download size={16} data-icon="inline-start" aria-hidden="true" />Download</Button>{/if}
+  {/if}
   <DropdownMenu.Root>
     <DropdownMenu.Trigger class="icon-button library-download-menu" aria-label={`Actions for ${file.title || file.fileName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
     <DropdownMenu.Portal>
       <DropdownMenu.Content class="bits-menu" align="end" sideOffset={6}>
-        {#if cached}
+        {#if cached || placement === "menu"}
           <DropdownMenu.Item class="bits-menu-item">
             {#snippet child({ props })}<a {...props} href={downloads.fileUrl(file.path, storage)}>Download</a>{/snippet}
           </DropdownMenu.Item>

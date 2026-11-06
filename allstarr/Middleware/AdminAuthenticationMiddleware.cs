@@ -171,7 +171,11 @@ public class AdminAuthenticationMiddleware
 
         var promotionSegments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
         if (promotionSegments.Length >= 3 && promotionSegments[2].Equals("library-promotions", StringComparison.OrdinalIgnoreCase))
-            return promotionSegments.Length == 3 && HttpMethods.IsPost(method) ||
+            return promotionSegments.Length == 3 && (HttpMethods.IsGet(method) || HttpMethods.IsPost(method)) ||
+                promotionSegments.Length == 4 && promotionSegments[3] == "requests" && (HttpMethods.IsGet(method) || HttpMethods.IsPost(method)) ||
+                promotionSegments.Length == 5 && promotionSegments[3] == "requests" && Guid.TryParse(promotionSegments[4], out _) && HttpMethods.IsGet(method) ||
+                promotionSegments.Length == 6 && promotionSegments[3] == "requests" && Guid.TryParse(promotionSegments[4], out _) &&
+                    promotionSegments[5] == "cancel" && HttpMethods.IsPost(method) ||
                 promotionSegments.Length == 5 && promotionSegments[3] == "profiles" && (
                     promotionSegments[4] == "me" && (HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method)) ||
                     promotionSegments[4] == "preview" && HttpMethods.IsPost(method)) ||

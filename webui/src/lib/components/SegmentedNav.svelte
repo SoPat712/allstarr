@@ -111,3 +111,9 @@
     {/each}
   </div>
 </nav>
+
+<style>
+  @media (max-width: 899px) {
+    .segmented-tabs[role="tablist"] > [role="tab"] { min-width: 44px; min-height: 44px; }
+  }
+</style>
