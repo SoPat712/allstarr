@@ -201,7 +201,8 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
 
         var effectiveLimit = Math.Clamp(limit, 1, 24);
         var statusManager = HttpContext.RequestServices.GetRequiredService<ProviderStatusManager>();
-        if (!statusManager.IsKnownProvider(normalizedProvider))
+        if (!statusManager.IsKnownProvider(normalizedProvider) &&
+            !CurrentProviderSupportCatalog.All.Any(provider => provider.Id == normalizedProvider))
         {
             return NotFound();
         }

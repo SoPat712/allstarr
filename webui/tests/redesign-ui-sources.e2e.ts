@@ -214,7 +214,7 @@ for (const [width, theme] of [[1280, "light"], [1280, "dark"], [390, "light"]] a
   });
 }
 
-for (const count of [0, 1, 2, 32]) {
+for (const count of [1, 2, 32]) {
   test(`Sources check strip keeps 30 fixed slots with ${count} recorded ${count === 1 ? "check" : "checks"}`, async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 844 });
     await fixture(page);
@@ -336,3 +336,37 @@ for (const section of ["services", "accounts"]) {
     }
   });
 }
+
+for (const checked of [false, true]) {
+  test(`Sources empty checks explain ${checked ? "pending checks" : "no automatic checks"}`, async ({ page }) => {
+    await fixture(page);
+    await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
+      activeBackend: "Jellyfin", providers: [{ id: "musicbrainz", name: "MusicBrainz", categories: ["enrichment"],
+        runtimeCapabilities: checked ? [{ id: "metadata", canTest: true, health: "unknown" }] : [] }],
+    } }));
+    await page.route("**/api/admin/providers/status", route => route.fulfill({ json: [] }));
+    await page.route("**/health-history?*", route => route.fulfill({ json: {
+      capturedAt: "2026-11-03T12:00:00Z", counts: { passed: 0, failed: 0, neutral: 0 }, checks: [],
+    } }));
+    await page.goto("#/sources/services/musicbrainz");
+    const panel = page.getByRole("dialog", { name: "MusicBrainz", exact: true });
+    await expect(panel.getByText(checked ? "No checks yet" : "This source isn't checked automatically", { exact: true })).toBeVisible();
+    await expect(panel.getByRole("region", { name: "Last 30 checks", exact: true })).toHaveCount(0);
+    await expect(panel.getByText("Checks could not be loaded")).toHaveCount(0);
+    await expect(panel.getByText("Recent checks unavailable")).toHaveCount(0);
+  });
+}
+
+test("Sources history load errors stay recoverable", async ({ page }) => {
+  await fixture(page);
+  await page.route("**/health-history?*", route => route.fulfill({ status: 503, json: { error: "Unavailable" } }));
+  await page.goto("#/sources/services/qobuz");
+  await expect(page.getByText("Checks could not be loaded", { exact: true })).toBeVisible();
+  await expect(page.getByText("Recent checks unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByText("No checks yet", { exact: true })).toHaveCount(0);
+  await page.route("**/health-history?*", route => route.fulfill({ json: {
+    capturedAt: "2026-11-03T12:00:00Z", counts: { passed: 0, failed: 0, neutral: 0 }, checks: [],
+  } }));
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.getByText("No checks yet", { exact: true })).toBeVisible();
+});

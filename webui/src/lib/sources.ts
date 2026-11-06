@@ -12,6 +12,10 @@ import { humanize } from "./activity";
 import type { UpdateEvent } from "./live-updates.svelte";
 export { humanize };
 
+export const sourceHasChecks = (provider: ProviderDefinition, checks: ProviderHealth[]) =>
+  (provider.runtimeCapabilities ?? []).some(check => check.canTest) ||
+  checks.some(check => check.supported && check.canTest);
+
 export const providerReadinessLabel = (reason: string) =>
   reason === "apple-download-sign-in-required" ? "Apple download needs sign-in" :
     reason === "apple-download-gateway-update-required" ? "Apple download gateway needs an update" : humanize(reason);

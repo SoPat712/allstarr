@@ -63,6 +63,7 @@
     groupSourceChecks,
     type SourceCheck,
     sourceMetrics,
+    sourceHasChecks,
     sourceNeedsAccount,
     sourceOriginLabel,
     sourceStatus,
@@ -955,7 +956,7 @@
           {:else if pageSource}
             <div class="source-summary" data-tone={sourceTone(pageSource)}><StatePill tone={sourceTone(pageSource)} text={sourceLabel(pageSource)} /><p>{sourceFact(pageSource)}</p>{#if needsSetup.includes(pageSource)}<p>{providerHealth(pageSource.id).some(check => !check.canAttempt && check.enabled && check.supported) ? "Playback skips this source while it is paused. Other sources can still play." : "Open the latest checks below for the next step."}</p>{/if}</div>
             {#if administrator}
-              {#key pageSource.id}{#await import("$lib/components/SourceHealthHistory.svelte") then { default: SourceHealthHistory }}<SourceHealthHistory providerId={pageSource.id} statuses={providerHealth(pageSource.id)} automatic={pageSource.useMode !== "manualOnly" && pageSource.useMode !== "off"} refreshKey={JSON.stringify(providerHealth(pageSource.id))} onRetryWindow={refresh} />{/await}{/key}
+              {#key pageSource.id}{#await import("$lib/components/SourceHealthHistory.svelte") then { default: SourceHealthHistory }}<SourceHealthHistory checksSupported={sourceHasChecks(pageSource, providerHealth(pageSource.id))} providerId={pageSource.id} statuses={providerHealth(pageSource.id)} automatic={pageSource.useMode !== "manualOnly" && pageSource.useMode !== "off"} refreshKey={JSON.stringify(providerHealth(pageSource.id))} onRetryWindow={refresh} />{/await}{/key}
             {/if}
             {#await import("$lib/components/SourceUseSettings.svelte") then { default: SourceUseSettings }}<SourceUseSettings providerId={pageSource.id} {administrator} onSaved={refresh} onUndo={(providerId, run) => sourceUndo = { providerId, run }} />{/await}
             <dl class="source-facts"><dt>Quality</dt><dd>{qualityOf(pageSource.id) || "Not measured yet"}</dd><dt>Score</dt><dd>{scoreOf(pageSource.id) ?? "Not measured yet"}</dd><dt>Accounts</dt><dd>{providerAccounts(pageSource.id).filter(account => account.enabled).length} of {providerAccounts(pageSource.id).length} on</dd><dt>Start time</dt><dd>{sourceStartTimeLabel(measurements.find(item => item.providerId === pageSource.id), scores.find(item => item.providerId.toLowerCase() === pageSource.id.toLowerCase()))}</dd></dl>

@@ -8,9 +8,10 @@
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
   import { Button } from "$lib/components/ui/button";
 
-  let { providerId, statuses, refreshKey, onRetryWindow, automatic = true }: {
+  let { providerId, statuses, refreshKey, onRetryWindow, automatic = true, checksSupported = true }: {
     providerId: string;
     automatic?: boolean;
+    checksSupported?: boolean;
     statuses: ProviderHealth[];
     refreshKey: string;
     onRetryWindow: () => Promise<void>;
@@ -33,6 +34,8 @@
       : check.latencyMs != null && Number.isFinite(check.latencyMs) && check.latencyMs >= 1000 ? "slow" : "ok";
   }
 
+  const emptyLabel = $derived(checksSupported ? "No checks yet" : "This source isn't checked automatically");
+  const empty = $derived(history !== null && history.checks.length === 0 && !loading && !error);
   const recentChecks = $derived(history?.checks.slice(0, 30) ?? []);
   const stripSlots = $derived([...Array<null>(30 - recentChecks.length).fill(null), ...recentChecks.toReversed()]);
   const stripSummary = $derived(`${countLabel(recentChecks.length, "recorded check")}, oldest to newest; ${recentChecks.filter(check => stripOutcome(check) === "failed").length} failed, ${recentChecks.filter(check => stripOutcome(check) === "slow").length} slow, ${recentChecks.filter(check => stripOutcome(check) === "ok").length} ok, ${recentChecks.filter(check => stripOutcome(check) === "neutral").length} not checked; ${countLabel(30 - recentChecks.length, "empty slot")}. Slow means 1 second or more.`);
@@ -127,6 +130,7 @@
   </section>
 {/if}
 
+{#if !empty}
 <section class="check-history" aria-label="Last 30 checks">
   <h3>Last 30 checks</h3>
   {#if loading}<RowsSkeleton count={1} />
@@ -137,11 +141,14 @@
         <span aria-hidden="true" data-outcome={check ? stripOutcome(check) : "empty"} title={check ? `${humanize(check.outcome)}${stripOutcome(check) === "slow" ? " · Slow" : ""} · ${humanize(check.capability)} · ${check.accountLabel} · ${timeLabel(check.testedAt)}` : "No recorded check"}></span>
       {/each}
     </div>
-    {#if recentChecks.length}<div class="check-axis"><span>{timeLabel(recentChecks.at(-1)!.testedAt)}</span><span>Latest</span></div>
-    {:else}<p class="check-empty">No recorded checks yet.</p>{/if}
+    {#if recentChecks.length}<div class="check-axis"><span>{timeLabel(recentChecks.at(-1)!.testedAt)}</span><span>Latest</span></div>{/if}
   {/if}
 </section>
+{/if}
 
+{#if empty}
+  <p class="check-empty">{emptyLabel}</p>
+{:else}
 <details class="settings-card check-details" aria-label="Recent diagnostic checks">
   <summary class="settings-row" style="grid-template-columns: minmax(0, 1fr); min-height: var(--control-md); cursor: pointer;">
     <div><strong>Latest checks</strong><small>{#if history}{history.counts.passed} passed · {history.counts.failed} failed · {history.counts.neutral} neutral{:else if loading}Loading recent checks…{:else}Recent checks unavailable{/if}</small></div>
@@ -176,6 +183,7 @@
     <div class="settings-row" style="grid-template-columns: minmax(0, 1fr);"><div><small>No recorded diagnostic checks.</small></div></div>
   {/if}
 </details>
+{/if}
 
 <style>
   .check-history { display: grid; min-width: 0; gap: var(--space-2); }

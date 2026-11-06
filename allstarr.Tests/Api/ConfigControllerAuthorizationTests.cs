@@ -653,6 +653,21 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ProviderHealthHistoryForEnrichmentWithoutChecksIsEmpty()
+    {
+        var clients = new Mock<IHttpClientFactory>(MockBehavior.Strict);
+        var controller = Diagnostics(CreateController(CreateHttpContextWithSession(isAdmin: true),
+            httpClientFactory: clients.Object));
+
+        var response = Assert.IsType<OkObjectResult>(await controller.GetProviderHealthHistory("musicbrainz"));
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(response.Value));
+        Assert.Equal("musicbrainz", document.RootElement.GetProperty("provider").GetString());
+        Assert.Empty(document.RootElement.GetProperty("checks").EnumerateArray());
+        Assert.All(document.RootElement.GetProperty("counts").EnumerateObject(), count => Assert.Equal(0, count.Value.GetInt32()));
+        clients.Verify(item => item.CreateClient(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
     public async Task HistoryRejectsUnknownRetiredAndNoncanonicalProviders()
     {
         var controller = Diagnostics(CreateController(CreateHttpContextWithSession(isAdmin: true)));

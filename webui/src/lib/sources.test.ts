@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderAccount, ProviderDefinition, ProviderHealth, ProviderScore } from "./api";
 import {
+  sourceHasChecks,
   supportedAudiences,
   sharingDescription,
   accountSettings,
@@ -46,6 +47,14 @@ const account = (scope: ProviderAccount["scope"] = "Personal"): ProviderAccount 
 const provider: ProviderDefinition = { id: "future-extension", name: "Future Extension" };
 
 describe("source presentation", () => {
+  it("distinguishes sources without checks from checks that have not run", () => {
+    expect(sourceHasChecks(provider, [])).toBe(false);
+    expect(sourceHasChecks({ ...provider, runtimeCapabilities: [{ id: "metadata", ready: false, canAttempt: false, canTest: false }] }, [])).toBe(false);
+    expect(sourceHasChecks({ ...provider, runtimeCapabilities: [{ id: "metadata", ready: false, canAttempt: false, canTest: true }] }, [])).toBe(true);
+    expect(sourceHasChecks(provider, [{ canTest: true, supported: true } as ProviderHealth])).toBe(true);
+    expect(sourceHasChecks(provider, [{ canTest: true, supported: false } as ProviderHealth])).toBe(false);
+  });
+
   it("keeps unused built-ins available without treating them as connected sources", () => {
     const unused = { id: "koito", name: "Koito", status: "needs_config" };
     expect(sourceIsInUse(unused, [], [])).toBe(false);
