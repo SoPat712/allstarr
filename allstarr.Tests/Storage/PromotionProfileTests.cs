@@ -41,9 +41,20 @@ public sealed class PromotionProfileTests : IAsyncLifetime
     {
         var fields = PromotionSongFields.FromSong(new()
         {
-            Title = "Title", Artist = "Artist", AlbumArtist = "Various Artists", Album = "Album",
-            ReleaseDate = "2024-05-02", Track = 3, TotalTracks = 20, DiscNumber = 2, TotalDiscs = 3,
-            Codec = "flac", BitDepth = 24, SampleRate = 96000, Genre = "Jazz", Label = "Label",
+            Title = "Title",
+            Artist = "Artist",
+            AlbumArtist = "Various Artists",
+            Album = "Album",
+            ReleaseDate = "2024-05-02",
+            Track = 3,
+            TotalTracks = 20,
+            DiscNumber = 2,
+            TotalDiscs = 3,
+            Codec = "flac",
+            BitDepth = 24,
+            SampleRate = 96000,
+            Genre = "Jazz",
+            Label = "Label",
             ProviderIds = new() { ["originaldate"] = "1998-01-01", ["musicbrainz_albumid"] = "release", ["catalognumber"] = "CAT-1" }
         }, ".FLAC");
         Assert.Equal("2024", fields["year"]);
@@ -169,9 +180,16 @@ public sealed class PromotionProfileTests : IAsyncLifetime
             (await db.LibraryTracks.SingleAsync(item => item.Id == multi)).BackendItemId = "zzzz-disc";
             for (var index = 0; index < 520; index++) db.LibraryTracks.Add(new()
             {
-                Id = Guid.CreateVersion7(), OwnerUserId = listener, BackendLibraryId = "music", Protocol = "jellyfin",
-                BackendInstanceId = "backend", BackendItemId = $"album-{index:0000}", FilePath = "/fixture/song.flac",
-                Title = "Album song", Artist = "Artist", Album = "Album"
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = listener,
+                BackendLibraryId = "music",
+                Protocol = "jellyfin",
+                BackendInstanceId = "backend",
+                BackendItemId = $"album-{index:0000}",
+                FilePath = "/fixture/song.flac",
+                Title = "Album song",
+                Artist = "Artist",
+                Album = "Album"
             });
             await db.SaveChangesAsync();
         }
@@ -236,29 +254,63 @@ public sealed class PromotionProfileTests : IAsyncLifetime
         db.CanonicalRecordings.Add(new() { Id = recordingId, CreatedByUserId = listener, PublicId = id.ToString(), Title = title });
         db.LibraryTracks.Add(new()
         {
-            Id = id, OwnerUserId = listener, CanonicalRecordingId = recordingId, BackendLibraryId = library,
-            Protocol = "jellyfin", BackendInstanceId = "backend", BackendItemId = id.ToString(), FilePath = "/fixture/song.flac",
-            Title = title, Artist = "Artist", Album = album, AlbumArtist = albumArtist
+            Id = id,
+            OwnerUserId = listener,
+            CanonicalRecordingId = recordingId,
+            BackendLibraryId = library,
+            Protocol = "jellyfin",
+            BackendInstanceId = "backend",
+            BackendItemId = id.ToString(),
+            FilePath = "/fixture/song.flac",
+            Title = title,
+            Artist = "Artist",
+            Album = album,
+            AlbumArtist = albumArtist
         });
         db.ProviderTrackIdentities.Add(new()
         {
-            Id = identityId, CanonicalRecordingId = recordingId, ProviderId = "fixture", ExternalId = id.ToString(),
-            ExternalIdHash = externalHash, ResourceKind = allstarr.Core.Capabilities.ProviderResourceKind.Track,
-            Verification = ProviderIdentityVerification.Verified, VerificationMethod = "fixture", DecisionVersion = 1,
+            Id = identityId,
+            CanonicalRecordingId = recordingId,
+            ProviderId = "fixture",
+            ExternalId = id.ToString(),
+            ExternalIdHash = externalHash,
+            ResourceKind = allstarr.Core.Capabilities.ProviderResourceKind.Track,
+            Verification = ProviderIdentityVerification.Verified,
+            VerificationMethod = "fixture",
+            DecisionVersion = 1,
             Scope = ProviderIdentityScope.Catalog
         });
         var payload = JsonSerializer.Serialize(new allstarr.Models.Domain.Song
         {
-            Title = title, Artist = "Artist", Album = album, AlbumArtist = albumArtist, ExternalProvider = "fixture",
-            ExternalId = id.ToString(), Track = 1, DiscNumber = disc, TotalDiscs = totalDiscs, Container = "flac", Year = 2024
+            Title = title,
+            Artist = "Artist",
+            Album = album,
+            AlbumArtist = albumArtist,
+            ExternalProvider = "fixture",
+            ExternalId = id.ToString(),
+            Track = 1,
+            DiscNumber = disc,
+            TotalDiscs = totalDiscs,
+            Container = "flac",
+            Year = 2024
         });
         db.ExternalMetadataSnapshots.Add(new()
         {
-            Id = Guid.CreateVersion7(), OwnerUserId = listener, ProviderTrackIdentityId = identityId, ProviderId = "fixture",
-            ExternalIdHash = externalHash, ResourceKind = "track", BackendInstanceId = "backend", BackendPrincipalId = listener.ToString(),
-            Protocol = "jellyfin", PayloadJson = payload, SnapshotVersion = 1,
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = listener,
+            ProviderTrackIdentityId = identityId,
+            ProviderId = "fixture",
+            ExternalIdHash = externalHash,
+            ResourceKind = "track",
+            BackendInstanceId = "backend",
+            BackendPrincipalId = listener.ToString(),
+            Protocol = "jellyfin",
+            PayloadJson = payload,
+            SnapshotVersion = 1,
             PayloadSha256 = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(payload))),
-            ProviderRevision = "fixture", CorrelationId = "promotion-preview", RetrievedAt = DateTimeOffset.UtcNow
+            ProviderRevision = "fixture",
+            CorrelationId = "promotion-preview",
+            RetrievedAt = DateTimeOffset.UtcNow
         });
         await db.SaveChangesAsync();
         return id;
@@ -269,10 +321,16 @@ public sealed class PromotionProfileTests : IAsyncLifetime
         var http = new DefaultHttpContext();
         if (user.HasValue) http.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
         {
-            SessionId = "profile-test", UserId = user.Value.ToString(), UserName = "Listener", BackendType = "jellyfin",
-            BackendInstanceId = "backend", AllstarrUserId = user, IsAdministrator = user == administrator,
+            SessionId = "profile-test",
+            UserId = user.Value.ToString(),
+            UserName = "Listener",
+            BackendType = "jellyfin",
+            BackendInstanceId = "backend",
+            AllstarrUserId = user,
+            IsAdministrator = user == administrator,
             JellyfinAccessToken = "protected",
-            ExpiresAtUtc = DateTime.UtcNow.AddHours(1), LastSeenUtc = DateTime.UtcNow
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
+            LastSeenUtc = DateTime.UtcNow
         };
         return new(profiles, new(factory, profiles, access), new(factory, new SystemPlatformClock()))
         { ControllerContext = new() { HttpContext = http } };
@@ -284,8 +342,13 @@ public sealed class PromotionProfileTests : IAsyncLifetime
 
     private static UserRecord User(Guid id, bool admin) => new()
     {
-        Id = id, Enabled = true, IsAdmin = admin, DisplayName = "Listener", BackendType = "jellyfin",
-        BackendInstanceId = "backend", BackendPrincipalId = id.ToString()
+        Id = id,
+        Enabled = true,
+        IsAdmin = admin,
+        DisplayName = "Listener",
+        BackendType = "jellyfin",
+        BackendInstanceId = "backend",
+        BackendPrincipalId = id.ToString()
     };
 
     public async Task DisposeAsync() => await database.DisposeAsync();

@@ -88,7 +88,8 @@ public sealed class ChineseWordLyricsCapabilityAdapterTests
     {
         var handler = new Handler((_, index) => Response(index == 1 ? QqSearch : JsonSerializer.Serialize(new
         {
-            code = 0, req_1 = new { code = 0, data = new { songID = 99, qrc = 1, crypt = 1, lyric = ChineseWordLyricsParserTests.EncryptedQrc } }
+            code = 0,
+            req_1 = new { code = 0, data = new { songID = 99, qrc = 1, crypt = 1, lyric = ChineseWordLyricsParserTests.EncryptedQrc } }
         })));
         var value = (await Adapter("qqlyrics", handler).FetchLyricsAsync(Context("qqlyrics"), Request("qqlyrics"))).RequireValue();
         Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, value.Availability);

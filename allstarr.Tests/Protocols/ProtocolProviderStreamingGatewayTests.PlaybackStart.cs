@@ -180,9 +180,14 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         for (var index = 0; index < failures; index++)
             statuses.RestoreCheckResult(ProviderRuntimeStatusKey.CreateAccountFree("deezer", "streaming"), null, new()
             {
-                Provider = "deezer", Capability = "streaming", IsSupported = true, IsEnabled = true,
-                Configuration = ProviderConfigurationState.Configured, Health = ProviderHealthState.Degraded,
-                TestedAt = at.AddSeconds(index + 1), ReasonCode = "probe_failed"
+                Provider = "deezer",
+                Capability = "streaming",
+                IsSupported = true,
+                IsEnabled = true,
+                Configuration = ProviderConfigurationState.Configured,
+                Health = ProviderHealthState.Degraded,
+                TestedAt = at.AddSeconds(index + 1),
+                ReasonCode = "probe_failed"
             });
         var (gateway, _) = FailoverGateway(first, second, outcomes: health, providerStatuses: statuses);
         using var response = (await gateway.OpenStreamAsync(context, "deezer", "source-track", ProviderAudioQuality.Any, null))!.Response;

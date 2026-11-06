@@ -67,10 +67,14 @@ public sealed partial class ProviderStatusManagerTests
         var key = ProviderRuntimeStatusKey.CreateAccountFree("deezer", capability);
         ProviderRuntimeStatus Check(bool passed) => new()
         {
-            Provider = "deezer", Capability = capability, IsSupported = true, IsEnabled = true,
+            Provider = "deezer",
+            Capability = capability,
+            IsSupported = true,
+            IsEnabled = true,
             Configuration = ProviderConfigurationState.Configured,
             Health = passed ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
-            TestedAt = clock.UtcNow, ReasonCode = passed ? null : "probe_failed"
+            TestedAt = clock.UtcNow,
+            ReasonCode = passed ? null : "probe_failed"
         };
         manager.RestoreCheckResult(key, null, Check(true));
         for (var count = 1; count <= 3; count++)
@@ -95,9 +99,14 @@ public sealed partial class ProviderStatusManagerTests
         var key = ProviderRuntimeStatusKey.CreateAccountFree("deezer", "streaming");
         manager.RestoreCheckResult(key, null, new()
         {
-            Provider = "deezer", Capability = "streaming", IsSupported = true, IsEnabled = true,
-            Configuration = ProviderConfigurationState.Configured, Health = ProviderHealthState.Degraded,
-            TestedAt = clock.UtcNow.AddHours(-1), ReasonCode = "probe_failed"
+            Provider = "deezer",
+            Capability = "streaming",
+            IsSupported = true,
+            IsEnabled = true,
+            Configuration = ProviderConfigurationState.Configured,
+            Health = ProviderHealthState.Degraded,
+            TestedAt = clock.UtcNow.AddHours(-1),
+            ReasonCode = "probe_failed"
         });
         Assert.Equal(ProviderHealthState.Unknown, manager.GetLatestCapabilityHealth(MediaContext(clock), ProviderCapabilityKind.Streaming));
     }
@@ -113,8 +122,13 @@ public sealed partial class ProviderStatusManagerTests
         var key = ProviderRuntimeStatusKey.CreateAccountFree("deezer", "streaming");
         manager.RestoreCheckResult(key, null, new()
         {
-            Provider = "deezer", Capability = "streaming", IsSupported = true, IsEnabled = true,
-            Configuration = ProviderConfigurationState.Configured, Health = ProviderHealthState.Healthy, TestedAt = clock.UtcNow
+            Provider = "deezer",
+            Capability = "streaming",
+            IsSupported = true,
+            IsEnabled = true,
+            Configuration = ProviderConfigurationState.Configured,
+            Health = ProviderHealthState.Healthy,
+            TestedAt = clock.UtcNow
         });
         if (tryResult) manager.RecordTryResult("deezer", "streaming", null, null, false, 200, "probe_failed");
         else

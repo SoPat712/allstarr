@@ -26,11 +26,29 @@ public static class PromotionNaming
 
     private static readonly Dictionary<string, (int Minimum, int Maximum)> Functions = new(StringComparer.Ordinal)
     {
-        ["if"] = (2, 3), ["if2"] = (1, 32), ["not"] = (1, 1), ["and"] = (1, 32), ["or"] = (1, 32),
-        ["eq"] = (2, 2), ["ne"] = (2, 2), ["gt"] = (2, 2), ["lt"] = (2, 2),
-        ["left"] = (2, 2), ["right"] = (2, 2), ["num"] = (2, 2), ["lower"] = (1, 1), ["upper"] = (1, 1),
-        ["title"] = (1, 1), ["replace"] = (3, 3), ["rreplace"] = (3, 3), ["trim"] = (1, 2),
-        ["noop"] = (0, 32), ["set"] = (2, 2), ["get"] = (1, 1), ["firstalphachar"] = (1, 2), ["initials"] = (1, 1)
+        ["if"] = (2, 3),
+        ["if2"] = (1, 32),
+        ["not"] = (1, 1),
+        ["and"] = (1, 32),
+        ["or"] = (1, 32),
+        ["eq"] = (2, 2),
+        ["ne"] = (2, 2),
+        ["gt"] = (2, 2),
+        ["lt"] = (2, 2),
+        ["left"] = (2, 2),
+        ["right"] = (2, 2),
+        ["num"] = (2, 2),
+        ["lower"] = (1, 1),
+        ["upper"] = (1, 1),
+        ["title"] = (1, 1),
+        ["replace"] = (3, 3),
+        ["rreplace"] = (3, 3),
+        ["trim"] = (1, 2),
+        ["noop"] = (0, 32),
+        ["set"] = (2, 2),
+        ["get"] = (1, 1),
+        ["firstalphachar"] = (1, 2),
+        ["initials"] = (1, 1)
     };
 
     internal static bool IsSupportedVariable(string name) => Variables.Contains(name) ||

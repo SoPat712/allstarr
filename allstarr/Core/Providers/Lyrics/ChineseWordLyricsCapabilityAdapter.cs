@@ -176,7 +176,8 @@ public sealed class QqWordLyricsCapabilityAdapter : ChineseWordLyricsCapabilityA
     {
         req_1 = new
         {
-            module = "music.search.SearchCgiService", method = "DoSearchForQQMusicDesktop",
+            module = "music.search.SearchCgiService",
+            method = "DoSearchForQQMusicDesktop",
             param = new { num_per_page = 10, page_num = 1, query = request.TrackTitle!.Trim() + " " + string.Join(" ", request.ArtistNames), search_type = 0 }
         }
     });
@@ -201,12 +202,19 @@ public sealed class QqWordLyricsCapabilityAdapter : ChineseWordLyricsCapabilityA
         {
             req_1 = new
             {
-                module = "music.musichallSong.PlayLyricInfo", method = "GetPlayLyricInfo",
+                module = "music.musichallSong.PlayLyricInfo",
+                method = "GetPlayLyricInfo",
                 param = new
                 {
-                    songID = songId, songName = Base64(candidate.Title), singerName = Base64(candidate.Artist),
-                    albumName = Base64(candidate.Album ?? string.Empty), interval = (int)Math.Round(candidate.DurationSeconds ?? 0),
-                    qrc = 1, crypt = 1, ct = 19, cv = 0
+                    songID = songId,
+                    songName = Base64(candidate.Title),
+                    singerName = Base64(candidate.Artist),
+                    albumName = Base64(candidate.Album ?? string.Empty),
+                    interval = (int)Math.Round(candidate.DurationSeconds ?? 0),
+                    qrc = 1,
+                    crypt = 1,
+                    ct = 19,
+                    cv = 0
                 }
             }
         }), token, "application/json");

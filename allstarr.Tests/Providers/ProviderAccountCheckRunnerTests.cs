@@ -76,10 +76,14 @@ public sealed class ProviderAccountCheckRunnerTests
         var key = ProviderRuntimeStatusKey.CreateAccountFree("deezer", "streaming");
         ProviderRuntimeStatus Check(bool passed) => new()
         {
-            Provider = "deezer", Capability = "streaming", IsSupported = true, IsEnabled = true,
+            Provider = "deezer",
+            Capability = "streaming",
+            IsSupported = true,
+            IsEnabled = true,
             Configuration = ProviderConfigurationState.Configured,
             Health = passed ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
-            TestedAt = time.GetUtcNow(), ReasonCode = passed ? null : "probe_failed"
+            TestedAt = time.GetUtcNow(),
+            ReasonCode = passed ? null : "probe_failed"
         };
         await history.RecordAsync(new(key, null, Check(true)), "health-test", default);
         time.Advance(TimeSpan.FromMinutes(1));

@@ -9,9 +9,15 @@ public sealed class PromotionNamingTests
 
     private static Dictionary<string, string?> Fields() => new(StringComparer.OrdinalIgnoreCase)
     {
-        ["artist"] = "Singer", ["albumartist"] = "Various Artists", ["album"] = "Collection",
-        ["title"] = "Song", ["year"] = "2024", ["tracknumber"] = "3", ["totaldiscs"] = "2",
-        ["discnumber"] = "1", ["_extension"] = "flac"
+        ["artist"] = "Singer",
+        ["albumartist"] = "Various Artists",
+        ["album"] = "Collection",
+        ["title"] = "Song",
+        ["year"] = "2024",
+        ["tracknumber"] = "3",
+        ["totaldiscs"] = "2",
+        ["discnumber"] = "1",
+        ["_extension"] = "flac"
     };
 
     [Fact]

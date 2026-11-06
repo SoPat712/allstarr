@@ -355,8 +355,12 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var gateway = new GatewayHandler([], "audio/flac")
         {
             AdvertiseLyrics = true,
-            LyricsPayload = System.Text.Json.JsonSerializer.Serialize(new { source = "GAMDL", format = "TTML",
-                content = "<tt xmlns='http://www.w3.org/ns/ttml'><body><div><p begin='1' end='2'><span begin='1' end='1.5'>Synthetic </span><span begin='1.5' end='2'>words</span></p></div></body></tt>" })
+            LyricsPayload = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                source = "GAMDL",
+                format = "TTML",
+                content = "<tt xmlns='http://www.w3.org/ns/ttml'><body><div><p begin='1' end='2'><span begin='1' end='1.5'>Synthetic </span><span begin='1.5' end='2'>words</span></p></div></body></tt>"
+            })
         };
         var settings = new AppleDownloadSettings { BaseUrl = "https://gateway.test/" };
         using var client = new HttpClient(gateway);

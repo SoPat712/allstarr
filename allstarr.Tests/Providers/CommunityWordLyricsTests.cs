@@ -99,7 +99,8 @@ public sealed class CommunityWordLyricsTests
     {
         var json = JsonSerializer.Serialize(new
         {
-            track = new { isrc, title, artist = "Artist", duration }, meta = new { level = "word" },
+            track = new { isrc, title, artist = "Artist", duration },
+            meta = new { level = "word" },
             lines = new[] { new { text = "Synthetic words", start = 5623, end = 6711,
                 words = new[] { new { text = "Synthetic ", start = 5623, end = 6000 }, new { text = "words", start = 6000, end = 6711 } } } }
         });

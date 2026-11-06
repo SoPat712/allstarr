@@ -435,8 +435,12 @@ public sealed class LibraryPromotionService(IDbContextFactory<AllstarrDbContext>
     {
         var fields = plan.NamingFields ?? PromotionSongFields.FromSong(new Song
         {
-            Title = plan.Track.Title, Artist = plan.Track.Artist, Album = plan.Track.Album ?? "Unknown",
-            AlbumArtist = plan.Track.AlbumArtist, Year = plan.Track.Year, Track = plan.Track.Track
+            Title = plan.Track.Title,
+            Artist = plan.Track.Artist,
+            Album = plan.Track.Album ?? "Unknown",
+            AlbumArtist = plan.Track.AlbumArtist,
+            Year = plan.Track.Year,
+            Track = plan.Track.Track
         }, plan.Track.Extension);
         var result = PromotionNaming.Render(plan.NamingScript, fields);
         return result.RelativePath ?? throw new ArgumentException("The promotion naming script does not produce a safe relative path.");

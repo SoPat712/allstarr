@@ -49,8 +49,13 @@ public sealed class PromotionNamingPreviewService(IDbContextFactory<AllstarrDbCo
         var candidates = tracks.GroupBy(item => (item.BackendInstanceId, item.BackendItemId)).Select(group => group.First())
             .Select(item => new Example(item.Id, item.CanonicalRecordingId, new Song
             {
-                Id = item.BackendItemId, Title = item.Title, Artist = item.Artist, Album = item.Album ?? "",
-                AlbumArtist = item.AlbumArtist, Container = Extension(item.FilePath), CanonicalRecordingId = item.CanonicalRecordingId,
+                Id = item.BackendItemId,
+                Title = item.Title,
+                Artist = item.Artist,
+                Album = item.Album ?? "",
+                AlbumArtist = item.AlbumArtist,
+                Container = Extension(item.FilePath),
+                CanonicalRecordingId = item.CanonicalRecordingId,
                 ProviderIds = new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     ["musicbrainz_recordingid"] = item.MusicBrainzRecordingId ?? "",
@@ -67,8 +72,12 @@ public sealed class PromotionNamingPreviewService(IDbContextFactory<AllstarrDbCo
                 if (metadata == null) continue;
                 candidates.Add(new(null, item.Route.CanonicalRecordingId, new Song
                 {
-                    Title = metadata.Title, Artist = metadata.Artists.FirstOrDefault() ?? "Unknown", Album = metadata.Album ?? "",
-                    AlbumArtist = metadata.AlbumArtist, Track = metadata.Track, Container = Extension(item.CanonicalPath),
+                    Title = metadata.Title,
+                    Artist = metadata.Artists.FirstOrDefault() ?? "Unknown",
+                    Album = metadata.Album ?? "",
+                    AlbumArtist = metadata.AlbumArtist,
+                    Track = metadata.Track,
+                    Container = Extension(item.CanonicalPath),
                     CanonicalRecordingId = item.Route.CanonicalRecordingId
                 }));
             }

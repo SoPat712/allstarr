@@ -607,8 +607,11 @@ public sealed partial class ProtocolLyricsResolver(
         {
             var prefix = sourceProvider switch
             {
-                "spotify" or "spicylyrics" => "spotify", "applemusic" or "apple-musickit" or "apple-download" => "apple",
-                "netease" or "neteaselyrics" => "netease", "qq" or "qqlyrics" => "qq", _ => null
+                "spotify" or "spicylyrics" => "spotify",
+                "applemusic" or "apple-musickit" or "apple-download" => "apple",
+                "netease" or "neteaselyrics" => "netease",
+                "qq" or "qqlyrics" => "qq",
+                _ => null
             };
             if (prefix == "spotify" && SpotifyTrackReference.TryNormalize(sourceExternalId, out var sourceSpotify)) return "spotify:" + sourceSpotify;
             if (prefix is "apple" or "netease" or "qq" && !string.IsNullOrWhiteSpace(sourceExternalId)) return prefix + ":" + sourceExternalId;
