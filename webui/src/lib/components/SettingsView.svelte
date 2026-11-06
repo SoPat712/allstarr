@@ -5,7 +5,7 @@
   import { home, settings, downloads, type DownloadsResponse, type ConfigSection, type UiSchema, type OnboardingState } from "$lib/api";
   import { slideIndicator } from "$lib/slide-indicator";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
-  import { Activity, Archive, AudioLines, Bell, Gauge, HardDrive, Headphones, Lock, Palette, Rocket, SlidersHorizontal, Users } from "@lucide/svelte";
+  import { Activity, Archive, AudioLines, Bell, Gauge, HardDrive, Headphones, Library, Lock, Palette, Rocket, SlidersHorizontal, Users } from "@lucide/svelte";
   import { Button } from "$lib/components/ui/button";
   import SettingsRestartNotice from "$lib/components/SettingsRestartNotice.svelte";
   import SettingsFields from "$lib/components/SettingsFields.svelte";
@@ -24,6 +24,7 @@
   const allPages = [
     { id: "appearance", label: "Appearance", group: "You", icon: Palette, description: "How Allstarr looks on this device." },
     { id: "preferences", label: "Listening preferences", group: "You", icon: Headphones, description: "", href: "#/preferences" },
+    { id: "adding-to-library", label: "Adding to the library", group: "You", icon: Library, description: "Your own process. Saved as you go; the household default applies to listeners without one." },
     { id: "general", label: "General", group: "Server", icon: SlidersHorizontal, description: "Server-wide behavior for every listener. Changes save as you make them." },
     { id: "quality", label: "Quality and routing", group: "Server", icon: Gauge, description: "The highest quality Allstarr plays and downloads, and the order it tries sources. Your own music always comes first." },
     { id: "access", label: "Access and network", group: "Server", icon: Lock, description: "Who can sign in, media-server access, and how Allstarr is reached." },
@@ -130,6 +131,8 @@
       {/if}
       {#if active === "appearance"}
         {#await import("./SettingsAppearance.svelte")}<RowsSkeleton count={1} />{:then { default: Appearance }}<Appearance />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
+      {:else if active === "adding-to-library"}
+        {#await import("./LibraryPromotionSettings.svelte")}<RowsSkeleton count={4} />{:then { default: Promotion }}<Promotion {administrator} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
       {:else if active === "quality"}
         {#await import("./RoutingView.svelte")}<RowsSkeleton />{:then { default: Routing }}<Routing embedded />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
       {:else if active === "listeners"}

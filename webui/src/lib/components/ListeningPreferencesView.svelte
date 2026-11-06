@@ -392,6 +392,12 @@
 
     <div class="panel preferences-panel elsewhere-panel">
       <header class="panel-heading"><h3>Elsewhere</h3></header>
+      <section class="preference-options" aria-labelledby="library-profile-title">
+        <div class="preference-link-row">
+          <div><h3 id="library-profile-title">Adding to the library</h3><p>Choose file names, quality and extras for your library copies.</p></div>
+          <Button variant="secondary" href="#/settings/adding-to-library">Library profile</Button>
+        </div>
+      </section>
       <section class="preference-options" aria-labelledby="problem-alerts-title">
         <div class="preference-link-row">
           <div>
