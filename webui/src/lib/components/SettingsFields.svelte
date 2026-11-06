@@ -170,7 +170,7 @@
         {:else if field.key === "MATCHING_LOCAL_PREFERENCE_PERCENT"}
           <div class="matching-preference"><span class="settings-toggle"><Switch aria-label={label(field)} checked={Number(value(field)) > 0} disabled={busy} onchange={event => change(field, event.currentTarget.checked ? "7" : "0")} /></span><details><summary>Preference window</summary><input type="number" aria-label="Preference window (points)" value={value(field)} min={field.min ?? 0} max={field.max ?? 20} disabled={busy} onchange={event => { if (event.currentTarget.reportValidity()) change(field, event.currentTarget.value); }} /></details></div>
         {:else if field.key === "PLAYBACK_START_PREFERENCE"}
-          <ThreeDetentSwitch name={field.key} label={label(field)} value={(value(field) || "Balanced") as PlaybackStart} options={playbackStartOptions} compact disabled={busy} onchange={next => change(field, next)} />
+          <ThreeDetentSwitch name={field.key} label={label(field)} value={(value(field) || "Balanced") as PlaybackStart} options={playbackStartOptions} disabled={busy} onchange={next => change(field, next)} />
         {:else if field.key === "STORAGE_MODE"}
           <span class="settings-toggle"><Switch aria-label={label(field)} checked={value(field) === "Cache"} disabled={busy} onchange={event => change(field, event.currentTarget.checked ? "Cache" : "Permanent")} /></span>
         {:else if toggle(field)}

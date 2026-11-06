@@ -7,10 +7,10 @@
   } = $props();
 
   const options = [
-    { value: "automatic", label: "On", tone: "primary" },
+    { value: "automatic", label: "On" },
     { value: "manualOnly", label: "Manual only" },
-    { value: "off", label: "Off", tone: "neutral" },
+    { value: "off", label: "Off" },
   ] as const;
 </script>
 
-<ThreeDetentSwitch {value} {label} {options} {disabled} {onchange} compact widths={[27.5, 45, 27.5]} />
+<ThreeDetentSwitch {value} {label} {options} {disabled} {onchange} />

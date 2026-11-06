@@ -349,7 +349,7 @@
           <h3 id="playback-start-title">Playback start</h3>
           <p>Fast start chooses quick lossless playback. Balanced favors the best quality when recent starts take 3 seconds or less. Best quality prefers the highest quality.</p>
         </div>
-        <ThreeDetentSwitch label="Playback start" value={playbackStart} options={playbackStartOptions} compact disabled={controlsDisabled || !selectedFilter} onchange={value => void changePreference("playbackStart", value)} />
+        <ThreeDetentSwitch label="Playback start" value={playbackStart} options={playbackStartOptions} disabled={controlsDisabled || !selectedFilter} onchange={value => void changePreference("playbackStart", value)} />
       </section>
 
       <section class="preference-options" aria-labelledby="quality-limit-title">

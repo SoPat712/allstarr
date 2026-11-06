@@ -46,7 +46,7 @@
   }
 </script>
 
-<div bind:this={group} class="filter-segments" role="radiogroup" tabindex="-1" aria-label={label} onkeydown={navigate} onfocusout={(event) => { if (!(event.relatedTarget instanceof Node) || !group.contains(event.relatedTarget)) focused = undefined; }}>
+<div bind:this={group} class="seg filter-segments" role="radiogroup" tabindex="-1" aria-label={label} onkeydown={navigate} onfocusout={(event) => { if (!(event.relatedTarget instanceof Node) || !group.contains(event.relatedTarget)) focused = undefined; }}>
   {#each options as option (option.id)}
     <button
       type="button"
@@ -62,15 +62,3 @@
     </button>
   {/each}
 </div>
-
-<style>
-  .filter-segments { display: flex; width: fit-content; min-width: 0; max-width: 100%; overflow-x: auto; gap: var(--space-1); padding: var(--space-1); border: 1px solid var(--color-edge); border-radius: var(--radius-lg); background: var(--color-panel); }
-  button { display: inline-flex; min-height: var(--control-md); min-width: var(--control-md); max-width: 100%; flex: 0 0 auto; align-items: center; justify-content: center; gap: var(--space-2); border: 0; border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); background: transparent; color: var(--color-ink-muted); cursor: pointer; font-size: var(--text-sm); font-weight: 500; white-space: nowrap; transition: background var(--motion-standard), color var(--motion-standard); }
-  button > span { min-width: 0; overflow-wrap: anywhere; }
-  button:hover { background: var(--color-panel-raised); color: var(--color-ink); }
-  button[aria-checked="true"] { background: var(--color-signal-muted); color: var(--color-signal-text); font-weight: 700; }
-  .segment-count { font-variant-numeric: tabular-nums; }
-  button.zero { opacity: 0.55; }
-  @media (min-width: 900px) { .filter-segments { flex-wrap: wrap; overflow: visible; } button { white-space: normal; } }
-  @media (prefers-reduced-motion: reduce) { button { transition: none; } }
-</style>

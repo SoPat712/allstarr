@@ -2436,7 +2436,83 @@ for (const theme of ["light", "dark"]) {
   });
 }
 
-test("Shared selects and settings tabs animate without remounting", async ({ page }) => {
+for (const theme of ["light", "dark"] as const) {
+  test(`Segmented controls share borders and selected colors across workspaces in ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.addInitScript(mode => localStorage.setItem("allstarr.theme", mode), theme);
+    await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+    await page.route("**/*", route => ["localhost", "127.0.0.1"].includes(new URL(route.request().url()).hostname) ? route.fallback() : route.abort());
+    await mockApi(page);
+    const screens = [
+      ["#/sources/services/lumen-audio", "Use this source for you"],
+      ["#/library/cached", "Cached song filters"],
+      ["#/activity?view=history", "History filters"],
+      ["#/activity?view=plays", "Play filters"],
+      ["#/activity?view=tasks", "Task filters"],
+      ["#/settings/appearance", "Color theme"],
+      ["#/settings/listeners", "Filter listeners"],
+    ];
+    for (const [href, label] of screens) {
+      await page.goto(href);
+      await expect(page.getByRole("radiogroup", { name: label, exact: true })).toBeVisible();
+      const mismatches = await page.locator(".seg").evaluateAll(groups => {
+        const probe = document.createElement("span");
+        document.body.append(probe);
+        const color = (token: string) => {
+          probe.style.color = `var(${token})`;
+          return getComputedStyle(probe).color;
+        };
+        const edge = color("--color-edge-strong"), ink = color("--color-ink");
+        const tonal = color("--md-sys-color-secondary-container"), onTonal = color("--md-sys-color-on-secondary-container");
+        const errors: string[] = [];
+        for (const group of groups) {
+          const name = group.getAttribute("aria-label") ?? group.className;
+          const style = getComputedStyle(group);
+          if ([style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth].some(width => width !== "1px") || style.borderTopStyle !== "solid" || style.borderTopColor !== edge || style.borderRadius !== "999px" || style.columnGap !== "0px") errors.push(`${name}: outline`);
+          for (const [index, control] of [...group.querySelectorAll(":scope > a, :scope > button")].entries()) {
+            const selected = control.matches('[aria-selected="true"], [aria-checked="true"], [aria-pressed="true"]');
+            const item = getComputedStyle(control);
+            if (item.backgroundColor !== (selected ? tonal : "rgba(0, 0, 0, 0)") || item.color !== (selected ? onTonal : ink)) errors.push(`${name}: ${control.textContent} colors`);
+            if (index > 0 && (item.borderInlineStartWidth !== "1px" || item.borderInlineStartColor !== edge)) errors.push(`${name}: divider`);
+            if (!["none", "normal"].includes(getComputedStyle(control, "::after").content)) errors.push(`${name}: underline`);
+          }
+          if (group.querySelector(".slide-indicator, .use-switch-thumb")) errors.push(`${name}: old indicator`);
+        }
+        probe.remove();
+        return errors;
+      });
+      expect(mismatches, href).toEqual([]);
+    }
+  });
+}
+
+for (const [administrator, backend] of [[true, "Jellyfin"], [false, "Navidrome"]] as const) {
+  test(`Desktop drawer groups destinations and identifies the ${administrator ? "administrator" : "listener"}`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await mockApi(page, { intelligenceEnabled: false });
+    await page.route("**/api/admin/auth/me", route => route.fulfill({ json: { authenticated: true, backend, user: { id: "user", name: "Taylor", isAdministrator: administrator } } }));
+    await page.goto("#/settings");
+    const nav = page.locator(".desktop-navigation");
+    await expect(nav.getByRole("group", { name: "Main destinations", exact: true }).getByRole("link")).toHaveText(["Home", "Library", "For you", "Sources", "Activity", "Settings"]);
+    const secondary = nav.getByRole("group", { name: "Help and connections", exact: true });
+    await expect(secondary.getByRole("link")).toHaveText(["Connect apps", "Report a problem"]);
+    await expect(secondary).toHaveCSS("border-top-width", "1px");
+    expect(await secondary.evaluate(element => Number.parseFloat(getComputedStyle(element).marginTop))).toBeGreaterThan(0);
+    await expect(page.locator(".brand small")).toHaveText(backend);
+    await expect(page.locator(".profile strong")).toHaveText("Taylor");
+    await expect(page.locator(".profile small")).toHaveText(administrator ? "Administrator" : "Listener");
+    await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
+    await expect(nav.getByRole("link", { name: "Listening preferences", exact: true })).toHaveCount(0);
+    if (administrator) await expect(page.getByRole("region", { name: "About Allstarr" })).toContainText("beta");
+    const settingsNav = page.getByRole("navigation", { name: "Settings sections", exact: true }).first();
+    await expect(settingsNav.getByText("You", { exact: true })).toBeVisible();
+    await settingsNav.getByRole("link", { name: "Listening preferences", exact: true }).click();
+    await expect(page).toHaveURL(/#\/preferences$/);
+    await expect(nav.getByRole("link", { name: "Settings", exact: true })).toHaveAttribute("aria-current", "page");
+  });
+}
+
+test("Shared selects and settings tabs preserve selection without remounting", async ({ page }) => {
   await mockApi(page);
   await page.goto("#/settings/general");
   const selectedNav = page.locator(".desktop-navigation")
@@ -2454,17 +2530,16 @@ test("Shared selects and settings tabs animate without remounting", async ({ pag
   const routing = page.getByRole("tab", { name: "Matches" });
   await routing.click();
   await expect(tabs).toHaveAttribute("data-instance", "stable");
-  const indicator = tabs.locator(".slide-indicator");
-  expect(await indicator.evaluate((element) => getComputedStyle(element).height)).toBe("2px");
-  expect(await indicator.evaluate((element) => getComputedStyle(element).backgroundColor))
-    .toBe(await page.evaluate(() => {
-      const sample = document.createElement("span");
-      sample.style.color = "var(--color-signal)";
-      document.body.append(sample);
-      const value = getComputedStyle(sample).color;
-      sample.remove();
-      return value;
-    }));
+  await expect(tabs.locator(".slide-indicator")).toHaveCount(0);
+  await expect(tabs).toHaveCSS("border-top-width", "1px");
+  await expect.poll(() => routing.evaluate(element => {
+    const sample = document.createElement("span");
+    sample.style.backgroundColor = "var(--md-sys-color-secondary-container)";
+    document.body.append(sample);
+    const matches = getComputedStyle(element).backgroundColor === getComputedStyle(sample).backgroundColor;
+    sample.remove();
+    return matches;
+  })).toBe(true);
 });
 
 test("Legacy Library links open their current shared views", async ({ page }) => {
@@ -4147,7 +4222,7 @@ for (const theme of ["light", "dark"] as const) {
       await expect(page.locator(".profile a[href='#/settings']")).toHaveCount(0);
       if (width > 760) {
         await expect(page.locator(".mobile-navigation")).toBeHidden();
-        await expect(primary.getByRole("link")).toHaveCount(7);
+        await expect(primary.getByRole("link")).toHaveText(["Home", "Library", "For you", "Sources", "Activity", "Settings", "Connect apps", "Report a problem"]);
         await expect(primary.getByRole("link", { name: "Report a problem", exact: true })).toHaveCount(1);
         await expect(primary.getByRole("link", { name: "Connect apps", exact: true })).toHaveCount(1);
         await expect(primary.getByRole("link", { name: "Settings", exact: true })).toHaveCount(1);
@@ -4883,12 +4958,12 @@ test("Settings preserves dirty drafts during live refresh and scrolls mobile tab
   }));
   expect(tabSizes.every(({ height, fontSize }) => height >= 44 && fontSize >= 14)).toBe(true);
   const storageTab = tabs.getByRole("tab", { name: "Storage" });
-  const selectedUnderline = await storageTab.evaluate((element) => getComputedStyle(element, "::after").backgroundColor);
+  const selectedBackground = await storageTab.evaluate((element) => getComputedStyle(element).backgroundColor);
   await tabs.getByRole("tab", { name: "Setup guide", exact: true }).click();
   await expect(tabs.getByRole("tab", { name: "Setup guide", exact: true })).toHaveAttribute("aria-selected", "true");
   const setupTab = tabs.getByRole("tab", { name: "Setup guide", exact: true });
-  await expect.poll(() => setupTab.evaluate((element) => getComputedStyle(element, "::after").backgroundColor))
-    .toBe(selectedUnderline);
+  await expect.poll(() => setupTab.evaluate((element) => getComputedStyle(element).backgroundColor))
+    .toBe(selectedBackground);
   await expect.poll(() => tabs.evaluate((element) => {
     const active = element.querySelector<HTMLElement>('[aria-selected="true"]');
     if (!active) return false;
@@ -5587,8 +5662,8 @@ test("Responsive boundaries preserve navigation and download identity", async ({
   for (const width of [760, 761, 900, 901]) {
     await page.setViewportSize({ width, height: 844 });
     const navigation = page.locator(width <= 760 ? ".mobile-navigation" : ".desktop-navigation");
-    await expect(navigation.getByRole("link")).toHaveCount(width <= 760 ? 3 : 7);
-    await expect(navigation.locator(":scope > :is(a, button)")).toHaveCount(width <= 760 ? 4 : 7);
+    await expect(navigation.getByRole("link")).toHaveCount(width <= 760 ? 3 : 8);
+    await expect(navigation.locator(width <= 760 ? ":scope > :is(a, button)" : ".navigation-group > a")).toHaveCount(width <= 760 ? 4 : 8);
     await expect(page.locator(".sidebar")).toHaveCSS("position", "fixed");
     if (width === 900)
       await expect.poll(async () => (await page.locator(".sidebar").boundingBox())?.width ?? 0).toBe(80);
@@ -5660,7 +5735,7 @@ test("Sidebar uses an integrated expander and deterministic slim breakpoint", as
     page.getByRole("link", { name: "Allstarr home" }).boundingBox(),
   ]);
   expect(expanderBox!.y + expanderBox!.height).toBeLessThanOrEqual(brandBox!.y);
-  await expect(page.locator(".desktop-navigation").getByRole("link")).toHaveCount(7);
+  await expect(page.locator(".desktop-navigation").getByRole("link")).toHaveCount(8);
   await expect(page.locator(".desktop-navigation").getByRole("link", { name: "Connect apps", exact: true })).toBeVisible();
   await expect(page.locator(".desktop-navigation").getByRole("link", { name: "Intelligence" })).toHaveCount(0);
   const libraryIcon = page.locator(".desktop-navigation")
@@ -8998,7 +9073,7 @@ for (const width of [320, 390, 718, 1280]) for (const theme of ["light", "dark"]
     await page.goto("#/integrations/services/spicylyrics");
     const sourcePanel = page.getByRole("dialog", { name: "SpicyLyrics", exact: true });
     // Both sections load above the test opener; wait for their final layout before clicking.
-    await expect(sourcePanel.getByRole("region", { name: "Last 30 checks", exact: true }).getByRole("img")).toBeVisible();
+    await expect(sourcePanel.getByText("No checks yet", { exact: true })).toBeVisible();
     await expect(sourcePanel.getByRole("radiogroup", { name: "Use this source for you", exact: true })).toBeVisible();
     await openSourceSettings(page, "SpicyLyrics");
     await clickWhenStable(sourcePanel.getByRole("button", { name: "Open Lyrics tests", exact: true }));
@@ -9158,7 +9233,7 @@ test("Source health Resume now clears the pause and recovers from a failed reque
   await page.goto("#/integrations/services/lumen-audio");
   const routing = page.getByRole("region", { name: "Automatic routing" });
   await expect(routing).toContainText("Started");
-  const strip = page.getByRole("region", { name: "Last 30 checks", exact: true }).getByRole("img", { name: /^9 recorded checks, oldest to newest;/ });
+  const strip = page.getByRole("region", { name: "Last 30 checks", exact: true }).getByRole("group", { name: /^9 recorded checks, oldest to newest;/ });
   await expect(strip).toBeVisible();
   await expect(strip.locator('[data-outcome]:not([data-outcome="empty"])')).toHaveCount(9);
   await routing.getByRole("button", { name: "Resume now" }).click();
@@ -9229,7 +9304,7 @@ test("Source health retry follows server time and refreshes quietly once", async
   await page.goto("#/integrations/services/lumen-audio");
   const routing = page.getByRole("region", { name: "Automatic routing" });
   await expect(routing).toContainText("Paused from automatic use after repeated failures");
-  await expect(page.getByRole("region", { name: "Last 30 checks", exact: true }).getByRole("img")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Last 30 checks", exact: true }).getByRole("group")).toBeVisible();
   expect(statusReads).toBe(1);
   expect(historyReads).toBe(1);
   await page.clock.runFor(2_100);

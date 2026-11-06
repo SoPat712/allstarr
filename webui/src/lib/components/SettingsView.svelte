@@ -35,10 +35,10 @@
     { id: "health", label: "Health", group: "Maintenance", icon: Activity, description: "Checks against your media server. Skipped checks don't mean a problem." },
     { id: "setup", label: "Setup guide", group: "Maintenance", icon: Rocket, description: "Walk through setup again. Nothing is reset; progress is saved for your account." },
   ] as const;
-  const pages = $derived(allPages.filter(item => administrator || item.id === "alerts" || item.id === "appearance"));
+  const pages = $derived(allPages.filter(item => administrator || item.id === "alerts" || item.group === "You"));
   const legacy: Record<string, string> = { network: "access", diagnostics: "health", maintenance: "backups", routing: "quality" };
   const requested = $derived(legacy[section] ?? section);
-  const active = $derived(pages.some(item => item.id === requested) ? requested : administrator ? "general" : "alerts");
+  const active = $derived(pages.some(item => item.id === requested) ? requested : administrator ? "general" : "appearance");
   const activePage = $derived(pages.find(item => item.id === active) ?? pages[0]);
   const href = (item: (typeof allPages)[number]) => "href" in item ? item.href : `#/settings/${item.id}`;
   let schema = $state<UiSchema | null>(null), config = $state<Record<string, unknown>>({});
@@ -151,6 +151,7 @@
           {#if onboardingState}<Guide state={onboardingState} onChanged={onSetupChanged} embedded={onboardingState.completed} />{:else}<Button variant="outline" onclick={() => onOpenSetup()}>Open setup guide</Button>{/if}
         {:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
       {:else if active === "general"}
+        <section class="settings-card" aria-label="About Allstarr"><header><h3>Allstarr</h3></header><div class="settings-row"><strong>Version</strong><span>beta {__APP_VERSION__}</span></div></section>
         {#each generalGroups as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh} />{/each}
         {#if fields.some(field => field.key === "ODESLI_RATE_LIMIT_MS")}<details class="settings-fold"><summary>Advanced: wait between song.link lookups</summary><SettingsFields section={group("link-timing", "Song link timing", fields.filter(field => field.key === "ODESLI_RATE_LIMIT_MS"))} {config} onChanged={refresh} /></details>{/if}
       {:else if active === "access"}

@@ -23,8 +23,8 @@
     { href: "#/for-you", label: "For you", mobileLabel: "For you", icon: "headphones", mobile: true },
     { href: "#/sources/services", prefix: "/integrations/", label: "Sources", mobileLabel: "Sources", icon: "sources", mobile: false },
     { href: "#/activity", label: "Activity", mobileLabel: "Activity", icon: "activity", mobile: true },
-    { href: "#/connect", prefix: "/getting-started", label: "Connect apps", mobileLabel: "Connect apps", icon: "guide", mobile: false },
     { href: "#/settings", label: "Settings", mobileLabel: "Settings", icon: "settings", mobile: false },
+    { href: "#/connect", prefix: "/getting-started", label: "Connect apps", mobileLabel: "Connect apps", icon: "guide", mobile: false },
     { href: "#/report", label: "Report a problem", mobileLabel: "Report", icon: "report", mobile: false },
   ];
   const preferencesDestination: (typeof destinations)[number] = {
@@ -87,14 +87,10 @@
 
   const administrator = $derived(session?.user?.isAdministrator === true);
   const developmentIntelligence = $derived(session?.features?.intelligence === true);
-  const navigationDestinations = $derived(destinations
-    .filter(item => item.href !== "#/for-you" || !developmentIntelligence)
-    .map(item => administrator ? item
-      : item.href === "#/settings" ? preferencesDestination
-      : item.prefix === "/integrations/" ? { ...item, label: "Sources", mobileLabel: "Sources" }
-      : item));
+  const navigationDestinations = $derived(destinations.filter(item => item.href !== "#/for-you" || !developmentIntelligence));
   const mobileDestinations = $derived(navigationDestinations.filter((item) => item.mobile));
-  const moreDestinations = $derived([preferencesDestination, ...navigationDestinations.filter((item) => !item.mobile && item !== preferencesDestination)]);
+  const moreDestinations = $derived([preferencesDestination, ...["#/sources/services", "#/connect", ...(administrator ? ["#/settings"] : []), "#/report"]
+    .map(href => navigationDestinations.find(item => item.href === href)!).filter(Boolean)]);
   const librarySections = $derived(administrator
     ? allLibrarySections
     : allLibrarySections.filter((item) => item.id === "playlists" || item.id === "mappings" || item.id === "import"));
@@ -111,6 +107,7 @@
     }
     if (["/library/missing", "/library/migration"].includes(path)) return "/library/mappings";
     if (path === "/sources") return "/integrations/services";
+    if (path === "/settings/preferences") return "/preferences";
     if (path === "/settings/accounts") return "/integrations/accounts";
     if (path === "/settings/extensions") return "/integrations/services";
     if (["/settings/routing", "/settings/playback", "/integrations/routing"].includes(path)) return "/settings/quality";
@@ -120,7 +117,7 @@
 
   const route = $derived(currentRoute(`/${page.params.path ?? ""}`));
   const forbiddenRoute = $derived(!administrator && (
-    (route.startsWith("/settings") && route !== "/settings/alerts") ||
+    (route.startsWith("/settings") && !["/settings", "/settings/appearance", "/settings/preferences", "/settings/alerts"].includes(route)) ||
     route === "/library/cached" ||
     route === "/library/kept" ||
     (route === "/intelligence" && developmentIntelligence)
@@ -526,7 +523,7 @@
         <span class="brand-mark">A</span>
         <span>
           <strong>Allstarr</strong>
-          <small>beta {__APP_VERSION__}</small>
+          <small>{session.backend}</small>
         </span>
       </a>
       <button
@@ -542,17 +539,22 @@
       </button>
 
       <nav class="desktop-navigation" aria-label="Primary" use:slideIndicator={"a.active"}>
-        {#each navigationDestinations as destination}
-          <a
-            href={destination.href}
-            onpointerenter={() => prefetch(destination.href)}
-            onfocus={() => prefetch(destination.href)}
-            class:active={activeDestination.href === destination.href}
-            aria-current={activeDestination.href === destination.href ? "page" : undefined}
-          >
-            <span class="nav-icon"><UiIcon name={destination.icon} /></span>
-            <span class="nav-label">{destination.label}</span>
-          </a>
+        {#each [destinations.filter(item => !["#/connect", "#/report"].includes(item.href)), destinations.filter(item => ["#/connect", "#/report"].includes(item.href))] as group, index}
+          <div class="navigation-group" role="group" aria-label={index === 0 ? "Main destinations" : "Help and connections"}>
+            {#each group as destination}
+              {@const active = activeDestination.href === destination.href || destination.href === "#/settings" && (route === "/preferences" || route.startsWith("/settings"))}
+              <a
+                href={destination.href}
+                onpointerenter={() => prefetch(destination.href)}
+                onfocus={() => prefetch(destination.href)}
+                class:active
+                aria-current={active ? "page" : undefined}
+              >
+                <span class="nav-icon"><UiIcon name={destination.icon} /></span>
+                <span class="nav-label">{destination.label}</span>
+              </a>
+            {/each}
+          </div>
         {/each}
       </nav>
 
@@ -599,7 +601,7 @@
         <div class="min-w-0">
           <a class="block min-w-0 text-inherit no-underline" href="#/preferences" aria-label="Listening preferences" aria-current={route === "/preferences" ? "page" : undefined}>
             <strong>{session.user?.name}</strong>
-            <small>{session.backend} · Preferences</small>
+            <small>{administrator ? "Administrator" : "Listener"}</small>
           </a>
         </div>
         <button

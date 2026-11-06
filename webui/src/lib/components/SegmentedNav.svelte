@@ -1,7 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
   import type { Component } from "svelte";
-  import { slideIndicator } from "$lib/slide-indicator";
 
   type Item = { id: string; label: string; href?: string; count?: number; icon?: Component<any> };
 
@@ -78,12 +77,11 @@
 <nav class="segmented-nav" aria-label={label}>
   <div
     bind:this={tablist}
-    class={`segmented-tabs ${className}`}
+    class={`seg segmented-tabs ${className}`}
     role="tablist"
     tabindex="-1"
     style={`--tab-count:${items.length}`}
     onkeydown={navigate}
-    use:slideIndicator={'[aria-selected="true"]'}
   >
     {#each items as item}
       {#if item.href}

@@ -5,6 +5,7 @@
   import PageStatus from "$lib/components/patterns/PageStatus.svelte";
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
+  import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import ProblemContextCard from "$lib/components/ProblemContextCard.svelte";
   import { listenerSupport, newReportRequestId, reportKinds, reportReturnHref, reportSelection,
@@ -102,14 +103,7 @@
         {#if selector}
           <fieldset class="report-reasons" disabled={busy}>
             <legend>Problem</legend><p>Choose the closest description.</p>
-            <div class="reason-chips" role="radiogroup" aria-label="Problem">
-              {#each reportKinds as reason (reason.value)}
-                <label class:selected={kind === reason.value}>
-                  <input type="radio" name="report-kind" value={reason.value} bind:group={kind} />
-                  <span>{reasonLabels[reason.value]}</span>
-                </label>
-              {/each}
-            </div>
+            <ThreeDetentSwitch label="Problem" options={reportKinds.map(reason => ({ value: reason.value, label: reasonLabels[reason.value] }))} value={kind} disabled={busy} onchange={value => kind = value} />
           </fieldset>
         {:else}
           <div class="setting-field settings-row"><div><strong>Problem</strong><small>Choose the closest description.</small></div><SelectField label="Problem" value={kind} options={reportKinds} onchange={(value) => kind = value as ReportKind} /></div>
@@ -130,11 +124,6 @@
   .report-reasons { display: grid; gap: var(--space-2); margin: 0; border: 0; padding: var(--surface-gutter); border-bottom: 1px solid var(--color-edge); }
   .report-reasons legend { float: left; width: 100%; padding: 0; font-size: var(--text-sm); font-weight: 600; }
   .report-reasons p { margin: 0; color: var(--color-ink-muted); font-size: var(--text-sm); }
-  .reason-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .reason-chips label { position: relative; display: inline-flex; min-height: var(--control-md); align-items: center; gap: var(--space-2); border: 1px solid var(--color-edge); border-radius: var(--radius-xl); padding: var(--space-2) var(--space-3); color: var(--color-ink-muted); font-size: var(--text-sm); cursor: pointer; }
-  .reason-chips label.selected { border-color: var(--color-signal); background: var(--color-signal-muted); color: var(--color-signal-text); }
-  .reason-chips label:focus-within { outline: 2px solid var(--color-ring); outline-offset: 2px; }
-  .reason-chips input { width: var(--space-4); height: var(--space-4); margin: 0; accent-color: var(--color-signal); }
   .report-note-hint { color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.5; }
   .settings-fields > footer { gap: var(--space-3); }
   @media (max-width: 599px) { .settings-fields > footer { align-items: stretch; flex-direction: column; } }

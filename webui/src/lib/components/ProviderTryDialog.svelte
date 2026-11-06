@@ -23,6 +23,7 @@
   import { lyricsSourceDisplayName } from "$lib/sources";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
+  import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import LyricsAttribution from "$lib/components/LyricsAttribution.svelte";
 
@@ -191,22 +192,12 @@
     ...(operation("metadata", "isrc") ? [{ id: "isrc", label: "ISRC" }] : []),
   ]);
   const find = $derived(lookup === "search" ? kind : lookup);
-  let findButtons: HTMLButtonElement[] = [];
   $effect(() => {
     if (finds.length && !finds.some((item) => item.id === find)) choose(finds[0].id);
   });
   function choose(id: string) {
     if (id === "track" || id === "isrc") lookup = id;
     else { lookup = "search"; kind = id as ProviderTrySearchKind; }
-  }
-  function findKey(event: KeyboardEvent, current: number) {
-    if (running) return;
-    const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
-    if (!step && event.key !== "Home" && event.key !== "End") return;
-    event.preventDefault();
-    const next = event.key === "Home" ? 0 : event.key === "End" ? finds.length - 1 : (current + step + finds.length) % finds.length;
-    findButtons[next]?.focus();
-    choose(finds[next].id);
   }
 
   function submitMetadata(event: SubmitEvent) {
@@ -459,15 +450,7 @@
                 <Button type="submit" disabled={Boolean(running) || !query.trim()}>{running === "metadata" ? "Searching…" : lookup === "search" ? "Search" : "Look up"}</Button>
               </div>
               {#if finds.length > 1}
-                <div class="try-chips" role="radiogroup" aria-label="Find">
-                  {#each finds as item, index (item.id)}
-                    {#if index > 0 && (item.id === "track" || item.id === "isrc") && !["track", "isrc"].includes(finds[index - 1].id)}<span class="try-chip-divider" aria-hidden="true"></span>{/if}
-                    <button bind:this={findButtons[index]} type="button" role="radio" class="try-chip" aria-checked={find === item.id}
-                      tabindex={find === item.id ? 0 : -1} disabled={Boolean(running)} onclick={() => choose(item.id)} onkeydown={event => findKey(event, index)}>
-                      {#if find === item.id}<Check size={16} strokeWidth={2.5} aria-hidden="true" />{/if}{item.label}
-                    </button>
-                  {/each}
-                </div>
+                <ThreeDetentSwitch label="Find" options={finds.map(item => ({ value: item.id, label: item.label }))} value={find} disabled={Boolean(running)} onchange={choose} />
               {/if}
             </form>
             {@render status("metadata", result, result?.succeeded ? `${resultCountLabel(result)} found` : "")}
@@ -847,23 +830,9 @@
         color: var(--color-ink);
       }
 
-      .try-chip[aria-checked="true"] {
-        border-color: transparent;
-        background: var(--md-sys-color-secondary-container);
-        padding-left: var(--space-2);
-        color: var(--md-sys-color-on-secondary-container);
-      }
-
       .try-chip:focus-visible {
         outline: 2px solid var(--color-ring);
         outline-offset: 2px;
-      }
-
-      .try-chip-divider {
-        width: 1px;
-        height: 1.25rem;
-        margin: 0 var(--space-1);
-        background: var(--color-edge);
       }
 
       /* Outlined text fields. */
@@ -1364,8 +1333,7 @@
         display: none;
       }
 
-      .try-chip,
-      .try-chip-divider {
+      .try-chip {
         flex-shrink: 0;
       }
 

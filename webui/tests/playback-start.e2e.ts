@@ -112,7 +112,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
       expect(await radio.locator("span").evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
       expect(await radio.locator("span").evaluate(element => element.scrollHeight)).toBeLessThanOrEqual(20);
     }
-    expect(await group.locator("[aria-hidden=true]").first().evaluate(element => getComputedStyle(element).transitionDuration)).toBe("0s");
+    expect(await best.evaluate(element => getComputedStyle(element).transitionDuration)).toBe("0s");
+    await expect(group.locator(".use-switch-thumb")).toHaveCount(0);
     await page.screenshot({ path: testInfo.outputPath(`playback-start-${width}-${theme}.png`) });
     await page.getByRole("button", { name: "Reset to household defaults", exact: true }).click();
     await expect(fast).toBeChecked();
@@ -158,22 +159,32 @@ for (const width of [320, 390]) {
   test(`Playback start fits wider fallback labels at ${width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
-    await mockPreferences(page, route => json(route, {
-      values: { ...defaults, playbackStart: "Balanced" },
-      householdDefaults: { ...defaults, playbackStart: "Balanced" },
-      revision: "initial", usesHouseholdDefaults: true,
-    }));
+    let playbackStart: PlaybackStart = "Balanced";
+    await mockPreferences(page, route => {
+      if (route.request().method() === "PUT") playbackStart = route.request().postDataJSON().playbackStart;
+      return json(route, {
+        values: { ...defaults, playbackStart },
+        householdDefaults: { ...defaults, playbackStart: "Balanced" },
+        revision: "initial", usesHouseholdDefaults: playbackStart === "Balanced",
+      });
+    });
     await page.goto("/#/preferences");
     const group = page.getByRole("radiogroup", { name: "Playback start", exact: true });
     await expect(group).toBeVisible();
     await page.addStyleTag({ content: '[role="radiogroup"][aria-label="Playback start"] [role="radio"] { font-family: monospace; letter-spacing: .15px; }' });
     for (const name of ["Fast start", "Balanced", "Best quality"]) {
       await group.getByRole("radio", { name, exact: true }).click();
-      await expect.poll(() => group.evaluate(element => {
-        const active = element.querySelector('[aria-checked="true"]')!.getBoundingClientRect();
-        const thumb = element.querySelector(':scope > [aria-hidden="true"]')!.getBoundingClientRect();
-        return Math.abs(active.left - thumb.left) <= 1 && Math.abs(active.width - thumb.width) <= 1;
-      }), { message: "The selected thumb follows the rendered segment." }).toBe(true);
+      const selected = group.getByRole("radio", { name, exact: true });
+      await expect(selected).toHaveAttribute("aria-checked", "true");
+      expect(await selected.evaluate(element => {
+        const sample = document.createElement("span");
+        sample.style.backgroundColor = "var(--md-sys-color-secondary-container)";
+        document.body.append(sample);
+        const matches = getComputedStyle(element).backgroundColor === getComputedStyle(sample).backgroundColor;
+        sample.remove();
+        return matches;
+      })).toBe(true);
+      await expect(group.locator(":scope > [aria-hidden='true']")).toHaveCount(0);
       for (const radio of await group.getByRole("radio").all()) {
         const metrics = await radio.locator("span").evaluate(element => ({
           label: element.textContent, font: getComputedStyle(element).font,

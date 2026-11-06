@@ -1,5 +1,6 @@
 <script lang="ts">
   import { providerUse, type ProviderUseMode, type ProviderUseSettings } from "$lib/api";
+  import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
   import SourceUseSwitch from "$lib/components/SourceUseSwitch.svelte";
   import RowsSkeleton from "$lib/components/patterns/RowsSkeleton.svelte";
   import ErrorState from "$lib/components/patterns/ErrorState.svelte";
@@ -13,7 +14,7 @@
   let generation = 0;
   const source = $derived(data?.providers?.find(item => item.providerId === providerId));
   const modeLabel = (mode: ProviderUseMode) => mode === "manualOnly" ? "Manual only" : mode === "off" ? "Off" : "On";
-  const personalOptions = [{ mode: null, label: "Follow" }, { mode: "automatic", label: "On" }, { mode: "manualOnly", label: "Manual only" }, { mode: "off", label: "Off" }] as const;
+  const personalOptions = [{ value: "follow", label: "Follow" }, { value: "automatic", label: "On" }, { value: "manualOnly", label: "Manual only" }, { value: "off", label: "Off" }] as const;
   $effect(() => {
     const id = providerId;
     let current = true;
@@ -21,16 +22,6 @@
     providerUse.get().then(result => { if (current && id === providerId) data = result; }).catch(() => { if (current) failed = true; });
     return () => { current = false; };
   });
-  function navigate(event: KeyboardEvent) {
-    const step = ["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : ["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 0;
-    if (!step) return;
-    const controls = [...(event.currentTarget as HTMLDivElement).querySelectorAll<HTMLButtonElement>("button")];
-    const index = controls.indexOf(event.target as HTMLButtonElement);
-    if (index < 0) return;
-    event.preventDefault();
-    const next = controls[(index + step + controls.length) % controls.length];
-    next.focus(); next.click();
-  }
   async function reload() {
     failed = false;
     try { data = await providerUse.get(); } catch { failed = true; }
@@ -64,9 +55,7 @@
       <div class="use-setting"><div><strong>Everyone</strong><small>The default for every listener</small></div><SourceUseSwitch label="Use this source for everyone" value={source.householdMode} disabled={busy} onchange={mode => void save(mode, "household")} /></div>
     {/if}
     <div class="use-setting"><div><strong>Just you</strong><small>{!source.canChoosePersonal ? "An administrator turned this source off for everyone." : source.personalMode === null ? `Follows the setting for everyone. Current setting: ${modeLabel(source.householdMode)}.` : source.personalMode === "off" ? "Off: not used or shown anywhere." : "Your own setting."}</small></div>
-      <div class="personal-use" role="radiogroup" aria-label="Use this source for you" tabindex="-1" onkeydown={navigate}>
-        {#each personalOptions as option}<button type="button" role="radio" aria-checked={source.personalMode === option.mode} tabindex={source.personalMode === option.mode ? 0 : -1} disabled={busy || !source.canChoosePersonal} onclick={() => void save(option.mode, "personal")}>{option.label}</button>{/each}
-      </div>
+      <ThreeDetentSwitch label="Use this source for you" options={personalOptions} value={source.personalMode ?? "follow"} disabled={busy || !source.canChoosePersonal} onchange={mode => void save(mode === "follow" ? null : mode, "personal")} />
     </div>
   {:else if failed}<ErrorState title="This setting could not be loaded" onretry={reload} />
   {:else if !data}<RowsSkeleton count={1} />{/if}
@@ -78,10 +67,5 @@
   .use-setting { display: grid; min-width: 0; gap: var(--space-2); border-bottom: 1px solid var(--color-edge); padding-bottom: var(--space-3); }
   .use-setting:last-child { border: 0; padding-bottom: 0; }
   strong, small { display: block; } strong { font-size: var(--text-sm); } small { margin-top: var(--space-1); color: var(--color-ink-muted); font-size: var(--text-xs); }
-  .personal-use { display: flex; min-width: 0; gap: var(--space-1); padding: var(--space-1); border: 1px solid var(--color-edge); border-radius: var(--radius-lg); background: var(--color-panel-raised); }
-  button { flex: 1; min-width: 0; min-height: 44px; border: 0; border-radius: var(--radius-md); padding: var(--space-1); background: transparent; color: var(--color-ink-muted); font-size: var(--text-xs); cursor: pointer; }
-  button[aria-checked="true"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); font-weight: 600; }
-  button:disabled { opacity: .55; cursor: default; }
-  .use-setting :global(.use-switch) { width: 100%; min-height: 44px; }
-  .use-setting :global(.use-switch button) { min-height: 44px; }
+  .use-setting :global(.use-switch) { width: 100%; }
 </style>

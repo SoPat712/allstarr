@@ -322,9 +322,9 @@
                       {#if administrator}
                         <div class="play-scope" inert={actionBusy || matchLoading}>
                           <span>Change it for</span>
-                          <div class="play-audience" role="group" aria-label="Change it for">
-                            <button type="button" class="filter-chip" aria-pressed={authorityScope === "personal"} onclick={() => authorityScope = "personal"}>Just me</button>
-                            <button type="button" class="filter-chip" aria-pressed={authorityScope === "household"} onclick={() => authorityScope = "household"}>Everyone</button>
+                          <div class="seg play-audience" role="group" aria-label="Change it for">
+                            <button type="button" aria-pressed={authorityScope === "personal"} onclick={() => authorityScope = "personal"}>Just me</button>
+                            <button type="button" aria-pressed={authorityScope === "household"} onclick={() => authorityScope = "household"}>Everyone</button>
                           </div>
                         </div>
                       {/if}
@@ -385,7 +385,6 @@
   .play-actions :global(button) { min-height: 44px; }
   .play-scope, .play-report { width: 100%; min-width: 0; }
   .play-scope { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); color: var(--color-ink-muted); font-size: .8125rem; }
-  .play-audience { display: flex; gap: var(--space-2); }
   .play-audience button { min-height: 44px; }
   .play-report { display: grid; gap: var(--space-3); max-width: 32rem; }
   .play-report textarea { width: 100%; resize: vertical; }

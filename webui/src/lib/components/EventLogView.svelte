@@ -51,9 +51,9 @@
 </script>
 
 {#snippet scopeControls()}
-  <div class="activity-audience" role="group" aria-label="Activity scope">
-    <button bind:this={mineButton} use:restoreScopeFocus={"mine"} type="button" class="filter-chip" aria-pressed={scope === "mine"} onclick={() => void chooseScope("mine")}>Mine</button>
-    <button bind:this={everyoneButton} use:restoreScopeFocus={"everyone"} type="button" class="filter-chip" aria-pressed={scope === "everyone"} onclick={() => void chooseScope("everyone")}>Everyone</button>
+  <div class="seg activity-audience" role="group" aria-label="Activity scope">
+    <button bind:this={mineButton} use:restoreScopeFocus={"mine"} type="button" aria-pressed={scope === "mine"} onclick={() => void chooseScope("mine")}>Mine</button>
+    <button bind:this={everyoneButton} use:restoreScopeFocus={"everyone"} type="button" aria-pressed={scope === "everyone"} onclick={() => void chooseScope("everyone")}>Everyone</button>
   </div>
 {/snippet}
 
@@ -107,7 +107,6 @@
 
   :global(body:has([data-side-panel])) .activity-content { margin-right: var(--side-panel-offset, 0px); }
   .activity-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1rem; margin-block: var(--space-5) var(--section-gap); }
-  .activity-content :global(.activity-audience) { display: flex; gap: .5rem; }
   .activity-content :global(.activity-audience button) { min-height: var(--control-md); }
   .activity-scope { margin: 0; color: var(--md-sys-color-on-surface-variant); font-size: .8125rem; }
 </style>
