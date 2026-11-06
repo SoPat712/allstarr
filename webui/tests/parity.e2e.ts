@@ -9211,6 +9211,7 @@ test("Source health history ignores a response after changing source", async ({ 
 
 test("Source health retry follows server time and refreshes quietly once", async ({ page }) => {
   await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
+  await page.clock.pauseAt(new Date("2026-01-01T00:00:01Z"));
   await mockApi(page);
   let statusReads = 0;
   let historyReads = 0;
@@ -9228,7 +9229,9 @@ test("Source health retry follows server time and refreshes quietly once", async
   await page.goto("#/integrations/services/lumen-audio");
   const routing = page.getByRole("region", { name: "Automatic routing" });
   await expect(routing).toContainText("Paused from automatic use after repeated failures");
+  await expect(page.getByRole("region", { name: "Last 30 checks", exact: true }).getByRole("img")).toBeVisible();
   expect(statusReads).toBe(1);
+  expect(historyReads).toBe(1);
   await page.clock.runFor(2_100);
   await expect.poll(() => statusReads).toBe(2);
   await expect(routing).toHaveCount(0);
@@ -9236,6 +9239,9 @@ test("Source health retry follows server time and refreshes quietly once", async
   await page.clock.runFor(2_100);
   expect(statusReads).toBe(2);
   expect(historyReads).toBe(2);
+  // The five-second freshness poll is separate from the retry-window refresh.
+  await page.clock.runFor(1_100);
+  await expect.poll(() => statusReads).toBe(3);
   await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click();
   await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
 });

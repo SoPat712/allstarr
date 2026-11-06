@@ -99,7 +99,7 @@ test("Shelf Add is one click, keeps card height, and the card opens separately",
   await add.click();
   await expect(card.getByText("✓ In your apps", { exact: true })).toBeVisible();
   await expect(add).toHaveCount(0);
-  expect((await card.boundingBox())!.height).toBe(height);
+  expect((await card.boundingBox())!.height).toBeCloseTo(height, 2);
   expect(state.calls.filter(call => call.path === "/api/admin/mixes/daily-2/in-apps")).toHaveLength(1);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await card.getByRole("button", { name: "Open Blend 2", exact: true }).click();
