@@ -1360,6 +1360,12 @@ public sealed partial class ProtocolProviderGateway(
         }
         if (cacheReplay)
         {
+            var cacheStartCandidates = effectivePolicy != null && hasPlaybackIdentity && !resuming && rangeStart == 0
+                ? plan.Candidates.Where(candidate => IsAutomaticProvider(candidate.Provider.Id, effectivePolicy)).ToArray() : [];
+            var cacheStartFacts = new List<PlaybackStartCandidate>();
+            for (var index = 0; index < cacheStartCandidates.Length; index++)
+                if (await ReadPlaybackStartCandidateAsync(protocol, cacheStartCandidates[index], trackId, quality, index) is { } fact)
+                    cacheStartFacts.Add(fact);
             var checkedCacheRoutes = new HashSet<(string Provider, Guid? Account, long? Revision, string Track)>();
             async Task<ProtocolProviderStream?> OpenCompleteCacheAsync(ProviderRoutePlan<IProviderStreamingCapability> cachePlan)
             {
@@ -1374,7 +1380,18 @@ public sealed partial class ProtocolProviderGateway(
                     var cached = await OpenAvailableCacheAsync(protocol, candidate.Context, cachedTrack, quality,
                         rangeStart, true, true, protocol.CancellationToken);
                     if (cached != null)
-                        return await OpenedAsync(cached with { SelectionReason = "replay:managed-cache" }, candidate.Context, cachedTrack);
+                    {
+                        if (effectivePolicy?.Preferences.PlaybackStart != "FastStart" && cacheStartFacts.Any(fact =>
+                            PlaybackStartPolicy.CompareQuality(fact.Media, cached.Lease.Media) > 0 ||
+                            PlaybackStartPolicy.CompareQuality(fact.AvailableMedia, cached.Lease.Media) > 0))
+                        {
+                            cached.Response.Dispose();
+                            continue;
+                        }
+                        var selected = await OpenedAsync(cached with { SelectionReason = "replay:managed-cache" }, candidate.Context, cachedTrack);
+                        ScheduleCacheUpgrade(protocol, cacheStartCandidates, cacheStartFacts, trackId, quality);
+                        return selected;
+                    }
                 }
                 return null;
             }

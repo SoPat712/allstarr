@@ -26,11 +26,7 @@ public sealed partial class ProtocolProviderGateway
         var measurement = outcomes?.GetPlaybackStart(candidate.Context, quality);
         var media = measurement?.Media;
         var cached = await AvailableCachedMediaAsync(protocol, candidate.Context, track, quality, protocol.CancellationToken);
-        if (cached != null)
-        {
-            media = cached;
-        }
-        else if (MediaFacts is { } mediaStore)
+        if (media == null && MediaFacts is { } mediaStore)
         {
             var song = new Song { ExternalProvider = track.ProviderId, ExternalId = track.Value };
             try { await mediaStore.ApplyStoredMediaFactsAsync(protocol.RequireActor(), [song], protocol.CancellationToken); }
@@ -40,8 +36,10 @@ public sealed partial class ProtocolProviderGateway
                 media = new(AudioMediaFacts.Mime(song.Container ?? "unknown"), song.Container ?? "unknown", song.Codec,
                     song.Bitrate, song.SampleRate, song.BitDepth, song.Channels);
         }
+        media ??= cached ?? (candidate.Implementation as IProviderAudioFormatSource)?.PreferredFormat(quality);
+        if (cached != null && HasFailingPlaybackHealth(protocol, candidate)) media = cached;
         return cached != null || outcomes?.IsPlaybackCoolingDown(candidate.Context, track, quality) != true
-            ? new PlaybackStartCandidate(index, media, measurement?.MedianStart, cached != null) : null;
+            ? new PlaybackStartCandidate(index, cached ?? media, measurement?.MedianStart, cached != null, media) : null;
     }
 
     private async Task<ProtocolProviderStream?> OpenWithStartPreferenceAsync(ProtocolExecutionContext protocol,
@@ -85,7 +83,11 @@ public sealed partial class ProtocolProviderGateway
             _ => "playback-start-balanced"
         };
         plan = plan with { Candidates = order.Select(index => eligible[index]).ToArray() };
-        var orderedMedia = order.Select(index => facts.First(fact => fact.Index == index).Media).ToArray();
+        var orderedMedia = order.Select(index =>
+        {
+            var fact = facts.First(fact => fact.Index == index);
+            return mode != "FastStart" && PlaybackStartPolicy.CompareQuality(fact.AvailableMedia, fact.Media) > 0 ? fact.AvailableMedia : fact.Media;
+        }).ToList();
         var localCapacity = 0;
         ProviderError? lastFailure = null;
         string? fallbackReason = null;
@@ -95,7 +97,8 @@ public sealed partial class ProtocolProviderGateway
             protocol.CancellationToken.ThrowIfCancellationRequested();
             var current = index;
             var hedged = false;
-            using var result = index + 1 < count
+            var next = index + 1 < count ? facts.First(fact => fact.Index == order[index + 1]) : null;
+            using var result = next != null && PlaybackStartPolicy.ShouldHedge(mode, orderedMedia[current], next)
                 ? await PlaybackStartHedge.FirstReadyAsync(
                     (token, abandonment) => StartAsync(current, token, abandonment),
                     (token, abandonment) =>
@@ -112,7 +115,12 @@ public sealed partial class ProtocolProviderGateway
             if (result.Stream != null)
             {
                 var stream = result.TakeStream();
-                try { return await opened(stream, result.Execution, result.Track); }
+                try
+                {
+                    var selected = await opened(stream, result.Execution, result.Track);
+                    ScheduleCacheUpgrade(protocol, eligible, facts, requestedTrack, quality);
+                    return selected;
+                }
                 catch { stream.Response.Dispose(); throw; }
             }
             if (result.Error?.Code == LocalCapacityException.Code) throw new LocalCapacityException();
@@ -153,6 +161,7 @@ public sealed partial class ProtocolProviderGateway
             var patience = PlaybackStartPolicy.HedgeDelay(mode, quality, fact.Media) - PlaybackStartPolicy.HedgeDelay(mode);
             if (patience > TimeSpan.Zero) await Task.Delay(patience, clock, cancellation);
             plan = plan with { Candidates = [.. plan.Candidates, added] };
+            orderedMedia.Add(fact.Media);
             return await StartAsync(plan.Candidates.Count - 1, cancellation, abandonment);
         }
 
@@ -178,14 +187,21 @@ public sealed partial class ProtocolProviderGateway
                         requestedRange?.Ranges.Single().From, false, requestedRange != null, cancellation);
                     if (cached != null)
                     {
-                        if (!CanDeliverCached(protocol, cached))
+                        if (mode != "FastStart" && PlaybackStartPolicy.CompareQuality(cached.Lease.Media, orderedMedia[index]) < 0)
                         {
                             cached.Response.Dispose();
-                            return new(index, null, candidate.Context, track, ProviderError.AudioProfileUnavailable(), null);
                         }
-                        transferred = true;
-                        return new(index, cached with { SelectionReason = $"{startReason}:managed-cache" },
-                            candidate.Context, track, null, gate);
+                        else
+                        {
+                            if (!CanDeliverCached(protocol, cached))
+                            {
+                                cached.Response.Dispose();
+                                return new(index, null, candidate.Context, track, ProviderError.AudioProfileUnavailable(), null);
+                            }
+                            transferred = true;
+                            return new(index, cached with { SelectionReason = $"{startReason}:managed-cache" },
+                                candidate.Context, track, null, gate);
+                        }
                     }
                 }
                 if (outcomes?.IsPlaybackCoolingDown(candidate.Context, track, quality) == true)

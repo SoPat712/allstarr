@@ -39,7 +39,8 @@ public sealed record ExtensionSdkSetting(
 public sealed record ExtensionSdkQualityOption(
     string Id,
     string Label,
-    string? Description);
+    string? Description,
+    string? Kind = null);
 
 public sealed record ExtensionSignedSessionEndpoints(
     string Bootstrap,
@@ -399,7 +400,7 @@ public static partial class ExtensionSdkV1
                 throw new ExtensionSdkValidationException("Extension quality options must be strings or objects.");
             var idValue = Optional(value, "id") ?? Optional(value, "value") ?? Required(value, "name");
             result.Add(new(idValue, Optional(value, "label") ?? Optional(value, "displayName") ?? idValue,
-                Optional(value, "description")));
+                Optional(value, "description"), Optional(value, "kind")));
         }
         if (result.Count > 32 || result.Select(item => item.Id).Distinct(StringComparer.Ordinal).Count() != result.Count)
             throw new ExtensionSdkValidationException("Extension quality options must be unique and are limited to 32 entries.");

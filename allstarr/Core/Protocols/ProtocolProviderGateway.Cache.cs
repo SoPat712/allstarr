@@ -1,11 +1,68 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
+using allstarr.Core.Music;
+using allstarr.Core.Routing;
 using allstarr.Services.Common;
 
 namespace allstarr.Core.Protocols;
 
 public sealed partial class ProtocolProviderGateway
 {
+    private void ScheduleCacheUpgrade(ProtocolExecutionContext protocol,
+        IReadOnlyList<ProviderRouteCandidate<IProviderStreamingCapability>> candidates,
+        IReadOnlyList<PlaybackStartCandidate> facts, ProviderExternalResourceId requestedTrack, ProviderAudioQuality quality)
+    {
+        if (managedTrackCache == null || protocol.IsOriginalDownload) return;
+        ProviderMediaFormat? BestMedia(PlaybackStartCandidate fact) => PlaybackStartPolicy.CompareQuality(fact.AvailableMedia, fact.Media) > 0
+            ? fact.AvailableMedia : fact.Media;
+        var cached = facts.FirstOrDefault(fact => fact.IsCached && facts.Any(other =>
+            PlaybackStartPolicy.CompareQuality(BestMedia(other), fact.Media) > 0));
+        if (cached == null) return;
+        var target = candidates[cached.Index];
+        var track = target.TrackId ?? requestedTrack;
+        var scope = managedTrackCache.ScopeFor(protocol, target.Context.Account?.AccountId, quality, target.Context.Account?.Revision);
+        var better = facts.Where(fact => PlaybackStartPolicy.CompareQuality(BestMedia(fact), cached.Media) > 0)
+            .OrderByDescending(BestMedia, Comparer<ProviderMediaFormat?>.Create(PlaybackStartPolicy.CompareQuality))
+            .Take(4).Select(fact => candidates[fact.Index]).ToArray();
+        _ = managedTrackCache.ScheduleUpgrade(protocol, track, scope, target.Context.Account?.Revision, async token =>
+        {
+            var background = ManagedTrackCacheService.UpgradeContext(protocol, token);
+            foreach (var candidate in better)
+            {
+                var source = candidate.TrackId ?? requestedTrack;
+                var execution = new ProviderExecutionContext(candidate.Context.Actor, candidate.Context.ProviderId,
+                    candidate.Context.Account, candidate.Context.Policy, candidate.Context.OperationId, candidate.Context.CorrelationId,
+                    background.Deadline, token, candidate.Context.IdempotencyKey);
+                if (!await AllowsCleanPlaybackAsync(background, source, execution)) continue;
+                var available = await OpenAvailableCacheAsync(background, execution, source, quality, null, false, false, token);
+                if (available != null)
+                {
+                    if (PlaybackStartPolicy.CompareQuality(available.FileFacts.Media ?? available.Lease.Media, cached.Media) > 0) return available;
+                    available.Response.Dispose();
+                }
+                if (outcomes?.IsPlaybackCoolingDown(execution, source, quality) == true) continue;
+                var outcome = await OpenCandidateAsync(
+                    () => candidate.Implementation.GetStreamLeaseAsync(execution, new(source, quality)), async lease =>
+                    {
+                        using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+                        return lease.ProtectedResponseFactory != null ? await lease.ProtectedResponseFactory(request, token)
+                            : await httpClientFactory.CreateClient(StreamingClientName).SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+                    }, false, null, token, await ExpectedPlaybackDurationAsync(execution, source, requestedTrack));
+                if (!outcome.IsSuccess) continue;
+                var opened = outcome.RequireValue();
+                if (PlaybackStartPolicy.CompareQuality(opened.Lease.Media, cached.Media) <= 0)
+                {
+                    opened.Response.Dispose();
+                    continue;
+                }
+                return new(opened.Response, opened.Lease, candidate.Provider.Id, source.Value, execution.Account?.AccountId,
+                    EffectiveQuality: quality, ServingAccountRevision: execution.Account?.Revision)
+                { FileFacts = new() { Measured = PrefetchedStream.Facts(opened.Response.Content), Media = opened.Lease.Media } };
+            }
+            return null;
+        }, (stream, token) => GetSongAsync(ManagedTrackCacheService.UpgradeContext(protocol, token), stream.ServingProviderId, stream.ServingExternalId!));
+    }
+
     private static IEnumerable<ProviderAudioQuality> CachedQualities(ProtocolExecutionContext protocol, ProviderAudioQuality quality, bool range)
     {
         yield return quality;

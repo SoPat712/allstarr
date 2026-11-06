@@ -1,5 +1,6 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Music;
+using allstarr.Core.Providers.Qobuz;
 
 namespace allstarr.Tests;
 
@@ -8,6 +9,110 @@ public sealed class PlaybackStartPolicyTests
     private static readonly ProviderMediaFormat Cd = new("audio/flac", "flac", "flac", sampleRate: 44100, bitDepth: 16);
     private static readonly ProviderMediaFormat High = new("audio/flac", "flac", "flac", sampleRate: 96000, bitDepth: 24);
     private static readonly ProviderMediaFormat Mp3 = new("audio/mpeg", "mp3", "mp3", bitrate: 320000);
+
+    [Theory]
+    [InlineData("FLAC_24_HIGH", 192000)]
+    [InlineData("FLAC_24_LOW", 96000)]
+    public void ConfiguredLosslessTiersRetainTheirDeclaredSampleRate(string configured, int rate)
+    {
+        using var http = new HttpClient();
+        var source = new QobuzStreamingCapabilityAdapter(http, null!, null!, configured);
+        Assert.Equal(rate, source.PreferredFormat(ProviderAudioQuality.Any)!.SampleRate);
+        Assert.Equal(48000, ProviderDeclaredAudio.Parse("alac-24-48")!.SampleRate);
+    }
+
+    [Theory]
+    [InlineData("MP3_128", "mp3", 128000, null)]
+    [InlineData("AAC 256 kbps", "aac", 256000, null)]
+    [InlineData("FLAC lossless", "flac", null, 16)]
+    [InlineData("alac-24-96", "alac", null, 24)]
+    public void DeclaredFormatsSupplyUnprobedRankingFacts(string declaration, string codec, int? bitrate, int? depth)
+    {
+        var media = ProviderDeclaredAudio.Parse(declaration);
+        Assert.Equal(codec, media!.Codec);
+        Assert.Equal(bitrate, media.Bitrate);
+        Assert.Equal(depth, media.BitDepth);
+    }
+
+    [Fact]
+    public void DeclaredKindsDistinguishOpaqueLosslessOptionsAndExcludeSpatialAudio()
+    {
+        Assert.Equal("flac", ProviderDeclaredAudio.Parse("best", "lossless")!.Codec);
+        Assert.Null(ProviderDeclaredAudio.Parse("lossless spatial", "spatial"));
+        Assert.Equal("aac", ProviderDeclaredAudio.Parse("AAC 256; lossless unavailable", "lossy")!.Codec);
+    }
+
+    [Theory]
+    [InlineData("Balanced", 0)]
+    [InlineData("BestQuality", 0)]
+    [InlineData("FastStart", 0)]
+    public void ABetterFormatAtTheCachedSourceRemainsEligible(string mode, int expected) =>
+        Assert.Equal(expected, PlaybackStartPolicy.Order(mode,
+        [
+            new(0, new("audio/mpeg", "mp3", "mp3", 128000), TimeSpan.FromSeconds(2), IsCached: true, AvailableMedia: High),
+            new(1, Cd, TimeSpan.FromSeconds(5))
+        ])[0]);
+
+    [Theory]
+    [InlineData("Balanced")]
+    [InlineData("BestQuality")]
+    [InlineData("FastStart")]
+    public void LimitedLossySourceStaysBehindABetterDownloadSource(string mode) =>
+        Assert.Equal(1, PlaybackStartPolicy.Order(mode,
+        [
+            new(0, new("audio/mpeg", "mp3", "mp3", 128000, 44100), TimeSpan.FromMilliseconds(1)),
+            new(1, new("audio/mp4", "m4a", "aac", 256000, 44100), TimeSpan.FromSeconds(5))
+        ])[0]);
+
+    [Fact]
+    public void LimitedLossySourceRemainsTheLastFallback() =>
+        Assert.Equal([0, 2, 1], PlaybackStartPolicy.Order("Balanced",
+        [
+            new(0, Cd, TimeSpan.FromMilliseconds(10)),
+            new(1, new("audio/mpeg", "mp3", "mp3", 128000), TimeSpan.FromMilliseconds(1)),
+            new(2, Mp3, TimeSpan.FromSeconds(1))
+        ]));
+
+    [Theory]
+    [InlineData("Balanced", false)]
+    [InlineData("BestQuality", false)]
+    [InlineData("FastStart", true)]
+    public void LowerCachedQualityCannotWinWhileTheBetterSourceIsStillStarting(string mode, bool expected)
+    {
+        var low = new ProviderMediaFormat("audio/mpeg", "mp3", "mp3", 128000);
+        Assert.Equal(expected, PlaybackStartPolicy.ShouldHedge(mode, Cd, new(1, low, null, IsCached: true)));
+        Assert.False(PlaybackStartPolicy.ShouldHedge(mode, Cd, new(1, low, null)));
+        Assert.True(PlaybackStartPolicy.ShouldHedge(mode, Cd, new(1, Cd, null, IsCached: true)));
+    }
+
+    [Theory]
+    [InlineData("Balanced", 1)]
+    [InlineData("BestQuality", 1)]
+    [InlineData("FastStart", 0)]
+    public void LowBitrateCacheDoesNotDisplaceABetterLossySource(string mode, int expected) =>
+        Assert.Equal(expected, PlaybackStartPolicy.Order(mode,
+        [
+            new(0, new("audio/mpeg", "mp3", "mp3", 128000, 44100), null, IsCached: true),
+            new(1, new("audio/mp4", "m4a", "aac", 256000, 44100), null)
+        ])[0]);
+
+    [Theory]
+    [InlineData("Balanced")]
+    [InlineData("BestQuality")]
+    public void CachedLossySampleRateDoesNotOutrankBitrate(string mode) =>
+        Assert.Equal(1, PlaybackStartPolicy.Order(mode,
+        [
+            new(0, new("audio/mpeg", "mp3", "mp3", 128000, 48000, 16), null, IsCached: true),
+            new(1, new("audio/mp4", "m4a", "aac", 256000, 44100), null)
+        ])[0]);
+
+    [Theory]
+    [InlineData("FastStart")]
+    [InlineData("Balanced")]
+    [InlineData("BestQuality")]
+    public void EqualLossyCacheStartsWithoutWaiting(string mode) =>
+        Assert.Equal(0, PlaybackStartPolicy.Order(mode,
+        [new(0, Mp3, null, IsCached: true), new(1, Mp3, TimeSpan.FromMilliseconds(10))])[0]);
 
     [Theory]
     [InlineData("FastStart", 7, 2)]

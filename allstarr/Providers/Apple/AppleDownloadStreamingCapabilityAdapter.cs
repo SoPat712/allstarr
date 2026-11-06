@@ -13,7 +13,7 @@ using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Providers.AppleDownload;
 
-public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderDownloadStreamingCapability
+public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderDownloadStreamingCapability, IProviderAudioFormatSource
 {
     private readonly HttpClient http;
     private readonly AppleMusicClient client;
@@ -40,6 +40,9 @@ public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderDownloadS
 
     public string ProviderId => AppleDownloadCapabilityAdapter.StableProviderId;
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Streaming;
+
+    public ProviderMediaFormat? PreferredFormat(ProviderAudioQuality quality) =>
+        ProviderDeclaredAudio.Parse(AppleDownloadCapabilityAdapter.Quality(quality, settings.Quality));
 
     public async Task<ProviderOutcome<ProviderStreamLease>> GetStreamLeaseAsync(
         ProviderExecutionContext context,

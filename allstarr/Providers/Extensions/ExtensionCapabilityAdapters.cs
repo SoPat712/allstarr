@@ -11,7 +11,7 @@ using SkiaSharp;
 
 namespace allstarr.Core.Extensions;
 
-public abstract class ExtensionCapabilityAdapterBase : IProviderUrlCapability
+public abstract class ExtensionCapabilityAdapterBase : IProviderUrlCapability, IProviderAudioFormatSource
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly ExtensionSandbox _sandbox;
@@ -21,11 +21,15 @@ public abstract class ExtensionCapabilityAdapterBase : IProviderUrlCapability
     private readonly ProviderCapabilityKind _capability;
     private readonly bool _accountRequired;
     private readonly bool _usesExpandedUrls;
+    private readonly ProviderMediaFormat[] _declaredFormats;
 
     protected ExtensionCapabilityAdapterBase(ExtensionSandbox sandbox, ExtensionSdkManifest manifest,
         ProviderCapabilityKind capability, IProviderAccountSecretAccessor? secrets)
     {
         _sandbox = sandbox;
+        _declaredFormats = (manifest.QualityOptions ?? [])
+            .Select(option => ProviderDeclaredAudio.Parse($"{option.Id} {option.Label} {option.Description}", option.Kind))
+            .OfType<ProviderMediaFormat>().ToArray();
         _secrets = secrets;
         ProviderId = manifest.Id;
         _capability = capability;
@@ -48,6 +52,8 @@ public abstract class ExtensionCapabilityAdapterBase : IProviderUrlCapability
     ProviderCapabilityKind IProviderCapability.Capability => _capability;
     public IReadOnlyList<string> UrlPatterns { get; }
     protected IReadOnlySet<string> Hooks { get; }
+
+    public ProviderMediaFormat? PreferredFormat(ProviderAudioQuality quality) => ProviderDeclaredAudio.Best(_declaredFormats, quality);
 
     public async Task<ProviderOutcome<ProviderExternalResourceId>> ResolveUrlAsync(
         ProviderExecutionContext context, string url)
@@ -378,7 +384,7 @@ public sealed class ExtensionDownloadCapabilityAdapter : ExtensionCapabilityAdap
 }
 
 public sealed partial class ExtensionDownloadStreamingCapabilityAdapter :
-    IProviderDownloadStreamingCapability, IAsyncDisposable
+    IProviderDownloadStreamingCapability, IProviderAudioFormatSource, IAsyncDisposable
 {
     private readonly ExtensionDownloadCapabilityAdapter download;
     private readonly ProviderDownloadArtifactResolver artifacts;
@@ -411,6 +417,8 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter :
     public string ProviderId { get; }
     public bool SupportsRecordingAvailability { get; }
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Streaming;
+
+    public ProviderMediaFormat? PreferredFormat(ProviderAudioQuality quality) => download.PreferredFormat(quality);
 
     public Task<ProviderOutcome<ProviderRecordingAvailability>> ResolveRecordingAsync(
         ProviderExecutionContext context, ProviderRecordingAvailabilityRequest recording, ProviderAudioQuality quality)

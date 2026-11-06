@@ -8,7 +8,7 @@ using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Providers.Deezer;
 
-public sealed class DeezerStreamingCapabilityAdapter : IProviderStreamingCapability
+public sealed class DeezerStreamingCapabilityAdapter : IProviderStreamingCapability, IProviderAudioFormatSource
 {
     private readonly HttpClient http;
     private readonly IProviderAccountSecretAccessor secrets;
@@ -39,6 +39,9 @@ public sealed class DeezerStreamingCapabilityAdapter : IProviderStreamingCapabil
 
     public string ProviderId => DeezerDownloadCapabilityAdapter.StableProviderId;
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Streaming;
+
+    public ProviderMediaFormat? PreferredFormat(ProviderAudioQuality quality) =>
+        ProviderDeclaredAudio.Parse(DeezerDownloadCapabilityAdapter.Quality(quality, configuredQuality));
 
     public async Task<ProviderOutcome<ProviderStreamLease>> GetStreamLeaseAsync(
         ProviderExecutionContext context,

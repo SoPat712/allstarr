@@ -10,7 +10,7 @@ namespace allstarr.Core.Providers.Monochrome;
 
 public sealed class MonochromeStreamingCapabilityAdapter(
     HttpClient http,
-    ILogger<MonochromeStreamingCapabilityAdapter>? logger = null) : IProviderRecordingStreamingCapability, IProviderDiagnosticSampleSearch
+    ILogger<MonochromeStreamingCapabilityAdapter>? logger = null) : IProviderRecordingStreamingCapability, IProviderDiagnosticSampleSearch, IProviderAudioFormatSource
 {
     private const string Host = "tracks.monochrome.st";
     private const int MaximumSearchBytes = 256 * 1024;
@@ -21,6 +21,9 @@ public sealed class MonochromeStreamingCapabilityAdapter(
     public string ProviderId => "monochrome";
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Streaming;
     public bool SupportsRecordingAvailability => true;
+
+    public ProviderMediaFormat? PreferredFormat(ProviderAudioQuality quality) =>
+        quality is ProviderAudioQuality.Any or >= ProviderAudioQuality.Lossless ? Media : null;
 
     public async Task<ProviderOutcome<ProviderStreamLease>> GetStreamLeaseAsync(
         ProviderExecutionContext context, ProviderStreamLeaseRequest request)

@@ -225,7 +225,7 @@ public sealed class ExtensionSdkV1Tests : IDisposable
                  "author":"Example","icon":"icon.jpg","type":["metadata_provider"],
                  "settings":[{"key":"mediaUserToken","label":"Media user token","type":"password","required":true},
                              {"key":"storefront","label":"Storefront","description":"Apple Music storefront code (e.g. us, gb, jp, id).","type":"select","options":["us","ca"],"default":"us"}],
-                 "qualityOptions":[{"id":"lossless","label":"Lossless"}],
+                 "qualityOptions":[{"id":"lossless","label":"Lossless","kind":"lossless"}],
                  "permissions":{"network":["api.example.test","*.example.test"],"storage":true}}
                 """);
             Write(archive, "index.js", "registerExtension({customSearch:function(){return [];},getTrack:function(id){return {id:id,name:'Demo',artists:['Artist']};}});");
@@ -249,6 +249,7 @@ public sealed class ExtensionSdkV1Tests : IDisposable
         Assert.Equal("Apple Music storefront code (e.g. us, gb, jp, id).",
             verified.Manifest.Settings.Single(item => item.Key == "storefront").Description);
         Assert.Equal("lossless", Assert.Single(verified.Manifest.QualityOptions!).Id);
+        Assert.Equal("lossless", Assert.Single(verified.Manifest.QualityOptions!).Kind);
         Assert.Contains(verified.Manifest.Permissions, item => item is
         { Kind: ExtensionPermissionKind.Secret, Value: "mediaUserToken", Required: true });
         Assert.Contains(verified.Manifest.Permissions, item => item is { Kind: ExtensionPermissionKind.Cache, Value: "*" });

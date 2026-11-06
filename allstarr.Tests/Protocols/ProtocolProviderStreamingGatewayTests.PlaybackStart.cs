@@ -3,6 +3,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Health;
 using allstarr.Core.Downloads;
 using allstarr.Core.Protocols;
+using allstarr.Models.Domain;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Services.Common;
@@ -18,6 +19,66 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
+    [Theory]
+    [InlineData("Balanced", false, null)]
+    [InlineData("BestQuality", false, null)]
+    [InlineData("FastStart", true, null)]
+    [InlineData("Balanced", false, "bytes=0-")]
+    [InlineData("FastStart", true, "bytes=0-")]
+    public async Task PlaybackStartUsesDeclaredQualityAndUpgradesTheLowerQualityCache(string mode, bool cachedStart, string? range)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "cache"));
+        try
+        {
+            var path = Path.Combine(root, "cache", "cached.mp3");
+            await File.WriteAllBytesAsync(path, ManagedTrackCacheServiceTests.ConstantBitrateMp3());
+            string? published = null;
+            var local = new Mock<ILocalLibraryService>(MockBehavior.Strict);
+            local.Setup(item => item.GetLocalPathForExternalSongAsync(It.IsAny<DownloadedSongMappingScope>(), "deezer", "source-track"))
+                .ReturnsAsync(path);
+            local.Setup(item => item.GetLocalPathForExternalSongAsync(It.IsAny<DownloadedSongMappingScope>(), "qobuz", "qobuz-track"))
+                .ReturnsAsync(() => published);
+            local.Setup(item => item.RegisterDownloadedSongAsync(It.IsAny<DownloadedSongMappingScope>(), It.IsAny<Song>(), It.IsAny<string>()))
+                .Callback<DownloadedSongMappingScope, Song, string>((_, song, saved) =>
+                {
+                    Assert.Equal("qobuz", song.ExternalProvider);
+                    published = saved;
+                }).Returns(Task.CompletedTask);
+            await using var cache = new ManagedTrackCacheService(new ConfigurationBuilder().AddInMemoryCollection(
+                new Dictionary<string, string?> { ["Library:DownloadPath"] = root }).Build(),
+                Options.Create(new SubsonicSettings()), local.Object, NullLogger<ManagedTrackCacheService>.Instance,
+                audioVerifier: FixtureAudioVerifier.Instance);
+            var first = Streaming("deezer", (_, _) => throw new InvalidOperationException("The cached fallback needs no source request."));
+            first.As<IProviderAudioFormatSource>().Setup(item => item.PreferredFormat(It.IsAny<ProviderAudioQuality>()))
+                .Returns(new ProviderMediaFormat("audio/flac", "flac", "flac", sampleRate: 44100, bitDepth: 16));
+            var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+            second.As<IProviderAudioFormatSource>().Setup(item => item.PreferredFormat(It.IsAny<ProviderAudioQuality>()))
+                .Returns(new ProviderMediaFormat("audio/flac", "flac", "flac", sampleRate: 44100, bitDepth: 16));
+            using var activity = new PlaybackDeliveryActivityStore();
+            var context = StartPreferenceContext(mode);
+            var (gateway, _) = FailoverGateway(first, second, activity, managedTrackCache: cache);
+            var stream = (await gateway.OpenStreamAsync(context, "deezer", "source-track", ProviderAudioQuality.Any, range))!;
+            using var response = stream.Response;
+            Assert.Equal(cachedStart, stream.IsCached);
+            Assert.Equal(cachedStart ? "mp3" : "flac", stream.Lease.Media.Codec);
+            if (cachedStart)
+            {
+                Assert.Equal(128000, stream.Lease.Media.Bitrate);
+                Assert.Equal(44100, stream.Lease.Media.SampleRate);
+                Assert.Null(stream.Lease.Media.BitDepth);
+                var served = activity.StreamFor(context.RequireActor().EffectiveUserId, context.Client.DeviceId, "ext-deezer-song-source-track");
+                Assert.Equal(stream.Lease.Media, served!.Media);
+            }
+            await response.Content.CopyToAsync(Stream.Null);
+            await cache.UpgradeCompletion.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.NotNull(published);
+            Assert.True(File.Exists(published));
+            Assert.False(File.Exists(path));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     [Theory]
     [InlineData(ProviderErrorKind.Unauthorized)]
     [InlineData(ProviderErrorKind.Forbidden)]

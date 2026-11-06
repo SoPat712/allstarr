@@ -7,7 +7,7 @@ using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Providers.Qobuz;
 
-public sealed class QobuzStreamingCapabilityAdapter : IProviderStreamingCapability
+public sealed class QobuzStreamingCapabilityAdapter : IProviderStreamingCapability, IProviderAudioFormatSource
 {
     private readonly HttpClient http;
     private readonly IProviderAccountSecretAccessor secrets;
@@ -38,6 +38,17 @@ public sealed class QobuzStreamingCapabilityAdapter : IProviderStreamingCapabili
 
     public string ProviderId => QobuzDownloadCapabilityAdapter.StableProviderId;
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Streaming;
+
+    public ProviderMediaFormat? PreferredFormat(ProviderAudioQuality quality)
+    {
+        var declared = QobuzDownloadCapabilityAdapter.Quality(quality, configuredQuality) switch
+        {
+            "FLAC_24_LOW" => "FLAC 24 96",
+            "FLAC_24_HIGH" => "FLAC 24 192",
+            var other => other
+        };
+        return ProviderDeclaredAudio.Parse(declared);
+    }
 
     public async Task<ProviderOutcome<ProviderStreamLease>> GetStreamLeaseAsync(
         ProviderExecutionContext context,
