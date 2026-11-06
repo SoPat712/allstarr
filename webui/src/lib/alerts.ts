@@ -1,4 +1,5 @@
 import type { ProblemAlertThresholds } from "./api";
+import { formatLocalDateTime } from "./dates";
 
 export function alertDeliveryLabel(delivery?: { status: string }) {
   if (!delivery) return "No deliveries yet";
@@ -7,9 +8,7 @@ export function alertDeliveryLabel(delivery?: { status: string }) {
 }
 
 export function alertDate(value?: string | null) {
-  const date = value ? new Date(value) : null;
-  return date && Number.isFinite(date.getTime())
-    ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date) : "Time unavailable";
+  return formatLocalDateTime(value, "Time unavailable");
 }
 
 export function destinationHost(value: string) {

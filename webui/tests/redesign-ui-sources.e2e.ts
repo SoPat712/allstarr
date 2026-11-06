@@ -289,7 +289,13 @@ for (const width of [1280, 390]) {
     await expect(card).toContainText("1250 ms");
     await expect(card).toContainText("5 minutes ago");
     await expect(card.locator("time")).toHaveAttribute("datetime", "2026-11-03T12:00:00Z");
-    await expect(card.locator("time")).toContainText("2026");
+    const localTime = await page.evaluate(value => new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value)), "2026-11-03T12:00:00Z");
+    await expect(card.locator("time")).toHaveText(localTime);
+    if (width === 390) {
+      expect((await strip.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+      await strip.hover({ position: { x: (await strip.boundingBox())!.width - 2, y: 1 } });
+      await expect(card).toContainText("Failed");
+    }
     await expect(bars.last()).toHaveAttribute("data-active", "true");
     await expect(strip).not.toBeFocused();
     await expect(card).toHaveAttribute("data-align", "end");

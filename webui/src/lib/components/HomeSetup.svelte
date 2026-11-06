@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatLocalDateTime } from "$lib/dates";
   import { countLabel, countNoun } from "$lib/count-label";
   import type { MatchReviewResponse, StorageOverview } from "$lib/api";
   import type { HomeSnapshot } from "$lib/home";
@@ -31,7 +32,7 @@
     { title: "Background work", state: summary.activeJobs ? `${summary.activeJobs} active` : "Idle", warn: false,
       number: summary.activeJobs.toLocaleString(), label: `${countNoun(summary.activeJobs, "job")} running or waiting`, detail: summary.activeJobs ? "Playlist updates and other work continue here" : "Nothing running or waiting", href: "#/activity?view=jobs", link: "Open jobs", ratio: null },
     { title: "Backups", state: backup ? backup.status === "verified" ? "Verified" : "Needs a look" : storage ? "No backup yet" : "Not available", warn: Boolean(backup && backup.status !== "verified"),
-      number: backup ? new Date(backup.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—", label: backup ? `${new Date(backup.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} · ${bytes(backup.bytes)}` : "Create a backup to protect your setup", detail: storage?.backupStatus?.nextRunAt ? `Next ${new Date(storage.backupStatus.nextRunAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : "Review your backup schedule and saved copies", href: "#/settings/backups", link: "Open backups", ratio: backup ? backup.status === "verified" ? 1 : 0 : null },
+      number: backup ? new Date(backup.createdAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—", label: backup ? `${new Date(backup.createdAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} · ${bytes(backup.bytes)}` : "Create a backup to protect your setup", detail: storage?.backupStatus?.nextRunAt ? `Next ${formatLocalDateTime(storage.backupStatus.nextRunAt, "Invalid Date")}` : "Review your backup schedule and saved copies", href: "#/settings/backups", link: "Open backups", ratio: backup ? backup.status === "verified" ? 1 : 0 : null },
   ]);
 </script>
 <section aria-label="Your setup" class="home-setup">
@@ -74,7 +75,7 @@
   .source-dots i { width: 6px; height: 8px; border-radius: 2px; background: var(--success); }
   .source-dots i.failing { background: var(--warning); }
   p { margin-top: var(--space-2); margin-bottom: var(--space-2); overflow-wrap: anywhere; }
-  .setup-tile :global([data-slot="button"]) { align-self: start; margin-top: auto; }
+  .setup-tile :global([data-slot="button"]) { align-self: start; margin-top: auto; padding-inline: 0; }
   @media (max-width: 1050px) { .setup-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 540px) { .setup-grid { grid-template-columns: minmax(0, 1fr); } }
 </style>

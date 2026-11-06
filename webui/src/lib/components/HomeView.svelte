@@ -415,7 +415,7 @@
   {#if shelf.length}<MixShelf title="Pick up where you left off" cards={shelf} columns={6} seeAll="#/for-you" seeAllLabel="All mixes" onopen={card => { window.location.hash = `#/for-you?mix=${encodeURIComponent(card.id)}`; }} />
   {:else}<EmptyState title="Your mixes start here" description="Play some music or import your history to get mixes made for you.">{#snippet icon()}<Headphones size={24} />{/snippet}{#snippet action()}<Button variant="outline" href="#/for-you">Explore your mixes</Button>{/snippet}</EmptyState>{/if}
   </div>
-  {#if !administrator && releases.length}<div class="release-note"><span>New from artists you follow: <strong>{releases[0].title}</strong> by {releases[0].artist}</span><a href="#/for-you?section=releases">See releases</a></div>{/if}
+  {#if !administrator && releases.length}<div class="release-note"><span>New from artists you follow: <strong>{releases[0].title}</strong> by {releases[0].artist}</span><Button variant="text" size="sm" href="#/for-you?section=releases">See releases</Button></div>{/if}
 </div>
 {/if}
 <style>
@@ -438,7 +438,6 @@
   header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
   h2 { font-size: 1.125rem; font-weight: 600; }
   header :global([data-slot="button"]) { flex: none; }
-  .release-note a { display: inline-flex; min-height: 44px; align-items: center; font-size: var(--text-sm); }
   .week-numbers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); margin-block: var(--space-3) var(--space-4); }
   .week-numbers > div { display: grid; align-content: start; gap: var(--space-1); min-width: 0; padding: var(--space-3); border-radius: var(--radius-md); background: var(--color-panel-raised); }
   .week-numbers strong { font: 600 1.25rem/1.2 var(--font-display); overflow-wrap: anywhere; }

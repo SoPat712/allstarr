@@ -764,7 +764,7 @@
       </div>
 
       <footer class="dialog-actions">
-        {#if step > 1}<Button variant="text" onclick={() => step = 1}>Back</Button>{/if}<Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
+        {#if step > 1}<Button variant="text" onclick={() => step = 1}>Back</Button>{/if}<Dialog.Close class={buttonVariants({ variant: "text" })}>Cancel</Dialog.Close>
         {#if step < 2}
           <Button disabled={!stepReady || loading} onclick={() => void next()}>Next</Button>
         {:else}

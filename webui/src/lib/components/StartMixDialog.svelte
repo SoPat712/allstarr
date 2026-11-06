@@ -82,7 +82,7 @@
       {#if !appsAllowed}<p class="muted">Your admin hasn't allowed adding mixes.</p>{/if}
     {/if}
   </div>
-  <footer class="dialog-actions"><Dialog.Close type="button" disabled={saving} class={buttonVariants({ variant: "outline" })}>Cancel</Dialog.Close><Button disabled={busy || saving || !preview?.readiness.ready || !name.trim()} onclick={save}>{saving ? "Starting…" : "Start mix"}</Button></footer>
+  <footer class="dialog-actions"><Dialog.Close type="button" disabled={saving} class={buttonVariants({ variant: "text" })}>Cancel</Dialog.Close><Button disabled={busy || saving || !preview?.readiness.ready || !name.trim()} onclick={save}>{saving ? "Starting…" : "Start mix"}</Button></footer>
 </Dialog.Content></Dialog.Portal></Dialog.Root>
 <style>
   :global(.start-mix-dialog) { display: flex; width: min(640px, calc(100vw - 32px)); flex-direction: column; overflow: hidden; }

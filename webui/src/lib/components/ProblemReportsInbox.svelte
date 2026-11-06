@@ -165,7 +165,7 @@
     <div class="report-toolbar"><FilterSegments label="Report status" value={filter} onchange={(next) => void choose(next)} storageKey="activity.reports" options={[
       { id: "new", label: "New", count: count("new") }, { id: "seen", label: "Seen", count: count("seen") },
       { id: "fixed", label: "Fixed", count: count("fixed") }, { id: "all", label: "All", count: count("all") },
-    ]} /><RefreshButton variant="outline" onrefresh={() => load()} label="Refresh reports" /></div>
+    ]} /><RefreshButton onrefresh={() => load()} label="Refresh reports" /></div>
     {#if error}<ErrorState title={error} onretry={() => load()} />{/if}
     {#if loading}<RowsSkeleton label="Loading reports" />
     {:else if rows.length}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatLocalDateTime } from "$lib/dates";
   import { countLabel } from "$lib/count-label";
   import { onMount, tick, untrack } from "svelte";
   import { activityWork, home, type Job, type JobDetail, type JobProgress } from "$lib/api";
@@ -84,8 +85,7 @@
 
   function finishedAt(job: Job) { return job.completedAt ?? job.createdAt ?? job.updatedAt; }
   function time(value?: string | null) {
-    if (!value || Number.isNaN(Date.parse(value))) return "Not recorded";
-    return new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    return formatLocalDateTime(value, "Not recorded");
   }
   function clock(value?: string | null) {
     if (!value || Number.isNaN(Date.parse(value))) return "";
@@ -262,7 +262,7 @@
       {#snippet pill()}<ActivityOutcome state={resultState(job)} label={job.cancellationRequestedAt ? "Cancellation requested" : statusLabel(job)} />{/snippet}
       {#snippet trailing()}
         <time datetime={finishedAt(job)} title={time(finishedAt(job))}>{clockRange(finishedAt(runs.at(-1)!), finishedAt(job))}</time>
-        {#if job.canCancel && !job.cancellationRequestedAt && queueStates.includes(job.state)}<Button variant="ghost" class="cancel-job" onclick={() => { cancelJob = job; cancelError = ""; cancelOpen = true; }}>Cancel</Button>{/if}
+        {#if job.canCancel && !job.cancellationRequestedAt && queueStates.includes(job.state)}<Button variant="text" size="sm" class="cancel-job" onclick={() => { cancelJob = job; cancelError = ""; cancelOpen = true; }}>Cancel</Button>{/if}
       {/snippet}
     </ItemRow>
     {#if percent !== null}<div class="job-row-progress"><Progress value={percent} aria-label={percent + "% complete"} /><small>{info.completed} of {info.total} · {percent}%</small></div>{/if}
@@ -283,7 +283,7 @@
       { id: "finished", label: "Finished", count: finished.length },
     ]} />
     <SelectField label="Job type" bind:value={typeFilter} options={[{ value: "", label: "All work" }, ...Object.entries(jobNames).map(([value, label]) => ({ value, label }))]} />
-    <RefreshButton bind:ref={refreshButton} variant="outline" onrefresh={() => load()} label="Refresh jobs" />
+    <RefreshButton bind:ref={refreshButton} onrefresh={() => load()} label="Refresh jobs" />
   </div>
   <details class="extra-filters"><summary>More filters{stateFilter ? " · " + jobState(stateFilter) : ""}</summary><SelectField label="Job state" bind:value={stateFilter} options={[{ value: "", label: "All states" }, ...stateOptions]} /></details>
   {#if linkedLoading}<p role="status">Opening related work…</p>{/if}
@@ -334,14 +334,14 @@
       {#if selectedJob.lastErrorMessage && selectedJob.lastErrorMessage !== selectedJob.summary}<p>{activityText(selectedJob.lastErrorMessage)}</p>{/if}
       {#if selectedJob.recovery}<p><strong>Next step:</strong> {activityRecovery(selectedJob.recovery)}</p>{/if}
       {#if selectedRuns.length > 1}
-        <GroupedRow count={selectedRuns.length} summary="Runs" expanded={true}>
+        <GroupedRow count={selectedRuns.length} summary="Runs" tone="neutral" expanded={true}>
           {#snippet members()}{#each selectedRuns as run}<ItemRow title={run.targetName || run.displayName || jobName(run.type)} subtitle={time(finishedAt(run))} selected={expanded === run.id} onclick={() => void attempts(run)}>{#snippet pill()}<ActivityOutcome state={run.displayState || run.state} label={statusLabel(run)} />{/snippet}</ItemRow>{/each}{/snippet}
         </GroupedRow>
       {/if}
       {@render attemptHistory(selectedJob)}
       <details class="event-technical"><summary>Technical details</summary><dl><div><dt>Job reference</dt><dd>{selectedJob.id}</dd></div><div><dt>Operation</dt><dd>{selectedJob.type}</dd></div>{#if selectedJob.lastErrorCode}<div><dt>Reason code</dt><dd>{selectedJob.lastErrorCode}</dd></div>{/if}{#each Object.entries(selectedJob.technicalDetails ?? {}) as [name, value]}<div><dt>{name}</dt><dd>{value}</dd></div>{/each}</dl></details>
     </div>
-    {#snippet footer()}<div class="job-panel-footer">{#if selectedJob.canCancel && !selectedJob.cancellationRequestedAt && queueStates.includes(selectedJob.state)}<Button variant="ghost" class="cancel-job" onclick={() => { cancelJob = selectedJob; cancelError = ""; cancelOpen = true; }}>Cancel job…</Button>{/if}<Button variant="text" href="#/activity?view=history">Open in History</Button>{#if internalActivityLink(selectedJob.actionHref)}<Button href={selectedJob.actionHref!}>{selectedJob.actionLabel || "Open related work"}</Button>{/if}</div>{/snippet}
+    {#snippet footer()}<div class="job-panel-footer">{#if selectedJob.canCancel && !selectedJob.cancellationRequestedAt && queueStates.includes(selectedJob.state)}<Button variant="text" size="sm" class="cancel-job" onclick={() => { cancelJob = selectedJob; cancelError = ""; cancelOpen = true; }}>Cancel job…</Button>{/if}<Button variant="text" href="#/activity?view=history">Open in History</Button>{#if internalActivityLink(selectedJob.actionHref)}<Button href={selectedJob.actionHref!}>{selectedJob.actionLabel || "Open related work"}</Button>{/if}</div>{/snippet}
   </SidePanel>
 {/if}
 

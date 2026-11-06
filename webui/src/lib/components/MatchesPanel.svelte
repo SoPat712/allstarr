@@ -139,7 +139,7 @@
   {#snippet menu()}
     {#if match}
       <DropdownMenu.Root>
-        <DropdownMenu.Trigger class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label="More"><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
+        <DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label="More"><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
         <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end" sideOffset={4}>
           <DropdownMenu.Item class="bits-menu-item" onSelect={() => onRematch(match!)}>Rematch</DropdownMenu.Item>
           <DropdownMenu.Item class="bits-menu-item" disabled={!match.canonicalRecordingId} onSelect={() => showLyrics = !showLyrics}>Wrong lyrics?</DropdownMenu.Item>

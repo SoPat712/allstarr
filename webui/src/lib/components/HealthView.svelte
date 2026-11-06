@@ -1,4 +1,7 @@
 <script lang="ts">
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
+  import { formatLocalDateTime } from "$lib/dates";
   import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { toast } from "$lib/toasts";
@@ -20,6 +23,13 @@
   const stripHelpId = $props.id();
   const stripRuns = $derived(snapshot?.runs.slice(0, 30) ?? []);
   const stripSelection = $derived(stripRuns[Math.min(stripIndex, stripRuns.length - 1)]);
+  function stripClick(event: MouseEvent) {
+    const bounds = event.currentTarget instanceof HTMLElement ? event.currentTarget.getBoundingClientRect() : null;
+    if (!bounds?.width) return;
+    const slot = Math.max(0, Math.min(29, Math.floor((event.clientX - bounds.left) / bounds.width * 30)));
+    const run = stripRuns[29 - slot];
+    if (run) { stripIndex = 29 - slot; openDetail(run); }
+  }
   function stripKey(event: KeyboardEvent) {
     if (event.key === "Enter" || event.key === " ") {
       if (stripSelection) { event.preventDefault(); openDetail(stripSelection); }
@@ -89,9 +99,7 @@
   };
 
   function when(value: string | null) {
-    if (!value) return "Not scheduled";
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? "Time unavailable" : date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    return formatLocalDateTime(value, value ? "Time unavailable" : "Not scheduled");
   }
 
   function latency(value: number | null) {
@@ -196,14 +204,14 @@
   {#if loading}<RowsSkeleton />
   {:else if !snapshot}<ErrorState title="Health monitoring could not be loaded" detail={error} onretry={() => load(true)} />
   {:else}
-    <div class="settings-toolbar"><span class="settings-muted">{serverMode ? serviceReady ? "Server API key ready" : "Server API key needed" : configured ? "Listener configured" : "Choose a dedicated test listener"}</span><div class="health-actions"><Button variant="text" disabled={Boolean(action)} onclick={() => { polls = 0; pollLimitReached = false; void load(); }}>Refresh results</Button><Button variant="outline" disabled={locked || !canRun} onclick={() => void run()}>{action === "run" ? "Queuing…" : "Run now"}</Button></div></div>
+    <div class="settings-toolbar"><span class="settings-muted">{serverMode ? serviceReady ? "Server API key ready" : "Server API key needed" : configured ? "Listener configured" : "Choose a dedicated test listener"}</span><div class="health-actions"><RefreshButton disabled={Boolean(action)} onrefresh={() => { polls = 0; pollLimitReached = false; return load(); }} label="Refresh results" /><Button variant="outline" disabled={locked || !canRun} onclick={() => void run()}>{action === "run" ? "Queuing…" : "Run now"}</Button></div></div>
     {#if !serviceReady && serverMode}<Button href="#/settings/setup" variant="outline">Open Setup</Button>{/if}
     {#if running}<p role="status">A check is running. {pollLimitReached ? "Refresh results to keep following it." : "Results update automatically."}</p>{/if}
     {#if error}<ErrorState title="Health could not finish that request" detail={error} onretry={() => load(true)} />{/if}
     <section class="settings-card check-strip-card" aria-label="Recent checks"><header><h3>Last 30 checks</h3></header>
-      <div class="health-strip"><CheckStrip tabindex={0} onkeydown={stripKey} onfocus={() => stripFocused = true} onblur={() => stripFocused = false} aria-describedby={stripHelpId}>
+      <div class="health-strip"><CheckStrip tabindex={0} onkeydown={stripKey} onclick={stripClick} onfocus={() => stripFocused = true} onblur={() => stripFocused = false} aria-describedby={stripHelpId}>
         {#each Array(Math.max(0, 30 - snapshot.runs.length)).fill(0) as _}<span data-outcome="empty" title="No check recorded"></span>{/each}
-        {#each stripRuns.toReversed() as run (run.id)}<button type="button" tabindex="-1" data-active={stripFocused && stripSelection?.id === run.id} data-outcome={outcome(run).tone === "ok" ? "ok" : outcome(run).tone === "stop" ? "failed" : "neutral"} aria-label={`${outcome(run).label}, ${when(run.completedAt ?? run.startedAt)}`} title={`${outcome(run).label} · ${when(run.completedAt ?? run.startedAt)}`} onclick={() => openDetail(run)}></button>{/each}
+        {#each stripRuns.toReversed() as run (run.id)}<span aria-hidden="true" data-active={stripFocused && stripSelection?.id === run.id} data-outcome={outcome(run).tone === "ok" ? "ok" : outcome(run).tone === "stop" ? "failed" : "neutral"} title={`${outcome(run).label} · ${when(run.completedAt ?? run.startedAt)}`}></span>{/each}
       </CheckStrip><span id={stripHelpId} class="sr-only" aria-live="polite">Use left and right arrows to explore checks, Home and End to reach either end, and Enter to open details.{#if stripSelection} {outcome(stripSelection).label}, {when(stripSelection.completedAt ?? stripSelection.startedAt)}.{/if}</span></div>
       <div class="strip-axis"><span>{snapshot.runs.length ? when(snapshot.runs[Math.min(29, snapshot.runs.length - 1)].startedAt) : "No checks recorded"}</span><span>Now</span></div>
     </section>
@@ -226,12 +234,12 @@
         <label class="settings-row"><div><strong>Listener password</strong></div><input aria-label="Listener password" type="password" autocomplete="current-password" bind:value={password} required={credentialsNeeded || Boolean(username)} disabled={locked} /></label>
       {/if}
       <label class="settings-row"><div><strong>Check interval (minutes)</strong><small>Between 1 and 1,440 minutes.</small></div><input aria-label="Check interval (minutes)" type="number" min="1" max="1440" required bind:value={intervalMinutes} disabled={locked} /></label>
-      <details class="settings-fold"><summary>Advanced: sample song, timing and webhook</summary>
+      <AdvancedFold description="sample song, timing and webhook">
         <label class="settings-row"><div><strong>Search query</strong><small>{serverMode ? "A library song to look for. Another sample can be used if unavailable." : "The source track to find for each check."}</small></div><input aria-label="Search query" maxlength="200" required bind:value={searchQuery} disabled={locked} /></label>
         <label class="settings-row"><div><strong>First audio byte budget (seconds)</strong><small>Between 1 and 60 seconds.</small></div><input aria-label="First audio byte budget (seconds)" type="number" min="1" max="60" required bind:value={firstByteBudgetSeconds} disabled={locked} /></label>
         <label class="settings-row"><div><strong>Webhook URL</strong><small>{snapshot.configuration.hasWebhook ? "A webhook is saved. Leave blank to keep it." : "Optional. Receive failure and recovery alerts."}</small></div><input aria-label="Webhook URL" type="password" autocomplete="new-password" bind:value={webhookUrl} disabled={locked || clearWebhook} /></label>
         {#if snapshot.configuration.hasWebhook}<label class="settings-row"><div><strong>Remove saved webhook</strong></div><span class="settings-toggle"><Switch aria-label="Remove saved webhook" bind:checked={clearWebhook} disabled={locked} /></span></label>{/if}
-      </details>
+      </AdvancedFold>
       <p class="settings-impact">{serverMode ? "Read-only checks leave listening history and saved music unchanged. App sign-in, favorites and playlist actions are checked separately. Source diagnostics are in Sources." : "Saving permanently marks this listener as a test listener. Its playback is excluded from listening history, recommendations and external scrobbles, even after monitoring is disabled."}</p>
       {#if message}<p class="settings-impact" role="status">{message}</p>{/if}
     </form>

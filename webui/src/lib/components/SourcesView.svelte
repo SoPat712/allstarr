@@ -907,7 +907,7 @@
       <PageStatus label={accountsPage ? "Accounts status" : "Services status"} items={accountsPage
         ? [{ label: countLabel(accounts.length, "account") }, { label: `${countLabel(deliveries.length, "listen")} waiting to send`, tone: deliveries.length ? "warn" : "neutral" }]
         : [{ label: `${mySources.length - needsSetup.length} working` }, { label: `${countLabel(needsSetup.length, "needs", "need")} attention`, tone: needsSetup.length ? "stop" : "neutral" }, { label: `${mySources.length} in use of ${providers.length}` }]} />
-      <div class="sources-heading-actions"><RefreshButton variant="ghost" onrefresh={refresh} />
+      <div class="sources-heading-actions"><RefreshButton onrefresh={refresh} />
         {#if accountsPage}{#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}><Plus size={16} aria-hidden="true" />Connect account</Button>{/if}
         {:else if administrator}<Button onclick={() => addSourceOpen = true}><PackagePlus size={16} aria-hidden="true" />Add extension</Button>{/if}
       </div>

@@ -170,7 +170,7 @@
     {#if detail.songs.length}<div class="songs-heading"><h3>Songs</h3><span>Picked from</span></div><MixTrackRows songs={detail.songs} {busy} onfeedback={detail.mix.kind === "external" ? undefined : feedback} />{/if}
   {/if}
   {#snippet footer()}{#if detail}<div class="mix-footer">
-    {#if detail.mix.kind !== "custom" && detail.mix.kind !== "external"}<RefreshButton label="Refresh mix" variant="outline" disabled={busy || throttled || Boolean(refreshJob)} onrefresh={refresh} />{/if}
+    {#if detail.mix.kind !== "custom" && detail.mix.kind !== "external"}<RefreshButton label="Refresh mix" disabled={busy || throttled || Boolean(refreshJob)} onrefresh={refresh} />{/if}
     {#if !detail.mix.inApps}<Button disabled={busy || !detail.mix.appsAllowed} onclick={() => void showInApps(true)}>Add to apps</Button>{/if}
   </div>{/if}{/snippet}
 </SidePanel>

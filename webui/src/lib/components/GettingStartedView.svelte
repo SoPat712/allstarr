@@ -147,11 +147,11 @@
     <div class="connect-help">
       <article class="settings-card help-card">
         <h3>Coming from Spotify or Apple Music?</h3><p>Bring your playlists and liked songs. Nothing changes there.</p>
-        <Button variant="ghost" href="#/library/import">Import your music</Button>
+        <Button variant="text" size="sm" href="#/library/import">Import your music</Button>
       </article>
       <article class="settings-card help-card">
         <h3>Something not working?</h3><p>Use a song's report action to attach its details, or send a general note. Reports stay inside Allstarr for your administrator.</p>
-        <Button variant="ghost" href={reportHref()}>Report a problem</Button>
+        <Button variant="text" size="sm" href={reportHref()}>Report a problem</Button>
       </article>
     <details class="settings-card connect-tips help-card">
       <summary><span><strong>Tips</strong><small>Hearts, offline listening and beta limits</small><span class="tips-action">Read the tips</span></span><ChevronDown class="disclosure-chevron" size={18} aria-hidden="true" /></summary>

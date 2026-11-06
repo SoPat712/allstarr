@@ -63,13 +63,13 @@
       <Popover.Trigger class={`${buttonVariants({ variant: "secondary" })} taste-chip`} aria-label={`Steer ${name}`} disabled={action}>{name}{#if nudgeValue}<span aria-hidden="true"> {nudgeMarker(nudgeValue.mode)}</span>{/if}</Popover.Trigger>
       <Popover.Portal><Popover.Content class="bits-menu taste-popover" sideOffset={8}>
         <SegmentedNav variant="segments" label={`Duration for ${name}`} items={[{ id: "today", label: "Today only" }, { id: "persistent", label: "Until I change it" }]} active={duration} onchange={value => duration = value} />
-        <div class="nudge-options">{#each ["more", "less", "never"] as mode}<Button variant="ghost" disabled={action} onclick={() => nudge(kind, name, mode as TasteNudge["mode"])}>{mode === "more" ? "More" : mode === "less" ? "Less" : "Never"}</Button>{/each}</div>
+        <div class="nudge-options">{#each ["more", "less", "never"] as mode}<Button variant="text" size="sm" disabled={action} onclick={() => nudge(kind, name, mode as TasteNudge["mode"])}>{mode === "more" ? "More" : mode === "less" ? "Less" : "Never"}</Button>{/each}</div>
       </Popover.Content></Popover.Portal>
     </Popover.Root>
   {/each}</div>
 {/snippet}
 <div class="your-taste">
-  <div class="section-heading"><h2>Your taste</h2><RefreshButton variant="secondary" label="Refresh taste" disabled={action} onrefresh={load} /></div>
+  <div class="section-heading"><h2>Your taste</h2><RefreshButton label="Refresh taste" disabled={action} onrefresh={load} /></div>
   <PageStatus items={[{ label: profile?.paused ? "Learning paused" : "Your listening shapes your mixes" }, { label: profile ? countLabel(profile.nudges.length, "active choice") : "Loading your taste" }]} />
   {#if error}<ErrorState title="Couldn't load your taste" detail={error} onretry={load} />{/if}
   {#if loading}<RowsSkeleton label="Loading your taste" />{:else if profile}

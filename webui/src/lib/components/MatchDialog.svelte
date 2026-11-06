@@ -497,7 +497,7 @@
             {#if showReject}
               <Button variant="destructive" disabled={!selectedScopeEditable} onclick={() => onReject?.(match!, authorityScope)}>Reject candidate</Button>
             {/if}
-            <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
+            <Dialog.Close class={buttonVariants({ variant: "text" })}>Cancel</Dialog.Close>
           {/if}
         </footer>
       {/if}

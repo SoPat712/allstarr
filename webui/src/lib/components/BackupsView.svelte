@@ -1,4 +1,7 @@
 <script lang="ts">
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
+  import { formatLocalDateTime } from "$lib/dates";
   import { onMount } from "svelte";
   import { ApiError, settings, type BackupPolicy, type BackupPolicyInput, type StorageOverview, type StorageBackup } from "$lib/api";
   import { toast } from "$lib/toasts";
@@ -54,9 +57,7 @@
       manualRetentionCount: policy.manualRetentionCount };
   }
   function date(value?: string | null) {
-    if (!value) return "Not available";
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? "Not available" : new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(parsed);
+    return formatLocalDateTime(value, "Not available");
   }
   function size(value?: number | null) {
     return typeof value === "number" && Number.isFinite(value) && value > 0
@@ -177,7 +178,7 @@
     {#if error}<ErrorState title="Backup status is unavailable" detail={error} onretry={() => { polls = 0; return refresh(); }} />{/if}
     {#if !data && !error}<RowsSkeleton count={4} />
     {:else if data}
-      <div class="settings-toolbar"><output aria-label="Backup status" class:sr-only={stateLabel === "Ready"}>{stateLabel}</output><div class="backup-actions"><Button variant="text" disabled={Boolean(action)} onclick={() => { polls = 0; void refresh(); }}>Refresh status</Button><Button disabled={Boolean(action) || !ready || pending || active || directoryUnavailable} onclick={() => start()}>{action === "backup" ? "Queuing…" : "Back up now"}</Button></div></div>
+      <div class="settings-toolbar"><output aria-label="Backup status" class:sr-only={stateLabel === "Ready"}>{stateLabel}</output><div class="backup-actions"><RefreshButton disabled={Boolean(action)} onrefresh={() => { polls = 0; return refresh(); }} label="Refresh status" /><Button disabled={Boolean(action) || !ready || pending || active || directoryUnavailable} onclick={() => start()}>{action === "backup" ? "Queuing…" : "Back up now"}</Button></div></div>
       {#if pending}<p class="notice-info" role="status">A restore is staged. Restart Allstarr to finish replacing saved state and credentials.</p>{/if}
       {#if failed && status?.lastFailure}<ErrorState title="Last backup failed" detail={`${status.lastFailure.message} · ${date(status.lastFailure.at)}`} />{/if}
       {#if active && polls >= 60}<p role="status">The backup is still running. Refresh its status to check again.</p>{/if}
@@ -190,10 +191,10 @@
             <label class="setting-field settings-row"><div><strong>Backup time (UTC)</strong><small>Uses UTC, including during daylight saving changes.</small></div><input type="time" required aria-label="Backup time (UTC)" bind:value={draft.timeUtc} /></label>
             <label class="setting-field settings-row"><div><strong>Daily copies</strong></div><input type="number" aria-label="Daily copies" required min="1" max="90" bind:value={draft.dailyRetentionCount} /></label>
             <label class="setting-field settings-row"><div><strong>Weekly copies</strong><small>One file can count as both daily and weekly.</small></div><input type="number" aria-label="Weekly copies" required min="0" max="52" bind:value={draft.weeklyRetentionCount} /></label>
-            <details class="settings-fold"><summary>Advanced: folder and manual copies</summary>
+            <AdvancedFold description="folder and manual copies">
               <label class="setting-field settings-row"><div><strong>Backup folder</strong><small>Local path inside the container. Leave blank to use the data folder. Mount synchronized storage before choosing it.</small></div><input type="text" aria-label="Backup folder" maxlength="2000" placeholder="Default backup folder" bind:value={draft.directory} /></label>
               <label class="setting-field settings-row"><div><strong>Manual copies</strong><small>Newest snapshots created with Back up now. Backups from earlier versions are preserved.</small></div><input type="number" aria-label="Manual copies" required min="1" max="1000" bind:value={draft.manualRetentionCount} /></label>
-            </details>
+            </AdvancedFold>
           </fieldset>
         </form>
       {/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatLocalDateTime } from "$lib/dates";
   import { countLabel } from "$lib/count-label";
   import type { CacheDiagnostics, CacheMaintenancePreview, CacheTierUsage } from "$lib/api";
   import { humanize } from "$lib/sources";
@@ -125,7 +126,7 @@
       <div><dt>Orphaned or malformed</dt><dd>{(preview?.metadata.unknownOwnerEntries ?? 0) + (preview?.media.orphanedMetadataFiles ?? 0) + (preview?.media.orphanedPayloadFiles ?? 0) + (preview?.media.malformedMetadataFiles ?? 0) + (preview?.unreferencedArtworkPayloads ?? 0)}</dd></div>
       <div><dt>Over quota</dt><dd>{(preview?.metadata.overQuotaEntries ?? 0) + (preview?.media.overQuotaEntries ?? 0)}</dd></div>
       <div><dt>Extension storage</dt><dd>{bytes(snapshot?.extensionStorage.payloadBytes)} of {bytes(snapshot?.extensionStorage.maximumBytes)}</dd></div>
-      <div><dt>Last automatic cleanup</dt><dd>{preview?.media.lastCleanupAt ? `${new Date(preview.media.lastCleanupAt).toLocaleString()} · ${preview.media.lastCleanupDeletedEntries} removed` : "Not yet run"}</dd></div>
+      <div><dt>Last automatic cleanup</dt><dd>{preview?.media.lastCleanupAt ? `${formatLocalDateTime(preview.media.lastCleanupAt, "Invalid Date")} · ${preview.media.lastCleanupDeletedEntries} removed` : "Not yet run"}</dd></div>
     </dl>
     {#if preview?.metadata.scanLimitReached || preview?.media.scanLimitReached || preview?.artworkReferenceScanLimitReached}
       <p class="cache-scan-warning">The preview stopped at its scan limit, so another cleanup may find more to remove.</p>

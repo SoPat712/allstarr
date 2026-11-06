@@ -29,6 +29,15 @@ describe("segmented controls", () => {
     expect(html.match(/aria-selected="true"/g)).toHaveLength(1);
   });
 
+  it("keeps page choices in the outlined segmented variant", () => {
+    const html = render(SegmentedNav, { props: { variant: "segments", label: "Period", active: "week", items: [
+      { id: "week", label: "Week" }, { id: "month", label: "Month" },
+    ] } }).body;
+    expect(html).toMatch(/class="seg segmented-tabs/);
+    expect(html.match(/role="tab"/g)).toHaveLength(2);
+    expect(html.match(/tabindex="0"/g)).toHaveLength(1);
+  });
+
   it("preserves a named setting and one selected tab stop for four choices", () => {
     const html = render(ThreeDetentSwitch, { props: { label: "Source use", name: "source", value: "follow", options: [
       { value: "follow", label: "Follow" }, { value: "on", label: "On" }, { value: "manual", label: "Manual only" }, { value: "off", label: "Off" },

@@ -1,5 +1,6 @@
 import { ApiError, json, type ProviderDefinition } from "./api";
 import { providerDisplayName } from "./sources";
+import { formatLocalDateTime } from "./dates";
 
 export type ListenerContext = { backend: "Jellyfin" | "Subsonic"; username: string;
   musicClientUrl: string | null; addressSource: "configured" | "unconfigured" };
@@ -67,8 +68,7 @@ export function supportErrorCode(cause: unknown) {
   return cause instanceof ApiError ? (cause.details as { code?: string; error?: string } | null)?.code ?? "" : "";
 }
 export function supportDate(value?: string | null) {
-  if (!value || !Number.isFinite(Date.parse(value))) return "Not available";
-  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  return formatLocalDateTime(value, "Not available");
 }
 
 export function musicClientUrl(value: string) {

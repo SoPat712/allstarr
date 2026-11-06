@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatLocalDateTime } from "$lib/dates";
   import { newUuid } from "$lib/uuid";
   import { countLabel } from "$lib/count-label";
   import { onMount, tick } from "svelte";
@@ -70,7 +71,7 @@
   });
   const steps = $derived([...(detail?.timing.phases ?? [])].sort((a, b) => a.startedMs - b.startedMs));
   function time(value: string) {
-    return Number.isNaN(Date.parse(value)) ? "Time not recorded" : new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    return formatLocalDateTime(value, "Time not recorded");
   }
   const clock = (value: string) => Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleTimeString(undefined, { timeStyle: "short" }) : "Not recorded";
   function startRange(runs: PlayTrace[]) {
@@ -255,7 +256,7 @@
     { id: "cancelled", label: "Stopped", count: plays.filter(play => play.outcome.toLowerCase() === "cancelled").length },
     { id: "failed", label: "Problems", count: plays.filter(play => play.outcome.toLowerCase() === "failed").length },
     { id: "slow", label: "Slow starts", count: plays.filter(play => (play.timing.firstByteMs ?? 0) > 4000).length },
-  ]} /><RefreshButton variant="outline" label="Refresh plays" onrefresh={() => load()} /></div>
+  ]} /><RefreshButton label="Refresh plays" onrefresh={() => load()} /></div>
   {#if loading}
     <RowsSkeleton label="Loading plays" />
   {:else if error && !plays.length}
@@ -298,7 +299,7 @@
   <SidePanel bind:open={panelOpen} title={detail?.request.presented.title || selectedRuns[0]?.request.presented.title || "Play details"} description={detail?.request.presented.artist || selectedRuns[0]?.request.presented.artist || ""} onclose={() => { expanded = ""; detailRequest++; reportOpen = false; void tick().then(() => { if (opener?.isConnected) opener.focus({ preventScroll: true }); }); }}>
     {#snippet menu()}
       <DropdownMenu.Root>
-        <DropdownMenu.Trigger class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label="More play actions"><MoreHorizontal size={18} /></DropdownMenu.Trigger>
+        <DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label="More play actions"><MoreHorizontal size={18} /></DropdownMenu.Trigger>
         <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end">
           <DropdownMenu.Item class="bits-menu-item play-forget" disabled={!detail?.resolution.externalSnapshotId || actionBusy} onSelect={() => forgetOpen = true}>Look for it again</DropdownMenu.Item>
           <DropdownMenu.Item class="bits-menu-item" disabled={!detail?.resolution.externalSnapshotId || actionBusy} onSelect={openReport}>Report a problem</DropdownMenu.Item>

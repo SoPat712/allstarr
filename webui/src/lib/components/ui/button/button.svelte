@@ -11,19 +11,19 @@
 				default: "bg-[var(--color-signal)] text-[var(--color-on-signal)] hover:shadow-[var(--shadow-sm)]",
 				outline: "border-[var(--color-edge-strong)] bg-transparent text-[var(--color-signal-text)] hover:bg-[color-mix(in_srgb,var(--color-signal)_8%,transparent)]",
 				secondary: "bg-[var(--md-sys-color-secondary-container)] text-[var(--md-sys-color-on-secondary-container)] hover:shadow-[var(--shadow-sm)]",
-				ghost: "hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50",
+				ghost: "bg-transparent text-[var(--color-signal-text)] hover:bg-muted aria-expanded:bg-muted dark:hover:bg-muted/50",
 				text: "bg-transparent text-[var(--color-signal-text)] hover:bg-muted aria-expanded:bg-muted dark:hover:bg-muted/50",
 				destructive: "bg-[var(--md-sys-color-error)] text-[var(--md-sys-color-on-error)] hover:shadow-[var(--shadow-sm)] focus-visible:ring-[color-mix(in_srgb,var(--color-danger)_30%,transparent)]",
 				link: "text-primary underline-offset-4 hover:underline",
 			},
 			size: {
 				default: "h-[var(--control-md)] gap-1.5 px-4 has-data-[icon=inline-end]:pr-3 has-data-[icon=inline-start]:pl-3",
-				xs: "h-[var(--control-sm)] gap-1 rounded-[min(var(--radius-md),10px)] px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
-				sm: "h-[var(--control-sm)] gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
+				xs: "h-[var(--control-sm)] gap-1 px-2 text-xs in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3",
+				sm: "h-[var(--control-sm)] gap-1 px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
 				lg: "h-[var(--control-lg)] gap-2 px-6 has-data-[icon=inline-end]:pr-5 has-data-[icon=inline-start]:pl-5",
 				icon: "size-[var(--control-md)]",
-				"icon-xs": "size-[var(--control-sm)] rounded-[min(var(--radius-md),10px)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
-				"icon-sm": "size-[var(--control-sm)] rounded-[min(var(--radius-md),12px)] in-data-[slot=button-group]:rounded-lg",
+				"icon-xs": "size-[var(--control-sm)] in-data-[slot=button-group]:rounded-lg [&_svg:not([class*='size-'])]:size-3",
+				"icon-sm": "size-[var(--control-sm)] in-data-[slot=button-group]:rounded-lg",
 				"icon-lg": "size-[var(--control-lg)]",
 			},
 		},
@@ -61,6 +61,8 @@
 	<a
 		bind:this={ref}
 		data-slot="button"
+		data-variant={variant}
+		data-size={size}
 		class={cn(buttonVariants({ variant, size }), className)}
 		href={disabled ? undefined : href}
 		aria-disabled={disabled}
@@ -74,6 +76,8 @@
 	<button
 		bind:this={ref}
 		data-slot="button"
+		data-variant={variant}
+		data-size={size}
 		class={cn(buttonVariants({ variant, size }), className)}
 		{type}
 		{disabled}

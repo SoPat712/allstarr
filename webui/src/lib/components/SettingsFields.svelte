@@ -15,6 +15,7 @@
   import SelectField from "$lib/components/SelectField.svelte";
   import ThreeDetentSwitch from "$lib/components/ThreeDetentSwitch.svelte";
   import AudioQualityField from "$lib/components/AudioQualityField.svelte";
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
 
   let { section, config, onChanged = () => {} }: { section: ConfigSection; config: Record<string, unknown>; onChanged?: () => void | Promise<void> } = $props();
   let edits = $state<Record<string, { value: string; base: string }>>({});
@@ -204,7 +205,7 @@
       </div>
     {/each}
   </div>
-  {#if section.fields.some(field => field.type === "audio-quality")}<details class="settings-fold"><summary>Exact quality asked from each service</summary><ul class="requested-qualities">{#each requestedQualities as quality}<li>{quality}</li>{/each}</ul></details>{/if}
+  {#if section.fields.some(field => field.type === "audio-quality")}<AdvancedFold label="Exact quality asked from each service"><ul class="requested-qualities">{#each requestedQualities as quality}<li>{quality}</li>{/each}</ul></AdvancedFold>{/if}
   {#if error}<p role="alert" class="settings-impact notice-error">{error}</p>{/if}
 </form>
 

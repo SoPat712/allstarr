@@ -217,7 +217,7 @@
       </div>
 
       <footer class="dialog-actions dialog-actions--stacked">
-        <Dialog.Close class={buttonVariants({ variant: "secondary" })}>{copy.canApply ? "Cancel" : "Close"}</Dialog.Close>
+        <Dialog.Close class={buttonVariants({ variant: "text" })}>{copy.canApply ? "Cancel" : "Close"}</Dialog.Close>
         {#if copy.canApply}
           <Button disabled={!confirmed || applying} onclick={() => void applyRematch()}>
             {applying ? copy.applyingLabel : copy.actionLabel}

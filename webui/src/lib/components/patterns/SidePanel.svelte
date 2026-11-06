@@ -109,6 +109,7 @@
       data-side-panel
       data-mode={docked ? "docked" : "modal"}
       class="side-panel"
+      style={`--panel-width: ${panelWidth}px`}
       preventScroll={false}
       trapFocus={!docked}
       onInteractOutside={(event) => { if (docked) event.preventDefault(); }}
@@ -126,11 +127,11 @@
               </div>
               <div class="panel-controls touch-targets">
                 <nav class="panel-navigation" aria-label="Browse items">
-                  <Button variant="ghost" size="icon" aria-label={previousLabel ?? `Previous ${navigationLabel}`} disabled={!onPrevious} onclick={onPrevious}><ArrowUp size={16} aria-hidden="true" /></Button>
-                  <Button variant="ghost" size="icon" aria-label={nextLabel ?? `Next ${navigationLabel}`} disabled={!onNext} onclick={onNext}><ArrowDown size={16} aria-hidden="true" /></Button>
+                  <Button variant="text" size="icon" aria-label={previousLabel ?? `Previous ${navigationLabel}`} disabled={!onPrevious} onclick={onPrevious}><ArrowUp size={16} aria-hidden="true" /></Button>
+                  <Button variant="text" size="icon" aria-label={nextLabel ?? `Next ${navigationLabel}`} disabled={!onNext} onclick={onNext}><ArrowDown size={16} aria-hidden="true" /></Button>
                 </nav>
                 {@render menu?.()}
-                <Dialog.Close class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label="Close"><X size={18} aria-hidden="true" /></Dialog.Close>
+                <Dialog.Close class={buttonVariants({ variant: "text", size: "icon" })} aria-label="Close"><X size={18} aria-hidden="true" /></Dialog.Close>
               </div>
               {#if header}<div class="panel-header-extra">{@render header()}</div>{/if}
             </header>
@@ -156,8 +157,8 @@
   .panel-artwork { width: 56px; height: 56px; overflow: hidden; border-radius: var(--radius-sm); }
   .panel-artwork :global(.media-art) { width: 100%; height: 100%; }
   .panel-title { min-width: 0; }
-  .panel-title :global(h2) { overflow: hidden; margin: 0; color: var(--color-ink); font-size: 1.05rem; font-weight: 600; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
-  .panel-title :global(p) { overflow: hidden; margin: var(--space-1) 0 0; color: var(--color-ink-muted); font-size: var(--text-sm); line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
+  .panel-title :global([data-dialog-title]) { overflow: hidden; margin: 0; color: var(--color-ink); font-size: 1.05rem; font-weight: 600; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+  .panel-title :global([data-dialog-description]) { overflow: hidden; margin: var(--space-1) 0 0; color: var(--color-ink-muted); font-size: var(--text-xs); line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
   .panel-controls, .panel-navigation { display: flex; align-items: center; gap: 0; }
   .panel-controls :global(button) { display: inline-flex; width: 32px; height: 32px; min-height: var(--touch-target-min, 32px); align-items: center; justify-content: center; padding: 0; color: var(--color-ink-muted); }
   .panel-header-extra { grid-column: 1 / -1; min-width: 0; overflow-wrap: anywhere; color: var(--color-ink-muted); font-size: .8125rem; line-height: 1.4; }
@@ -166,7 +167,7 @@
   .panel-body :global(.sec-label) { margin: 0 0 var(--space-3); color: var(--color-ink-muted); font-size: .7rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
   .panel-footer { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; border-top: 1px solid var(--color-edge); padding: var(--space-3) var(--space-4) max(var(--space-3), env(safe-area-inset-bottom)); background: var(--color-panel); }
   :global(.side-panel-overlay--docked) { display: none; }
-  @media (min-width: 900px) { :global(.side-panel) { width: min(480px, 40vw); } .panel-grip { display: none; } }
+  @media (min-width: 900px) { :global(.side-panel) { width: var(--panel-width); } .panel-grip { display: none; } }
   @keyframes panel-in { from { opacity: 0; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
   @keyframes panel-out { from { opacity: 1; transform: translateX(0); } to { opacity: 0; transform: translateX(100%); } }
   @media (max-width: 899px) {

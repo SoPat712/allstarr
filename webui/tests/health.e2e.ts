@@ -187,6 +187,19 @@ test("Health explains skipped checks and source availability at 320px", async ({
   await expect(latest).toContainText("Search must pass before this step can run.");
   await expect(latest).toContainText("Skipped");
   await expectContainedMobileGeometry(page);
+  const strip = page.getByRole("group", { name: "Last 30 checks", exact: true });
+  const bounds = (await strip.boundingBox())!;
+  expect(bounds.height).toBeGreaterThanOrEqual(44);
+  await strip.click({ position: { x: bounds.width - 2, y: 1 } });
+  const panel = page.getByRole("dialog", { name: "Jellyfin check", exact: true });
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText("No eligible provider song was found.");
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
+  await strip.focus();
+  await strip.press("End");
+  await strip.press("Enter");
+  await expect(panel).toBeVisible();
+  await panel.getByRole("button", { name: "Close", exact: true }).click();
   await page.screenshot({ path: testInfo.outputPath("health-unavailable-320.png") });
 });
 

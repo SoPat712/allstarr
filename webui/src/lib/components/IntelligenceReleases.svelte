@@ -155,7 +155,7 @@
 
 <div class="releases-inbox">
   <PageStatus items={[{ label: `${inbox?.entries.length ?? 0} ${(inbox?.entries.length ?? 0) === 1 ? "release" : "releases"} from ${countLabel(artists.length, "artist")} you follow` }, { label: "Just Dropped collects these every Friday." }]} />
-  {#if radar}<a class="radar-link" href={`#/for-you?mix=${encodeURIComponent(radar)}`}>Open Just Dropped</a>{/if}
+  {#if radar}<Button variant="text" size="sm" class="radar-link" href={`#/for-you?mix=${encodeURIComponent(radar)}`}>Open Just Dropped</Button>{/if}
   <section class="following-row" aria-label="Following artists">
     <Button variant="text" size="sm" onclick={() => artistsOpen = true}>Following ({artists.length})</Button>
     <div class="artist-faces">{#each artists.slice(0, 6) as artist, index (`${index}:${artist.providerId}:${artist.artistId}`)}<button type="button" onclick={() => artistsOpen = true} aria-label={`Manage ${artist.displayName}`}><MediaArtwork url={`/api/admin/stats/art?${new URLSearchParams({ artist: artist.displayName })}`} /><span>{artist.displayName}</span></button>{/each}</div>
@@ -165,7 +165,7 @@
     <FilterSegments options={filters} bind:value={type} storageKey="allstarr.releases.type" label="Release type" />
     <div class="release-actions"><SelectField label="Release order" bind:value={sort} options={[{ value: "newest", label: "Newest first" }, { value: "oldest", label: "Oldest first" }]} />
       <DropdownMenu.Root><DropdownMenu.Trigger class="icon-button" aria-label="Release actions"><UiIcon name="more" /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu release-menu" align="end"><DropdownMenu.Item class="bits-menu-item" onSelect={() => void followTop()}>Follow my top artists</DropdownMenu.Item><DropdownMenu.Item class="bits-menu-item" onSelect={() => { followError = ""; followOpen = true; }}>Follow artists from my hearts</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
-      <RefreshButton variant="secondary" label="Refresh releases" disabled={Boolean(pendingAction)} onrefresh={load} />
+      <RefreshButton label="Refresh releases" disabled={Boolean(pendingAction)} onrefresh={load} />
     </div>
   </div>
   {#if error}<ErrorState title="Couldn't load new releases" detail={error} onretry={async () => { await load(); if (initialRelease && !ReleasePanel) await loadReleasePanel(); }} />{/if}
@@ -226,7 +226,7 @@
 
 <style>
   .releases-inbox { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); min-width: 0; }
-  .radar-link { width: fit-content; font-size: var(--text-sm); }
+  :global(.radar-link) { width: fit-content; }
   .following-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-lg); background: var(--color-panel); }
   .artist-faces { display: flex; flex: 1; min-width: 0; gap: var(--space-4); overflow-x: auto; }
   .artist-faces button { display: grid; flex: 0 0 auto; justify-items: center; gap: var(--space-1); min-width: 44px; max-width: 88px; font-size: var(--text-xs); color: var(--color-ink-muted); }

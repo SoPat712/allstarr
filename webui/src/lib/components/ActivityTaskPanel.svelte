@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatLocalDateTime } from "$lib/dates";
   import { onMount } from "svelte";
   import { CalendarClock } from "@lucide/svelte";
   import { playlistLinks, type ActivityTask, type PlaylistDetails, type PlaylistLink, type PlaylistSchedule, type ProviderDefinition } from "$lib/api";
@@ -36,7 +37,7 @@
   let saved = $state(false);
 
   function time(value?: string | null) {
-    return value && Number.isFinite(Date.parse(value)) ? new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "Not recorded";
+    return formatLocalDateTime(value, "Not recorded");
   }
   function setSchedule(value: PlaylistSchedule) {
     schedule = value;
@@ -125,12 +126,12 @@
     {#if saved}<p class="saved" role="status">Saved</p>{/if}
     <section class="settings-group" aria-label="Recent runs"><h3>Recent runs</h3>
       {#if task.lastRunAt}<p>{time(task.lastRunAt)}</p><span>{taskLastResult(task.state, task.lastRunAt)}</span>{:else}<p>No runs recorded yet.</p>{/if}
-      <Button variant="ghost" href="#/activity?view=history">Open in History</Button>
+      <Button variant="text" size="sm" href="#/activity?view=history">Open in History</Button>
     </section>
   {:else}<section class="settings-group"><h3>About this task</h3><p>{task.cadence}</p><p>{task.detail || "Runs automatically when needed."}</p><ActivityOutcome state={task.state} label={task.state} /></section>{/if}
   {#snippet footer()}
     <div class="task-footer">
-      {#if schedule?.enabled}<Button variant="ghost" class="stop-sync" disabled={saving} onclick={() => stopOpen = true}>Pause schedule…</Button>{/if}
+      {#if schedule?.enabled}<Button variant="text" size="sm" class="stop-sync" disabled={saving} onclick={() => stopOpen = true}>Pause schedule…</Button>{/if}
       {#if task.runPlaylistLinkId}<Button disabled={running || saving || loading} onclick={() => void onrun()}>{running ? "Queued" : "Run now"}</Button>{:else if internalActivityLink(task.actionHref)}<Button href={task.actionHref!}>{task.actionLabel || "Open settings"}</Button>{/if}
     </div>
   {/snippet}

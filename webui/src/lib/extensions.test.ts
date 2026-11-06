@@ -63,7 +63,8 @@ describe("extension sign-in", () => {
   it("shows automatic renewal and safe failure guidance", () => {
     const summary = sessionSummary({ state: "signed_in", expiresAt: "2099-06-15T12:00:00Z", renewsAutomatically: true }, "en-US");
     expect(summary.detail).toContain("Renews automatically.");
-    expect(summary.detail).toContain("2099");
+    expect(summary.detail).toContain(new Date("2099-06-15T12:00:00Z").toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }));
+    expect(summary.detail).not.toContain("2099");
     expect(renewalFailureText("provider_unavailable")).toContain("Your sign-in was kept");
     expect(renewalFailureText("token=private")).not.toContain("private");
     expect(renewalFailureText("renewal_capped", "2026-10-17T16:11:00Z")).toContain("Sign in again before then");
@@ -78,7 +79,8 @@ describe("extension sign-in", () => {
       .toMatchObject({ label: "Sign-in expired", badge: "degraded" });
     const signedIn = sessionSummary({ state: "signed_in", expiresAt: "2099-06-15T12:00:00Z" }, "en-US");
     expect(signedIn).toMatchObject({ label: "Signed in", badge: "healthy" });
-    expect(signedIn.detail).toContain("2099");
+    expect(signedIn.detail).toContain(new Date("2099-06-15T12:00:00Z").toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }));
+    expect(signedIn.detail).not.toContain("2099");
   });
 
   it("explains failures with a recovery step and never echoes unknown codes", () => {

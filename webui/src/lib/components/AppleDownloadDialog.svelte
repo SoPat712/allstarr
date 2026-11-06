@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import { Dialog } from "$lib/components/ui/dialog";
   import { Button } from "$lib/components/ui/button";
   import { X } from "@lucide/svelte";
@@ -103,7 +104,7 @@
       </div>
       <footer class="dialog-actions">
         <Button variant="secondary" href="#/sources/services/apple-musickit" onclick={() => open = false}>Provider settings</Button>
-        <Button variant="secondary" disabled={Boolean(action)} onclick={() => void load()}>Refresh status</Button>
+        <RefreshButton disabled={Boolean(action)} onrefresh={() => load()} label="Refresh status" />
       </footer>
     </Dialog.Content>
   </Dialog.Portal>

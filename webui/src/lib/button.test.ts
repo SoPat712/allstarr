@@ -12,12 +12,15 @@ describe("text buttons", () => {
     expect(html).not.toContain("text-foreground");
   });
 
-  it("keeps ghost icon controls free of the signal text override", () => {
-    for (const size of ["icon", "icon-sm", "icon-xs", "icon-lg"] as const) {
-      const classes = buttonVariants({ variant: "ghost", size });
-      expect(classes).not.toContain("text-[var(--color-signal-text)]");
-      expect(classes).toContain("hover:text-foreground");
-      expect(classes).toContain("aria-expanded:text-foreground");
+  it("colours ghost and text icons like their labels", () => {
+    for (const variant of ["ghost", "text"] as const) {
+      for (const size of ["icon", "icon-sm", "icon-xs", "icon-lg"] as const) {
+        const classes = buttonVariants({ variant, size });
+        expect(classes).toContain("text-[var(--color-signal-text)]");
+        expect(classes).not.toContain("text-foreground");
+        for (const state of ["hover:bg-muted", "aria-expanded:bg-muted", "dark:hover:bg-muted/50"])
+          expect(classes).toContain(state);
+      }
     }
   });
 });

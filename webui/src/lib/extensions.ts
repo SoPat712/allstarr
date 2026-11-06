@@ -1,4 +1,5 @@
 import type { ExtensionPackage, ExtensionSession, ExtensionStoreItem } from "$lib/api";
+import { formatLocalDateTime } from "./dates";
 
 export type SessionSummary = {
   label: string;
@@ -97,10 +98,7 @@ export function verificationHost(url?: string | null) {
 }
 
 function formatSessionTime(value: string, locale?: string) {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime())
-    ? "at an unknown time"
-    : date.toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
+  return formatLocalDateTime(value, "at an unknown time", { locale });
 }
 
 export function compareVersions(left: string, right: string) {

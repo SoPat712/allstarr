@@ -1,6 +1,7 @@
 import type { ProviderCheckHistory } from "./api";
 import { relativeTime } from "./activity";
 import { checkGuide, humanize } from "./sources";
+import { formatLocalDateTime } from "./dates";
 
 export function sourceCheckCard(check: ProviderCheckHistory["checks"][number] | null) {
   if (!check) return null;
@@ -10,9 +11,7 @@ export function sourceCheckCard(check: ProviderCheckHistory["checks"][number] | 
     outcome: humanize(check.outcome),
     tone: check.outcome === "passed" ? "success" as const : check.outcome === "failed" ? "danger" as const : "neutral" as const,
     relative: relativeTime(check.testedAt, "Time unavailable"),
-    absolute: Number.isFinite(Date.parse(check.testedAt))
-      ? new Date(check.testedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
-      : "Time unavailable",
+    absolute: formatLocalDateTime(check.testedAt, "Time unavailable"),
     reason: check.outcome === "passed" ? null : checkGuide(check.reasonCode)?.label ??
       (check.outcome === "failed" ? "Check failed" : "Not checked"),
     latency: check.latencyMs != null && Number.isFinite(check.latencyMs) && check.latencyMs >= 0

@@ -17,6 +17,7 @@
   } = $props();
 
   let group: HTMLDivElement;
+  let wrapped = $state(false);
   let focused = $state<string>();
   const focusId = $derived(focused && options.some(option => option.id === focused) ? focused : options.find(option => option.id === value)?.id ?? options[0]?.id);
 
@@ -24,6 +25,14 @@
     const saved = readFilter(storageKey, options.map(option => option.id));
     if (saved !== undefined && saved !== value) select(saved);
     else if (!options.some(option => option.id === value) && options[0]) select(options[0].id);
+    const measure = () => {
+      const controls = [...group.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
+      wrapped = new Set(controls.map(control => control.offsetTop)).size > 1;
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(group);
+    measure();
+    return () => observer.disconnect();
   });
 
   function select(id: string) {
@@ -46,7 +55,7 @@
   }
 </script>
 
-<div bind:this={group} class="seg filter-segments" role="radiogroup" tabindex="-1" aria-label={label} onkeydown={navigate} onfocusout={(event) => { if (!(event.relatedTarget instanceof Node) || !group.contains(event.relatedTarget)) focused = undefined; }}>
+<div bind:this={group} class="seg filter-segments" class:wrapped role="radiogroup" tabindex="-1" aria-label={label} onkeydown={navigate} onfocusout={(event) => { if (!(event.relatedTarget instanceof Node) || !group.contains(event.relatedTarget)) focused = undefined; }}>
   {#each options as option (option.id)}
     <button
       type="button"
@@ -58,7 +67,12 @@
       onfocus={() => focused = option.id}
     >
       <span>{option.label}</span>
-      {#if option.count !== undefined}<span class="segment-count">{option.count}</span>{/if}
+      {#if option.count !== undefined}<span class="segment-count">{option.count.toLocaleString()}</span>{/if}
     </button>
   {/each}
 </div>
+
+<style>
+  .filter-segments { flex-wrap: wrap; overflow: hidden; }
+  .filter-segments.wrapped { border-radius: var(--radius-list); }
+</style>

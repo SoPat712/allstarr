@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import { countLabel, countNoun } from "$lib/count-label";
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
@@ -17,7 +18,7 @@
   import PlaylistSyncSettings from "$lib/components/PlaylistSyncSettings.svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { ChevronDown, MoreHorizontal, RefreshCw, Server } from "@lucide/svelte";
+  import { ChevronDown, MoreHorizontal, Server } from "@lucide/svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
 
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
@@ -576,7 +577,7 @@
   <section class="library-playlists" class:panel-open={detailOpen} aria-busy={refreshing || passiveRefreshing}>
     <article class="library-list">
       <header class="library-heading"><h2>Playlists</h2><div class="library-actions">
-        <Button variant="ghost" size="icon" aria-label="Refresh playlists" disabled={Boolean(action) || refreshing} onclick={() => void refreshSources()}><RefreshCw size={18} /></Button>
+        <RefreshButton label="Refresh playlists" disabled={Boolean(action) || refreshing} onrefresh={() => refreshSources()} />
         <Button onclick={() => addOpen = true}>Import playlist</Button>
       </div></header>
       <PageStatus label="Playlist status" items={[
@@ -601,7 +602,7 @@
           {#if "inApps" in playlist}
             <ItemRow title={playlist.name} subtitle={`Mix · in your apps · ${playlist.trackCount ?? "?"} ${playlist.trackCount === 1 ? "song" : "songs"}`} href={`#/for-you?mix=${encodeURIComponent(playlist.id)}`} actionLabel={`Open ${playlist.name} mix`}>
               {#snippet leading()}<MediaArtwork class="playlist-art" url={`/api/admin/mixes/${encodeURIComponent(playlist.id)}/cover?v=${encodeURIComponent(playlist.updatedAt ?? playlist.recipeVersion ?? "")}`} />{/snippet}
-              {#snippet menu()}<DropdownMenu.Root><DropdownMenu.Trigger class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end"><DropdownMenu.Item class="bits-menu-item library-danger" onSelect={() => { removeError = ""; removingMix = playlist; }}>Remove from my apps</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/snippet}
+              {#snippet menu()}<DropdownMenu.Root><DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label={`More options for ${playlist.name}`}><MoreHorizontal size={18} /></DropdownMenu.Trigger><DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" align="end"><DropdownMenu.Item class="bits-menu-item library-danger" onSelect={() => { removeError = ""; removingMix = playlist; }}>Remove from my apps</DropdownMenu.Item></DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>{/snippet}
             </ItemRow>
           {:else}
             <ItemRow title={playlist.name} subtitle={`${providerName(playlist.sourceProviderId)} → ${providerName(playlist.targetProtocol)} · ${countLabel(playlist.trackCount, "song")}${playlist.routeCoverage.some(route => ["local", playlist.targetProtocol].includes(route.providerId)) ? ` · ${playlist.routeCoverage.filter(route => ["local", playlist.targetProtocol].includes(route.providerId)).reduce((sum, route) => sum + route.count, 0)} from your library` : ""}${hasCopy(playlist) ? " · Your copy" : ""}`} actionLabel={`Open ${playlist.name} playlist details`} selected={playlist.id === selectedId} attention={needsLook(playlist)} onclick={event => void loadDetails(playlist.id, event.currentTarget as HTMLElement)}>
@@ -618,7 +619,7 @@
       onNext={panelPosition >= 0 && panelPosition < panelPlaylists.length - 1 ? () => void loadDetails(panelPlaylists[panelPosition + 1].id) : undefined}>
       {#snippet menu()}{#if selected}
         <DropdownMenu.Root>
-          <DropdownMenu.Trigger class={buttonVariants({ variant: "ghost", size: "icon" })} aria-label="Actions" disabled={!details}>
+          <DropdownMenu.Trigger class={buttonVariants({ variant: "text", size: "icon" })} aria-label="Actions" disabled={!details}>
             <MoreHorizontal size={18} aria-hidden="true" />
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>

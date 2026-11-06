@@ -297,7 +297,7 @@
 
 <section class="settings-content import-page" aria-label="Move your music collection">
   <header class="import-heading"><div><h2>Bring your music</h2></div>
-    {#if runId}<RefreshButton variant="secondary" label="Refresh import progress" onrefresh={refresh} />{/if}
+    {#if runId}<RefreshButton label="Refresh import progress" onrefresh={refresh} />{/if}
   </header>
   <PageStatus label="Import status" items={[{ label: "Nothing changes in Apple Music or Spotify.", emphasis: true }, ...(status && runState !== "choosing" ? [{ label: `${status.total.accepted} found · ${status.total.review} unsure · ${status.total.unmatched} missing so far` }] : [])]} />
   {#if !loading && providerOptions.length > 1}
@@ -439,7 +439,7 @@
           <Dialog.Description>{selectedResource.metadata.title}{selectedResource.metadata.artists?.length ? ` · ${selectedResource.metadata.artists.join(", ")}` : ""}</Dialog.Description></div></header>
         <div class="import-resource-options">
           {#each selectedResource.resource.candidates as candidate (`${candidate.providerId}:${candidate.resourceId}`)}
-            <Button variant="ghost" class="import-resource-option" aria-label={`Choose ${candidate.title}${candidate.artist ? ` by ${candidate.artist}` : ""}`} disabled={resourceSaving} onclick={() => saveResource(candidate)}>
+            <Button variant="text" size="sm" class="import-resource-option" aria-label={`Choose ${candidate.title}${candidate.artist ? ` by ${candidate.artist}` : ""}`} disabled={resourceSaving} onclick={() => saveResource(candidate)}>
               <MediaArtwork url={candidate.artworkUrl} />
               <span><strong>{candidate.title}</strong>{#if candidate.artist}<small>{candidate.artist}</small>{/if}{#if resourceDetails(candidate)}<small>{resourceDetails(candidate)}</small>{/if}</span>
               <span class="import-resource-action">Choose</span>
@@ -448,7 +448,7 @@
           {#if !selectedResource.resource.candidates.length}<p>No matches found. You can skip this one and keep moving your other music.</p>{/if}
           {#if resourceError}<p class="notice-error" role="alert">{resourceError}</p>{/if}
         </div>
-        <footer class="dialog-actions"><Dialog.Close class={buttonVariants({ variant: "secondary" })} disabled={resourceSaving}>Cancel</Dialog.Close><Button variant="outline" disabled={resourceSaving} onclick={() => saveResource()}>Skip this one</Button></footer>
+        <footer class="dialog-actions"><Dialog.Close class={buttonVariants({ variant: "text" })} disabled={resourceSaving}>Cancel</Dialog.Close><Button variant="outline" disabled={resourceSaving} onclick={() => saveResource()}>Skip this one</Button></footer>
       {/if}
     </Dialog.Content>
   </Dialog.Portal>

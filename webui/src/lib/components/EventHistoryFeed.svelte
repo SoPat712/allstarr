@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatLocalDateTime } from "$lib/dates";
   import { countLabel } from "$lib/count-label";
   import { writeFilter } from "$lib/components/patterns/helpers";
   import { onMount, tick, untrack } from "svelte";
@@ -256,11 +257,7 @@
   }
 
   function fullTime(value: string) {
-    if (Number.isNaN(Date.parse(value))) return "Time unavailable";
-    return new Intl.DateTimeFormat(undefined, {
-      dateStyle: "medium",
-      timeStyle: "short",
-    }).format(new Date(value));
+    return formatLocalDateTime(value, "Time unavailable");
   }
 
   function technical(item: ActivityItem) {
@@ -346,7 +343,7 @@
           { id: "library", label: "Library", count: countFor("library") },
         ]} />
       </div>
-      <RefreshButton variant="outline" class="event-log-refresh" disabled={loadingEarlier} onrefresh={() => load("refresh")} />
+      <RefreshButton class="event-log-refresh" disabled={loadingEarlier} onrefresh={() => load("refresh")} />
     </div>
     <details class="event-more-filters">
       <summary>More filters{providerFilter || showBackground || ["sources", "system"].includes(category) ? " · active" : ""}</summary>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { toast } from "$lib/toasts";
@@ -147,31 +148,31 @@
         {#await import("./BackupsView.svelte")}<RowsSkeleton />{:then { default: Backups }}<Backups {administrator} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
       {:else if active === "health"}
         {#await import("./HealthView.svelte")}<RowsSkeleton />{:then { default: Health }}<Health {initialPanel} />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
-        <details class="settings-fold"><summary>Advanced: media and playlist tests</summary><section class="settings-card" aria-label="Diagnostics">
+        <AdvancedFold description="media and playlist tests"><section class="settings-card" aria-label="Diagnostics">
           <div class="settings-row"><div><strong>Media pipeline</strong><small>Checks song details, artwork and playback.</small></div><Button variant="outline" disabled={Boolean(action)} onclick={() => run("media", settings.mediaProbe, "Media pipeline checked.")}>Test media pipeline</Button></div>
           <div class="settings-row"><div><strong>Playlist readiness</strong><small>Checks source access and which songs listeners can play.</small></div><Button variant="outline" disabled={Boolean(action)} onclick={() => run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>Test playlist readiness</Button></div>
-        </section></details>
+        </section></AdvancedFold>
       {:else if active === "setup"}
         {#await import("./SetupGuide.svelte")}<RowsSkeleton />{:then { default: Guide }}
           {#if onboardingState}<Guide state={onboardingState} onChanged={onSetupChanged} embedded={onboardingState.completed} />{:else}<Button variant="outline" onclick={() => onOpenSetup()}>Open setup guide</Button>{/if}
         {:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
       {:else if active === "general"}
         {#each generalGroups as item (item.id)}<SettingsFields section={item} {config} onChanged={refresh} />{/each}
-        {#if fields.some(field => field.key === "ODESLI_RATE_LIMIT_MS")}<details class="settings-fold"><summary>Advanced: wait between song.link lookups</summary><SettingsFields section={group("link-timing", "Song link timing", fields.filter(field => field.key === "ODESLI_RATE_LIMIT_MS"))} {config} onChanged={refresh} /></details>{/if}
+        {#if fields.some(field => field.key === "ODESLI_RATE_LIMIT_MS")}<AdvancedFold description="wait between song.link lookups"><SettingsFields section={group("link-timing", "Song link timing", fields.filter(field => field.key === "ODESLI_RATE_LIMIT_MS"))} {config} onChanged={refresh} /></AdvancedFold>{/if}
         <p class="settings-muted">Allstarr · beta {__APP_VERSION__}</p>
       {:else if active === "access"}
         {#await import("./AccessSettingsCard.svelte")}<RowsSkeleton count={2} />{:then { default: Access }}<Access kind="backend" /><Access kind="oidc" />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
         {#if accessFields.some(field => !/Cors:/.test(field.valuePath ?? ""))}<SettingsFields section={group("network", "Addresses and network", accessFields.filter(field => !/Cors:/.test(field.valuePath ?? "")))} {config} onChanged={refresh} />{/if}
-        <details class="settings-fold"><summary>Advanced: browser access (origins, methods, headers)</summary><SettingsFields section={group("browser-access", "Browser access", accessFields.filter(field => /Cors:/.test(field.valuePath ?? "")))} {config} onChanged={refresh} /></details>
+        <AdvancedFold description="browser access (origins, methods, headers)"><SettingsFields section={group("browser-access", "Browser access", accessFields.filter(field => /Cors:/.test(field.valuePath ?? "")))} {config} onChanged={refresh} /></AdvancedFold>
       {:else if active === "storage"}
         {#if fields.some(field => ["STORAGE_MODE", "CACHE_DURATION_HOURS", "CACHE_AUDIO_MAXIMUM_GIB"].includes(field.key))}<SettingsFields section={group("track-cache", "Track cache", fields.filter(field => ["STORAGE_MODE", "CACHE_DURATION_HOURS", "CACHE_AUDIO_MAXIMUM_GIB"].includes(field.key)))} {config} onChanged={refresh} />{/if}
         {#if sectionFor("audio-limits").some(field => field.key !== "CACHE_AUDIO_MAXIMUM_GIB")}<SettingsFields section={group("audio-limits", "Audio limits", sectionFor("audio-limits").filter(field => field.key !== "CACHE_AUDIO_MAXIMUM_GIB"))} {config} onChanged={refresh} />{/if}
         {#if sectionFor("paths").length}<SettingsFields section={group("paths", "Folders", sectionFor("paths"))} {config} onChanged={refresh} />{/if}
-        <details class="settings-fold"><summary>Advanced: activity retention, cache durations, saved-file verification</summary>
+        <AdvancedFold description="activity retention, cache durations, saved-file verification">
           {#if storageAdvanced.length}<SettingsFields section={group("storage-advanced", "Retention and cache", storageAdvanced)} {config} onChanged={refresh} />{/if}
           {#await import("./StorageVerificationCard.svelte")}<RowsSkeleton count={1} />{:then { default: Verification }}<Verification />{:catch}<ErrorState title="This settings page could not be opened" onretry={() => window.location.reload()} />{/await}
           <CacheDiagnosticsCard snapshot={cache} {preview} busy={Boolean(action)} onClean={() => run("clean", settings.cleanCache, "Cache cleanup complete.")} onPurge={target => { purgeTarget = target; purgeOpen = true; }} />
-        </details>
+        </AdvancedFold>
       {/if}
     {/if}
   </div>

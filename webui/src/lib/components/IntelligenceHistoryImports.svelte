@@ -240,7 +240,7 @@
   {/if}
   {#if error}<p class="history-message notice-error" role="alert">{error}</p>{/if}
   {#if summary}<p class="history-message" role="status">{summary}</p>{/if}
-  <header><h3>Your imports</h3><RefreshButton variant="secondary" label="Refresh imports" disabled={uploading || action} onrefresh={() => load(true)} /></header>
+  <header><h3>Your imports</h3><RefreshButton label="Refresh imports" disabled={uploading || action} onrefresh={() => load(true)} /></header>
   {#if loading}<p class="history-message" role="status">Loading imports…</p>
   {:else if !items.length}<p class="history-message">No imports yet.</p>
   {:else}

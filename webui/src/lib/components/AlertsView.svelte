@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AdvancedFold from "$lib/components/patterns/AdvancedFold.svelte";
   import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { X, Bell, CircleCheck, MoreHorizontal } from "@lucide/svelte";
@@ -162,10 +163,10 @@
   {#if error}<ErrorState title="Alerts could not be loaded" detail={error} onretry={() => load()} />{/if}
   {#if !data && !error}<RowsSkeleton count={3} />{/if}
   <section class="settings-stack" aria-label="Open problems">
-    <div class="settings-toolbar"><h3>Open problems</h3><RefreshButton variant="ghost" label="Refresh alerts" disabled={Boolean(action)} onrefresh={() => load()} /></div>
+    <div class="settings-toolbar"><h3>Open problems</h3><RefreshButton label="Refresh alerts" disabled={Boolean(action)} onrefresh={() => load()} /></div>
     {#if data && !openIncidents.length}<section class="settings-card"><EmptyState title="No open problems" description="Allstarr will show problems here when something needs attention.">{#snippet icon()}<CircleCheck size={24} />{/snippet}</EmptyState></section>{/if}
     {#each incidentGroups as group (group[0].id)}
-      <GroupedRow count={group.length} summary={group[0].message}>
+      <GroupedRow count={group.length} summary={group[0].kind.includes("source") ? group.length === 1 ? "source needs a look" : "sources need a look" : group.length === 1 ? "open problem" : "open problems"} reason={group[0].message}>
         {#snippet action()}<Button variant="outline" size="sm" href={group[0].kind.includes("source") ? "#/sources" : "#/settings/health"}>{group[0].kind.includes("source") ? "Review sources" : "Review health"}</Button>{/snippet}
         {#snippet members()}{#each group as incident (incident.id)}<ItemRow title={incident.resource || incident.message} subtitle={`${incident.action} · Started ${alertDate(incident.openedAt)}`} />{/each}{/snippet}
       </GroupedRow>
@@ -201,15 +202,15 @@
         <form aria-label="Disk alert thresholds" onsubmit={event => event.preventDefault()} onchange={event => { if (event.currentTarget.checkValidity() && thresholdDirty) void saveConfiguration("thresholds"); }}>
           <fieldset class="settings-fields" disabled={Boolean(action)}>
             {#each thresholdFields.filter(field => field.key === "warningGiB" || field.key === "criticalGiB") as field}<label class="setting-field settings-row"><div><strong>{field.label}</strong><small>{field.key === "warningGiB" ? "Warn below this much free space." : "Must be no higher than the warning."}</small></div><input type="number" aria-label={field.label} required min="0" max={field.max} step={field.step} bind:value={draft[field.key]} /></label>{/each}
-            <details class="settings-fold"><summary>Advanced: percentages, recovery margin and repeat alerts</summary>
+            <AdvancedFold description="percentages, recovery margin and repeat alerts">
               {#each thresholdFields.filter(field => field.key !== "warningGiB" && field.key !== "criticalGiB") as field}<label class="setting-field settings-row"><div><strong>{field.label}</strong></div><input type="number" aria-label={field.label} required min={field.key === "cooldownMinutes" ? 1 : 0} max={field.max} step={field.step} bind:value={draft[field.key]} /></label>{/each}
-            </details>
+            </AdvancedFold>
             {#if !thresholds}<p class="notice-error alert-notice" role="alert">Check the limits and recovery margins. Warning limits must be at least the critical limits.</p>{/if}
           </fieldset>
         </form>
-      <details class="settings-fold"><summary>Advanced: hosts listeners may send alerts to</summary>
+      <AdvancedFold description="hosts listeners may send alerts to">
         <form class="settings-card" aria-label="Allowed destination hosts" onsubmit={event => event.preventDefault()} onchange={() => { if (hostsDirty) void saveConfiguration("hosts"); }}><label class="settings-row"><div><strong>Allowed hosts</strong><small>One host per line, with an optional port. Administrators can use other hosts. Leave empty to allow no listener destinations.</small></div><textarea aria-label="Allowed hosts" rows="4" bind:value={hosts} spellcheck="false" disabled={Boolean(action)}></textarea></label>{#if !permittedHosts}<p class="notice-error alert-notice" role="alert">Enter host names with optional ports, without a scheme, path or username.</p>{/if}</form>
-      </details>
+      </AdvancedFold>
       </article>
     {/if}
   {/if}

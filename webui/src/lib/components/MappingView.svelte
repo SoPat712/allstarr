@@ -642,7 +642,7 @@
 
 {#snippet rowMenu(match: MatchReviewItem)}
   <DropdownMenu.Root>
-    <DropdownMenu.Trigger class={`${buttonVariants({ variant: "ghost", size: "icon" })} row-menu`} disabled={Boolean(action)} aria-label={`More actions for ${match.title || "song"}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
+    <DropdownMenu.Trigger class={`${buttonVariants({ variant: "text", size: "icon" })} row-menu`} disabled={Boolean(action)} aria-label={`More actions for ${match.title || "song"}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
     <DropdownMenu.Portal><DropdownMenu.Content class="bits-menu" sideOffset={4} align="end">
       <DropdownMenu.Item class="bits-menu-item" onSelect={() => { openMatch(match); lyricsRequest++; }} disabled={!match.canonicalRecordingId}>Wrong lyrics?</DropdownMenu.Item>
       <DropdownMenu.Item class="bits-menu-item" onSelect={() => window.location.hash = reportHref({ externalSnapshotId: match.externalSnapshotId }, "/library/matches")}>Report a problem</DropdownMenu.Item>
@@ -693,7 +693,7 @@
           ]} onchange={() => { page = 1; void load(); }} />
           <Button variant="text" size="sm" aria-pressed={bulkMode} onclick={() => { bulkMode = !bulkMode; if (!bulkMode) chosen = new Map(); }}>{bulkMode ? "Done selecting" : "Select"}</Button>
           <Button variant="outline" size="sm" disabled={Boolean(action) || refreshing} onclick={() => rematchAllOpen = true}>Rematch all</Button>
-          <RefreshButton variant="ghost" size="icon" class="matches-refresh" disabled={Boolean(action)} onrefresh={reload} />
+          <RefreshButton class="matches-refresh" disabled={Boolean(action)} onrefresh={reload} />
         </div>
       </div>
       {#if counts.needs === 0}<div class="quiet-success"><EmptyState title="Nothing needs you right now" /></div>{/if}
@@ -724,7 +724,7 @@
                   <td class="desktop-cell"><div class="plays-as">{#if target}<span><ProviderMark id={target.providerId === "local" ? backend.toLowerCase() : target.providerId} definition={provider(target.providerId)} />{providerName(target.providerId)}</span>{#if target.title?.trim() && target.title !== match.title}<small>{target.title}</small>{/if}{:else}<span class="no-match">No match yet</span>{/if}</div></td>
                   <td class="desktop-cell"><StatePill tone={state.tone} text={state.text} /></td>
                   <td class="desktop-cell"><div class="difference-chips" title={differences.join(" · ") || undefined}>{#if target}{#each differences as difference}<span>{difference}</span>{:else}{#if target.title?.trim() && target.artist?.trim()}<span class="same-song">✓ Same song</span>{/if}{/each}{/if}</div></td>
-                  <td class="desktop-cell actions-cell"><div class="row-actions">{@render rowMenu(match)}<Button variant="ghost" size="icon" class="row-chevron" aria-label={`Show match for ${match.title || "song"}`} onclick={() => openMatch(match)}><ChevronRight size={16} aria-hidden="true" /></Button></div></td>
+                  <td class="desktop-cell actions-cell"><div class="row-actions">{@render rowMenu(match)}<Button variant="text" size="icon" class="row-chevron" aria-label={`Show match for ${match.title || "song"}`} onclick={() => openMatch(match)}><ChevronRight size={16} aria-hidden="true" /></Button></div></td>
                 {/if}
               </tr>
             {/each}</tbody>

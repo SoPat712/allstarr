@@ -273,7 +273,7 @@
   <header class="library-downloads-heading">
     <h2>{label} songs</h2>
     <div class="library-downloads-heading-actions">
-      <RefreshButton variant="ghost" size="icon" class="downloads-refresh" disabled={Boolean(action)} onrefresh={refresh} />
+      <RefreshButton class="downloads-refresh" disabled={Boolean(action)} onrefresh={refresh} />
       {#if bulkActionCount}<Button class="danger-text" variant="text" disabled={Boolean(action)} onclick={() => confirm({ kind: "all" })}>Remove all</Button>{/if}
     </div>
   </header>
@@ -400,7 +400,6 @@
     :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .song-heading { width: auto; padding-left: var(--space-2); }
     :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .source-heading { width: 100px; }
     :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .quality-heading { width: 90px; }
-    :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .actions-heading { width: 128px; }
     :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .lifecycle-heading, :global(body:has([data-side-panel][data-mode="docked"])) .panel-open .size-heading, :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.lifecycle-cell), :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.size-cell) { display: none; }
     :global(body:has([data-side-panel][data-mode="docked"])) .panel-open th, :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.library-download-row > td) { padding-inline: var(--space-2); }
     :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.library-download-row > td), :global(body:has([data-side-panel][data-mode="docked"])) .panel-open :global(.song-description > strong) { font-size: var(--text-xs); }

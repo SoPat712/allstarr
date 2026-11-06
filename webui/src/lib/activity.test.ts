@@ -305,7 +305,7 @@ describe("activity labels and retry times", () => {
     const retry = new Date("2026-11-03T04:00:27Z");
     const clock = new Intl.DateTimeFormat(undefined, { timeStyle: "short" }).format(retry);
     expect(activityRecovery("Retry scheduled for 2026-11-03 04:00:27 UTC.", retry)).toBe(`Retrying at ${clock}`);
-    const dated = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(retry);
+    const dated = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(retry);
     expect(activityRecovery("Retry scheduled for 2026-11-03 04:00:27 UTC.", new Date("2026-11-01T12:00:00Z"))).toBe(`Retrying at ${dated}`);
     expect(activityRecovery("Review your source connection.")).toBe("Review your source connection.");
     expect(activityRecovery("Retry scheduled for an unknown time.")).toBe("Retry scheduled for an unknown time.");

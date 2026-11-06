@@ -196,7 +196,7 @@
 <section class="settings-card shared-hearts" aria-labelledby="shared-hearts-title">
   <div class="panel-heading">
     <div><h3 id="shared-hearts-title" class="font-semibold">Shared provider hearts</h3><p>Combine provider hearts for two profiles of the same person.</p></div>
-    <div class="panel-heading-actions"><RefreshButton variant="secondary" disabled={Boolean(action)} onrefresh={refresh} label="Refresh profiles" /></div>
+    <div class="panel-heading-actions"><RefreshButton disabled={Boolean(action)} onrefresh={refresh} label="Refresh profiles" /></div>
   </div>
   {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
   {#if message}<p class="notice-info" role="status">{message}</p>{/if}

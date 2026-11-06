@@ -88,7 +88,7 @@
 
 <div class="sound-settings" aria-busy={refreshing}>
   <PageStatus items={[{ label: statusLabel }, { label: connection?.keyConfigured ? "Key saved" : "No key saved" }]} />
-  <div class="sound-refresh"><RefreshButton variant="ghost" label="Refresh sound analysis" disabled={Boolean(action)} onrefresh={refresh} /></div>
+  <div class="sound-refresh"><RefreshButton label="Refresh sound analysis" disabled={Boolean(action)} onrefresh={refresh} /></div>
   {#if error}<ErrorState title="Some sound analysis settings are unavailable" detail={error} onretry={refresh} />{/if}
   {#if !status && refreshing}<RowsSkeleton count={2} />{:else}
     <section class="settings-card" aria-label="AudioMuse connection"><header><h3>AudioMuse</h3></header>
@@ -109,7 +109,7 @@
         <label class="field"><span>API key</span><input type="password" aria-label="API key" aria-describedby="sound-key-help" bind:value={key} autocomplete="new-password" maxlength="4096" disabled={connectionLoading || Boolean(action)} /><small id="sound-key-help">{connection?.keyConfigured ? "Key saved. Leave blank to keep it." : "Enter your AudioMuse key."}</small></label>
         {#if connectionError}<p class="notice-error" role="alert">{connectionError}</p>{/if}
       </div>
-      <footer class="dialog-actions"><Dialog.Close type="button" class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</Dialog.Close><Button type="submit" disabled={connectionLoading || Boolean(action) || !connection}>{action === "connection" ? "Saving…" : "Save"}</Button></footer>
+      <footer class="dialog-actions"><Dialog.Close type="button" class={buttonVariants({ variant: "text" })} disabled={Boolean(action)}>Cancel</Dialog.Close><Button type="submit" disabled={connectionLoading || Boolean(action) || !connection}>{action === "connection" ? "Saving…" : "Save"}</Button></footer>
     </form>
   </Dialog.Content></Dialog.Portal>
 </Dialog.Root>

@@ -210,7 +210,7 @@
             {/if}
             {#each (orders[group.id] ?? group.providers).slice(0, expanded ? undefined : 5) as providerId, index (providerId)}
               {@const definition = provider(providerId)}
-              {@const label = group.id === "lyrics" ? lyricsSourceDisplayName(schema?.providers ?? [], providerId) : definition?.name ?? providerId}
+              {@const label = group.id === "lyrics" ? lyricsSourceDisplayName(schema?.providers ?? [], providerId) : definition?.name ?? humanize(providerId)}
               {@const scoreKey = `${group.id}:${providerId}`}
               <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
               <li
@@ -218,14 +218,14 @@
                 class:has-score={Boolean(scoreFor(providerId))}
                 onclick={(event) => { if (scoreFor(providerId) && !(event.target as Element).closest("button, a, input, details, .score-details")) toggleScore(scoreKey); }}
                 class:dragging={dragging?.groupId === group.id && dragging.index === index}
-                ondragstart={() => { dragging = { groupId: group.id, index }; }}
+                ondragstart={event => { dragging = { groupId: group.id, index }; event.dataTransfer?.setData("text/plain", providerId); }}
                 ondragover={(event) => event.preventDefault()}
-                ondrop={() => dropProvider(group, index)}
+                ondrop={event => { event.preventDefault(); dropProvider(group, index); }}
                 ondragend={() => { dragging = null; }}
               >
                 <span class="routing-index" aria-hidden="true"><GripVertical size={16} />{index + 1}</span>
                 <ProviderArtwork id={providerId} definition={definition} label={label} />
-                <span class="routing-copy"><strong>{label}</strong><small>{definition ? sourceOriginLabel(definition) : providerId === "backend" ? "Media server" : "Kept lyrics"}</small></span>
+                <span class="routing-copy"><strong>{label}</strong><small>{definition ? sourceOriginLabel(definition) : providerId === "backend" ? "Media server" : providerId === "kept" ? "Kept lyrics" : "Source"}</small></span>
                 <span class="routing-quality-label">{scoreFor(providerId)?.quality?.typical ?? "—"}</span>
                 {#if scoreFor(providerId)}
                   {@const ranked = isRanked(definition?.useMode)}
@@ -238,8 +238,8 @@
                 {:else}<span class="score-unavailable" aria-label="Score not measured">—</span>
                 {/if}
                 <details class="routing-move"><summary aria-label={`Reorder ${label}`}><ChevronDown size={16} aria-hidden="true" /></summary><span class="routing-actions">
-                  <Button variant="ghost" size="icon" aria-label={`Move ${label} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
-                  <Button variant="ghost" size="icon" aria-label={`Move ${label} down`} disabled={index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
+                  <Button variant="text" size="icon" aria-label={`Move ${label} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
+                  <Button variant="text" size="icon" aria-label={`Move ${label} down`} disabled={index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
                 </span></details>
               </li>
             {/each}

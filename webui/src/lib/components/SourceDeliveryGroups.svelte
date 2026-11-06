@@ -1,4 +1,6 @@
 <script lang="ts">
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
+  import { formatLocalDateTime } from "$lib/dates";
   import { countLabel } from "$lib/count-label";
   import { untrack } from "svelte";
   import { scrobbling, type ScrobbleDelivery, type ProviderAccount } from "$lib/api";
@@ -94,7 +96,7 @@
       {@const reason = first.unavailableReason || (first.providerCode === "destination-unbound" ? "The destination needs confirming" : first.requiresReauthentication ? "Reconnect the saved account" : first.safeMessage || "Waiting to retry")}
       <div class="delivery-group">
         {#if accountId}<p class="delivery-reason"><strong>{countLabel(group.items.length, "listen is", "listens are")} waiting.</strong> {reason}</p>{/if}
-        <GroupedRow count={group.items.length} summary={`${name} · ${reason}`} expanded={Boolean(accountId)}>
+        <GroupedRow count={group.items.length} summary={`${group.items.length === 1 ? "listen" : "listens"} waiting for ${name}`} {reason} expanded={Boolean(accountId)}>
           {#snippet action()}
             <div class="delivery-actions">
               {#if canResend(first)}
@@ -110,19 +112,19 @@
               <div class="listen-row">
                 <span class="listen-icon" aria-hidden="true"><Music2 size={18} /></span>
                 <div class="listen-copy"><strong>{item.submission?.title ?? "Saved listen"}</strong>
-                  <small>{item.submission?.artist ?? name} · {new Date(item.submission?.occurredAt ?? item.updatedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</small>
+                  <small>{item.submission?.artist ?? name} · {formatLocalDateTime(item.submission?.occurredAt ?? item.updatedAt, "Invalid Date")}</small>
                   <small>{item.destinationAccountId ? "Saved account" : "Destination to confirm"}: {account?.displayName ?? "Connect the intended account"}</small>
                   {#if canResend(item) && !item.destinationAccountId && item.availableDestinationAccountIds?.length}
                     <SelectField label="Destination account for older listen" value={account?.id ?? ""} options={accounts.filter(a => item.availableDestinationAccountIds?.includes(a.id)).map(a => ({ value: a.id, label: `${a.displayName} (${a.scope})` }))} disabled={busy} onchange={value => selectedDestinations[item.id] = value} />
                   {/if}
-                  {#if item.retryAfter}<small>Next attempt {new Date(item.retryAfter).toLocaleString()}</small>{/if}
+                  {#if item.retryAfter}<small>Next attempt {formatLocalDateTime(item.retryAfter, "Invalid Date")}</small>{/if}
                 </div>
                 <div class="listen-actions">
                   {#if item.canDismiss}<Button variant="text" size="sm" disabled={busy} onclick={() => void dismiss(item)}>Dismiss</Button>
                   {:else if needsAction(item) && canResend(item)}
                     {#if item.canConfirm}<Button variant="text" size="sm" disabled={busy} onclick={() => choose([item], "confirm-delivered")}>Already in history</Button>{/if}
                     <Button variant="text" size="sm" disabled={busy || !canRetry(item)} onclick={() => choose([item], "retry")}>Retry</Button>
-                    {#if !account}<a href={`#/sources/accounts?source=${item.targetId}&connect=1`}>Connect this service</a>{/if}
+                    {#if !account}<Button variant="text" size="sm" href={`#/sources/accounts?source=${item.targetId}&connect=1`}>Connect this service</Button>{/if}
                   {:else}<StatePill text={item.state === "retrying" ? "Waiting to retry" : "Cannot resend"} />{/if}
                 </div>
               </div>
@@ -132,7 +134,7 @@
       </div>
     {/each}
   {/if}
-  <Button variant="text" size="sm" disabled={busy} onclick={() => void load()}>Refresh delivery</Button>
+  <RefreshButton disabled={busy} onrefresh={() => load()} label="Refresh delivery" />
   {#if hasMore}<Button variant="text" disabled={busy} onclick={() => void load(true)}>Load earlier deliveries</Button>{/if}
 </section>
 
@@ -145,7 +147,6 @@
 
 <style>
   .delivery-groups, .delivery-group { display: grid; min-width: 0; gap: var(--space-3); }
-  .delivery-groups :global(button) { min-height: 44px; }
   .delivery-actions, .listen-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
   .delivery-reason { margin: 0; padding: var(--space-3); border-radius: var(--radius-md); background: color-mix(in srgb, var(--warning) 10%, var(--color-panel)); font-size: var(--text-sm); overflow-wrap: anywhere; }
   .listen-row { display: flex; gap: var(--space-3); align-items: center; border-bottom: 1px solid var(--color-edge); padding: var(--space-3); }
@@ -155,6 +156,5 @@
   .listen-copy strong { font-size: var(--text-sm); }
   .listen-copy small { color: var(--color-ink-muted); font-size: var(--text-xs); }
   .listen-actions { justify-content: flex-end; }
-  .listen-actions a { display: flex; min-height: 44px; align-items: center; font-size: var(--text-sm); }
   @media (max-width: 599px) { .delivery-groups :global(.group-heading) { flex-wrap: wrap; padding-right: 0; } .delivery-groups :global(.group-action) { padding: 0 var(--space-3) var(--space-2); } .listen-row { flex-wrap: wrap; } .listen-actions { width: 100%; } }
 </style>

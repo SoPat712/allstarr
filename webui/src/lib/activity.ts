@@ -1,4 +1,5 @@
 import { countLabel } from "./count-label";
+import { formatLocalDateTime } from "./dates";
 import type { ActivityItem, Job, JobAttempt, PlayTrace } from "./api";
 
 export type ActivityFilters = {
@@ -340,7 +341,7 @@ export function activityRecovery(value?: string | null, now = new Date()) {
   const date = new Date(`${match[1]}T${match[2]}Z`);
   if (Number.isNaN(date.getTime())) return text;
   const today = date.toDateString() === now.toDateString();
-  return `Retrying at ${new Intl.DateTimeFormat(undefined, { timeStyle: "short", ...(today ? {} : { dateStyle: "medium" }) }).format(date)}`;
+  return `Retrying at ${today ? new Intl.DateTimeFormat(undefined, { timeStyle: "short" }).format(date) : formatLocalDateTime(date.toISOString())}`;
 }
 
 

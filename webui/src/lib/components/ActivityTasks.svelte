@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatLocalDateTime } from "$lib/dates";
   import { countLabel } from "$lib/count-label";
   import { onMount, tick } from "svelte";
   import { CalendarClock } from "@lucide/svelte";
@@ -42,8 +43,7 @@
   const next = $derived(items.filter(task => task.enabled && task.nextRunAt).toSorted((a, b) => a.nextRunAt!.localeCompare(b.nextRunAt!))[0]);
 
   function time(value?: string | null) {
-    if (!value || Number.isNaN(Date.parse(value))) return "Not recorded";
-    return new Date(value).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", ...(zones.length === 1 ? { timeZone: zones[0] } : {}) });
+    return formatLocalDateTime(value, "Not recorded", { timeZone: zones.length === 1 ? zones[0] : undefined });
   }
   async function load() {
     if (busy) return;
@@ -107,7 +107,7 @@
       { id: "scheduled", label: "Scheduled", count: items.filter(task => task.enabled).length },
       { id: "paused", label: "Paused", count: items.filter(task => !task.enabled).length },
     ]} />
-    <RefreshButton variant="outline" onrefresh={load} label="Refresh tasks" />
+    <RefreshButton onrefresh={load} label="Refresh tasks" />
   </div>
   {#if loading}<RowsSkeleton label="Loading tasks" />
   {:else if error && !items.length}<ErrorState title={error} label="Tasks unavailable" onretry={load} />
@@ -127,10 +127,10 @@
                   <td class="cadence">{taskCadence(task.cadence)}</td>
                   <td>{#if task.lastRunAt}<span class="last-run">{time(task.lastRunAt)}</span>{/if}<span class="last-result">{taskLastResult(task.state, task.lastRunAt)}</span></td>
                   <td>{task.enabled ? task.nextRunAt ? time(task.nextRunAt) : task.state === "Running" ? "After this run" : "When needed" : "Paused"}</td>
-                  <td>{#if task.runPlaylistLinkId}<Button variant="text" size="sm" disabled={Boolean(running) || queued.has(task.id)} onclick={() => void run(task)}>{queued.has(task.id) ? "Queued" : running === task.id ? "Queuing…" : "Run now"}</Button>{:else}<Button variant="ghost" size="sm" onclick={() => void open(task)}>Details</Button>{/if}</td>
+                  <td>{#if task.runPlaylistLinkId}<Button variant="text" size="sm" disabled={Boolean(running) || queued.has(task.id)} onclick={() => void run(task)}>{queued.has(task.id) ? "Queued" : running === task.id ? "Queuing…" : "Run now"}</Button>{:else}<Button variant="text" size="sm" onclick={() => void open(task)}>Details</Button>{/if}</td>
                 </tr>
               {/each}
-              {#if group.name === "Playlist syncs" && group.tasks.length > 4}<tr><td colspan="5"><Button variant="ghost" onclick={() => showAll = !showAll}>{showAll ? "Show fewer playlist syncs" : "Show " + countLabel(group.tasks.length - 4, "more playlist sync")}</Button></td></tr>{/if}
+              {#if group.name === "Playlist syncs" && group.tasks.length > 4}<tr><td colspan="5"><Button variant="text" size="sm" onclick={() => showAll = !showAll}>{showAll ? "Show fewer playlist syncs" : "Show " + countLabel(group.tasks.length - 4, "more playlist sync")}</Button></td></tr>{/if}
             {/if}
           {/each}
         </tbody>

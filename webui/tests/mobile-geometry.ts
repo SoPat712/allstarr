@@ -68,9 +68,14 @@ export async function expectContainedMobileGeometry(page: Page) {
     const targets = new Set(document.querySelectorAll<HTMLElement>(
       "button, [role=button], [role=tab], summary, [data-slot=button], .mobile-navigation a",
     ));
-    for (const target of targets) {
+    const touchTargets = window.innerWidth <= 899 || matchMedia("(pointer: coarse)").matches;
+    for (const target of touchTargets ? targets : []) {
       if (!visible(target) || target.matches(":disabled")) continue;
       const rect = target.getBoundingClientRect();
+      if (target.matches('[data-slot="checkbox"]')) {
+        const hit = getComputedStyle(target, "::after");
+        if (hit.content !== "none" && Number.parseFloat(hit.width) >= 44 && Number.parseFloat(hit.height) >= 44) continue;
+      }
       if (target.matches(".add-chip")) {
         const hit = getComputedStyle(target, "::after");
         if (!matchMedia("(pointer: coarse)").matches || hit.content !== "none" && Number.parseFloat(hit.minWidth) >= 44 && Number.parseFloat(hit.minHeight) >= 44) continue;

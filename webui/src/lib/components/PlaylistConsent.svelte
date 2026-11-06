@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatLocalDateTime } from "$lib/dates";
   import { countLabel } from "$lib/count-label";
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
@@ -33,9 +34,7 @@
   });
 
   function dateLabel(value: string | null) {
-    if (!value) return "";
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.valueOf()) ? "" : parsed.toLocaleString();
+    return formatLocalDateTime(value, "");
   }
 
   async function load() {

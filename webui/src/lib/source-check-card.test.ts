@@ -16,7 +16,7 @@ describe("source check card content", () => {
     expect(sourceCheckCard(check)).toEqual({
       capability: "Streaming", account: "Household", outcome: "Failed", tone: "danger",
       relative: "5 minutes ago",
-      absolute: new Date(check.testedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }),
+      absolute: new Date(check.testedAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }),
       reason: "Timed out", latency: "1235 ms",
     });
   });

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatLocalDateTime } from "$lib/dates";
   import { countLabel } from "$lib/count-label";
   import { tick, untrack, type Snippet } from "svelte";
   import { sources, type ProviderCheckHistory, type ProviderHealth } from "$lib/api";
@@ -73,7 +74,9 @@
 
   function pointerSlot(event: PointerEvent | MouseEvent) {
     const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-check-slot]") : null;
-    return target ? Number(target.dataset.checkSlot) : null;
+    if (target) return Number(target.dataset.checkSlot);
+    const bounds = strip?.getBoundingClientRect();
+    return bounds?.width ? Math.max(0, Math.min(29, Math.floor((event.clientX - bounds.left) / bounds.width * 30))) : null;
   }
 
   function hoverSlot(event: PointerEvent) {
@@ -148,9 +151,7 @@
   }
 
   function timeLabel(value: string) {
-    return Number.isFinite(dateValue(value))
-      ? new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })
-      : "Time unavailable";
+    return formatLocalDateTime(value, "Time unavailable");
   }
 
   const pauses = $derived(statuses.filter(status => automatic && status.supported && status.enabled &&

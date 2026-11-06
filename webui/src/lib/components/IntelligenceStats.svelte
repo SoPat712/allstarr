@@ -111,7 +111,7 @@
   <PageStatus items={[{ label: stats && loadedSelection === selection ? countLabel(stats.playCount, "play") : "Your listening recap" }, { label: year || periods.find(item => item.id === period)?.label || "All time" }]} />
   <div class="stats-toolbar">
     <SegmentedNav variant="segments" label="Stats period" items={periods} active={year ? "" : period} onchange={selectPeriod} />
-    <div class="stats-actions"><SelectField bind:value={year} label="Year in review" options={years} onchange={() => void load()} /><RefreshButton variant="secondary" label="Refresh stats" onrefresh={load} /></div>
+    <div class="stats-actions"><SelectField bind:value={year} label="Year in review" options={years} onchange={() => void load()} /><RefreshButton label="Refresh stats" onrefresh={load} /></div>
   </div>
   {#if loading || refreshing && loadedSelection !== selection}<RowsSkeleton />
   {:else if !stats || error && loadedSelection !== selection}<ErrorState title="Your stats are unavailable" detail={error} onretry={load} />

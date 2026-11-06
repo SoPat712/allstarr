@@ -91,7 +91,6 @@
   .row-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); margin-top: var(--space-2); }
   .row-control { position: relative; z-index: 2; }
   .row-selection { display: flex; width: var(--control-md); min-height: var(--control-md); flex: 0 0 auto; align-items: center; justify-content: center; }
-  .row-selection :global([data-slot="checkbox"]::after) { inset: -12px; }
   .row-controls { display: flex; flex: 0 0 auto; align-items: center; gap: var(--space-1); }
   .row-pill { flex: 0 0 auto; }
   .item-row :global(.row-chevron) { flex: 0 0 auto; color: var(--color-ink-muted); }

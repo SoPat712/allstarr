@@ -626,15 +626,6 @@
           <h1>{activeDestination.label}</h1>
         </div>
         <div class="flex items-center gap-2">
-          <button
-            class="icon-button"
-            type="button"
-            title={`Theme: ${themeMode}. Switch to ${nextTheme}.`}
-            aria-label={`Theme: ${themeMode}. Switch to ${nextTheme}.`}
-            onclick={cycleTheme}
-          >
-            <ThemeIcon aria-hidden="true" />
-          </button>
           <div class="live-state" data-state={liveUpdates.state.status} role="status" aria-label={`Live updates ${liveUpdates.state.status}`}>
             <span aria-hidden="true"></span>
             {liveUpdates.state.status[0].toUpperCase() + liveUpdates.state.status.slice(1)}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import { onMount } from "svelte";
   import { ApiError, home, type ProviderDefinition } from "$lib/api";
   import { Button } from "$lib/components/ui/button";
@@ -100,7 +101,7 @@
   {:else}
     {#if selectionError || contextError}
       <div class="degraded-banner" role="alert"><p>{selectionError || contextError}</p>
-        <div class="panel-heading-actions">{#if !selectionError}<Button variant="secondary" disabled={loading || busy} onclick={() => void preview()}>Refresh details</Button>{/if}
+        <div class="panel-heading-actions">{#if !selectionError}<RefreshButton disabled={loading || busy} onrefresh={() => preview()} label="Refresh details" />{/if}
           {#if selector?.playback}<Button variant="secondary" disabled={loading || busy} onclick={() => void withoutPlayback()}>Continue without playback details</Button>{/if}
           <Button variant="secondary" disabled={loading || busy} onclick={() => void general()}>Continue without song details</Button></div></div>
     {/if}

@@ -1228,17 +1228,20 @@ for (const viewport of viewports) {
       await sourceDialog.getByRole("button", { name: "Cancel" }).click();
       await page.goto("#/settings/routing");
       await expect(page.getByRole("heading", { name: "Quality and routing", level: 2 })).toBeVisible();
-      await expect(page.getByText(/always tried first/)).toBeVisible();
+      await expect(page.getByText(/Your own music always comes first/)).toBeVisible();
       await expect(page.getByRole("button", { name: "Save playback and matching" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Move Jellyfin up" })).toHaveCount(0);
       await expect(page.locator(".provider-art").first()).toHaveCSS("border-top-width", "0px");
       const savePlayback = page.getByRole("button", { name: "Save Playback", exact: true });
       await expect(savePlayback).toHaveCount(0);
       const routes = page.locator(".routing-group li[draggable=true]");
+      await page.locator(".routing-group").first().scrollIntoViewIfNeeded();
+      await expect(routes.nth(0)).toBeInViewport({ ratio: 1 });
+      await expect(routes.nth(1)).toBeInViewport({ ratio: 1 });
       // Dragging while the view is still easing in can land on the wrong row.
       await page.evaluate(() => Promise.all(document.getAnimations()
         .filter((animation) => animation.effect?.getTiming().iterations !== Infinity).map((animation) => animation.finished)));
-      await routes.nth(0).dragTo(routes.nth(1));
+      await routes.nth(0).locator(".routing-index").dragTo(routes.nth(1).locator(".routing-index"));
       await expect(routes.nth(0)).toContainText("Future audio");
       await expect.poll(() => saved).toEqual({ StreamingOrder: "future-audio,lumen-audio" });
       await expect(page.getByText("Order saved", { exact: true })).toBeVisible();
@@ -1247,7 +1250,7 @@ for (const viewport of viewports) {
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.goto("#/integrations/services/lumen-audio");
-      await expect(page.locator(".service-extension .extension-row .source-row-capabilities span")).toContainText(["Metadata", "Streaming"]);
+      await expect(page.getByRole("dialog", { name: "Lumen Audio", exact: true }).locator(".service-description")).toHaveText("Used for song details and playback.");
       await page.goto("#/settings/extensions");
       await page.getByRole("button", { name: "Add extension" }).click();
       const addSource = page.getByRole("dialog", { name: "Add an extension" });
@@ -1260,7 +1263,7 @@ for (const viewport of viewports) {
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await addSource.getByRole("button", { name: "Close add an extension" }).click();
       await page.goto("#/settings/maintenance");
-      await expect(page.getByText(/Backups include saved sign-ins/)).toBeVisible();
+      await expect(page.getByText("Choose a backup ZIP. Saved sign-ins are included; audio and caches need separate backups.", { exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: "Back up now" })).toBeVisible();
       await expect(page.getByText("No backups yet", { exact: true })).toBeVisible();
       await expect(page.locator(".transfer-card")).toHaveCount(0);
@@ -2236,7 +2239,7 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   await expect(page.getByRole("region", { name: "Your setup", exact: true }).getByRole("heading", { name: "Library", exact: true })).toBeVisible();
   await expect(page.getByText("Legacy .env import")).toHaveCount(0);
   await expect(page.locator(".setup-tile").filter({ hasText: "Sources" })).toBeVisible();
-  await expect(page.getByText("Playlist check", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "playlist check", exact: true })).toBeVisible();
   await expect(page.locator(".setup-tile")).toHaveCount(6);
   await expect(page.getByRole("region", { name: "Recent activity", exact: true }).locator("svg").first()).toBeVisible();
   const nowPlaying = page.getByRole("region", { name: "Now playing" });
@@ -2535,7 +2538,9 @@ for (const theme of ["light", "dark"] as const) {
         for (const group of groups) {
           const name = group.getAttribute("aria-label") ?? group.className;
           const style = getComputedStyle(group);
-          if ([style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth].some(width => width !== "1px") || style.borderTopStyle !== "solid" || style.borderTopColor !== edge || style.borderRadius !== "999px" || style.columnGap !== "0px") errors.push(`${name}: outline`);
+          probe.style.borderRadius = group.classList.contains("wrapped") ? "var(--radius-list)" : "999px";
+          const radius = getComputedStyle(probe).borderRadius;
+          if ([style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth].some(width => width !== "1px") || style.borderTopStyle !== "solid" || style.borderTopColor !== edge || style.borderRadius !== radius || style.columnGap !== "0px") errors.push(`${name}: outline`);
           for (const [index, control] of [...group.querySelectorAll(":scope > a, :scope > button")].entries()) {
             const selected = control.matches('[aria-selected="true"], [aria-checked="true"], [aria-pressed="true"]');
             const item = getComputedStyle(control);
@@ -4057,8 +4062,13 @@ test("Dashboard primary tracks stay geometrically aligned", async ({ page }) => 
   const homeBoxes = await setupTiles.evaluateAll(items => items.map(item => item.getBoundingClientRect().toJSON()));
   expect(Math.max(...homeBoxes.map(box => box.width)) - Math.min(...homeBoxes.map(box => box.width))).toBeLessThanOrEqual(1);
   expect(Math.abs(homeBoxes[0].y - homeBoxes[2].y)).toBeLessThanOrEqual(1);
-  await expectSameTrack(".home-view", ".week-panel");
-  await expectSameTrack(".week-panel", ".recent-panel");
+  await expectSameTrack(".home-view", ".home-summary");
+  await expectSameTrack(".home-summary", ".home-mixes");
+  const week = (await page.locator(".week-panel").boundingBox())!;
+  const recent = (await page.locator(".recent-panel").boundingBox())!;
+  expect(Math.abs(week.y - recent.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(week.width - recent.width)).toBeLessThanOrEqual(1);
+  expect(recent.x).toBeGreaterThan(week.x + week.width);
 
   await page.goto("#/settings/general");
   await expect(page.locator(".settings-workspace")).toBeVisible();
@@ -9014,6 +9024,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.goto("#/integrations/routing");
     const group = page.locator(".routing-group").filter({ has: page.getByRole("heading", { name: "Lyrics order", exact: true }) });
     await expect(group.locator("li strong")).toHaveText(["Media server lyrics", "LRCLib", "Kept LRC", "Paxsenix"]);
+    await group.getByLabel("Reorder Kept LRC", { exact: true }).click();
     await expect(group.getByRole("button", { name: "Move Kept LRC up", exact: true })).toBeEnabled();
     await expect(group.getByRole("button", { name: "Move Kept LRC down", exact: true })).toBeEnabled();
     await expect(group.locator("li").nth(2)).toHaveAttribute("draggable", "true");
@@ -9022,19 +9033,18 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await group.locator("li").first().dispatchEvent("dragend");
     await expect(group.locator("li strong")).toHaveText(["Kept LRC", "Media server lyrics", "LRCLib", "Paxsenix"]);
     await group.getByRole("button", { name: "Move Kept LRC down", exact: true }).click();
+    await group.getByLabel("Reorder LRCLib", { exact: true }).click();
     await group.getByRole("button", { name: "Move LRCLib up", exact: true }).focus();
     await page.keyboard.press("Enter");
     await expect(group.locator("li strong")).toHaveText(["Media server lyrics", "LRCLib", "Kept LRC", "Paxsenix"]);
     await group.getByRole("button", { name: "Move LRCLib up", exact: true }).click();
     await expect.poll(() => saved).toEqual({ MULTI_PROVIDER_LYRICS_ORDER: "lrclib,backend,kept,paxsenix" });
     await expect(group.locator("li strong")).toHaveText(["LRCLib", "Media server lyrics", "Kept LRC", "Paxsenix"]);
-    await expect(group.locator("header")).toContainText("A lyrics choice saved for a song always wins.");
-    await expect(group.locator("header")).toContainText("the best-timed lyrics win: word by word, then line by line, then plain text.");
-    await expect(group.locator("header")).toContainText("This order decides between equally timed lyrics.");
+    await expect(group.locator("header")).toContainText("Drag to reorder. Saves as you drop.");
     await expect(group).not.toContainText("gets 5 confidence points");
     while (await page.getByRole("button", { name: "Dismiss notification", exact: true }).count())
       await page.getByRole("button", { name: "Dismiss notification", exact: true }).first().click();
-    await group.getByRole("heading", { name: "Lyrics order", exact: true }).click();
+    await group.getByRole("heading", { name: "Source order", exact: true }).click();
     if (width < 600) await expectContainedMobileGeometry(page);
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: `test-results/lyrics-routing-${width}-${theme}.png`, fullPage: true });

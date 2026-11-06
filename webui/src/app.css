@@ -4,8 +4,8 @@
   --font-sans: "Roboto", "Helvetica Neue", ui-sans-serif, system-ui, sans-serif;
   --font-display: var(--font-sans);
   --color-canvas: var(--md-sys-color-surface);
-  --color-panel: var(--md-sys-color-surface-container-low);
-  --color-panel-raised: var(--md-sys-color-surface-container);
+  --color-panel: var(--surface-card);
+  --color-panel-raised: var(--md-sys-color-surface-container-low);
   --color-surface-raised: var(--md-sys-color-surface-container-high);
   --color-edge: var(--md-sys-color-outline-variant);
   --color-edge-strong: var(--md-sys-color-outline);
@@ -25,7 +25,7 @@
   --color-muted-foreground: var(--md-sys-color-on-surface-variant);
   --color-background: var(--md-sys-color-surface);
   --color-foreground: var(--md-sys-color-on-surface);
-  --color-card: var(--md-sys-color-surface-container-low);
+  --color-card: var(--surface-card);
   --color-card-foreground: var(--md-sys-color-on-surface);
   --color-popover: var(--md-sys-color-surface-container-high);
   --color-popover-foreground: var(--md-sys-color-on-surface);
@@ -43,6 +43,7 @@
 @layer base {
   :root {
     color-scheme: light;
+    --surface-card: #ffffff;
     --md-sys-color-primary: #0b57d0;
     --md-sys-color-on-primary: #ffffff;
     --md-sys-color-primary-container: #dbe6ff;
@@ -78,10 +79,10 @@
     --surface-strong: var(--color-panel-raised);
     --text: var(--color-ink);
     --text-muted: var(--color-ink-muted);
-    --success: #0b6e4f;
-    --success-container: #b9f1d9;
+    --success: #006c4c;
+    --success-container: #c6f1dd;
     --on-success-container: #005138;
-    --warning: #7d5700;
+    --warning: #7c5800;
     --warning-container: #ffdea3;
     --on-warning-container: #644300;
     --danger: var(--md-sys-color-error);
@@ -118,11 +119,12 @@
     --radius-sm: 0.5rem;
     --radius-md: 0.75rem;
     --radius-lg: 1rem;
+    --radius-list: 0.875rem;
     --radius-xl: 1.5rem;
     --radius-2xl: 1.75rem;
-    --control-sm: 2.25rem;
-    --control-md: 2.75rem;
-    --control-lg: 3rem;
+    --control-sm: 2rem;
+    --control-md: 2.25rem;
+    --control-lg: 2.5rem;
     --icon-sm: 1rem;
     --icon-md: 1.125rem;
     --icon-lg: 1.25rem;
@@ -139,6 +141,7 @@
 
   .dark {
     color-scheme: dark;
+    --surface-card: #1e2025;
     --md-sys-color-primary: #adc6ff;
     --md-sys-color-on-primary: #002e69;
     --md-sys-color-primary-container: #004494;
@@ -205,6 +208,10 @@
     font: inherit;
     font-size: var(--text-sm);
   }
+
+  h2, h3, h4 { font-weight: 600; }
+
+  a { color: var(--color-signal-text); }
 
   button,
   a {
@@ -393,7 +400,7 @@
     flex-direction: column;
     overflow: hidden;
     border-right: 1px solid var(--color-edge);
-    background: var(--color-panel);
+    background: var(--color-panel-raised);
     padding: 4rem 1rem 1.25rem;
   }
 
@@ -512,7 +519,8 @@
     margin-top: 2rem;
   }
 
-  .navigation-group { display: grid; gap: 0.35rem; }
+  .navigation-group { display: grid; gap: 2px; }
+  .desktop-navigation .nav-icon { width: 40px; height: 40px; }
   .navigation-group + .navigation-group {
     margin-top: var(--space-4);
     border-top: 1px solid var(--color-edge);
@@ -528,8 +536,9 @@
     outline-offset: -2px;
     display: grid;
     width: 100%;
-    min-height: var(--control-lg);
-    grid-template-columns: var(--control-lg) minmax(0, 1fr);
+    min-height: 40px;
+    grid-template-columns: 40px minmax(0, 1fr);
+    font-size: var(--text-sm);
     align-items: center;
     gap: 0.5rem;
     border-radius: 999px;
@@ -709,7 +718,8 @@
     color: var(--color-ink);
   }
 
-  .panel-open { margin-right: var(--side-panel-offset, 0px); }
+  .panel-open, .workspace-header { margin-right: var(--side-panel-offset, 0px); }
+  .workspace > .segmented-nav { margin-right: var(--side-panel-offset, 0px); }
 
   .workspace {
     min-width: 0;
@@ -728,7 +738,9 @@
   .workspace-header h1 {
     margin: 0.25rem 0 0;
     font-family: var(--font-display);
-    font-size: clamp(1.8rem, 3vw, 2.7rem);
+    font-size: 2rem;
+    font-weight: 650;
+    line-height: 1.15;
     letter-spacing: -0.04em;
   }
 
@@ -2588,6 +2600,7 @@
   }
 
   .use-switch { width: min(23rem, 100%); }
+  .use-switch > button { min-height: 44px; }
 
   .segmented-tab-icon {
     flex: none;
@@ -9880,4 +9893,20 @@ summary > svg:last-child {
     transition-duration: 0s !important;
     transition-delay: 0s !important;
   }
+}
+
+:root .workspace :is(.library-list, .library-downloads, .mapping-queue) { padding: 0; }
+:root .workspace :is(.library-rows, .downloads-table-scroll, .mapping-rows) { overflow: auto; border: 1px solid var(--color-edge); border-radius: var(--radius-list); background: var(--color-panel); }
+@media (min-width: 900px) {
+  :root .workspace .library-downloads-table .library-download-actions { display: table-cell; vertical-align: middle; text-align: right; }
+  :root .workspace .library-downloads-table .library-download-actions > * { vertical-align: middle; }
+}
+:root .workspace .library-downloads-table tr:last-child > td { border-bottom: 0; }
+:root .workspace .library-rows > .playlist-row { display: block; padding: 0; }
+:root .workspace .library-rows > .playlist-row + .playlist-row { border-top: 1px solid var(--color-edge); }
+:root .workspace .library-rows .item-row { border-bottom: 0; }
+
+@media (max-width: 899px), (pointer: coarse) {
+  :root { --control-md: 2.75rem; }
+  :is(.tabs, .seg) > :is(a, button, label), .icon-button.icon-button, .sidebar-expander { min-width: 44px; min-height: 44px; }
 }

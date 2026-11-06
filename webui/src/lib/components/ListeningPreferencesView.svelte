@@ -321,8 +321,8 @@
               <span class="lyrics-grip" aria-hidden="true"><GripVertical size={18} /></span>
               <strong>{lyricsName(providerId)}</strong>
               <span class="lyrics-order-actions">
-                <Button variant="ghost" size="icon" aria-label={`Move ${lyricsName(providerId)} up`} disabled={controlsDisabled || !selectedFilter || index === 0} onclick={() => moveLyrics(index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
-                <Button variant="ghost" size="icon" aria-label={`Move ${lyricsName(providerId)} down`} disabled={controlsDisabled || !selectedFilter || index === lyricsOrder.length - 1} onclick={() => moveLyrics(index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
+                <Button variant="text" size="icon" aria-label={`Move ${lyricsName(providerId)} up`} disabled={controlsDisabled || !selectedFilter || index === 0} onclick={() => moveLyrics(index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
+                <Button variant="text" size="icon" aria-label={`Move ${lyricsName(providerId)} down`} disabled={controlsDisabled || !selectedFilter || index === lyricsOrder.length - 1} onclick={() => moveLyrics(index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
               </span>
             </li>
           {/each}

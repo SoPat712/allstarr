@@ -12,7 +12,7 @@
 <section aria-label={title}>
   <header><h2>{title}</h2><div class="shelf-actions">
     {#if onaddall && available.length}<Button variant="text" size="sm" disabled={Boolean(busy)} onclick={onaddall}>Add all to apps</Button>{/if}
-    {#if seeAll}<a href={seeAll}>{seeAllLabel}</a>{/if}
+    {#if seeAll}<Button variant="text" size="sm" href={seeAll}>{seeAllLabel}</Button>{/if}
   </div></header>
   <div class="mix-shelf" style={`--shelf-columns: ${Math.max(1, Math.floor(columns))}`}>
     {#each cards as card, index (`${index}:${card.id}`)}
@@ -35,7 +35,6 @@
   header, .shelf-actions { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
   header { margin-bottom: var(--space-3); }
   h2 { font-size: 1.125rem; font-weight: 600; }
-  a { display: inline-flex; min-height: 44px; align-items: center; font-size: var(--text-sm); white-space: nowrap; }
   .mix-shelf { display: grid; grid-auto-flow: column; grid-auto-columns: max(132px, calc((100% - (var(--shelf-columns) - 1) * var(--space-3)) / var(--shelf-columns))); overflow-x: auto; scroll-snap-type: x mandatory; align-items: stretch; gap: var(--space-3); padding-block: var(--space-1) var(--space-2); }
   .mix-card { min-width: 0; scroll-snap-align: start; text-align: left; color: var(--color-ink); }
   .cover, .mix-open { display: flex; flex-direction: column; width: 100%; min-width: 0; gap: var(--space-2); }

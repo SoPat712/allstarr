@@ -366,9 +366,9 @@
       {#if actions.length}
         <span class="try-row-actions">
           {#each actions as action}
-            {#if action === "lyrics"}<Button variant="ghost" size="icon" aria-label={`Get lyrics for ${track.title}`} title="Get lyrics" disabled={Boolean(running)} onclick={() => use(track, "lyrics")}><ScrollText /></Button>{/if}
-            {#if action === "streaming"}<Button variant="ghost" size="icon" aria-label={`Play ${track.title}`} title="Play" disabled={Boolean(running)} onclick={() => use(track, "streaming")}><Play /></Button>{/if}
-            {#if action === "download"}<Button variant="ghost" size="icon" aria-label={`Download ${track.title}`} title="Download" disabled={Boolean(running)} onclick={() => use(track, "download")}><Download /></Button>{/if}
+            {#if action === "lyrics"}<Button variant="text" size="icon" aria-label={`Get lyrics for ${track.title}`} title="Get lyrics" disabled={Boolean(running)} onclick={() => use(track, "lyrics")}><ScrollText /></Button>{/if}
+            {#if action === "streaming"}<Button variant="text" size="icon" aria-label={`Play ${track.title}`} title="Play" disabled={Boolean(running)} onclick={() => use(track, "streaming")}><Play /></Button>{/if}
+            {#if action === "download"}<Button variant="text" size="icon" aria-label={`Download ${track.title}`} title="Download" disabled={Boolean(running)} onclick={() => use(track, "download")}><Download /></Button>{/if}
           {/each}
         </span>
       {/if}
@@ -500,7 +500,7 @@
               </form>
               {#if lyricNeedsArtist}<p id="try-lyric-artist-needed" class="try-lyric-error" role="alert">This source needs the artist too</p>{/if}
               <div class="try-lyric-actions">
-                <Button variant="ghost" aria-expanded={lyricDetailsOpen} aria-controls="try-lyric-details" onclick={toggleLyricDetails}>
+                <Button variant="text" size="sm" aria-expanded={lyricDetailsOpen} aria-controls="try-lyric-details" onclick={toggleLyricDetails}>
                   <ChevronDown class={lyricDetailsOpen ? "try-chevron-open" : ""} aria-hidden="true" />More details
                 </Button>
                 <Button variant="link" disabled={Boolean(running) || (!lyricTitle.trim() && !lyricIsrc.trim())} onclick={directLyrics}>Use what I typed</Button>

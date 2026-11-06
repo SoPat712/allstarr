@@ -68,7 +68,7 @@
     {#if busy && !preview}<Skeleton class="skeleton-panel" aria-label="Loading preview" />{:else if preview}<MixSongs songs={preview.songs} />{#if !preview.readiness.ready}<p>{preview.readiness.message}</p>{/if}{/if}
     {#if error}<p class="notice-error" role="alert">{error}</p><Button variant="secondary" disabled={busy} onclick={loadPreview}>Try again</Button>{/if}
   </div>
-  <footer class="dialog-actions"><label>Mix name<input bind:value={name} disabled={saving} maxlength="200" /></label><Dialog.Close type="button" disabled={saving} class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close><Button disabled={busy || !preview?.readiness.ready || !name.trim()} onclick={save}>Save to my mixes</Button></footer>
+  <footer class="dialog-actions"><label>Mix name<input bind:value={name} disabled={saving} maxlength="200" /></label><Dialog.Close type="button" disabled={saving} class={buttonVariants({ variant: "text" })}>Cancel</Dialog.Close><Button disabled={busy || !preview?.readiness.ready || !name.trim()} onclick={save}>Save to my mixes</Button></footer>
 </Dialog.Content></Dialog.Portal></Dialog.Root>
 <style>
   h2 { font-size: 1.125rem; font-weight: 600; margin-bottom: var(--space-3); }

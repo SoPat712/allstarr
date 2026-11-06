@@ -665,7 +665,7 @@
           </div>
         {/if}
       </div>
-      <footer class="dialog-actions"><Dialog.Close class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</Dialog.Close>{#if catalogTab === "url"}<Button type="submit" form="extension-install-form" disabled={Boolean(action)}>{action === "install:" ? "Downloading and verifying…" : "Download and review"}</Button>{/if}</footer>
+      <footer class="dialog-actions"><Dialog.Close class={buttonVariants({ variant: "text" })} disabled={Boolean(action)}>Cancel</Dialog.Close>{#if catalogTab === "url"}<Button type="submit" form="extension-install-form" disabled={Boolean(action)}>{action === "install:" ? "Downloading and verifying…" : "Download and review"}</Button>{/if}</footer>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>
 {:else if loading}

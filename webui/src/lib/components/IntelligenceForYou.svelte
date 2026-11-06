@@ -144,7 +144,7 @@
   });
 </script>
 <div class="for-you">
-  <div class="section-heading"><h2>{greeting(new Date().getHours(), listenerName)}</h2><div class="page-actions"><RefreshButton variant="secondary" label="Refresh page" onrefresh={async () => { await pending; await load(); }} /><Button onclick={() => void startMix()}>Start a mix</Button></div></div>
+  <div class="section-heading"><h2>{greeting(new Date().getHours(), listenerName)}</h2><div class="page-actions"><RefreshButton label="Refresh page" onrefresh={async () => { await pending; await load(); }} /><Button onclick={() => void startMix()}>Start a mix</Button></div></div>
   <PageStatus items={[{ label: `${countLabel(cards.filter(card => card.readiness.ready).length, "mix", "mixes")} ready` }, { label: "Mixes refresh every morning" }]} />
   {#if loading}{#each ["Made for you", "Moods"] as title}<section aria-label={`Loading ${title}`}><h2>{title}</h2><RowsSkeleton count={3} /></section>{/each}
   {:else}

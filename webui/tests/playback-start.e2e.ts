@@ -66,8 +66,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
       });
     });
     await page.goto("/#/preferences");
-    const region = page.getByRole("region", { name: "Playback start", exact: true });
-    const group = region.getByRole("radiogroup", { name: "Playback start", exact: true });
+    const group = page.getByRole("radiogroup", { name: "Playback start", exact: true });
+    const region = page.locator(".settings-row").filter({ has: group });
     const fast = group.getByRole("radio", { name: "Fast start", exact: true });
     const balanced = group.getByRole("radio", { name: "Balanced", exact: true });
     const best = group.getByRole("radio", { name: "Best quality", exact: true });
@@ -75,9 +75,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(balanced).toHaveAttribute("tabindex", "0");
     await expect(fast).toHaveAttribute("tabindex", "-1");
     await expect(best).toHaveAttribute("tabindex", "-1");
-    await expect(region).toContainText("lossless");
-    await expect(region).toContainText("3 seconds");
-    await expect(region).toContainText("highest quality");
+    await expect(region).toContainText("Balanced favors quality when starts stay under 3 seconds.");
     await expect(page.getByRole("button", { name: "Save preferences", exact: true })).toHaveCount(0);
 
     await balanced.focus();

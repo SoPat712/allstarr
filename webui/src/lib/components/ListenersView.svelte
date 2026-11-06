@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RefreshButton from "$lib/components/RefreshButton.svelte";
   import { countLabel } from "$lib/count-label";
   import { onMount } from "svelte";
   import { ApiError, listeningPreferences, playlistLinks, sources, type ListenerPlaylistCopy, type PersonalListeningPreferences, type PlaylistLink, type ProviderAccount } from "$lib/api";
@@ -78,7 +79,7 @@
   {:else if error && !listeners.length}<ErrorState title="Listeners could not be loaded" detail={error} onretry={load} />
   {:else}
     {#if error}<ErrorState title="Some listener details are unavailable" detail={error} onretry={load} />{/if}
-    <div class="settings-toolbar"><FilterSegments bind:value={filter} storageKey="allstarr.settings.listeners.filter" label="Filter listeners" options={[{ id: "all", label: "All", count: listeners.length }, { id: "locked", label: "Locked to clean", count: lockedCount }]} /><Button variant="text" onclick={load}>Refresh</Button></div>
+    <div class="settings-toolbar"><FilterSegments bind:value={filter} storageKey="allstarr.settings.listeners.filter" label="Filter listeners" options={[{ id: "all", label: "All", count: listeners.length }, { id: "locked", label: "Locked to clean", count: lockedCount }]} /><RefreshButton onrefresh={load} label="Refresh listeners" /></div>
     <section class="settings-card" aria-label="Listeners">
       {#if filtered.length}
         <table class="settings-table listener-table"><thead><tr><th>Listener</th><th class="desktop-column">Last active</th><th class="desktop-column">Plays this week</th><th class="desktop-column">Accounts</th><th class="desktop-column">Playlist editing</th><th>Clean only, locked</th><th></th></tr></thead><tbody>

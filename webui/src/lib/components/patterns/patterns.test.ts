@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { render } from "svelte/server";
+import { createRawSnippet } from "svelte";
+import RefreshButton from "../RefreshButton.svelte";
+import SearchField from "../SearchField.svelte";
+import AdvancedFold from "./AdvancedFold.svelte";
 import PageStatus from "./PageStatus.svelte";
 import FilterSegments from "./FilterSegments.svelte";
 import ItemRow from "./ItemRow.svelte";
@@ -35,6 +39,11 @@ describe("shared pattern accessibility", () => {
     expect(html).toContain('aria-checked="true"');
     expect(html).not.toContain("disabled");
   });
+  it("formats large filter counts as localized badge text", () => {
+    const html = render(FilterSegments, { props: { options: [{ id: "all", label: "All", count: 4999 }], value: "all" } }).body;
+    expect(html).toContain(new Intl.NumberFormat().format(4999));
+    expect(html).toMatch(/class="segment-count/);
+  });
   it("provides a single named row opener and reflects selection", () => {
     const html = render(ItemRow, { props: { title: "Song", subtitle: "Artist", selected: true, attention: true, onclick: () => {} } }).body;
     expect(html.match(/<button/g)).toHaveLength(1);
@@ -59,6 +68,44 @@ describe("shared pattern accessibility", () => {
     expect(collapsed).toMatch(/class="group-members[^>]* hidden/);
     expect(expanded).toContain('aria-expanded="true"');
     expect(expanded).not.toMatch(/class="group-members[^>]* hidden/);
+  });
+  it("keeps the problem reason and action visible when members are collapsed", () => {
+    const html = render(GroupedRow, { props: { count: 6, summary: "Listens waiting", reason: "The destination needs confirming", tone: "warn",
+      action: createRawSnippet(() => ({ render: () => '<button type="button">Confirm destination</button>' })),
+    } }).body;
+    expect(html).toContain('data-tone="warn"');
+    expect(html).toContain("group-icon");
+    expect(html).toContain("The destination needs confirming");
+    expect(html.indexOf("Confirm destination")).toBeLessThan(html.indexOf('class="group-members'));
+    expect(html).toContain('aria-expanded="false"');
+  });
+  it("uses a native fold with a compact label and a descriptive accessible name", () => {
+    const html = render(AdvancedFold, { props: { description: "folder and manual copies" } }).body;
+    expect(html).toMatch(/<details class="settings-fold(?:\s|")/);
+    expect(html).toContain("Advanced");
+    expect(html).toContain('class="sr-only"');
+    expect(html).toContain(": folder and manual copies");
+    expect(html).not.toContain(" open");
+  });
+  it("preserves a specific fold label when the content needs one", () => {
+    const html = render(AdvancedFold, { props: { label: "Exact quality asked from each service" } }).body;
+    expect(html).toContain("Exact quality asked from each service");
+    expect(html).not.toContain("Advanced");
+    expect(html).not.toContain(" open");
+  });
+  it("renders refresh as a named icon with a tooltip and no visible label", () => {
+    const html = render(RefreshButton, { props: { label: "Refresh songs", onrefresh: () => {} } }).body;
+    expect(html).toContain('aria-label="Refresh songs"');
+    expect(html).toContain('title="Refresh songs"');
+    expect(html).toContain('data-variant="text"');
+    expect(html).toContain('data-size="icon"');
+    expect(html).not.toContain("<span>Refresh songs</span>");
+  });
+  it("keeps the search label associated with its search input", () => {
+    const html = render(SearchField, { props: { value: "", label: "Find songs", placeholder: "Search songs", hiddenLabel: true } }).body;
+    expect(html).toContain('type="search"');
+    expect(html).toContain("Find songs");
+    expect(html).toContain("sr-only");
   });
   it("bounds invalid skeleton counts and announces busy content once", () => {
     const html = render(RowsSkeleton, { props: { count: 2.8 } }).body;

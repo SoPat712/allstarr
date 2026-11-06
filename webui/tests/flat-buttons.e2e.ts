@@ -142,16 +142,16 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
 
     await page.goto("/#/preferences");
     const household = page.getByRole("link", { name: "Change the household limit", exact: true });
-    await expectOutline(household);
+    await expectSignalText(household);
+    await expect(household).toHaveAttribute("data-variant", "text");
     await expect(household).toHaveAttribute("href", "#/settings/quality");
     await capture("preferences");
 
     await household.click();
     await expect(page.getByRole("slider", { name: "Audio quality", exact: true })).toBeVisible();
     const sort = page.getByRole("button", { name: "Sort by score", exact: true });
-    await expectOutline(sort);
-    await expect(sort.locator("svg")).toBeVisible();
-    await expect(sort.locator("svg")).toHaveAttribute("aria-hidden", "true");
+    await expectSignalText(sort);
+    await expect(sort).toHaveAttribute("data-variant", "text");
     const showMore = page.getByRole("button", { name: "Show 1 more", exact: true });
     await expectSignalText(showMore);
     await showMore.click();
